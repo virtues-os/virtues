@@ -35,10 +35,10 @@ pub async fn build_hourly_context(
     // timestamps as `DateTime<Utc>` directly (the prior `try_get::<String>` on a
     // timestamptz column would also have failed).
     if let Ok(rows) = sqlx::query(
-        r#"SELECT title, start_time, end_time, location_name, attendee_identifiers
+        r#"SELECT title, started_at, ended_at, location_name, attendee_identifiers
            FROM data_calendar_event
-           WHERE start_time >= $1 AND start_time < $2
-           ORDER BY start_time"#,
+           WHERE started_at >= $1 AND started_at < $2
+           ORDER BY started_at"#,
     )
     .bind(window_start)
     .bind(window_end)
@@ -47,8 +47,8 @@ pub async fn build_hourly_context(
     {
         let items: Vec<String> = rows.iter().filter_map(|r| {
             let title: String = r.try_get("title").ok()?;
-            let start: DateTime<Utc> = r.try_get("start_time").ok()?;
-            let end: DateTime<Utc> = r.try_get("end_time").ok()?;
+            let start: DateTime<Utc> = r.try_get("started_at").ok()?;
+            let end: DateTime<Utc> = r.try_get("ended_at").ok()?;
             let loc: Option<String> = r.try_get("location_name").ok().flatten();
             let attendees: Option<serde_json::Value> = r.try_get("attendee_identifiers").ok();
             let mut s = format!("- {} ({} to {})", title, start.format("%H:%M"), end.format("%H:%M"));
@@ -104,7 +104,7 @@ pub async fn build_hourly_context(
     if let Ok(rows) = sqlx::query(
         r#"SELECT app_name, duration_minutes, window_title
            FROM data_activity_app_session
-           WHERE start_time >= $1 AND start_time < $2
+           WHERE started_at >= $1 AND started_at < $2
            ORDER BY duration_minutes DESC
            LIMIT 10"#,
     )
@@ -157,10 +157,10 @@ pub async fn build_hourly_context(
 
     // Voice transcriptions
     if let Ok(rows) = sqlx::query(
-        r#"SELECT text, start_time, duration_seconds
+        r#"SELECT text, started_at, duration_seconds
            FROM data_communication_transcription
-           WHERE start_time >= $1 AND start_time < $2
-           ORDER BY start_time
+           WHERE started_at >= $1 AND started_at < $2
+           ORDER BY started_at
            LIMIT 5"#,
     )
     .bind(window_start)
@@ -278,13 +278,13 @@ pub async fn build_hourly_context(
 
     // Today's events so far (for continuity — the agent needs to know what it already created)
     if let Ok(rows) = sqlx::query(
-        r#"SELECT e.id, e.start_time, e.end_time, e.auto_label, e.event_summary, e.agent_action
+        r#"SELECT e.id, e.started_at, e.ended_at, e.auto_label, e.event_summary, e.agent_action
            FROM wiki_events e
            JOIN wiki_days d ON e.day_id = d.id
            WHERE d.date = $1::date
              AND e.is_unknown = FALSE
              AND e.user_hidden = FALSE
-           ORDER BY e.start_time"#,
+           ORDER BY e.started_at"#,
     )
     .bind(&today)
     .fetch_all(pool)
@@ -292,8 +292,8 @@ pub async fn build_hourly_context(
     {
         let items: Vec<String> = rows.iter().filter_map(|r| {
             let id: String = r.try_get("id").ok()?;
-            let start: DateTime<Utc> = r.try_get("start_time").ok()?;
-            let end: DateTime<Utc> = r.try_get("end_time").ok()?;
+            let start: DateTime<Utc> = r.try_get("started_at").ok()?;
+            let end: DateTime<Utc> = r.try_get("ended_at").ok()?;
             let label: Option<String> = r.try_get("auto_label").ok().flatten();
             let summary: Option<String> = r.try_get("event_summary").ok().flatten();
             let action: Option<String> = r.try_get("agent_action").ok().flatten();

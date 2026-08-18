@@ -678,8 +678,8 @@ async fn fetch_calendar_events(db: &Database, window: TimeWindow) -> Result<Vec<
             id,
             attendee_identifiers
         FROM data_calendar_event
-        WHERE start_time >= $1
-          AND start_time < $2
+        WHERE started_at >= $1
+          AND started_at < $2
           AND jsonb_array_length(attendee_identifiers) > 0
         "#,
         window.start,
@@ -716,7 +716,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
 
     // Fetch event start_time for the wiki_refs timestamp
     let timestamp: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT start_time FROM data_calendar_event WHERE id = $1",
+        "SELECT started_at FROM data_calendar_event WHERE id = $1",
     )
     .bind(&event_id_str)
     .fetch_optional(db.pool())

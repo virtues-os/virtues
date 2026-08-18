@@ -110,7 +110,7 @@ async fn create_event(
     sqlx::query(
         r#"
         INSERT INTO wiki_events (
-            id, day_id, start_time, end_time,
+            id, day_id, started_at, ended_at,
             auto_label, event_summary, topics, source_ontologies,
             agent_action
         ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6, $7::jsonb, $8::jsonb, 'NEW')
@@ -348,7 +348,7 @@ async fn revise_event(
         } else {
             // No time params provided — look up the event's existing start_time
             sqlx::query_scalar::<_, String>(
-                "SELECT start_time::text FROM wiki_events WHERE id = $1"
+                "SELECT started_at::text FROM wiki_events WHERE id = $1"
             )
             .bind(event_id)
             .fetch_optional(pool)
@@ -403,8 +403,8 @@ async fn mark_no_data(
     let prev_unknown: Option<String> = sqlx::query_scalar(
         r#"SELECT e.id FROM wiki_events e
            JOIN wiki_days d ON e.day_id = d.id
-           WHERE d.date = $1::date AND e.is_unknown = TRUE AND e.end_time = $2::timestamptz
-           ORDER BY e.end_time DESC LIMIT 1"#,
+           WHERE d.date = $1::date AND e.is_unknown = TRUE AND e.ended_at = $2::timestamptz
+           ORDER BY e.ended_at DESC LIMIT 1"#,
     )
     .bind(&date_str)
     .bind(start_time)
@@ -414,7 +414,7 @@ async fn mark_no_data(
 
     if let Some(prev_id) = prev_unknown {
         // Extend the existing unknown event
-        sqlx::query("UPDATE wiki_events SET end_time = $1::timestamptz, updated_at = now() WHERE id = $2")
+        sqlx::query("UPDATE wiki_events SET ended_at = $1::timestamptz, updated_at = now() WHERE id = $2")
             .bind(end_time)
             .bind(&prev_id)
             .execute(pool)
@@ -456,7 +456,7 @@ async fn mark_no_data(
     sqlx::query(
         r#"
         INSERT INTO wiki_events (
-            id, day_id, start_time, end_time,
+            id, day_id, started_at, ended_at,
             auto_label, kind, agent_action
         ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, 'Unknown', 'unknown', 'NO_DATA')
         "#,

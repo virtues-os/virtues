@@ -656,7 +656,7 @@ fn generate_visit_id(centroid_lat: f64, centroid_lon: f64, start_time: DateTime<
 /// rather than minting a new one every time the clusterer re-runs.
 ///
 /// The bug this fixes: the maintenance loop re-clusters a 30-hour window every 15
-/// minutes, and the visit id was `uuid_v5(lat, lon, start_time)`. Across re-runs
+/// minutes, and the visit id was `uuid_v5(lat, lon, started_at)`. Across re-runs
 /// the cluster's earliest point drifts, so the start — and therefore the id —
 /// changes, and `ON CONFLICT (id)` never fires. One 3-hour stay at home became a
 /// dozen overlapping rows (arriving 00:04, 00:19, 00:34…, all departing 03:07),
@@ -758,7 +758,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     let duration_minutes = (visit.end_time - visit.start_time).num_minutes() as i32;
 
     // Conflict on `source_stream_id`, NOT `id`. A stay carries two identities and
-    // only one of them is stable: `id` is derived from (centroid, start_time) and
+    // only one of them is stable: `id` is derived from (centroid, started_at) and
     // DRIFTS every time re-clustering nudges either, while `source_stream_id` (the
     // first point) does not — and the stable one is what holds the UNIQUE
     // constraint. Guarding `id` meant a re-clustered stay arrived with a fresh id,

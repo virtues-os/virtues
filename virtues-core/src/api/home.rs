@@ -112,15 +112,15 @@ pub struct UpcomingEvent {
 pub async fn get_calendar_upcoming(pool: &PgPool, limit: i64) -> Result<Vec<UpcomingEvent>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, title, start_time, end_time, is_all_day, location_name,
+        SELECT id, title, started_at, ended_at, is_all_day, location_name,
                COALESCE(is_sacred, FALSE) AS is_sacred
         FROM data_calendar_event
-        WHERE start_time > now()
+        WHERE started_at > now()
           AND deleted_at_source IS NULL
           AND is_archived = FALSE
           AND (status IS NULL OR status <> 'cancelled')
           AND NOT (is_all_day = TRUE AND (calendar_name ILIKE '%holiday%' OR calendar_name ILIKE '%birthday%'))
-        ORDER BY start_time ASC
+        ORDER BY started_at ASC
         LIMIT $1
         "#,
     )
@@ -131,8 +131,8 @@ pub async fn get_calendar_upcoming(pool: &PgPool, limit: i64) -> Result<Vec<Upco
     Ok(rows
         .iter()
         .filter_map(|r| {
-            let start: DateTime<Utc> = r.try_get("start_time").ok()?;
-            let end: DateTime<Utc> = r.try_get("end_time").ok()?;
+            let start: DateTime<Utc> = r.try_get("started_at").ok()?;
+            let end: DateTime<Utc> = r.try_get("ended_at").ok()?;
             Some(UpcomingEvent {
                 id: r.try_get("id").ok()?,
                 title: r.try_get("title").unwrap_or_default(),

@@ -342,7 +342,7 @@ async fn tombstone_absent(
          WHERE source_provider = 'google' \
            AND source_table = 'google_calendar' \
            AND calendar_name = $1 \
-           AND start_time >= $2::timestamptz \
+           AND started_at >= $2::timestamptz \
            AND deleted_at_source IS NULL \
            AND source_stream_id <> ALL($3)",
     )

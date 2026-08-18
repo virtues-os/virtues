@@ -990,9 +990,9 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleep
     // 1. Get sleep record for this night (overlaps with this calendar day)
     let sleep_row: Option<sqlx::postgres::PgRow> = sqlx::query(
         r#"SELECT sleep_stages FROM data_health_sleep
-           WHERE start_time >= $1
-             AND start_time < $2
-           ORDER BY start_time ASC LIMIT 1"#,
+           WHERE started_at >= $1
+             AND started_at < $2
+           ORDER BY started_at ASC LIMIT 1"#,
     )
     .bind(start)
     .bind(end)
@@ -1072,9 +1072,9 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleep
         r#"SELECT AVG(CAST(hr.bpm AS REAL))
            FROM data_health_heart_rate hr
            INNER JOIN data_health_sleep s
-             ON hr.occurred_at >= s.start_time AND hr.occurred_at < s.end_time
-           WHERE s.start_time >= $1
-             AND s.start_time < $2
+             ON hr.occurred_at >= s.started_at AND hr.occurred_at < s.ended_at
+           WHERE s.started_at >= $1
+             AND s.started_at < $2
            GROUP BY s.id"#,
     )
     .bind(baseline_start)
@@ -1164,7 +1164,7 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
              AND NOT EXISTS (
                SELECT 1 FROM wiki_events e2, jsonb_array_elements_text(e2.topics) jt2
                WHERE e2.day_id != e.day_id
-                 AND e2.start_time < e.start_time
+                 AND e2.start_time < e.started_at
                  AND jt2 = jt
              )"#,
     )
@@ -1500,7 +1500,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
     let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            id, day_id, start_time, end_time,
+            id, day_id, started_at, ended_at,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,
             novelty_z, avg_hr, autonomic_z, hr_z, hrv_z,
@@ -1510,7 +1510,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             created_at, updated_at
         FROM wiki_events
         WHERE day_id = $1
-        ORDER BY start_time ASC
+        ORDER BY started_at ASC
         "#,
     )
     .bind(&day_id)
@@ -1524,8 +1524,8 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
         .iter()
         .filter_map(|row| {
             let id: String = row.try_get("id").ok()?;
-            let start: DateTime<Utc> = row.try_get("start_time").ok()?;
-            let end: DateTime<Utc> = row.try_get("end_time").ok()?;
+            let start: DateTime<Utc> = row.try_get("started_at").ok()?;
+            let end: DateTime<Utc> = row.try_get("ended_at").ok()?;
             Some((id, start, end))
         })
         .collect();
@@ -1567,8 +1567,8 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             // (timestamptz is not text), so `.ok()?` dropped every row and the
             // timeline came back empty. JSONB decodes into serde_json::Value and
             // BOOLEAN into bool — no string round-trip, no `!= 0`.
-            let start_time: DateTime<Utc> = row.try_get("start_time").ok()?;
-            let end_time: DateTime<Utc> = row.try_get("end_time").ok()?;
+            let start_time: DateTime<Utc> = row.try_get("started_at").ok()?;
+            let end_time: DateTime<Utc> = row.try_get("ended_at").ok()?;
             let created_at: DateTime<Utc> = row.try_get("created_at").ok()?;
             let updated_at: DateTime<Utc> = row.try_get("updated_at").ok()?;
             let entity_timestamps = entity_ts_by_event.get(&id).cloned();
@@ -1657,7 +1657,7 @@ pub async fn create_temporal_event(
     let row = sqlx::query(
         r#"
         INSERT INTO wiki_events (
-            id, day_id, start_time, end_time,
+            id, day_id, started_at, ended_at,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, kind, is_user_added, event_summary,
             topics
@@ -1749,7 +1749,7 @@ pub async fn update_temporal_event(
             updated_at = now()
         WHERE id = $1
         RETURNING
-            id, day_id, start_time, end_time,
+            id, day_id, started_at, ended_at,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,
             created_at, updated_at
@@ -1767,8 +1767,8 @@ pub async fn update_temporal_event(
     Ok(TemporalEvent {
         id: row.id,
         day_id: row.day_id,
-        start_time: row.start_time,
-        end_time: row.end_time,
+        start_time: row.started_at,
+        end_time: row.ended_at,
         auto_label: row.auto_label,
         auto_location: row.auto_location,
         user_label: row.user_label,
@@ -2622,11 +2622,11 @@ pub async fn get_today_streams(
     // --- Calendar: the day as intended ---
     let cal_rows = sqlx::query(
         r#"
-        SELECT id, title, start_time, end_time, is_all_day,
+        SELECT id, title, started_at, ended_at, is_all_day,
                COALESCE(is_sacred, FALSE) AS is_sacred, location_name, calendar_name
         FROM data_calendar_event
-        WHERE start_time >= $1::timestamptz AND start_time < $2::timestamptz
-        ORDER BY start_time ASC
+        WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz
+        ORDER BY started_at ASC
         "#,
     )
     .bind(&start_str)
@@ -2638,8 +2638,8 @@ pub async fn get_today_streams(
     let calendar: Vec<TodayCalendarSpan> = cal_rows
         .iter()
         .filter_map(|row| {
-            let start: DateTime<Utc> = row.try_get("start_time").ok()?;
-            let end: DateTime<Utc> = row.try_get("end_time").ok()?;
+            let start: DateTime<Utc> = row.try_get("started_at").ok()?;
+            let end: DateTime<Utc> = row.try_get("ended_at").ok()?;
             Some(TodayCalendarSpan {
                 id: row.try_get("id").ok()?,
                 start_time: start.to_rfc3339(),
@@ -3121,7 +3121,7 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
         // `timestamp` is a TIMESTAMPTZ column — decode directly. Reading it as
         // String failed at decode and `continue`d past every message, so
         // external AI conversations never showed up on the day page.
-        let ts: DateTime<Utc> = match row.try_get("timestamp") {
+        let ts: DateTime<Utc> = match row.try_get("occurred_at") {
             Ok(v) => v,
             Err(_) => continue,
         };

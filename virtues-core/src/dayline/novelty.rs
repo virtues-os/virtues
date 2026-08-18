@@ -72,7 +72,7 @@ pub async fn compute_novelty_for_day(pool: &PgPool, date: NaiveDate) -> anyhow::
     // backfill that adds the local channel reaches events already global-scored.
     let events: Vec<(String, String, DateTime<Utc>, Option<String>)> = sqlx::query_as(
         r#"
-        SELECT e.id, e.event_summary, e.start_time, d.start_timezone
+        SELECT e.id, e.event_summary, e.started_at, d.start_timezone
         FROM wiki_events e
         JOIN wiki_days d ON e.day_id = d.id
         WHERE d.date = $1
@@ -102,13 +102,13 @@ pub async fn compute_novelty_for_day(pool: &PgPool, date: NaiveDate) -> anyhow::
     let baseline = load_baseline(pool, date, true).await?;
 
     let mut scored = 0u32;
-    for (i, (event_id, _summary, start_time, tz)) in events.iter().enumerate() {
+    for (i, (event_id, _summary, started_at, tz)) in events.iter().enumerate() {
         let embedding = match embeddings.get(i) {
             Some(e) => e,
             None => continue,
         };
 
-        let phase = local_phase(*start_time, tz.as_deref());
+        let phase = local_phase(*started_at, tz.as_deref());
         let novelty_z = baseline
             .as_ref()
             .and_then(|b| score_global(b, embedding, phase));
@@ -159,7 +159,7 @@ pub async fn compute_and_store_novelty(
     // This event's own phase, for the global centroid weighting.
     let phase = match sqlx::query_as::<_, (DateTime<Utc>, Option<String>)>(
         r#"
-        SELECT e.start_time, d.start_timezone
+        SELECT e.started_at, d.start_timezone
         FROM wiki_events e JOIN wiki_days d ON e.day_id = d.id
         WHERE e.id = $1
         "#,
@@ -252,7 +252,7 @@ async fn load_baseline(
     // first so the MAX_BASELINE_EVENTS cap keeps the freshest events.
     let rows: Vec<(Vec<u8>, NaiveDate, DateTime<Utc>, Option<String>)> = sqlx::query_as(
         r#"
-        SELECT e.embedding, d.date, e.start_time, d.start_timezone
+        SELECT e.embedding, d.date, e.started_at, d.start_timezone
         FROM wiki_events e
         JOIN wiki_days d ON e.day_id = d.id
         WHERE d.date >= $1
@@ -273,7 +273,7 @@ async fn load_baseline(
     let mut days_ago = Vec::new();
     let mut distinct_dates: std::collections::HashSet<NaiveDate> = std::collections::HashSet::new();
 
-    for (blob, row_date, start_time, tz) in &rows {
+    for (blob, row_date, started_at, tz) in &rows {
         let emb = bytes_to_embedding(blob);
         if emb.is_empty() {
             continue;
@@ -282,7 +282,7 @@ async fn load_baseline(
             break;
         }
         embeddings.push(emb);
-        phases.push(local_phase(*start_time, tz.as_deref()));
+        phases.push(local_phase(*started_at, tz.as_deref()));
         days_ago.push((event_date - *row_date).num_days().max(0) as f64);
         distinct_dates.insert(*row_date);
     }

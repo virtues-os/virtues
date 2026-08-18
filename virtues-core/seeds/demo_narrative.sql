@@ -61,7 +61,7 @@ INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_
 
 -- E01: Sleep (midnight-6:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0001', 'day_2025-11-24',
     '2025-11-24T06:00:00Z', '2025-11-24T12:30:00Z',
@@ -73,7 +73,7 @@ INSERT INTO wiki_events (
 
 -- E02: Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0002', 'day_2025-11-24',
     '2025-11-24T12:30:00Z', '2025-11-24T13:15:00Z',
@@ -85,7 +85,7 @@ INSERT INTO wiki_events (
 
 -- E03: Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0003', 'day_2025-11-24',
     '2025-11-24T13:15:00Z', '2025-11-24T13:45:00Z',
@@ -97,7 +97,7 @@ INSERT INTO wiki_events (
 
 -- E04: Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0004', 'day_2025-11-24',
     '2025-11-24T13:45:00Z', '2025-11-24T14:15:00Z',
@@ -109,7 +109,7 @@ INSERT INTO wiki_events (
 
 -- E05: Design standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0005', 'day_2025-11-24',
     '2025-11-24T14:15:00Z', '2025-11-24T14:45:00Z',
@@ -121,7 +121,7 @@ INSERT INTO wiki_events (
 
 -- E06: Focused design work (08:45-11:30 CST = 14:45-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0006', 'day_2025-11-24',
     '2025-11-24T14:45:00Z', '2025-11-24T17:30:00Z',
@@ -133,7 +133,7 @@ INSERT INTO wiki_events (
 
 -- E07: Solo lunch (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0007', 'day_2025-11-24',
     '2025-11-24T17:30:00Z', '2025-11-24T18:15:00Z',
@@ -145,7 +145,7 @@ INSERT INTO wiki_events (
 
 -- E08: Afternoon work (12:15-16:30 CST = 18:15-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0008', 'day_2025-11-24',
     '2025-11-24T18:15:00Z', '2025-11-24T22:30:00Z',
@@ -157,7 +157,7 @@ INSERT INTO wiki_events (
 
 -- E09: Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0009', 'day_2025-11-24',
     '2025-11-24T22:30:00Z', '2025-11-24T23:00:00Z',
@@ -169,7 +169,7 @@ INSERT INTO wiki_events (
 
 -- E10: Evening at home (17:00-22:00 CST = 23:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0010', 'day_2025-11-24',
     '2025-11-24T23:00:00Z', '2025-11-25T04:00:00Z',
@@ -183,7 +183,7 @@ INSERT INTO wiki_events (
 
 -- E11: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0011', 'day_2025-11-25',
     '2025-11-25T04:00:00Z', '2025-11-25T12:45:00Z',
@@ -195,7 +195,7 @@ INSERT INTO wiki_events (
 
 -- E12: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0012', 'day_2025-11-25',
     '2025-11-25T12:45:00Z', '2025-11-25T13:15:00Z',
@@ -207,7 +207,7 @@ INSERT INTO wiki_events (
 
 -- E13: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0013', 'day_2025-11-25',
     '2025-11-25T13:15:00Z', '2025-11-25T13:45:00Z',
@@ -219,7 +219,7 @@ INSERT INTO wiki_events (
 
 -- E14: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0014', 'day_2025-11-25',
     '2025-11-25T13:45:00Z', '2025-11-25T14:15:00Z',
@@ -231,7 +231,7 @@ INSERT INTO wiki_events (
 
 -- E15: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0015', 'day_2025-11-25',
     '2025-11-25T14:15:00Z', '2025-11-25T14:45:00Z',
@@ -243,7 +243,7 @@ INSERT INTO wiki_events (
 
 -- E16: Design review with David (Tuesday special)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0016', 'day_2025-11-25',
     '2025-11-25T15:00:00Z', '2025-11-25T16:00:00Z',
@@ -255,7 +255,7 @@ INSERT INTO wiki_events (
 
 -- E17: Focused work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0017', 'day_2025-11-25',
     '2025-11-25T16:00:00Z', '2025-11-25T17:30:00Z',
@@ -267,7 +267,7 @@ INSERT INTO wiki_events (
 
 -- E18: Lunch (solo)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0018', 'day_2025-11-25',
     '2025-11-25T17:30:00Z', '2025-11-25T18:15:00Z',
@@ -279,7 +279,7 @@ INSERT INTO wiki_events (
 
 -- E19: Afternoon work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0019', 'day_2025-11-25',
     '2025-11-25T18:15:00Z', '2025-11-25T22:30:00Z',
@@ -291,7 +291,7 @@ INSERT INTO wiki_events (
 
 -- E20: Bike commute home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0020', 'day_2025-11-25',
     '2025-11-25T22:30:00Z', '2025-11-25T23:00:00Z',
@@ -303,7 +303,7 @@ INSERT INTO wiki_events (
 
 -- E21: Evening run (Tuesday = Mueller trails)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0021', 'day_2025-11-25',
     '2025-11-25T23:15:00Z', '2025-11-26T00:00:00Z',
@@ -315,7 +315,7 @@ INSERT INTO wiki_events (
 
 -- E22: Evening at home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0022', 'day_2025-11-25',
     '2025-11-26T00:00:00Z', '2025-11-26T04:00:00Z',
@@ -329,7 +329,7 @@ INSERT INTO wiki_events (
 
 -- E23: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0023', 'day_2025-11-26',
     '2025-11-26T04:00:00Z', '2025-11-26T12:30:00Z',
@@ -341,7 +341,7 @@ INSERT INTO wiki_events (
 
 -- E24: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0024', 'day_2025-11-26',
     '2025-11-26T12:30:00Z', '2025-11-26T13:15:00Z',
@@ -353,7 +353,7 @@ INSERT INTO wiki_events (
 
 -- E25: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0025', 'day_2025-11-26',
     '2025-11-26T13:15:00Z', '2025-11-26T13:45:00Z',
@@ -365,7 +365,7 @@ INSERT INTO wiki_events (
 
 -- E26: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0026', 'day_2025-11-26',
     '2025-11-26T13:45:00Z', '2025-11-26T14:15:00Z',
@@ -377,7 +377,7 @@ INSERT INTO wiki_events (
 
 -- E27: Standup (short, pre-holiday)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0027', 'day_2025-11-26',
     '2025-11-26T14:15:00Z', '2025-11-26T14:30:00Z',
@@ -389,7 +389,7 @@ INSERT INTO wiki_events (
 
 -- E28: Focused work (wrapping up before holiday)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0028', 'day_2025-11-26',
     '2025-11-26T14:30:00Z', '2025-11-26T17:30:00Z',
@@ -401,7 +401,7 @@ INSERT INTO wiki_events (
 
 -- E29: Lunch with Maya at Tatsu-ya (Wednesday = Tatsu-ya day)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0029', 'day_2025-11-26',
     '2025-11-26T17:30:00Z', '2025-11-26T18:30:00Z',
@@ -413,7 +413,7 @@ INSERT INTO wiki_events (
 
 -- E30: Short afternoon (left early)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0030', 'day_2025-11-26',
     '2025-11-26T18:30:00Z', '2025-11-26T21:00:00Z',
@@ -425,7 +425,7 @@ INSERT INTO wiki_events (
 
 -- E31: Bike commute home (early)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0031', 'day_2025-11-26',
     '2025-11-26T21:00:00Z', '2025-11-26T21:30:00Z',
@@ -437,7 +437,7 @@ INSERT INTO wiki_events (
 
 -- E32: Evening — groceries and cooking
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0032', 'day_2025-11-26',
     '2025-11-26T21:30:00Z', '2025-11-27T04:00:00Z',
@@ -451,7 +451,7 @@ INSERT INTO wiki_events (
 
 -- E33: Sleep (slept in)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0033', 'day_2025-11-27',
     '2025-11-27T04:00:00Z', '2025-11-27T14:00:00Z',
@@ -463,7 +463,7 @@ INSERT INTO wiki_events (
 
 -- E34: Slow morning
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0034', 'day_2025-11-27',
     '2025-11-27T14:00:00Z', '2025-11-27T15:30:00Z',
@@ -475,7 +475,7 @@ INSERT INTO wiki_events (
 
 -- E35: Morning walk
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0035', 'day_2025-11-27',
     '2025-11-27T15:30:00Z', '2025-11-27T16:30:00Z',
@@ -487,7 +487,7 @@ INSERT INTO wiki_events (
 
 -- E36: Cooking Thanksgiving meal
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0036', 'day_2025-11-27',
     '2025-11-27T16:30:00Z', '2025-11-27T20:00:00Z',
@@ -499,7 +499,7 @@ INSERT INTO wiki_events (
 
 -- E37: Phone call with Mom
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0037', 'day_2025-11-27',
     '2025-11-27T20:00:00Z', '2025-11-27T20:45:00Z',
@@ -511,7 +511,7 @@ INSERT INTO wiki_events (
 
 -- E38: Thanksgiving evening
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0038', 'day_2025-11-27',
     '2025-11-27T20:45:00Z', '2025-11-28T04:00:00Z',
@@ -525,7 +525,7 @@ INSERT INTO wiki_events (
 
 -- E39: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0039', 'day_2025-11-28',
     '2025-11-28T04:00:00Z', '2025-11-28T14:00:00Z',
@@ -537,7 +537,7 @@ INSERT INTO wiki_events (
 
 -- E40: Slow morning
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0040', 'day_2025-11-28',
     '2025-11-28T14:00:00Z', '2025-11-28T15:30:00Z',
@@ -549,7 +549,7 @@ INSERT INTO wiki_events (
 
 -- E41: Lady Bird Lake walk
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0041', 'day_2025-11-28',
     '2025-11-28T16:00:00Z', '2025-11-28T17:30:00Z',
@@ -561,7 +561,7 @@ INSERT INTO wiki_events (
 
 -- E42: Afternoon at home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0042', 'day_2025-11-28',
     '2025-11-28T17:30:00Z', '2025-11-28T23:00:00Z',
@@ -573,7 +573,7 @@ INSERT INTO wiki_events (
 
 -- E43: Game night at Jess's
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0043', 'day_2025-11-28',
     '2025-11-29T00:00:00Z', '2025-11-29T04:00:00Z',
@@ -587,7 +587,7 @@ INSERT INTO wiki_events (
 
 -- E44: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0044', 'day_2025-11-29',
     '2025-11-29T04:00:00Z', '2025-11-29T13:30:00Z',
@@ -599,7 +599,7 @@ INSERT INTO wiki_events (
 
 -- E45: Slow morning
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0045', 'day_2025-11-29',
     '2025-11-29T13:30:00Z', '2025-11-29T15:00:00Z',
@@ -611,7 +611,7 @@ INSERT INTO wiki_events (
 
 -- E46: Lady Bird Lake walk
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0046', 'day_2025-11-29',
     '2025-11-29T15:00:00Z', '2025-11-29T16:30:00Z',
@@ -623,7 +623,7 @@ INSERT INTO wiki_events (
 
 -- E47: Errands and afternoon
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0047', 'day_2025-11-29',
     '2025-11-29T16:30:00Z', '2025-11-29T21:00:00Z',
@@ -635,7 +635,7 @@ INSERT INTO wiki_events (
 
 -- E48: Mom call (Saturday this week since Thanksgiving was Thursday)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0048', 'day_2025-11-29',
     '2025-11-29T21:00:00Z', '2025-11-29T21:30:00Z',
@@ -647,7 +647,7 @@ INSERT INTO wiki_events (
 
 -- E49: Evening
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0049', 'day_2025-11-29',
     '2025-11-29T21:30:00Z', '2025-11-30T04:30:00Z',
@@ -661,7 +661,7 @@ INSERT INTO wiki_events (
 
 -- E50: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0050', 'day_2025-11-30',
     '2025-11-30T04:30:00Z', '2025-11-30T14:00:00Z',
@@ -673,7 +673,7 @@ INSERT INTO wiki_events (
 
 -- E51: Slow morning
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0051', 'day_2025-11-30',
     '2025-11-30T14:00:00Z', '2025-11-30T15:30:00Z',
@@ -685,7 +685,7 @@ INSERT INTO wiki_events (
 
 -- E52: Mueller run
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0052', 'day_2025-11-30',
     '2025-11-30T15:30:00Z', '2025-11-30T16:15:00Z',
@@ -697,7 +697,7 @@ INSERT INTO wiki_events (
 
 -- E53: Afternoon reading and meal prep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0053', 'day_2025-11-30',
     '2025-11-30T16:15:00Z', '2025-11-30T21:00:00Z',
@@ -709,7 +709,7 @@ INSERT INTO wiki_events (
 
 -- E54: Evening
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0054', 'day_2025-11-30',
     '2025-11-30T21:00:00Z', '2025-12-01T04:00:00Z',
@@ -727,7 +727,7 @@ INSERT INTO wiki_events (
 
 -- E55: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0055', 'day_2025-12-01',
     '2025-12-01T04:00:00Z', '2025-12-01T12:30:00Z',
@@ -739,7 +739,7 @@ INSERT INTO wiki_events (
 
 -- E56: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0056', 'day_2025-12-01',
     '2025-12-01T12:30:00Z', '2025-12-01T13:15:00Z',
@@ -751,7 +751,7 @@ INSERT INTO wiki_events (
 
 -- E57: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0057', 'day_2025-12-01',
     '2025-12-01T13:15:00Z', '2025-12-01T13:45:00Z',
@@ -763,7 +763,7 @@ INSERT INTO wiki_events (
 
 -- E58: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0058', 'day_2025-12-01',
     '2025-12-01T13:45:00Z', '2025-12-01T14:15:00Z',
@@ -775,7 +775,7 @@ INSERT INTO wiki_events (
 
 -- E59: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0059', 'day_2025-12-01',
     '2025-12-01T14:15:00Z', '2025-12-01T14:45:00Z',
@@ -787,7 +787,7 @@ INSERT INTO wiki_events (
 
 -- E60: Focused work (long morning block)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0060', 'day_2025-12-01',
     '2025-12-01T14:45:00Z', '2025-12-01T17:30:00Z',
@@ -799,7 +799,7 @@ INSERT INTO wiki_events (
 
 -- E61: Lunch (solo)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0061', 'day_2025-12-01',
     '2025-12-01T17:30:00Z', '2025-12-01T18:15:00Z',
@@ -811,7 +811,7 @@ INSERT INTO wiki_events (
 
 -- E62: Afternoon meetings + work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0062', 'day_2025-12-01',
     '2025-12-01T18:15:00Z', '2025-12-01T22:30:00Z',
@@ -823,7 +823,7 @@ INSERT INTO wiki_events (
 
 -- E63: Bike commute home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0063', 'day_2025-12-01',
     '2025-12-01T22:30:00Z', '2025-12-01T23:00:00Z',
@@ -835,7 +835,7 @@ INSERT INTO wiki_events (
 
 -- E64: Evening
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0064', 'day_2025-12-01',
     '2025-12-01T23:00:00Z', '2025-12-02T04:00:00Z',
@@ -849,7 +849,7 @@ INSERT INTO wiki_events (
 
 -- E65: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0065', 'day_2025-12-02',
     '2025-12-02T04:00:00Z', '2025-12-02T12:30:00Z',
@@ -861,7 +861,7 @@ INSERT INTO wiki_events (
 
 -- E66: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0066', 'day_2025-12-02',
     '2025-12-02T12:30:00Z', '2025-12-02T13:15:00Z',
@@ -873,7 +873,7 @@ INSERT INTO wiki_events (
 
 -- E67: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0067', 'day_2025-12-02',
     '2025-12-02T13:15:00Z', '2025-12-02T13:45:00Z',
@@ -885,7 +885,7 @@ INSERT INTO wiki_events (
 
 -- E68: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0068', 'day_2025-12-02',
     '2025-12-02T13:45:00Z', '2025-12-02T14:15:00Z',
@@ -897,7 +897,7 @@ INSERT INTO wiki_events (
 
 -- E69: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0069', 'day_2025-12-02',
     '2025-12-02T14:15:00Z', '2025-12-02T14:45:00Z',
@@ -909,7 +909,7 @@ INSERT INTO wiki_events (
 
 -- E70: Design review with David
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0070', 'day_2025-12-02',
     '2025-12-02T15:00:00Z', '2025-12-02T16:00:00Z',
@@ -921,7 +921,7 @@ INSERT INTO wiki_events (
 
 -- E71: Focused work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0071', 'day_2025-12-02',
     '2025-12-02T16:00:00Z', '2025-12-02T17:30:00Z',
@@ -933,7 +933,7 @@ INSERT INTO wiki_events (
 
 -- E72: Lunch (solo)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0072', 'day_2025-12-02',
     '2025-12-02T17:30:00Z', '2025-12-02T18:15:00Z',
@@ -945,7 +945,7 @@ INSERT INTO wiki_events (
 
 -- E73: Afternoon work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0073', 'day_2025-12-02',
     '2025-12-02T18:15:00Z', '2025-12-02T22:30:00Z',
@@ -957,7 +957,7 @@ INSERT INTO wiki_events (
 
 -- E74: Bike commute home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0074', 'day_2025-12-02',
     '2025-12-02T22:30:00Z', '2025-12-02T23:00:00Z',
@@ -969,7 +969,7 @@ INSERT INTO wiki_events (
 
 -- E75: Evening run (Tuesday = Mueller)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0075', 'day_2025-12-02',
     '2025-12-02T23:15:00Z', '2025-12-03T00:00:00Z',
@@ -981,7 +981,7 @@ INSERT INTO wiki_events (
 
 -- E76: Evening at home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0076', 'day_2025-12-02',
     '2025-12-03T00:00:00Z', '2025-12-03T04:30:00Z',
@@ -995,7 +995,7 @@ INSERT INTO wiki_events (
 
 -- E77: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0077', 'day_2025-12-03',
     '2025-12-03T04:30:00Z', '2025-12-03T12:30:00Z',
@@ -1007,7 +1007,7 @@ INSERT INTO wiki_events (
 
 -- E78: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0078', 'day_2025-12-03',
     '2025-12-03T12:30:00Z', '2025-12-03T13:15:00Z',
@@ -1019,7 +1019,7 @@ INSERT INTO wiki_events (
 
 -- E79: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0079', 'day_2025-12-03',
     '2025-12-03T13:15:00Z', '2025-12-03T13:45:00Z',
@@ -1031,7 +1031,7 @@ INSERT INTO wiki_events (
 
 -- E80: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0080', 'day_2025-12-03',
     '2025-12-03T13:45:00Z', '2025-12-03T14:15:00Z',
@@ -1043,7 +1043,7 @@ INSERT INTO wiki_events (
 
 -- E81: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0081', 'day_2025-12-03',
     '2025-12-03T14:15:00Z', '2025-12-03T14:45:00Z',
@@ -1055,7 +1055,7 @@ INSERT INTO wiki_events (
 
 -- E82: Focused work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0082', 'day_2025-12-03',
     '2025-12-03T14:45:00Z', '2025-12-03T17:30:00Z',
@@ -1067,7 +1067,7 @@ INSERT INTO wiki_events (
 
 -- E83: Lunch with Maya at Tatsu-ya
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0083', 'day_2025-12-03',
     '2025-12-03T17:30:00Z', '2025-12-03T18:30:00Z',
@@ -1079,7 +1079,7 @@ INSERT INTO wiki_events (
 
 -- E84: Afternoon work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0084', 'day_2025-12-03',
     '2025-12-03T18:30:00Z', '2025-12-03T22:30:00Z',
@@ -1091,7 +1091,7 @@ INSERT INTO wiki_events (
 
 -- E85: Bike commute home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0085', 'day_2025-12-03',
     '2025-12-03T22:30:00Z', '2025-12-03T23:00:00Z',
@@ -1103,7 +1103,7 @@ INSERT INTO wiki_events (
 
 -- E86: Evening at home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0086', 'day_2025-12-03',
     '2025-12-03T23:00:00Z', '2025-12-04T04:00:00Z',
@@ -1117,7 +1117,7 @@ INSERT INTO wiki_events (
 
 -- E87: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0087', 'day_2025-12-04',
     '2025-12-04T04:00:00Z', '2025-12-04T12:30:00Z',
@@ -1129,7 +1129,7 @@ INSERT INTO wiki_events (
 
 -- E88: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0088', 'day_2025-12-04',
     '2025-12-04T12:30:00Z', '2025-12-04T13:15:00Z',
@@ -1141,7 +1141,7 @@ INSERT INTO wiki_events (
 
 -- E89: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0089', 'day_2025-12-04',
     '2025-12-04T13:15:00Z', '2025-12-04T13:45:00Z',
@@ -1153,7 +1153,7 @@ INSERT INTO wiki_events (
 
 -- E90: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0090', 'day_2025-12-04',
     '2025-12-04T13:45:00Z', '2025-12-04T14:15:00Z',
@@ -1165,7 +1165,7 @@ INSERT INTO wiki_events (
 
 -- E91: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0091', 'day_2025-12-04',
     '2025-12-04T14:15:00Z', '2025-12-04T14:45:00Z',
@@ -1177,7 +1177,7 @@ INSERT INTO wiki_events (
 
 -- E92: Morning work at office
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0092', 'day_2025-12-04',
     '2025-12-04T14:45:00Z', '2025-12-04T17:30:00Z',
@@ -1189,7 +1189,7 @@ INSERT INTO wiki_events (
 
 -- E93: Lunch (solo at office)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0093', 'day_2025-12-04',
     '2025-12-04T17:30:00Z', '2025-12-04T18:00:00Z',
@@ -1201,7 +1201,7 @@ INSERT INTO wiki_events (
 
 -- E94: Bike commute home (midday)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0094', 'day_2025-12-04',
     '2025-12-04T18:00:00Z', '2025-12-04T18:30:00Z',
@@ -1213,7 +1213,7 @@ INSERT INTO wiki_events (
 
 -- E95: WFH afternoon
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0095', 'day_2025-12-04',
     '2025-12-04T18:30:00Z', '2025-12-04T22:00:00Z',
@@ -1225,7 +1225,7 @@ INSERT INTO wiki_events (
 
 -- E96: Evening walk
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0096', 'day_2025-12-04',
     '2025-12-04T22:00:00Z', '2025-12-04T22:45:00Z',
@@ -1237,7 +1237,7 @@ INSERT INTO wiki_events (
 
 -- E97: Evening
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0097', 'day_2025-12-04',
     '2025-12-04T22:45:00Z', '2025-12-05T04:00:00Z',
@@ -1251,7 +1251,7 @@ INSERT INTO wiki_events (
 
 -- E98: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0098', 'day_2025-12-05',
     '2025-12-05T04:00:00Z', '2025-12-05T12:30:00Z',
@@ -1263,7 +1263,7 @@ INSERT INTO wiki_events (
 
 -- E99: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0099', 'day_2025-12-05',
     '2025-12-05T12:30:00Z', '2025-12-05T13:15:00Z',
@@ -1275,7 +1275,7 @@ INSERT INTO wiki_events (
 
 -- E100: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0100', 'day_2025-12-05',
     '2025-12-05T13:15:00Z', '2025-12-05T13:45:00Z',
@@ -1287,7 +1287,7 @@ INSERT INTO wiki_events (
 
 -- E101: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0101', 'day_2025-12-05',
     '2025-12-05T13:45:00Z', '2025-12-05T14:15:00Z',
@@ -1299,7 +1299,7 @@ INSERT INTO wiki_events (
 
 -- E102: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0102', 'day_2025-12-05',
     '2025-12-05T14:15:00Z', '2025-12-05T14:45:00Z',
@@ -1311,7 +1311,7 @@ INSERT INTO wiki_events (
 
 -- E103: Focused work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0103', 'day_2025-12-05',
     '2025-12-05T14:45:00Z', '2025-12-05T17:30:00Z',
@@ -1323,7 +1323,7 @@ INSERT INTO wiki_events (
 
 -- E104: Lunch (solo)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0104', 'day_2025-12-05',
     '2025-12-05T17:30:00Z', '2025-12-05T18:15:00Z',
@@ -1335,7 +1335,7 @@ INSERT INTO wiki_events (
 
 -- E105: Short afternoon
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0105', 'day_2025-12-05',
     '2025-12-05T18:15:00Z', '2025-12-05T21:00:00Z',
@@ -1347,7 +1347,7 @@ INSERT INTO wiki_events (
 
 -- E106: Bike commute home (early)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0106', 'day_2025-12-05',
     '2025-12-05T21:00:00Z', '2025-12-05T21:30:00Z',
@@ -1359,7 +1359,7 @@ INSERT INTO wiki_events (
 
 -- E107: Quiet Friday evening (no game night)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0107', 'day_2025-12-05',
     '2025-12-05T21:30:00Z', '2025-12-06T04:30:00Z',
@@ -1373,7 +1373,7 @@ INSERT INTO wiki_events (
 
 -- E108: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0108', 'day_2025-12-06',
     '2025-12-06T04:30:00Z', '2025-12-06T14:00:00Z',
@@ -1385,7 +1385,7 @@ INSERT INTO wiki_events (
 
 -- E109: Slow morning
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0109', 'day_2025-12-06',
     '2025-12-06T14:00:00Z', '2025-12-06T15:30:00Z',
@@ -1397,7 +1397,7 @@ INSERT INTO wiki_events (
 
 -- E110: Lady Bird Lake walk
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0110', 'day_2025-12-06',
     '2025-12-06T15:30:00Z', '2025-12-06T17:00:00Z',
@@ -1409,7 +1409,7 @@ INSERT INTO wiki_events (
 
 -- E111: Errands
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0111', 'day_2025-12-06',
     '2025-12-06T17:00:00Z', '2025-12-06T19:00:00Z',
@@ -1421,7 +1421,7 @@ INSERT INTO wiki_events (
 
 -- E112: Afternoon at home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0112', 'day_2025-12-06',
     '2025-12-06T19:00:00Z', '2025-12-06T23:00:00Z',
@@ -1433,7 +1433,7 @@ INSERT INTO wiki_events (
 
 -- E113: Evening (movie night solo)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0113', 'day_2025-12-06',
     '2025-12-06T23:00:00Z', '2025-12-07T04:30:00Z',
@@ -1447,7 +1447,7 @@ INSERT INTO wiki_events (
 
 -- E114: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0114', 'day_2025-12-07',
     '2025-12-07T04:30:00Z', '2025-12-07T14:00:00Z',
@@ -1459,7 +1459,7 @@ INSERT INTO wiki_events (
 
 -- E115: Slow morning
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0115', 'day_2025-12-07',
     '2025-12-07T14:00:00Z', '2025-12-07T15:30:00Z',
@@ -1471,7 +1471,7 @@ INSERT INTO wiki_events (
 
 -- E116: Mueller run
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0116', 'day_2025-12-07',
     '2025-12-07T15:30:00Z', '2025-12-07T16:15:00Z',
@@ -1483,7 +1483,7 @@ INSERT INTO wiki_events (
 
 -- E117: Afternoon — reading and cooking
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0117', 'day_2025-12-07',
     '2025-12-07T16:15:00Z', '2025-12-07T20:00:00Z',
@@ -1495,7 +1495,7 @@ INSERT INTO wiki_events (
 
 -- E118: Mom call
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0118', 'day_2025-12-07',
     '2025-12-07T20:00:00Z', '2025-12-07T20:40:00Z',
@@ -1507,7 +1507,7 @@ INSERT INTO wiki_events (
 
 -- E119: Evening
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0119', 'day_2025-12-07',
     '2025-12-07T20:40:00Z', '2025-12-08T04:00:00Z',
@@ -1525,7 +1525,7 @@ INSERT INTO wiki_events (
 
 -- E120: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0120', 'day_2025-12-08',
     '2025-12-08T04:00:00Z', '2025-12-08T12:30:00Z',
@@ -1537,7 +1537,7 @@ INSERT INTO wiki_events (
 
 -- E121: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0121', 'day_2025-12-08',
     '2025-12-08T12:30:00Z', '2025-12-08T13:15:00Z',
@@ -1549,7 +1549,7 @@ INSERT INTO wiki_events (
 
 -- E122: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0122', 'day_2025-12-08',
     '2025-12-08T13:15:00Z', '2025-12-08T13:45:00Z',
@@ -1561,7 +1561,7 @@ INSERT INTO wiki_events (
 
 -- E123: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0123', 'day_2025-12-08',
     '2025-12-08T13:45:00Z', '2025-12-08T14:15:00Z',
@@ -1573,7 +1573,7 @@ INSERT INTO wiki_events (
 
 -- E124: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0124', 'day_2025-12-08',
     '2025-12-08T14:15:00Z', '2025-12-08T14:45:00Z',
@@ -1585,7 +1585,7 @@ INSERT INTO wiki_events (
 
 -- E125: Focused work (long block)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0125', 'day_2025-12-08',
     '2025-12-08T14:45:00Z', '2025-12-08T17:30:00Z',
@@ -1597,7 +1597,7 @@ INSERT INTO wiki_events (
 
 -- E126: Lunch (solo)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0126', 'day_2025-12-08',
     '2025-12-08T17:30:00Z', '2025-12-08T18:15:00Z',
@@ -1609,7 +1609,7 @@ INSERT INTO wiki_events (
 
 -- E127: Afternoon work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0127', 'day_2025-12-08',
     '2025-12-08T18:15:00Z', '2025-12-08T22:30:00Z',
@@ -1621,7 +1621,7 @@ INSERT INTO wiki_events (
 
 -- E128: Bike commute home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0128', 'day_2025-12-08',
     '2025-12-08T22:30:00Z', '2025-12-08T23:00:00Z',
@@ -1633,7 +1633,7 @@ INSERT INTO wiki_events (
 
 -- E129: Evening
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0129', 'day_2025-12-08',
     '2025-12-08T23:00:00Z', '2025-12-09T04:00:00Z',
@@ -1647,7 +1647,7 @@ INSERT INTO wiki_events (
 
 -- E130: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0130', 'day_2025-12-09',
     '2025-12-09T04:00:00Z', '2025-12-09T12:30:00Z',
@@ -1659,7 +1659,7 @@ INSERT INTO wiki_events (
 
 -- E131: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0131', 'day_2025-12-09',
     '2025-12-09T12:30:00Z', '2025-12-09T13:15:00Z',
@@ -1671,7 +1671,7 @@ INSERT INTO wiki_events (
 
 -- E132: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0132', 'day_2025-12-09',
     '2025-12-09T13:15:00Z', '2025-12-09T13:45:00Z',
@@ -1683,7 +1683,7 @@ INSERT INTO wiki_events (
 
 -- E133: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0133', 'day_2025-12-09',
     '2025-12-09T13:45:00Z', '2025-12-09T14:15:00Z',
@@ -1695,7 +1695,7 @@ INSERT INTO wiki_events (
 
 -- E134: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0134', 'day_2025-12-09',
     '2025-12-09T14:15:00Z', '2025-12-09T14:45:00Z',
@@ -1707,7 +1707,7 @@ INSERT INTO wiki_events (
 
 -- E135: Design review with David
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0135', 'day_2025-12-09',
     '2025-12-09T15:00:00Z', '2025-12-09T16:00:00Z',
@@ -1719,7 +1719,7 @@ INSERT INTO wiki_events (
 
 -- E136: Focused work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0136', 'day_2025-12-09',
     '2025-12-09T16:00:00Z', '2025-12-09T17:30:00Z',
@@ -1731,7 +1731,7 @@ INSERT INTO wiki_events (
 
 -- E137: Lunch (solo)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0137', 'day_2025-12-09',
     '2025-12-09T17:30:00Z', '2025-12-09T18:15:00Z',
@@ -1743,7 +1743,7 @@ INSERT INTO wiki_events (
 
 -- E138: Afternoon work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0138', 'day_2025-12-09',
     '2025-12-09T18:15:00Z', '2025-12-09T22:30:00Z',
@@ -1755,7 +1755,7 @@ INSERT INTO wiki_events (
 
 -- E139: Bike commute home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0139', 'day_2025-12-09',
     '2025-12-09T22:30:00Z', '2025-12-09T23:00:00Z',
@@ -1767,7 +1767,7 @@ INSERT INTO wiki_events (
 
 -- E140: Evening run (Tuesday)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0140', 'day_2025-12-09',
     '2025-12-09T23:15:00Z', '2025-12-10T00:00:00Z',
@@ -1779,7 +1779,7 @@ INSERT INTO wiki_events (
 
 -- E141: Evening at home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0141', 'day_2025-12-09',
     '2025-12-10T00:00:00Z', '2025-12-10T04:00:00Z',
@@ -1793,7 +1793,7 @@ INSERT INTO wiki_events (
 
 -- E142: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0142', 'day_2025-12-10',
     '2025-12-10T04:00:00Z', '2025-12-10T12:45:00Z',
@@ -1805,7 +1805,7 @@ INSERT INTO wiki_events (
 
 -- E143: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0143', 'day_2025-12-10',
     '2025-12-10T12:45:00Z', '2025-12-10T13:15:00Z',
@@ -1817,7 +1817,7 @@ INSERT INTO wiki_events (
 
 -- E144: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0144', 'day_2025-12-10',
     '2025-12-10T13:15:00Z', '2025-12-10T13:45:00Z',
@@ -1829,7 +1829,7 @@ INSERT INTO wiki_events (
 
 -- E145: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0145', 'day_2025-12-10',
     '2025-12-10T13:45:00Z', '2025-12-10T14:15:00Z',
@@ -1841,7 +1841,7 @@ INSERT INTO wiki_events (
 
 -- E146: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0146', 'day_2025-12-10',
     '2025-12-10T14:15:00Z', '2025-12-10T14:45:00Z',
@@ -1853,7 +1853,7 @@ INSERT INTO wiki_events (
 
 -- E147: Focused work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0147', 'day_2025-12-10',
     '2025-12-10T14:45:00Z', '2025-12-10T17:30:00Z',
@@ -1865,7 +1865,7 @@ INSERT INTO wiki_events (
 
 -- E148: Lunch with Maya at Tatsu-ya
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0148', 'day_2025-12-10',
     '2025-12-10T17:30:00Z', '2025-12-10T18:30:00Z',
@@ -1877,7 +1877,7 @@ INSERT INTO wiki_events (
 
 -- E149: Afternoon work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0149', 'day_2025-12-10',
     '2025-12-10T18:30:00Z', '2025-12-10T22:30:00Z',
@@ -1889,7 +1889,7 @@ INSERT INTO wiki_events (
 
 -- E150: Bike commute home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0150', 'day_2025-12-10',
     '2025-12-10T22:30:00Z', '2025-12-10T23:00:00Z',
@@ -1901,7 +1901,7 @@ INSERT INTO wiki_events (
 
 -- E151: Evening at home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0151', 'day_2025-12-10',
     '2025-12-10T23:00:00Z', '2025-12-11T04:00:00Z',
@@ -1915,7 +1915,7 @@ INSERT INTO wiki_events (
 
 -- E152: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0152', 'day_2025-12-11',
     '2025-12-11T04:00:00Z', '2025-12-11T12:30:00Z',
@@ -1927,7 +1927,7 @@ INSERT INTO wiki_events (
 
 -- E153: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0153', 'day_2025-12-11',
     '2025-12-11T12:30:00Z', '2025-12-11T13:15:00Z',
@@ -1939,7 +1939,7 @@ INSERT INTO wiki_events (
 
 -- E154: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0154', 'day_2025-12-11',
     '2025-12-11T13:15:00Z', '2025-12-11T13:45:00Z',
@@ -1951,7 +1951,7 @@ INSERT INTO wiki_events (
 
 -- E155: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0155', 'day_2025-12-11',
     '2025-12-11T13:45:00Z', '2025-12-11T14:15:00Z',
@@ -1963,7 +1963,7 @@ INSERT INTO wiki_events (
 
 -- E156: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0156', 'day_2025-12-11',
     '2025-12-11T14:15:00Z', '2025-12-11T14:45:00Z',
@@ -1975,7 +1975,7 @@ INSERT INTO wiki_events (
 
 -- E157: Focused work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0157', 'day_2025-12-11',
     '2025-12-11T14:45:00Z', '2025-12-11T17:30:00Z',
@@ -1987,7 +1987,7 @@ INSERT INTO wiki_events (
 
 -- E158: Lunch (solo)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0158', 'day_2025-12-11',
     '2025-12-11T17:30:00Z', '2025-12-11T18:15:00Z',
@@ -1999,7 +1999,7 @@ INSERT INTO wiki_events (
 
 -- E159: Afternoon work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0159', 'day_2025-12-11',
     '2025-12-11T18:15:00Z', '2025-12-11T22:30:00Z',
@@ -2011,7 +2011,7 @@ INSERT INTO wiki_events (
 
 -- E160: Bike commute home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0160', 'day_2025-12-11',
     '2025-12-11T22:30:00Z', '2025-12-11T23:00:00Z',
@@ -2023,7 +2023,7 @@ INSERT INTO wiki_events (
 
 -- E161: Evening walk and dinner
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0161', 'day_2025-12-11',
     '2025-12-11T23:00:00Z', '2025-12-12T00:00:00Z',
@@ -2035,7 +2035,7 @@ INSERT INTO wiki_events (
 
 -- E162: Evening
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0162', 'day_2025-12-11',
     '2025-12-12T00:00:00Z', '2025-12-12T04:00:00Z',
@@ -2049,7 +2049,7 @@ INSERT INTO wiki_events (
 
 -- E163: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0163', 'day_2025-12-12',
     '2025-12-12T04:00:00Z', '2025-12-12T12:30:00Z',
@@ -2061,7 +2061,7 @@ INSERT INTO wiki_events (
 
 -- E164: Morning routine
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0164', 'day_2025-12-12',
     '2025-12-12T12:30:00Z', '2025-12-12T13:15:00Z',
@@ -2073,7 +2073,7 @@ INSERT INTO wiki_events (
 
 -- E165: Bike commute
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0165', 'day_2025-12-12',
     '2025-12-12T13:15:00Z', '2025-12-12T13:45:00Z',
@@ -2085,7 +2085,7 @@ INSERT INTO wiki_events (
 
 -- E166: Coffee and Slack
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0166', 'day_2025-12-12',
     '2025-12-12T13:45:00Z', '2025-12-12T14:15:00Z',
@@ -2097,7 +2097,7 @@ INSERT INTO wiki_events (
 
 -- E167: Standup
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0167', 'day_2025-12-12',
     '2025-12-12T14:15:00Z', '2025-12-12T14:45:00Z',
@@ -2109,7 +2109,7 @@ INSERT INTO wiki_events (
 
 -- E168: Focused work
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0168', 'day_2025-12-12',
     '2025-12-12T14:45:00Z', '2025-12-12T17:30:00Z',
@@ -2121,7 +2121,7 @@ INSERT INTO wiki_events (
 
 -- E169: Lunch (with Maya, casual)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0169', 'day_2025-12-12',
     '2025-12-12T17:30:00Z', '2025-12-12T18:15:00Z',
@@ -2133,7 +2133,7 @@ INSERT INTO wiki_events (
 
 -- E170: Short afternoon
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0170', 'day_2025-12-12',
     '2025-12-12T18:15:00Z', '2025-12-12T21:00:00Z',
@@ -2145,7 +2145,7 @@ INSERT INTO wiki_events (
 
 -- E171: Bike commute home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0171', 'day_2025-12-12',
     '2025-12-12T21:00:00Z', '2025-12-12T21:30:00Z',
@@ -2157,7 +2157,7 @@ INSERT INTO wiki_events (
 
 -- E172: Quick break at home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0172', 'day_2025-12-12',
     '2025-12-12T21:30:00Z', '2025-12-13T00:00:00Z',
@@ -2169,7 +2169,7 @@ INSERT INTO wiki_events (
 
 -- E173: Game night at Jess's
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0173', 'day_2025-12-12',
     '2025-12-13T00:00:00Z', '2025-12-13T04:30:00Z',
@@ -2183,7 +2183,7 @@ INSERT INTO wiki_events (
 
 -- E174: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0174', 'day_2025-12-13',
     '2025-12-13T04:30:00Z', '2025-12-13T14:30:00Z',
@@ -2195,7 +2195,7 @@ INSERT INTO wiki_events (
 
 -- E175: Slow morning
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0175', 'day_2025-12-13',
     '2025-12-13T14:30:00Z', '2025-12-13T16:00:00Z',
@@ -2207,7 +2207,7 @@ INSERT INTO wiki_events (
 
 -- E176: Lady Bird Lake walk
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0176', 'day_2025-12-13',
     '2025-12-13T16:00:00Z', '2025-12-13T17:30:00Z',
@@ -2219,7 +2219,7 @@ INSERT INTO wiki_events (
 
 -- E177: Jo's Coffee
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0177', 'day_2025-12-13',
     '2025-12-13T17:30:00Z', '2025-12-13T19:00:00Z',
@@ -2231,7 +2231,7 @@ INSERT INTO wiki_events (
 
 -- E178: Afternoon at home
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0178', 'day_2025-12-13',
     '2025-12-13T19:00:00Z', '2025-12-13T23:00:00Z',
@@ -2243,7 +2243,7 @@ INSERT INTO wiki_events (
 
 -- E179: Evening
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0179', 'day_2025-12-13',
     '2025-12-13T23:00:00Z', '2025-12-14T04:30:00Z',
@@ -2257,7 +2257,7 @@ INSERT INTO wiki_events (
 
 -- E180: Sleep
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0180', 'day_2025-12-14',
     '2025-12-14T04:30:00Z', '2025-12-14T14:00:00Z',
@@ -2269,7 +2269,7 @@ INSERT INTO wiki_events (
 
 -- E181: Slow morning
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0181', 'day_2025-12-14',
     '2025-12-14T14:00:00Z', '2025-12-14T15:30:00Z',
@@ -2281,7 +2281,7 @@ INSERT INTO wiki_events (
 
 -- E182: Mueller run
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0182', 'day_2025-12-14',
     '2025-12-14T15:30:00Z', '2025-12-14T16:15:00Z',
@@ -2293,7 +2293,7 @@ INSERT INTO wiki_events (
 
 -- E183: Afternoon — meal prep and reading
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0183', 'day_2025-12-14',
     '2025-12-14T16:15:00Z', '2025-12-14T21:00:00Z',
@@ -2305,7 +2305,7 @@ INSERT INTO wiki_events (
 
 -- E184: Evening
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0184', 'day_2025-12-14',
     '2025-12-14T21:00:00Z', '2025-12-15T04:00:00Z',
@@ -2378,67 +2378,67 @@ INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0211', 'day_2025-12-15', '2025-12-15T06:00:00Z', '2025-12-15T12:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 6:30am, 6.5 hours.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 56) ON CONFLICT DO NOTHING;
 
 -- Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0212', 'day_2025-12-15', '2025-12-15T12:30:00Z', '2025-12-15T13:15:00Z', 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, 'Coffee and checking messages before heading out.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 -- Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0213', 'day_2025-12-15', '2025-12-15T13:15:00Z', '2025-12-15T13:45:00Z', 'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE, 'Bike commute from Mueller to downtown office, chilly morning.', '["commute", "cycling", "morning"]', '[]', NULL, NULL, NULL, 'NEW', 133) ON CONFLICT DO NOTHING;
 
 -- Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0214', 'day_2025-12-15', '2025-12-15T13:45:00Z', '2025-12-15T14:15:00Z', 'Coffee and Slack', 'Office', '["app_usage", "message"]', FALSE, FALSE, 'Office coffee and catching up on Slack before standup.', '["messaging", "work"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 69) ON CONFLICT DO NOTHING;
 
 -- Design standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0215', 'day_2025-12-15', '2025-12-15T14:15:00Z', '2025-12-15T14:45:00Z', 'Design standup', 'Office', '["calendar", "transcription"]', FALSE, FALSE, 'Monday standup with Maya and David, reviewing sprint priorities.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 73) ON CONFLICT DO NOTHING;
 
 -- Focused design work (09:00-11:30 CST = 15:00-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0216', 'day_2025-12-15', '2025-12-15T15:00:00Z', '2025-12-15T17:30:00Z', 'Focused design work', 'Office', '["app_usage"]', FALSE, FALSE, 'Deep work in Figma on the settings page redesign.', '["design", "figma", "focus", "deep-work"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0217', 'day_2025-12-15', '2025-12-15T17:30:00Z', '2025-12-15T18:15:00Z', 'Lunch', 'Office', '["location_visit"]', FALSE, FALSE, 'Solo lunch at the office, ate leftover soup at her desk.', '["food"]', '["place_demo_office"]', NULL, NULL, NULL, 'NEW', 72) ON CONFLICT DO NOTHING;
 
 -- Afternoon work (12:30-16:30 CST = 18:30-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0218', 'day_2025-12-15', '2025-12-15T18:30:00Z', '2025-12-15T22:30:00Z', 'Afternoon work', 'Office', '["app_usage"]', FALSE, FALSE, 'Worked on component library updates and responded to design review comments.', '["work", "design", "figma", "code-review"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 65) ON CONFLICT DO NOTHING;
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0219', 'day_2025-12-15', '2025-12-15T22:30:00Z', '2025-12-15T23:00:00Z', 'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE, 'Bike ride home from the office.', '["commute", "cycling"]', '[]', NULL, NULL, NULL, 'NEW', 131) ON CONFLICT DO NOTHING;
 
 -- Evening at home (17:30-21:30 CST = 23:30-03:30+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0220', 'day_2025-12-15', '2025-12-15T23:30:00Z', '2025-12-16T03:30:00Z', 'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Made stir-fry for dinner, then read on the couch for a couple hours.', '["food", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 -- Wind down (21:30-00:00 CST = 03:30-06:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0221', 'day_2025-12-15', '2025-12-16T03:30:00Z', '2025-12-16T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Browsed Reddit and watched a YouTube video before bed.', '["leisure", "browsing"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 58) ON CONFLICT DO NOTHING;
 
@@ -2447,64 +2447,64 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0222', 'day_2025-12-16', '2025-12-16T06:00:00Z', '2025-12-16T12:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 6:30am, 6.5 hours.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 61) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0223', 'day_2025-12-16', '2025-12-16T12:30:00Z', '2025-12-16T13:15:00Z', 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, 'Morning coffee and scrolling through news.', '["routine", "morning", "coffee", "browsing"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0224', 'day_2025-12-16', '2025-12-16T13:15:00Z', '2025-12-16T13:45:00Z', 'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE, 'Bike commute to the office, cold but clear.', '["commute", "cycling", "morning"]', '[]', NULL, NULL, NULL, 'NEW', 110) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0225', 'day_2025-12-16', '2025-12-16T13:45:00Z', '2025-12-16T14:15:00Z', 'Coffee and Slack', 'Office', '["app_usage", "message"]', FALSE, FALSE, 'Checked Slack and email over coffee at the office.', '["messaging", "work"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 66) ON CONFLICT DO NOTHING;
 
 -- Standup + design review with David (Tuesday pattern)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0226', 'day_2025-12-16', '2025-12-16T14:15:00Z', '2025-12-16T15:15:00Z', 'Standup and design review', 'Office', '["calendar", "transcription"]', FALSE, FALSE, 'Standup followed by design review with David on the dashboard components.', '["meeting", "standup", "design", "design-review"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 73) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0227', 'day_2025-12-16', '2025-12-16T15:15:00Z', '2025-12-16T17:30:00Z', 'Focused design work', 'Office', '["app_usage"]', FALSE, FALSE, 'Iterated on dashboard wireframes in Figma after review feedback.', '["design", "figma", "focus", "deep-work"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0228', 'day_2025-12-16', '2025-12-16T17:30:00Z', '2025-12-16T18:15:00Z', 'Lunch', 'Office', '["location_visit"]', FALSE, FALSE, 'Grabbed a sandwich from the deli downstairs.', '["food"]', '["place_demo_office"]', NULL, NULL, NULL, 'NEW', 78) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0229', 'day_2025-12-16', '2025-12-16T18:30:00Z', '2025-12-16T22:30:00Z', 'Afternoon work', 'Office', '["app_usage"]', FALSE, FALSE, 'Continued dashboard iteration and prepped assets for handoff.', '["work", "design", "figma"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 64) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0230', 'day_2025-12-16', '2025-12-16T22:30:00Z', '2025-12-16T23:00:00Z', 'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE, 'Bike ride home from the office.', '["commute", "cycling"]', '[]', NULL, NULL, NULL, 'NEW', 127) ON CONFLICT DO NOTHING;
 
 -- Evening run on Mueller trails (Tuesday pattern)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0231', 'day_2025-12-16', '2025-12-16T23:30:00Z', '2025-12-17T00:15:00Z', 'Evening run', 'Mueller Trails', '["steps", "workout"]', FALSE, FALSE, 'Evening run on the Mueller trails, 3.2 miles in the cold.', '["exercise", "running", "cardio", "mueller-trails"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0232', 'day_2025-12-16', '2025-12-17T00:30:00Z', '2025-12-17T03:30:00Z', 'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Showered, heated up leftovers, watched an episode of a show.', '["food", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0233', 'day_2025-12-16', '2025-12-17T03:30:00Z', '2025-12-17T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Scrolled through Instagram and texted Jess about Friday plans.', '["leisure", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 61) ON CONFLICT DO NOTHING;
 
@@ -2513,58 +2513,58 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0234', 'day_2025-12-17', '2025-12-17T06:00:00Z', '2025-12-17T12:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 6:30am, 6.5 hours.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 58) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0235', 'day_2025-12-17', '2025-12-17T12:30:00Z', '2025-12-17T13:15:00Z', 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, 'Coffee and catching up on Slack messages before heading out.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 66) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0236', 'day_2025-12-17', '2025-12-17T13:15:00Z', '2025-12-17T13:45:00Z', 'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE, 'Bike commute to the office.', '["commute", "cycling", "morning"]', '[]', NULL, NULL, NULL, 'NEW', 128) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0237', 'day_2025-12-17', '2025-12-17T13:45:00Z', '2025-12-17T14:15:00Z', 'Coffee and Slack', 'Office', '["app_usage", "message"]', FALSE, FALSE, 'Morning coffee and reviewing design feedback in Slack.', '["messaging", "work", "code-review"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 69) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0238', 'day_2025-12-17', '2025-12-17T14:15:00Z', '2025-12-17T14:45:00Z', 'Design standup', 'Office', '["calendar", "transcription"]', FALSE, FALSE, 'Wednesday standup, quick sync on year-end tasks.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0239', 'day_2025-12-17', '2025-12-17T15:00:00Z', '2025-12-17T17:30:00Z', 'Focused work', 'Office', '["app_usage"]', FALSE, FALSE, 'Deep work session on the settings page flow.', '["design", "figma", "focus", "deep-work"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 -- Wednesday: Lunch at Tatsu-ya with Maya
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0240', 'day_2025-12-17', '2025-12-17T17:30:00Z', '2025-12-17T18:30:00Z', 'Lunch with Maya', 'Ramen Tatsu-ya', '["location_visit", "transcription"]', FALSE, FALSE, 'Weekly lunch at Tatsu-ya with Maya, talked about holiday plans.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]', NULL, NULL, NULL, 'NEW', 72) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0241', 'day_2025-12-17', '2025-12-17T18:30:00Z', '2025-12-17T22:30:00Z', 'Afternoon work', 'Office', '["app_usage"]', FALSE, FALSE, 'Finalized settings page mockups and shared with the team.', '["work", "design", "figma"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0242', 'day_2025-12-17', '2025-12-17T22:30:00Z', '2025-12-17T23:00:00Z', 'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE, 'Bike ride home from the office.', '["commute", "cycling"]', '[]', NULL, NULL, NULL, 'NEW', 120) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0243', 'day_2025-12-17', '2025-12-17T23:30:00Z', '2025-12-18T04:00:00Z', 'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Made pasta for dinner, then watched a documentary about architecture.', '["food", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 64) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0244', 'day_2025-12-17', '2025-12-18T04:00:00Z', '2025-12-18T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Reading in bed before falling asleep.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 59) ON CONFLICT DO NOTHING;
 
@@ -2573,59 +2573,59 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0245', 'day_2025-12-18', '2025-12-18T06:00:00Z', '2025-12-18T12:15:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 6:15am, 6.25 hours.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 58) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0246', 'day_2025-12-18', '2025-12-18T12:15:00Z', '2025-12-18T13:15:00Z', 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, 'Slow morning, coffee and checking messages.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 65) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0247', 'day_2025-12-18', '2025-12-18T13:15:00Z', '2025-12-18T13:45:00Z', 'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE, 'Bike commute to the office.', '["commute", "cycling", "morning"]', '[]', NULL, NULL, NULL, 'NEW', 113) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0248', 'day_2025-12-18', '2025-12-18T14:15:00Z', '2025-12-18T14:45:00Z', 'Design standup', 'Office', '["calendar", "transcription"]', FALSE, FALSE, 'Thursday standup, most of the team already wrapping up before the holidays.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 71) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0249', 'day_2025-12-18', '2025-12-18T15:00:00Z', '2025-12-18T17:30:00Z', 'Focused work', 'Office', '["app_usage"]', FALSE, FALSE, 'Morning design work on year-end polish items.', '["design", "figma", "focus", "deep-work"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 65) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0250', 'day_2025-12-18', '2025-12-18T17:30:00Z', '2025-12-18T18:15:00Z', 'Lunch', 'Office', '["location_visit"]', FALSE, FALSE, 'Quick lunch at the office before heading home.', '["food"]', '["place_demo_office"]', NULL, NULL, NULL, 'NEW', 71) ON CONFLICT DO NOTHING;
 
 -- WFH afternoon
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0251', 'day_2025-12-18', '2025-12-18T18:30:00Z', '2025-12-18T19:00:00Z', 'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE, 'Rode home early to work from home for the afternoon.', '["commute", "cycling"]', '[]', NULL, NULL, NULL, 'NEW', 121) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0252', 'day_2025-12-18', '2025-12-18T19:00:00Z', '2025-12-18T22:00:00Z', 'WFH afternoon', 'Home', '["app_usage"]', FALSE, FALSE, 'Worked from home on Slack messages and final design tweaks before the holiday break.', '["work", "messaging", "design"]', '["place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 67) ON CONFLICT DO NOTHING;
 
 -- Walk in the afternoon
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0253', 'day_2025-12-18', '2025-12-18T22:30:00Z', '2025-12-18T23:15:00Z', 'Walk', 'Mueller Trails', '["steps"]', FALSE, FALSE, 'Late afternoon walk around Mueller trails to clear her head.', '["exercise", "outdoors"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 93) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0254', 'day_2025-12-18', '2025-12-18T23:30:00Z', '2025-12-19T04:00:00Z', 'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Cooked a big batch of chili for the week, listened to a podcast.', '["food", "leisure", "podcast"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 60) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0255', 'day_2025-12-18', '2025-12-19T04:00:00Z', '2025-12-19T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Browsed holiday gift ideas online.', '["leisure", "browsing", "errands"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
@@ -2634,55 +2634,55 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0256', 'day_2025-12-19', '2025-12-19T06:00:00Z', '2025-12-19T12:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 6:30am, 6.5 hours.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0257', 'day_2025-12-19', '2025-12-19T12:30:00Z', '2025-12-19T13:15:00Z', 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, 'Coffee and quick morning browse.', '["routine", "morning", "coffee"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 67) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0258', 'day_2025-12-19', '2025-12-19T13:15:00Z', '2025-12-19T13:45:00Z', 'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE, 'Bike commute to the office.', '["commute", "cycling", "morning"]', '[]', NULL, NULL, NULL, 'NEW', 113) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0259', 'day_2025-12-19', '2025-12-19T14:15:00Z', '2025-12-19T14:45:00Z', 'Design standup', 'Office', '["calendar", "transcription"]', FALSE, FALSE, 'Friday standup, last one before the holiday break.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 76) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0260', 'day_2025-12-19', '2025-12-19T15:00:00Z', '2025-12-19T17:30:00Z', 'Focused work', 'Office', '["app_usage"]', FALSE, FALSE, 'Wrapping up loose ends before the holiday break.', '["work", "design", "figma"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0261', 'day_2025-12-19', '2025-12-19T17:30:00Z', '2025-12-19T18:15:00Z', 'Lunch', 'Office', '["location_visit"]', FALSE, FALSE, 'Lunch in the break room, the office already felt half-empty.', '["food"]', '["place_demo_office"]', NULL, NULL, NULL, 'NEW', 78) ON CONFLICT DO NOTHING;
 
 -- Left early on Friday
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0262', 'day_2025-12-19', '2025-12-19T20:00:00Z', '2025-12-19T20:30:00Z', 'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE, 'Left the office early, biked home.', '["commute", "cycling"]', '[]', NULL, NULL, NULL, 'NEW', 119) ON CONFLICT DO NOTHING;
 
 -- Mom call (Friday evening)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0263', 'day_2025-12-19', '2025-12-19T23:00:00Z', '2025-12-19T23:45:00Z', 'Phone call with Mom', 'Home', '["transcription"]', FALSE, FALSE, 'Weekly call with Mom, talked about Christmas plans and what to bring.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
 
 -- Game night at Jess's
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0264', 'day_2025-12-19', '2025-12-20T01:00:00Z', '2025-12-20T05:00:00Z', 'Game night', 'Jess''s Place', '["location_visit", "transcription"]', FALSE, FALSE, 'Game night at Jess''s with Priya, played Catan and drank mulled wine.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]', NULL, NULL, NULL, 'NEW', 71) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0265', 'day_2025-12-19', '2025-12-20T05:00:00Z', '2025-12-20T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Got home late from game night, quick scroll before bed.', '["leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
@@ -2691,37 +2691,37 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0266', 'day_2025-12-20', '2025-12-20T06:00:00Z', '2025-12-20T13:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Slept in after game night, midnight to 7:30am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 56) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0267', 'day_2025-12-20', '2025-12-20T13:30:00Z', '2025-12-20T15:00:00Z', 'Slow morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Lazy Saturday morning, coffee and browsing.', '["routine", "morning", "coffee", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0268', 'day_2025-12-20', '2025-12-20T15:00:00Z', '2025-12-20T16:30:00Z', 'Walk at Lady Bird Lake', 'Lady Bird Lake', '["steps", "location_visit"]', FALSE, FALSE, 'Morning walk along Lady Bird Lake, crisp winter air.', '["exercise", "outdoors"]', '["place_demo_ladybird"]', NULL, NULL, NULL, 'NEW', 92) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0269', 'day_2025-12-20', '2025-12-20T17:00:00Z', '2025-12-20T19:00:00Z', 'Holiday errands', NULL, '["location_visit"]', FALSE, FALSE, 'Holiday shopping and picking up last-minute gifts.', '["leisure", "errands"]', '[]', NULL, NULL, NULL, 'NEW', 76) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0270', 'day_2025-12-20', '2025-12-20T19:30:00Z', '2025-12-20T23:00:00Z', 'Afternoon at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Wrapped presents and watched holiday baking shows.', '["leisure", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 59) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0271', 'day_2025-12-20', '2025-12-20T23:00:00Z', '2025-12-21T01:00:00Z', 'Dinner', 'Home', '["location_visit"]', FALSE, FALSE, 'Made tacos for dinner and ate on the couch.', '["food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0272', 'day_2025-12-20', '2025-12-21T01:00:00Z', '2025-12-21T06:00:00Z', 'Evening and wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Watched a movie and then read before bed.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 64) ON CONFLICT DO NOTHING;
 
@@ -2730,37 +2730,37 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0273', 'day_2025-12-21', '2025-12-21T06:00:00Z', '2025-12-21T14:00:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 8am, nice long sleep.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 56) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0274', 'day_2025-12-21', '2025-12-21T14:00:00Z', '2025-12-21T15:30:00Z', 'Slow morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Lazy Sunday morning, coffee and reading.', '["routine", "morning", "coffee", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 66) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0275', 'day_2025-12-21', '2025-12-21T16:00:00Z', '2025-12-21T17:00:00Z', 'Run', 'Mueller Trails', '["steps", "workout"]', FALSE, FALSE, 'Easy Sunday run on the Mueller trails, 2.5 miles.', '["exercise", "running", "cardio", "mueller-trails"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 149) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0276', 'day_2025-12-21', '2025-12-21T17:30:00Z', '2025-12-21T20:00:00Z', 'Cooking', 'Home', '["location_visit"]', FALSE, FALSE, 'Batch cooking for the week — soup and roasted vegetables.', '["food", "cooking"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 75) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0277', 'day_2025-12-21', '2025-12-21T20:00:00Z', '2025-12-22T01:00:00Z', 'Afternoon reading', 'Home', '["app_usage"]', FALSE, FALSE, 'Read for a few hours and did some light tidying up.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0278', 'day_2025-12-21', '2025-12-22T01:00:00Z', '2025-12-22T04:00:00Z', 'Evening', 'Home', '["app_usage"]', FALSE, FALSE, 'Watched a holiday movie and packed for Christmas travel.', '["leisure", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0279', 'day_2025-12-21', '2025-12-22T04:00:00Z', '2025-12-22T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Pre-sleep browsing and setting alarms for tomorrow.', '["leisure", "browsing"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 60) ON CONFLICT DO NOTHING;
 
@@ -2769,43 +2769,43 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0280', 'day_2025-12-22', '2025-12-22T06:00:00Z', '2025-12-22T12:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 6:30am, 6.5 hours.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 60) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0281', 'day_2025-12-22', '2025-12-22T12:30:00Z', '2025-12-22T13:30:00Z', 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, 'Coffee and checking Slack, most channels pretty quiet.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 64) ON CONFLICT DO NOTHING;
 
 -- WFH for the day
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0282', 'day_2025-12-22', '2025-12-22T14:00:00Z', '2025-12-22T17:00:00Z', 'WFH morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Light work from home, tying up loose ends and writing documentation.', '["work"]', '["place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0283', 'day_2025-12-22', '2025-12-22T17:00:00Z', '2025-12-22T18:00:00Z', 'Lunch', 'Home', '["location_visit"]', FALSE, FALSE, 'Leftover chili for lunch.', '["food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 74) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0284', 'day_2025-12-22', '2025-12-22T18:00:00Z', '2025-12-22T20:00:00Z', 'WFH afternoon', 'Home', '["app_usage"]', FALSE, FALSE, 'A bit more work, then signed off early for the holidays.', '["work"]', '["place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0285', 'day_2025-12-22', '2025-12-22T21:00:00Z', '2025-12-22T22:00:00Z', 'Walk', 'Mueller Trails', '["steps"]', FALSE, FALSE, 'Afternoon walk through the neighborhood.', '["exercise", "outdoors"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 90) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0286', 'day_2025-12-22', '2025-12-22T23:00:00Z', '2025-12-23T03:00:00Z', 'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Baked cookies for Christmas, listened to holiday music.', '["food", "leisure", "cooking", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0287', 'day_2025-12-22', '2025-12-23T03:00:00Z', '2025-12-23T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Watched a few YouTube videos before bed.', '["leisure", "browsing"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
@@ -2814,37 +2814,37 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0288', 'day_2025-12-23', '2025-12-23T06:00:00Z', '2025-12-23T13:00:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 7am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 58) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0289', 'day_2025-12-23', '2025-12-23T13:00:00Z', '2025-12-23T14:00:00Z', 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, 'Slow morning coffee, reading holiday recipes.', '["routine", "morning", "coffee"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 64) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0290', 'day_2025-12-23', '2025-12-23T14:00:00Z', '2025-12-23T16:00:00Z', 'WFH morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Checked in on a few things, mostly quiet — half the team already off.', '["work", "messaging"]', '["place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 66) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0291', 'day_2025-12-23', '2025-12-23T17:00:00Z', '2025-12-23T19:00:00Z', 'Holiday errands', NULL, '["location_visit"]', FALSE, FALSE, 'Ran out to pick up groceries and a last-minute gift.', '["leisure", "errands"]', '[]', NULL, NULL, NULL, 'NEW', 78) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0292', 'day_2025-12-23', '2025-12-23T19:30:00Z', '2025-12-23T22:00:00Z', 'Cooking', 'Home', '["location_visit"]', FALSE, FALSE, 'Prepped food for Christmas Eve dinner.', '["food", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 72) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0293', 'day_2025-12-23', '2025-12-23T22:00:00Z', '2025-12-24T01:00:00Z', 'Evening', 'Home', '["app_usage"]', FALSE, FALSE, 'Wrapped the last presents and watched a holiday movie.', '["leisure", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0294', 'day_2025-12-23', '2025-12-24T01:00:00Z', '2025-12-24T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Read in bed and fell asleep early.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 59) ON CONFLICT DO NOTHING;
 
@@ -2853,37 +2853,37 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0295', 'day_2025-12-24', '2025-12-24T06:00:00Z', '2025-12-24T13:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 7:30am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 60) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0296', 'day_2025-12-24', '2025-12-24T13:30:00Z', '2025-12-24T15:00:00Z', 'Slow morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Christmas Eve morning, coffee and cinnamon rolls.', '["routine", "morning", "coffee", "food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0297', 'day_2025-12-24', '2025-12-24T15:00:00Z', '2025-12-24T16:00:00Z', 'Walk', 'Mueller Trails', '["steps"]', FALSE, FALSE, 'Short walk through the Mueller neighborhood, holiday lights everywhere.', '["exercise", "outdoors"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 92) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0298', 'day_2025-12-24', '2025-12-24T17:00:00Z', '2025-12-24T20:00:00Z', 'Christmas Eve cooking', 'Home', '["location_visit"]', FALSE, FALSE, 'Spent the afternoon cooking Christmas Eve dinner.', '["food", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0299', 'day_2025-12-24', '2025-12-25T00:00:00Z', '2025-12-25T00:45:00Z', 'Phone call with Mom', 'Home', '["transcription"]', FALSE, FALSE, 'FaceTime with Mom on Christmas Eve, she showed off the tree.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0300', 'day_2025-12-24', '2025-12-25T01:00:00Z', '2025-12-25T04:00:00Z', 'Christmas Eve evening', 'Home', '["app_usage"]', FALSE, FALSE, 'Quiet evening at home, watched It''s a Wonderful Life.', '["leisure", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 66) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0301', 'day_2025-12-24', '2025-12-25T04:00:00Z', '2025-12-25T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Texted friends Merry Christmas and fell asleep.', '["messaging", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 60) ON CONFLICT DO NOTHING;
 
@@ -2892,37 +2892,37 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0302', 'day_2025-12-25', '2025-12-25T06:00:00Z', '2025-12-25T14:00:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Slept in on Christmas morning, midnight to 8am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 56) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0303', 'day_2025-12-25', '2025-12-25T14:00:00Z', '2025-12-25T16:00:00Z', 'Christmas morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Slow Christmas morning, opened a gift from Mom that arrived in the mail.', '["routine", "morning", "coffee", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 64) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0304', 'day_2025-12-25', '2025-12-25T16:00:00Z', '2025-12-25T17:00:00Z', 'Phone call with Mom', 'Home', '["transcription"]', FALSE, FALSE, 'Long Christmas morning call with Mom, caught up on family news.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0305', 'day_2025-12-25', '2025-12-25T17:30:00Z', '2025-12-25T19:00:00Z', 'Walk', 'Mueller Trails', '["steps"]', FALSE, FALSE, 'Christmas walk around Mueller, streets were quiet.', '["exercise", "outdoors"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 91) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0306', 'day_2025-12-25', '2025-12-25T19:30:00Z', '2025-12-25T22:00:00Z', 'Christmas cooking', 'Home', '["location_visit"]', FALSE, FALSE, 'Made a proper Christmas dinner for herself — roasted chicken and potatoes.', '["food", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 75) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0307', 'day_2025-12-25', '2025-12-25T22:00:00Z', '2025-12-26T04:00:00Z', 'Christmas evening', 'Home', '["app_usage"]', FALSE, FALSE, 'Curled up with a new book she got as a gift, then watched a movie.', '["leisure", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 66) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0308', 'day_2025-12-25', '2025-12-26T04:00:00Z', '2025-12-26T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Light browsing before bed, peaceful Christmas night.', '["leisure", "browsing", "family"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
@@ -2931,37 +2931,37 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0309', 'day_2025-12-26', '2025-12-26T06:00:00Z', '2025-12-26T14:00:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Slept in, midnight to 8am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0310', 'day_2025-12-26', '2025-12-26T14:00:00Z', '2025-12-26T15:30:00Z', 'Slow morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Leisurely morning with coffee and leftover Christmas food.', '["routine", "morning", "coffee", "food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 64) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0311', 'day_2025-12-26', '2025-12-26T16:00:00Z', '2025-12-26T17:30:00Z', 'Walk at Lady Bird Lake', 'Lady Bird Lake', '["steps", "location_visit"]', FALSE, FALSE, 'Post-Christmas walk along Lady Bird Lake, beautiful winter day.', '["exercise", "outdoors"]', '["place_demo_ladybird"]', NULL, NULL, NULL, 'NEW', 93) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0312', 'day_2025-12-26', '2025-12-26T18:00:00Z', '2025-12-26T22:00:00Z', 'Afternoon at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Read her new book for most of the afternoon.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 60) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0313', 'day_2025-12-26', '2025-12-26T22:00:00Z', '2025-12-27T00:00:00Z', 'Dinner', 'Home', '["location_visit"]', FALSE, FALSE, 'Used up Christmas leftovers for a simple dinner.', '["food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0314', 'day_2025-12-26', '2025-12-27T00:00:00Z', '2025-12-27T04:00:00Z', 'Evening', 'Home', '["app_usage"]', FALSE, FALSE, 'Watched a couple episodes of a show and messaged Jess about New Year''s plans.', '["leisure", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0315', 'day_2025-12-26', '2025-12-27T04:00:00Z', '2025-12-27T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Browsed online sales before bed.', '["leisure", "browsing", "errands"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 
@@ -2970,38 +2970,38 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0316', 'day_2025-12-27', '2025-12-27T06:00:00Z', '2025-12-27T13:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 7:30am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 59) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0317', 'day_2025-12-27', '2025-12-27T13:30:00Z', '2025-12-27T15:00:00Z', 'Slow morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Coffee and catching up on messages from the holidays.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0318', 'day_2025-12-27', '2025-12-27T16:00:00Z', '2025-12-27T17:00:00Z', 'Run', 'Mueller Trails', '["steps", "workout"]', FALSE, FALSE, 'Saturday morning run on Mueller trails, working off Christmas food.', '["exercise", "running", "cardio", "mueller-trails"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 154) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0319', 'day_2025-12-27', '2025-12-27T18:00:00Z', '2025-12-27T20:00:00Z', 'Errands', NULL, '["location_visit"]', FALSE, FALSE, 'Grocery run and returned a couple of things at the store.', '["leisure", "errands"]', '[]', NULL, NULL, NULL, 'NEW', 78) ON CONFLICT DO NOTHING;
 
 -- Mom call (Saturday)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0320', 'day_2025-12-27', '2025-12-27T22:00:00Z', '2025-12-27T22:40:00Z', 'Phone call with Mom', 'Home', '["transcription"]', FALSE, FALSE, 'Called Mom to recap Christmas and talk about New Year''s plans.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]', NULL, NULL, NULL, 'NEW', 71) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0321', 'day_2025-12-27', '2025-12-27T23:00:00Z', '2025-12-28T03:00:00Z', 'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Cooked a simple stir-fry and watched a movie.', '["food", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 65) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0322', 'day_2025-12-27', '2025-12-28T03:00:00Z', '2025-12-28T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Read before bed.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 59) ON CONFLICT DO NOTHING;
 
@@ -3010,37 +3010,37 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0323', 'day_2025-12-28', '2025-12-28T06:00:00Z', '2025-12-28T14:00:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 8am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 57) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0324', 'day_2025-12-28', '2025-12-28T14:00:00Z', '2025-12-28T15:30:00Z', 'Slow morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Lazy Sunday, coffee and reading.', '["routine", "morning", "coffee", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 67) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0325', 'day_2025-12-28', '2025-12-28T16:00:00Z', '2025-12-28T17:30:00Z', 'Walk at Lady Bird Lake', 'Lady Bird Lake', '["steps", "location_visit"]', FALSE, FALSE, 'Sunday walk along Lady Bird Lake.', '["exercise", "outdoors"]', '["place_demo_ladybird"]', NULL, NULL, NULL, 'NEW', 100) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0326', 'day_2025-12-28', '2025-12-28T18:00:00Z', '2025-12-28T20:00:00Z', 'Cooking', 'Home', '["location_visit"]', FALSE, FALSE, 'Made a big pot of lentil soup for the week.', '["food", "cooking"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 69) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0327', 'day_2025-12-28', '2025-12-28T20:00:00Z', '2025-12-29T01:00:00Z', 'Afternoon at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Read and did some light journaling about the year.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 58) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0328', 'day_2025-12-28', '2025-12-29T01:00:00Z', '2025-12-29T04:00:00Z', 'Evening', 'Home', '["app_usage"]', FALSE, FALSE, 'Watched a documentary and had soup for dinner.', '["leisure", "food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 61) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0329', 'day_2025-12-28', '2025-12-29T04:00:00Z', '2025-12-29T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Browsing and reading before bed.', '["leisure", "browsing", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 59) ON CONFLICT DO NOTHING;
 
@@ -3049,42 +3049,42 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0330', 'day_2025-12-29', '2025-12-29T06:00:00Z', '2025-12-29T13:00:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 7am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 57) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0331', 'day_2025-12-29', '2025-12-29T13:00:00Z', '2025-12-29T14:00:00Z', 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, 'Coffee and checking in on Slack, still pretty quiet.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0332', 'day_2025-12-29', '2025-12-29T14:00:00Z', '2025-12-29T17:00:00Z', 'WFH morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Light work from home, cleaning up Jira tickets and design files.', '["work", "design"]', '["place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 66) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0333', 'day_2025-12-29', '2025-12-29T17:00:00Z', '2025-12-29T18:00:00Z', 'Lunch', 'Home', '["location_visit"]', FALSE, FALSE, 'Lentil soup from yesterday for lunch.', '["food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 71) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0334', 'day_2025-12-29', '2025-12-29T18:00:00Z', '2025-12-29T20:00:00Z', 'WFH afternoon', 'Home', '["app_usage"]', FALSE, FALSE, 'Wrapped up a few things and signed off for the day.', '["work"]', '["place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0335', 'day_2025-12-29', '2025-12-29T21:00:00Z', '2025-12-29T22:00:00Z', 'Run', 'Mueller Trails', '["steps", "workout"]', FALSE, FALSE, 'Afternoon run on Mueller trails, 3 miles.', '["exercise", "running", "cardio", "mueller-trails"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 151) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0336', 'day_2025-12-29', '2025-12-29T23:00:00Z', '2025-12-30T03:00:00Z', 'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Made a simple dinner and started a new show.', '["food", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 67) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0337', 'day_2025-12-29', '2025-12-30T03:00:00Z', '2025-12-30T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Browsed year-end lists and articles before bed.', '["leisure", "browsing", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 
@@ -3093,42 +3093,42 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0338', 'day_2025-12-30', '2025-12-30T06:00:00Z', '2025-12-30T12:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 6:30am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 59) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0339', 'day_2025-12-30', '2025-12-30T12:30:00Z', '2025-12-30T13:30:00Z', 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, 'Coffee and catching up on messages.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 67) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0340', 'day_2025-12-30', '2025-12-30T14:00:00Z', '2025-12-30T17:00:00Z', 'WFH morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Worked on organizing design files and reviewing Q1 roadmap drafts.', '["work", "design", "figma"]', '["place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0341', 'day_2025-12-30', '2025-12-30T17:00:00Z', '2025-12-30T18:00:00Z', 'Lunch', 'Home', '["location_visit"]', FALSE, FALSE, 'Soup and bread for lunch.', '["food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 71) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0342', 'day_2025-12-30', '2025-12-30T18:00:00Z', '2025-12-30T20:00:00Z', 'WFH afternoon', 'Home', '["app_usage"]', FALSE, FALSE, 'Quick video call with Maya to sync on January plans, then signed off.', '["work", "meeting"]', '["person_demo_maya", "place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0343', 'day_2025-12-30', '2025-12-30T21:00:00Z', '2025-12-30T22:00:00Z', 'Walk', 'Mueller Trails', '["steps"]', FALSE, FALSE, 'Afternoon walk through the neighborhood.', '["exercise", "outdoors"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 93) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0344', 'day_2025-12-30', '2025-12-30T23:00:00Z', '2025-12-31T03:00:00Z', 'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Made rice and vegetables for dinner, then binge-watched a show.', '["food", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 65) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0345', 'day_2025-12-30', '2025-12-31T03:00:00Z', '2025-12-31T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Read a bit before bed, thinking about New Year''s resolutions.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 58) ON CONFLICT DO NOTHING;
 
@@ -3137,38 +3137,38 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0346', 'day_2025-12-31', '2025-12-31T06:00:00Z', '2025-12-31T13:00:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 7am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 59) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0347', 'day_2025-12-31', '2025-12-31T13:00:00Z', '2025-12-31T14:30:00Z', 'Slow morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Slow morning on New Year''s Eve, coffee and planning the day.', '["routine", "morning", "coffee"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 66) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0348', 'day_2025-12-31', '2025-12-31T15:00:00Z', '2025-12-31T16:30:00Z', 'Walk at Lady Bird Lake', 'Lady Bird Lake', '["steps", "location_visit"]', FALSE, FALSE, 'Late morning walk along Lady Bird Lake, reflecting on the year.', '["exercise", "outdoors", "reflection"]', '["place_demo_ladybird"]', NULL, NULL, NULL, 'NEW', 90) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0349', 'day_2025-12-31', '2025-12-31T17:00:00Z', '2025-12-31T19:00:00Z', 'Afternoon at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Tidied up the apartment and did some year-end journaling.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 77) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0350', 'day_2025-12-31', '2025-12-31T22:00:00Z', '2025-12-31T23:00:00Z', 'Getting ready', 'Home', '["location_visit"]', FALSE, FALSE, 'Got ready and made appetizers to bring to Jess''s NYE party.', '["routine", "food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 -- NYE party at Jess's
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0351', 'day_2025-12-31', '2026-01-01T00:00:00Z', '2026-01-01T06:30:00Z', 'New Year''s Eve at Jess''s', 'Jess''s Place', '["location_visit", "transcription"]', FALSE, FALSE, 'New Year''s Eve party at Jess''s with Priya and a few others, champagne at midnight.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]', NULL, NULL, NULL, 'NEW', 74) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0352', 'day_2025-12-31', '2026-01-01T06:30:00Z', '2026-01-01T07:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Got home around 12:30am and fell straight into bed.', '["leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 
@@ -3177,37 +3177,37 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0353', 'day_2026-01-01', '2026-01-01T07:00:00Z', '2026-01-01T15:00:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Slept in after New Year''s Eve, 1am to 9am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 57) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0354', 'day_2026-01-01', '2026-01-01T15:00:00Z', '2026-01-01T16:30:00Z', 'Slow morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Very slow New Year''s morning, coffee and toast.', '["routine", "morning", "coffee", "food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 67) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0355', 'day_2026-01-01', '2026-01-01T17:00:00Z', '2026-01-01T18:00:00Z', 'Walk', 'Mueller Trails', '["steps"]', FALSE, FALSE, 'Short New Year''s Day walk to get some fresh air.', '["exercise", "outdoors"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 88) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0356', 'day_2026-01-01', '2026-01-01T18:30:00Z', '2026-01-01T22:00:00Z', 'Afternoon at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Spent the afternoon on the couch reading and writing New Year''s goals.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0357', 'day_2026-01-01', '2026-01-01T22:00:00Z', '2026-01-02T01:00:00Z', 'Dinner', 'Home', '["location_visit"]', FALSE, FALSE, 'Made a simple dinner and watched the first episode of a new show.', '["food", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0358', 'day_2026-01-01', '2026-01-02T01:00:00Z', '2026-01-02T05:00:00Z', 'Evening', 'Home', '["app_usage"]', FALSE, FALSE, 'Quiet evening, journaling about plans for the new year.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0359', 'day_2026-01-01', '2026-01-02T05:00:00Z', '2026-01-02T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Early to bed, ready to get back to normal.', '["leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 60) ON CONFLICT DO NOTHING;
 
@@ -3216,43 +3216,43 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0360', 'day_2026-01-02', '2026-01-02T06:00:00Z', '2026-01-02T12:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 6:30am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 57) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0361', 'day_2026-01-02', '2026-01-02T12:30:00Z', '2026-01-02T13:30:00Z', 'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE, 'Coffee and Slack, team starting to come back online.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 67) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0362', 'day_2026-01-02', '2026-01-02T14:00:00Z', '2026-01-02T17:00:00Z', 'WFH morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Eased back into work from home, reviewed Q1 priorities and cleared out email.', '["work", "onboarding"]', '["place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 67) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0363', 'day_2026-01-02', '2026-01-02T17:00:00Z', '2026-01-02T18:00:00Z', 'Lunch', 'Home', '["location_visit"]', FALSE, FALSE, 'Leftover soup for lunch.', '["food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0364', 'day_2026-01-02', '2026-01-02T18:00:00Z', '2026-01-02T20:00:00Z', 'WFH afternoon', 'Home', '["app_usage"]', FALSE, FALSE, 'Caught up with David on Slack about a design spec, signed off early.', '["work", "messaging", "design-review"]', '["person_demo_david", "place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 67) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0365', 'day_2026-01-02', '2026-01-02T21:00:00Z', '2026-01-02T21:45:00Z', 'Phone call with Mom', 'Home', '["transcription"]', FALSE, FALSE, 'Quick call with Mom, talked about how the holidays went.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]', NULL, NULL, NULL, 'NEW', 72) ON CONFLICT DO NOTHING;
 
 -- Game night at Jess's
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0366', 'day_2026-01-02', '2026-01-03T01:00:00Z', '2026-01-03T05:00:00Z', 'Game night', 'Jess''s Place', '["location_visit", "transcription"]', FALSE, FALSE, 'First game night of the new year at Jess''s, played Ticket to Ride with Priya.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0367', 'day_2026-01-02', '2026-01-03T05:00:00Z', '2026-01-03T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Got home and went straight to bed.', '["leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 58) ON CONFLICT DO NOTHING;
 
@@ -3261,38 +3261,38 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0368', 'day_2026-01-03', '2026-01-03T06:00:00Z', '2026-01-03T13:30:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Slept in after game night, midnight to 7:30am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 60) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0369', 'day_2026-01-03', '2026-01-03T13:30:00Z', '2026-01-03T15:00:00Z', 'Slow morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Saturday morning, coffee and reading the news.', '["routine", "morning", "coffee", "browsing"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 65) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0370', 'day_2026-01-03', '2026-01-03T15:30:00Z', '2026-01-03T17:00:00Z', 'Walk at Lady Bird Lake', 'Lady Bird Lake', '["steps", "location_visit"]', FALSE, FALSE, 'Saturday walk at Lady Bird Lake, cool January morning.', '["exercise", "outdoors"]', '["place_demo_ladybird"]', NULL, NULL, NULL, 'NEW', 92) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0371', 'day_2026-01-03', '2026-01-03T17:30:00Z', '2026-01-03T19:30:00Z', 'Errands', NULL, '["location_visit"]', FALSE, FALSE, 'Grocery shopping and picking up a few things for the new year.', '["leisure", "errands"]', '[]', NULL, NULL, NULL, 'NEW', 72) ON CONFLICT DO NOTHING;
 
 -- Mom call (Saturday)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0372', 'day_2026-01-03', '2026-01-03T22:00:00Z', '2026-01-03T22:45:00Z', 'Phone call with Mom', 'Home', '["transcription"]', FALSE, FALSE, 'Weekly call with Mom, she asked about New Year''s resolutions.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0373', 'day_2026-01-03', '2026-01-03T23:00:00Z', '2026-01-04T02:00:00Z', 'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Made a stir-fry for dinner and started a new book.', '["food", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 61) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0374', 'day_2026-01-03', '2026-01-04T02:00:00Z', '2026-01-04T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Watched a show and fell asleep on the couch.', '["leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 58) ON CONFLICT DO NOTHING;
 
@@ -3301,37 +3301,37 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0375', 'day_2026-01-04', '2026-01-04T06:00:00Z', '2026-01-04T14:00:00Z', 'Sleep', 'Home', '["sleep"]', FALSE, FALSE, 'Sleep from midnight to 8am.', '["sleep"]', '[]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0376', 'day_2026-01-04', '2026-01-04T14:00:00Z', '2026-01-04T15:30:00Z', 'Slow morning', 'Home', '["app_usage"]', FALSE, FALSE, 'Lazy Sunday morning, coffee and reading.', '["routine", "morning", "coffee", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0377', 'day_2026-01-04', '2026-01-04T16:00:00Z', '2026-01-04T17:00:00Z', 'Run', 'Mueller Trails', '["steps", "workout"]', FALSE, FALSE, 'Sunday morning run on Mueller trails, 3 miles to start the year right.', '["exercise", "running", "cardio", "mueller-trails"]', '["place_demo_mueller_trails"]', NULL, NULL, NULL, 'NEW', 157) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0378', 'day_2026-01-04', '2026-01-04T17:30:00Z', '2026-01-04T20:00:00Z', 'Cooking and meal prep', 'Home', '["location_visit"]', FALSE, FALSE, 'Big Sunday meal prep — made soup, roasted vegetables, and prepped lunches.', '["food", "cooking"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0379', 'day_2026-01-04', '2026-01-04T20:00:00Z', '2026-01-05T00:00:00Z', 'Afternoon at home', 'Home', '["app_usage"]', FALSE, FALSE, 'Read for a while and organized her desk for the week ahead.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 60) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0380', 'day_2026-01-04', '2026-01-05T00:00:00Z', '2026-01-05T03:00:00Z', 'Evening', 'Home', '["app_usage"]', FALSE, FALSE, 'Made pasta for dinner and watched a movie, early night to get back on schedule.', '["food", "leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 67) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0381', 'day_2026-01-04', '2026-01-05T03:00:00Z', '2026-01-05T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Set alarms for Monday, read a few pages, and fell asleep.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 62) ON CONFLICT DO NOTHING;
 -- =============================================================================
@@ -3397,7 +3397,7 @@ INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0421', 'day_2026-01-05',
     '2026-01-05T06:00:00Z', '2026-01-05T12:30:00Z',
@@ -3409,7 +3409,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0422', 'day_2026-01-05',
     '2026-01-05T12:30:00Z', '2026-01-05T13:15:00Z',
@@ -3421,7 +3421,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0423', 'day_2026-01-05',
     '2026-01-05T13:15:00Z', '2026-01-05T13:45:00Z',
@@ -3433,7 +3433,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0424', 'day_2026-01-05',
     '2026-01-05T13:45:00Z', '2026-01-05T14:15:00Z',
@@ -3445,7 +3445,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-09:00 CST = 14:15-15:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0425', 'day_2026-01-05',
     '2026-01-05T14:15:00Z', '2026-01-05T15:00:00Z',
@@ -3457,7 +3457,7 @@ INSERT INTO wiki_events (
 
 -- Focused design work (09:00-11:30 CST = 15:00-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0426', 'day_2026-01-05',
     '2026-01-05T15:00:00Z', '2026-01-05T17:30:00Z',
@@ -3469,7 +3469,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0427', 'day_2026-01-05',
     '2026-01-05T17:30:00Z', '2026-01-05T18:15:00Z',
@@ -3481,7 +3481,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work block (12:15-16:30 CST = 18:15-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0428', 'day_2026-01-05',
     '2026-01-05T18:15:00Z', '2026-01-05T22:30:00Z',
@@ -3493,7 +3493,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0429', 'day_2026-01-05',
     '2026-01-05T22:30:00Z', '2026-01-05T23:00:00Z',
@@ -3505,7 +3505,7 @@ INSERT INTO wiki_events (
 
 -- Evening run (17:30-18:15 CST = 23:30-00:15+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0430', 'day_2026-01-05',
     '2026-01-05T23:30:00Z', '2026-01-06T00:15:00Z',
@@ -3517,7 +3517,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and reading (18:30-22:00 CST = 00:30-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0431', 'day_2026-01-05',
     '2026-01-06T00:30:00Z', '2026-01-06T04:00:00Z',
@@ -3531,7 +3531,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:15 CST = 06:00-12:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0432', 'day_2026-01-06',
     '2026-01-06T06:00:00Z', '2026-01-06T12:15:00Z',
@@ -3543,7 +3543,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:15-07:10 CST = 12:15-13:10 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0433', 'day_2026-01-06',
     '2026-01-06T12:15:00Z', '2026-01-06T13:10:00Z',
@@ -3555,7 +3555,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:10-07:40 CST = 13:10-13:40 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0434', 'day_2026-01-06',
     '2026-01-06T13:10:00Z', '2026-01-06T13:40:00Z',
@@ -3567,7 +3567,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:40-08:15 CST = 13:40-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0435', 'day_2026-01-06',
     '2026-01-06T13:40:00Z', '2026-01-06T14:15:00Z',
@@ -3579,7 +3579,7 @@ INSERT INTO wiki_events (
 
 -- Standup + design review with David (08:15-09:30 CST = 14:15-15:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0436', 'day_2026-01-06',
     '2026-01-06T14:15:00Z', '2026-01-06T15:30:00Z',
@@ -3591,7 +3591,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (09:30-11:30 CST = 15:30-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0437', 'day_2026-01-06',
     '2026-01-06T15:30:00Z', '2026-01-06T17:30:00Z',
@@ -3603,7 +3603,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0438', 'day_2026-01-06',
     '2026-01-06T17:30:00Z', '2026-01-06T18:15:00Z',
@@ -3615,7 +3615,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:15-16:30 CST = 18:15-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0439', 'day_2026-01-06',
     '2026-01-06T18:15:00Z', '2026-01-06T22:30:00Z',
@@ -3627,7 +3627,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0440', 'day_2026-01-06',
     '2026-01-06T22:30:00Z', '2026-01-06T23:00:00Z',
@@ -3639,7 +3639,7 @@ INSERT INTO wiki_events (
 
 -- Evening run on Mueller trails (17:30-18:20 CST = 23:30-00:20+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0441', 'day_2026-01-06',
     '2026-01-06T23:30:00Z', '2026-01-07T00:20:00Z',
@@ -3651,7 +3651,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and TV (19:00-22:00 CST = 01:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0442', 'day_2026-01-06',
     '2026-01-07T01:00:00Z', '2026-01-07T04:00:00Z',
@@ -3665,7 +3665,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0443', 'day_2026-01-07',
     '2026-01-07T06:00:00Z', '2026-01-07T12:30:00Z',
@@ -3677,7 +3677,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0444', 'day_2026-01-07',
     '2026-01-07T12:30:00Z', '2026-01-07T13:15:00Z',
@@ -3689,7 +3689,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0445', 'day_2026-01-07',
     '2026-01-07T13:15:00Z', '2026-01-07T13:45:00Z',
@@ -3701,7 +3701,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0446', 'day_2026-01-07',
     '2026-01-07T13:45:00Z', '2026-01-07T14:15:00Z',
@@ -3713,7 +3713,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0447', 'day_2026-01-07',
     '2026-01-07T14:15:00Z', '2026-01-07T14:45:00Z',
@@ -3725,7 +3725,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (08:45-11:30 CST = 14:45-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0448', 'day_2026-01-07',
     '2026-01-07T14:45:00Z', '2026-01-07T17:30:00Z',
@@ -3737,7 +3737,7 @@ INSERT INTO wiki_events (
 
 -- Lunch with Maya at Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0449', 'day_2026-01-07',
     '2026-01-07T17:30:00Z', '2026-01-07T18:30:00Z',
@@ -3749,7 +3749,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:30-16:30 CST = 18:30-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0450', 'day_2026-01-07',
     '2026-01-07T18:30:00Z', '2026-01-07T22:30:00Z',
@@ -3761,7 +3761,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0451', 'day_2026-01-07',
     '2026-01-07T22:30:00Z', '2026-01-07T23:00:00Z',
@@ -3773,7 +3773,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and browsing (18:00-22:00 CST = 00:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0452', 'day_2026-01-07',
     '2026-01-08T00:00:00Z', '2026-01-08T04:00:00Z',
@@ -3787,7 +3787,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:20 CST = 06:00-12:20 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0453', 'day_2026-01-08',
     '2026-01-08T06:00:00Z', '2026-01-08T12:20:00Z',
@@ -3799,7 +3799,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:20-07:10 CST = 12:20-13:10 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0454', 'day_2026-01-08',
     '2026-01-08T12:20:00Z', '2026-01-08T13:10:00Z',
@@ -3811,7 +3811,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:10-07:40 CST = 13:10-13:40 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0455', 'day_2026-01-08',
     '2026-01-08T13:10:00Z', '2026-01-08T13:40:00Z',
@@ -3823,7 +3823,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:40-08:15 CST = 13:40-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0456', 'day_2026-01-08',
     '2026-01-08T13:40:00Z', '2026-01-08T14:15:00Z',
@@ -3835,7 +3835,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0457', 'day_2026-01-08',
     '2026-01-08T14:15:00Z', '2026-01-08T14:45:00Z',
@@ -3847,7 +3847,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (08:45-11:30 CST = 14:45-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0458', 'day_2026-01-08',
     '2026-01-08T14:45:00Z', '2026-01-08T17:30:00Z',
@@ -3859,7 +3859,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0459', 'day_2026-01-08',
     '2026-01-08T17:30:00Z', '2026-01-08T18:15:00Z',
@@ -3871,7 +3871,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:15-16:00 CST = 18:15-22:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0460', 'day_2026-01-08',
     '2026-01-08T18:15:00Z', '2026-01-08T22:00:00Z',
@@ -3883,7 +3883,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:00-16:30 CST = 22:00-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0461', 'day_2026-01-08',
     '2026-01-08T22:00:00Z', '2026-01-08T22:30:00Z',
@@ -3895,7 +3895,7 @@ INSERT INTO wiki_events (
 
 -- ** RACHEL FIRST CONTACT ** Phone call (17:00-17:20 CST = 23:00-23:20 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0462', 'day_2026-01-08',
     '2026-01-08T23:00:00Z', '2026-01-08T23:20:00Z',
@@ -3907,7 +3907,7 @@ INSERT INTO wiki_events (
 
 -- Walk on Mueller trails (17:30-18:15 CST = 23:30-00:15+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0463', 'day_2026-01-08',
     '2026-01-08T23:30:00Z', '2026-01-09T00:15:00Z',
@@ -3919,7 +3919,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and evening (19:00-22:00 CST = 01:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0464', 'day_2026-01-08',
     '2026-01-09T01:00:00Z', '2026-01-09T04:00:00Z',
@@ -3933,7 +3933,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0465', 'day_2026-01-09',
     '2026-01-09T06:00:00Z', '2026-01-09T12:30:00Z',
@@ -3945,7 +3945,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0466', 'day_2026-01-09',
     '2026-01-09T12:30:00Z', '2026-01-09T13:15:00Z',
@@ -3957,7 +3957,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0467', 'day_2026-01-09',
     '2026-01-09T13:15:00Z', '2026-01-09T13:45:00Z',
@@ -3969,7 +3969,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0468', 'day_2026-01-09',
     '2026-01-09T13:45:00Z', '2026-01-09T14:15:00Z',
@@ -3981,7 +3981,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0469', 'day_2026-01-09',
     '2026-01-09T14:15:00Z', '2026-01-09T14:45:00Z',
@@ -3993,7 +3993,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (08:45-11:30 CST = 14:45-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0470', 'day_2026-01-09',
     '2026-01-09T14:45:00Z', '2026-01-09T17:30:00Z',
@@ -4005,7 +4005,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0471', 'day_2026-01-09',
     '2026-01-09T17:30:00Z', '2026-01-09T18:15:00Z',
@@ -4017,7 +4017,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work — shorter Friday (12:15-15:30 CST = 18:15-21:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0472', 'day_2026-01-09',
     '2026-01-09T18:15:00Z', '2026-01-09T21:30:00Z',
@@ -4029,7 +4029,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (15:30-16:00 CST = 21:30-22:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0473', 'day_2026-01-09',
     '2026-01-09T21:30:00Z', '2026-01-09T22:00:00Z',
@@ -4041,7 +4041,7 @@ INSERT INTO wiki_events (
 
 -- Mom call (17:00-17:40 CST = 23:00-23:40 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0474', 'day_2026-01-09',
     '2026-01-09T23:00:00Z', '2026-01-09T23:40:00Z',
@@ -4053,7 +4053,7 @@ INSERT INTO wiki_events (
 
 -- Game night at Jess's (19:00-23:00 CST = 01:00-05:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0475', 'day_2026-01-09',
     '2026-01-10T01:00:00Z', '2026-01-10T05:00:00Z',
@@ -4067,7 +4067,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (01:00-08:00 CST = 07:00-14:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0476', 'day_2026-01-10',
     '2026-01-10T07:00:00Z', '2026-01-10T14:00:00Z',
@@ -4079,7 +4079,7 @@ INSERT INTO wiki_events (
 
 -- Slow morning (08:00-09:30 CST = 14:00-15:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0477', 'day_2026-01-10',
     '2026-01-10T14:00:00Z', '2026-01-10T15:30:00Z',
@@ -4091,7 +4091,7 @@ INSERT INTO wiki_events (
 
 -- Lady Bird Lake walk (10:00-11:30 CST = 16:00-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0478', 'day_2026-01-10',
     '2026-01-10T16:00:00Z', '2026-01-10T17:30:00Z',
@@ -4103,7 +4103,7 @@ INSERT INTO wiki_events (
 
 -- Errands and lunch (11:30-13:30 CST = 17:30-19:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0479', 'day_2026-01-10',
     '2026-01-10T17:30:00Z', '2026-01-10T19:30:00Z',
@@ -4115,7 +4115,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon reading (14:00-17:00 CST = 20:00-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0480', 'day_2026-01-10',
     '2026-01-10T20:00:00Z', '2026-01-10T23:00:00Z',
@@ -4127,7 +4127,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and movie (18:00-22:00 CST = 00:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0481', 'day_2026-01-10',
     '2026-01-11T00:00:00Z', '2026-01-11T04:00:00Z',
@@ -4141,7 +4141,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-08:00 CST = 06:00-14:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0482', 'day_2026-01-11',
     '2026-01-11T06:00:00Z', '2026-01-11T14:00:00Z',
@@ -4153,7 +4153,7 @@ INSERT INTO wiki_events (
 
 -- Slow morning (08:00-09:30 CST = 14:00-15:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0483', 'day_2026-01-11',
     '2026-01-11T14:00:00Z', '2026-01-11T15:30:00Z',
@@ -4165,7 +4165,7 @@ INSERT INTO wiki_events (
 
 -- Mueller trails run (09:30-10:30 CST = 15:30-16:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0484', 'day_2026-01-11',
     '2026-01-11T15:30:00Z', '2026-01-11T16:30:00Z',
@@ -4177,7 +4177,7 @@ INSERT INTO wiki_events (
 
 -- Cooking and meal prep (11:00-13:00 CST = 17:00-19:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0485', 'day_2026-01-11',
     '2026-01-11T17:00:00Z', '2026-01-11T19:00:00Z',
@@ -4189,7 +4189,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon reading and browsing (13:00-17:00 CST = 19:00-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0486', 'day_2026-01-11',
     '2026-01-11T19:00:00Z', '2026-01-11T23:00:00Z',
@@ -4201,7 +4201,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and wind down (18:00-22:00 CST = 00:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0487', 'day_2026-01-11',
     '2026-01-12T00:00:00Z', '2026-01-12T04:00:00Z',
@@ -4219,7 +4219,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0488', 'day_2026-01-12',
     '2026-01-12T06:00:00Z', '2026-01-12T12:30:00Z',
@@ -4231,7 +4231,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0489', 'day_2026-01-12',
     '2026-01-12T12:30:00Z', '2026-01-12T13:15:00Z',
@@ -4243,7 +4243,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0490', 'day_2026-01-12',
     '2026-01-12T13:15:00Z', '2026-01-12T13:45:00Z',
@@ -4255,7 +4255,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0491', 'day_2026-01-12',
     '2026-01-12T13:45:00Z', '2026-01-12T14:15:00Z',
@@ -4267,7 +4267,7 @@ INSERT INTO wiki_events (
 
 -- Standup + onboarding kickoff (08:15-09:30 CST = 14:15-15:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0492', 'day_2026-01-12',
     '2026-01-12T14:15:00Z', '2026-01-12T15:30:00Z',
@@ -4279,7 +4279,7 @@ INSERT INTO wiki_events (
 
 -- Focused work on onboarding audit (09:30-11:30 CST = 15:30-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0493', 'day_2026-01-12',
     '2026-01-12T15:30:00Z', '2026-01-12T17:30:00Z',
@@ -4291,7 +4291,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0494', 'day_2026-01-12',
     '2026-01-12T17:30:00Z', '2026-01-12T18:15:00Z',
@@ -4303,7 +4303,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:15-16:30 CST = 18:15-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0495', 'day_2026-01-12',
     '2026-01-12T18:15:00Z', '2026-01-12T22:30:00Z',
@@ -4315,7 +4315,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0496', 'day_2026-01-12',
     '2026-01-12T22:30:00Z', '2026-01-12T23:00:00Z',
@@ -4327,7 +4327,7 @@ INSERT INTO wiki_events (
 
 -- Evening — dinner and reading (18:00-22:00 CST = 00:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0497', 'day_2026-01-12',
     '2026-01-13T00:00:00Z', '2026-01-13T04:00:00Z',
@@ -4341,7 +4341,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:20 CST = 06:00-12:20 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0498', 'day_2026-01-13',
     '2026-01-13T06:00:00Z', '2026-01-13T12:20:00Z',
@@ -4353,7 +4353,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:20-07:10 CST = 12:20-13:10 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0499', 'day_2026-01-13',
     '2026-01-13T12:20:00Z', '2026-01-13T13:10:00Z',
@@ -4365,7 +4365,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:10-07:40 CST = 13:10-13:40 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0500', 'day_2026-01-13',
     '2026-01-13T13:10:00Z', '2026-01-13T13:40:00Z',
@@ -4377,7 +4377,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:40-08:15 CST = 13:40-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0501', 'day_2026-01-13',
     '2026-01-13T13:40:00Z', '2026-01-13T14:15:00Z',
@@ -4389,7 +4389,7 @@ INSERT INTO wiki_events (
 
 -- Standup + design review (08:15-09:30 CST = 14:15-15:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0502', 'day_2026-01-13',
     '2026-01-13T14:15:00Z', '2026-01-13T15:30:00Z',
@@ -4401,7 +4401,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (09:30-11:30 CST = 15:30-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0503', 'day_2026-01-13',
     '2026-01-13T15:30:00Z', '2026-01-13T17:30:00Z',
@@ -4413,7 +4413,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0504', 'day_2026-01-13',
     '2026-01-13T17:30:00Z', '2026-01-13T18:15:00Z',
@@ -4425,7 +4425,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:15-16:30 CST = 18:15-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0505', 'day_2026-01-13',
     '2026-01-13T18:15:00Z', '2026-01-13T22:30:00Z',
@@ -4437,7 +4437,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0506', 'day_2026-01-13',
     '2026-01-13T22:30:00Z', '2026-01-13T23:00:00Z',
@@ -4449,7 +4449,7 @@ INSERT INTO wiki_events (
 
 -- Evening run (17:30-18:20 CST = 23:30-00:20+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0507', 'day_2026-01-13',
     '2026-01-13T23:30:00Z', '2026-01-14T00:20:00Z',
@@ -4461,7 +4461,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and TV (19:00-22:00 CST = 01:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0508', 'day_2026-01-13',
     '2026-01-14T01:00:00Z', '2026-01-14T04:00:00Z',
@@ -4475,7 +4475,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0509', 'day_2026-01-14',
     '2026-01-14T06:00:00Z', '2026-01-14T12:30:00Z',
@@ -4487,7 +4487,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0510', 'day_2026-01-14',
     '2026-01-14T12:30:00Z', '2026-01-14T13:15:00Z',
@@ -4499,7 +4499,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0511', 'day_2026-01-14',
     '2026-01-14T13:15:00Z', '2026-01-14T13:45:00Z',
@@ -4511,7 +4511,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0512', 'day_2026-01-14',
     '2026-01-14T13:45:00Z', '2026-01-14T14:15:00Z',
@@ -4523,7 +4523,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0513', 'day_2026-01-14',
     '2026-01-14T14:15:00Z', '2026-01-14T14:45:00Z',
@@ -4535,7 +4535,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (08:45-11:30 CST = 14:45-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0514', 'day_2026-01-14',
     '2026-01-14T14:45:00Z', '2026-01-14T17:30:00Z',
@@ -4547,7 +4547,7 @@ INSERT INTO wiki_events (
 
 -- Lunch with Maya at Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0515', 'day_2026-01-14',
     '2026-01-14T17:30:00Z', '2026-01-14T18:30:00Z',
@@ -4559,7 +4559,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:30-16:30 CST = 18:30-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0516', 'day_2026-01-14',
     '2026-01-14T18:30:00Z', '2026-01-14T22:30:00Z',
@@ -4571,7 +4571,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0517', 'day_2026-01-14',
     '2026-01-14T22:30:00Z', '2026-01-14T23:00:00Z',
@@ -4583,7 +4583,7 @@ INSERT INTO wiki_events (
 
 -- Evening walk and dinner (17:30-22:00 CST = 23:30-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0518', 'day_2026-01-14',
     '2026-01-14T23:30:00Z', '2026-01-15T04:00:00Z',
@@ -4597,7 +4597,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:15 CST = 06:00-12:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0519', 'day_2026-01-15',
     '2026-01-15T06:00:00Z', '2026-01-15T12:15:00Z',
@@ -4609,7 +4609,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:15-07:10 CST = 12:15-13:10 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0520', 'day_2026-01-15',
     '2026-01-15T12:15:00Z', '2026-01-15T13:10:00Z',
@@ -4621,7 +4621,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:10-07:40 CST = 13:10-13:40 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0521', 'day_2026-01-15',
     '2026-01-15T13:10:00Z', '2026-01-15T13:40:00Z',
@@ -4633,7 +4633,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:40-08:15 CST = 13:40-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0522', 'day_2026-01-15',
     '2026-01-15T13:40:00Z', '2026-01-15T14:15:00Z',
@@ -4645,7 +4645,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0523', 'day_2026-01-15',
     '2026-01-15T14:15:00Z', '2026-01-15T14:45:00Z',
@@ -4657,7 +4657,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (08:45-11:30 CST = 14:45-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0524', 'day_2026-01-15',
     '2026-01-15T14:45:00Z', '2026-01-15T17:30:00Z',
@@ -4669,7 +4669,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0525', 'day_2026-01-15',
     '2026-01-15T17:30:00Z', '2026-01-15T18:15:00Z',
@@ -4681,7 +4681,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home early for WFH (12:30-13:00 CST = 18:30-19:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0526', 'day_2026-01-15',
     '2026-01-15T18:30:00Z', '2026-01-15T19:00:00Z',
@@ -4693,7 +4693,7 @@ INSERT INTO wiki_events (
 
 -- WFH afternoon work (13:30-16:30 CST = 19:30-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0527', 'day_2026-01-15',
     '2026-01-15T19:30:00Z', '2026-01-15T22:30:00Z',
@@ -4705,7 +4705,7 @@ INSERT INTO wiki_events (
 
 -- Mueller trails walk (17:00-17:45 CST = 23:00-23:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0528', 'day_2026-01-15',
     '2026-01-15T23:00:00Z', '2026-01-15T23:45:00Z',
@@ -4717,7 +4717,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and browsing (18:30-22:00 CST = 00:30-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0529', 'day_2026-01-15',
     '2026-01-16T00:30:00Z', '2026-01-16T04:00:00Z',
@@ -4731,7 +4731,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0530', 'day_2026-01-16',
     '2026-01-16T06:00:00Z', '2026-01-16T12:30:00Z',
@@ -4743,7 +4743,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0531', 'day_2026-01-16',
     '2026-01-16T12:30:00Z', '2026-01-16T13:15:00Z',
@@ -4755,7 +4755,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0532', 'day_2026-01-16',
     '2026-01-16T13:15:00Z', '2026-01-16T13:45:00Z',
@@ -4767,7 +4767,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0533', 'day_2026-01-16',
     '2026-01-16T13:45:00Z', '2026-01-16T14:15:00Z',
@@ -4779,7 +4779,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0534', 'day_2026-01-16',
     '2026-01-16T14:15:00Z', '2026-01-16T14:45:00Z',
@@ -4791,7 +4791,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (08:45-11:30 CST = 14:45-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0535', 'day_2026-01-16',
     '2026-01-16T14:45:00Z', '2026-01-16T17:30:00Z',
@@ -4803,7 +4803,7 @@ INSERT INTO wiki_events (
 
 -- Lunch (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0536', 'day_2026-01-16',
     '2026-01-16T17:30:00Z', '2026-01-16T18:15:00Z',
@@ -4815,7 +4815,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work — shorter Friday (12:15-15:30 CST = 18:15-21:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0537', 'day_2026-01-16',
     '2026-01-16T18:15:00Z', '2026-01-16T21:30:00Z',
@@ -4827,7 +4827,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (15:30-16:00 CST = 21:30-22:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0538', 'day_2026-01-16',
     '2026-01-16T21:30:00Z', '2026-01-16T22:00:00Z',
@@ -4839,7 +4839,7 @@ INSERT INTO wiki_events (
 
 -- Game night at Jess's (19:00-23:00 CST = 01:00-05:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0539', 'day_2026-01-16',
     '2026-01-17T01:00:00Z', '2026-01-17T05:00:00Z',
@@ -4853,7 +4853,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (01:00-08:30 CST = 07:00-14:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0540', 'day_2026-01-17',
     '2026-01-17T07:00:00Z', '2026-01-17T14:30:00Z',
@@ -4865,7 +4865,7 @@ INSERT INTO wiki_events (
 
 -- Slow morning (08:30-10:00 CST = 14:30-16:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0541', 'day_2026-01-17',
     '2026-01-17T14:30:00Z', '2026-01-17T16:00:00Z',
@@ -4877,7 +4877,7 @@ INSERT INTO wiki_events (
 
 -- Lady Bird Lake walk (10:00-11:30 CST = 16:00-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0542', 'day_2026-01-17',
     '2026-01-17T16:00:00Z', '2026-01-17T17:30:00Z',
@@ -4889,7 +4889,7 @@ INSERT INTO wiki_events (
 
 -- Errands (11:30-13:00 CST = 17:30-19:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0543', 'day_2026-01-17',
     '2026-01-17T17:30:00Z', '2026-01-17T19:00:00Z',
@@ -4901,7 +4901,7 @@ INSERT INTO wiki_events (
 
 -- Mom call (14:00-14:45 CST = 20:00-20:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0544', 'day_2026-01-17',
     '2026-01-17T20:00:00Z', '2026-01-17T20:45:00Z',
@@ -4913,7 +4913,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon reading (15:00-17:30 CST = 21:00-23:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0545', 'day_2026-01-17',
     '2026-01-17T21:00:00Z', '2026-01-17T23:30:00Z',
@@ -4925,7 +4925,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and movie (18:00-22:00 CST = 00:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0546', 'day_2026-01-17',
     '2026-01-18T00:00:00Z', '2026-01-18T04:00:00Z',
@@ -4939,7 +4939,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-08:00 CST = 06:00-14:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0547', 'day_2026-01-18',
     '2026-01-18T06:00:00Z', '2026-01-18T14:00:00Z',
@@ -4951,7 +4951,7 @@ INSERT INTO wiki_events (
 
 -- Slow morning (08:00-09:30 CST = 14:00-15:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0548', 'day_2026-01-18',
     '2026-01-18T14:00:00Z', '2026-01-18T15:30:00Z',
@@ -4963,7 +4963,7 @@ INSERT INTO wiki_events (
 
 -- Morning run (09:30-10:30 CST = 15:30-16:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0549', 'day_2026-01-18',
     '2026-01-18T15:30:00Z', '2026-01-18T16:30:00Z',
@@ -4975,7 +4975,7 @@ INSERT INTO wiki_events (
 
 -- Jo's Coffee (11:00-12:00 CST = 17:00-18:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0550', 'day_2026-01-18',
     '2026-01-18T17:00:00Z', '2026-01-18T18:00:00Z',
@@ -4987,7 +4987,7 @@ INSERT INTO wiki_events (
 
 -- Cooking and meal prep (12:30-14:30 CST = 18:30-20:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0551', 'day_2026-01-18',
     '2026-01-18T18:30:00Z', '2026-01-18T20:30:00Z',
@@ -4999,7 +4999,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon browsing (15:00-17:30 CST = 21:00-23:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0552', 'day_2026-01-18',
     '2026-01-18T21:00:00Z', '2026-01-18T23:30:00Z',
@@ -5011,7 +5011,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and wind down (18:00-22:00 CST = 00:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0553', 'day_2026-01-18',
     '2026-01-19T00:00:00Z', '2026-01-19T04:00:00Z',
@@ -5029,7 +5029,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0554', 'day_2026-01-19',
     '2026-01-19T06:00:00Z', '2026-01-19T12:30:00Z',
@@ -5041,7 +5041,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0555', 'day_2026-01-19',
     '2026-01-19T12:30:00Z', '2026-01-19T13:15:00Z',
@@ -5053,7 +5053,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0556', 'day_2026-01-19',
     '2026-01-19T13:15:00Z', '2026-01-19T13:45:00Z',
@@ -5065,7 +5065,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0557', 'day_2026-01-19',
     '2026-01-19T13:45:00Z', '2026-01-19T14:15:00Z',
@@ -5077,7 +5077,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-09:00 CST = 14:15-15:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0558', 'day_2026-01-19',
     '2026-01-19T14:15:00Z', '2026-01-19T15:00:00Z',
@@ -5089,7 +5089,7 @@ INSERT INTO wiki_events (
 
 -- User research session (09:00-10:30 CST = 15:00-16:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0559', 'day_2026-01-19',
     '2026-01-19T15:00:00Z', '2026-01-19T16:30:00Z',
@@ -5101,7 +5101,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (10:30-11:30 CST = 16:30-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0560', 'day_2026-01-19',
     '2026-01-19T16:30:00Z', '2026-01-19T17:30:00Z',
@@ -5113,7 +5113,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0561', 'day_2026-01-19',
     '2026-01-19T17:30:00Z', '2026-01-19T18:15:00Z',
@@ -5125,7 +5125,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:15-16:30 CST = 18:15-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0562', 'day_2026-01-19',
     '2026-01-19T18:15:00Z', '2026-01-19T22:30:00Z',
@@ -5137,7 +5137,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0563', 'day_2026-01-19',
     '2026-01-19T22:30:00Z', '2026-01-19T23:00:00Z',
@@ -5149,7 +5149,7 @@ INSERT INTO wiki_events (
 
 -- Evening run (17:30-18:15 CST = 23:30-00:15+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0564', 'day_2026-01-19',
     '2026-01-19T23:30:00Z', '2026-01-20T00:15:00Z',
@@ -5161,7 +5161,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and reading (19:00-22:00 CST = 01:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0565', 'day_2026-01-19',
     '2026-01-20T01:00:00Z', '2026-01-20T04:00:00Z',
@@ -5175,7 +5175,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:15 CST = 06:00-12:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0566', 'day_2026-01-20',
     '2026-01-20T06:00:00Z', '2026-01-20T12:15:00Z',
@@ -5187,7 +5187,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:15-07:10 CST = 12:15-13:10 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0567', 'day_2026-01-20',
     '2026-01-20T12:15:00Z', '2026-01-20T13:10:00Z',
@@ -5199,7 +5199,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:10-07:40 CST = 13:10-13:40 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0568', 'day_2026-01-20',
     '2026-01-20T13:10:00Z', '2026-01-20T13:40:00Z',
@@ -5211,7 +5211,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:40-08:15 CST = 13:40-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0569', 'day_2026-01-20',
     '2026-01-20T13:40:00Z', '2026-01-20T14:15:00Z',
@@ -5223,7 +5223,7 @@ INSERT INTO wiki_events (
 
 -- Standup + design review (08:15-09:30 CST = 14:15-15:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0570', 'day_2026-01-20',
     '2026-01-20T14:15:00Z', '2026-01-20T15:30:00Z',
@@ -5235,7 +5235,7 @@ INSERT INTO wiki_events (
 
 -- User research session (09:30-11:00 CST = 15:30-17:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0571', 'day_2026-01-20',
     '2026-01-20T15:30:00Z', '2026-01-20T17:00:00Z',
@@ -5247,7 +5247,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:00-12:00 CST = 17:00-18:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0572', 'day_2026-01-20',
     '2026-01-20T17:00:00Z', '2026-01-20T18:00:00Z',
@@ -5259,7 +5259,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:00-16:30 CST = 18:00-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0573', 'day_2026-01-20',
     '2026-01-20T18:00:00Z', '2026-01-20T22:30:00Z',
@@ -5271,7 +5271,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0574', 'day_2026-01-20',
     '2026-01-20T22:30:00Z', '2026-01-20T23:00:00Z',
@@ -5283,7 +5283,7 @@ INSERT INTO wiki_events (
 
 -- Evening run (17:30-18:20 CST = 23:30-00:20+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0575', 'day_2026-01-20',
     '2026-01-20T23:30:00Z', '2026-01-21T00:20:00Z',
@@ -5295,7 +5295,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and TV (19:00-22:00 CST = 01:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0576', 'day_2026-01-20',
     '2026-01-21T01:00:00Z', '2026-01-21T04:00:00Z',
@@ -5309,7 +5309,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0577', 'day_2026-01-21',
     '2026-01-21T06:00:00Z', '2026-01-21T12:30:00Z',
@@ -5321,7 +5321,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0578', 'day_2026-01-21',
     '2026-01-21T12:30:00Z', '2026-01-21T13:15:00Z',
@@ -5333,7 +5333,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0579', 'day_2026-01-21',
     '2026-01-21T13:15:00Z', '2026-01-21T13:45:00Z',
@@ -5345,7 +5345,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0580', 'day_2026-01-21',
     '2026-01-21T13:45:00Z', '2026-01-21T14:15:00Z',
@@ -5357,7 +5357,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0581', 'day_2026-01-21',
     '2026-01-21T14:15:00Z', '2026-01-21T14:45:00Z',
@@ -5369,7 +5369,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (08:45-11:30 CST = 14:45-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0582', 'day_2026-01-21',
     '2026-01-21T14:45:00Z', '2026-01-21T17:30:00Z',
@@ -5381,7 +5381,7 @@ INSERT INTO wiki_events (
 
 -- Lunch with Maya at Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0583', 'day_2026-01-21',
     '2026-01-21T17:30:00Z', '2026-01-21T18:30:00Z',
@@ -5393,7 +5393,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:30-16:30 CST = 18:30-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0584', 'day_2026-01-21',
     '2026-01-21T18:30:00Z', '2026-01-21T22:30:00Z',
@@ -5405,7 +5405,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0585', 'day_2026-01-21',
     '2026-01-21T22:30:00Z', '2026-01-21T23:00:00Z',
@@ -5417,7 +5417,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and browsing (18:00-22:00 CST = 00:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0586', 'day_2026-01-21',
     '2026-01-22T00:00:00Z', '2026-01-22T04:00:00Z',
@@ -5431,7 +5431,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:20 CST = 06:00-12:20 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0587', 'day_2026-01-22',
     '2026-01-22T06:00:00Z', '2026-01-22T12:20:00Z',
@@ -5443,7 +5443,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:20-07:10 CST = 12:20-13:10 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0588', 'day_2026-01-22',
     '2026-01-22T12:20:00Z', '2026-01-22T13:10:00Z',
@@ -5455,7 +5455,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:10-07:40 CST = 13:10-13:40 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0589', 'day_2026-01-22',
     '2026-01-22T13:10:00Z', '2026-01-22T13:40:00Z',
@@ -5467,7 +5467,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:40-08:15 CST = 13:40-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0590', 'day_2026-01-22',
     '2026-01-22T13:40:00Z', '2026-01-22T14:15:00Z',
@@ -5479,7 +5479,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0591', 'day_2026-01-22',
     '2026-01-22T14:15:00Z', '2026-01-22T14:45:00Z',
@@ -5491,7 +5491,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (08:45-11:30 CST = 14:45-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0592', 'day_2026-01-22',
     '2026-01-22T14:45:00Z', '2026-01-22T17:30:00Z',
@@ -5503,7 +5503,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0593', 'day_2026-01-22',
     '2026-01-22T17:30:00Z', '2026-01-22T18:15:00Z',
@@ -5515,7 +5515,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:15-16:30 CST = 18:15-22:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0594', 'day_2026-01-22',
     '2026-01-22T18:15:00Z', '2026-01-22T22:30:00Z',
@@ -5527,7 +5527,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (16:30-17:00 CST = 22:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0595', 'day_2026-01-22',
     '2026-01-22T22:30:00Z', '2026-01-22T23:00:00Z',
@@ -5539,7 +5539,7 @@ INSERT INTO wiki_events (
 
 -- Walk on Mueller trails (17:30-18:15 CST = 23:30-00:15+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0596', 'day_2026-01-22',
     '2026-01-22T23:30:00Z', '2026-01-23T00:15:00Z',
@@ -5551,7 +5551,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and reading (19:00-22:00 CST = 01:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0597', 'day_2026-01-22',
     '2026-01-23T01:00:00Z', '2026-01-23T04:00:00Z',
@@ -5565,7 +5565,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0598', 'day_2026-01-23',
     '2026-01-23T06:00:00Z', '2026-01-23T12:30:00Z',
@@ -5577,7 +5577,7 @@ INSERT INTO wiki_events (
 
 -- Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0599', 'day_2026-01-23',
     '2026-01-23T12:30:00Z', '2026-01-23T13:15:00Z',
@@ -5589,7 +5589,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0600', 'day_2026-01-23',
     '2026-01-23T13:15:00Z', '2026-01-23T13:45:00Z',
@@ -5601,7 +5601,7 @@ INSERT INTO wiki_events (
 
 -- Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0601', 'day_2026-01-23',
     '2026-01-23T13:45:00Z', '2026-01-23T14:15:00Z',
@@ -5613,7 +5613,7 @@ INSERT INTO wiki_events (
 
 -- Standup (08:15-08:45 CST = 14:15-14:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0602', 'day_2026-01-23',
     '2026-01-23T14:15:00Z', '2026-01-23T14:45:00Z',
@@ -5625,7 +5625,7 @@ INSERT INTO wiki_events (
 
 -- Focused work (08:45-11:30 CST = 14:45-17:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0603', 'day_2026-01-23',
     '2026-01-23T14:45:00Z', '2026-01-23T17:30:00Z',
@@ -5637,7 +5637,7 @@ INSERT INTO wiki_events (
 
 -- Lunch solo (11:30-12:15 CST = 17:30-18:15 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0604', 'day_2026-01-23',
     '2026-01-23T17:30:00Z', '2026-01-23T18:15:00Z',
@@ -5649,7 +5649,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon work (12:15-15:30 CST = 18:15-21:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0605', 'day_2026-01-23',
     '2026-01-23T18:15:00Z', '2026-01-23T21:30:00Z',
@@ -5661,7 +5661,7 @@ INSERT INTO wiki_events (
 
 -- Bike commute home (15:30-16:00 CST = 21:30-22:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0606', 'day_2026-01-23',
     '2026-01-23T21:30:00Z', '2026-01-23T22:00:00Z',
@@ -5673,7 +5673,7 @@ INSERT INTO wiki_events (
 
 -- Mom call (17:00-17:35 CST = 23:00-23:35 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0607', 'day_2026-01-23',
     '2026-01-23T23:00:00Z', '2026-01-23T23:35:00Z',
@@ -5685,7 +5685,7 @@ INSERT INTO wiki_events (
 
 -- Quiet Friday evening (18:00-22:00 CST = 00:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0608', 'day_2026-01-23',
     '2026-01-24T00:00:00Z', '2026-01-24T04:00:00Z',
@@ -5699,7 +5699,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-07:30 CST = 06:00-13:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0609', 'day_2026-01-24',
     '2026-01-24T06:00:00Z', '2026-01-24T13:30:00Z',
@@ -5711,7 +5711,7 @@ INSERT INTO wiki_events (
 
 -- Slow morning (07:30-09:00 CST = 13:30-15:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0610', 'day_2026-01-24',
     '2026-01-24T13:30:00Z', '2026-01-24T15:00:00Z',
@@ -5723,7 +5723,7 @@ INSERT INTO wiki_events (
 
 -- Lady Bird Lake walk (09:30-11:00 CST = 15:30-17:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0611', 'day_2026-01-24',
     '2026-01-24T15:30:00Z', '2026-01-24T17:00:00Z',
@@ -5735,7 +5735,7 @@ INSERT INTO wiki_events (
 
 -- Errands and lunch (11:00-13:00 CST = 17:00-19:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0612', 'day_2026-01-24',
     '2026-01-24T17:00:00Z', '2026-01-24T19:00:00Z',
@@ -5747,7 +5747,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon reading (13:30-17:00 CST = 19:30-23:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0613', 'day_2026-01-24',
     '2026-01-24T19:30:00Z', '2026-01-24T23:00:00Z',
@@ -5759,7 +5759,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and movie (18:00-22:00 CST = 00:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0614', 'day_2026-01-24',
     '2026-01-25T00:00:00Z', '2026-01-25T04:00:00Z',
@@ -5773,7 +5773,7 @@ INSERT INTO wiki_events (
 
 -- Sleep (00:00-07:30 CST = 06:00-13:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0615', 'day_2026-01-25',
     '2026-01-25T06:00:00Z', '2026-01-25T13:30:00Z',
@@ -5785,7 +5785,7 @@ INSERT INTO wiki_events (
 
 -- Slow morning (07:30-09:00 CST = 13:30-15:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0616', 'day_2026-01-25',
     '2026-01-25T13:30:00Z', '2026-01-25T15:00:00Z',
@@ -5797,7 +5797,7 @@ INSERT INTO wiki_events (
 
 -- Morning run (09:00-10:00 CST = 15:00-16:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0617', 'day_2026-01-25',
     '2026-01-25T15:00:00Z', '2026-01-25T16:00:00Z',
@@ -5809,7 +5809,7 @@ INSERT INTO wiki_events (
 
 -- ** RACHEL SECOND APPEARANCE ** House showing (11:00-11:45 CST = 17:00-17:45 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0618', 'day_2026-01-25',
     '2026-01-25T17:00:00Z', '2026-01-25T17:45:00Z',
@@ -5821,7 +5821,7 @@ INSERT INTO wiki_events (
 
 -- Lunch (12:00-13:00 CST = 18:00-19:00 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0619', 'day_2026-01-25',
     '2026-01-25T18:00:00Z', '2026-01-25T19:00:00Z',
@@ -5833,7 +5833,7 @@ INSERT INTO wiki_events (
 
 -- Cooking and meal prep (13:30-15:30 CST = 19:30-21:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0620', 'day_2026-01-25',
     '2026-01-25T19:30:00Z', '2026-01-25T21:30:00Z',
@@ -5845,7 +5845,7 @@ INSERT INTO wiki_events (
 
 -- Afternoon reading (15:30-17:30 CST = 21:30-23:30 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0621', 'day_2026-01-25',
     '2026-01-25T21:30:00Z', '2026-01-25T23:30:00Z',
@@ -5857,7 +5857,7 @@ INSERT INTO wiki_events (
 
 -- Dinner and wind down (18:00-22:00 CST = 00:00-04:00+1 UTC)
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0622', 'day_2026-01-25',
     '2026-01-26T00:00:00Z', '2026-01-26T04:00:00Z',
@@ -5916,7 +5916,7 @@ VALUES
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0631', 'day_2026-01-26', '2026-01-26T06:00:00Z', '2026-01-26T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -5974,7 +5974,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0641', 'day_2026-01-27', '2026-01-27T06:00:00Z', '2026-01-27T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6032,7 +6032,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0651', 'day_2026-01-28', '2026-01-28T06:00:00Z', '2026-01-28T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6090,7 +6090,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0661', 'day_2026-01-29', '2026-01-29T06:00:00Z', '2026-01-29T12:45:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6148,7 +6148,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0671', 'day_2026-01-30', '2026-01-30T06:00:00Z', '2026-01-30T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6206,7 +6206,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0681', 'day_2026-01-31', '2026-01-31T06:00:00Z', '2026-01-31T13:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6249,7 +6249,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0688', 'day_2026-02-01', '2026-02-01T06:00:00Z', '2026-02-01T14:00:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6292,7 +6292,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0695', 'day_2026-02-02', '2026-02-02T06:00:00Z', '2026-02-02T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6350,7 +6350,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0705', 'day_2026-02-03', '2026-02-03T06:00:00Z', '2026-02-03T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6408,7 +6408,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0715', 'day_2026-02-04', '2026-02-04T06:00:00Z', '2026-02-04T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6466,7 +6466,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0725', 'day_2026-02-05', '2026-02-05T06:00:00Z', '2026-02-05T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6524,7 +6524,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0735', 'day_2026-02-06', '2026-02-06T06:00:00Z', '2026-02-06T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6582,7 +6582,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0745', 'day_2026-02-07', '2026-02-07T06:00:00Z', '2026-02-07T14:00:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6625,7 +6625,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0752', 'day_2026-02-08', '2026-02-08T06:00:00Z', '2026-02-08T13:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6668,7 +6668,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0759', 'day_2026-02-09', '2026-02-09T06:00:00Z', '2026-02-09T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6726,7 +6726,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0769', 'day_2026-02-10', '2026-02-10T06:00:00Z', '2026-02-10T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
@@ -6784,7 +6784,7 @@ INSERT INTO wiki_events (
 -- =============================================================================
 
 INSERT INTO wiki_events (
-    id, day_id, start_time, end_time, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
+    id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
 ('ev_b0779', 'day_2026-02-11', '2026-02-11T06:00:00Z', '2026-02-11T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', FALSE, FALSE,
