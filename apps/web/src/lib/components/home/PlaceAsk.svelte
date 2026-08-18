@@ -31,7 +31,7 @@
 		getUnnamedPlaces(6)
 			.then((rows) => {
 				if (dropped) return;
-				queue = rows.filter((p) => p.visit_count >= MIN_VISITS);
+				queue = rows.filter((p) => p.ref_count >= MIN_VISITS);
 			})
 			.catch(() => {});
 		return () => {
@@ -71,7 +71,7 @@
 {#if current}
 	<section class="ask">
 		<h2 class="q">
-			You've stopped here {int.format(current.visit_count)} times. What is this place?
+			You've stopped here {int.format(current.ref_count)} times. What is this place?
 		</h2>
 		<p class="where mono">{coords(current)}</p>
 		<div class="row">

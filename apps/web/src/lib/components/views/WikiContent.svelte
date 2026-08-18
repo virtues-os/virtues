@@ -117,7 +117,7 @@
 					const person = await getPersonById(entityId);
 					if (person) {
 						wikiPage = apiToPersonPage(person);
-						updateLabel(person.canonical_name);
+						updateLabel(person.name);
 					} else {
 						error = `Person "${entityId}" not found`;
 					}
@@ -139,7 +139,7 @@
 					const org = await getOrganizationById(entityId);
 					if (org) {
 						wikiPage = apiToOrganizationPage(org);
-						updateLabel(org.canonical_name);
+						updateLabel(org.name);
 					} else {
 						error = `Organization "${entityId}" not found`;
 					}

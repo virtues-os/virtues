@@ -155,14 +155,14 @@ pub async fn get_calendar_upcoming(pool: &PgPool, limit: i64) -> Result<Vec<Upco
 pub struct UnnamedPlace {
     pub id: String,
     pub name: String,
-    pub visit_count: i64,
+    pub ref_count: i64,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
 }
 
 /// The unnamed places worth asking about, busiest first.
 ///
-/// `wiki_places.visit_count` is not the count to sort on: it is maintained for
+/// `wiki_places.ref_count` is not the count to sort on: it is maintained for
 /// named places and sits at 0 for every `Location %` row on both a dev box and
 /// a nine-year one — which is exactly the set this returns, so ordering by it
 /// ranked the backlog at random and reported every place as never visited.
@@ -188,13 +188,13 @@ pub async fn get_unnamed_places(pool: &PgPool, limit: i64) -> Result<Vec<Unnamed
             FROM data_location_visit v
             WHERE v.is_archived = FALSE AND v.deleted_at_source IS NULL
         )
-        SELECT c.id, c.name, c.latitude, c.longitude, count(a.place_id) AS visit_count
+        SELECT c.id, c.name, c.latitude, c.longitude, count(a.place_id) AS ref_count
         FROM wiki_places c
         LEFT JOIN assigned a ON a.place_id = c.id
         WHERE c.name LIKE 'Location %'
         GROUP BY c.id, c.name, c.latitude, c.longitude
         HAVING count(a.place_id) > 0
-        ORDER BY visit_count DESC
+        ORDER BY ref_count DESC
         LIMIT $1
         "#,
     )
@@ -208,7 +208,7 @@ pub async fn get_unnamed_places(pool: &PgPool, limit: i64) -> Result<Vec<Unnamed
             Some(UnnamedPlace {
                 id: r.try_get("id").ok()?,
                 name: r.try_get("name").ok()?,
-                visit_count: r.try_get("visit_count").unwrap_or(0),
+                ref_count: r.try_get("ref_count").unwrap_or(0),
                 latitude: r.try_get("latitude").ok().flatten(),
                 longitude: r.try_get("longitude").ok().flatten(),
             })

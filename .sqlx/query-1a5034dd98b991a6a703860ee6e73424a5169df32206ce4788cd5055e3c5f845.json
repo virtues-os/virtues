@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH handle_owner AS (\n                SELECT h.handle,\n                       min(p.id)             AS person_id,\n                       min(p.name) AS name\n                FROM wiki_people p\n                CROSS JOIN LATERAL jsonb_array_elements_text(p.handles) AS h(handle)\n                GROUP BY h.handle\n                HAVING count(DISTINCT p.id) = 1\n            )\n            SELECT m.id            AS \"msg_id!\",\n                   o.person_id     AS \"person_id!\",\n                   o.name AS \"name!\"\n            FROM data_communication_message m\n            JOIN handle_owner o ON o.handle = m.from_handle\n            LEFT JOIN wiki_refs r\n                   ON r.source_table = 'data_communication_message'\n                  AND r.source_id = m.id\n                  AND r.role = 'sender'\n            WHERE m.from_handle <> ''\n              AND r.id IS NULL\n            LIMIT $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "msg_id!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "person_id!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "name!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "1a5034dd98b991a6a703860ee6e73424a5169df32206ce4788cd5055e3c5f845"
+}

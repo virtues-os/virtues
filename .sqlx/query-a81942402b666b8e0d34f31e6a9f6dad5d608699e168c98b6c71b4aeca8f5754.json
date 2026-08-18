@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, name, content, article, article_updated_at, cover_image, category, address,\n            latitude, longitude,\n            visit_count, first_visit, last_visit,\n            created_at, updated_at\n        FROM wiki_places\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id, name, content, article, article_updated_at, cover_image, category, address,\n            latitude, longitude,\n            seen_count, first_seen, last_seen,\n            created_at, updated_at\n        FROM wiki_places\n        WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -55,17 +55,17 @@
       },
       {
         "ordinal": 10,
-        "name": "visit_count",
+        "name": "seen_count",
         "type_info": "Int8"
       },
       {
         "ordinal": 11,
-        "name": "first_visit",
+        "name": "first_seen",
         "type_info": "Timestamptz"
       },
       {
         "ordinal": 12,
-        "name": "last_visit",
+        "name": "last_seen",
         "type_info": "Timestamptz"
       },
       {
@@ -102,5 +102,5 @@
       false
     ]
   },
-  "hash": "a3ef59c86aa1921833f69a53e109e77e228dc51aaa9b9ddda05ff213e90ec9a1"
+  "hash": "a81942402b666b8e0d34f31e6a9f6dad5d608699e168c98b6c71b4aeca8f5754"
 }

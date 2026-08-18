@@ -555,7 +555,7 @@ mod tests {
     /// so `app_pages.kind` and "has a `wiki_articles` row" cannot disagree.
     #[sqlx::test]
     async fn create_writes_both_rows_and_marks_the_page(pool: PgPool) {
-        sqlx::query("INSERT INTO wiki_people (id, canonical_name) VALUES ('p_1', 'Sarah')")
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
             .execute(&pool)
             .await
             .unwrap();
@@ -588,7 +588,7 @@ mod tests {
     /// empties a destination the user built by hand.
     #[sqlx::test]
     async fn articles_stay_out_of_the_pages_list(pool: PgPool) {
-        sqlx::query("INSERT INTO wiki_people (id, canonical_name) VALUES ('p_1', 'Sarah')")
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
             .execute(&pool)
             .await
             .unwrap();
@@ -619,7 +619,7 @@ mod tests {
     /// the subject precisely so a retry cannot strand an orphan.
     #[sqlx::test]
     async fn create_is_idempotent_per_subject(pool: PgPool) {
-        sqlx::query("INSERT INTO wiki_people (id, canonical_name) VALUES ('p_1', 'Sarah')")
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
             .execute(&pool)
             .await
             .unwrap();
@@ -645,7 +645,7 @@ mod tests {
     /// own, which is the ordinary case under opt-in.
     #[sqlx::test]
     async fn backlinks_find_a_subject_with_no_article(pool: PgPool) {
-        sqlx::query("INSERT INTO wiki_people (id, canonical_name) VALUES ('p_1', 'Maya')")
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Maya')")
             .execute(&pool)
             .await
             .unwrap();
@@ -675,7 +675,7 @@ mod tests {
     #[sqlx::test]
     async fn backlinks_do_not_match_an_id_prefix(pool: PgPool) {
         for (id, name) in [("p_1", "Maya"), ("p_12", "Mayara")] {
-            sqlx::query("INSERT INTO wiki_people (id, canonical_name) VALUES ($1, $2)")
+            sqlx::query("INSERT INTO wiki_people (id, name) VALUES ($1, $2)")
                 .bind(id)
                 .bind(name)
                 .execute(&pool)
@@ -705,7 +705,7 @@ mod tests {
     /// mapping wrong makes every org backlink silently empty.
     #[sqlx::test]
     async fn org_backlinks_use_the_org_route(pool: PgPool) {
-        sqlx::query("INSERT INTO wiki_orgs (id, canonical_name) VALUES ('o_1', 'Acme')")
+        sqlx::query("INSERT INTO wiki_orgs (id, name) VALUES ('o_1', 'Acme')")
             .execute(&pool)
             .await
             .unwrap();
@@ -729,7 +729,7 @@ mod tests {
     async fn history_pairs_each_author_with_the_edit_they_made(pool: PgPool) {
         use base64::Engine as _;
 
-        sqlx::query("INSERT INTO wiki_people (id, canonical_name) VALUES ('p_1', 'Sarah')")
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
             .execute(&pool)
             .await
             .unwrap();
@@ -793,7 +793,7 @@ mod tests {
     /// A subject with no article has no history — not an error.
     #[sqlx::test]
     async fn history_is_empty_without_an_article(pool: PgPool) {
-        sqlx::query("INSERT INTO wiki_people (id, canonical_name) VALUES ('p_1', 'Sarah')")
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
             .execute(&pool)
             .await
             .unwrap();
@@ -805,7 +805,7 @@ mod tests {
     /// person's prose stays searchable and citable forever.
     #[sqlx::test]
     async fn delete_clears_the_search_index(pool: PgPool) {
-        sqlx::query("INSERT INTO wiki_people (id, canonical_name) VALUES ('p_1', 'Sarah')")
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('p_1', 'Sarah')")
             .execute(&pool)
             .await
             .unwrap();

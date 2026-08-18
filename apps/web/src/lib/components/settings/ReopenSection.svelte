@@ -1,5 +1,10 @@
 <!--
-  Settings → Box → "Start over on this box".
+  Settings → Devices → "Start over".
+
+  Lives at the foot of Devices because that is what it does: it is the plural
+  of Unpair. It used to sit at the bottom of "Box", under the CPU graphs — so
+  a page you opened to check a temperature ended in a button that signs out
+  every device you own.
 
   Wraps `POST /api/pair/reopen-onboarding` — the `virtues reset --keep-data`
   path. Revokes every paired device and its credentials; touches no data, no
@@ -81,17 +86,15 @@
 </section>
 
 <style>
+	/* Inside Devices' `<Page>` now, which owns the gutter — this only needs the
+	   rule and the air that separate it from the device list above. */
 	.reopen {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
-		padding: 16px 1.25rem;
-	}
-
-	@media (min-width: 768px) {
-		.reopen {
-			padding: 16px 3rem;
-		}
+		margin-top: 2.5rem;
+		padding-top: 1.5rem;
+		border-top: 1px solid var(--color-border);
 	}
 
 	header {

@@ -17,6 +17,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { onDestroy, onMount } from "svelte";
 	import { isTauri, isMacOS, thisComputerLabel } from "$lib/utils/platform";
+	import { backToDevices } from "$lib/devices/shared";
 	import * as api from "$lib/api/client";
 	import {
 		getCollectorStatus,
@@ -138,6 +139,18 @@
 	description={`${thisComputerLabel} — what this computer remembers, kept on your box.`}
 	maxWidth="prose"
 >
+	<!--
+		This is `devices/this` now, reached by clicking a row in the Devices
+		list — so it needs the way back that every other device page has. It was
+		a top-level Settings section until 2026-08-17 and had no use for one.
+	-->
+	{#snippet actions()}
+		<Button variant="ghost" onclick={backToDevices}>
+			<Icon icon="ri:arrow-left-line" />
+			Devices
+		</Button>
+	{/snippet}
+
 	{#if !isTauri || !isMacOS}
 		<!-- Browser / non-Mac: can't drive a local daemon. -->
 		<div class="rounded-lg border border-border bg-surface p-4">

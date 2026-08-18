@@ -239,7 +239,10 @@
 
 	async function connect(source: SourceCatalogItem) {
 		if (isThisDevice(source)) {
-			windowShellStore.navigate('/virtues/this-mac', { label: 'This Mac' });
+			// This Mac stopped being a top-level Settings section on 2026-08-17 —
+			// it is a device page now, and `this` is the stable name for the
+			// machine you're on (no device id to look up first).
+			windowShellStore.navigate('/virtues/devices/this', { label: 'This Mac' });
 			return;
 		}
 		await connectFlow.start(source);

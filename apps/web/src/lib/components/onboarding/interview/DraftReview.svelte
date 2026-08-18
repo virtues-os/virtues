@@ -18,25 +18,11 @@
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
-	import type { StepId } from "$lib/components/onboarding/steps";
 	import { draftNarrative, saveNarrativeRules, type NarrativeDraft } from "$lib/api/client";
 	import { onMount } from "svelte";
 
-	let {
-		ondone,
-		passed = [],
-		onjump,
-		back = false,
-		reduced = false,
-	}: {
-		ondone: () => void;
-		passed?: StepId[];
-		onjump?: (id: StepId) => void;
-		/** Arrived by going backward through the strip. */
-		back?: boolean;
-		reduced?: boolean;
-	} = $props();
+	// Shell and progress strip belong to the route; this is only the leaf.
+	let { ondone }: { ondone: () => void } = $props();
 
 	let draft = $state<NarrativeDraft | null>(null);
 	let error = $state<string | null>(null);
@@ -74,10 +60,8 @@
 	}
 </script>
 
-<div class="ob-wrap" class:ob-still={reduced} class:ob-back={back}>
-	<div class="ob-sheet">
-		<OnboardingHeader step="words" done={passed} {onjump} />
-
+<div>
+	<div>
 		{#if busy}
 			<p class="quiet">
 				<Icon icon="ri:quill-pen-line" width="15" /> Reading what you wrote…

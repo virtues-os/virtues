@@ -199,7 +199,10 @@
 					action: {
 						label: "Details",
 						onClick: () =>
-							windowShellStore.openTabFromRoute("/virtues/box", {
+							// Software, not the old catch-all Box — this toast is
+							// about a version having changed, and that page is now
+							// the one place that says which versions are in play.
+							windowShellStore.openTabFromRoute("/virtues/software", {
 								label: "Settings",
 								preferEmptyPane: true,
 							}),

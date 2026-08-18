@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id\n        FROM wiki_orgs\n        WHERE LOWER(canonical_name) = LOWER($1)\n           OR LOWER(canonical_name) = LOWER($2)\n        LIMIT 1\n        ",
+  "query": "\n        SELECT id\n        FROM wiki_orgs\n        WHERE LOWER(name) = LOWER($1)\n           OR LOWER(name) = LOWER($2)\n        LIMIT 1\n        ",
   "describe": {
     "columns": [
       {
@@ -19,5 +19,5 @@
       false
     ]
   },
-  "hash": "bb47e8bc43db7913f4405f4cb8e4eab0aa54c4c17e0e36007e65f40aaaeaa594"
+  "hash": "09dd72a2d65059f7e49cb0339407e3939a0cbe63fef7d922a9b55c53ff455662"
 }

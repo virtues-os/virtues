@@ -576,12 +576,12 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
         -- navigator never read it, so linking "Sarah" once resolved nothing —
         -- the decision had a home and no door. An exact alias hit ranks with a
         -- prefix hit: it is not a fuzzy match, it is a name you declared.
-        SELECT id, canonical_name as name, 'person' as entity_type, 'ri:user-line' as icon,
+        SELECT id, name, 'person' as entity_type, 'ri:user-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN canonical_name ILIKE $2 OR jsonb_exists(aliases, $4)
+               CASE WHEN name ILIKE $2 OR jsonb_exists(aliases, $4)
                     THEN 0 ELSE 1 END as relevance
         FROM wiki_people
-        WHERE canonical_name ILIKE $1 OR nickname ILIKE $1 OR jsonb_exists(aliases, $4)
+        WHERE name ILIKE $1 OR nickname ILIKE $1 OR jsonb_exists(aliases, $4)
         UNION ALL
         SELECT id, name, 'place' as entity_type, 'ri:map-pin-line' as icon,
                NULL as mime_type, updated_at,
@@ -590,12 +590,12 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
         FROM wiki_places
         WHERE name ILIKE $1 OR jsonb_exists(aliases, $4)
         UNION ALL
-        SELECT id, canonical_name as name, 'org' as entity_type, 'ri:building-line' as icon,
+        SELECT id, name, 'org' as entity_type, 'ri:building-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN canonical_name ILIKE $2 OR jsonb_exists(aliases, $4)
+               CASE WHEN name ILIKE $2 OR jsonb_exists(aliases, $4)
                     THEN 0 ELSE 1 END as relevance
         FROM wiki_orgs
-        WHERE canonical_name ILIKE $1 OR jsonb_exists(aliases, $4)
+        WHERE name ILIKE $1 OR jsonb_exists(aliases, $4)
         UNION ALL
         SELECT id, filename as name, 'file' as entity_type, 'ri:file-line' as icon,
                mime_type, updated_at,

@@ -53,7 +53,7 @@
 			hideOnMobile: true,
 		},
 		{
-			key: 'visit_count',
+			key: 'ref_count',
 			label: 'Visits',
 			icon: 'ri:footprint-line',
 			width: '15%',
@@ -115,8 +115,8 @@
 					{place.category}
 				</span>
 			{/if}
-			{#if place.visit_count !== undefined && place.visit_count !== null}
-				<span class="visits-text">{place.visit_count} visits</span>
+			{#if place.ref_count !== undefined && place.ref_count !== null}
+				<span class="visits-text">{place.ref_count} visits</span>
 			{/if}
 		</div>
 	{/snippet}
