@@ -1072,7 +1072,7 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleep
         r#"SELECT AVG(CAST(hr.bpm AS REAL))
            FROM data_health_heart_rate hr
            INNER JOIN data_health_sleep s
-             ON hr.timestamp >= s.start_time AND hr.timestamp < s.end_time
+             ON hr.occurred_at >= s.start_time AND hr.occurred_at < s.end_time
            WHERE s.start_time >= $1
              AND s.start_time < $2
            GROUP BY s.id"#,
@@ -1100,7 +1100,7 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleep
         let avg_hr: Option<f64> = sqlx::query_scalar(
             r#"SELECT AVG(CAST(bpm AS REAL))
                FROM data_health_heart_rate
-               WHERE timestamp >= $1 AND timestamp < $2"#,
+               WHERE occurred_at >= $1 AND occurred_at < $2"#,
         )
         .bind(start)
         .bind(end)
@@ -1141,8 +1141,8 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
     let new_entities: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(DISTINCT r.entity_id)
            FROM wiki_refs r
-           WHERE r.timestamp >= ($1 || 'T00:00:00Z')::timestamptz
-             AND r.timestamp < ($2 || 'T00:00:00Z')::timestamptz
+           WHERE r.occurred_at >= ($1 || 'T00:00:00Z')::timestamptz
+             AND r.occurred_at < ($2 || 'T00:00:00Z')::timestamptz
              AND NOT EXISTS (
                SELECT 1 FROM wiki_refs r2
                WHERE r2.entity_id = r.entity_id
@@ -1536,9 +1536,9 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             r#"
             SELECT entity_id, MIN(timestamp) as earliest
             FROM wiki_refs
-            WHERE timestamp IS NOT NULL
-              AND timestamp >= $1
-              AND timestamp < $2
+            WHERE occurred_at IS NOT NULL
+              AND occurred_at >= $1
+              AND occurred_at < $2
             GROUP BY entity_id
             "#,
         )
@@ -2359,8 +2359,8 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
     let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            v.arrival_time           AS arrival_time,
-            v.departure_time         AS departure_time,
+            v.started_at           AS started_at,
+            v.ended_at         AS ended_at,
             v.duration_minutes       AS duration_minutes,
             v.latitude               AS visit_lat,
             v.longitude              AS visit_lon,
@@ -2375,8 +2375,8 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
            AND er.source_id    = v.id
            AND er.entity_type  = 'place'
         LEFT JOIN wiki_places p ON p.id = er.entity_id
-        WHERE v.arrival_time >= $1 AND v.arrival_time < $2
-        ORDER BY v.arrival_time ASC
+        WHERE v.started_at >= $1 AND v.started_at < $2
+        ORDER BY v.started_at ASC
         "#,
     )
     .bind(start_of_day)
@@ -2389,12 +2389,12 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
     let chunks: Vec<TimelineChunk> = rows
         .iter()
         .filter_map(|row| {
-            // arrival_time / departure_time are TIMESTAMPTZ in Postgres; read
+            // started_at / ended_at are TIMESTAMPTZ in Postgres; read
             // them as DateTime<Utc> and stringify with RFC-3339 for the JSON.
-            let arrival_ts: DateTime<Utc> = row.try_get("arrival_time").ok()?;
+            let arrival_ts: DateTime<Utc> = row.try_get("started_at").ok()?;
             let arrival = arrival_ts.to_rfc3339();
             let departure: Option<String> = row
-                .try_get::<Option<DateTime<Utc>>, _>("departure_time")
+                .try_get::<Option<DateTime<Utc>>, _>("ended_at")
                 .ok()
                 .flatten()
                 .map(|d| d.to_rfc3339());
@@ -2430,10 +2430,10 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
     // not just lines connecting visit centroids.
     let point_rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
-        SELECT latitude, longitude, timestamp
+        SELECT latitude, longitude, occurred_at
         FROM data_location_point
-        WHERE timestamp >= $1 AND timestamp < $2
-        ORDER BY timestamp ASC
+        WHERE occurred_at >= $1 AND occurred_at < $2
+        ORDER BY occurred_at ASC
         "#,
     )
     .bind(start_of_day)
@@ -2548,9 +2548,9 @@ pub async fn get_day_heart_rate(
     let (start_str, end_str) = super::day_summary::day_boundaries_utc(date, Some(&timezone));
 
     let rows: Vec<(chrono::DateTime<chrono::Utc>, i32)> = sqlx::query_as(
-        r#"SELECT timestamp, bpm FROM data_health_heart_rate
-           WHERE timestamp >= $1::timestamptz AND timestamp < $2::timestamptz
-           ORDER BY timestamp"#,
+        r#"SELECT occurred_at, bpm FROM data_health_heart_rate
+           WHERE occurred_at >= $1::timestamptz AND occurred_at < $2::timestamptz
+           ORDER BY occurred_at"#,
     )
     .bind(&start_str)
     .bind(&end_str)
@@ -2581,8 +2581,8 @@ pub async fn get_today_streams(
         r#"
         SELECT
             v.id               AS id,
-            v.arrival_time     AS arrival_time,
-            v.departure_time   AS departure_time,
+            v.started_at     AS started_at,
+            v.ended_at   AS ended_at,
             v.duration_minutes AS duration_minutes,
             p.name             AS place_name,
             p.category         AS place_category
@@ -2592,8 +2592,8 @@ pub async fn get_today_streams(
            AND er.source_id    = v.id
            AND er.entity_type  = 'place'
         LEFT JOIN wiki_places p ON p.id = er.entity_id
-        WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time < $2::timestamptz
-        ORDER BY v.arrival_time ASC
+        WHERE v.started_at >= $1::timestamptz AND v.started_at < $2::timestamptz
+        ORDER BY v.started_at ASC
         "#,
     )
     .bind(&start_str)
@@ -2605,9 +2605,9 @@ pub async fn get_today_streams(
     let location: Vec<TodayLocationSpan> = loc_rows
         .iter()
         .filter_map(|row| {
-            let arrival: DateTime<Utc> = row.try_get("arrival_time").ok()?;
+            let arrival: DateTime<Utc> = row.try_get("started_at").ok()?;
             let departure: Option<DateTime<Utc>> =
-                row.try_get::<Option<DateTime<Utc>>, _>("departure_time").ok().flatten();
+                row.try_get::<Option<DateTime<Utc>>, _>("ended_at").ok().flatten();
             Some(TodayLocationSpan {
                 id: row.try_get("id").ok()?,
                 start_time: arrival.to_rfc3339(),
@@ -3088,11 +3088,11 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
     // in-app chat that was also synced into the ontology lake.
     let ext_rows = sqlx::query(
         r#"
-        SELECT conversation_id, role, content, provider, timestamp
+        SELECT conversation_id, role, content, provider, occurred_at
         FROM data_content_conversation
-        WHERE timestamp >= $1 AND timestamp <= $2
+        WHERE occurred_at >= $1 AND occurred_at <= $2
           AND source_provider != 'virtues'
-        ORDER BY conversation_id, timestamp ASC
+        ORDER BY conversation_id, occurred_at ASC
         "#,
     )
     .bind(start_of_day)

@@ -27,7 +27,7 @@ pub struct WeatherNow {
     pub temp_min_c: Option<f64>,
     pub sunrise: Option<String>,
     pub sunset: Option<String>,
-    pub valid_time: String,
+    pub occurred_at: String,
 }
 
 fn wmo_condition(code: Option<i32>) -> String {
@@ -47,9 +47,9 @@ fn wmo_condition(code: Option<i32>) -> String {
 
 pub async fn get_current_weather(pool: &PgPool) -> Result<Option<WeatherNow>> {
     let cur = sqlx::query(
-        r#"SELECT temperature_c, apparent_c, humidity_pct, wind_kph, is_day, weather_code, valid_time
+        r#"SELECT temperature_c, apparent_c, humidity_pct, wind_kph, is_day, weather_code, occurred_at
            FROM data_environment_weather WHERE is_forecast = FALSE
-           ORDER BY valid_time DESC LIMIT 1"#,
+           ORDER BY occurred_at DESC LIMIT 1"#,
     )
     .fetch_optional(pool)
     .await
@@ -61,7 +61,7 @@ pub async fn get_current_weather(pool: &PgPool) -> Result<Option<WeatherNow>> {
     let fc = sqlx::query(
         r#"SELECT temp_max_c, temp_min_c, sunrise, sunset
            FROM data_environment_weather
-           WHERE is_forecast = TRUE AND valid_time::date = (now() AT TIME ZONE 'UTC')::date
+           WHERE is_forecast = TRUE AND occurred_at::date = (now() AT TIME ZONE 'UTC')::date
            ORDER BY issued_at DESC LIMIT 1"#,
     )
     .fetch_optional(pool)
@@ -70,7 +70,7 @@ pub async fn get_current_weather(pool: &PgPool) -> Result<Option<WeatherNow>> {
     .flatten();
 
     let code: Option<i32> = cur.try_get("weather_code").ok().flatten();
-    let valid: DateTime<Utc> = cur.try_get("valid_time").ok().unwrap_or_else(Utc::now);
+    let valid: DateTime<Utc> = cur.try_get("occurred_at").ok().unwrap_or_else(Utc::now);
     Ok(Some(WeatherNow {
         temperature_c: cur.try_get("temperature_c").ok().flatten(),
         apparent_c: cur.try_get("apparent_c").ok().flatten(),
@@ -89,7 +89,7 @@ pub async fn get_current_weather(pool: &PgPool) -> Result<Option<WeatherNow>> {
             .as_ref()
             .and_then(|r| r.try_get::<Option<DateTime<Utc>>, _>("sunset").ok().flatten())
             .map(|d| d.to_rfc3339()),
-        valid_time: valid.to_rfc3339(),
+        occurred_at: valid.to_rfc3339(),
     }))
 }
 

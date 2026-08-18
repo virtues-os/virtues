@@ -72,15 +72,15 @@ pub async fn build_hourly_context(
     // populated, so the prior query returned NULL names and the section was
     // empty. JOIN through to the place, and decode the timestamp as DateTime.
     if let Ok(rows) = sqlx::query(
-        r#"SELECT p.name AS place_name, v.arrival_time, v.duration_minutes
+        r#"SELECT p.name AS place_name, v.started_at, v.duration_minutes
            FROM data_location_visit v
            JOIN wiki_refs er
              ON er.source_table = 'data_location_visit'
             AND er.source_id = v.id
             AND er.entity_type = 'place'
            JOIN wiki_places p ON p.id = er.entity_id
-           WHERE v.arrival_time >= $1 AND v.arrival_time < $2
-           ORDER BY v.arrival_time"#,
+           WHERE v.started_at >= $1 AND v.started_at < $2
+           ORDER BY v.started_at"#,
     )
     .bind(window_start)
     .bind(window_end)
@@ -89,7 +89,7 @@ pub async fn build_hourly_context(
     {
         let items: Vec<String> = rows.iter().filter_map(|r| {
             let name: String = r.try_get::<Option<String>, _>("place_name").ok().flatten()?;
-            let arrival: DateTime<Utc> = r.try_get("arrival_time").ok()?;
+            let arrival: DateTime<Utc> = r.try_get("started_at").ok()?;
             let dur: Option<i32> = r.try_get("duration_minutes").ok().flatten();
             let mut s = format!("- {} (arrived {})", name, arrival.format("%H:%M"));
             if let Some(d) = dur { s.push_str(&format!(", {}min", d)); }
@@ -133,8 +133,8 @@ pub async fn build_hourly_context(
     if let Ok(rows) = sqlx::query(
         r#"SELECT from_name, channel, body
            FROM data_communication_message
-           WHERE timestamp >= $1 AND timestamp < $2
-           ORDER BY timestamp
+           WHERE occurred_at >= $1 AND occurred_at < $2
+           ORDER BY occurred_at
            LIMIT 15"#,
     )
     .bind(window_start)
@@ -184,7 +184,7 @@ pub async fn build_hourly_context(
 
     // Health summary (aggregated, not per-reading)
     if let Ok(row) = sqlx::query(
-        "SELECT COUNT(*) as cnt, AVG(bpm) as avg_bpm FROM data_health_heart_rate WHERE timestamp >= $1 AND timestamp < $2",
+        "SELECT COUNT(*) as cnt, AVG(bpm) as avg_bpm FROM data_health_heart_rate WHERE occurred_at >= $1 AND occurred_at < $2",
     )
     .bind(window_start)
     .bind(window_end)
@@ -203,7 +203,7 @@ pub async fn build_hourly_context(
     }
 
     if let Ok(row) = sqlx::query(
-        "SELECT SUM(step_count) as total FROM data_health_steps WHERE timestamp >= $1 AND timestamp < $2",
+        "SELECT SUM(step_count) as total FROM data_health_steps WHERE occurred_at >= $1 AND occurred_at < $2",
     )
     .bind(window_start)
     .bind(window_end)
@@ -224,7 +224,7 @@ pub async fn build_hourly_context(
     if let Ok(rows) = sqlx::query(
         r#"SELECT url, page_title, visit_duration_seconds
            FROM data_activity_web_browsing
-           WHERE timestamp >= $1 AND timestamp < $2
+           WHERE occurred_at >= $1 AND occurred_at < $2
            ORDER BY visit_duration_seconds DESC
            LIMIT 5"#,
     )
@@ -253,8 +253,8 @@ pub async fn build_hourly_context(
     if let Ok(rows) = sqlx::query(
         r#"SELECT track_name, artist_name
            FROM data_activity_listening
-           WHERE played_at >= $1 AND played_at < $2
-           ORDER BY played_at
+           WHERE occurred_at >= $1 AND occurred_at < $2
+           ORDER BY occurred_at
            LIMIT 5"#,
     )
     .bind(window_start)

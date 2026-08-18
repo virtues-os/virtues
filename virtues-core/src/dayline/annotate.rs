@@ -136,7 +136,7 @@ async fn window_avg_hr(
     sqlx::query_scalar(
         r#"SELECT AVG(CAST(bpm AS REAL))
            FROM data_health_heart_rate
-           WHERE timestamp >= $1 AND timestamp < $2"#,
+           WHERE occurred_at >= $1 AND occurred_at < $2"#,
     )
     .bind(start)
     .bind(end)
@@ -161,7 +161,7 @@ async fn window_entities(
         r#"
         SELECT DISTINCT entity_id
         FROM wiki_refs
-        WHERE timestamp >= $1 AND timestamp < $2
+        WHERE occurred_at >= $1 AND occurred_at < $2
         "#,
     )
     .bind(start)

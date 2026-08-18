@@ -485,10 +485,10 @@ pub async fn get_ground(
                round(avg(longitude)::numeric, 6)::float8 AS "lon!",
                count(*)                                  AS "visits!",
                COALESCE(sum(duration_minutes), 0)::float8 AS "minutes!",
-               min(arrival_time)                         AS "first",
-               max(COALESCE(departure_time, arrival_time)) AS "last"
+               min(started_at)                         AS "first",
+               max(COALESCE(ended_at, started_at)) AS "last"
         FROM data_location_visit
-        WHERE arrival_time >= $1 AND arrival_time < $2
+        WHERE started_at >= $1 AND started_at < $2
           AND latitude IS NOT NULL AND longitude IS NOT NULL
         GROUP BY round((latitude / $3)::numeric), round((longitude / $3)::numeric)
         ORDER BY 4 DESC
@@ -506,7 +506,7 @@ pub async fn get_ground(
 
     let track_total: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM data_location_point
-           WHERE timestamp >= $1 AND timestamp < $2 AND latitude IS NOT NULL"#,
+           WHERE occurred_at >= $1 AND occurred_at < $2 AND latitude IS NOT NULL"#,
         from,
         to,
     )
@@ -523,9 +523,9 @@ pub async fn get_ground(
         SELECT latitude AS "lat!", longitude AS "lon!"
         FROM (
             SELECT latitude, longitude,
-                   row_number() OVER (ORDER BY timestamp) AS rn
+                   row_number() OVER (ORDER BY occurred_at) AS rn
             FROM data_location_point
-            WHERE timestamp >= $1 AND timestamp < $2
+            WHERE occurred_at >= $1 AND occurred_at < $2
               AND latitude IS NOT NULL AND longitude IS NOT NULL
         ) s
         WHERE rn % $3 = 0

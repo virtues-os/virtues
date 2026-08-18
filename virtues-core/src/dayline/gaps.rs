@@ -200,13 +200,13 @@ pub async fn classify_day_gaps(pool: &PgPool, date: NaiveDate) -> crate::error::
     // Visits for the day, each with its RESOLVED place id + name
     // (data_location_visit → wiki_refs[place] → wiki_places).
     let visits = sqlx::query(
-        "SELECT er.entity_id AS place_id, p.name AS place_name, v.arrival_time, v.departure_time \
+        "SELECT er.entity_id AS place_id, p.name AS place_name, v.started_at, v.ended_at \
          FROM data_location_visit v \
          JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' AND er.source_id = v.id \
           AND er.entity_type = 'place' \
          JOIN wiki_places p ON p.id = er.entity_id \
-         WHERE v.departure_time >= $1::timestamptz AND v.arrival_time <= $2::timestamptz",
+         WHERE v.ended_at >= $1::timestamptz AND v.started_at <= $2::timestamptz",
     )
     .bind(win_start)
     .bind(win_end)
@@ -218,9 +218,9 @@ pub async fn classify_day_gaps(pool: &PgPool, date: NaiveDate) -> crate::error::
     for b in blocks.iter_mut() {
         let mut best: Option<(i64, String, String)> = None;
         for v in &visits {
-            let arr: DateTime<Utc> = v.get("arrival_time");
+            let arr: DateTime<Utc> = v.get("started_at");
             let dep: DateTime<Utc> = v
-                .try_get::<Option<DateTime<Utc>>, _>("departure_time")
+                .try_get::<Option<DateTime<Utc>>, _>("ended_at")
                 .ok()
                 .flatten()
                 .unwrap_or(win_end);

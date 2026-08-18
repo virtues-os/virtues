@@ -28,19 +28,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_health_heart_rate", TableMetadata {
         description: "Heart rate BPM measurements from wearables",
         category: "health",
-        key_columns: &["bpm", "timestamp"],
+        key_columns: &["bpm", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_health_hrv", TableMetadata {
         description: "Heart rate variability measurements in milliseconds",
         category: "health",
-        key_columns: &["hrv_ms", "timestamp"],
+        key_columns: &["hrv_ms", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_health_steps", TableMetadata {
         description: "Step count records (may have multiple per day)",
         category: "health",
-        key_columns: &["step_count", "timestamp"],
+        key_columns: &["step_count", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_health_sleep", TableMetadata {
@@ -62,13 +62,13 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_location_point", TableMetadata {
         description: "Raw GPS coordinates (high volume, use sparingly)",
         category: "location",
-        key_columns: &["latitude", "longitude", "altitude", "horizontal_accuracy", "timestamp"],
+        key_columns: &["latitude", "longitude", "altitude", "horizontal_accuracy", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_location_visit", TableMetadata {
         description: "Place visits with arrival/departure times",
         category: "location",
-        key_columns: &["place_name", "latitude", "longitude", "arrival_time", "departure_time", "duration_minutes"],
+        key_columns: &["place_name", "latitude", "longitude", "started_at", "ended_at", "duration_minutes"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_location_visit' AND er.source_id = data_location_visit.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
     });
 
@@ -78,13 +78,13 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_communication_email", TableMetadata {
         description: "Email messages from Gmail, etc.",
         category: "communication",
-        key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "timestamp"],
+        key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "occurred_at"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_email' AND er.source_id = data_communication_email.id JOIN wiki_people ON er.entity_id = wiki_people.id AND er.entity_type = 'person'"),
     });
     m.insert("data_communication_message", TableMetadata {
         description: "Chat messages (iMessage, SMS, etc.)",
         category: "communication",
-        key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "timestamp"],
+        key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "occurred_at"],
         // A message links to the person on the other end via wiki_refs:
         // role='sender' for messages you received, role='recipient' for messages you
         // sent. Filter both to get a full thread with someone; the message's own
@@ -114,19 +114,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_financial_transaction", TableMetadata {
         description: "Transactions (amounts in cents, negative=debit)",
         category: "financial",
-        key_columns: &["account_id", "amount", "currency", "merchant_name", "merchant_category", "description", "category", "is_pending", "transaction_type", "payment_channel", "timestamp"],
+        key_columns: &["account_id", "amount", "currency", "merchant_name", "merchant_category", "description", "category", "is_pending", "transaction_type", "payment_channel", "occurred_at"],
         join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
     });
     m.insert("data_financial_asset", TableMetadata {
         description: "Investment holdings (stocks, crypto, etc.)",
         category: "financial",
-        key_columns: &["account_id", "asset_type", "symbol", "name", "quantity", "cost_basis", "current_value", "currency", "timestamp"],
+        key_columns: &["account_id", "asset_type", "symbol", "name", "quantity", "cost_basis", "current_value", "currency", "occurred_at"],
         join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
     });
     m.insert("data_financial_liability", TableMetadata {
         description: "Loans, mortgages, and debt",
         category: "financial",
-        key_columns: &["account_id", "liability_type", "principal", "interest_rate", "minimum_payment", "next_payment_due_date", "currency", "timestamp"],
+        key_columns: &["account_id", "liability_type", "principal", "interest_rate", "minimum_payment", "next_payment_due_date", "currency", "occurred_at"],
         join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
     });
 
@@ -142,7 +142,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_activity_web_browsing", TableMetadata {
         description: "Web browsing history",
         category: "activity",
-        key_columns: &["url", "domain", "page_title", "visit_duration_seconds", "timestamp"],
+        key_columns: &["url", "domain", "page_title", "visit_duration_seconds", "occurred_at"],
         join_hint: None,
     });
 
@@ -152,19 +152,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_content_document", TableMetadata {
         description: "Saved documents and notes",
         category: "content",
-        key_columns: &["title", "content", "content_summary", "document_type", "tags", "is_authored", "created_time", "last_modified_time"],
+        key_columns: &["title", "content", "content_summary", "document_type", "tags", "is_authored", "occurred_at", "last_modified_time"],
         join_hint: None,
     });
     m.insert("data_content_conversation", TableMetadata {
         description: "Past AI chat conversation history",
         category: "content",
-        key_columns: &["conversation_id", "message_id", "role", "content", "model", "provider", "timestamp"],
+        key_columns: &["conversation_id", "message_id", "role", "content", "model", "provider", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_content_bookmark", TableMetadata {
         description: "Saved/starred content (GitHub stars, browser bookmarks, etc.)",
         category: "content",
-        key_columns: &["url", "title", "description", "source_platform", "bookmark_type", "content_type", "author", "tags", "timestamp"],
+        key_columns: &["url", "title", "description", "source_platform", "bookmark_type", "content_type", "author", "tags", "occurred_at"],
         join_hint: None,
     });
 
@@ -198,19 +198,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_environment_weather", TableMetadata {
         description: "Weather where the owner was. Holds BOTH observations and forecasts — filter is_forecast = false for what actually happened.",
         category: "environment",
-        key_columns: &["valid_time", "is_forecast", "temperature_c", "apparent_c", "latitude", "longitude"],
+        key_columns: &["occurred_at", "is_forecast", "temperature_c", "apparent_c", "latitude", "longitude"],
         join_hint: None,
     });
     m.insert("data_health_active_energy", TableMetadata {
         description: "Active energy burned, in kilocalories",
         category: "health",
-        key_columns: &["kcal", "timestamp"],
+        key_columns: &["kcal", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_health_distance", TableMetadata {
         description: "Distance moved, in meters",
         category: "health",
-        key_columns: &["meters", "timestamp"],
+        key_columns: &["meters", "occurred_at"],
         join_hint: None,
     });
     m.insert("wiki_articles", TableMetadata {
@@ -287,7 +287,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("wiki_refs", TableMetadata {
         description: "Junction table linking entities (people, places, orgs) to ontology records. Use for 'everything about entity X' queries.",
         category: "wiki_reference",
-        key_columns: &["entity_type", "entity_id", "source_table", "source_id", "role", "timestamp"],
+        key_columns: &["entity_type", "entity_id", "source_table", "source_id", "role", "occurred_at"],
         join_hint: None,
     });
 

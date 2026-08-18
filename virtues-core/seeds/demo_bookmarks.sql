@@ -40,7 +40,7 @@
 
 INSERT INTO data_content_bookmark (
     id, url, title, description, source_platform, bookmark_type, author,
-    tags, thumbnail_url, note, timestamp, source_stream_id, source_table,
+    tags, thumbnail_url, note, occurred_at, source_stream_id, source_table,
     source_provider, deleted_at_source, metadata,
     enrichment_status, enriched_at, enrichment_model, extraction, extraction_text
 ) VALUES
@@ -237,7 +237,7 @@ ON CONFLICT DO NOTHING;
 
 INSERT INTO data_content_bookmark (
     id, url, title, description, source_platform, bookmark_type, tags,
-    thumbnail_url, note, timestamp, source_stream_id, source_table,
+    thumbnail_url, note, occurred_at, source_stream_id, source_table,
     source_provider, metadata, enrichment_status, enriched_at,
     enrichment_model, extraction, extraction_text
 ) VALUES

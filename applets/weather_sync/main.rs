@@ -45,7 +45,7 @@ struct WeatherRow {
     id: String,
     latitude: f64,
     longitude: f64,
-    valid_time: DateTime<Utc>,
+    occurred_at: DateTime<Utc>,
     issued_at: DateTime<Utc>,
     is_forecast: bool,
     temperature_c: Option<f64>,
@@ -82,7 +82,7 @@ fn parse_day_noon(s: &str) -> Option<DateTime<Utc>> {
 async fn resolve_location(pool: &PgPool) -> Option<(f64, f64)> {
     if let Ok(Some(r)) = sqlx::query(
         "SELECT latitude, longitude FROM data_location_point \
-         WHERE latitude IS NOT NULL ORDER BY timestamp DESC LIMIT 1",
+         WHERE latitude IS NOT NULL ORDER BY occurred_at DESC LIMIT 1",
     )
     .fetch_optional(pool)
     .await
@@ -117,7 +117,7 @@ async fn flush(pool: &PgPool, rows: &[WeatherRow]) -> Result<usize> {
         return Ok(0);
     }
     let cols = [
-        "id", "latitude", "longitude", "valid_time", "issued_at", "is_forecast",
+        "id", "latitude", "longitude", "occurred_at", "issued_at", "is_forecast",
         "temperature_c", "apparent_c", "humidity_pct", "precipitation_mm", "wind_kph",
         "is_day", "temp_max_c", "temp_min_c", "sunrise", "sunset", "weather_code",
         "source_stream_id",
@@ -129,7 +129,7 @@ async fn flush(pool: &PgPool, rows: &[WeatherRow]) -> Result<usize> {
             .bind(&r.id)
             .bind(r.latitude)
             .bind(r.longitude)
-            .bind(r.valid_time)
+            .bind(r.occurred_at)
             .bind(r.issued_at)
             .bind(r.is_forecast)
             .bind(r.temperature_c)
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
         id: uuid_v5(&cur_ssid),
         latitude: lat,
         longitude: lon,
-        valid_time: cur_valid,
+        occurred_at: cur_valid,
         issued_at: issued,
         is_forecast: false,
         temperature_c: resp.current.temperature_2m,
@@ -205,7 +205,7 @@ async fn main() -> Result<()> {
                 id: uuid_v5(&ssid),
                 latitude: lat,
                 longitude: lon,
-                valid_time: valid,
+                occurred_at: valid,
                 issued_at: issued,
                 is_forecast: true,
                 temperature_c: None,
