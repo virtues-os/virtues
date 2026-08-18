@@ -4,7 +4,7 @@
 	The box names a place it cannot identify after its coordinates, and then
 	files every later visit under that name. Nothing in the product ever asks
 	you to fix it, so an archive that should get better with age instead
-	accumulates rows filed under "Location 30.2645, -97.7451" — and one answer
+	accumulates rows filed under "Location 41.8781, -87.6298" — and one answer
 	here renames every one of them at once, backwards through the record.
 
 	One question at a time, and only for places visited often enough that the

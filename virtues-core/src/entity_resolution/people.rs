@@ -108,7 +108,7 @@ const MESSAGE_BATCH: i64 = 5_000;
 ///
 /// An unrecognized email address at least carries a display name. A bare phone number
 /// carries nothing, so minting a person per unknown number would fill the graph with
-/// hundreds of ghosts called "+18334160379". They stay unresolved until a contact
+/// hundreds of ghosts called "+18005550199". They stay unresolved until a contact
 /// turns up — the honest state.
 async fn resolve_message_senders(db: &Database) -> Result<usize> {
     normalize_pending_handles(db).await?;
@@ -209,8 +209,8 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
 /// Link the messages *you* sent to the person you sent them to.
 ///
 /// This is the other half of a conversation. The sender pass (above) resolves every
-/// *inbound* message — "+16786463049" → Almu — but says nothing about your replies,
-/// and so "did we ever text Almu?" returned only her side: her three messages, none
+/// *inbound* message — "+15125550137" → Nick — but says nothing about your replies,
+/// and so "did we ever text Nick?" returned only their side: their three messages, none
 /// of yours. The reason is structural, not a bug in the join. A message you sent has
 /// `is_from_me = true`, which the transform records as `from_identifier = "me"` and
 /// `from_handle = ""` — because the chat.db `handle` names the *other* party even on
@@ -315,7 +315,7 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
 
         // `from_name` is deliberately NOT filled here. It names who *sent* the
         // message — that is you — so writing the recipient's name onto your own row
-        // would render "Almu: <your reply>". The link lives in the ref; the plain
+        // would render "Nick: <your reply>". The link lives in the ref; the plain
         // column stays honest.
 
         resolved += batch;
@@ -901,7 +901,7 @@ mod tests {
         // Namespaced so the seed can never collide with real rows and always cleans up.
         const P: &str = "test_recipient_pass";
         let person_id = format!("person_{P}");
-        let handle = "+16786463049";
+        let handle = "+15125550137";
         let thread = format!("iMessage;-;{handle};{P}");
 
         async fn cleanup(db: &Database, person_id: &str, thread: &str) {
@@ -957,7 +957,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO wiki_people (id, canonical_name, handles)
-             VALUES ($1, 'Almu', $2::jsonb)",
+             VALUES ($1, 'Nick', $2::jsonb)",
         )
         .bind(&person_id)
         .bind(serde_json::json!([handle]))

@@ -367,8 +367,8 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
         // `group_title` is empty for most group chats (people don't name them), so
         // keying on it found zero groups.
         //
-        //   any;-;+16025778741            1:1
-        //   any;+;chat646103172830255689  group
+        //   any;-;+15125550164            1:1
+        //   any;+;chat100000000000000001  group
         let is_group = chat_guid.as_deref().is_some_and(|g| g.contains(";+;"));
 
         // A tapback IS a message row in chat.db: `associated_message_type` says which
