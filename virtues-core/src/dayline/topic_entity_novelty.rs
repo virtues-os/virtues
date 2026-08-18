@@ -277,7 +277,24 @@ async fn score_topics_by_embedding(
     }
 
     if baseline_embeddings.is_empty() {
-        return Ok(today_topics.iter().map(|t| (t.clone(), Z_MAX)).collect());
+        // Score nothing — the same rule the caller applies, for the same reason.
+        //
+        // The caller already refuses to score when the baseline is too FEW DAYS
+        // (see the `MIN_BASELINE_DAYS` branch and its comment: "'I have no
+        // baseline' and 'this is unprecedented' are opposite claims and must
+        // never produce the same number"). This is the other way to have no
+        // baseline: enough days, but none of their rows carried a usable
+        // embedding. It returned Z_MAX for every topic — exactly the behavior
+        // that comment was written to end, reachable by a different route.
+        //
+        // An empty map leaves `topic_novelty` NULL, which reads as
+        // "calibrating" downstream. Absence of a measurement is not a
+        // measurement.
+        tracing::debug!(
+            topics = today_topics.len(),
+            "no usable baseline embeddings — leaving topic novelty NULL, not Z_MAX"
+        );
+        return Ok(HashMap::new());
     }
 
     // Compute centroid of all baseline topic embeddings

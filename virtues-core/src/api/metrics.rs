@@ -90,7 +90,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
             SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as failed,
             SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
             SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active,
-            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as total_records,
+            CAST(COALESCE(SUM(records_processed), 0) AS BIGINT) as total_records,
             AVG(CASE WHEN completed_at IS NOT NULL
                 THEN EXTRACT(EPOCH FROM (completed_at - started_at))
                 ELSE NULL END) as avg_duration
@@ -256,7 +256,7 @@ async fn get_period_stats(db: &Database, since: DateTime<Utc>) -> Result<PeriodS
         SELECT
             SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as completed,
             SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as failed,
-            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records
+            CAST(COALESCE(SUM(records_processed), 0) AS BIGINT) as records
         FROM app_applet_runs
         WHERE created_at >= $1
         "#,
