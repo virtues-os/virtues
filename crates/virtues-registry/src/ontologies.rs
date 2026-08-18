@@ -227,13 +227,13 @@ pub fn lane_measures() -> &'static [LaneMeasure] {
             timestamp_column: "occurred_at", label: "HRV", unit: "ms",
             agg: "avg(hrv_ms)", filter: Some("hrv_ms > 0"), kind: Rate },
         LaneMeasure { id: "sleep", lane: "health", table: "data_health_sleep",
-            timestamp_column: "start_time", label: "sleep", unit: "h",
+            timestamp_column: "started_at", label: "sleep", unit: "h",
             agg: "sum(duration_minutes) / 60.0", filter: None, kind: Total },
         LaneMeasure { id: "steps", lane: "health", table: "data_health_steps",
             timestamp_column: "occurred_at", label: "steps", unit: "",
             agg: "sum(step_count)", filter: None, kind: Total },
         LaneMeasure { id: "workouts", lane: "health", table: "data_health_workout",
-            timestamp_column: "start_time", label: "workouts", unit: "",
+            timestamp_column: "started_at", label: "workouts", unit: "",
             agg: "count(*)", filter: None, kind: Total },
         // ── location ────────────────────────────────────────────────────────
         LaneMeasure { id: "visits", lane: "location", table: "data_location_visit",
@@ -258,7 +258,7 @@ pub fn lane_measures() -> &'static [LaneMeasure] {
             agg: "count(DISTINCT from_handle)", filter: Some("from_handle IS NOT NULL"),
             kind: Total },
         LaneMeasure { id: "talk", lane: "communication", table: "data_communication_transcription",
-            timestamp_column: "start_time", label: "speech heard", unit: "min",
+            timestamp_column: "started_at", label: "speech heard", unit: "min",
             agg: "sum(duration_seconds) / 60.0", filter: None, kind: Total },
         // ── financial ───────────────────────────────────────────────────────
         LaneMeasure { id: "spend", lane: "financial", table: "data_financial_transaction",
@@ -272,11 +272,11 @@ pub fn lane_measures() -> &'static [LaneMeasure] {
             agg: "count(*)", filter: None, kind: Total },
         // ── activity ────────────────────────────────────────────────────────
         LaneMeasure { id: "screen", lane: "activity", table: "data_activity_app_session",
-            timestamp_column: "start_time", label: "screen time", unit: "h",
-            agg: "sum(EXTRACT(EPOCH FROM (end_time - start_time))) / 3600.0",
-            filter: Some("end_time IS NOT NULL"), kind: Total },
+            timestamp_column: "started_at", label: "screen time", unit: "h",
+            agg: "sum(EXTRACT(EPOCH FROM (ended_at - started_at))) / 3600.0",
+            filter: Some("ended_at IS NOT NULL"), kind: Total },
         LaneMeasure { id: "apps", lane: "activity", table: "data_activity_app_session",
-            timestamp_column: "start_time", label: "distinct apps", unit: "",
+            timestamp_column: "started_at", label: "distinct apps", unit: "",
             agg: "count(DISTINCT app_name)", filter: Some("app_name IS NOT NULL"), kind: Total },
         LaneMeasure { id: "browsing", lane: "activity", table: "data_activity_web_browsing",
             timestamp_column: "occurred_at", label: "pages visited", unit: "",
@@ -435,8 +435,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             lane: Some("health"),
             table_name: "data_health_sleep",
             source_streams: vec!["stream_ios_healthkit"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: None,
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -461,8 +461,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             lane: Some("health"),
             table_name: "data_health_workout",
             source_streams: vec!["stream_ios_healthkit", "stream_strava_activities"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: None,
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -626,15 +626,15 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             lane: None,
             table_name: "data_calendar_event",
             source_streams: vec!["stream_google_calendar", "stream_ios_eventkit"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: Some(EmbeddingConfig {
                 embed_text_sql: "COALESCE(t.title, '') || '\n\n' || COALESCE(t.description, '')",
                 content_type: "calendar",
                 title_sql: Some("t.title"),
                 preview_sql: "COALESCE(SUBSTR(t.description, 1, 200), '')",
                 author_sql: None,
-                timestamp_sql: "t.start_time",
+                timestamp_sql: "t.started_at",
                 embed_where: None,
             }),
             extraction: None,
@@ -661,8 +661,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             lane: Some("activity"),
             table_name: "data_activity_app_session",
             source_streams: vec!["stream_mac_apps"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: None,
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -672,7 +672,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 label_sql: "COALESCE(t.app_name, 'Unknown app')",
                 preview_sql: "t.window_title",
                 id_sql: "t.id",
-                // An open session's end_time is provisional (it walks forward with
+                // An open session's ended_at is provisional (it walks forward with
                 // each heartbeat), so it would otherwise show up in a day's timeline
                 // as a zero-length blip until it closes.
                 // The `AND` is not decoration: `extra_where` is spliced raw after
@@ -746,8 +746,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             lane: Some("communication"),
             table_name: "data_communication_transcription",
             source_streams: vec!["stream_ios_microphone"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             // What you actually SAID — and until now, the one thing search could
             // not find. A row here is not an audio chunk: `transcription_resolution`
             // has already assembled the whole conversation (durations run to 6300s)
@@ -763,7 +763,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 title_sql: Some("t.title"),
                 preview_sql: "COALESCE(SUBSTR(t.summary, 1, 200), SUBSTR(t.text, 1, 200), '')",
                 author_sql: None,
-                timestamp_sql: "t.start_time",
+                timestamp_sql: "t.started_at",
                 // Silence is not a document.
                 //
                 // 68.6% of rows on a real box are silent chunks — the collector
@@ -808,8 +808,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             lane: Some("communication"),
             table_name: "data_audio_session",
             source_streams: vec!["stream_ios_microphone"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: None,
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -899,8 +899,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             lane: None,
             table_name: "wiki_events",
             source_streams: vec![],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: Some(EmbeddingConfig {
                 // The user's own label wins over the machine's: autonomy over
                 // tidiness, everywhere.
@@ -919,7 +919,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 title_sql: Some("COALESCE(t.user_label, t.auto_label)"),
                 preview_sql: "SUBSTR(COALESCE(t.event_summary, ''), 1, 200)",
                 author_sql: None,
-                timestamp_sql: "t.start_time",
+                timestamp_sql: "t.started_at",
                 embed_where: None,
             }),
             // Entities are already resolved onto events by the day pipeline
@@ -1442,8 +1442,8 @@ mod tests {
         assert!(sleep.is_some());
         let s = sleep.unwrap();
         assert_eq!(s.domain, "health");
-        assert_eq!(s.timestamp_column, "start_time");
-        assert_eq!(s.end_timestamp_column, Some("end_time"));
+        assert_eq!(s.timestamp_column, "started_at");
+        assert_eq!(s.end_timestamp_column, Some("ended_at"));
     }
 
     #[test]

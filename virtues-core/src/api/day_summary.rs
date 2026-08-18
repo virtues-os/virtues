@@ -391,10 +391,10 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         // `COALESCE(..., '(unlabeled)')` so a NULL label can never fail the String
         // decode and abort narration for the whole day.
         "SELECT COALESCE(user_label, auto_label, '(unlabeled)') AS label, event_summary, \
-                start_time, end_time, novelty_z \
+                start_time, ended_at, novelty_z \
          FROM wiki_events \
          WHERE day_id = $1 AND NOT is_unknown AND NOT user_hidden \
-         ORDER BY start_time",
+         ORDER BY started_at",
     )
     .bind(&day.id)
     .fetch_all(pool)
@@ -465,7 +465,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         date.format("%A, %B %-d, %Y")
     );
     for (i, e) in events.iter().enumerate() {
-        prompt.push_str(&format!("- {}–{} {}", fmt(&e.start_time), fmt(&e.end_time), e.label));
+        prompt.push_str(&format!("- {}–{} {}", fmt(&e.started_at), fmt(&e.ended_at), e.label));
         if let Some(s) = e.event_summary.as_deref().filter(|s| !s.trim().is_empty()) {
             prompt.push_str(&format!(": {s}"));
         }
@@ -705,8 +705,8 @@ fn append_section(prompt: &mut String, section: &PromptSection) {
 struct DayEventRow {
     label: String,
     event_summary: Option<String>,
-    start_time: chrono::DateTime<chrono::Utc>,
-    end_time: chrono::DateTime<chrono::Utc>,
+    started_at: chrono::DateTime<chrono::Utc>,
+    ended_at: chrono::DateTime<chrono::Utc>,
     novelty_z: Option<f64>,
 }
 
@@ -921,10 +921,10 @@ async fn day_device_presence(
     const TOP_APPS: usize = 4;
 
     let rows = sqlx::query(
-        "SELECT app_name, start_time, end_time, attention, closed_by, is_open \
+        "SELECT app_name, started_at, ended_at, attention, closed_by, is_open \
          FROM data_activity_app_session \
-         WHERE end_time >= $1::timestamptz AND start_time <= $2::timestamptz \
-         ORDER BY start_time",
+         WHERE ended_at >= $1::timestamptz AND started_at <= $2::timestamptz \
+         ORDER BY started_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -947,8 +947,8 @@ async fn day_device_presence(
     let mut runs: Vec<Run> = Vec::new();
 
     for r in &rows {
-        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
-        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
         if e < s {
             continue;
         }
@@ -1120,7 +1120,7 @@ async fn day_message_bursts(
                 .unwrap_or_else(|| r.get::<String, _>("id"));
             Msg {
                 thread,
-                ts: r.get("timestamp"),
+                ts: r.get("occurred_at"),
                 body: r.try_get::<Option<String>, _>("body").ok().flatten(),
                 from_me,
                 who,
@@ -1312,11 +1312,11 @@ async fn build_dossier(
     // is even ABOUT the owner. All-day events bound nothing; flag them so the
     // detective does not treat a 24h block as a boundary.
     let cal = sqlx::query(
-        "SELECT title, start_time, end_time, is_all_day, calendar_access_role, response_status \
+        "SELECT title, started_at, ended_at, is_all_day, calendar_access_role, response_status \
          FROM data_calendar_event \
-         WHERE start_time >= $1::timestamptz AND start_time <= $2::timestamptz \
+         WHERE started_at >= $1::timestamptz AND started_at <= $2::timestamptz \
            AND (status IS NULL OR status <> 'cancelled') \
-         ORDER BY start_time",
+         ORDER BY started_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -1325,8 +1325,8 @@ async fn build_dossier(
     .unwrap_or_default();
     for r in &cal {
         let title: String = r.try_get("title").unwrap_or_default();
-        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
-        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
         let all_day: bool = r.try_get("is_all_day").unwrap_or(false);
         let access: Option<String> = r.try_get("calendar_access_role").ok().flatten();
         let rsvp: Option<String> = r.try_get("response_status").ok().flatten();
@@ -1370,10 +1370,10 @@ async fn build_dossier(
 
     // Sleep — a hard boundary. Overlap the window (sleep starts the night before).
     let sleep = sqlx::query(
-        "SELECT start_time, end_time, duration_minutes \
+        "SELECT started_at, ended_at, duration_minutes \
          FROM data_health_sleep \
-         WHERE end_time >= $1::timestamptz AND start_time <= $2::timestamptz \
-         ORDER BY start_time",
+         WHERE ended_at >= $1::timestamptz AND started_at <= $2::timestamptz \
+         ORDER BY started_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -1381,8 +1381,8 @@ async fn build_dossier(
     .await
     .unwrap_or_default();
     for r in &sleep {
-        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
-        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
         let dur: Option<i32> = r.try_get("duration_minutes").ok().flatten();
         let dur_str = dur
             .map(|m| format!(" ({}h{:02}m)", m / 60, m % 60))
@@ -1394,10 +1394,10 @@ async fn build_dossier(
     // is the reasoning material that lets the detective name a location-less day,
     // capped so a talkative day cannot bloat the prompt.
     let audio = sqlx::query(
-        "SELECT start_time, end_time, speaker_mode, content \
+        "SELECT started_at, ended_at, speaker_mode, content \
          FROM data_audio_session \
-         WHERE start_time >= $1::timestamptz AND start_time < $2::timestamptz \
-         ORDER BY start_time",
+         WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz \
+         ORDER BY started_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -1405,8 +1405,8 @@ async fn build_dossier(
     .await
     .unwrap_or_default();
     for r in &audio {
-        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
-        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
         let mode: i16 = r.try_get("speaker_mode").unwrap_or(0);
         let who = match mode {
             0 => "silent/ambient",
@@ -1472,7 +1472,7 @@ async fn build_dossier(
     .await
     .unwrap_or_default();
     for r in &txns {
-        let ts: chrono::DateTime<chrono::Utc> = r.get("timestamp");
+        let ts: chrono::DateTime<chrono::Utc> = r.get("occurred_at");
         let cents: i64 = r.try_get("amount").unwrap_or(0);
         let currency = r
             .try_get::<Option<String>, _>("currency")
@@ -1573,7 +1573,7 @@ async fn recent_event_labels(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) ->
         "SELECT d.date, COALESCE(e.user_label, e.auto_label, '(unlabeled)') AS label \
          FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id \
          WHERE d.date >= $1 AND d.date < $2 AND NOT e.is_unknown AND NOT e.user_hidden \
-         ORDER BY d.date, e.start_time",
+         ORDER BY d.date, e.started_at",
     )
     .bind(date - chrono::Duration::days(3))
     .bind(date)
@@ -1606,7 +1606,7 @@ async fn recent_event_case_file(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>)
         "SELECT d.date, COALESCE(e.user_label, e.auto_label, '(unlabeled)') AS label, e.event_summary \
          FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id \
          WHERE d.date >= $1 AND d.date < $2 AND NOT e.is_unknown AND NOT e.user_hidden \
-         ORDER BY d.date, e.start_time",
+         ORDER BY d.date, e.started_at",
     )
     .bind(date - chrono::Duration::days(14))
     .bind(date)
@@ -2290,7 +2290,7 @@ mod dossier_tests {
 
         sqlx::query(
             "INSERT INTO data_calendar_event \
-             (id,title,start_time,end_time,is_all_day,source_stream_id,source_table, \
+             (id,title,started_at,ended_at,is_all_day,source_stream_id,source_table, \
               source_provider,calendar_access_role,response_status) \
              VALUES ('g1','GAP Community Dinner','2026-07-26T18:30:00Z','2026-07-26T20:30:00Z', \
                      false,'gs1','google_calendar','google','reader',NULL)",
@@ -2310,7 +2310,7 @@ mod dossier_tests {
         {
             sqlx::query(
                 "INSERT INTO data_activity_app_session \
-                 (id,app_name,start_time,end_time,source_stream_id,source_table, \
+                 (id,app_name,started_at,ended_at,source_stream_id,source_table, \
                   source_provider,attention,is_open,closed_by) \
                  VALUES ($1,$2,$3::timestamptz,$4::timestamptz,$5,'mac_apps','mac','active',false,$6)",
             )

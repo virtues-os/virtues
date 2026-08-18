@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE wiki_events\n        SET\n            user_label = COALESCE($2, user_label),\n            user_location = COALESCE($3, user_location),\n            user_notes = COALESCE($4, user_notes),\n            is_user_edited = true,\n            updated_at = now()\n        WHERE id = $1\n        RETURNING\n            id, day_id, start_time, end_time,\n            auto_label, auto_location, user_label, user_location, user_notes,\n            source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,\n            created_at, updated_at\n        ",
+  "query": "\n        UPDATE wiki_events\n        SET\n            user_label = COALESCE($2, user_label),\n            user_location = COALESCE($3, user_location),\n            user_notes = COALESCE($4, user_notes),\n            is_user_edited = true,\n            updated_at = now()\n        WHERE id = $1\n        RETURNING\n            id, day_id, started_at, ended_at,\n            auto_label, auto_location, user_label, user_location, user_notes,\n            source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,\n            created_at, updated_at\n        ",
   "describe": {
     "columns": [
       {
@@ -15,12 +15,12 @@
       },
       {
         "ordinal": 2,
-        "name": "start_time",
+        "name": "started_at",
         "type_info": "Timestamptz"
       },
       {
         "ordinal": 3,
-        "name": "end_time",
+        "name": "ended_at",
         "type_info": "Timestamptz"
       },
       {
@@ -111,5 +111,5 @@
       false
     ]
   },
-  "hash": "a11c4d449f82746bf33475e51dbf71e6b743cf9cd9e48b5cc97138635b194267"
+  "hash": "542bb4c9c40643f9b5a259160e2d6f66568f097668985f75c526ab96a50a9c47"
 }

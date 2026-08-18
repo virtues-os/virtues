@@ -762,12 +762,12 @@ pub async fn get_processed(
                     ELSE e.kind END                        AS "tag",
                COALESCE(e.user_label, e.auto_label)        AS "label",
                e.event_summary                             AS "summary",
-               e.start_time                                AS "start!",
-               e.end_time                                  AS "end"
+               e.started_at                                AS "start!",
+               e.ended_at                                  AS "end"
         FROM wiki_events e
-        WHERE e.start_time >= $1 AND e.start_time < $2
+        WHERE e.started_at >= $1 AND e.started_at < $2
           AND COALESCE(e.user_hidden, false) = false
-        ORDER BY e.start_time DESC
+        ORDER BY e.started_at DESC
         LIMIT $3
         "#,
         from,
@@ -779,7 +779,7 @@ pub async fn get_processed(
     .map_err(|e| Error::Database(format!("processed items: {e}")))?;
 
     let span = sqlx::query!(
-        r#"SELECT min(start_time) AS "lo", max(COALESCE(end_time, start_time)) AS "hi",
+        r#"SELECT min(started_at) AS "lo", max(COALESCE(ended_at, started_at)) AS "hi",
                   count(DISTINCT day_id) AS "days!"
            FROM wiki_events WHERE COALESCE(user_hidden, false) = false"#
     )

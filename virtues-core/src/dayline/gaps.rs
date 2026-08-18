@@ -166,10 +166,10 @@ pub async fn classify_day_gaps(pool: &PgPool, date: NaiveDate) -> crate::error::
 
     // The day's auto blocks, gapless and ordered.
     let rows = sqlx::query(
-        "SELECT id, start_time, end_time, is_unknown, is_transit, is_sleep \
+        "SELECT id, started_at, ended_at, is_unknown, is_transit, is_sleep \
          FROM wiki_events \
          WHERE day_id = $1 AND is_user_added = FALSE \
-         ORDER BY start_time",
+         ORDER BY started_at",
     )
     .bind(&day_id)
     .fetch_all(pool)
@@ -182,8 +182,8 @@ pub async fn classify_day_gaps(pool: &PgPool, date: NaiveDate) -> crate::error::
         .iter()
         .map(|r| Block {
             id: r.get("id"),
-            start: r.get("start_time"),
-            end: r.get("end_time"),
+            start: r.get("started_at"),
+            end: r.get("ended_at"),
             is_unknown: r.get("is_unknown"),
             is_transit: r.get("is_transit"),
             is_sleep: r.get("is_sleep"),
@@ -256,9 +256,9 @@ async fn apply(pool: &PgPool, op: Op) {
     match op {
         Op::Absorb { block_id, neighbour_id, into_prev, boundary } => {
             let extend = if into_prev {
-                "UPDATE wiki_events SET end_time = $1 WHERE id = $2 AND is_user_added = FALSE"
+                "UPDATE wiki_events SET ended_at = $1 WHERE id = $2 AND is_user_added = FALSE"
             } else {
-                "UPDATE wiki_events SET start_time = $1 WHERE id = $2 AND is_user_added = FALSE"
+                "UPDATE wiki_events SET started_at = $1 WHERE id = $2 AND is_user_added = FALSE"
             };
             let _ = sqlx::query(extend).bind(boundary).bind(&neighbour_id).execute(pool).await;
             let _ = sqlx::query("DELETE FROM wiki_events WHERE id = $1 AND is_user_added = FALSE")

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT min(start_time) AS \"lo\", max(COALESCE(end_time, start_time)) AS \"hi\",\n                  count(DISTINCT day_id) AS \"days!\"\n           FROM wiki_events WHERE COALESCE(user_hidden, false) = false",
+  "query": "SELECT min(started_at) AS \"lo\", max(COALESCE(ended_at, started_at)) AS \"hi\",\n                  count(DISTINCT day_id) AS \"days!\"\n           FROM wiki_events WHERE COALESCE(user_hidden, false) = false",
   "describe": {
     "columns": [
       {
@@ -28,5 +28,5 @@
       null
     ]
   },
-  "hash": "36aa0f4c70e5f8ec15feebb079035c1f044f3b906930b1e50cb2cd50b9d140d8"
+  "hash": "5fd9670bdd79f9a1096dc2bd97e164b249627d2867235ca53a537626922c6273"
 }

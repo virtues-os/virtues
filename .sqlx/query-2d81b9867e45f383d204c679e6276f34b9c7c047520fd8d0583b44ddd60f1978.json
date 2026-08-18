@@ -1,0 +1,60 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT e.id                                       AS \"id!\",\n               'event'                                    AS \"kind!\",\n               CASE WHEN e.is_sleep    THEN 'sleep'\n                    WHEN e.is_transit  THEN 'transit'\n                    WHEN e.is_unknown  THEN 'unknown'\n                    ELSE e.kind END                        AS \"tag\",\n               COALESCE(e.user_label, e.auto_label)        AS \"label\",\n               e.event_summary                             AS \"summary\",\n               e.started_at                                AS \"start!\",\n               e.ended_at                                  AS \"end\"\n        FROM wiki_events e\n        WHERE e.started_at >= $1 AND e.started_at < $2\n          AND COALESCE(e.user_hidden, false) = false\n        ORDER BY e.started_at DESC\n        LIMIT $3\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "kind!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "tag",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "label",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "summary",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "start!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "end",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "2d81b9867e45f383d204c679e6276f34b9c7c047520fd8d0583b44ddd60f1978"
+}

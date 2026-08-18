@@ -602,10 +602,10 @@ WHERE occurred_at > now() - interval '14 days'
 ORDER BY occurred_at DESC
 
 -- Calendar events today
-SELECT title, start_time, end_time, location
+SELECT title, started_at, ended_at, location
 FROM data_calendar_event
-WHERE start_time::date = current_date
-ORDER BY start_time"#.to_string(),
+WHERE started_at::date = current_date
+ORDER BY started_at"#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["operation"],
@@ -1278,10 +1278,10 @@ fn dayline_event_tool() -> ToolConfig {
         llm_description: r#"Create, continue, revise, or mark timeline events for the Dayline.
 
 Actions:
-- NEW: Create a new event. Requires: event_summary, start_time, end_time. Optional: topics, auto_label, source_ontologies.
-- CONTINUE: Extend the current event. Requires: event_id, end_time. Optional: event_summary (updated), topics.
-- REVISE: Modify a previous event (merge, split, update). Requires: event_id. Optional: event_summary, start_time, end_time, auto_label, topics.
-- NO_DATA: Mark this time period as unknown. Requires: start_time, end_time.
+- NEW: Create a new event. Requires: event_summary, started_at, ended_at. Optional: topics, auto_label, source_ontologies.
+- CONTINUE: Extend the current event. Requires: event_id, ended_at. Optional: event_summary (updated), topics.
+- REVISE: Modify a previous event (merge, split, update). Requires: event_id. Optional: event_summary, started_at, ended_at, auto_label, topics.
+- NO_DATA: Mark this time period as unknown. Requires: start_time, ended_at.
 
 Event summaries should be 1-3 factual sentences. Be specific: name people, places, apps, projects. Include all data sources, even minor ones."#.to_string(),
         parameters: serde_json::json!({
