@@ -218,12 +218,12 @@ async fn fetch_names(
     // the id — it looks like a rendering bug.
     let sql = match kind {
         "person" => {
-            "SELECT id, COALESCE(NULLIF(canonical_name, ''), NULLIF(nickname, ''), id) \
+            "SELECT id, COALESCE(NULLIF(name, ''), NULLIF(nickname, ''), id) \
              FROM wiki_people WHERE id = ANY($1)"
         }
         "place" => "SELECT id, COALESCE(NULLIF(name, ''), id) FROM wiki_places WHERE id = ANY($1)",
         "org" => {
-            "SELECT id, COALESCE(NULLIF(canonical_name, ''), id) FROM wiki_orgs WHERE id = ANY($1)"
+            "SELECT id, COALESCE(NULLIF(name, ''), id) FROM wiki_orgs WHERE id = ANY($1)"
         }
         // No "thing" arm: migration 0071 dropped wiki_things and swept every
         // stored /thing/ url. An unknown kind resolves to nothing, which is

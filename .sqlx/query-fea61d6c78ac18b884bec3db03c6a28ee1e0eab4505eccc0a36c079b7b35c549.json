@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO wiki_people (\n            id,\n            canonical_name,\n            emails\n        ) VALUES (\n            $1, $2, $3\n        )\n        RETURNING id\n        ",
+  "query": "\n        INSERT INTO wiki_people (\n            id,\n            name,\n            emails\n        ) VALUES ($1, $2, $3)\n        ON CONFLICT (id) DO NOTHING\n        RETURNING id\n        ",
   "describe": {
     "columns": [
       {
@@ -20,5 +20,5 @@
       false
     ]
   },
-  "hash": "a87f9d0eae09b38cffeff9070d08adb85c0217b38a2b7b09d8cdab42e5bf858c"
+  "hash": "fea61d6c78ac18b884bec3db03c6a28ee1e0eab4505eccc0a36c079b7b35c549"
 }

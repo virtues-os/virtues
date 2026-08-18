@@ -395,12 +395,12 @@ export const themePreviewColors: Record<
 		syntax: ['#ff7b72', '#a5d6ff', '#d2a8ff', '#79c0ff', '#8b949e', '#e6edf3']
 	},
 	narnia: {
-		background: '#0C0E13',
-		surface: '#161820',
-		surfaceElevated: '#1e2028',
-		foreground: '#FAF9F5',
-		foregroundMuted: '#a8a29e',
-		primary: '#FF9D52',
+		background: '#0F1821',
+		surface: '#131E28',
+		surfaceElevated: '#18242F',
+		foreground: '#EDF1F4',
+		foregroundMuted: '#9BA7B2',
+		primary: '#7CC3DE',
 		syntax: ['#bb9af7', '#9ece6a', '#7aa2f7', '#ff9e64', '#565f89', '#a9b1d6']
 	},
 	canterbury: {
@@ -506,8 +506,8 @@ export const themeMetadata: Record<
 		description: 'Victorian gaslight'
 	},
 	narnia: {
-		icon: 'ph:lamp-bold',
-		description: 'Magical lamppost glow'
+		icon: 'ph:compass-tool-bold',
+		description: 'Blueprint under lamplight'
 	},
 	canterbury: {
 		icon: 'ph:path-bold',

@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Settings → Box → Updates.
+	 * Settings → Software → Updates.
 	 *
 	 * Checks on open rather than on a timer: a background poll means the box
 	 * making periodic outbound calls to GitHub on its own initiative, which
@@ -320,22 +320,14 @@
 </section>
 
 <style>
-	/* Carries its own gutter, matching the Page shell's, because Settings
-	   renders this section as a bare sibling of a Page-shelled view (`box` =
-	   UpdateSection + SystemInfoView). With no horizontal padding it sat flush
-	   to the window edge while the System page below it was inset — legible as
-	   a mistake at any width, glaring at 375px. */
+	/* No gutter of its own any more. It used to carry one — hand-matched to the
+	   Page shell's — because Settings rendered it as a bare sibling of a
+	   Page-shelled view. It now lives inside SoftwareView's `<Page>`, which
+	   owns the measure, so duplicating it here would double the inset. */
 	.updates {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
-		padding: 16px 1.25rem;
-	}
-
-	@media (min-width: 768px) {
-		.updates {
-			padding: 16px 3rem;
-		}
 	}
 
 	header {

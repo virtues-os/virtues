@@ -25,7 +25,7 @@ pub struct Place {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub radius_m: Option<f64>,
-    pub visit_count: Option<i32>,
+    pub seen_count: Option<i32>,
     pub metadata: Option<serde_json::Value>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -85,7 +85,7 @@ pub async fn list_places(pool: &PgPool) -> Result<Vec<Place>> {
             latitude,
             longitude,
             radius_m,
-            visit_count,
+            seen_count,
             metadata,
             created_at,
             updated_at
@@ -108,7 +108,7 @@ pub async fn list_places(pool: &PgPool) -> Result<Vec<Place>> {
             latitude: row.latitude,
             longitude: row.longitude,
             radius_m: Some(row.radius_m),
-            visit_count: Some(row.visit_count as i32),
+            seen_count: Some(row.seen_count as i32),
             metadata: Some(row.metadata),
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -131,7 +131,7 @@ pub async fn get_place(pool: &PgPool, id: String) -> Result<Place> {
             latitude,
             longitude,
             radius_m,
-            visit_count,
+            seen_count,
             metadata,
             created_at,
             updated_at
@@ -153,7 +153,7 @@ pub async fn get_place(pool: &PgPool, id: String) -> Result<Place> {
         latitude: row.latitude,
         longitude: row.longitude,
         radius_m: Some(row.radius_m),
-        visit_count: Some(row.visit_count as i32),
+        seen_count: Some(row.seen_count as i32),
         metadata: Some(row.metadata),
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -368,8 +368,8 @@ pub async fn set_home_place(pool: &PgPool, place_id: String) -> Result<()> {
 pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String) -> Result<String> {
     let person = sqlx::query!(
         r#"
-        SELECT canonical_name, emails, phones, handles, nickname,
-               first_interaction, last_interaction, interaction_count,
+        SELECT name, emails, phones, handles, nickname,
+               first_seen, last_seen, seen_count,
                metadata, content, aliases
         FROM wiki_people WHERE id = $1
         "#,
@@ -384,7 +384,7 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
     // silent no-op against an existing org of the same name.
     let org_id = ids::generate_id(
         ids::WIKI_ORG_PREFIX,
-        &[&person.canonical_name, &person_id],
+        &[&person.name, &person_id],
     );
 
     // What an org has no column for. Kept, not discarded.
@@ -407,15 +407,15 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
 
     sqlx::query!(
         r#"
-        INSERT INTO wiki_orgs (id, canonical_name, interaction_count, first_interaction,
-                               last_interaction, metadata, content, aliases)
+        INSERT INTO wiki_orgs (id, name, seen_count, first_seen,
+                               last_seen, metadata, content, aliases)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
         &org_id,
-        &person.canonical_name,
-        person.interaction_count,
-        person.first_interaction,
-        person.last_interaction,
+        &person.name,
+        person.seen_count,
+        person.first_seen,
+        person.last_seen,
         serde_json::Value::Object(metadata),
         person.content,
         person.aliases,
@@ -499,7 +499,7 @@ pub async fn create_person(pool: &PgPool, name: &str) -> Result<String> {
     let id = ids::generate_id(ids::WIKI_PERSON_PREFIX, &[name, "manual"]);
 
     sqlx::query!(
-        "INSERT INTO wiki_people (id, canonical_name) VALUES ($1, $2) \
+        "INSERT INTO wiki_people (id, name) VALUES ($1, $2) \
          ON CONFLICT (id) DO NOTHING",
         &id,
         name
@@ -520,7 +520,7 @@ pub async fn create_organization(pool: &PgPool, name: &str) -> Result<String> {
     let id = ids::generate_id(ids::WIKI_ORG_PREFIX, &[name, "manual"]);
 
     sqlx::query!(
-        "INSERT INTO wiki_orgs (id, canonical_name) VALUES ($1, $2) \
+        "INSERT INTO wiki_orgs (id, name) VALUES ($1, $2) \
          ON CONFLICT (id) DO NOTHING",
         &id,
         name

@@ -11,7 +11,7 @@
 
 export interface WikiPersonApi {
 	id: string;
-	canonical_name: string;
+	name: string;
 	content: string | null;
 	article: string | null;
 	article_updated_at: string | null;
@@ -31,9 +31,9 @@ export interface WikiPersonApi {
 	aliases: string[];
 	/** Is the record keeping this article up to date? Off unless asked. */
 	article_auto_update?: boolean;
-	first_interaction: string | null;
-	last_interaction: string | null;
-	interaction_count: number | null;
+	first_seen: string | null;
+	last_seen: string | null;
+	seen_count: number | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -49,9 +49,9 @@ export interface WikiPlaceApi {
 	address: string | null;
 	latitude: number | null;
 	longitude: number | null;
-	visit_count: number | null;
-	first_visit: string | null;
-	last_visit: string | null;
+	seen_count: number | null;
+	first_seen: string | null;
+	last_seen: string | null;
 	created_at: string;
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */
@@ -60,7 +60,7 @@ export interface WikiPlaceApi {
 
 export interface WikiOrganizationApi {
 	id: string;
-	canonical_name: string;
+	name: string;
 	content: string | null;
 	article: string | null;
 	article_updated_at: string | null;
@@ -70,9 +70,9 @@ export interface WikiOrganizationApi {
 	role_title: string | null;
 	start_date: string | null;
 	end_date: string | null;
-	interaction_count: number | null;
-	first_interaction: string | null;
-	last_interaction: string | null;
+	seen_count: number | null;
+	first_seen: string | null;
+	last_seen: string | null;
 	created_at: string;
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */
@@ -147,10 +147,10 @@ export interface IdResolution {
 
 export interface WikiPersonListItem {
 	id: string;
-	canonical_name: string;
+	name: string;
 	picture: string | null;
 	relationship_category: string | null;
-	last_interaction: string | null;
+	last_seen: string | null;
 	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
 	ref_count: number;
 }
@@ -160,14 +160,14 @@ export interface WikiPlaceListItem {
 	name: string;
 	category: string | null;
 	address: string | null;
-	visit_count: number | null;
+	seen_count: number | null;
 	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
 	ref_count: number;
 }
 
 export interface WikiOrganizationListItem {
 	id: string;
-	canonical_name: string;
+	name: string;
 	organization_type: string | null;
 	relationship_type: string | null;
 	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
@@ -1401,7 +1401,7 @@ export async function getCalendarUpcoming(
 export interface UnnamedPlace {
 	id: string;
 	name: string;
-	visit_count: number;
+	ref_count: number;
 	latitude: number | null;
 	longitude: number | null;
 }

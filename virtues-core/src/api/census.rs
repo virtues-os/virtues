@@ -63,15 +63,20 @@ pub struct Census {
 /// biography.
 const SOURCES: &[(&str, &str, &str, &str)] = &[
     // (id, label, table, time column)
-    ("messages", "messages", "data_communication_message", "timestamp"),
-    ("emails", "emails", "data_communication_email", "timestamp"),
-    ("conversations", "conversations", "data_content_conversation", "timestamp"),
-    ("events", "calendar events", "data_calendar_event", "start_time"),
-    ("browsing", "pages read", "data_activity_web_browsing", "timestamp"),
-    ("bookmarks", "things saved", "data_content_bookmark", "timestamp"),
+    //
+    // Time columns follow the 2026-08-17 rename: a moment is `occurred_at`, a
+    // span is `started_at`/`ended_at`. The old `timestamp`/`start_time` names
+    // are gone, and this list silently counted zero for every source until it
+    // caught up — see `count_of` for why that was invisible.
+    ("messages", "messages", "data_communication_message", "occurred_at"),
+    ("emails", "emails", "data_communication_email", "occurred_at"),
+    ("conversations", "conversations", "data_content_conversation", "occurred_at"),
+    ("events", "calendar events", "data_calendar_event", "started_at"),
+    ("browsing", "pages read", "data_activity_web_browsing", "occurred_at"),
+    ("bookmarks", "things saved", "data_content_bookmark", "occurred_at"),
     ("recordings", "recordings", "data_audio_recording", "started_at"),
-    ("transactions", "transactions", "data_financial_transaction", "timestamp"),
-    ("sessions", "app sessions", "data_activity_app_session", "start_time"),
+    ("transactions", "transactions", "data_financial_transaction", "occurred_at"),
+    ("sessions", "app sessions", "data_activity_app_session", "started_at"),
 ];
 
 /// Counted from the graph rather than the record, so they come last: these are
@@ -82,16 +87,35 @@ const DERIVED: &[(&str, &str, &str)] = &[
     ("days", "days written up", "wiki_days"),
 ];
 
-/// Count one table, tolerating its absence.
+/// Count one table, tolerating its absence but never hiding a failure.
 ///
-/// A missing table is not an error here. Sources arrive by migration and this
-/// list will drift ahead of, or behind, any given box — and a census that 500s
-/// because one table was renamed is worse than a census missing a line.
+/// A missing table is genuinely fine: sources arrive by migration and this list
+/// will drift ahead of, or behind, any given box, and a census that 500s over
+/// one renamed table is worse than one missing a line.
+///
+/// But the first version swallowed EVERY error into `0`, and within a day that
+/// bit exactly as it deserved to: a schema-wide rename of `timestamp` to
+/// `occurred_at` left this list pointing at columns that no longer existed, and
+/// the census reported a box with a full record as empty — including to the
+/// reveal, which would then show someone the "you have connected nothing"
+/// screen. Silence in the face of a real error is how a count becomes a lie.
+///
+/// So: absence is quiet, everything else is loud.
 async fn count_of(pool: &PgPool, table: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
+    match sqlx::query_scalar::<_, i64>(&format!("SELECT count(*) FROM {table}"))
         .fetch_one(pool)
         .await
-        .unwrap_or(0)
+    {
+        Ok(n) => n,
+        Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("42P01") => {
+            // undefined_table — this box does not have this source. Expected.
+            0
+        }
+        Err(e) => {
+            tracing::warn!(table, error = %e, "census: count failed; reporting 0 for this source");
+            0
+        }
+    }
 }
 
 /// Oldest and newest value of `col`, ignoring tables that are not there.
@@ -101,6 +125,11 @@ async fn span_of(pool: &PgPool, table: &str, col: &str) -> Option<(chrono::DateT
     )
     .fetch_one(pool)
     .await
+    .map_err(|e| {
+        if !matches!(&e, sqlx::Error::Database(d) if d.code().as_deref() == Some("42P01")) {
+            tracing::warn!(table, col, error = %e, "census: span query failed");
+        }
+    })
     .ok()
     .and_then(|(lo, hi)| Some((lo?, hi?)))
 }

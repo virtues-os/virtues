@@ -183,9 +183,9 @@ pub async fn write_entity_article_now(
 /// The subject's display name, for the article page's title.
 async fn entity_title(pool: &PgPool, subject_type: &str, subject_id: &str) -> Result<String> {
     let sql = match subject_type {
-        "person" => "SELECT canonical_name FROM wiki_people WHERE id = $1",
+        "person" => "SELECT name FROM wiki_people WHERE id = $1",
         "place" => "SELECT name FROM wiki_places WHERE id = $1",
-        "organization" => "SELECT canonical_name FROM wiki_orgs WHERE id = $1",
+        "organization" => "SELECT name FROM wiki_orgs WHERE id = $1",
         other => {
             return Err(Error::InvalidInput(format!(
                 "Cannot write an article for subject type {other}"
@@ -212,16 +212,16 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
     let (name, facts, previous): (String, String, Option<String>) = match entity.kind.as_str() {
         "person" => {
             let row = sqlx::query(
-                "SELECT canonical_name, relationship_category, nickname, notes, \
-                        first_interaction::text AS fi, last_interaction::text AS li, \
-                        interaction_count, article \
+                "SELECT name, relationship_category, nickname, notes, \
+                        first_seen::text AS fi, last_seen::text AS li, \
+                        ref_count, article \
                  FROM wiki_people WHERE id = $1",
             )
             .bind(&entity.id)
             .fetch_one(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to load person: {}", e)))?;
-            let name: String = row.get("canonical_name");
+            let name: String = row.get("name");
             let mut f = String::new();
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("relationship_category") {
                 f.push_str(&format!("- Relationship: {}\n", v));
@@ -243,8 +243,8 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         }
         "place" => {
             let row = sqlx::query(
-                "SELECT name, category, address, visit_count, \
-                        first_visit::text AS fv, last_visit::text AS lv, article \
+                "SELECT name, category, address, ref_count, \
+                        first_seen::text AS fv, last_seen::text AS lv, article \
                  FROM wiki_places WHERE id = $1",
             )
             .bind(&entity.id)
@@ -259,7 +259,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("address") {
                 f.push_str(&format!("- Address: {}\n", v));
             }
-            if let Ok(v) = row.try_get::<i32, _>("visit_count") {
+            if let Ok(v) = row.try_get::<i32, _>("ref_count") {
                 f.push_str(&format!("- Visits on record: {}\n", v));
             }
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("fv") {
@@ -273,15 +273,15 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         }
         _ => {
             let row = sqlx::query(
-                "SELECT canonical_name, organization_type, relationship_type, role_title, \
-                        first_interaction::text AS fi, last_interaction::text AS li, article \
+                "SELECT name, organization_type, relationship_type, role_title, \
+                        first_seen::text AS fi, last_seen::text AS li, article \
                  FROM wiki_orgs WHERE id = $1",
             )
             .bind(&entity.id)
             .fetch_one(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to load org: {}", e)))?;
-            let name: String = row.get("canonical_name");
+            let name: String = row.get("name");
             let mut f = String::new();
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("organization_type") {
                 f.push_str(&format!("- Type: {}\n", v));
@@ -369,9 +369,9 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
     .unwrap_or_default();
     for (etype, eid) in &co {
         let (route, name_sql) = match etype.as_str() {
-            "person" => ("person", "SELECT canonical_name FROM wiki_people WHERE id = $1"),
+            "person" => ("person", "SELECT name FROM wiki_people WHERE id = $1"),
             "place" => ("place", "SELECT name FROM wiki_places WHERE id = $1"),
-            "organization" => ("org", "SELECT canonical_name FROM wiki_orgs WHERE id = $1"),
+            "organization" => ("org", "SELECT name FROM wiki_orgs WHERE id = $1"),
             _ => continue,
         };
         if let Ok(Some(n)) = sqlx::query_scalar::<_, String>(name_sql)

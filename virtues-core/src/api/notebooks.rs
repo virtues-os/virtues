@@ -662,9 +662,9 @@ pub async fn notebook_graph(pool: &PgPool, notebook_id: &str) -> Result<Notebook
     if !entity_ids.is_empty() {
         let rows: Vec<(String, String)> = sqlx::query_as(
             r#"
-            SELECT id, canonical_name AS name FROM wiki_people WHERE id = ANY($1)
+            SELECT id, name AS name FROM wiki_people WHERE id = ANY($1)
             UNION ALL SELECT id, name FROM wiki_places WHERE id = ANY($1)
-            UNION ALL SELECT id, canonical_name AS name FROM wiki_orgs WHERE id = ANY($1)
+            UNION ALL SELECT id, name AS name FROM wiki_orgs WHERE id = ANY($1)
             "#,
         )
         .bind(&entity_ids)

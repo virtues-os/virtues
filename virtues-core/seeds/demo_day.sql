@@ -1132,9 +1132,9 @@ INSERT INTO data_location_point (
 
 -- Maya Chen — design team lead, close colleague
 INSERT INTO wiki_people (
-    id, canonical_name, emails, phones,
+    id, name, emails, phones,
     relationship_category, notes,
-    first_interaction, last_interaction, interaction_count
+    first_seen, last_seen, seen_count
 ) VALUES (
     'person_demo_maya', 'Maya Chen',
     '["maya.chen@company.com"]', '[]',
@@ -1145,9 +1145,9 @@ INSERT INTO wiki_people (
 
 -- David Okafor — design team, frontend-leaning
 INSERT INTO wiki_people (
-    id, canonical_name, emails, phones,
+    id, name, emails, phones,
     relationship_category, notes,
-    first_interaction, last_interaction, interaction_count
+    first_seen, last_seen, seen_count
 ) VALUES (
     'person_demo_david', 'David Okafor',
     '["david.okafor@company.com"]', '[]',
@@ -1158,9 +1158,9 @@ INSERT INTO wiki_people (
 
 -- Rachel Torres — realtor
 INSERT INTO wiki_people (
-    id, canonical_name, emails, phones,
+    id, name, emails, phones,
     relationship_category, notes,
-    first_interaction, last_interaction, interaction_count
+    first_seen, last_seen, seen_count
 ) VALUES (
     'person_demo_rachel', 'Rachel Torres',
     '["rachel.torres@realty.com"]', '["512-555-0147"]',
@@ -1171,9 +1171,9 @@ INSERT INTO wiki_people (
 
 -- Jess Landry — close friend
 INSERT INTO wiki_people (
-    id, canonical_name, emails, phones,
+    id, name, emails, phones,
     relationship_category, nickname, notes,
-    first_interaction, last_interaction, interaction_count
+    first_seen, last_seen, seen_count
 ) VALUES (
     'person_demo_jess', 'Jess Landry',
     '["jess.landry@email.com"]', '["512-555-0233"]',
@@ -1184,9 +1184,9 @@ INSERT INTO wiki_people (
 
 -- Priya Mehta — close friend
 INSERT INTO wiki_people (
-    id, canonical_name, emails, phones,
+    id, name, emails, phones,
     relationship_category, notes,
-    first_interaction, last_interaction, interaction_count
+    first_seen, last_seen, seen_count
 ) VALUES (
     'person_demo_priya', 'Priya Mehta',
     '["priya.mehta@email.com"]', '["512-555-0891"]',
@@ -1197,9 +1197,9 @@ INSERT INTO wiki_people (
 
 -- Mom
 INSERT INTO wiki_people (
-    id, canonical_name, phones,
+    id, name, phones,
     relationship_category, nickname, notes,
-    first_interaction, last_interaction, interaction_count
+    first_seen, last_seen, seen_count
 ) VALUES (
     'person_demo_mom', 'Linda',
     '["512-555-0012"]',
@@ -1216,7 +1216,7 @@ INSERT INTO wiki_people (
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    visit_count, first_visit, last_visit
+    seen_count, first_seen, last_seen
 ) VALUES (
     'place_demo_home', 'Home', 'home',
     'Mueller, Austin, TX',
@@ -1228,7 +1228,7 @@ INSERT INTO wiki_places (
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    visit_count, first_visit, last_visit
+    seen_count, first_seen, last_seen
 ) VALUES (
     'place_demo_office', 'Office', 'workplace',
     'Downtown Austin, TX',
@@ -1240,7 +1240,7 @@ INSERT INTO wiki_places (
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    visit_count, first_visit, last_visit,
+    seen_count, first_seen, last_seen,
     content
 ) VALUES (
     'place_demo_ramen', 'Ramen Tatsu-ya', 'restaurant',
@@ -1254,7 +1254,7 @@ INSERT INTO wiki_places (
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    visit_count, first_visit, last_visit,
+    seen_count, first_seen, last_seen,
     content
 ) VALUES (
     'place_demo_jos', 'Jo''s Coffee', 'cafe',
@@ -1268,7 +1268,7 @@ INSERT INTO wiki_places (
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    visit_count, first_visit, last_visit,
+    seen_count, first_seen, last_seen,
     content
 ) VALUES (
     'place_demo_house', '1847 S 3rd St', 'residential',
@@ -1282,7 +1282,7 @@ INSERT INTO wiki_places (
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    visit_count, first_visit, last_visit
+    seen_count, first_seen, last_seen
 ) VALUES (
     'place_demo_jess', 'Jess''s Place', 'residential',
     'South Lamar, Austin, TX',
@@ -1294,7 +1294,7 @@ INSERT INTO wiki_places (
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    visit_count, first_visit, last_visit
+    seen_count, first_seen, last_seen
 ) VALUES (
     'place_demo_ladybird', 'Lady Bird Lake', 'park',
     'Lady Bird Lake, Austin, TX',
@@ -1306,7 +1306,7 @@ INSERT INTO wiki_places (
 INSERT INTO wiki_places (
     id, name, category, address,
     latitude, longitude, radius_m,
-    visit_count, first_visit, last_visit,
+    seen_count, first_seen, last_seen,
     content
 ) VALUES (
     'place_demo_mueller_trails', 'Mueller Trails', 'park',
@@ -1322,10 +1322,10 @@ INSERT INTO wiki_places (
 
 -- Employer — product design company
 INSERT INTO wiki_orgs (
-    id, canonical_name, organization_type,
+    id, name, organization_type,
     relationship_type, role_title,
-    start_date, interaction_count,
-    first_interaction, last_interaction,
+    start_date, seen_count,
+    first_seen, last_seen,
     content
 ) VALUES (
     'org_demo_employer', 'Canopy', 'company',
@@ -1337,9 +1337,9 @@ INSERT INTO wiki_orgs (
 
 -- Torres Realty — Rachel's agency
 INSERT INTO wiki_orgs (
-    id, canonical_name, organization_type,
+    id, name, organization_type,
     relationship_type,
-    interaction_count, first_interaction, last_interaction
+    seen_count, first_seen, last_seen
 ) VALUES (
     'org_demo_realty', 'Torres Realty', 'company',
     'client',

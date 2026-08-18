@@ -272,7 +272,7 @@ async fn merge_into_person(db: &PgPool, person_id: &str, contact: &ContactRecord
 }
 
 async fn create_person(db: &PgPool, contact: &ContactRecord) -> Result<String> {
-    let canonical_name = if !contact.given_name.is_empty() && !contact.family_name.is_empty() {
+    let name = if !contact.given_name.is_empty() && !contact.family_name.is_empty() {
         format!("{} {}", contact.given_name, contact.family_name)
     } else if !contact.given_name.is_empty() {
         contact.given_name.clone()
@@ -311,7 +311,7 @@ async fn create_person(db: &PgPool, contact: &ContactRecord) -> Result<String> {
     });
 
     sqlx::query(
-        r#"INSERT INTO wiki_people (id, canonical_name, emails, phones, handles, birthday, metadata)
+        r#"INSERT INTO wiki_people (id, name, emails, phones, handles, birthday, metadata)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (id) DO UPDATE SET
                emails = EXCLUDED.emails,
@@ -322,7 +322,7 @@ async fn create_person(db: &PgPool, contact: &ContactRecord) -> Result<String> {
                updated_at = now()"#,
     )
     .bind(&person_id)
-    .bind(&canonical_name)
+    .bind(&name)
     .bind(&emails_json)
     .bind(&phones_json)
     .bind(&handles_json)

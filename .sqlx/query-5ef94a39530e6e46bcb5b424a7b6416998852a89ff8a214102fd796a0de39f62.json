@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id,\n            name,\n            category,\n            address,\n            latitude,\n            longitude,\n            radius_m,\n            visit_count,\n            metadata,\n            created_at,\n            updated_at\n        FROM wiki_places\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id,\n            name,\n            category,\n            address,\n            latitude,\n            longitude,\n            radius_m,\n            seen_count,\n            metadata,\n            created_at,\n            updated_at\n        FROM wiki_places\n        WHERE (metadata->>'is_known_location')::boolean = true\n        ORDER BY created_at ASC\n        ",
   "describe": {
     "columns": [
       {
@@ -40,7 +40,7 @@
       },
       {
         "ordinal": 7,
-        "name": "visit_count",
+        "name": "seen_count",
         "type_info": "Int8"
       },
       {
@@ -60,9 +60,7 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -78,5 +76,5 @@
       false
     ]
   },
-  "hash": "90e4f9448bb903ab8a8e8671a2dab04cf972c3299bfc9e4e531bb8efd1a78997"
+  "hash": "5ef94a39530e6e46bcb5b424a7b6416998852a89ff8a214102fd796a0de39f62"
 }
