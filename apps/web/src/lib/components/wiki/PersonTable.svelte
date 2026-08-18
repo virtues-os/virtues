@@ -30,7 +30,7 @@
 	// Column definitions
 	const columns: Column<WikiPersonListItem>[] = [
 		{
-			key: 'canonical_name',
+			key: 'name',
 			label: 'Name',
 			icon: 'ri:user-line',
 			width: '50%',
@@ -46,13 +46,13 @@
 			badgeColors: relationshipColors,
 		},
 		{
-			key: 'last_interaction',
+			key: 'last_seen',
 			label: 'Last Interaction',
 			icon: 'ri:calendar-line',
 			width: '25%',
 			minWidth: '140px',
 			hideOnMobile: true,
-			getValue: (item) => formatRelativeDate(item.last_interaction),
+			getValue: (item) => formatRelativeDate(item.last_seen),
 		},
 	];
 
@@ -121,13 +121,13 @@
 		<td class="col-name">
 			<div class="name-cell">
 				{#if person.picture}
-					<img src={person.picture} alt={person.canonical_name} class="avatar-img" />
+					<img src={person.picture} alt={person.name} class="avatar-img" />
 				{:else}
 					<div class="avatar">
-						{person.canonical_name.charAt(0).toUpperCase()}
+						{person.name.charAt(0).toUpperCase()}
 					</div>
 				{/if}
-				<span class="name-text">{person.canonical_name}</span>
+				<span class="name-text">{person.name}</span>
 			</div>
 		</td>
 		<td class="col-relationship">
@@ -140,8 +140,8 @@
 			{/if}
 		</td>
 		<td class="col-last-interaction hide-mobile">
-			{#if person.last_interaction}
-				<span class="date-text">{formatRelativeDate(person.last_interaction)}</span>
+			{#if person.last_seen}
+				<span class="date-text">{formatRelativeDate(person.last_seen)}</span>
 			{:else}
 				<span class="empty-cell">—</span>
 			{/if}
@@ -152,13 +152,13 @@
 	{#snippet card(person: WikiPersonListItem)}
 		<div class="card-content">
 			{#if person.picture}
-				<img src={person.picture} alt={person.canonical_name} class="avatar-img avatar-lg" />
+				<img src={person.picture} alt={person.name} class="avatar-img avatar-lg" />
 			{:else}
 				<div class="avatar avatar-lg">
-					{person.canonical_name.charAt(0).toUpperCase()}
+					{person.name.charAt(0).toUpperCase()}
 				</div>
 			{/if}
-			<span class="card-name">{person.canonical_name}</span>
+			<span class="card-name">{person.name}</span>
 			{#if person.relationship_category}
 				<span class="badge {getRelationshipClass(person.relationship_category)}">
 					{person.relationship_category}

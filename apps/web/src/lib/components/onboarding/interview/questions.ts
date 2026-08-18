@@ -1,6 +1,14 @@
 /**
  * "In your own words" — the interview.
  *
+ * FIVE AT SIGNUP, NINE HELD BACK. The corpus below is all fourteen; only the
+ * five in `ONBOARDING_QUESTIONS` are asked at signup, chosen by one rule: they
+ * are the questions NO RECORD CAN EVER GROUND. Everything about a life that can
+ * be observed — who you talk to, where you go, what you are working on — is
+ * asked better later, per-thing, with the evidence attached. An hour of typing
+ * before the box has shown anything was spending the person's patience on
+ * exactly the half that did not need it.
+ *
  * The one document on the box nobody can observe. Everything else is derived
  * from the record; this is authored, and it is what lets the box know what
  * someone is FOR rather than only what they did.
@@ -67,20 +75,37 @@ export interface Question {
 	mode: 'type' | 'speak';
 	/** Which movement of the document it feeds. */
 	tense: 'past' | 'present' | 'future' | 'rules';
+	/**
+	 * Asked at signup, or held for the queue.
+	 *
+	 * `onboarding` is reserved for questions NO RECORD CAN EVER GROUND. That is
+	 * the whole selection rule, and it is why "who were the people in your life"
+	 * is not among them despite being one of the most valuable answers here: six
+	 * weeks from now the box can ask it per-person, with four thousand messages
+	 * of evidence attached, and get a better answer for a fraction of the effort.
+	 * Asking it cold on day zero spends the person's patience on the one thing
+	 * patience was not needed for.
+	 *
+	 * See docs/narrative-resolution-plan.md.
+	 */
+	stage: 'onboarding' | 'queue';
 }
 
 export const QUESTIONS: Question[] = [
 	{
 		id: 'chapters',
 		facet: 'WHEN',
-		prompt: 'Where have you lived, what were the chapters of your life, and what ended each one?',
+		prompt:
+			'Where have you lived, what were the chapters of your life, and what was the changepoint event for each one?',
 		purpose:
 			'The scaffold everything else hangs on — your own periods, which never match the calendar.',
 		why: "Everyone privately divides their life into chapters, and nobody's match the calendar. A box that knows yours can say “that was during the Boston years” instead of “in 2017” — the difference between a filing system and a memory. What ENDED each chapter matters most: the moment a period closed is usually the moment something in you did. Places ride along because moves are one of the few universally legible turning points, and where you were usually explains who you knew.",
-		hint: 'Name them however you would out loud. Rough dates are fine.',
+		hint:
+			'Name them however you would out loud. Rough dates are fine — the changepoint matters more than the date.',
 		target: 400,
 		mode: 'speak',
-		tense: 'past'
+		tense: 'past',
+		stage: 'onboarding'
 	},
 	{
 		id: 'high_point',
@@ -91,7 +116,8 @@ export const QUESTIONS: Question[] = [
 		hint: 'Set the scene. Where, who, what it felt like.',
 		target: 300,
 		mode: 'speak',
-		tense: 'past'
+		tense: 'past',
+		stage: 'queue'
 	},
 	{
 		id: 'low_point',
@@ -102,7 +128,8 @@ export const QUESTIONS: Question[] = [
 		hint: 'As much as you want to say. This one is allowed to be short.',
 		target: null,
 		mode: 'speak',
-		tense: 'past'
+		tense: 'past',
+		stage: 'queue'
 	},
 	{
 		id: 'people',
@@ -114,7 +141,8 @@ export const QUESTIONS: Question[] = [
 		hint: 'Who they were to you, and what they were like.',
 		target: 400,
 		mode: 'type',
-		tense: 'past'
+		tense: 'past',
+		stage: 'queue'
 	},
 	{
 		id: 'loss',
@@ -125,18 +153,22 @@ export const QUESTIONS: Question[] = [
 		hint: 'As much or as little as you want. There is no length worth aiming for.',
 		target: null,
 		mode: 'type',
-		tense: 'past'
+		tense: 'past',
+		stage: 'queue'
 	},
 	{
 		id: 'admire',
 		facet: 'WHO',
-		prompt: 'Who do you admire — and whose way of explaining things would you want this to borrow?',
-		purpose: 'Two kinds of example: the character you respect, and the voice you trust.',
-		why: "Values named as adjectives are mush — everyone wants to be honest and kind. Values named as PEOPLE are precise: “my grandmother's stubbornness” says something no list of traits can. The second half does a different job. Nobody can usefully answer “do you want brief or thorough, challenging or supportive”, but everyone can point at someone whose way of telling them a hard thing actually landed. That is how this learns to talk to you, without a single slider.",
-		hint: 'Real people, writers, anyone. And what specifically about them.',
+		prompt: 'Which well-known figures do you admire, and what specifically about them?',
+		purpose:
+			'Values named as people, not adjectives — and named people your box has already read.',
+		why: "Values named as adjectives are mush — everyone wants to be honest and kind. Values named as PEOPLE are precise. But precise for WHOM: “my grandmother's stubbornness” means everything to you and nothing to a machine that never met her, while a figure the world knows arrives already carrying a body of work, a temperament, and a way of speaking your box can actually draw on. So name the public ones first; add the private ones after, and say what they were like. The second half does a different job entirely. Nobody can usefully answer “do you want brief or thorough, challenging or supportive”, but everyone can point at someone whose way of telling them a hard thing actually landed. That is how this learns to talk to you, without a single slider.",
+		hint:
+			'Writers, thinkers, founders, saints, athletes — whoever. Private people count too; just name the public ones first. And if someone\'s way of putting things is how you would want this to talk to you, say who.',
 		target: 300,
 		mode: 'speak',
-		tense: 'present'
+		tense: 'present',
+		stage: 'onboarding'
 	},
 	{
 		id: 'pride',
@@ -147,7 +179,8 @@ export const QUESTIONS: Question[] = [
 		hint: 'How you do things, not only what you have done.',
 		target: 300,
 		mode: 'speak',
-		tense: 'present'
+		tense: 'present',
+		stage: 'queue'
 	},
 	{
 		id: 'novelty',
@@ -158,29 +191,33 @@ export const QUESTIONS: Question[] = [
 		hint: 'The things people find surprising, or that you have stopped mentioning because nobody relates.',
 		target: 300,
 		mode: 'type',
-		tense: 'present'
+		tense: 'present',
+		stage: 'onboarding'
 	},
 	{
 		id: 'vices',
 		facet: 'PULL',
-		prompt: 'Which pull is strongest for you — money, power, pleasure, or fame?',
+		prompt: 'Which pull is strongest for you — money, power, pleasure, or fame? And why that one?',
 		purpose: 'The thing you are up against, named by you rather than guessed at.',
 		why: "The four are Arthur Brooks'. They work because they are a menu rather than a blank page, and most people know their answer in about a second — which is usually a sign that it is the true one. Written by you it is self-knowledge; derived by a machine from your own data it would be an accusation, which is exactly why it is asked and never inferred.",
 		hint: 'And if it helps: what do you keep starting and not finishing?',
 		target: 200,
 		mode: 'type',
-		tense: 'present'
+		tense: 'present',
+		stage: 'onboarding'
 	},
 	{
 		id: 'belief',
 		facet: 'WHY',
-		prompt: 'What do you believe? Including if you are still working it out.',
-		purpose: 'The why underneath the rest — to be understood, not argued with.',
+		prompt: 'What is your religion, or your worldview?',
+		purpose: 'The why underneath the rest. Recorded to be understood, never to be argued with.',
 		why: "An assistant told nothing about what you believe falls back on a bland average: agreeable, agnostic, faintly therapeutic. That voice grates on nearly everyone eventually, from every direction. This is not here to be argued with, optimized, or gently corrected. It is here so that what the box says stops cutting across the grain of what you actually hold.",
-		hint: '“I genuinely do not know” is an answer, and a useful one.',
+		hint:
+			'Including if you are still working it out — “I genuinely do not know” is an answer, and a useful one.',
 		target: 300,
 		mode: 'speak',
-		tense: 'present'
+		tense: 'present',
+		stage: 'onboarding'
 	},
 	{
 		id: 'now',
@@ -191,7 +228,8 @@ export const QUESTIONS: Question[] = [
 		hint: 'Work, body, house, people, projects, the thing you keep meaning to start.',
 		target: 200,
 		mode: 'type',
-		tense: 'present'
+		tense: 'present',
+		stage: 'queue'
 	},
 	{
 		id: 'ambitions',
@@ -203,7 +241,8 @@ export const QUESTIONS: Question[] = [
 		hint: 'What is actually true, rather than what sounds good.',
 		target: 400,
 		mode: 'speak',
-		tense: 'future'
+		tense: 'future',
+		stage: 'queue'
 	},
 	{
 		id: 'shadow_future',
@@ -214,7 +253,8 @@ export const QUESTIONS: Question[] = [
 		hint: 'Be concrete. Vague is comfortable and useless here.',
 		target: 300,
 		mode: 'speak',
-		tense: 'future'
+		tense: 'future',
+		stage: 'queue'
 	},
 	{
 		id: 'rules',
@@ -225,7 +265,8 @@ export const QUESTIONS: Question[] = [
 		hint: 'Plainly: “never suggest bars”, “do not mention my father unless I do”.',
 		target: null,
 		mode: 'type',
-		tense: 'rules'
+		tense: 'rules',
+		stage: 'queue'
 	}
 ];
 
@@ -234,3 +275,26 @@ export function wordCount(s: string): number {
 	const t = s.trim();
 	return t ? t.split(/\s+/).length : 0;
 }
+
+/**
+ * The five asked at signup, in asking order.
+ *
+ * Not their order in `QUESTIONS` above, which is the corpus order. Rising
+ * exposure still governs: the scaffold first, then the calibration, then the
+ * two that ask what someone is up against, then the one underneath all of it.
+ */
+const ONBOARDING_ORDER = ['chapters', 'novelty', 'admire', 'vices', 'belief'] as const;
+
+export const ONBOARDING_QUESTIONS: Question[] = ONBOARDING_ORDER.map(
+	(id) => QUESTIONS.find((q) => q.id === id) as Question
+);
+
+/**
+ * The nine held back — the seed of the resolution queue.
+ *
+ * Kept here rather than deleted: they are the best writing in the product, and
+ * every one of them is still going to be asked. Just later, by a box that has
+ * earned the right to ask, and in several cases grounded in something real
+ * rather than posed cold. See docs/narrative-resolution-plan.md.
+ */
+export const QUEUED_QUESTIONS: Question[] = QUESTIONS.filter((q) => q.stage === 'queue');

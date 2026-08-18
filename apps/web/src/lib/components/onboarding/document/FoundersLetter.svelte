@@ -27,23 +27,13 @@
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
-	import type { StepId } from "$lib/components/onboarding/steps";
 
-	let {
-		onbegin,
-		passed = [],
-		onjump,
-		back = false,
-		reduced = false,
-	}: {
-		onbegin: () => void;
-		passed?: StepId[];
-		onjump?: (id: StepId) => void;
-		/** Arrived by going backward through the strip. */
-		back?: boolean;
-		reduced?: boolean;
-	} = $props();
+	// THE SHELL IS THE ROUTE'S. This used to own its own `.ob-wrap`/`.ob-sheet`
+	// and mount the progress strip itself, which made the strip a different
+	// element on every screen — so it animated in with the content beneath it.
+	// The route now mounts one header above one animated slot, and this is only
+	// the leaf that goes in the slot.
+	let { onbegin }: { onbegin: () => void } = $props();
 
 	// Up here because they are the likeliest thing on this page to rot, and a
 	// reachable founder is the claim the page rests on — a dead link here costs
@@ -55,9 +45,8 @@
 	const MANIFESTO_URL = "https://virtues.com/library/manifesto";
 </script>
 
-<div class="letter ob-wrap" class:ob-still={reduced} class:ob-back={back}>
-	<div class="ob-sheet">
-		<OnboardingHeader step="letter" done={passed} {onjump} />
+<div class="letter">
+	<div>
 		<h1 class="ob-h1 hero">A small correction to technology.</h1>
 
 		<!-- A face carries an argument about trust in a way a paragraph cannot,
@@ -70,23 +59,19 @@
 		</div>
 
 		<div class="body">
-			<!-- A BELIEF, THEN A QUESTION, in one breath. The list is categories
-			     and one allusion rather than names: categories cannot be argued
-			     with, and a name invites an argument about that name, which is the
-			     one thing this paragraph cannot afford. The last item does the
-			     work of the name and lets the reader supply it — which lands
-			     harder and will still read the same in ten years.
-
-			     "and … and …" rather than commas inside that item, or the list
-			     reads as six answers instead of four. The repeated conjunction
-			     binds them into one man, and "disordered" is the older, better
-			     word for it: a life whose loves are out of order. -->
+			<!-- A BELIEF, THEN A QUESTION, in one breath. The list is CATEGORIES
+			     rather than names: a category cannot be argued with, and a name
+			     invites an argument about that name — which is the one thing this
+			     paragraph cannot afford. The last item is the exception that
+			     proves it: it describes rather than names, so the reader supplies
+			     the face themselves, which lands harder and will still read the
+			     same in ten years. -->
 			<p>
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
 				idea that a thing belongs at the most local level able to hold it. Nothing is more
 				local than your own life. So ask it plainly. Who would you rather have holding the
-				whole account of yours: a government, a political party, an advertising company, a
-				man with money and an island and a disordered life? Or you.
+				whole account of yours: a government, a political party, big tech, an advertising
+				company, disordered men preying on the vulnerable? Or you.
 			</p>
 
 			<!-- The turn from the question to the product, and the only place the
@@ -95,23 +80,51 @@
 			     way it is without accusing anyone of malice, and it makes the name
 			     an argument rather than a mood. -->
 			<p>
-				That is why I built Virtues: to put the record of your life somewhere it cannot be
-				turned into advertising, or a feed, or a habit you did not choose. Vice is
-				repetitive and profitable, which is why so much is arranged to produce it. Virtue
-				asks for harder things — attention, memory, an honest account of what you have
-				actually been doing. A record of your own life can give you all three, but only if
-				it is genuinely yours.
+				That is why I built Virtues: to put your digital life somewhere it cannot be turned
+				into advertising, or a feed, or a habit you did not choose. Vice is repetitive and
+				profitable, which is why so much is arranged to produce it. Virtue asks for harder
+				things — attention, memory, honesty, intimacy.
 			</p>
 
 			<!-- SHOWN, NOT ASSERTED. Everything above is an argument, and a page of
-			     pure argument is cold. One concrete object at a concrete time is a
-			     thing you can picture — and tomorrow rather than some eventual
-			     capability, because a promise you can check within a day is not an
-			     IOU. -->
+			     pure argument is cold. A concrete object at a concrete time is a
+			     thing you can picture, and "every day" is a promise you can check
+			     rather than an IOU. -->
 			<p>
-				Tomorrow morning a page will be waiting for you: yesterday, written down — where you
-				went, who you spoke with, what you were working on. Thin at first, having only just
-				met you. Give it a month and it will know your weeks better than you do.
+				Every day, a page will be waiting for you: yesterday, written down — where you went,
+				who you spoke with, what you were working on. Thin at first, having only just met
+				you. But give it a week, and it becomes Jarvis. You can ask it things like:
+			</p>
+		</div>
+
+		<!-- THE ONLY PLACE THE PRODUCT SPEAKS FOR ITSELF.
+		     Five questions carry more than five paragraphs of capability claims,
+		     and the RANGE is the argument: a symptom, a stranger's name, a craft,
+		     a song, a fast. No single app holds all five today, and nothing but
+		     your own record could.
+
+		     Set as a block rather than bullets — these are things you would say
+		     out loud, and a bulleted list turns speech into a feature grid. Full
+		     ink, because they are the payoff of the page rather than an aside. -->
+		<ul class="asks">
+			<li>Why do I have a migraine today?</li>
+			<li>What was the name of the woman I met at the dog park yesterday?</li>
+			<li>How do I become a better writer?</li>
+			<li>What song was playing at the bar yesterday that made me nostalgic?</li>
+			<li>How's my fast going?</li>
+		</ul>
+
+		<div class="body">
+			<!-- THE BRIDGE. The questions above are only askable of something that
+			     already knows the ordinary, unflattering texture of a life — which
+			     is precisely what nobody sane hands to a company. So the intimacy
+			     the list promises is what FORCES the architecture the figure below
+			     describes; sovereignty is not a feature bolted alongside it. -->
+			<p>
+				Such intimacy requires sovereignty. Nothing will tell a machine the truth about its
+				marriage, its body, or its worst week while that machine belongs to someone else —
+				and a record that can be sold, subpoenaed, or quietly read is someone else's. So the
+				first question about Virtues is not what it can do. It is where it lives.
 			</p>
 		</div>
 
@@ -276,6 +289,35 @@
 		margin: 0;
 	}
 
+	/* Questions someone would say out loud, so they are set as speech: no
+	   markers, a hairline to hold them together as one utterance, and the same
+	   serif at the same size as the prose they interrupt. Bullets would have
+	   made them a feature grid, which is the one thing they must not read as. */
+	.asks {
+		margin: 1.4rem 0 0;
+		padding: 0 0 0 1.3rem;
+		border-left: 1px solid var(--color-border);
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+		line-height: 1.45;
+		color: var(--color-foreground);
+	}
+
+	.asks li {
+		margin: 0;
+		text-wrap: pretty;
+	}
+
+	/* The bridge paragraph carries on the letter, so it keeps the body's rhythm
+	   rather than starting a new block. */
+	.asks + .body {
+		margin-top: 1.5rem;
+	}
+
 	/* ── where it lives ────────────────────────────────────────────────── */
 
 	.where {
@@ -412,7 +454,7 @@
 		}
 	}
 
-	.ob-still .mark {
+	:global(.ob-still) .mark {
 		animation: none;
 	}
 

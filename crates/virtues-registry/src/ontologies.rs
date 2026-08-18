@@ -1,6 +1,47 @@
-//! Ontology registry - Normalized data schema definitions
+//! The registry of observation types, and how each takes part in the pipeline.
 //!
-//! This module defines the metadata for ontology tables (health, location, social, etc.).
+//! ## What "ontology" means here — and what it does not
+//!
+//! It is a misnomer we have kept, and it is worth being precise about because the
+//! word invites the wrong expectations. There is no concept hierarchy in this
+//! module, no relations between concepts, no inference. What an
+//! `OntologyDescriptor` actually declares is a **participation contract**: given
+//! one table of observations, how to read its time, whether to embed it for
+//! search, whether it carries prose worth extracting entities from, how it
+//! reaches a day page, which lifeline lane it plots on, and whether its presence
+//! means the owner was DOING something rather than merely being measured.
+//!
+//! The accurate vocabulary, if you are reasoning about the design rather than
+//! reading the code:
+//!
+//!   * A `data_*` table is an **observation type** — one kind of thing that can
+//!     be observed about a life. One row is one observation at one time, with
+//!     provenance back to the stream that delivered it. It is never derived from
+//!     another table (that is `wiki_*`) and never product state (that is
+//!     `app_*`). It is the only layer that can be re-collected; everything
+//!     downstream is rebuildable from it.
+//!   * A descriptor here is that type's **participation contract**.
+//!   * The thing with actual ontological commitments is the PIPELINE —
+//!     ingest → resolve → index → cite → narrate — not this table of metadata.
+//!
+//! The name is not being changed today because `ontology` appears ~340 times and,
+//! more to the point, is a stored value in `search_embeddings.ontology` — so a
+//! rename is a data migration plus a full reindex, for a word. Written down
+//! instead, so at least it means one thing.
+//!
+//! ## The contract is load-bearing, and silence is its failure mode
+//!
+//! `search/indexer.rs` decides what is searchable by iterating
+//! `registered_ontologies()`. A `data_*` table with no descriptor is therefore
+//! collected and then invisible: not searchable, absent from the lifeline, the
+//! dayline and day summaries. The collector succeeds, the rows are there, and the
+//! data never appears anywhere. That had happened to SEVEN tables before anyone
+//! noticed — including imported AI chat history, which is prose.
+//!
+//! `every_data_table_participates_or_is_exempted` now fails the build for a new
+//! one. Exemptions are named individually there, so leaving a table out is a
+//! decision rather than an oversight.
+//!
 //! The actual SQL schema lives in Core migrations.
 
 use serde::{Deserialize, Serialize};
@@ -426,6 +467,92 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             //                    who  whom what when where why  how
             is_activation_signal: false,
+        },
+        OntologyDescriptor {
+            name: "environment_weather",
+            display_name: "Weather",
+            description: "Weather where the owner was — observations, and forecasts kept separately",
+            domain: "environment",
+            // NOT a lane, and this is a decision already made and tested twice:
+            // `lane`'s own doc excludes "ambient conditions rather than conduct
+            // (weather)", and `the_exclusions_hold` asserts it with the reason
+            // "weather is a condition you were in, not something you did".
+            //
+            // A descriptor without a lane is still worth having — it is what
+            // makes this table visible to the registry at all, and stops it
+            // being collected into silence. Whether ambient context should ALSO
+            // plot on the lifeline is a product reversal, not a gap, and belongs
+            // to whoever owns that doctrine.
+            lane: None,
+            table_name: "data_environment_weather",
+            source_streams: vec!["stream_weather"],
+            timestamp_column: "occurred_at",
+            end_timestamp_column: None,
+            // Numbers, not prose. Nothing here is worth embedding — "18°C" does
+            // not answer a question anybody phrases in words, and the day page
+            // renders the reading directly.
+            embedding: None,
+            // No entity extraction: weather mentions no one.
+            extraction: None,
+            temporal_type: TemporalType::Continuous,
+            // Ambient context on the day page rather than a day SOURCE: a day is
+            // not evidenced by the weather, and counting weather rows as sources
+            // would inflate a quiet day into a busy one. The lane measures carry
+            // it instead.
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            // Not activation: rain is not the owner doing something.
+            is_activation_signal: false,
+        },
+        OntologyDescriptor {
+            name: "content_conversation",
+            display_name: "AI Conversations",
+            description: "Imported chat history from other AI providers — one row per turn",
+            domain: "content",
+            // No lane. This is content the owner produced and consumed, like a
+            // bookmark or a document — not a rhythm of the day worth plotting.
+            lane: None,
+            table_name: "data_content_conversation",
+            source_streams: vec!["stream_chat_import"],
+            timestamp_column: "occurred_at",
+            end_timestamp_column: None,
+            // THE POINT OF GIVING THIS A CONTRACT AT ALL. It is prose, it is the
+            // owner's own thinking, and it was unsearchable — "what was I working
+            // on last spring" could not reach a year of it.
+            embedding: Some(EmbeddingConfig {
+                embed_text_sql: "COALESCE(t.content, '')",
+                content_type: "conversation",
+                // The provider is the closest thing to a counterpart's name.
+                title_sql: Some("COALESCE(t.provider, 'AI') || ' conversation'"),
+                preview_sql: "left(COALESCE(t.content, ''), 200)",
+                // `role` is who said it — 'user' or 'assistant'. That is the
+                // honest author for a turn, and it lets a result say which half
+                // of the exchange matched.
+                author_sql: Some("t.role"),
+                timestamp_sql: "t.occurred_at",
+                embed_where: None,
+            }),
+            // NO ENTITY EXTRACTION, deliberately, and this is the one judgement
+            // call in the descriptor. Extraction resolves the people, places and
+            // organizations named in prose into the owner's graph — but the names
+            // in an AI conversation are usually DISCUSSED, not known: characters,
+            // public figures, examples, a company being researched. Running it
+            // here would populate `wiki_people` with people the owner has never
+            // met, and there is no signal in the row to tell those apart from the
+            // ones they have.
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            // Not a day source yet. A turn is too granular to list on a day page
+            // — a single session can be two hundred of them — and the right unit
+            // (a conversation, grouped by `conversation_id`) is a rollup nothing
+            // builds today.
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            // Talking to an AI is the owner doing something, and the activation
+            // gate is about whether the box saw activity at all.
+            is_activation_signal: true,
         },
         OntologyDescriptor {
             name: "health_sleep",

@@ -48,7 +48,24 @@ export const SETTINGS_MODE: SidebarMode = {
 		// and what the box has been running — not something anyone sends
 		// anywhere, and not a developer console.
 		{ id: 'usage', label: 'Usage', icon: 'ri:pulse-line', href: '/virtues/usage' },
-		{ id: 'box', label: 'Box', icon: 'ri:server-line', href: '/virtues/box' },
+		// Was one door, "Box", which was a container rather than a subject: it
+		// stacked a Wi-Fi picker, an update installer, an 8-chapter telemetry
+		// console and a revoke-everything button on one scroll, and two of those
+		// duplicated chapters of the console below them. Three subjects, three
+		// doors — the machine, its connection, and the code it runs.
+		{ id: 'system', label: 'System', icon: 'ri:server-line', href: '/virtues/system' },
+		{ id: 'network', label: 'Network', icon: 'ri:wifi-line', href: '/virtues/network' },
+		{
+			id: 'software',
+			label: 'Software',
+			// A package, not a download. The point of naming this section
+			// "Software" rather than "Updates" was that it stays true when
+			// nothing is pending — a download-cloud glyph put the pending state
+			// back into the nav permanently, which is the thing the name avoids.
+			// (The remix icon is called `box-3`; unrelated to the old Box door.)
+			icon: 'ri:box-3-line',
+			href: '/virtues/software',
+		},
 		{ id: 'devices', label: 'Devices', icon: 'ri:device-line', href: '/virtues/devices' },
 	],
 };

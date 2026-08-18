@@ -1,6 +1,8 @@
 <script lang="ts">
 	/**
-	 * Settings → Box → Network.
+	 * Settings → Network. Its own door since 2026-08-17 — it used to be the
+	 * third component down inside "Box", which is a poor place for the screen
+	 * people reach for precisely when something is wrong.
 	 *
 	 * Exists because a claimed box had no way to change networks: setup's
 	 * surfaces correctly close at claim time, and on 2026-08-11 that marooned
@@ -21,6 +23,7 @@
 	 *    answers again, from whichever network we find it on.
 	 */
 	import { onDestroy } from 'svelte';
+	import { Page } from '$lib';
 	import { apiGet, apiSend } from '$lib/api/client';
 
 	type Net = { ssid: string; signal: number; secured: boolean; enterprise: boolean };
@@ -144,9 +147,11 @@
 	void refresh();
 </script>
 
-<div class="section">
-	<h3 class="font-serif text-lg text-foreground">Network</h3>
-
+<Page
+	title="Network"
+	description="The network this box is on, and how to move it to another."
+	maxWidth="wide"
+>
 	{#if status}
 		<div class="statusrow">
 			<span class="dot" class:warn={connectivityLabel.tone === 'warn'}></span>
@@ -224,12 +229,9 @@
 			</div>
 		{/if}
 	{/if}
-</div>
+</Page>
 
 <style>
-	.section {
-		margin-bottom: 2.5rem;
-	}
 	.statusrow {
 		display: flex;
 		align-items: flex-start;

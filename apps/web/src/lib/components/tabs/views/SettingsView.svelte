@@ -14,14 +14,26 @@
 	  Assistant    /virtues/assistant      — name, persona, model
 	  Billing      /virtues/billing        — plan and payment method
 	  Usage        /virtues/usage          — AI-call log, background runs, system
-	  Box          /virtues/box            — box stats / health
-	  Devices      /virtues/devices        — paired devices (Unpair lives here)
-	  This Mac     /virtues/this-mac       — macOS-only device panel
+	  System       /virtues/system         — the machine, measured (read-only)
+	  Network      /virtues/network        — which network the box is on
+	  Software     /virtues/software       — release, track, update, artifacts
+	  Devices      /virtues/devices        — paired devices (Unpair, Start over)
+	               /virtues/devices/this   — the machine you're on (local panel)
+	               /virtues/devices/:id    — another device, as the box knows it
 	  Developer    /virtues/developer      — SQL · Terminal · Lake
+
+	"Box" was three of those in one door (2026-08-17). It stacked a Wi-Fi
+	picker, an update installer, an 8-chapter telemetry console and a
+	revoke-every-device button on a single scroll — a reading, two settings and
+	a detonator sharing one scrollbar — and the console's own "Network &
+	Devices" and "About" chapters answered questions the two sections above
+	them had already answered differently. Splitting it by subject is what
+	removes the duplication; it was never really one room.
 
 	There is no "Sign out" — auth is the device's proven iroh key, not a server
 	session. The destructive action is Unpair, and it lives next to the thing it
-	destroys (Devices).
+	destroys (Devices) — which is also why "Start over", the plural of Unpair,
+	moved there out of Box.
 
 	Legacy flat/nested routes (/virtues/account, /virtues/connections/*,
 	/virtues/box/devices, /virtues/developer/console, …) self-heal on mount.
@@ -30,10 +42,9 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { isMacOS } from '$lib/utils/platform';
+	import { isMacOS, isIOS } from '$lib/utils/platform';
 	import NetworkSection from '$lib/components/settings/NetworkSection.svelte';
-import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
-	import ReopenSection from '$lib/components/settings/ReopenSection.svelte';
+	import SoftwareView from '$lib/components/tabs/views/SoftwareView.svelte';
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
@@ -41,7 +52,9 @@ import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
 	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
+	import DeviceDetailView from '$lib/components/tabs/views/DeviceDetailView.svelte';
 	import ThisMacView from '$lib/components/tabs/views/ThisMacView.svelte';
+	import ThisDeviceView from '$lib/components/tabs/views/ThisDeviceView.svelte';
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import DeveloperLakeView from '$lib/components/tabs/views/DeveloperLakeView.svelte';
@@ -67,14 +80,25 @@ import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
 		'/virtues/telemetry': '/virtues/usage',
 		'/virtues/developer/telemetry': '/virtues/usage',
 		'/virtues/system/history': '/virtues/usage',
-		// Box → stats; Devices and This Mac are their own tabs now
-		'/virtues/system': '/virtues/box',
-		'/virtues/box/health': '/virtues/box',
+		// Box split into System · Network · Software (2026-08-17). Its own door
+		// lands on System, the largest of the three and the one that kept the
+		// page's former title.
+		'/virtues/box': '/virtues/system',
+		'/virtues/box/health': '/virtues/system',
+		'/virtues/box/network': '/virtues/network',
+		'/virtues/box/updates': '/virtues/software',
+		'/virtues/updates': '/virtues/software',
+		'/virtues/version': '/virtues/software',
+		// Devices absorbed both Start over (the split above) and This Mac, which
+		// was a top-level section for one instance of hardware. It is now
+		// `devices/this` — a device page like any other, and a stable word
+		// Sources can link to without knowing a device id.
 		'/virtues/box/devices': '/virtues/devices',
 		'/virtues/system/devices': '/virtues/devices',
 		'/virtues/devices/': '/virtues/devices',
-		'/virtues/box/this-mac': '/virtues/this-mac',
-		'/virtues/system/this-mac': '/virtues/this-mac',
+		'/virtues/this-mac': '/virtues/devices/this',
+		'/virtues/box/this-mac': '/virtues/devices/this',
+		'/virtues/system/this-mac': '/virtues/devices/this',
 		// Developer flattened — Console layer removed
 		'/virtues/developer': '/virtues/developer/sql',
 		'/virtues/developer/console': '/virtues/developer/sql',
@@ -111,18 +135,20 @@ import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
 		| 'assistant'
 		| 'billing'
 		| 'usage'
-		| 'box'
+		| 'system'
+		| 'network'
+		| 'software'
 		| 'devices'
-		| 'this-mac'
 		| 'developer';
 
 	const SECTIONS = [
 		'assistant',
 		'billing',
 		'usage',
-		'box',
+		'system',
+		'network',
+		'software',
 		'devices',
-		'this-mac',
 		'developer',
 	];
 
@@ -154,15 +180,31 @@ import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
 			<BillingView {tab} {active} />
 		{:else if section === 'usage'}
 			<UsageView {tab} {active} />
-		{:else if section === 'box'}
-			<NetworkSection />
-			<UpdateSection />
+		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
-			<ReopenSection />
+		{:else if section === 'network'}
+			<NetworkSection />
+		{:else if section === 'software'}
+			<SoftwareView />
 		{:else if section === 'devices'}
-			<DevicesView {tab} {active} />
-		{:else if section === 'this-mac' && isMacOS}
-			<ThisMacView {tab} {active} />
+			{#if !sub}
+				<DevicesView {tab} {active} />
+			{:else if sub === 'this' && isIOS}
+				<!-- iOS FIRST, because an iPad satisfies `isMacOS` too (it reports
+				     a desktop platform string; see utils/platform.ts) and would
+				     otherwise be handed the Mac collector panel. -->
+				<ThisDeviceView />
+			{:else if sub === 'this' && isMacOS}
+				<!-- The machine you're on is NOT rendered from its device row. Its
+				     panel — collector health, permissions, streams — is read from
+				     the local daemon over IPC, and knows things the box never
+				     receives. In a plain browser there is no local daemon to read,
+				     so `this` falls through to the box-side page, which is then
+				     genuinely all there is. -->
+				<ThisMacView {tab} {active} />
+			{:else}
+				<DeviceDetailView deviceId={sub} />
+			{/if}
 		{:else if section === 'developer'}
 			{#if sub === 'terminal'}
 				<DeveloperTerminalView {tab} {active} />

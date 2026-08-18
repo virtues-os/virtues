@@ -222,7 +222,7 @@
 			const unified: UnifiedEntity[] = [
 				...people.map((p: WikiPersonListItem): UnifiedEntity => ({
 					id: p.id,
-					name: p.canonical_name,
+					name: p.name,
 					entityType: 'person',
 					subtitle: p.relationship_category,
 					route: `/person/${p.id}`,
@@ -240,7 +240,7 @@
 				})),
 				...orgs.map((o: WikiOrganizationListItem): UnifiedEntity => ({
 					id: o.id,
-					name: o.canonical_name,
+					name: o.name,
 					entityType: 'org',
 					subtitle: o.organization_type || o.relationship_type,
 					route: `/org/${o.id}`,

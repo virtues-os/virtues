@@ -742,7 +742,7 @@ struct DayEventRow {
 async fn day_entities_for_refs(pool: &PgPool, start_str: &str, end_str: &str) -> Vec<String> {
     use sqlx::Row;
     let rows = sqlx::query(
-        "SELECT 'person' AS kind, pe.id AS id, pe.canonical_name AS name \
+        "SELECT 'person' AS kind, pe.id AS id, pe.name AS name \
          FROM wiki_refs er JOIN wiki_people pe ON pe.id = er.entity_id \
          WHERE er.entity_type = 'person' \
            AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz \
@@ -752,7 +752,7 @@ async fn day_entities_for_refs(pool: &PgPool, start_str: &str, end_str: &str) ->
          WHERE er.entity_type = 'place' \
            AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz \
          UNION \
-         SELECT 'org', o.id, o.canonical_name \
+         SELECT 'org', o.id, o.name \
          FROM wiki_refs er JOIN wiki_orgs o ON o.id = er.entity_id \
          WHERE er.entity_type = 'organization' \
            AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz",
@@ -1098,14 +1098,14 @@ async fn day_message_bursts(
         "SELECT DISTINCT ON (m.id) \
                 m.id, m.thread_id, m.body, m.occurred_at, m.from_name, m.from_identifier, \
                 COALESCE((m.metadata->>'is_from_me')::boolean, false) AS from_me, \
-                pe.canonical_name AS resolved_name \
+                pe.name AS resolved_name \
          FROM data_communication_message m \
          LEFT JOIN wiki_refs er \
            ON er.source_table = 'data_communication_message' AND er.source_id = m.id \
           AND er.entity_type = 'person' AND er.role IN ('sender', 'recipient') \
          LEFT JOIN wiki_people pe ON pe.id = er.entity_id \
          WHERE m.occurred_at >= $1::timestamptz AND m.occurred_at <= $2::timestamptz \
-         ORDER BY m.id, (pe.canonical_name IS NULL)",
+         ORDER BY m.id, (pe.name IS NULL)",
     )
     .bind(start_str)
     .bind(end_str)

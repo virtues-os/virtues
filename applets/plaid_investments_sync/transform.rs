@@ -143,7 +143,7 @@ async fn flush(db: &PgPool, records: &[AssetRow]) -> Result<usize> {
             "cost_basis",
             "current_value",
             "currency",
-            "timestamp",
+            "occurred_at",
             "source_stream_id",
             "source_table",
             "source_provider",

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, canonical_name, content, article, article_updated_at, picture, cover_image,\n            emails, phones, birthday, instagram, facebook, linkedin, x,\n            relationship_category, nickname, aliases,\n            first_interaction, last_interaction, interaction_count,\n            created_at, updated_at\n        FROM wiki_people\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id, name, content, article, article_updated_at, picture, cover_image,\n            emails, phones, birthday, instagram, facebook, linkedin, x,\n            relationship_category, nickname, aliases,\n            first_seen, last_seen, seen_count,\n            created_at, updated_at\n        FROM wiki_people\n        WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -10,7 +10,7 @@
       },
       {
         "ordinal": 1,
-        "name": "canonical_name",
+        "name": "name",
         "type_info": "Text"
       },
       {
@@ -90,17 +90,17 @@
       },
       {
         "ordinal": 17,
-        "name": "first_interaction",
+        "name": "first_seen",
         "type_info": "Timestamptz"
       },
       {
         "ordinal": 18,
-        "name": "last_interaction",
+        "name": "last_seen",
         "type_info": "Timestamptz"
       },
       {
         "ordinal": 19,
-        "name": "interaction_count",
+        "name": "seen_count",
         "type_info": "Int8"
       },
       {
@@ -144,5 +144,5 @@
       false
     ]
   },
-  "hash": "15e015ecc680bb346aff9b07ec530aca7ce35974ff2b3db9da668642468ad6bb"
+  "hash": "3a2da48f3445f60bc32567bcfefe8e971a36f8df0ebfe580943827da9bb0013e"
 }

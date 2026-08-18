@@ -124,7 +124,7 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
             WITH handle_owner AS (
                 SELECT h.handle,
                        min(p.id)             AS person_id,
-                       min(p.canonical_name) AS canonical_name
+                       min(p.name) AS name
                 FROM wiki_people p
                 CROSS JOIN LATERAL jsonb_array_elements_text(p.handles) AS h(handle)
                 GROUP BY h.handle
@@ -132,7 +132,7 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
             )
             SELECT m.id            AS "msg_id!",
                    o.person_id     AS "person_id!",
-                   o.canonical_name AS "canonical_name!"
+                   o.name AS "name!"
             FROM data_communication_message m
             JOIN handle_owner o ON o.handle = m.from_handle
             LEFT JOIN wiki_refs r
@@ -155,7 +155,7 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
 
         let msg_ids: Vec<String> = rows.iter().map(|r| r.msg_id.clone()).collect();
         let person_ids: Vec<String> = rows.iter().map(|r| r.person_id.clone()).collect();
-        let names: Vec<String> = rows.iter().map(|r| r.canonical_name.clone()).collect();
+        let names: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
         let ref_ids: Vec<String> = rows
             .iter()
             .map(|r| ids::generate_id("eref", &[&r.msg_id, &r.person_id, "sender"]))
@@ -246,7 +246,7 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
             WITH handle_owner AS (
                 SELECT h.handle,
                        min(p.id)             AS person_id,
-                       min(p.canonical_name) AS canonical_name
+                       min(p.name) AS name
                 FROM wiki_people p
                 CROSS JOIN LATERAL jsonb_array_elements_text(p.handles) AS h(handle)
                 GROUP BY h.handle
@@ -259,7 +259,7 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
             thread_party AS (
                 SELECT m.thread_id,
                        min(o.person_id)      AS person_id,
-                       min(o.canonical_name) AS canonical_name
+                       min(o.name) AS name
                 FROM data_communication_message m
                 JOIN handle_owner o ON o.handle = m.from_handle
                 WHERE m.from_handle <> ''
@@ -270,7 +270,7 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
             )
             SELECT m.id             AS "msg_id!",
                    tp.person_id     AS "person_id!",
-                   tp.canonical_name AS "canonical_name!"
+                   tp.name AS "name!"
             FROM data_communication_message m
             JOIN thread_party tp ON tp.thread_id = m.thread_id
             LEFT JOIN wiki_refs r
@@ -578,7 +578,7 @@ async fn resolve_or_create_person_with_name(
     // Check if person exists with this email
     let existing = sqlx::query!(
         r#"
-        SELECT id, canonical_name
+        SELECT id, name
         FROM wiki_people
         WHERE emails @> to_jsonb($1::text)
         LIMIT 1
@@ -593,7 +593,7 @@ async fn resolve_or_create_person_with_name(
 
         // Update canonical name if we have a better one (from email header vs extracted from email)
         if let Some(name) = display_name {
-            let current_name = row.canonical_name;
+            let current_name = row.name;
             // Only update if current name looks like it was extracted from email (no spaces, or matches email pattern)
             let name_trimmed = name.trim();
             if !name_trimmed.is_empty()
@@ -603,7 +603,7 @@ async fn resolve_or_create_person_with_name(
                 sqlx::query!(
                     r#"
                     UPDATE wiki_people
-                    SET canonical_name = $1,
+                    SET name = $1,
                         updated_at = now()
                     WHERE id = $2
                     "#,
@@ -626,7 +626,7 @@ async fn resolve_or_create_person_with_name(
     }
 
     // Create new person entity
-    let canonical_name = display_name
+    let name = display_name
         .filter(|n| !n.trim().is_empty())
         .map(|n| n.trim().to_string())
         .unwrap_or_else(|| extract_name_from_email(email));
@@ -639,14 +639,14 @@ async fn resolve_or_create_person_with_name(
         r#"
         INSERT INTO wiki_people (
             id,
-            canonical_name,
+            name,
             emails
         ) VALUES ($1, $2, $3)
         ON CONFLICT (id) DO NOTHING
         RETURNING id
         "#,
         person_id,
-        canonical_name,
+        name,
         emails_json,
     )
     .fetch_optional(db.pool())
@@ -655,7 +655,7 @@ async fn resolve_or_create_person_with_name(
     tracing::info!(
         email = %email,
         person_id = %person_id,
-        canonical_name = %canonical_name,
+        name = %name,
         source = "email_sender",
         "Created new person entity"
     );
@@ -796,7 +796,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<String> 
     }
 
     // Create new person entity
-    let canonical_name = extract_name_from_email(email);
+    let name = extract_name_from_email(email);
 
     let emails_json = serde_json::json!([email]);
 
@@ -806,7 +806,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<String> 
         r#"
         INSERT INTO wiki_people (
             id,
-            canonical_name,
+            name,
             emails
         ) VALUES (
             $1, $2, $3
@@ -814,7 +814,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<String> 
         RETURNING id
         "#,
         person_id,
-        canonical_name,
+        name,
         emails_json,
     )
     .fetch_one(db.pool())
@@ -825,7 +825,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<String> 
     tracing::info!(
         email = %email,
         person_id = %person_id_str,
-        canonical_name = %canonical_name,
+        name = %name,
         "Created new person entity"
     );
 
@@ -956,7 +956,7 @@ mod tests {
         cleanup(&db, &person_id, &thread).await; // in case a prior run died mid-way
 
         sqlx::query(
-            "INSERT INTO wiki_people (id, canonical_name, handles)
+            "INSERT INTO wiki_people (id, name, handles)
              VALUES ($1, 'Nick', $2::jsonb)",
         )
         .bind(&person_id)

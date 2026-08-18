@@ -27,11 +27,18 @@
     ⑤ words     the interview — its own surface, and the draft after it
     ⑥ you       the reveal
 
-  Server state still drives where someone LANDS, so the flow survives refreshes
-  and the OAuth round-trip; `screen` only drives where they go next.
+  THE URL IS THE FLOW. Each view is `/onboarding/<slug>`, so Back and Forward
+  work, a refresh keeps your place, and a screen can be linked to. Five local
+  booleans used to encode this between them; they made Back leave the app
+  entirely and a refresh start the step over.
+
+  Server state still decides what is REACHABLE — everything past `account`
+  needs the account — so a hand-typed `/onboarding/you` on an unlinked box is
+  bounced rather than honored.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
+	import { page } from "$app/state";
 	import { onMount } from "svelte";
 	import { fade } from "svelte/transition";
 	import { Button } from "$lib";
@@ -44,7 +51,15 @@
 		getInterviewAnswers,
 	} from "$lib/api/client";
 	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
-	import type { StepId } from "$lib/components/onboarding/steps";
+	import {
+		STEPS,
+		VIEW_ORDER,
+		VIEW_STEP,
+		STEP_VIEW,
+		isViewId,
+		type StepId,
+		type ViewId,
+	} from "$lib/components/onboarding/steps";
 	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import Introductions from "$lib/components/onboarding/document/Introductions.svelte";
@@ -69,29 +84,31 @@
 	let advancedOpen = $state(false);
 	let reduced = $state(false);
 
-	// THE LETTER IS A SURFACE, NOT A STEP YOU FINISH. Held in memory only:
-	// re-reading it on a revisit costs one click to pass, which is a better
-	// failure than silently skipping the one screen that explains why any of
-	// this is safe.
-	let letterRead = $state(false);
-	let introDone = $state(false);
-	// Where the sequence is after those two. Seeded from server state on the
-	// first load so a refresh mid-flow does not start over.
-	let screen = $state<StepId>("account");
-	let seeded = false;
-	// Which way the last move went, so the page turns the matching way. Forward
-	// is the default because every control except the strip goes forward.
-	let back = $state(false);
+	// ── the URL is the flow ───────────────────────────────────────────
+	//
+	// `letterRead`, `introDone`, `screen`, `interviewOpen` and `draftOpen` were
+	// five booleans that between them encoded one fact: which screen you are on.
+	// Being local, they made Back leave the app entirely, a refresh lose your
+	// place, and nothing linkable. The address bar holds that fact better than
+	// any of them, and it comes with history for free.
+	const view = $derived<ViewId>(isViewId(page.params.view) ? page.params.view : "letter");
+	const step = $derived<StepId>(VIEW_STEP[view]);
 
-	/** Every forward move goes through here, so the turn direction cannot drift. */
-	function advance(to: StepId) {
-		back = false;
-		screen = to;
+	// Which way to turn the page. Derived by comparing positions rather than set
+	// by whoever called the navigation, so the browser's own Back and Forward
+	// buttons animate correctly too — they never run our handlers.
+	let seen = $state<number>(VIEW_ORDER.indexOf("letter"));
+	let back = $state(false);
+	$effect(() => {
+		const at = VIEW_ORDER.indexOf(view);
+		back = at < seen;
+		seen = at;
+	});
+
+	/** Go to a view, adding a history entry. */
+	function go(to: ViewId) {
+		void goto(`/onboarding/${to}`);
 	}
-	// The interview and its draft are surfaces of their own, entered from the
-	// words screen and returning to it.
-	let interviewOpen = $state(false);
-	let draftOpen = $state(false);
 
 	// Optimistic local flags — flip a step the instant the local signal fires,
 	// before the next server poll confirms it.
@@ -126,28 +143,69 @@
 	// always be added and a tick would claim otherwise.
 	const passed = $derived(
 		[
-			letterRead && "letter",
-			introDone && "names",
+			// The two reading screens have no server-side completion — being past
+			// them in the URL order IS having passed them, which is also what makes
+			// them reachable again from the strip after a refresh.
+			VIEW_ORDER.indexOf(view) > VIEW_ORDER.indexOf("letter") && "letter",
+			VIEW_ORDER.indexOf(view) > VIEW_ORDER.indexOf("introductions") && "names",
 			accountDone && "account",
 			worldEnough && "sources",
 			interviewStarted && "words",
 		].filter(Boolean) as StepId[],
 	);
 
+	/**
+	 * Where an unresolved or unreachable URL should land.
+	 *
+	 * Everything past `account` needs the account, so a hand-typed
+	 * `/onboarding/you` on an unlinked box must not open the reveal — the strip
+	 * already refuses to offer it, and the address bar has to refuse too.
+	 */
+	const reachable = $derived((v: ViewId) =>
+		VIEW_ORDER.indexOf(v) <= VIEW_ORDER.indexOf("account") ? true : accountDone,
+	);
+	const resolved = $derived<ViewId>(
+		!accountDone ? "letter" : !worldEnough ? "sources" : "your-words",
+	);
+
+	/**
+	 * What the strip may offer, from the SAME predicate that guards the URL.
+	 *
+	 * Derived rather than hand-listed for one reason: when these two drifted, the
+	 * strip disabled Introductions while happily offering Account two places
+	 * further along, and typing the URL worked where clicking did not.
+	 */
+	const open = $derived(STEPS.map((s) => s.id).filter((id) => reachable(STEP_VIEW[id])));
+
 	async function refreshState() {
 		try {
 			state_ = await getSetupState();
-			// Land where they left off, once.
-			if (!seeded) {
-				seeded = true;
-				screen = !accountDone ? "account" : !worldEnough ? "sources" : "words";
-			}
 		} catch {
 			/* box briefly unreachable — keep last state */
 		} finally {
 			loading = false;
 		}
 	}
+
+	/**
+	 * Keep the address bar honest.
+	 *
+	 * Two jobs, both after the first state read so they never fight a box that
+	 * has not answered yet: make a bare `/onboarding` name the view it is showing
+	 * (so Back from step two returns to the letter rather than out of the app),
+	 * and bounce a URL the person is not entitled to.
+	 *
+	 * `replaceState` in both cases — a correction is not somewhere they navigated
+	 * to, and leaving it in history would make Back bounce off it forever.
+	 */
+	$effect(() => {
+		if (loading || !state_) return;
+		if (!isViewId(page.params.view)) {
+			void goto(`/onboarding/${view}`, { replaceState: true });
+		} else if (!reachable(view)) {
+			void goto(`/onboarding/${resolved}`, { replaceState: true });
+		}
+	});
 
 	// Cloud/onboarding cross-check for home_timezone (the box's location).
 	// The box normally seeds this from its own system clock; but a datacenter box
@@ -214,20 +272,7 @@
 	 * to lose.
 	 */
 	function jump(id: StepId) {
-		back = true;
-		interviewOpen = false;
-		draftOpen = false;
-		if (id === "letter") {
-			letterRead = false;
-			return;
-		}
-		if (id === "names") {
-			introDone = false;
-			return;
-		}
-		letterRead = true;
-		introDone = true;
-		screen = id;
+		go(STEP_VIEW[id]);
 	}
 
 	function confirmAdvanced() {
@@ -264,122 +309,123 @@
 			</button>
 		</div>
 	</div>
-{:else if !letterRead}
-	<FoundersLetter onbegin={() => (letterRead = true)} {passed} onjump={jump} {back} {reduced} />
-{:else if !introDone}
-	<Introductions onnext={() => { back = false; introDone = true; }} {passed} onjump={jump} {back} {reduced} />
-{:else if interviewOpen}
-	<Interview
-		{passed}
-		onjump={jump}
-		{back}
-		onfinish={() => {
-			interviewOpen = false;
-			draftOpen = true;
-		}}
-		{reduced}
-	/>
-{:else if draftOpen}
-	<DraftReview
-		{passed}
-		onjump={jump}
-		{back}
-		ondone={() => {
-			draftOpen = false;
-			interviewStarted = true;
-			advance("you");
-			void refreshState();
-		}}
-		{reduced}
-	/>
 {:else}
-	<div class="ob-wrap" class:ob-still={reduced} class:ob-back={back}>
-		<div class="ob-sheet" class:ob-wide={screen === "sources"}>
-			<OnboardingHeader step={screen} done={passed} onjump={jump} />
+	<!-- ONE SHELL, ONE HEADER, ONE ANIMATED SLOT.
+	     Every surface used to bring its own `.ob-wrap`, its own `.ob-sheet` and
+	     its own copy of the strip, so the strip was a different element on every
+	     screen and slid in with the content under it. Mounted once out here it
+	     simply persists: `{#key view}` remounts only the leaf, so only the leaf
+	     turns. -->
+	<div class="ob-wrap" class:ob-still={reduced}>
+		<div class="ob-sheet">
+			<OnboardingHeader {step} done={passed} {open} onjump={jump} />
 
-			{#if screen === "account"}
-				<!-- ③ The one gate. Everything else in onboarding can be skipped,
-				     put off, or half-done; this is the only screen that has to end
-				     in a yes, so it is the only one with no way past. -->
-				<h1 class="ob-h1">Sign in to Virtues</h1>
-				<p class="ob-lede">
-					Your subscription is the only part of Virtues that touches our servers — it handles
-					sign-in and pays for the models your box calls on. It is built in two halves: one
-					knows you pay us, the other runs your requests. They share no identifier, so
-					joining them returns an empty table. Everything else stays on the box.
-				</p>
+			{#key view}
+				<div class="ob-page" class:ob-back={back}>
+					{#if view === "letter"}
+						<FoundersLetter onbegin={() => go("introductions")} />
+					{:else if view === "introductions"}
+						<!-- Introductions is the hand-off from reading to working, so
+						     Continue goes wherever the box actually needs us — not
+						     blindly to the next slug. -->
+						<Introductions onnext={() => go(resolved)} />
+					{:else if view === "interview"}
+						<Interview onfinish={() => go("draft")} />
+					{:else if view === "draft"}
+						<DraftReview
+							ondone={() => {
+								interviewStarted = true;
+								void refreshState();
+								go("you");
+							}}
+						/>
+					{:else if view === "account"}
+						<!-- The one gate. Everything else in onboarding can be skipped,
+						     put off, or half-done; this is the only screen that has to
+						     end in a yes, so it is the only one with no way past. -->
+						<h1 class="ob-h1">Sign in to Virtues</h1>
+						<p class="ob-lede">
+							Your subscription is the only part of Virtues that touches our servers — it
+							handles sign-in and pays for the models your box calls on. It is built in two
+							halves: one knows you pay us, the other runs your requests. They share no
+							identifier, so joining them returns an empty table. Everything else stays on
+							the box.
+						</p>
 
-				<div class="work">
-					<AccountGate done={accountDone} onLinked={refreshState} />
-				</div>
+						<div class="work">
+							<AccountGate done={accountDone} onLinked={refreshState} />
+						</div>
 
-				{#if accountDone}
-					<div in:fade>
-						<button class="ob-btn" onclick={() => advance("sources")}>
-							Continue
+						{#if accountDone}
+							<div in:fade>
+								<button class="ob-btn" onclick={() => go("sources")}>
+									Continue
+									<Icon icon="ri:arrow-right-line" width="16" />
+								</button>
+							</div>
+						{/if}
+					{:else if view === "sources"}
+						<h1 class="ob-h1">Where the record comes from</h1>
+						<p class="ob-lede">
+							Connect what already holds your life. Each source is read onto the box and
+							stays there — nothing is sent to us. Start with one; add the rest whenever.
+						</p>
+
+						<div class="work">
+							<ConnectWorld
+								onConnected={refreshState}
+								onDeviceReady={() => (deviceReady = true)}
+							/>
+						</div>
+
+						<button class="ob-btn" onclick={() => go("your-words")}>
+							{worldEnough ? "Continue" : "Skip for now"}
 							<Icon icon="ri:arrow-right-line" width="16" />
 						</button>
-					</div>
-				{/if}
-			{:else if screen === "sources"}
-				<!-- ④ Sources. The only screen that wants width, because it is a set
-				     of choices rather than a passage of prose. -->
-				<h1 class="ob-h1">Where the record comes from</h1>
-				<p class="ob-lede">
-					Connect what already holds your life. Each source is read onto the box and stays
-					there — nothing is sent to us. Start with one; add the rest whenever.
-				</p>
+						<p class="ob-note">
+							Connecting is optional, and never finished — finances, notes, fitness and the
+							rest are waiting in the app.
+						</p>
+					{:else if view === "your-words"}
+						<!-- The doorway to the interview, which is its own view. -->
+						<h1 class="ob-h1">The part it can't observe</h1>
+						<p class="ob-lede">
+							Everything else here your box works out by watching. This is the half it
+							cannot: where you have been, what you are up against, who you mean to become.
+							Five questions, and nothing writes them but you.
+						</p>
 
-				<div class="work">
-					<ConnectWorld onConnected={refreshState} onDeviceReady={() => (deviceReady = true)} />
+						<button class="ob-btn" onclick={() => go("interview")}>
+							{interviewStarted ? "Keep writing" : "Start writing"}
+							<Icon icon="ri:arrow-right-line" width="16" />
+						</button>
+						<p class="ob-note">
+							It takes a while, and it saves as you go — stop anywhere and come back.
+						</p>
+
+						<button class="ob-ghost quiet-go" onclick={() => go("you")}>Not now →</button>
+					{:else}
+						<h1 class="ob-h1">Meet yourself</h1>
+						<div class="work">
+							<RevealSection
+								ready={narrativeReady}
+								generating={narrativeGenerating}
+								{reduced}
+								onEnter={enterApp}
+								onConnect={() => go("sources")}
+							/>
+						</div>
+					{/if}
 				</div>
-
-				<button class="ob-btn" onclick={() => advance("words")}>
-					{worldEnough ? "Continue" : "Skip for now"}
-					<Icon icon="ri:arrow-right-line" width="16" />
-				</button>
-				<p class="ob-note">
-					Connecting is optional, and never finished — finances, notes, fitness and the rest
-					are waiting in the app.
-				</p>
-			{:else if screen === "words"}
-				<!-- ⑤ The doorway to the interview, which is its own surface. -->
-				<h1 class="ob-h1">The part it can't observe</h1>
-				<p class="ob-lede">
-					Everything else here your box works out by watching. This is the half it cannot:
-					where you have been, what you are up against, who you mean to become. Fourteen
-					questions, and nothing writes it but you.
-				</p>
-
-				<button class="ob-btn" onclick={() => { back = false; interviewOpen = true; }}>
-					{interviewStarted ? "Keep writing" : "Start writing"}
-					<Icon icon="ri:arrow-right-line" width="16" />
-				</button>
-				<p class="ob-note">
-					It takes a while, and it saves as you go — stop anywhere and come back.
-				</p>
-
-				<button class="ob-ghost quiet-go" onclick={() => advance("you")}>Not now →</button>
-			{:else}
-				<!-- ⑥ You. -->
-				<h1 class="ob-h1">Meet yourself</h1>
-				<div class="work">
-					<RevealSection
-						ready={narrativeReady}
-						generating={narrativeGenerating}
-						{reduced}
-						onEnter={enterApp}
-					/>
-				</div>
-			{/if}
+			{/key}
 		</div>
 	</div>
 
-	<button class="manual-link" onclick={() => (advancedOpen = true)}>Skip setup →</button>
+	<button class="manual-link" onclick={() => (advancedOpen = true)}>Dangerously skip onboarding →</button>
 {/if}
 
 <!-- The advanced door's confirm — the safe choice (Stay guided) is the loud one. -->
-<Modal open={advancedOpen} onClose={() => (advancedOpen = false)} title="Skip the guided setup?" width="sm">
+<Modal open={advancedOpen} onClose={() => (advancedOpen = false)} title="Dangerously skip onboarding?" width="sm">
 	{#snippet children()}
 		<div class="space-y-5 text-sm">
 			<p class="leading-relaxed text-foreground-muted">
@@ -398,7 +444,12 @@
 </Modal>
 
 <style>
-	@reference "../../../app.css";
+	/* Four levels, not three — this file sits one deeper than it used to, under
+	   `[[view]]`. svelte-check does not resolve `@reference`, so a stale path
+	   here typechecks clean and 500s only the style request, which the browser
+	   reports as "failed to fetch dynamically imported module" for the whole
+	   page. Blank screen, no error naming this line. */
+	@reference "../../../../app.css";
 
 	/* The shell, type scale and controls come from onboarding.css — see that
 	   file for why they are not here. What follows is only this route's. */

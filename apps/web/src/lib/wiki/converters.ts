@@ -40,7 +40,7 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 	return {
 		type: "person",
 		id: api.id,
-				title: api.canonical_name,
+				title: api.name,
 		cover: api.picture ?? undefined,
 
 		// Person-specific fields
@@ -101,9 +101,9 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 		address: api.address ?? undefined,
 		coordinates:
 			api.latitude && api.longitude ? { lat: api.latitude, lng: api.longitude } : undefined,
-		visitCount: api.visit_count ?? 0,
-		firstVisit: api.first_visit ? new Date(api.first_visit) : undefined,
-		lastVisit: api.last_visit ? new Date(api.last_visit) : undefined,
+		visitCount: api.seen_count ?? 0,
+		firstVisit: api.first_seen ? new Date(api.first_seen) : undefined,
+		lastVisit: api.last_seen ? new Date(api.last_seen) : undefined,
 
 		// Content
 		content: api.content ?? "",
@@ -148,7 +148,7 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 	return {
 		type: "organization",
 		id: api.id,
-				title: api.canonical_name,
+				title: api.name,
 		cover: api.cover_image ?? undefined,
 
 		// Org-specific fields

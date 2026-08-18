@@ -20,7 +20,7 @@ use crate::ids;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiPerson {
     pub id: String,
-    pub canonical_name: String,
+    pub name: String,
     pub content: Option<String>,
     /// Machine-written wikipedia-style record (entity_article applet). Never
     /// user-edited — `content`/`notes` carry the user's own writing.
@@ -48,9 +48,9 @@ pub struct WikiPerson {
     /// Surfaces this entity also answers to (0037). Read alongside write, or an
     /// editor cannot show what is already there.
     pub aliases: Vec<String>,
-    pub first_interaction: Option<DateTime<Utc>>,
-    pub last_interaction: Option<DateTime<Utc>>,
-    pub interaction_count: Option<i32>,
+    pub first_seen: Option<DateTime<Utc>>,
+    pub last_seen: Option<DateTime<Utc>>,
+    pub seen_count: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -71,9 +71,9 @@ pub struct WikiPlace {
     pub address: Option<String>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
-    pub visit_count: Option<i32>,
-    pub first_visit: Option<DateTime<Utc>>,
-    pub last_visit: Option<DateTime<Utc>>,
+    pub seen_count: Option<i32>,
+    pub first_seen: Option<DateTime<Utc>>,
+    pub last_seen: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -82,7 +82,7 @@ pub struct WikiPlace {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiOrganization {
     pub id: String,
-    pub canonical_name: String,
+    pub name: String,
     pub content: Option<String>,
     pub article: Option<String>,
     pub article_updated_at: Option<DateTime<Utc>>,
@@ -97,9 +97,9 @@ pub struct WikiOrganization {
     pub end_date: Option<NaiveDate>,
     /// Surfaces this entity also answers to (0037).
     pub aliases: Vec<String>,
-    pub interaction_count: Option<i32>,
-    pub first_interaction: Option<DateTime<Utc>>,
-    pub last_interaction: Option<DateTime<Utc>>,
+    pub seen_count: Option<i32>,
+    pub first_seen: Option<DateTime<Utc>>,
+    pub last_seen: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -185,10 +185,10 @@ pub struct ScoredSleepCycle {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiPersonListItem {
     pub id: String,
-    pub canonical_name: String,
+    pub name: String,
     pub picture: Option<String>,
     pub relationship_category: Option<String>,
-    pub last_interaction: Option<DateTime<Utc>>,
+    pub last_seen: Option<DateTime<Utc>>,
     /// How many records mention this entity — see `REF_COUNT` in this module.
     pub ref_count: i64,
 }
@@ -200,7 +200,7 @@ pub struct WikiPlaceListItem {
     pub name: String,
     pub category: Option<String>,
     pub address: Option<String>,
-    pub visit_count: Option<i32>,
+    pub seen_count: Option<i32>,
     /// How many records mention this entity — see `REF_COUNT` in this module.
     pub ref_count: i64,
 }
@@ -209,7 +209,7 @@ pub struct WikiPlaceListItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiOrganizationListItem {
     pub id: String,
-    pub canonical_name: String,
+    pub name: String,
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
     /// How many records mention this entity — see `REF_COUNT` in this module.
@@ -223,7 +223,7 @@ pub struct WikiOrganizationListItem {
 /// Request to update a person wiki page
 #[derive(Debug, Deserialize)]
 pub struct UpdateWikiPersonRequest {
-    pub canonical_name: Option<String>,
+    pub name: Option<String>,
     pub content: Option<String>,
     pub picture: Option<String>,
     pub cover_image: Option<String>,
@@ -260,7 +260,7 @@ pub struct UpdateWikiPlaceRequest {
 /// Request to update an organization wiki page
 #[derive(Debug, Deserialize)]
 pub struct UpdateWikiOrganizationRequest {
-    pub canonical_name: Option<String>,
+    pub name: Option<String>,
     pub content: Option<String>,
     pub cover_image: Option<String>,
     pub organization_type: Option<String>,
@@ -296,10 +296,10 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     let row = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, content, article, article_updated_at, picture, cover_image,
+            id, name, content, article, article_updated_at, picture, cover_image,
             emails, phones, birthday, instagram, facebook, linkedin, x,
             relationship_category, nickname, aliases,
-            first_interaction, last_interaction, interaction_count,
+            first_seen, last_seen, seen_count,
             created_at, updated_at
         FROM wiki_people
         WHERE id = $1
@@ -316,7 +316,7 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
 
     Ok(WikiPerson {
         id: row.id,
-        canonical_name: row.canonical_name,
+        name: row.name,
         content: row.content,
         article,
         article_updated_at,
@@ -333,9 +333,9 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
         x: row.x,
         relationship_category: row.relationship_category,
         nickname: row.nickname,
-        first_interaction: row.first_interaction,
-        last_interaction: row.last_interaction,
-        interaction_count: Some(row.interaction_count as i32),
+        first_seen: row.first_seen,
+        last_seen: row.last_seen,
+        seen_count: Some(row.seen_count as i32),
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -389,8 +389,8 @@ fn normalize_aliases(input: Option<&Vec<String>>) -> Option<serde_json::Value> {
 
 /// Entity indexes sort by how many records mention the entity, not by name.
 ///
-/// The People index had no order at all: it sorted by `canonical_name`, and the
-/// column that was supposed to carry importance — `interaction_count` — is 0 on
+/// The People index had no order at all: it sorted by `name`, and the
+/// column that was supposed to carry importance — `seen_count` — is 0 on
 /// every row on a real box, because nothing has ever written it. So an address
 /// book of 573 contacts arrived alphabetically, with `no-reply@slack.com` sitting
 /// level with the people you actually talk to.
@@ -407,7 +407,7 @@ fn normalize_aliases(input: Option<&Vec<String>>) -> Option<serde_json::Value> {
 /// aggregate runs in 11 ms, which is cheaper than being wrong. Materialize it
 /// when the index gets slow, and not before.
 ///
-/// Deliberately NOT `interaction_count` or `wiki_places.visit_count`: those are
+/// Deliberately NOT `seen_count` or `wiki_places.seen_count`: those are
 /// two different quantities on two tables (and visits are not refs), so reusing
 /// either would make "the default sort" mean something different per index.
 /// Both are legacy; this is the one uniform measure.
@@ -415,14 +415,14 @@ pub async fn list_people(pool: &PgPool) -> Result<Vec<WikiPersonListItem>> {
     let rows = sqlx::query!(
         r#"
         SELECT
-            p.id, p.canonical_name, p.picture, p.relationship_category, p.last_interaction,
+            p.id, p.name, p.picture, p.relationship_category, p.last_seen,
             COALESCE(r.n, 0) AS "ref_count!"
         FROM wiki_people p
         LEFT JOIN (
             SELECT entity_id, count(*) AS n
             FROM wiki_refs WHERE entity_type = 'person' GROUP BY entity_id
         ) r ON r.entity_id = p.id
-        ORDER BY COALESCE(r.n, 0) DESC, p.canonical_name ASC
+        ORDER BY COALESCE(r.n, 0) DESC, p.name ASC
         "#
     )
     .fetch_all(pool)
@@ -433,10 +433,10 @@ pub async fn list_people(pool: &PgPool) -> Result<Vec<WikiPersonListItem>> {
         .into_iter()
         .map(|row| WikiPersonListItem {
             id: row.id,
-            canonical_name: row.canonical_name,
+            name: row.name,
             picture: row.picture,
             relationship_category: row.relationship_category,
-            last_interaction: row.last_interaction,
+            last_seen: row.last_seen,
             ref_count: row.ref_count,
         })
         .collect())
@@ -456,7 +456,7 @@ pub async fn update_person(
         r#"
         UPDATE wiki_people
         SET
-            canonical_name = COALESCE($2, canonical_name),
+            name = COALESCE($2, name),
             content = COALESCE($3, content),
             picture = COALESCE($4, picture),
             cover_image = COALESCE($5, cover_image),
@@ -474,7 +474,7 @@ pub async fn update_person(
         WHERE id = $1
         "#,
         id,
-        req.canonical_name,
+        req.name,
         req.content,
         req.picture,
         req.cover_image,
@@ -507,7 +507,7 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
         SELECT
             id, name, content, article, article_updated_at, cover_image, category, address,
             latitude, longitude,
-            visit_count, first_visit, last_visit,
+            seen_count, first_seen, last_seen,
             created_at, updated_at
         FROM wiki_places
         WHERE id = $1
@@ -534,9 +534,9 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
         address: row.address.clone(),
         latitude: row.latitude,
         longitude: row.longitude,
-        visit_count: Some(row.visit_count as i32),
-        first_visit: row.first_visit,
-        last_visit: row.last_visit,
+        seen_count: Some(row.seen_count as i32),
+        first_seen: row.first_seen,
+        last_seen: row.last_seen,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -547,7 +547,7 @@ pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
     let rows = sqlx::query!(
         r#"
         SELECT
-            p.id, p.name, p.category, p.address, p.visit_count,
+            p.id, p.name, p.category, p.address, p.seen_count,
             COALESCE(r.n, 0) AS "ref_count!"
         FROM wiki_places p
         LEFT JOIN (
@@ -568,7 +568,7 @@ pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
             name: row.name,
             category: row.category,
             address: row.address,
-            visit_count: Some(row.visit_count as i32),
+            seen_count: Some(row.seen_count as i32),
             ref_count: row.ref_count,
         })
         .collect())
@@ -615,10 +615,10 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
     let row = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, content, article, article_updated_at, cover_image,
+            id, name, content, article, article_updated_at, cover_image,
             organization_type, relationship_type, role_title, aliases,
-            start_date, end_date, interaction_count,
-            first_interaction, last_interaction,
+            start_date, end_date, seen_count,
+            first_seen, last_seen,
             created_at, updated_at
         FROM wiki_orgs
         WHERE id = $1
@@ -635,7 +635,7 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
 
     Ok(WikiOrganization {
         id: row.id,
-        canonical_name: row.canonical_name,
+        name: row.name,
         content: row.content,
         article,
         article_updated_at,
@@ -647,9 +647,9 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
         start_date: row.start_date,
         end_date: row.end_date,
         aliases: serde_json::from_value(row.aliases).unwrap_or_default(),
-        interaction_count: Some(row.interaction_count as i32),
-        first_interaction: row.first_interaction,
-        last_interaction: row.last_interaction,
+        seen_count: Some(row.seen_count as i32),
+        first_seen: row.first_seen,
+        last_seen: row.last_seen,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -660,14 +660,14 @@ pub async fn list_organizations(pool: &PgPool) -> Result<Vec<WikiOrganizationLis
     let rows = sqlx::query!(
         r#"
         SELECT
-            o.id, o.canonical_name, o.organization_type, o.relationship_type,
+            o.id, o.name, o.organization_type, o.relationship_type,
             COALESCE(r.n, 0) AS "ref_count!"
         FROM wiki_orgs o
         LEFT JOIN (
             SELECT entity_id, count(*) AS n
             FROM wiki_refs WHERE entity_type = 'organization' GROUP BY entity_id
         ) r ON r.entity_id = o.id
-        ORDER BY COALESCE(r.n, 0) DESC, o.canonical_name ASC
+        ORDER BY COALESCE(r.n, 0) DESC, o.name ASC
         "#
     )
     .fetch_all(pool)
@@ -678,7 +678,7 @@ pub async fn list_organizations(pool: &PgPool) -> Result<Vec<WikiOrganizationLis
         .into_iter()
         .map(|row| WikiOrganizationListItem {
             id: row.id,
-            canonical_name: row.canonical_name,
+            name: row.name,
             organization_type: row.organization_type,
             relationship_type: row.relationship_type,
             ref_count: row.ref_count,
@@ -696,7 +696,7 @@ pub async fn update_organization(
         r#"
         UPDATE wiki_orgs
         SET
-            canonical_name = COALESCE($2, canonical_name),
+            name = COALESCE($2, name),
             content = COALESCE($3, content),
             cover_image = COALESCE($4, cover_image),
             organization_type = COALESCE($5, organization_type),
@@ -709,7 +709,7 @@ pub async fn update_organization(
         WHERE id = $1
         "#,
         id,
-        req.canonical_name,
+        req.name,
         req.content,
         req.cover_image,
         req.organization_type,

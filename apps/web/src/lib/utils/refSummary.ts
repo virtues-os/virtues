@@ -48,12 +48,12 @@ async function fetchByType(type: string, id: string): Promise<RefSummary | null>
 			const p = await r.json();
 			const facts: RefFact[] = [];
 			if (p.relationship_category) facts.push({ label: "Relationship", value: p.relationship_category });
-			const seen = relativeTime(p.last_interaction);
+			const seen = relativeTime(p.last_seen);
 			if (seen) facts.push({ label: "Last seen", value: seen });
-			if (p.interaction_count) facts.push({ label: "Interactions", value: String(p.interaction_count) });
+			if (p.ref_count) facts.push({ label: "Interactions", value: String(p.ref_count) });
 			return {
 				type,
-				name: p.canonical_name || p.nickname || id,
+				name: p.name || p.nickname || id,
 				subtitle: p.relationship_category || undefined,
 				facts,
 				avatarUrl: p.picture || undefined,
@@ -65,8 +65,8 @@ async function fetchByType(type: string, id: string): Promise<RefSummary | null>
 			const p = await r.json();
 			const facts: RefFact[] = [];
 			if (p.category) facts.push({ label: "Type", value: p.category });
-			if (p.visit_count) facts.push({ label: "Visits", value: String(p.visit_count) });
-			const seen = relativeTime(p.last_visit);
+			if (p.ref_count) facts.push({ label: "Visits", value: String(p.ref_count) });
+			const seen = relativeTime(p.last_seen);
 			if (seen) facts.push({ label: "Last visit", value: seen });
 			const coords =
 				typeof p.latitude === "number" && typeof p.longitude === "number"
@@ -89,11 +89,11 @@ async function fetchByType(type: string, id: string): Promise<RefSummary | null>
 			const facts: RefFact[] = [];
 			if (o.role_title) facts.push({ label: "Role", value: o.role_title });
 			if (o.relationship_type) facts.push({ label: "Relationship", value: o.relationship_type });
-			const seen = relativeTime(o.last_interaction);
+			const seen = relativeTime(o.last_seen);
 			if (seen) facts.push({ label: "Last seen", value: seen });
 			return {
 				type,
-				name: o.canonical_name || id,
+				name: o.name || id,
 				subtitle: o.role_title || o.organization_type || undefined,
 				facts,
 			};

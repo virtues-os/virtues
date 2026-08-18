@@ -154,7 +154,7 @@ async fn flush_browser(
             "url",
             "domain",
             "page_title",
-            "timestamp",
+            "occurred_at",
             "source_stream_id",
             "source_table",
             "source_provider",
@@ -479,7 +479,7 @@ async fn flush_imessage(db: &PgPool, rows: &[Msg]) -> Result<usize> {
         // ("message:" || channel), so name it rather than leaving it "unknown".
         "channel",
         "thread_id",
-        "timestamp",
+        "occurred_at",
         // These four were on the wire and thrown away on arrival — every tapback,
         // every read receipt, every "they sent a photo", and every group chat.
         "is_read",

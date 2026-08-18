@@ -109,8 +109,8 @@ async fn assess_richness(pool: &PgPool) -> Richness {
     let row: (i64, i64, i64) = sqlx::query_as(
         r#"
         SELECT
-            (SELECT count(*) FROM wiki_people WHERE interaction_count >= 3),
-            (SELECT count(*) FROM wiki_places WHERE visit_count >= 2),
+            (SELECT count(*) FROM wiki_people WHERE ref_count >= 3),
+            (SELECT count(*) FROM wiki_places WHERE ref_count >= 2),
             (SELECT count(*) FROM wiki_day_prose WHERE prose IS NOT NULL)
         "#,
     )
@@ -131,9 +131,9 @@ async fn build_prompt(pool: &PgPool, thin: bool) -> String {
 
     // People who recur (by interaction volume).
     let people: Vec<(String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT canonical_name, relationship_category, interaction_count \
-         FROM wiki_people WHERE interaction_count > 0 \
-         ORDER BY interaction_count DESC LIMIT 8",
+        "SELECT name, relationship_category, ref_count \
+         FROM wiki_people WHERE ref_count > 0 \
+         ORDER BY ref_count DESC LIMIT 8",
     )
     .fetch_all(pool)
     .await
@@ -151,9 +151,9 @@ async fn build_prompt(pool: &PgPool, thin: bool) -> String {
 
     // Places they return to (by visit count).
     let places: Vec<(String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT name, category, visit_count \
-         FROM wiki_places WHERE visit_count > 0 \
-         ORDER BY visit_count DESC LIMIT 6",
+        "SELECT name, category, ref_count \
+         FROM wiki_places WHERE ref_count > 0 \
+         ORDER BY ref_count DESC LIMIT 6",
     )
     .fetch_all(pool)
     .await
@@ -171,8 +171,8 @@ async fn build_prompt(pool: &PgPool, thin: bool) -> String {
 
     // Organizations.
     let orgs: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT canonical_name, organization_type \
-         FROM wiki_orgs ORDER BY interaction_count DESC LIMIT 5",
+        "SELECT name, organization_type \
+         FROM wiki_orgs ORDER BY ref_count DESC LIMIT 5",
     )
     .fetch_all(pool)
     .await

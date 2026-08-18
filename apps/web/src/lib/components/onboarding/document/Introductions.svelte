@@ -20,25 +20,11 @@
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
-	import type { StepId } from "$lib/components/onboarding/steps";
 	import { getProfile, updateProfile, getAssistantProfile, updateAssistantProfile } from "$lib/api/client";
 	import { onMount } from "svelte";
 
-	let {
-		onnext,
-		passed = [],
-		onjump,
-		back = false,
-		reduced = false,
-	}: {
-		onnext: () => void;
-		passed?: StepId[];
-		onjump?: (id: StepId) => void;
-		/** Arrived by going backward through the strip, so the page turns the other way. */
-		back?: boolean;
-		reduced?: boolean;
-	} = $props();
+	// Shell and progress strip belong to the route; this is only the leaf.
+	let { onnext }: { onnext: () => void } = $props();
 
 	let you = $state("");
 	let assistant = $state("");
@@ -84,9 +70,8 @@
 	}
 </script>
 
-<div class="ob-wrap" class:ob-still={reduced} class:ob-back={back}>
-	<div class="ob-sheet">
-		<OnboardingHeader step="names" done={passed} {onjump} />
+<div>
+	<div>
 		<h1 class="ob-h1">Two names.</h1>
 		<p class="ob-lede">
 			Before the box starts reading anything, the two things it needs from you directly.
