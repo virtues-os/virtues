@@ -1,6 +1,47 @@
-//! Ontology registry - Normalized data schema definitions
+//! The registry of observation types, and how each takes part in the pipeline.
 //!
-//! This module defines the metadata for ontology tables (health, location, social, etc.).
+//! ## What "ontology" means here — and what it does not
+//!
+//! It is a misnomer we have kept, and it is worth being precise about because the
+//! word invites the wrong expectations. There is no concept hierarchy in this
+//! module, no relations between concepts, no inference. What an
+//! `OntologyDescriptor` actually declares is a **participation contract**: given
+//! one table of observations, how to read its time, whether to embed it for
+//! search, whether it carries prose worth extracting entities from, how it
+//! reaches a day page, which lifeline lane it plots on, and whether its presence
+//! means the owner was DOING something rather than merely being measured.
+//!
+//! The accurate vocabulary, if you are reasoning about the design rather than
+//! reading the code:
+//!
+//!   * A `data_*` table is an **observation type** — one kind of thing that can
+//!     be observed about a life. One row is one observation at one time, with
+//!     provenance back to the stream that delivered it. It is never derived from
+//!     another table (that is `wiki_*`) and never product state (that is
+//!     `app_*`). It is the only layer that can be re-collected; everything
+//!     downstream is rebuildable from it.
+//!   * A descriptor here is that type's **participation contract**.
+//!   * The thing with actual ontological commitments is the PIPELINE —
+//!     ingest → resolve → index → cite → narrate — not this table of metadata.
+//!
+//! The name is not being changed today because `ontology` appears ~340 times and,
+//! more to the point, is a stored value in `search_embeddings.ontology` — so a
+//! rename is a data migration plus a full reindex, for a word. Written down
+//! instead, so at least it means one thing.
+//!
+//! ## The contract is load-bearing, and silence is its failure mode
+//!
+//! `search/indexer.rs` decides what is searchable by iterating
+//! `registered_ontologies()`. A `data_*` table with no descriptor is therefore
+//! collected and then invisible: not searchable, absent from the lifeline, the
+//! dayline and day summaries. The collector succeeds, the rows are there, and the
+//! data never appears anywhere. That had happened to SEVEN tables before anyone
+//! noticed — including imported AI chat history, which is prose.
+//!
+//! `every_data_table_participates_or_is_exempted` now fails the build for a new
+//! one. Exemptions are named individually there, so leaving a table out is a
+//! decision rather than an oversight.
+//!
 //! The actual SQL schema lives in Core migrations.
 
 use serde::{Deserialize, Serialize};
