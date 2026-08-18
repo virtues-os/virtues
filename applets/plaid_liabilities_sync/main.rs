@@ -26,8 +26,9 @@ async fn main() -> Result<()> {
     // Proxied through virtues-api: the box sends only the per-user access_token;
     // the master Plaid secret stays server-side. Use the raw variant so a benign
     // non-2xx (accounts that don't support liabilities → 400) doesn't error.
-    let (status, body) = virtues_applets::plaid_proxy_raw(
+    let (status, body) = virtues_applets::service_proxy_raw(
         &pool,
+        "plaid",
         "liabilities/get",
         &json!({ "access_token": access_token }),
     )
