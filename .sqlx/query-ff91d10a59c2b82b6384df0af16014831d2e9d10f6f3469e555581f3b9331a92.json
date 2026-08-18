@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT count(*) AS \"n!\" FROM data_location_point\n           WHERE timestamp >= $1 AND timestamp < $2 AND latitude IS NOT NULL",
+  "query": "SELECT count(*) AS \"n!\" FROM data_location_point\n           WHERE occurred_at >= $1 AND occurred_at < $2 AND latitude IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -19,5 +19,5 @@
       null
     ]
   },
-  "hash": "e64c2f5e9b375059f1a93814ffc8dba0459b5fcc5c9549986f6a711d0d262b9f"
+  "hash": "ff91d10a59c2b82b6384df0af16014831d2e9d10f6f3469e555581f3b9331a92"
 }

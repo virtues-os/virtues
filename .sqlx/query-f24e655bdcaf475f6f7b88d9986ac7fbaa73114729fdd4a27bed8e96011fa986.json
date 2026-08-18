@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            e.id,\n            e.from_email,\n            e.from_name\n        FROM data_communication_email e\n        WHERE e.occurred_at >= $1\n          AND e.occurred_at < $2\n          AND e.from_email IS NOT NULL\n          AND e.from_email != ''\n          AND NOT EXISTS (\n              SELECT 1 FROM wiki_refs er\n              WHERE er.source_table = 'data_communication_email'\n                AND er.source_id = e.id\n                AND er.role = 'sender'\n          )\n        ORDER BY e.occurred_at ASC\n        LIMIT 1000\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "from_email",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "from_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "f24e655bdcaf475f6f7b88d9986ac7fbaa73114729fdd4a27bed8e96011fa986"
+}

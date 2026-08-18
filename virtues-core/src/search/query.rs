@@ -444,11 +444,11 @@ impl SemanticSearchEngine {
             next += filters.ontologies.len();
         }
         if filters.date_after.is_some() {
-            filter_sql.push_str(&format!(" AND se.timestamp >= ${next}"));
+            filter_sql.push_str(&format!(" AND se.occurred_at >= ${next}"));
             next += 1;
         }
         if filters.date_before.is_some() {
-            filter_sql.push_str(&format!(" AND se.timestamp <= ${next}"));
+            filter_sql.push_str(&format!(" AND se.occurred_at <= ${next}"));
             next += 1;
         }
         let entity_filter = !filters.entities.is_empty();
@@ -541,7 +541,7 @@ impl SemanticSearchEngine {
              ), best AS ( \
                SELECT DISTINCT ON (se.record_id) \
                       se.ontology, se.record_id, se.title, se.preview, se.author, \
-                      to_char(se.timestamp AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as ts, \
+                      to_char(se.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as ts, \
                       se.content, ({wd}*z.dz + {wl}*z.bz{boost})::float8 AS s \
                FROM z JOIN search_embeddings se ON se.id = z.id \
                ORDER BY se.record_id, s DESC, se.id \
@@ -617,7 +617,7 @@ impl SemanticSearchEngine {
         // Keep scanning the graph when the WHERE clause throws candidates away.
         //
         // The dense arm post-filters: HNSW returns `ef_search` nearest rows,
-        // and only then does `AND se.ontology IN (…)` / `AND se.timestamp >= $n`
+        // and only then does `AND se.ontology IN (…)` / `AND se.occurred_at >= $n`
         // discard whatever does not match. So a narrow filter — "what did I do
         // last March?" — could leave the dense arm returning a handful of rows
         // instead of a full pool, and the hybrid would quietly degrade to

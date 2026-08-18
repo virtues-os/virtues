@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id,\n            latitude,\n            longitude,\n            timestamp,\n            horizontal_accuracy\n        FROM data_location_point\n        WHERE timestamp >= $1\n          AND timestamp < $2\n          AND (horizontal_accuracy IS NULL OR horizontal_accuracy < $3)\n        ORDER BY timestamp ASC\n        ",
+  "query": "\n        SELECT\n            id,\n            latitude,\n            longitude,\n            occurred_at,\n            horizontal_accuracy\n        FROM data_location_point\n        WHERE occurred_at >= $1\n          AND occurred_at < $2\n          AND (horizontal_accuracy IS NULL OR horizontal_accuracy < $3)\n        ORDER BY occurred_at ASC\n        ",
   "describe": {
     "columns": [
       {
@@ -20,7 +20,7 @@
       },
       {
         "ordinal": 3,
-        "name": "timestamp",
+        "name": "occurred_at",
         "type_info": "Timestamptz"
       },
       {
@@ -44,5 +44,5 @@
       true
     ]
   },
-  "hash": "16a956bc3829f24129ee9b10cee1454db0596aa73082702bab3b003bc3ac9b0e"
+  "hash": "143150c33da2f6b0b8b0ed944fc48a586e62f4ce014844f93afe2cc357b51ea0"
 }

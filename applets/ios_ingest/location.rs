@@ -130,7 +130,7 @@ async fn flush_locations(db: &PgPool, records: &[LocationRow]) -> Result<usize> 
     );
 
     let mut q = sqlx::query(&sql);
-    for (id, lat, lon, alt, h_acc, v_acc, speed, course, timestamp, stream_id, metadata) in records {
+    for (id, lat, lon, alt, h_acc, v_acc, speed, course, occurred_at, stream_id, metadata) in records {
         q = q
             .bind(id)
             .bind(lat)
@@ -140,7 +140,7 @@ async fn flush_locations(db: &PgPool, records: &[LocationRow]) -> Result<usize> 
             .bind(v_acc)
             .bind(speed)
             .bind(course)
-            .bind(timestamp)
+            .bind(occurred_at)
             .bind(stream_id)
             .bind(LOCATION_STREAM_TABLE)
             .bind(IOS_PROVIDER)

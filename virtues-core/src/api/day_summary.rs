@@ -642,7 +642,7 @@ async fn build_health_snapshot(
         r#"
         SELECT MIN(bpm), MAX(bpm), ROUND(AVG(bpm)), COUNT(*)
         FROM data_health_heart_rate
-        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
+        WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz
         "#,
     )
     .bind(start_str)
@@ -666,7 +666,7 @@ async fn build_health_snapshot(
         r#"
         SELECT SUM(step_count)
         FROM data_health_steps
-        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
+        WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz
         "#,
     )
     .bind(start_str)
@@ -719,17 +719,17 @@ async fn day_entities_for_refs(pool: &PgPool, start_str: &str, end_str: &str) ->
         "SELECT 'person' AS kind, pe.id AS id, pe.canonical_name AS name \
          FROM wiki_refs er JOIN wiki_people pe ON pe.id = er.entity_id \
          WHERE er.entity_type = 'person' \
-           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz \
+           AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz \
          UNION \
          SELECT 'place', p.id, p.name \
          FROM wiki_refs er JOIN wiki_places p ON p.id = er.entity_id \
          WHERE er.entity_type = 'place' \
-           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz \
+           AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz \
          UNION \
          SELECT 'org', o.id, o.canonical_name \
          FROM wiki_refs er JOIN wiki_orgs o ON o.id = er.entity_id \
          WHERE er.entity_type = 'organization' \
-           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz",
+           AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz",
     )
     .bind(start_str)
     .bind(end_str)
@@ -783,9 +783,9 @@ async fn day_movement_segments(
 )> {
     use sqlx::Row;
     let rows = sqlx::query(
-        "SELECT timestamp, latitude, longitude, speed FROM data_location_point \
-         WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz \
-         ORDER BY timestamp",
+        "SELECT occurred_at, latitude, longitude, speed FROM data_location_point \
+         WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz \
+         ORDER BY occurred_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -1070,7 +1070,7 @@ async fn day_message_bursts(
     // the tiebreak so a row WITH a resolved name wins over one without.
     let rows = sqlx::query(
         "SELECT DISTINCT ON (m.id) \
-                m.id, m.thread_id, m.body, m.timestamp, m.from_name, m.from_identifier, \
+                m.id, m.thread_id, m.body, m.occurred_at, m.from_name, m.from_identifier, \
                 COALESCE((m.metadata->>'is_from_me')::boolean, false) AS from_me, \
                 pe.canonical_name AS resolved_name \
          FROM data_communication_message m \
@@ -1078,7 +1078,7 @@ async fn day_message_bursts(
            ON er.source_table = 'data_communication_message' AND er.source_id = m.id \
           AND er.entity_type = 'person' AND er.role IN ('sender', 'recipient') \
          LEFT JOIN wiki_people pe ON pe.id = er.entity_id \
-         WHERE m.timestamp >= $1::timestamptz AND m.timestamp <= $2::timestamptz \
+         WHERE m.occurred_at >= $1::timestamptz AND m.occurred_at <= $2::timestamptz \
          ORDER BY m.id, (pe.canonical_name IS NULL)",
     )
     .bind(start_str)
@@ -1219,14 +1219,14 @@ async fn build_dossier(
 
     // Visits — place resolved through wiki_places, arrival→departure.
     let visits = sqlx::query(
-        "SELECT COALESCE(p.name, v.place_name) AS place, v.arrival_time, v.departure_time \
+        "SELECT COALESCE(p.name, v.place_name) AS place, v.started_at, v.ended_at \
          FROM data_location_visit v \
          LEFT JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' AND er.source_id = v.id \
           AND er.entity_type = 'place' \
          LEFT JOIN wiki_places p ON p.id = er.entity_id \
-         WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time <= $2::timestamptz \
-         ORDER BY v.arrival_time",
+         WHERE v.started_at >= $1::timestamptz AND v.started_at <= $2::timestamptz \
+         ORDER BY v.started_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -1240,9 +1240,9 @@ async fn build_dossier(
             .flatten()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "Unknown place".to_string());
-        let arr: chrono::DateTime<chrono::Utc> = r.get("arrival_time");
+        let arr: chrono::DateTime<chrono::Utc> = r.get("started_at");
         let dep: Option<chrono::DateTime<chrono::Utc>> =
-            r.try_get("departure_time").ok().flatten();
+            r.try_get("ended_at").ok().flatten();
         let span = match dep {
             Some(d) => format!("{}–{}", fmt(&arr), fmt(&d)),
             None => format!("{}–?", fmt(&arr)),
@@ -1460,11 +1460,11 @@ async fn build_dossier(
     // stretch actually was — a meal, a shop, a checkout — grounding windows the audio
     // alone leaves ambiguous.
     let txns = sqlx::query(
-        "SELECT timestamp, amount, currency, merchant_name, description \
+        "SELECT occurred_at, amount, currency, merchant_name, description \
          FROM data_financial_transaction \
-         WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz \
+         WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz \
            AND is_archived IS NOT TRUE \
-         ORDER BY timestamp",
+         ORDER BY occurred_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -2054,7 +2054,7 @@ async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Option
           AND er.source_id = v.id \
           AND er.entity_type = 'place' \
          JOIN wiki_places p ON p.id = er.entity_id \
-         WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time <= $2::timestamptz \
+         WHERE v.started_at >= $1::timestamptz AND v.started_at <= $2::timestamptz \
          ORDER BY v.duration_minutes DESC LIMIT 1",
     )
     .bind(start)

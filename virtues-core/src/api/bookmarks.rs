@@ -189,12 +189,12 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
 
     let items = sqlx::query_as::<_, BookmarkListItem>(&format!(
         "SELECT id, url, title, description, note, source_platform, bookmark_type,
-                author, tags, thumbnail_url, timestamp,
+                author, tags, thumbnail_url, occurred_at,
                 extraction->>'medium' AS medium,
                 ({STATE_SQL}) AS state
            FROM data_content_bookmark
            {where_sql}
-          ORDER BY timestamp {}, id
+          ORDER BY occurred_at {}, id
           LIMIT $6 OFFSET $7",
         if ascending { "ASC" } else { "DESC" }
     ))
@@ -236,7 +236,7 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
 pub async fn get_bookmark(db: &PgPool, id: &str) -> Result<BookmarkDetail> {
     sqlx::query_as::<_, BookmarkDetail>(&format!(
         "SELECT id, url, title, description, note, source_platform, bookmark_type,
-                author, tags, thumbnail_url, timestamp, deleted_at_source,
+                author, tags, thumbnail_url, occurred_at, deleted_at_source,
                 enrichment_model, extraction,
                 extraction->>'medium' AS medium,
                 ({STATE_SQL}) AS state
@@ -384,7 +384,7 @@ pub async fn save_bookmark(db: &PgPool, req: SaveBookmarkRequest) -> Result<Save
     }
 
     let saved = sqlx::query_as::<_, SavedBookmark>(
-        "SELECT id, url, title, note, tags, timestamp
+        "SELECT id, url, title, note, tags, occurred_at
            FROM data_content_bookmark WHERE source_stream_id = $1",
     )
     .bind(&source_stream_id)
@@ -432,7 +432,7 @@ mod tests {
         for (name, url, status, meta) in rows {
             sqlx::query(
                 "INSERT INTO data_content_bookmark
-                   (id, url, title, timestamp, source_stream_id, source_table,
+                   (id, url, title, occurred_at, source_stream_id, source_table,
                     source_provider, enrichment_status, metadata, extraction)
                  VALUES ($1, $2, $3, now(), $1, 'test', 'test', $4, $5::jsonb,
                          '{\"medium\":\"article\"}'::jsonb)",
@@ -528,7 +528,7 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO data_content_bookmark
-               (id, url, title, timestamp, source_stream_id, source_table, source_provider,
+               (id, url, title, occurred_at, source_stream_id, source_table, source_provider,
                 enrichment_status, extraction, deleted_at_source)
              VALUES ($1, 'https://example.com/a', 'A', now(), $1, 'test', 'test', 'done',
                      '{\"medium\":\"article\",\"subject\":[\"x\"]}'::jsonb, now())",

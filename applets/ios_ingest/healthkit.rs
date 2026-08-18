@@ -94,11 +94,11 @@ async fn flush_heart_rate(
     );
 
     let mut q = sqlx::query(&sql);
-    for (id, bpm, timestamp, stream_id, metadata) in records {
+    for (id, bpm, occurred_at, stream_id, metadata) in records {
         q = q
             .bind(id)
             .bind(bpm)
-            .bind(timestamp)
+            .bind(occurred_at)
             .bind(stream_id)
             .bind(HEALTHKIT_STREAM_TABLE)
             .bind(IOS_PROVIDER)
@@ -185,11 +185,11 @@ async fn flush_hrv(
     );
 
     let mut q = sqlx::query(&sql);
-    for (id, hrv_ms, timestamp, stream_id, metadata) in records {
+    for (id, hrv_ms, occurred_at, stream_id, metadata) in records {
         q = q
             .bind(id)
             .bind(hrv_ms)
-            .bind(timestamp)
+            .bind(occurred_at)
             .bind(stream_id)
             .bind(HEALTHKIT_STREAM_TABLE)
             .bind(IOS_PROVIDER)
@@ -267,11 +267,11 @@ async fn flush_steps(
     );
 
     let mut q = sqlx::query(&sql);
-    for (id, step_count, timestamp, stream_id, metadata) in records {
+    for (id, step_count, occurred_at, stream_id, metadata) in records {
         q = q
             .bind(id)
             .bind(step_count)
-            .bind(timestamp)
+            .bind(occurred_at)
             .bind(stream_id)
             .bind(HEALTHKIT_STREAM_TABLE)
             .bind(IOS_PROVIDER)
@@ -348,11 +348,11 @@ async fn flush_active_energy(
     );
 
     let mut q = sqlx::query(&sql);
-    for (id, kcal, timestamp, stream_id, metadata) in records {
+    for (id, kcal, occurred_at, stream_id, metadata) in records {
         q = q
             .bind(id)
             .bind(kcal)
-            .bind(timestamp)
+            .bind(occurred_at)
             .bind(stream_id)
             .bind(HEALTHKIT_STREAM_TABLE)
             .bind(IOS_PROVIDER)
@@ -429,11 +429,11 @@ async fn flush_distance(
     );
 
     let mut q = sqlx::query(&sql);
-    for (id, meters, timestamp, stream_id, metadata) in records {
+    for (id, meters, occurred_at, stream_id, metadata) in records {
         q = q
             .bind(id)
             .bind(meters)
-            .bind(timestamp)
+            .bind(occurred_at)
             .bind(stream_id)
             .bind(HEALTHKIT_STREAM_TABLE)
             .bind(IOS_PROVIDER)

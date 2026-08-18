@@ -86,7 +86,7 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
     let avg_hr: Option<f64> = sqlx::query_scalar(
         r#"SELECT AVG(CAST(bpm AS REAL))
            FROM data_health_heart_rate
-           WHERE timestamp >= $1 AND timestamp < $2"#,
+           WHERE occurred_at >= $1 AND occurred_at < $2"#,
     )
     .bind(sleep_start)
     .bind(sleep_end)

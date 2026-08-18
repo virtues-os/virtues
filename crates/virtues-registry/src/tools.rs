@@ -571,7 +571,7 @@ NARRATIVE TABLES (life story structure — wiki_* prefix)
 QUERY TIPS (PostgreSQL dialect)
 ================================================================================
 - Use 'get_schema' to see columns before writing queries
-- Date filter: WHERE timestamp > now() - interval '7 days'
+- Date filter: WHERE occurred_at > now() - interval '7 days'
 - Truncate to a period: date_trunc('month', now()), date_trunc('day', now())
 - Cast a timestamp to a date: timestamp::date  (today = current_date)
 - Financial: amount/100.0 for dollars
@@ -585,21 +585,21 @@ EXAMPLE QUERIES
 -- Spending by category this month
 SELECT category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
 FROM data_financial_transaction
-WHERE timestamp >= date_trunc('month', now())
+WHERE occurred_at >= date_trunc('month', now())
 GROUP BY category ORDER BY dollars DESC
 
 -- Most contacted people this week
 SELECT wp.name, COUNT(*) as messages
 FROM data_communication_message m
 JOIN wiki_people wp ON m.sender_url = wp.url OR m.recipient_url = wp.url
-WHERE m.timestamp > now() - interval '7 days'
+WHERE m.occurred_at > now() - interval '7 days'
 GROUP BY wp.name ORDER BY messages DESC LIMIT 10
 
 -- Sleep patterns last 2 weeks
 SELECT timestamp::date as day, duration_hours, quality
 FROM data_health_sleep
-WHERE timestamp > now() - interval '14 days'
-ORDER BY timestamp DESC
+WHERE occurred_at > now() - interval '14 days'
+ORDER BY occurred_at DESC
 
 -- Calendar events today
 SELECT title, start_time, end_time, location
