@@ -111,8 +111,8 @@ pub const AGENT_MODE_PROMPT: &str = r#"
 - Do NOT use tools for: conversational replies, opinions, follow-ups on data already in context
 
 Common SQL patterns (Postgres):
-- Time filtering: WHERE timestamp > now() - interval '7 days'
-- This month: WHERE timestamp >= date_trunc('month', now())
+- Time filtering: WHERE occurred_at > now() - interval '7 days'
+- This month: WHERE occurred_at >= date_trunc('month', now())
 - Person lookup: JOIN wiki_people ON ... WHERE canonical_name ILIKE '%Sarah%'
 - Financial totals: SELECT category, SUM(amount)/100.0 as dollars FROM data_financial_transaction ...
 - Aggregation: GROUP BY + ORDER BY for top-N patterns

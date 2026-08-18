@@ -124,7 +124,6 @@ async fn wipe_derived(pool: &PgPool) -> Result<()> {
         // CASCADE truncates search_vectors too (it FK-references search_embeddings).
         "TRUNCATE search_embeddings CASCADE",
         "TRUNCATE search_topic_cache",
-        "TRUNCATE search_embedding_progress",
         // The geometry goes with the vectors. The indexer refuses to write vectors
         // from a model the index was not built with — and adopting the new model is
         // the entire point of this command, so the old geometry must not survive it.

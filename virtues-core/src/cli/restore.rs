@@ -1086,21 +1086,41 @@ pub(crate) fn apply_from_volume(
     // already on the box. Files belonging to no archive would survive, be
     // indistinguishable from restored ones, and quietly make the result
     // something other than the state that was backed up.
+    // VERIFY EVERY INCREMENT BEFORE DESTROYING ANYTHING.
+    //
+    // The wipe used to come first, and the increments were opened one at a time
+    // afterwards. So increment 3 of 7 failing — a bad sector, a wrong key, the
+    // backup drive filling while staging — left the owner with a destroyed
+    // lake, two increments restored, and a database already replaced. There was
+    // no way back: the pre-restore state was gone before anything had been
+    // shown to be readable.
+    //
+    // Each increment is opened, extracted and checksummed here, and the staging
+    // directories are held for the copy below, so the work is not repeated.
+    println!("→ verifying {} increment(s) before touching the lake…", increments.len());
+    let mut staged: Vec<(String, Stage)> = Vec::with_capacity(increments.len());
+    for (n, inc) in increments.iter().enumerate() {
+        let name = inc.file_name().unwrap_or_default().to_string_lossy().to_string();
+        println!("   {}/{}: {name}", n + 1, increments.len());
+        let stage = mkstage(inc)?;
+        {
+            let staging: &Path = stage.as_ref();
+            extract_into(open_archive(inc, identity)?, staging)?;
+            let manifest = read_manifest(staging)?;
+            verify_sha256(staging, &manifest.artifacts)?;
+        }
+        staged.push((name, stage));
+    }
+
+    // Only now is the live lake replaced. Everything below is a copy from
+    // material already proven readable.
     let _ = fs::remove_dir_all(&targets.lake);
     fs::create_dir_all(&targets.lake)
         .map_err(|e| crate::Error::Other(format!("create lake dir: {e}")))?;
 
-    // Then each increment, oldest first, unpacked straight into the lake.
-    for (n, inc) in increments.iter().enumerate() {
-        let name = inc.file_name().unwrap_or_default().to_string_lossy();
-        println!("→ increment {}/{}: {name}", n + 1, increments.len());
-        let stage = mkstage(inc)?;
-        let staging: &Path = stage.as_ref();
-        extract_into(open_archive(inc, identity)?, staging)?;
-        let manifest = read_manifest(staging)?;
-        verify_sha256(staging, &manifest.artifacts)?;
-
-        let staged_lake = staging.join("lake");
+    for (n, (name, stage)) in staged.iter().enumerate() {
+        println!("→ increment {}/{}: {name}", n + 1, staged.len());
+        let staged_lake = stage.as_ref().join("lake");
         if staged_lake.is_dir() {
             copy_tree(&staged_lake, &targets.lake)?;
         }

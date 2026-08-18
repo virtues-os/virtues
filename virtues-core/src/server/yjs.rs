@@ -162,6 +162,9 @@ impl Default for DocCache {
 struct PendingSave {
     yjs_state: Vec<u8>,
     queued_at: Instant,
+    /// How many times saving this page has failed. Drives the backoff, and
+    /// escalates the log once a transient blip looks like a real fault.
+    attempts: u32,
 }
 
 /// Debounced save queue - waits for typing to stop before saving
@@ -183,6 +186,7 @@ impl SaveQueue {
             PendingSave {
                 yjs_state,
                 queued_at: Instant::now(),
+                attempts: 0,
             },
         );
     }
@@ -200,8 +204,11 @@ impl SaveQueue {
             {
                 let mut pending = self.pending.write().await;
                 pending.retain(|page_id, save| {
-                    if now.duration_since(save.queued_at) >= DEBOUNCE_DURATION {
-                        to_save.push((page_id.clone(), save.yjs_state.clone()));
+                    // Back off after a failure, so a database that is briefly
+                    // unavailable is not hammered every 500 ms.
+                    let wait = DEBOUNCE_DURATION * (1 << save.attempts.min(5));
+                    if now.duration_since(save.queued_at) >= wait {
+                        to_save.push((page_id.clone(), save.yjs_state.clone(), save.attempts));
                         false
                     } else {
                         true
@@ -209,9 +216,35 @@ impl SaveQueue {
                 });
             }
 
-            for (page_id, yjs_state) in to_save {
+            for (page_id, yjs_state, attempts) in to_save {
                 if let Err(e) = save_and_materialize(&pool, &page_id, &yjs_state).await {
-                    tracing::error!("Failed to save page {}: {}", page_id, e);
+                    // Put it BACK. This is the owner's only copy.
+                    //
+                    // The entry was removed from `pending` before the save was
+                    // attempted, so a failure used to drop the bytes on the
+                    // floor with one log line. The editor is a CRDT and keeps
+                    // showing the text, so nothing looked wrong — until moka
+                    // evicted the doc ~30 minutes later and the page reverted to
+                    // its last successful save. A Postgres blip (pool exhausted
+                    // by the nightly narration, a restart during `virtues
+                    // upgrade`, an OOM on an SBC) is enough, and the window is
+                    // exactly when someone is typing.
+                    let attempts = attempts.saturating_add(1);
+                    if attempts <= 3 {
+                        tracing::warn!(page = %page_id, attempts, error = %e,
+                            "page save failed; requeued");
+                    } else {
+                        tracing::error!(page = %page_id, attempts, error = %e,
+                            "page save still failing — the owner's edits are unsaved");
+                    }
+                    let mut pending = self.pending.write().await;
+                    // A newer edit may have arrived while we were away; it
+                    // supersedes this one and already carries the full state.
+                    pending.entry(page_id).or_insert(PendingSave {
+                        yjs_state,
+                        queued_at: Instant::now(),
+                        attempts,
+                    });
                 }
             }
         }
@@ -502,6 +535,35 @@ impl YjsState {
         tokio::spawn(async move {
             save_queue.process_loop(pool).await;
         });
+    }
+
+    /// Write every queued edit now, ignoring the debounce.
+    ///
+    /// Called on shutdown. Without it, SIGTERM discards whatever is inside the
+    /// debounce window — which means every `systemctl restart virtues` and every
+    /// self-update silently drops the last couple of seconds of the owner's
+    /// typing. `server/mod.rs` used to carry a comment saying no flush was
+    /// needed on shutdown; that was true of the old StreamWriter and was never
+    /// true of this queue.
+    ///
+    /// Best-effort by design: a failure here has nowhere left to go, since the
+    /// process is exiting. It is logged at error so the next boot's journal
+    /// says what was lost.
+    pub async fn flush_pending_saves(&self) {
+        let drained: Vec<(String, Vec<u8>)> = {
+            let mut pending = self.save_queue.pending.write().await;
+            pending.drain().map(|(id, s)| (id, s.yjs_state)).collect()
+        };
+        if drained.is_empty() {
+            return;
+        }
+        tracing::info!(pages = drained.len(), "flushing unsaved page edits before shutdown");
+        for (page_id, state) in drained {
+            if let Err(e) = save_and_materialize(&self.pool, &page_id, &state).await {
+                tracing::error!(page = %page_id, error = %e,
+                    "could not flush page on shutdown — these edits are lost");
+            }
+        }
     }
 
     /// Get the current Yjs document state as bytes (for snapshots/versioning).

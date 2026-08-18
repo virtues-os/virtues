@@ -324,7 +324,33 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     let model = crate::api::assistant_profile::get_chat_model(pool).await?;
     let raw_response = call_virtues_api(pool, SEGMENT_PROMPT, &model, &prompt).await?;
 
-    let events = parse_events_salvaging(&raw_response).unwrap_or_default();
+    // An empty parse is a FAILURE, not a day with nothing in it.
+    //
+    // `store_structured_events` deletes every auto event for the day before
+    // inserting, and the fingerprint written below means the day is never
+    // re-cut. So one unparseable model response used to erase a day that had
+    // fourteen good events, replace it with a single "Unknown" block, and mark
+    // the work done — permanently, on a day the owner actually lived. The log
+    // said `events = 0`, which reads exactly like a quiet day.
+    //
+    // Bail before the delete and before the fingerprint, and keep the raw
+    // response at error level so the next run has something to look at. The day
+    // stays un-segmented, which is what "we could not read the answer" should
+    // look like, and the next scheduled pass tries again.
+    let events = match parse_events_salvaging(&raw_response) {
+        Some(ev) if !ev.is_empty() => ev,
+        _ => {
+            tracing::error!(
+                date = %date,
+                response = %raw_response.chars().take(2000).collect::<String>(),
+                "could not parse any events from the model response — leaving the \
+                 day un-segmented rather than erasing it"
+            );
+            return Err(crate::Error::Other(format!(
+                "day {date}: no events could be parsed from the model response"
+            )));
+        }
+    };
     let n = events.len() as u32;
 
     let day_stub = get_or_create_day(pool, date).await?;
@@ -391,10 +417,10 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         // `COALESCE(..., '(unlabeled)')` so a NULL label can never fail the String
         // decode and abort narration for the whole day.
         "SELECT COALESCE(user_label, auto_label, '(unlabeled)') AS label, event_summary, \
-                start_time, end_time, novelty_z \
+                start_time, ended_at, novelty_z \
          FROM wiki_events \
          WHERE day_id = $1 AND NOT is_unknown AND NOT user_hidden \
-         ORDER BY start_time",
+         ORDER BY started_at",
     )
     .bind(&day.id)
     .fetch_all(pool)
@@ -465,7 +491,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         date.format("%A, %B %-d, %Y")
     );
     for (i, e) in events.iter().enumerate() {
-        prompt.push_str(&format!("- {}–{} {}", fmt(&e.start_time), fmt(&e.end_time), e.label));
+        prompt.push_str(&format!("- {}–{} {}", fmt(&e.started_at), fmt(&e.ended_at), e.label));
         if let Some(s) = e.event_summary.as_deref().filter(|s| !s.trim().is_empty()) {
             prompt.push_str(&format!(": {s}"));
         }
@@ -642,7 +668,7 @@ async fn build_health_snapshot(
         r#"
         SELECT MIN(bpm), MAX(bpm), ROUND(AVG(bpm)), COUNT(*)
         FROM data_health_heart_rate
-        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
+        WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz
         "#,
     )
     .bind(start_str)
@@ -666,7 +692,7 @@ async fn build_health_snapshot(
         r#"
         SELECT SUM(step_count)
         FROM data_health_steps
-        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
+        WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz
         "#,
     )
     .bind(start_str)
@@ -705,8 +731,8 @@ fn append_section(prompt: &mut String, section: &PromptSection) {
 struct DayEventRow {
     label: String,
     event_summary: Option<String>,
-    start_time: chrono::DateTime<chrono::Utc>,
-    end_time: chrono::DateTime<chrono::Utc>,
+    started_at: chrono::DateTime<chrono::Utc>,
+    ended_at: chrono::DateTime<chrono::Utc>,
     novelty_z: Option<f64>,
 }
 
@@ -719,17 +745,17 @@ async fn day_entities_for_refs(pool: &PgPool, start_str: &str, end_str: &str) ->
         "SELECT 'person' AS kind, pe.id AS id, pe.canonical_name AS name \
          FROM wiki_refs er JOIN wiki_people pe ON pe.id = er.entity_id \
          WHERE er.entity_type = 'person' \
-           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz \
+           AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz \
          UNION \
          SELECT 'place', p.id, p.name \
          FROM wiki_refs er JOIN wiki_places p ON p.id = er.entity_id \
          WHERE er.entity_type = 'place' \
-           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz \
+           AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz \
          UNION \
          SELECT 'org', o.id, o.canonical_name \
          FROM wiki_refs er JOIN wiki_orgs o ON o.id = er.entity_id \
          WHERE er.entity_type = 'organization' \
-           AND er.timestamp >= $1::timestamptz AND er.timestamp <= $2::timestamptz",
+           AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz",
     )
     .bind(start_str)
     .bind(end_str)
@@ -783,9 +809,9 @@ async fn day_movement_segments(
 )> {
     use sqlx::Row;
     let rows = sqlx::query(
-        "SELECT timestamp, latitude, longitude, speed FROM data_location_point \
-         WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz \
-         ORDER BY timestamp",
+        "SELECT occurred_at, latitude, longitude, speed FROM data_location_point \
+         WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz \
+         ORDER BY occurred_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -797,7 +823,7 @@ async fn day_movement_segments(
         .iter()
         .map(|r| {
             (
-                r.get::<chrono::DateTime<chrono::Utc>, _>("timestamp"),
+                r.get::<chrono::DateTime<chrono::Utc>, _>("occurred_at"),
                 r.get::<f64, _>("latitude"),
                 r.get::<f64, _>("longitude"),
                 r.try_get::<Option<f64>, _>("speed").ok().flatten(),
@@ -921,10 +947,10 @@ async fn day_device_presence(
     const TOP_APPS: usize = 4;
 
     let rows = sqlx::query(
-        "SELECT app_name, start_time, end_time, attention, closed_by, is_open \
+        "SELECT app_name, started_at, ended_at, attention, closed_by, is_open \
          FROM data_activity_app_session \
-         WHERE end_time >= $1::timestamptz AND start_time <= $2::timestamptz \
-         ORDER BY start_time",
+         WHERE ended_at >= $1::timestamptz AND started_at <= $2::timestamptz \
+         ORDER BY started_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -947,8 +973,8 @@ async fn day_device_presence(
     let mut runs: Vec<Run> = Vec::new();
 
     for r in &rows {
-        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
-        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
         if e < s {
             continue;
         }
@@ -1070,7 +1096,7 @@ async fn day_message_bursts(
     // the tiebreak so a row WITH a resolved name wins over one without.
     let rows = sqlx::query(
         "SELECT DISTINCT ON (m.id) \
-                m.id, m.thread_id, m.body, m.timestamp, m.from_name, m.from_identifier, \
+                m.id, m.thread_id, m.body, m.occurred_at, m.from_name, m.from_identifier, \
                 COALESCE((m.metadata->>'is_from_me')::boolean, false) AS from_me, \
                 pe.canonical_name AS resolved_name \
          FROM data_communication_message m \
@@ -1078,7 +1104,7 @@ async fn day_message_bursts(
            ON er.source_table = 'data_communication_message' AND er.source_id = m.id \
           AND er.entity_type = 'person' AND er.role IN ('sender', 'recipient') \
          LEFT JOIN wiki_people pe ON pe.id = er.entity_id \
-         WHERE m.timestamp >= $1::timestamptz AND m.timestamp <= $2::timestamptz \
+         WHERE m.occurred_at >= $1::timestamptz AND m.occurred_at <= $2::timestamptz \
          ORDER BY m.id, (pe.canonical_name IS NULL)",
     )
     .bind(start_str)
@@ -1120,7 +1146,7 @@ async fn day_message_bursts(
                 .unwrap_or_else(|| r.get::<String, _>("id"));
             Msg {
                 thread,
-                ts: r.get("timestamp"),
+                ts: r.get("occurred_at"),
                 body: r.try_get::<Option<String>, _>("body").ok().flatten(),
                 from_me,
                 who,
@@ -1219,14 +1245,14 @@ async fn build_dossier(
 
     // Visits — place resolved through wiki_places, arrival→departure.
     let visits = sqlx::query(
-        "SELECT COALESCE(p.name, v.place_name) AS place, v.arrival_time, v.departure_time \
+        "SELECT COALESCE(p.name, v.place_name) AS place, v.started_at, v.ended_at \
          FROM data_location_visit v \
          LEFT JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' AND er.source_id = v.id \
           AND er.entity_type = 'place' \
          LEFT JOIN wiki_places p ON p.id = er.entity_id \
-         WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time <= $2::timestamptz \
-         ORDER BY v.arrival_time",
+         WHERE v.started_at >= $1::timestamptz AND v.started_at <= $2::timestamptz \
+         ORDER BY v.started_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -1240,9 +1266,9 @@ async fn build_dossier(
             .flatten()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "Unknown place".to_string());
-        let arr: chrono::DateTime<chrono::Utc> = r.get("arrival_time");
+        let arr: chrono::DateTime<chrono::Utc> = r.get("started_at");
         let dep: Option<chrono::DateTime<chrono::Utc>> =
-            r.try_get("departure_time").ok().flatten();
+            r.try_get("ended_at").ok().flatten();
         let span = match dep {
             Some(d) => format!("{}–{}", fmt(&arr), fmt(&d)),
             None => format!("{}–?", fmt(&arr)),
@@ -1312,11 +1338,11 @@ async fn build_dossier(
     // is even ABOUT the owner. All-day events bound nothing; flag them so the
     // detective does not treat a 24h block as a boundary.
     let cal = sqlx::query(
-        "SELECT title, start_time, end_time, is_all_day, calendar_access_role, response_status \
+        "SELECT title, started_at, ended_at, is_all_day, calendar_access_role, response_status \
          FROM data_calendar_event \
-         WHERE start_time >= $1::timestamptz AND start_time <= $2::timestamptz \
+         WHERE started_at >= $1::timestamptz AND started_at <= $2::timestamptz \
            AND (status IS NULL OR status <> 'cancelled') \
-         ORDER BY start_time",
+         ORDER BY started_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -1325,8 +1351,8 @@ async fn build_dossier(
     .unwrap_or_default();
     for r in &cal {
         let title: String = r.try_get("title").unwrap_or_default();
-        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
-        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
         let all_day: bool = r.try_get("is_all_day").unwrap_or(false);
         let access: Option<String> = r.try_get("calendar_access_role").ok().flatten();
         let rsvp: Option<String> = r.try_get("response_status").ok().flatten();
@@ -1370,10 +1396,10 @@ async fn build_dossier(
 
     // Sleep — a hard boundary. Overlap the window (sleep starts the night before).
     let sleep = sqlx::query(
-        "SELECT start_time, end_time, duration_minutes \
+        "SELECT started_at, ended_at, duration_minutes \
          FROM data_health_sleep \
-         WHERE end_time >= $1::timestamptz AND start_time <= $2::timestamptz \
-         ORDER BY start_time",
+         WHERE ended_at >= $1::timestamptz AND started_at <= $2::timestamptz \
+         ORDER BY started_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -1381,8 +1407,8 @@ async fn build_dossier(
     .await
     .unwrap_or_default();
     for r in &sleep {
-        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
-        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
         let dur: Option<i32> = r.try_get("duration_minutes").ok().flatten();
         let dur_str = dur
             .map(|m| format!(" ({}h{:02}m)", m / 60, m % 60))
@@ -1394,10 +1420,10 @@ async fn build_dossier(
     // is the reasoning material that lets the detective name a location-less day,
     // capped so a talkative day cannot bloat the prompt.
     let audio = sqlx::query(
-        "SELECT start_time, end_time, speaker_mode, content \
+        "SELECT started_at, ended_at, speaker_mode, content \
          FROM data_audio_session \
-         WHERE start_time >= $1::timestamptz AND start_time < $2::timestamptz \
-         ORDER BY start_time",
+         WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz \
+         ORDER BY started_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -1405,8 +1431,8 @@ async fn build_dossier(
     .await
     .unwrap_or_default();
     for r in &audio {
-        let s: chrono::DateTime<chrono::Utc> = r.get("start_time");
-        let e: chrono::DateTime<chrono::Utc> = r.get("end_time");
+        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
         let mode: i16 = r.try_get("speaker_mode").unwrap_or(0);
         let who = match mode {
             0 => "silent/ambient",
@@ -1460,11 +1486,11 @@ async fn build_dossier(
     // stretch actually was — a meal, a shop, a checkout — grounding windows the audio
     // alone leaves ambiguous.
     let txns = sqlx::query(
-        "SELECT timestamp, amount, currency, merchant_name, description \
+        "SELECT occurred_at, amount, currency, merchant_name, description \
          FROM data_financial_transaction \
-         WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz \
+         WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz \
            AND is_archived IS NOT TRUE \
-         ORDER BY timestamp",
+         ORDER BY occurred_at",
     )
     .bind(start_str)
     .bind(end_str)
@@ -1472,7 +1498,7 @@ async fn build_dossier(
     .await
     .unwrap_or_default();
     for r in &txns {
-        let ts: chrono::DateTime<chrono::Utc> = r.get("timestamp");
+        let ts: chrono::DateTime<chrono::Utc> = r.get("occurred_at");
         let cents: i64 = r.try_get("amount").unwrap_or(0);
         let currency = r
             .try_get::<Option<String>, _>("currency")
@@ -1573,7 +1599,7 @@ async fn recent_event_labels(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) ->
         "SELECT d.date, COALESCE(e.user_label, e.auto_label, '(unlabeled)') AS label \
          FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id \
          WHERE d.date >= $1 AND d.date < $2 AND NOT e.is_unknown AND NOT e.user_hidden \
-         ORDER BY d.date, e.start_time",
+         ORDER BY d.date, e.started_at",
     )
     .bind(date - chrono::Duration::days(3))
     .bind(date)
@@ -1606,7 +1632,7 @@ async fn recent_event_case_file(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>)
         "SELECT d.date, COALESCE(e.user_label, e.auto_label, '(unlabeled)') AS label, e.event_summary \
          FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id \
          WHERE d.date >= $1 AND d.date < $2 AND NOT e.is_unknown AND NOT e.user_hidden \
-         ORDER BY d.date, e.start_time",
+         ORDER BY d.date, e.started_at",
     )
     .bind(date - chrono::Duration::days(14))
     .bind(date)
@@ -2054,7 +2080,7 @@ async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Option
           AND er.source_id = v.id \
           AND er.entity_type = 'place' \
          JOIN wiki_places p ON p.id = er.entity_id \
-         WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time <= $2::timestamptz \
+         WHERE v.started_at >= $1::timestamptz AND v.started_at <= $2::timestamptz \
          ORDER BY v.duration_minutes DESC LIMIT 1",
     )
     .bind(start)
@@ -2290,7 +2316,7 @@ mod dossier_tests {
 
         sqlx::query(
             "INSERT INTO data_calendar_event \
-             (id,title,start_time,end_time,is_all_day,source_stream_id,source_table, \
+             (id,title,started_at,ended_at,is_all_day,source_stream_id,source_table, \
               source_provider,calendar_access_role,response_status) \
              VALUES ('g1','GAP Community Dinner','2026-07-26T18:30:00Z','2026-07-26T20:30:00Z', \
                      false,'gs1','google_calendar','google','reader',NULL)",
@@ -2310,7 +2336,7 @@ mod dossier_tests {
         {
             sqlx::query(
                 "INSERT INTO data_activity_app_session \
-                 (id,app_name,start_time,end_time,source_stream_id,source_table, \
+                 (id,app_name,started_at,ended_at,source_stream_id,source_table, \
                   source_provider,attention,is_open,closed_by) \
                  VALUES ($1,$2,$3::timestamptz,$4::timestamptz,$5,'mac_apps','mac','active',false,$6)",
             )

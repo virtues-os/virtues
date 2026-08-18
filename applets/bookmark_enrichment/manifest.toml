@@ -1,7 +1,6 @@
 name = "Bookmark Enrichment"
 description = "Reads the pages you saved, so you can find them again by what they were about."
 owner = "system"
-runtime = "function"
 command = ["bookmark_enrichment"]
 triggers = ["cron"]
 # Every 10 minutes. The batch is small and the daily cap does the real

@@ -485,10 +485,10 @@ pub async fn get_ground(
                round(avg(longitude)::numeric, 6)::float8 AS "lon!",
                count(*)                                  AS "visits!",
                COALESCE(sum(duration_minutes), 0)::float8 AS "minutes!",
-               min(arrival_time)                         AS "first",
-               max(COALESCE(departure_time, arrival_time)) AS "last"
+               min(started_at)                         AS "first",
+               max(COALESCE(ended_at, started_at)) AS "last"
         FROM data_location_visit
-        WHERE arrival_time >= $1 AND arrival_time < $2
+        WHERE started_at >= $1 AND started_at < $2
           AND latitude IS NOT NULL AND longitude IS NOT NULL
         GROUP BY round((latitude / $3)::numeric), round((longitude / $3)::numeric)
         ORDER BY 4 DESC
@@ -506,7 +506,7 @@ pub async fn get_ground(
 
     let track_total: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM data_location_point
-           WHERE timestamp >= $1 AND timestamp < $2 AND latitude IS NOT NULL"#,
+           WHERE occurred_at >= $1 AND occurred_at < $2 AND latitude IS NOT NULL"#,
         from,
         to,
     )
@@ -523,9 +523,9 @@ pub async fn get_ground(
         SELECT latitude AS "lat!", longitude AS "lon!"
         FROM (
             SELECT latitude, longitude,
-                   row_number() OVER (ORDER BY timestamp) AS rn
+                   row_number() OVER (ORDER BY occurred_at) AS rn
             FROM data_location_point
-            WHERE timestamp >= $1 AND timestamp < $2
+            WHERE occurred_at >= $1 AND occurred_at < $2
               AND latitude IS NOT NULL AND longitude IS NOT NULL
         ) s
         WHERE rn % $3 = 0
@@ -762,12 +762,12 @@ pub async fn get_processed(
                     ELSE e.kind END                        AS "tag",
                COALESCE(e.user_label, e.auto_label)        AS "label",
                e.event_summary                             AS "summary",
-               e.start_time                                AS "start!",
-               e.end_time                                  AS "end"
+               e.started_at                                AS "start!",
+               e.ended_at                                  AS "end"
         FROM wiki_events e
-        WHERE e.start_time >= $1 AND e.start_time < $2
+        WHERE e.started_at >= $1 AND e.started_at < $2
           AND COALESCE(e.user_hidden, false) = false
-        ORDER BY e.start_time DESC
+        ORDER BY e.started_at DESC
         LIMIT $3
         "#,
         from,
@@ -779,7 +779,7 @@ pub async fn get_processed(
     .map_err(|e| Error::Database(format!("processed items: {e}")))?;
 
     let span = sqlx::query!(
-        r#"SELECT min(start_time) AS "lo", max(COALESCE(end_time, start_time)) AS "hi",
+        r#"SELECT min(started_at) AS "lo", max(COALESCE(ended_at, started_at)) AS "hi",
                   count(DISTINCT day_id) AS "days!"
            FROM wiki_events WHERE COALESCE(user_hidden, false) = false"#
     )

@@ -67,8 +67,9 @@ async fn main() -> Result<()> {
     for _ in 0..MAX_CHUNKS {
         // Proxied through virtues-api: the box sends only its per-user
         // access_token; the master Plaid secret stays server-side.
-        let resp: Value = virtues_applets::plaid_proxy(
+        let resp: Value = virtues_applets::service_proxy(
             &pool,
+        "plaid",
             "transactions/sync",
             &json!({
                 "access_token": access_token,

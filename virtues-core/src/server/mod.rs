@@ -1119,14 +1119,43 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         app
     };
 
-    // CORS: the mobile app is a bundled SPA at its own `tauri://` origin that
-    // calls this API cross-origin over the iroh loopback. Auth is the proven
-    // iroh key (not Origin/cookies), so a permissive CORS is safe — it only
-    // relaxes the browser's same-origin policy, never the transport allowlist.
-    // Same-origin (desktop/browser served by the box) is unaffected.
+    // CORS: the app is a bundled SPA at its own `tauri://` origin that calls
+    // this API cross-origin over the iroh loopback, so some cross-origin access
+    // must be allowed. It is an ALLOWLIST, not `Any`.
+    //
+    // `Any` was wrong here, and the reasoning that justified it — "auth is the
+    // proven iroh key, not Origin/cookies, so relaxing same-origin never
+    // relaxes the transport allowlist" — was true of the iroh credential and
+    // missed the second one. There are two ways to be the owner:
+    //
+    //   1. a paired iroh key (what that comment was about), and
+    //   2. being on loopback (`middleware/auth.rs` — a request from 127.0.0.1
+    //      with no forwarding header IS the owner).
+    //
+    // And the desktop app binds `127.0.0.1:7117` and splices whatever connects
+    // to it over its own paired identity. So: the owner runs the app, then
+    // visits any web page — an ad, a forum, a compromised site. That page runs
+    // `fetch('http://127.0.0.1:7117/api/drive/files')`. The box authenticates it
+    // as the owner, and `Access-Control-Allow-Origin: *` let the attacker's page
+    // READ the reply. `allow_methods(Any)` + `allow_headers(Any)` meant
+    // preflighted POSTs succeeded too — including `/api/developer/sql`.
+    //
+    // A remote page's origin is `https://whatever.example`, which matches none
+    // of the arms below, so the browser refuses to hand it the response. The
+    // app, the box's own web UI, and local development all still match.
+    //
+    // `server/faces.rs` keeps its own `*` header deliberately: faces are served
+    // into an opaque-origin iframe under a strict CSP and carry no ambient
+    // authority. `api/terminal.rs` already does an explicit same-origin check
+    // for the same reason this layer now exists.
     let app = app.layer(
         tower_http::cors::CorsLayer::new()
-            .allow_origin(tower_http::cors::Any)
+            .allow_origin(tower_http::cors::AllowOrigin::predicate(
+                |origin: &axum::http::HeaderValue, _req| {
+                    origin.to_str().is_ok_and(origin_is_ours)
+                },
+            ))
+            .allow_credentials(false)
             .allow_methods(tower_http::cors::Any)
             .allow_headers(tower_http::cors::Any),
     );
@@ -1172,8 +1201,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     .with_graceful_shutdown(shutdown_signal)
     .await?;
 
-    // Note: No flush needed on shutdown - StreamWriter is in-memory only now.
-    // Records are written directly to filesystem during sync/ingest.
+    // Flush queued page edits before the process goes away.
+    //
+    // The note that used to sit here said no flush was needed — true of the old
+    // StreamWriter, never true of the Yjs save queue, which holds the owner's
+    // most recent typing for up to ~2.5s. Without this, every `systemctl
+    // restart virtues` and every self-update dropped it.
+    yjs_state.flush_pending_saves().await;
     tracing::info!("Server shutting down gracefully");
 
     // Note: scheduler runs in background and will stop when the process exits
@@ -1311,3 +1345,91 @@ async fn server_info() -> impl IntoResponse {
     }))
 }
 
+/// Is this `Origin` one of ours?
+///
+/// The allowlist behind the CORS layer. Kept as a named function with tests
+/// because it is the thing standing between a random web page and the owner's
+/// record, and a subtle parsing slip here is invisible in review.
+///
+/// Allowed: the app's `tauri://` origin, loopback on any port (the desktop
+/// proxy on 7117, the box's own UI, `pnpm dev` on 5173), and the box's `.virtues`
+/// name. A page served from a remote host has none of these origins.
+fn origin_is_ours(origin: &str) -> bool {
+    // The app's own origin: `tauri://localhost` on macOS/iOS,
+    // `https://tauri.localhost` on Windows.
+    if origin.starts_with("tauri://") || origin == "https://tauri.localhost" {
+        return true;
+    }
+
+    // Everything else must be an http(s) origin; anything else (file://, data:,
+    // a bare "null") is not ours.
+    let rest = match origin.split_once("://") {
+        Some(("http", r)) | Some(("https", r)) => r,
+        _ => return false,
+    };
+
+    // Strip the port. An IPv6 literal is bracketed (`[::1]:8000`), so splitting
+    // on the LAST colon leaves the brackets intact and does not cut inside the
+    // address.
+    let host = match rest.rsplit_once(':') {
+        // Only treat the tail as a port if it looks like one; otherwise the
+        // colon belonged to the host (an unbracketed IPv6, which is invalid in
+        // an origin anyway).
+        Some((h, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => rest,
+    };
+
+    // Exact matches only. `localhost.evil.example` must NOT pass, which is why
+    // this is not a `contains` or a suffix test.
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+        || host == "virtues"
+        || host.ends_with(".virtues")
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use super::origin_is_ours;
+
+    /// A remote page must not be allowed to read the box's responses.
+    ///
+    /// This is the CRITICAL case. The desktop app binds 127.0.0.1:7117 and
+    /// splices to the box over its paired identity, and loopback counts as the
+    /// owner — so with `allow_origin(Any)` any site the owner visited could
+    /// `fetch()` the box and READ the reply.
+    #[test]
+    fn a_remote_page_is_refused() {
+        for o in [
+            "https://evil.example",
+            "http://evil.example:7117",
+            // Near-misses that a substring or suffix test would wave through.
+            "http://localhost.evil.example",
+            "https://tauri.localhost.evil.example",
+            "http://notvirtues",
+            "http://evil.example/localhost",
+            // Non-http schemes and the opaque origin.
+            "null",
+            "file://",
+            "data:text/html,x",
+        ] {
+            assert!(!origin_is_ours(o), "must refuse {o}");
+        }
+    }
+
+    /// ...while everything that is genuinely ours still works, or the app
+    /// breaks and someone reverts the whole fix.
+    #[test]
+    fn our_own_origins_are_allowed() {
+        for o in [
+            "tauri://localhost",
+            "https://tauri.localhost",
+            "http://localhost:5173",
+            "http://127.0.0.1:7117",
+            "http://[::1]:8000",
+            "http://localhost",
+            "http://box.virtues:8000",
+            "http://virtues:8000",
+        ] {
+            assert!(origin_is_ours(o), "must allow {o}");
+        }
+    }
+}

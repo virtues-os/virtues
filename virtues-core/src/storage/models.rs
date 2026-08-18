@@ -279,12 +279,12 @@ mod tests {
             "streams/ios/source_ios-healthkit/healthkit/date=2025-01-15/records_1736899200.jsonl";
         let parser = StreamKeyParser::new(key);
 
-        let (provider, source_id, stream_name, date, timestamp) = parser.parse_all().unwrap();
+        let (provider, source_id, stream_name, date, occurred_at) = parser.parse_all().unwrap();
         assert_eq!(provider, "ios");
         assert_eq!(source_id, "source_ios-healthkit");
         assert_eq!(stream_name, "healthkit");
         assert_eq!(date, NaiveDate::from_ymd_opt(2025, 1, 15).unwrap());
-        assert_eq!(timestamp, 1736899200);
+        assert_eq!(occurred_at, 1736899200);
     }
 
     #[test]

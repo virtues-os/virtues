@@ -776,6 +776,7 @@ pub(crate) fn box_reach_fields() -> (Option<String>, Option<String>, Vec<String>
 /// `POST /api/pair/consume` — anonymous, but valid token required.
 pub async fn consume_handler(
     State(pool): State<PgPool>,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     headers: axum::http::HeaderMap,
     Json(body): Json<ConsumeRequest>,
 ) -> axum::response::Response {
@@ -791,7 +792,33 @@ pub async fn consume_handler(
     // the header. A request with NO XFF didn't transit our proxy (direct
     // loopback / dev) and isn't remotely reachable, so it's exempt rather than
     // sharing one bucket with every other header-less caller.
-    if let Some(ip_key) = rate_limit_ip(&headers) {
+    // Rate-limit key: the forwarding header when we sat behind a proxy,
+    // otherwise the actual socket peer.
+    //
+    // Header-only was the bug, and it disabled the limiter on every real box.
+    // A stock appliance has NO reverse proxy, so nothing carries
+    // `X-Forwarded-For` — `rate_limit_ip` returned `None` for every caller and
+    // the limiter never ran. Meanwhile the server binds `[::]`, so the LAN can
+    // reach it directly. The comment justifying the exemption ("only reachable
+    // by something already on the box") described the loopback case and was
+    // applied to everyone.
+    //
+    // That left a 6-digit code — 10^6, and the standing code is multi-use and
+    // always present for the panel — brute-forceable at full speed from the
+    // home or guest wifi. A successful consume enrolls a PERMANENT allowlisted
+    // device that then reaches the box from anywhere via the relay.
+    //
+    // Loopback stays exempt, because that is the one case the original comment
+    // was actually right about: `middleware/auth.rs` already treats an
+    // unforwarded loopback request as the owner, so a limit there protects
+    // nothing and would throttle the box's own setup flow.
+    let rl_key = rate_limit_ip(&headers).or_else(|| {
+        peer.as_ref().and_then(|axum::extract::ConnectInfo(addr)| {
+            let ip = crate::peer_addr::canonical_peer(addr);
+            (!ip.is_loopback()).then(|| ip.to_string())
+        })
+    });
+    if let Some(ip_key) = rl_key {
         if !crate::middleware::rate_limit::pair_limiter().check_and_record(&ip_key) {
             return (
                 StatusCode::TOO_MANY_REQUESTS,

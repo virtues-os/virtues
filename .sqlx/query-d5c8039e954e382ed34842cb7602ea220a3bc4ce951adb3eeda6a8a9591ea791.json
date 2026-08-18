@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT latitude AS \"lat!\", longitude AS \"lon!\"\n        FROM (\n            SELECT latitude, longitude,\n                   row_number() OVER (ORDER BY occurred_at) AS rn\n            FROM data_location_point\n            WHERE occurred_at >= $1 AND occurred_at < $2\n              AND latitude IS NOT NULL AND longitude IS NOT NULL\n        ) s\n        WHERE rn % $3 = 0\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "lat!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 1,
+        "name": "lon!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "d5c8039e954e382ed34842cb7602ea220a3bc4ce951adb3eeda6a8a9591ea791"
+}

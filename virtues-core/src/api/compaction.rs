@@ -234,8 +234,8 @@ pub async fn compact_chat(
     use sqlx::Row;
     let _message_count: i64 = chat_row.get("message_count");
     let conversation_summary: Option<String> = chat_row.get("conversation_summary");
-    let summary_up_to_index: i32 = chat_row.get("summary_up_to_index");
-    let summary_version: i32 = chat_row.get("summary_version");
+    let summary_up_to_index: i32 = chat_row.get::<i64, _>("summary_up_to_index") as i32;
+    let summary_version: i32 = chat_row.get::<i64, _>("summary_version") as i32;
 
     // Load messages from normalized table
     let message_rows = sqlx::query(
@@ -674,7 +674,7 @@ pub async fn needs_compaction(
 
     use sqlx::Row;
     let conversation_summary: Option<String> = chat_row.get("conversation_summary");
-    let summary_up_to_index: i32 = chat_row.get("summary_up_to_index");
+    let summary_up_to_index: i32 = chat_row.get::<i64, _>("summary_up_to_index") as i32;
 
     // Load messages from normalized table
     let message_rows = sqlx::query(

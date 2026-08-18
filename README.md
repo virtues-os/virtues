@@ -50,7 +50,7 @@ Virtues replaces a fragmented app ecosystem with a single, unified system:
 - **Write** an autobiography that maintains itself — daily summaries, narrative arcs, temporal navigation
 - **Query** your life with an AI that has real context — not a chatbot guessing, but an agent with access to your actual data via SQL, web search, and code execution
 
-All of it runs on a single Rust server with a Postgres database and S3 storage. Your data stays on your infrastructure.
+All of it runs on a single Rust server with a Postgres database and S3 storage. Your data stays on your infrastructure — with one deliberate exception: asking the assistant a question, or letting it write your day, sends the relevant part of your record to a model provider, unless you point Virtues at a local model. [The inference boundary](docs/privacy-model.md#the-inference-boundary-where-your-data-does-leave) says exactly what goes out and what never does.
 
 <a id="architecture"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-architecture-dark.svg"><img alt="Architecture" src=".github/images/headings/h2-architecture-light.svg" height="28"></picture>

@@ -395,7 +395,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 vec![d.parse().map_err(|e| format!("bad date: {e}"))?]
             } else {
                 sqlx::query_scalar(
-                    "SELECT DISTINCT start_time::date FROM data_communication_transcription ORDER BY 1",
+                    "SELECT DISTINCT started_at::date FROM data_communication_transcription ORDER BY 1",
                 )
                 .fetch_all(pool)
                 .await?

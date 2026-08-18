@@ -162,7 +162,7 @@ pub fn sessionize(chunks: &[Chunk], penalty: f64) -> Vec<Session> {
 ///
 /// Returns the number of sessions written.
 pub async fn sessionize_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u32> {
-    // The day is a tz-aware window, not `start_time::date` — that cast uses the
+    // The day is a tz-aware window, not `started_at::date` — that cast uses the
     // session timezone and silently shifts the day boundary (it cut a UTC-full day
     // of 271 chunks down to 223 in the wrong zone). Use the same "where you woke
     // up" boundary the rest of the day pipeline uses.
@@ -196,13 +196,13 @@ pub async fn sessionize_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u3
     // agree. Consequence: a session covering no speech now stitches to nothing,
     // which is what `silent_session_stitches_to_nothing` has always asserted.
     let rows = sqlx::query(
-        "SELECT t.start_time, t.end_time, t.speaker_count, \
+        "SELECT t.started_at, t.ended_at, t.speaker_count, \
                 CASE WHEN t.text = '' THEN NULL ELSE t.summary END AS summary, \
                 r.average_db_level AS db \
          FROM data_communication_transcription t \
          LEFT JOIN data_audio_recording r ON r.source_stream_id = t.source_stream_id \
-         WHERE t.start_time >= $1::timestamptz AND t.start_time < $2::timestamptz \
-         ORDER BY t.start_time",
+         WHERE t.started_at >= $1::timestamptz AND t.started_at < $2::timestamptz \
+         ORDER BY t.started_at",
     )
     .bind(&start_str)
     .bind(&end_str)
@@ -212,8 +212,8 @@ pub async fn sessionize_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u3
     let chunks: Vec<Chunk> = rows
         .iter()
         .map(|row| Chunk {
-            start: row.get("start_time"),
-            end: row.get("end_time"),
+            start: row.get("started_at"),
+            end: row.get("ended_at"),
             db: row.get::<Option<f64>, _>("db"),
             // `speaker_count` is int4, not int8 — decoding it as i64 fails, and a
             // `.ok()` there silently turned EVERY speaker into None, so every
@@ -232,7 +232,7 @@ pub async fn sessionize_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u3
     let sessions = sessionize(&chunks, penalty);
 
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM data_audio_session WHERE start_time >= $1::timestamptz AND start_time < $2::timestamptz")
+    sqlx::query("DELETE FROM data_audio_session WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz")
         .bind(&start_str)
         .bind(&end_str)
         .execute(&mut *tx)
@@ -247,7 +247,7 @@ pub async fn sessionize_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u3
         );
         sqlx::query(
             "INSERT INTO data_audio_session \
-             (id, start_time, end_time, speaker_mode, avg_db, chunk_count, content) \
+             (id, started_at, ended_at, speaker_mode, avg_db, chunk_count, content) \
              VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(&id)
@@ -363,7 +363,7 @@ mod tests {
         {
             sqlx::query(
                 "INSERT INTO data_communication_transcription \
-                 (id, text, summary, start_time, end_time, speaker_count, \
+                 (id, text, summary, started_at, ended_at, speaker_count, \
                   source_stream_id, source_table, source_provider) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, 'stream_ios_microphone', 'ios')",
             )
@@ -382,7 +382,7 @@ mod tests {
         sessionize_day(&pool, date).await.expect("sessionize");
 
         let content: Vec<Option<String>> =
-            sqlx::query_scalar("SELECT content FROM data_audio_session ORDER BY start_time")
+            sqlx::query_scalar("SELECT content FROM data_audio_session ORDER BY started_at")
                 .fetch_all(&pool)
                 .await
                 .expect("read sessions");

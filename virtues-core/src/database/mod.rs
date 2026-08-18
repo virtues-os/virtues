@@ -157,7 +157,21 @@ impl Database {
             .as_deref()
             .map(|t| t.trim_start().starts_with("halfvec"))
             .unwrap_or(false);
-        if is_halfvec && current == Some(target) {
+        // The early return has to prove ALL THREE columns are right, not just
+        // this one. `search_vectors`, `search_topic_cache` and
+        // `app_notebooks.centroid` share one embedding geometry and are resized
+        // together below — but the loop is not a transaction, so a failure
+        // partway leaves some converted and some not. Guarding on
+        // `search_vectors` alone meant every later boot took this return and
+        // never looked at the others again, which is precisely how the centroid
+        // dimension drifted before (see 0060's header: "Every centroid write
+        // failed the dimension check").
+        let centroid_ok = self
+            .vector_column_type("app_notebooks", "centroid")
+            .await?
+            .as_deref()
+            .is_some_and(|t| t.trim_start().starts_with("halfvec") && parse_vector_dim(t) == Some(target));
+        if is_halfvec && current == Some(target) && centroid_ok {
             return Ok(());
         }
 
@@ -211,8 +225,15 @@ impl Database {
                 "ALTER TABLE app_notebooks ALTER COLUMN centroid \
                  TYPE halfvec({target}) USING centroid::halfvec({target})"
             ),
+            // Build parameters stated, not inherited. Omitting `WITH` gets
+            // pgvector's defaults (m=16, ef_construction=64) by accident rather
+            // than by decision. ef_construction=128 roughly doubles build time
+            // for materially better recall at the same query cost — the right
+            // trade for an index rebuilt rarely (a reindex) and queried
+            // constantly.
             "CREATE INDEX search_vectors_hnsw ON search_vectors \
-             USING hnsw (embedding halfvec_cosine_ops)"
+             USING hnsw (embedding halfvec_cosine_ops) \
+             WITH (m = 16, ef_construction = 128)"
                 .to_string(),
         ] {
             sqlx::query(&stmt)

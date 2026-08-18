@@ -1,6 +1,6 @@
 //! Annotate segmented events from their own time windows.
 //!
-//! An event is a `[start_time, end_time)` interval. Everything that happened
+//! An event is a `[start_time, ended_at)` interval. Everything that happened
 //! inside it is already in the lake, keyed by timestamp — so membership needs
 //! no join table, just the window. This module walks each event and stamps it
 //! with what the window contains.
@@ -49,11 +49,11 @@ use virtues_registry::ontologies::registered_ontologies;
 pub async fn annotate_events_for_day(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     let events = sqlx::query(
         r#"
-        SELECT e.id, e.start_time, e.end_time, e.kind
+        SELECT e.id, e.started_at, e.ended_at, e.kind
         FROM wiki_events e
         JOIN wiki_days d ON d.id = e.day_id
         WHERE d.date = $1
-        ORDER BY e.start_time
+        ORDER BY e.started_at
         "#,
     )
     .bind(date)
@@ -64,8 +64,8 @@ pub async fn annotate_events_for_day(pool: &PgPool, date: NaiveDate) -> Result<u
 
     for row in &events {
         let id: String = row.get("id");
-        let start: chrono::DateTime<chrono::Utc> = row.get("start_time");
-        let end: chrono::DateTime<chrono::Utc> = row.get("end_time");
+        let start: chrono::DateTime<chrono::Utc> = row.get("started_at");
+        let end: chrono::DateTime<chrono::Utc> = row.get("ended_at");
         let kind: String = row.get("kind");
 
         let avg_hr = window_avg_hr(pool, start, end).await;
@@ -136,7 +136,7 @@ async fn window_avg_hr(
     sqlx::query_scalar(
         r#"SELECT AVG(CAST(bpm AS REAL))
            FROM data_health_heart_rate
-           WHERE timestamp >= $1 AND timestamp < $2"#,
+           WHERE occurred_at >= $1 AND occurred_at < $2"#,
     )
     .bind(start)
     .bind(end)
@@ -161,7 +161,7 @@ async fn window_entities(
         r#"
         SELECT DISTINCT entity_id
         FROM wiki_refs
-        WHERE timestamp >= $1 AND timestamp < $2
+        WHERE occurred_at >= $1 AND occurred_at < $2
         "#,
     )
     .bind(start)
