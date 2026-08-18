@@ -315,6 +315,29 @@ jobs:
           cp "$LLAMA_PATH" staging/llama-server
           cp -r apps/web/build staging/web
           cp -r applets staging/applets
+          # Ship only what the box READS at runtime: manifests, faces, schemas
+          # and sources.toml. `cp -r applets` brought the whole crate — 46 Rust
+          # source files (~10k lines) already compiled into applets-bin above,
+          # plus its Cargo.toml, the shared `src/` lib, the dev-only `vad_sweep`
+          # calibration example, and the authoring docs. None of it is opened by
+          # virtues-core; it was shipping to every customer because copying the
+          # directory was easier than saying what the directory is for.
+          # `applets/user/` is the owner's OWN chat-authored applets — per-box
+          # state, gitignored, and never package data (see CLAUDE.md). Absent on
+          # a clean CI checkout, present on any machine that has authored one,
+          # so a local release build would otherwise ship a person's private
+          # applets to every customer. Removed unconditionally rather than
+          # trusting the checkout to be clean.
+          rm -rf staging/applets/user
+          find staging/applets -name '*.rs' -delete
+          rm -rf staging/applets/src staging/applets/examples \
+                 staging/applets/Cargo.toml staging/applets/AGENTS.md \
+                 staging/applets/AUTHORING.md staging/applets/MANIFEST_SCHEMA.json
+          # A manifest with no face and no schema is still a valid applet, but
+          # zero manifests means the box has no actions at all — catch that here
+          # rather than on a customer's first boot.
+          test "$(find staging/applets -name manifest.toml | wc -l)" -gt 0 \
+            || (echo "no applet manifests staged" >&2 && exit 1)
 
           # Stage every action binary. The list comes from cargo metadata so it
           # tracks applets/Cargo.toml's [[bin]] entries automatically (no
