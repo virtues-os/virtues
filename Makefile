@@ -195,7 +195,32 @@ db: ## Ensure brew postgres@$(PG_MAJOR) is installed + running, db exists with p
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues'" | grep -q 1 || { echo "→ creating db 'virtues'"; $(PG_BIN)/createdb virtues; }
 	@$(PG_BIN)/psql -d virtues -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues_api'" | grep -q 1 || { echo "→ creating db 'virtues_api' (local virtues-api entitlements)"; $(PG_BIN)/createdb virtues_api; }
-	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='virtues'" | grep -q 1 || { echo "→ creating role 'virtues' (password 'virtues' for .env compat)"; $(PG_BIN)/psql -d postgres -c "CREATE ROLE virtues WITH LOGIN SUPERUSER PASSWORD 'virtues'" >/dev/null; }
+# `vector` into template1, so every database created afterwards inherits it.
+# This is what lets the dev role be a NON-superuser: pgvector is not a trusted
+# extension (`pg_available_extensions.trusted = f`), so `CREATE EXTENSION vector`
+# needs superuser — and `#[sqlx::test]` provisions a scratch database per test
+# that runs migration 0001, which creates it. Inheriting from template1 makes
+# that statement a no-op instead, and the tests stop needing the privilege.
+	@$(PG_BIN)/psql -d template1 -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
+# NOT a superuser. It was `CREATE ROLE virtues WITH LOGIN SUPERUSER PASSWORD
+# 'virtues'` — a superuser whose password is its own name, on a machine where
+# CLAUDE.md also tells you to open pg_hba to TCP on loopback. Any local process
+# that guessed once owned the cluster. CREATEDB is what the test harness
+# actually needs; ownership of its own database covers the rest.
+	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='virtues'" | grep -q 1 || { echo "→ creating role 'virtues' (password 'virtues' for .env compat)"; $(PG_BIN)/psql -d postgres -c "CREATE ROLE virtues WITH LOGIN CREATEDB CREATEROLE PASSWORD 'virtues'" >/dev/null; }
+# Idempotent downgrade for machines whose role predates the line above.
+	@$(PG_BIN)/psql -d postgres -tAc "SELECT rolsuper FROM pg_roles WHERE rolname='virtues'" | grep -q t && { echo "→ dropping SUPERUSER from role 'virtues'"; $(PG_BIN)/psql -d postgres -c "ALTER ROLE virtues NOSUPERUSER CREATEDB CREATEROLE" >/dev/null; } || true
+	@$(PG_BIN)/psql -d virtues -c "ALTER DATABASE virtues OWNER TO virtues" >/dev/null 2>&1 || true
+# The two least-privileged roles `server/faces.rs` drops to, plus ADMIN OPTION
+# so the non-superuser `virtues` can grant them to itself at runtime — which is
+# what faces.rs does on every boot. Superuser used to make that implicit; in
+# PG16+ a CREATEROLE role may only grant membership in roles it has ADMIN on,
+# and these are created by the cluster owner, so the option has to be handed
+# over explicitly. Without it the grant fails, no applet table is readable, and
+# the failure looks like a permissions bug in the applet rather than in setup.
+	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='virtues_face_reader'" | grep -q 1 || $(PG_BIN)/psql -d postgres -c "CREATE ROLE virtues_face_reader NOLOGIN" >/dev/null
+	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='virtues_applet_writer'" | grep -q 1 || $(PG_BIN)/psql -d postgres -c "CREATE ROLE virtues_applet_writer NOLOGIN" >/dev/null
+	@$(PG_BIN)/psql -d postgres -c "GRANT virtues_face_reader, virtues_applet_writer TO virtues WITH ADMIN OPTION" >/dev/null
 	@echo "✓ postgres ready on :5432, dbs 'virtues' (pgvector) + 'virtues_api', role 'virtues'"
 
 db-stop: ## Stop the brew postgres service (preserves data)
