@@ -99,13 +99,30 @@ fn random_pair_code() -> String {
 /// The two answers differ because the questions do: "is there any session here"
 /// versus "did a human bring a device to this box".
 pub async fn paired_device_count(pool: &PgPool) -> i64 {
+    try_paired_device_count(pool).await.unwrap_or(0)
+}
+
+async fn try_paired_device_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT count(*) FROM app_device WHERE revoked_at IS NULL AND id <> $1",
     )
     .bind(crate::middleware::auth::CONSOLE_DEVICE_ID)
     .fetch_one(pool)
     .await
-    .unwrap_or(0)
+}
+
+/// Whether this box can be CONFIRMED to have no paired device — the predicate
+/// that opens the setup surface (BLE advertising, the AP, `/api/provision/*`,
+/// the panel's setup screens).
+///
+/// It FAILS CLOSED: a DB error returns `false` (assume claimed), because the
+/// cost of a wrong "unclaimed" is a claimed box reopening its provisioning
+/// surface to the LAN, while the cost of a wrong "claimed" is only a delayed
+/// setup screen. `paired_device_count().unwrap_or(0)` — which every door used
+/// to call — failed the opposite way: a transient blip read as "nobody has
+/// paired, open everything." (Setup-runtime audit, 2026-08-19.)
+pub async fn is_unclaimed(pool: &PgPool) -> bool {
+    matches!(try_paired_device_count(pool).await, Ok(0))
 }
 
 pub(crate) fn hash_token(token: &str) -> String {

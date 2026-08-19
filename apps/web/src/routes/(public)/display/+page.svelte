@@ -78,7 +78,6 @@
 		setup_phrase: string | null | undefined;
 		phrase_frozen: boolean;
 		setup_session: string | null | undefined;
-		pair_code: string | null;
 		data_disk_fault: string | null | undefined;
 		button_held_secs: number | null | undefined;
 		button_hold_target: number;

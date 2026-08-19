@@ -201,7 +201,9 @@ mod server {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
-                let claimed = crate::api::pair::paired_device_count(&pool).await > 0;
+                // Fails CLOSED (a DB blip must not re-advertise the Improv
+                // service on a claimed box). See `api::pair::is_unclaimed`.
+                let claimed = !crate::api::pair::is_unclaimed(&pool).await;
                 // Connectivity changed since the service came up? Re-serve, so
                 // the advertisement and state characteristic tell the truth.
                 if let Some(h) = &serving {

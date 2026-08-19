@@ -170,6 +170,20 @@ const PANEL_SESSION_SECS: u64 = 90;
 static PANEL_SESSION: std::sync::Mutex<Option<(String, std::time::Instant)>> =
     std::sync::Mutex::new(None);
 
+/// `(phrase hash, when it verified)`. The claim path freezes the box "at pair
+/// consume", which happens after and elsewhere from the phrase check — so it
+/// used to freeze "the newest live row" and could enshrine a phrase the owner
+/// never saw if two rows were briefly live. This records the hash that actually
+/// verified so `freeze_current` freezes exactly that. In memory, short-lived: a
+/// claim always follows its phrase within one setup session.
+static VERIFIED_PHRASE: std::sync::Mutex<Option<(String, std::time::Instant)>> =
+    std::sync::Mutex::new(None);
+
+/// How long a verified phrase stays eligible to be the one frozen. Generous
+/// (the BLE idle timeout is 10 min) but bounded, so a stale verification from an
+/// abandoned session can never freeze a later, different phrase.
+const VERIFIED_TTL_SECS: u64 = 900;
+
 /// Note that an authorized setup command just arrived, and from whom.
 ///
 /// A MIRROR of the BLE layer's session, not a second source of truth: the
@@ -199,21 +213,32 @@ pub fn session() -> Option<String> {
 
 // ─── storage ────────────────────────────────────────────────────────────────
 
-/// The frozen phrase's hash, if this box has been claimed.
-async fn frozen_hash(pool: &PgPool) -> Option<String> {
+/// The frozen phrase's hash, if this box has been claimed. `Err` is a genuine
+/// query failure — the caller decides which way to fail on it (they differ).
+async fn frozen_hash(pool: &PgPool) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar::<_, String>(
         "SELECT phrase_hash FROM app_setup_phrase WHERE frozen_at IS NOT NULL LIMIT 1",
     )
     .fetch_optional(pool)
     .await
-    .ok()
-    .flatten()
 }
 
 /// Whether this box's phrase is frozen — i.e. it has been claimed at least once
 /// and its phrase must never appear on the panel again, including after a reset.
+///
+/// FAILS CLOSED: a DB error returns `true` (assume frozen). This gates whether
+/// the panel mints and shows a fresh phrase, so a blip reading `false` would
+/// print brand-new claiming words on a box that already holds a life — the
+/// asymmetry the whole reset-button design rests on. (Setup-runtime audit,
+/// 2026-08-19; `.ok().flatten()` used to fail the wrong way.)
 pub async fn is_frozen(pool: &PgPool) -> bool {
-    frozen_hash(pool).await.is_some()
+    match frozen_hash(pool).await {
+        Ok(h) => h.is_some(),
+        Err(e) => {
+            tracing::warn!(error = %e, "setup_phrase: is_frozen query failed — assuming FROZEN");
+            true
+        }
+    }
 }
 
 /// The phrase to DISPLAY, minting or rotating as needed.
@@ -279,7 +304,17 @@ pub async fn verify(pool: &PgPool, input: &str) -> bool {
         return false;
     }
     let want = hash(input);
-    let ok = if let Some(frozen) = frozen_hash(pool).await {
+    // A frozen-lookup error must NOT fall through to the live-row branch — that
+    // would let a claimed box (whose live rows were deleted at freeze) match a
+    // freshly-minted phrase. On error, refuse.
+    let frozen_lookup = match frozen_hash(pool).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::warn!(error = %e, "setup_phrase: verify frozen lookup failed — refusing");
+            return false;
+        }
+    };
+    let ok = if let Some(frozen) = frozen_lookup {
         // Constant-time compare: both sides are hex of a SHA-256, so length is
         // fixed and only the content is secret.
         virtues_helpers::crypto::constant_time_eq(frozen.as_bytes(), want.as_bytes())
@@ -295,44 +330,58 @@ pub async fn verify(pool: &PgPool, input: &str) -> bool {
     };
     if ok {
         clear_attempts();
+        // Remember exactly which phrase verified, so the freeze at pair-consume
+        // enshrines THIS one and not merely "the newest live row" (H3).
+        if let Ok(mut g) = VERIFIED_PHRASE.lock() {
+            *g = Some((want.clone(), std::time::Instant::now()));
+        }
     }
     ok
 }
 
-/// Freeze the phrase at first claim: this row becomes the box's permanent
-/// credential, and its plaintext is destroyed so the box can verify the phrase
-/// but never reveal it again.
-///
-/// Idempotent, and deliberately a no-op once something is frozen — a second
-/// freeze would mean a second credential, which the partial unique index in the
-/// migration also refuses.
-pub async fn freeze(pool: &PgPool, phrase: &str) -> crate::Result<()> {
-    if is_frozen(pool).await {
-        return Ok(());
-    }
-    sqlx::query(
-        "UPDATE app_setup_phrase SET frozen_at = now(), display_secret = NULL \
-         WHERE phrase_hash = $1 AND frozen_at IS NULL",
-    )
-    .bind(hash(phrase))
-    .execute(pool)
-    .await
-    .map_err(|e| crate::Error::Database(format!("freeze setup phrase: {e}")))?;
-    // Everything that never froze is now noise, and it is plaintext-bearing
-    // noise: drop it rather than leave rotated-out phrases decryptable on disk.
-    let _ = sqlx::query("DELETE FROM app_setup_phrase WHERE frozen_at IS NULL")
-        .execute(pool)
-        .await;
-    Ok(())
+/// The hash of the phrase most recently verified, if within the TTL.
+fn recently_verified_hash() -> Option<String> {
+    let g = VERIFIED_PHRASE.lock().ok()?;
+    let (hash, at) = g.as_ref()?;
+    (at.elapsed() < std::time::Duration::from_secs(VERIFIED_TTL_SECS)).then(|| hash.clone())
 }
 
-/// Freeze whatever phrase is currently displayed — the form the claim path
-/// wants, since it knows a claim happened but not which words were on the
-/// panel. No-op on a box that is already frozen, or one that somehow never
-/// minted a phrase.
+// (A standalone `freeze(pool, phrase)` used to live here and had zero callers —
+// the claim path always went through `freeze_current`. Its "freeze exactly this
+// phrase" behavior now lives INSIDE `freeze_current` via the verified-hash
+// record, so the two are one function and the dead one is gone.)
+
+/// Freeze the phrase the claim was made with — the form the claim path wants,
+/// since it knows a claim happened but not (directly) which words. No-op on a
+/// box that is already frozen, or one that somehow never minted a phrase.
+///
+/// Prefers the hash that ACTUALLY VERIFIED this session (recorded by `verify`)
+/// so the box's permanent credential is the words the owner typed and saved —
+/// not merely "the newest live row", which could differ from it if two rows
+/// were briefly live at once (H3). Falls back to newest-live only when no
+/// recent verification is on record (e.g. the AP breakglass path, which does
+/// not go through `verify`).
 pub async fn freeze_current(pool: &PgPool) -> crate::Result<()> {
     if is_frozen(pool).await {
         return Ok(());
+    }
+    if let Some(verified) = recently_verified_hash() {
+        let frozen = sqlx::query(
+            "UPDATE app_setup_phrase SET frozen_at = now(), display_secret = NULL \
+             WHERE phrase_hash = $1 AND frozen_at IS NULL",
+        )
+        .bind(&verified)
+        .execute(pool)
+        .await
+        .map_err(|e| crate::Error::Database(format!("freeze setup phrase: {e}")))?;
+        if frozen.rows_affected() > 0 {
+            let _ = sqlx::query("DELETE FROM app_setup_phrase WHERE frozen_at IS NULL")
+                .execute(pool)
+                .await;
+            return Ok(());
+        }
+        // The verified row is gone (expired + swept). Fall through to newest-live
+        // rather than freeze nothing — a claim did happen.
     }
     // Freeze the newest live row: that is the one the panel is showing and the
     // one the owner just typed. Older rows are inside their grace window and
