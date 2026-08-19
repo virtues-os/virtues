@@ -2120,15 +2120,30 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -e "$DATA_DIR/.claim-complete" ]
     if mount --bind "$(dirname "$DATA_DIR")" /run/virtues-cardseed 2>/dev/null; then
         CARD="/run/virtues-cardseed/$(basename "$DATA_DIR")"
         [ -d "$DATA_DIR/models" ] || cp -a "$CARD/models" "$DATA_DIR/models" 2>/dev/null || true
-        [ -e "$DATA_DIR/virtues.env" ] || cp -a "$CARD/virtues.env" "$DATA_DIR/virtues.env" 2>/dev/null || true
+        # The env file is LOAD-BEARING — no DATABASE_URL, no server — so unlike
+        # the models its copy failure is logged, not swallowed, and the
+        # sentinel below stays unwritten without it.
+        if [ ! -e "$DATA_DIR/virtues.env" ]; then
+            cp -a "$CARD/virtues.env" "$DATA_DIR/virtues.env" 2>/dev/null || \
+                logger -t virtues-firstboot "FAILED to copy virtues.env from the card seed"
+        fi
         if [ ! -e "$DATA_DIR/.needs-firstboot" ] && \
            ! grep -q '^VIRTUES_ENCRYPTION_KEY=' "$DATA_DIR/virtues.env" 2>/dev/null && \
            [ -e "$CARD/.needs-firstboot" ]; then
             cp -a "$CARD/.needs-firstboot" "$DATA_DIR/.needs-firstboot" 2>/dev/null || true
         fi
         umount /run/virtues-cardseed
-        touch "$DATA_DIR/.claim-complete"
-        logger -t virtues-firstboot "completed an interrupted disk claim from the card seed"
+        # The sentinel means "the seed is complete", NOT "this block reached
+        # its last line". Written over a hollow disk it disables the very
+        # repair path that exists for a failed copy — which is how the
+        # 2026-08-19 unit latched hollow: models across, env missing, sentinel
+        # written anyway, repair never ran again, status=0/SUCCESS throughout.
+        if [ -s "$DATA_DIR/virtues.env" ]; then
+            touch "$DATA_DIR/.claim-complete"
+            logger -t virtues-firstboot "completed an interrupted disk claim from the card seed"
+        else
+            logger -t virtues-firstboot "repair did not produce virtues.env - claim left unmarked for the next boot"
+        fi
     fi
     rmdir /run/virtues-cardseed 2>/dev/null || true
 fi
@@ -2160,13 +2175,18 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
             # the card and writes the disk; then the real mount takes over.
             mkdir -p /run/virtues-seed
             if mount "${disk}p1" /run/virtues-seed 2>/dev/null; then
-                cp -a "$DATA_DIR/." /run/virtues-seed/ 2>/dev/null || true
+                cp -a "$DATA_DIR/." /run/virtues-seed/ 2>/dev/null || \
+                    logger -t virtues-firstboot "seed copy reported errors - the sentinel gate below decides"
                 # A properly sealed card carries no cluster, but a half-sealed
                 # one (they exist) would hand every clone the SAME database and
                 # box identity. The cluster is per-disk by doctrine — 1c below
                 # builds it fresh — so whatever came over in the copy, goes.
                 rm -rf /run/virtues-seed/postgresql /run/virtues-seed/secrets /run/virtues-seed/backups
                 mkdir -p /run/virtues-seed/journal /run/virtues-seed/lake
+                # journald refuses a persistent directory it does not own:
+                # root:root 755 here means no journal ever lands, silently.
+                chown root:systemd-journal /run/virtues-seed/journal 2>/dev/null || true
+                chmod 2755 /run/virtues-seed/journal 2>/dev/null || true
                 umount /run/virtues-seed
                 logger -t virtues-firstboot "seeded new disk from the card-side $DATA_DIR"
             fi
@@ -2176,9 +2196,13 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 echo "LABEL=virtues-data $DATA_DIR ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2" >> /etc/fstab
             systemctl daemon-reload
             mount "$DATA_DIR" || logger -t virtues-firstboot "mount $DATA_DIR failed"
-            # LAST act, and only on the mounted disk: its absence is what marks
-            # a half-claim for the repair block above.
-            mountpoint -q "$DATA_DIR" && touch "$DATA_DIR/.claim-complete"
+            # LAST act, only on the mounted disk, and ONLY when the seed's
+            # load-bearing file made it across. The sentinel means "the seed is
+            # complete"; gating it on virtues.env is what keeps a failed copy
+            # repairable next boot instead of latched hollow (2026-08-19).
+            if mountpoint -q "$DATA_DIR" && [ -s "$DATA_DIR/virtues.env" ]; then
+                touch "$DATA_DIR/.claim-complete"
+            fi
             break
         fi
     done
@@ -2199,6 +2223,8 @@ fi
 # reboot is a no-op.
 if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -L /var/log/journal ]; then
     mkdir -p "$DATA_DIR/journal"
+    chown root:systemd-journal "$DATA_DIR/journal" 2>/dev/null || true
+    chmod 2755 "$DATA_DIR/journal" 2>/dev/null || true
     # Move what is already there rather than orphaning it: this runs on the
     # first boot AFTER the disk is claimed, and the boot that claimed the disk
     # logged the claim itself.
@@ -2211,6 +2237,39 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -L /var/log/journal ]; then
     systemctl kill --kill-who=main --signal=SIGUSR2 systemd-journald 2>/dev/null || true
     logger -t virtues-firstboot "journal relocated to $DATA_DIR/journal"
 fi
+
+# ── 1b'. Undo the pre-mount shadow, once per boot ───────────────────────────
+# journald starts long before this script and opens /var/log/journal at once.
+# With the symlink in place but the data disk not yet mounted, the path
+# resolves to the CARD-side directory; journald holds that fd while the NVMe
+# mounts over it. Diagnosed on hardware 2026-08-19: 25 MB of journal landing
+# on the boot card — the exact wear 1b exists to prevent — while journalctl,
+# resolving the same path post-mount, read the empty NVMe directory and
+# reported nothing at all. So after the mount is real: fix ownership (journald
+# refuses root:root), copy anything stranded card-side across (no-clobber, and
+# the card copy is left in place — it stops growing the moment journald is
+# bounced, and deleting under a live writer risks the history we came for),
+# and restart journald so it reopens through the mounted path.
+if mountpoint -q "$DATA_DIR" 2>/dev/null && [ -L /var/log/journal ] && [ ! -e /run/virtues-journal-rehomed ]; then
+    chown root:systemd-journal "$DATA_DIR/journal" 2>/dev/null || true
+    chmod 2755 "$DATA_DIR/journal" 2>/dev/null || true
+    mkdir -p /run/virtues-cardshadow
+    if mount --bind "$(dirname "$DATA_DIR")" /run/virtues-cardshadow 2>/dev/null; then
+        CARDJ="/run/virtues-cardshadow/$(basename "$DATA_DIR")/journal"
+        if [ -d "$CARDJ" ] && [ -n "$(ls -A "$CARDJ" 2>/dev/null)" ]; then
+            cp -an "$CARDJ/." "$DATA_DIR/journal/" 2>/dev/null || true
+            logger -t virtues-firstboot "copied a card-stranded journal onto the data disk"
+        fi
+        umount /run/virtues-cardshadow
+    fi
+    rmdir /run/virtues-cardshadow 2>/dev/null || true
+    systemctl try-restart systemd-journald 2>/dev/null || true
+    touch /run/virtues-journal-rehomed
+fi
+
+# sudo resolves the hostname on every invocation; without a hosts entry each
+# privileged command eats a resolver timeout and prints a warning (2026-08-19).
+grep -q '^127.0.1.1' /etc/hosts 2>/dev/null || printf '127.0.1.1 %s\n' "$(hostname)" >> /etc/hosts
 
 # ── 1c. Recreate the Postgres cluster on the claimed disk ───────────────────
 # /var/lib/postgresql is a SYMLINK into the data dir on an appliance — the
@@ -2314,6 +2373,18 @@ if [ -L "$PG_LINK" ] && [ -n "$PG_VER" ] && [ ! -e "$PG_LINK/$PG_VER/main/PG_VER
             logger -t virtues-firstboot "pg_createcluster FAILED - the box will not serve until this is fixed"
         fi
     fi
+fi
+
+# ── 1d. A provisioned disk with no env file is a FAILURE, said out loud ─────
+# The 2026-08-19 hollow unit reported status=0/SUCCESS on every boot while
+# virtues.service crash-looped beside it, because nothing here ever checked
+# the one file everything downstream needs. A red unit in `systemctl --failed`
+# is the difference between a glance and a UART cable. Appliance-shaped boxes
+# only: on DIY, $DATA_DIR is a plain directory on the root fs and the env
+# file's absence is the installer's business, not first boot's.
+if mountpoint -q "$DATA_DIR" 2>/dev/null && ! grep -q '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null; then
+    logger -t virtues-firstboot "PROVISIONING INCOMPLETE: $ENV_FILE is missing or has no DATABASE_URL - the box cannot serve"
+    exit 1
 fi
 
 # ── 2. Mint this unit's encryption key ──────────────────────────────────────
