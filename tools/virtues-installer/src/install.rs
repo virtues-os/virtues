@@ -2044,6 +2044,34 @@ DATA_DIR=__DATA_DIR__
 ENV_FILE="$DATA_DIR/virtues.env"
 MARKER="$DATA_DIR/.needs-firstboot"
 
+# ── 0. Finish an interrupted claim ──────────────────────────────────────────
+# The claim below is minutes of work (mkfs, a several-hundred-MB seed copy),
+# and a first boot is exactly when a new owner is most likely to cut power.
+# The first clone-test boot, 2026-08-19, was interrupted mid-copy: the next
+# boot auto-mounted the half-seeded disk (the fstab LABEL entry ships in the
+# image) and skipped everything — models present, env and marker gone, no key
+# ever minted, box hollow forever. `.claim-complete` is written as the LAST
+# act of a claim; a mounted disk without it is a half-claim, and the repair is
+# to finish the copy — item by item, only what is missing, because a repair
+# boot must never overwrite something a completed step already made.
+if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -e "$DATA_DIR/.claim-complete" ]; then
+    mkdir -p /run/virtues-cardseed
+    if mount --bind "$(dirname "$DATA_DIR")" /run/virtues-cardseed 2>/dev/null; then
+        CARD="/run/virtues-cardseed/$(basename "$DATA_DIR")"
+        [ -d "$DATA_DIR/models" ] || cp -a "$CARD/models" "$DATA_DIR/models" 2>/dev/null || true
+        [ -e "$DATA_DIR/virtues.env" ] || cp -a "$CARD/virtues.env" "$DATA_DIR/virtues.env" 2>/dev/null || true
+        if [ ! -e "$DATA_DIR/.needs-firstboot" ] && \
+           ! grep -q '^VIRTUES_ENCRYPTION_KEY=' "$DATA_DIR/virtues.env" 2>/dev/null && \
+           [ -e "$CARD/.needs-firstboot" ]; then
+            cp -a "$CARD/.needs-firstboot" "$DATA_DIR/.needs-firstboot" 2>/dev/null || true
+        fi
+        umount /run/virtues-cardseed
+        touch "$DATA_DIR/.claim-complete"
+        logger -t virtues-firstboot "completed an interrupted disk claim from the card seed"
+    fi
+    rmdir /run/virtues-cardseed 2>/dev/null || true
+fi
+
 # ── 1. Claim a blank NVMe for the data directory ────────────────────────────
 # We image the BOOT MEDIUM (a microSD card on the Q6A), not the NVMe, so every
 # unit boots with a fresh blank disk and no UUID or LABEL that fstab could have
@@ -2087,6 +2115,9 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 echo "LABEL=virtues-data $DATA_DIR ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2" >> /etc/fstab
             systemctl daemon-reload
             mount "$DATA_DIR" || logger -t virtues-firstboot "mount $DATA_DIR failed"
+            # LAST act, and only on the mounted disk: its absence is what marks
+            # a half-claim for the repair block above.
+            mountpoint -q "$DATA_DIR" && touch "$DATA_DIR/.claim-complete"
             break
         fi
     done
