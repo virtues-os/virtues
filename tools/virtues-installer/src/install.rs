@@ -2054,6 +2054,46 @@ MARKER="$DATA_DIR/.needs-firstboot"
 # act of a claim; a mounted disk without it is a half-claim, and the repair is
 # to finish the copy — item by item, only what is missing, because a repair
 # boot must never overwrite something a completed step already made.
+# ── 0a. A disk that carries our label but will not mount ────────────────────
+# A power cut DURING mkfs (the 2026-08-19 yank test) leaves the disk labeled
+# virtues-data but structurally corrupt: the claim below sees "not blank" and
+# skips, the repair sees "not mounted" and skips, and the box is hollow on
+# every boot forever. fsck first, then let the SENTINEL decide — it is written
+# after all seeding, so a recovered fs without it provably holds no owner data
+# and is safe to wipe for a fresh claim. A recovered fs WITH it is the owner's
+# disk that corrupted later in life: keep it, mount it, carry on. A fs fsck
+# cannot recover is potentially the owner's record — firstboot must NEVER
+# destroy that; it leaves the box up and loud instead (see the postgres
+# drop-in: nothing starts without the mount, and the display says so).
+if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
+    for disk in /dev/nvme0n1 /dev/nvme1n1; do
+        [ -b "${disk}p1" ] || continue
+        blkid "${disk}p1" 2>/dev/null | grep -q 'LABEL="virtues-data"' || continue
+        if mount "${disk}p1" "$DATA_DIR" 2>/dev/null; then
+            umount "$DATA_DIR" 2>/dev/null
+            break   # mountable — fstab/normal flow handles it
+        fi
+        logger -t virtues-firstboot "labeled data disk will not mount - running fsck"
+        e2fsck -y "${disk}p1" >/dev/null 2>&1 || true
+        if mount "${disk}p1" "$DATA_DIR" 2>/dev/null; then
+            if [ -e "$DATA_DIR/.claim-complete" ]; then
+                logger -t virtues-firstboot "data disk recovered by fsck - owner data intact"
+                umount "$DATA_DIR" 2>/dev/null
+            else
+                umount "$DATA_DIR" 2>/dev/null
+                logger -t virtues-firstboot "recovered fs has no claim sentinel - failed claim, wiping for a fresh one"
+                wipefs -a "${disk}p1" >/dev/null 2>&1 || true
+                wipefs -a "$disk" >/dev/null 2>&1 || true
+                dd if=/dev/zero of="$disk" bs=1M count=16 >/dev/null 2>&1 || true
+                partprobe "$disk" 2>/dev/null || true; sleep 2
+            fi
+        else
+            logger -t virtues-firstboot "data disk unrecoverable by fsck - NOT wiping (may hold the owner's record); box stays up without it"
+        fi
+        break
+    done
+fi
+
 if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -e "$DATA_DIR/.claim-complete" ]; then
     mkdir -p /run/virtues-cardseed
     if mount --bind "$(dirname "$DATA_DIR")" /run/virtues-cardseed 2>/dev/null; then
