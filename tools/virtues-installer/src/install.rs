@@ -2061,6 +2061,27 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
             parted -s "$disk" mklabel gpt mkpart virtues 1MiB 100%
             sleep 2; partprobe "$disk" 2>/dev/null || true; sleep 2
             mkfs.ext4 -q -F -L virtues-data "${disk}p1"
+            # Seed the fresh disk from the card BEFORE mounting shadows it.
+            # The card-side $DATA_DIR is the only one a clone has: deprovision
+            # wiped it and laid down exactly what a unit needs (stripped env,
+            # models, the first-boot marker). Without this copy a clone boots
+            # hollow — no env, no models, no licence to mint a key — which is
+            # precisely how the first master's clones would have come up
+            # (found 2026-08-19). Mounted at a private point so the copy reads
+            # the card and writes the disk; then the real mount takes over.
+            mkdir -p /run/virtues-seed
+            if mount "${disk}p1" /run/virtues-seed 2>/dev/null; then
+                cp -a "$DATA_DIR/." /run/virtues-seed/ 2>/dev/null || true
+                # A properly sealed card carries no cluster, but a half-sealed
+                # one (they exist) would hand every clone the SAME database and
+                # box identity. The cluster is per-disk by doctrine — 1c below
+                # builds it fresh — so whatever came over in the copy, goes.
+                rm -rf /run/virtues-seed/postgresql /run/virtues-seed/secrets /run/virtues-seed/backups
+                mkdir -p /run/virtues-seed/journal /run/virtues-seed/lake
+                umount /run/virtues-seed
+                logger -t virtues-firstboot "seeded new disk from the card-side $DATA_DIR"
+            fi
+            rmdir /run/virtues-seed 2>/dev/null || true
             mkdir -p "$DATA_DIR"
             grep -q '^LABEL=virtues-data' /etc/fstab 2>/dev/null || \
                 echo "LABEL=virtues-data $DATA_DIR ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2" >> /etc/fstab
