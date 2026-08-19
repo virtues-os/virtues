@@ -1376,6 +1376,10 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
         // needs bluetoothd running. Radxa's image ships it, but the appliance
         // profile must not depend on that staying true.
         "bluez",
+        // growpart, for firstboot §1e: masters are cut shrunk
+        // (tools/shrink-image.sh) and the first boot on real hardware grows
+        // the rootfs back to fill whatever card it landed on.
+        "cloud-guest-utils",
     ]);
     deps.env("DEBIAN_FRONTEND", "noninteractive");
     run_step("Install display runtime (cage + WebKit)", deps).await?;
@@ -2474,6 +2478,32 @@ fi
 # sudo resolves the hostname on every invocation; without a hosts entry each
 # privileged command eats a resolver timeout and prints a warning (2026-08-19).
 grep -q '^127.0.1.1' /etc/hosts 2>/dev/null || printf '127.0.1.1 %s\n' "$(hostname)" >> /etc/hosts
+
+# ── 1e. Grow the root filesystem to the card it landed on ───────────────────
+# Masters are cut SHRUNK (tools/shrink-image.sh) so one image restores onto
+# any card; the give-back happens here, on real hardware. growpart exits 0 on
+# change, 1 on nothing-to-do, 2 on error — only a real change is followed by
+# the online ext4 resize, so this logs once in an image's life and is silent
+# forever after. Best-effort by design: a rootfs that never grows still has
+# the shrink's 2 GiB margin, and everything heavy (Postgres, the lake, the
+# journal) lives on the NVMe anyway.
+ROOT_SRC="$(findmnt -no SOURCE / 2>/dev/null || true)"
+case "$ROOT_SRC" in
+    /dev/*[0-9])
+        ROOT_PART_NAME="${ROOT_SRC##*/}"
+        ROOT_PART_NUM="${ROOT_PART_NAME##*[!0-9]}"
+        ROOT_BASE="${ROOT_PART_NAME%"$ROOT_PART_NUM"}"
+        ROOT_DISK="/dev/${ROOT_BASE%p}"
+        if command -v growpart >/dev/null 2>&1; then
+            if growpart "$ROOT_DISK" "$ROOT_PART_NUM" >/dev/null 2>&1; then
+                resize2fs "$ROOT_SRC" >/dev/null 2>&1 || true
+                logger -t virtues-firstboot "grew the root filesystem to fill $ROOT_DISK"
+            fi
+        else
+            logger -t virtues-firstboot "growpart not installed - root stays at its shrunk size"
+        fi
+        ;;
+esac
 
 # ── 1c. Recreate the Postgres cluster on the claimed disk ───────────────────
 # /var/lib/postgresql is a SYMLINK into the data dir on an appliance — the

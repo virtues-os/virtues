@@ -121,18 +121,39 @@ DATE="$(date -u +%Y%m%d)"
 OUT="masters/virtues-master-$TAG-$DATE"
 mkdir -p masters
 
-# ── Read, compress, checksum — in one pass ──────────────────────────────────
-# Piped rather than staged: a 64 GB card written out raw and compressed
-# afterwards needs 64 GB of scratch and twice the wall clock, for a file that is
-# deleted immediately. `-T0` uses every core; `-19` is worth it because this is
-# written once and downloaded repeatedly.
+# ── Read, shrink, compress, checksum ────────────────────────────────────────
+# Staged to a raw file rather than piped straight into zstd, because the
+# shrink needs a seekable image it can resize and truncate. The stage briefly
+# costs the card's full size in scratch space; the shrink is what frees every
+# future flash from needing a card as large as the master's — the base OS
+# grows its rootfs to fill the build card, so an unshrunk 64 GB master
+# compresses to ~5 GB and then still demands a >= 64 GB card to restore
+# (a 32 GB card gets a truncated partition table; learned 2026-08-19).
 #
 # The card is read WHOLE, including free space. Zero it on the board first
 # (fstrim, or fill-and-delete) or the image carries gigabytes of noise —
 # including everything deprovision just deleted, still recoverable.
-say "Reading and compressing → $OUT.img.zst"
-warn "This takes a while. A 32 GB card is ~10 minutes on a fast reader."
-dd if="$READ_DEV" bs=4m 2>/dev/null | zstd -19 -T0 -o "$OUT.img.zst"
+RAW="$OUT.img"
+if [ -n "${SIZE:-}" ]; then
+    AVAIL_KB=$(df -k masters | awk 'NR==2{print $4}')
+    [ $((AVAIL_KB * 1024)) -gt $((SIZE + 2147483648)) ] || \
+        die "not enough free space here to stage the raw image ($SIZE bytes + margin needed)"
+fi
+say "Reading → $RAW"
+warn "This takes a while. A 64 GB card is ~15-25 minutes on a fast reader."
+dd if="$READ_DEV" of="$RAW" bs=4m 2>/dev/null
+
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    sh "$(dirname "$0")/shrink-image.sh" "$RAW" || \
+        die "shrink failed — the raw image is intact at $RAW; inspect, re-run
+       tools/shrink-image.sh, then compress by hand (zstd -19 -T0 --rm)"
+else
+    warn "docker unavailable — shipping FULL SIZE; restoring will need a card >= the source card (${SIZE:-unknown} bytes)"
+fi
+IMAGE_BYTES=$(wc -c < "$RAW" | tr -d ' ')
+
+say "Compressing → $OUT.img.zst"
+zstd -19 -T0 -q --rm "$RAW" -o "$OUT.img.zst"
 
 say "Checksumming"
 if command -v shasum >/dev/null 2>&1; then
@@ -149,6 +170,8 @@ cat > "$OUT.json" <<EOF
   "cut_by": "$(id -un)@$(hostname)",
   "base_os_image": "${BASE_IMAGE:-unrecorded}",
   "card_bytes": "${SIZE:-unknown}",
+  "image_bytes": "$IMAGE_BYTES",
+  "restore_min_card_bytes": "$IMAGE_BYTES",
   "source_device": "$DEV",
   "image_check": "asserted PASS by operator on the board before poweroff",
   "artifact": "$(basename "$OUT").img.zst",
@@ -163,6 +186,9 @@ cat <<'EOF'
   Next:
     • Keep all three files together. An image with no record is
       unreproducible, and eight months from now that is when you need it.
+    • Restore needs a card >= image_bytes in the record (NOT the original
+      card size — the image is shrunk; first boot grows it back to fill):
+          zstd -dc <file>.img.zst | sudo dd of=/dev/rdiskN bs=4m
     • Store PRIVATELY — the image contains Qualcomm firmware from the vendor
       BSP, which we do not redistribute. Not GitHub Releases (public assets,
       2 GB cap), not virtues.com/downloads (that is the installer's path).
