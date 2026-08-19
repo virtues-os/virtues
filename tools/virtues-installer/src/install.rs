@@ -504,6 +504,11 @@ const EMBED_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues embedding sidecar (llama-server, embeddinggemma-300m)
 Documentation=https://virtues.com/docs
 After=network.target
+# Cap the restart loop (see QNN_UNIT_TEMPLATE): Restart=on-failure at
+# RestartSec=5 is 2 starts/10s and never trips systemd's default burst of 5, so
+# a permanently-broken sidecar loops forever with no `failed` unit to see.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -532,6 +537,9 @@ const RERANK_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues rerank sidecar (llama-server, gte-reranker-modernbert-base)
 Documentation=https://virtues.com/docs
 After=network.target
+# See EMBED_UNIT_TEMPLATE / QNN_UNIT_TEMPLATE — cap the restart loop.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -1317,24 +1325,40 @@ pub async fn run_bringup(cfg: &InstallConfig) -> Result<()> {
 // systemd unit
 // ────────────────────────────────────────────────────────────────────────
 
-pub async fn install_systemd_unit(cfg: &InstallConfig) -> Result<()> {
+pub async fn install_systemd_unit(cfg: &InstallConfig, appliance: bool) -> Result<()> {
     let body = SYSTEMD_UNIT_TEMPLATE
         .replace("__BIN__", &cfg.binary_path().display().to_string())
         .replace("__DATA_DIR__", &cfg.data_dir.display().to_string());
     fs::write("/etc/systemd/system/virtues.service", body)
         .context("writing /etc/systemd/system/virtues.service")?;
 
-    install_firstboot_unit(cfg)?;
+    // FIRST-BOOT IS APPLIANCE-ONLY. It claims a blank NVMe, relocates the
+    // journal, creates the Postgres cluster on the data disk, and mints the
+    // encryption key from the deprovision marker — every one of which is an
+    // appliance-image concern. On a DIY box $DATA_DIR is a plain directory on
+    // the root filesystem, the installer wrote the env + key directly, and
+    // there is no marker — so the unit would do nothing useful and one thing
+    // actively harmful: §1's blank-NVMe claim loop has no appliance gate, so a
+    // DIY machine with a spare unpartitioned NVMe would get it formatted, and
+    // §1e would growpart the owner's root partition. So it is installed and
+    // enabled only on an appliance. (Found in the second-bench audit,
+    // 2026-08-19.)
+    if appliance {
+        install_firstboot_unit(cfg)?;
+    }
 
     let mut cmd = Command::new("systemctl");
     cmd.arg("daemon-reload");
     run_step("Install systemd unit", cmd).await?;
 
-    // Ordered Before=virtues.service, so it must be enabled or the ordering
-    // never applies — an enabled-but-inert oneshot is the normal steady state.
-    let mut en = Command::new("systemctl");
-    en.args(["enable", "virtues-firstboot"]);
-    run_step("Enable first-boot unit", en).await
+    if appliance {
+        // Ordered Before=virtues.service, so it must be enabled or the ordering
+        // never applies — an enabled-but-inert oneshot is the normal steady state.
+        let mut en = Command::new("systemctl");
+        en.args(["enable", "virtues-firstboot"]);
+        run_step("Enable first-boot unit", en).await?;
+    }
+    Ok(())
 }
 
 /// Turn a general-purpose Linux box into a Virtues appliance.
@@ -1387,17 +1411,34 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     // Boot text on the glass. From power to cage the panel used to be pure
     // black — `quiet splash` hides the kernel and systemd entirely, so nobody
     // can tell a booting box from a dead one until the kiosk paints
-    // (2026-08-19 bench feedback). With them dropped, fbcon scrolls the boot
-    // on the panel and cage takes the VT over when it starts; the shim's
-    // diagnostic page covers everything after that. Best-effort: only where
-    // the image boots through GRUB.
+    // (2026-08-19 bench feedback). With them dropped, fbcon scrolls the boot on
+    // the panel and cage takes the VT over when it starts; the shim's
+    // diagnostic page covers everything after that.
+    //
+    // The Dragon boots SYSTEMD-BOOT, not GRUB (docs/appliance-image.md) — the
+    // cmdline lives in the `options` line of each loader entry, so that is the
+    // real edit. An earlier version only touched /etc/default/grub, which the
+    // product has none of, so the step reported success while changing nothing.
+    // GRUB is kept as a fallback for non-Dragon appliance hosts.
     let mut cmdline = Command::new("sh");
     cmdline.args([
         "-c",
-        "if [ -f /etc/default/grub ] && command -v update-grub >/dev/null 2>&1; then \
+        "changed=0; \
+         for d in /boot/efi/loader/entries /boot/loader/entries; do \
+             [ -d \"$d\" ] || continue; \
+             for e in \"$d\"/*.conf; do \
+                 [ -f \"$e\" ] || continue; \
+                 grep -qE '^options .*\\b(quiet|splash)\\b' \"$e\" || continue; \
+                 sed -i -E '/^options /{s/\\b(quiet|splash)\\b//g; s/  +/ /g; s/ +$//}' \"$e\"; \
+                 changed=1; \
+             done; \
+         done; \
+         if [ -f /etc/default/grub ] && command -v update-grub >/dev/null 2>&1; then \
              sed -i -E '/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/\\b(quiet|splash)\\b//g' /etc/default/grub && \
-             update-grub >/dev/null 2>&1 && echo 'boot messages will show on the panel'; \
-         else echo 'no GRUB config found - boot stays quiet'; fi",
+             update-grub >/dev/null 2>&1; changed=1; \
+         fi; \
+         [ \"$changed\" = 1 ] && echo 'boot messages will show on the panel' \
+                             || echo 'no loader entries or GRUB found - boot stays quiet'",
     ]);
     run_step("Show boot messages on the panel", cmdline).await?;
 
@@ -1682,6 +1723,13 @@ Documentation=https://virtues.com/docs
 # process start, not listening, so the shim's retry remains the guarantee.
 After=systemd-user-sessions.service seatd.service virtues.service
 Wants=seatd.service
+# Cap the restart loop. Restart=always + RestartSec=5 is 2 starts/10s, under
+# systemd's default burst of 5 — so a headless board (ExecStartPre's DRM guard
+# fails) or a crash-looping kiosk would restart forever. With the cap it parks
+# after 5 and shows up in `systemctl --failed`, which on a headless board is
+# the correct end state.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -1852,6 +1900,16 @@ def _facts():
 
 def _verdict(f):
     """One line, plain language, worst confirmed fact first."""
+    # FIRST BOOT IS NOT A FAULT. firstboot is "the longest boot there is" — it
+    # claims the NVMe and builds the cluster over minutes — and while it runs the
+    # disk is legitimately unmounted or seed-incomplete. Reporting "Storage
+    # disconnected" / "Not provisioned" then, to a new owner in their first two
+    # minutes, is a lie the page tells about a healthy box. So if the firstboot
+    # unit is still activating, say so and stop; the storage/provisioning
+    # verdicts below are only meaningful once it has finished.
+    firstboot = dict(f["units"]).get("virtues-firstboot", "")
+    if firstboot == "activating":
+        return "Setting up — first boot is claiming the storage disk and preparing the database. This takes a few minutes."
     if f["fstab_disk"] and not f["mounted"]:
         return "Storage disconnected — the data disk is not mounted."
     if f["mounted"] and not f["env_exists"]:
@@ -2299,6 +2357,13 @@ DefaultDependencies=yes
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# The claim is minutes of work — mkfs on an NVMe plus a several-hundred-MB
+# seed copy that grows with the model set — and a oneshot inherits systemd's
+# 90s DefaultTimeoutStartSec. At 90s the copy is SIGKILLed mid-flight, which is
+# exactly the interrupted-claim state §0 exists to repair, on every unit once
+# models outgrow the default. Postgres already got `infinity` for its own
+# long recovery; the longer-running unit did not, until now.
+TimeoutStartSec=infinity
 ExecStart=/usr/local/sbin/virtues-firstboot.sh
 
 [Install]
@@ -2401,11 +2466,15 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -e "$DATA_DIR/.claim-complete" ]
         # repair path that exists for a failed copy — which is how the
         # 2026-08-19 unit latched hollow: models across, env missing, sentinel
         # written anyway, repair never ran again, status=0/SUCCESS throughout.
-        if [ -s "$DATA_DIR/virtues.env" ]; then
+        # SAME predicate §1d fails loudly on (DATABASE_URL present), not merely
+        # "env is non-empty" — a truncated env with no DATABASE_URL was passing
+        # `-s`, writing the sentinel, latching the repair off, and then failing
+        # §1d every boot forever.
+        if grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null; then
             touch "$DATA_DIR/.claim-complete"
             logger -t virtues-firstboot "completed an interrupted disk claim from the card seed"
         else
-            logger -t virtues-firstboot "repair did not produce virtues.env - claim left unmarked for the next boot"
+            logger -t virtues-firstboot "repair did not produce a usable virtues.env - claim left unmarked for the next boot"
         fi
     fi
     rmdir /run/virtues-cardseed 2>/dev/null || true
@@ -2476,14 +2545,18 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
             # ordered After this very script and a blocking start would
             # deadlock exactly like pg_createcluster --start once did.
             if mountpoint -q "$DATA_DIR"; then
-                systemctl reset-failed 2>/dev/null || true
+                # SCOPED: bare `reset-failed` clears every failed unit on the
+                # box, erasing the evidence an operator or `virtues doctor`
+                # needs from the first boot. Only clear the ones this race
+                # actually failed.
+                systemctl reset-failed postgresql.service virtues.service 2>/dev/null || true
                 systemctl --no-block start postgresql.service virtues.service 2>/dev/null || true
             fi
             # LAST act, only on the mounted disk, and ONLY when the seed's
-            # load-bearing file made it across. The sentinel means "the seed is
-            # complete"; gating it on virtues.env is what keeps a failed copy
-            # repairable next boot instead of latched hollow (2026-08-19).
-            if mountpoint -q "$DATA_DIR" && [ -s "$DATA_DIR/virtues.env" ]; then
+            # load-bearing file made it across — same predicate §1d and the
+            # repair block use (DATABASE_URL present), so "claim complete" and
+            # "provisioning incomplete" can never both be true of one disk.
+            if mountpoint -q "$DATA_DIR" && grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null; then
                 touch "$DATA_DIR/.claim-complete"
             fi
             break
@@ -2600,12 +2673,14 @@ fi
 # symlink; the disk it points at is blank on every unit. So the cluster has to
 # be made here, once, on the unit.
 #
-# The guard is the narrowest true statement about the job, like the other two:
-# a symlink whose target holds no cluster. A DIY box has no symlink and skips;
-# a second boot has a cluster and skips; a box whose disk failed to mount has
-# no symlink target it can write to and skips, leaving Postgres refusing to
-# start (see the postgresql@.service drop-in) rather than quietly building a
-# fresh empty cluster somewhere nobody meant.
+# GUARDED ON THE MOUNT, like every sibling section (§1b/§1b'/§1d). The earlier
+# claim that "a box whose disk failed to mount has no symlink target it can
+# write to and skips" was FALSE: /var/lib/virtues exists as the mountpoint
+# directory even unmounted, so `readlink -f` resolves and `mkdir -p` would build
+# the cluster ON THE BOOT CARD — the exact silent-divergence the postgresql
+# mount-guard drop-in exists to prevent, done by the provisioner itself in the
+# window before that guard applies. So: only when $DATA_DIR is genuinely
+# mounted. A DIY box has no symlink and skips regardless.
 #
 # NOT guarded on the first-boot marker. The marker licenses key MINTING, which
 # must happen exactly once ever; this must happen once per DISK, and those are
@@ -2613,7 +2688,7 @@ fi
 # encryption key.
 PG_VER="$(ls /etc/postgresql 2>/dev/null | sort -n | tail -1)"
 PG_LINK=/var/lib/postgresql
-if [ -L "$PG_LINK" ] && [ -n "$PG_VER" ] && [ ! -e "$PG_LINK/$PG_VER/main/PG_VERSION" ]; then
+if mountpoint -q "$DATA_DIR" 2>/dev/null && [ -L "$PG_LINK" ] && [ -n "$PG_VER" ] && [ ! -e "$PG_LINK/$PG_VER/main/PG_VERSION" ]; then
     PG_TARGET="$(readlink -f "$PG_LINK" 2>/dev/null || true)"
     if [ -n "$PG_TARGET" ] && mkdir -p "$PG_TARGET" 2>/dev/null; then
         chown postgres:postgres "$PG_TARGET"
@@ -2735,6 +2810,12 @@ Description=Virtues — your data, on your hardware
 Documentation=https://virtues.com/docs
 After=postgresql.service network-online.target
 Wants=postgresql.service network-online.target
+# Cap the restart loop. Without it, a box that cannot serve (a bad build, a
+# config it won't accept) burns one 120s TimeoutStartSec cycle after another
+# forever, with no `failed` unit to see — the exact pathology QNN_UNIT_TEMPLATE
+# fixed for one unit and left on the rest. 5 in 600s, then park.
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 # The data directory is its own filesystem on the appliance (a blank NVMe
 # claimed at first boot). fstab carries `nofail` so a missing disk never blocks
