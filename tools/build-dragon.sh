@@ -119,6 +119,28 @@ curl -sSL "https://raw.githubusercontent.com/virtues-os/virtues/${VIRTUES_VERSIO
 VIRTUES_VERSION="$VIRTUES_VERSION" sh /tmp/virtues-bootstrap.sh --no-init
 rm -f /tmp/virtues-bootstrap.sh
 
+# ── 2b. The data disk, which only a reboot can claim ────────────────────────
+# The blank NVMe is claimed by virtues-firstboot ON THE NEXT BOOT — that is
+# the same code path every customer unit runs, and the master board must not
+# bypass it. Until that boot happens, /var/lib/virtues is a plain directory on
+# the card and `doctor` fails, correctly, with "the data disk is not mounted".
+# The first fresh-board run, 2026-08-18, proved a virgin board can NEVER pass
+# step 3 without this reboot. Same shape as the kernel checkpoint above:
+# reboot, run me again, and this block is a no-op the second time.
+if ! mountpoint -q /var/lib/virtues 2>/dev/null; then
+    cat <<'CLAIM'
+
+  The data disk has not been claimed yet — that happens on the next boot,
+  by the same first-boot path every customer unit runs.
+
+      sudo reboot
+
+  Then run this script again. It will pick up from here.
+
+CLAIM
+    exit 0
+fi
+
 # ── 3. Prove it works, before destroying the evidence ───────────────────────
 # `doctor` is a report, not a gate — it exits non-zero on real problems, and on
 # a master build that must stop everything: a broken box cloned a hundred times
@@ -146,6 +168,12 @@ read -r walked
 
 # ── 4. Strip this board's identity ──────────────────────────────────────────
 say "Deprovisioning"
+# Stop the stack first — deprovision's database wipe refuses while
+# virtues.service holds connections, and this script never stopped it, so
+# step 4 could not actually run as written. Found on the first real seal,
+# 2026-08-18. (The walk-the-setup gate above needs the services UP, which is
+# why the stop lives here and not at the top.)
+systemctl stop virtues virtues-display virtues-qnnd 2>/dev/null || true
 virtues deprovision --yes
 
 # ── 5. Prove the strip worked ───────────────────────────────────────────────
@@ -185,5 +213,10 @@ cat <<EOF
   NVMe, builds its Postgres cluster, and mints that unit's own identity.
 
 EOF
+# Take the bench with us: this script and its log describe the master's build
+# session (versions, addresses, doctor output) and have no business on a
+# hundred cloned cards. Removed only here, on the success path — on any
+# failure they are exactly what the operator needs.
+rm -f /root/build.log /root/build-dragon.sh /tmp/virtues-bootstrap.sh
 sleep 5
 poweroff
