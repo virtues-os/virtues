@@ -34,7 +34,11 @@
 
   Server state still decides what is REACHABLE — everything past `account`
   needs the account — so a hand-typed `/onboarding/you` on an unlinked box is
-  bounced rather than honored.
+  bounced rather than honored. With one exemption, mirrored from the backend:
+  a DIY box reports `setup_complete` without an account (`compute_setup_state`
+  requires the account only on appliances — prescribe, never enforce), and this
+  page must honor that, or the CLI user who declined a subscription is wedged
+  at a screen whose only exit is paying.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
@@ -126,6 +130,12 @@
 	}
 
 	const accountDone = $derived(setupDone("account"));
+	// The backend requires the account only on appliances: a DIY box is
+	// `setup_complete` on `claimed` alone (`box_status.rs`). So "may pass the
+	// account screen" is account-linked OR setup-complete-without-it — the
+	// second arm is exactly the DIY exemption, since an appliance is never
+	// setup-complete unlinked.
+	const accountSatisfied = $derived(accountDone || (state_?.setup_complete ?? false));
 	const worldEnough = $derived(
 		onboardingDone("first_source") ||
 			onboardingDone("living_source") ||
@@ -162,10 +172,10 @@
 	 * already refuses to offer it, and the address bar has to refuse too.
 	 */
 	const reachable = $derived((v: ViewId) =>
-		VIEW_ORDER.indexOf(v) <= VIEW_ORDER.indexOf("account") ? true : accountDone,
+		VIEW_ORDER.indexOf(v) <= VIEW_ORDER.indexOf("account") ? true : accountSatisfied,
 	);
 	const resolved = $derived<ViewId>(
-		!accountDone ? "letter" : !worldEnough ? "sources" : "your-words",
+		!accountSatisfied ? "letter" : !worldEnough ? "sources" : "your-words",
 	);
 
 	/**
@@ -279,6 +289,17 @@
 		advancedOpen = false;
 		mode = "manual";
 	}
+
+	// The advanced door hides behind an icon. Spelled out, "Dangerously skip
+	// onboarding" sat in every screenshot of the letter — a permanent exit sign
+	// over a six-screen flow. It exists for devs and power users, who will try
+	// the one unexplained icon in the corner; everyone else shouldn't be
+	// reading an invitation to leave. First click names it, second click asks.
+	let skipExpanded = $state(false);
+	function skipClick() {
+		if (skipExpanded) advancedOpen = true;
+		else skipExpanded = true;
+	}
 </script>
 
 {#if loading}
@@ -340,9 +361,13 @@
 							}}
 						/>
 					{:else if view === "account"}
-						<!-- The one gate. Everything else in onboarding can be skipped,
-						     put off, or half-done; this is the only screen that has to
-						     end in a yes, so it is the only one with no way past. -->
+						<!-- The one gate — on an appliance. Everything else in onboarding
+						     can be skipped, put off, or half-done; this is the only screen
+						     that has to end in a yes. A DIY box is the exemption: the
+						     backend doesn't require the account there, so the quiet door
+						     below appears only when `setup_complete` already holds
+						     without one. -->
+
 						<h1 class="ob-h1">Sign in to Virtues</h1>
 						<p class="ob-lede">
 							Your subscription is the only part of Virtues that touches our servers — it
@@ -363,6 +388,10 @@
 									<Icon icon="ri:arrow-right-line" width="16" />
 								</button>
 							</div>
+						{:else if accountSatisfied}
+							<button class="ob-ghost quiet-go" onclick={() => go("sources")}>
+								Continue without an account →
+							</button>
 						{/if}
 					{:else if view === "sources"}
 						<h1 class="ob-h1">Where the record comes from</h1>
@@ -421,7 +450,19 @@
 		</div>
 	</div>
 
-	<button class="manual-link" onclick={() => (advancedOpen = true)}>Dangerously skip onboarding →</button>
+	<button
+		class="manual-link"
+		class:expanded={skipExpanded}
+		onclick={skipClick}
+		onblur={() => (skipExpanded = false)}
+		aria-label="Skip onboarding"
+	>
+		{#if skipExpanded}
+			<span in:fade={{ duration: 120 }}>Dangerously skip onboarding →</span>
+		{:else}
+			<Icon icon="ri:door-open-line" width="16" />
+		{/if}
+	</button>
 {/if}
 
 <!-- The advanced door's confirm — the safe choice (Stay guided) is the loud one. -->
@@ -467,13 +508,20 @@
 		position: fixed;
 		top: 1.5rem;
 		right: 1.75rem;
+		display: flex;
+		align-items: center;
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
 		color: var(--color-foreground-subtle);
-		transition: color 0.15s ease;
+		opacity: 0.6;
+		transition:
+			color 0.15s ease,
+			opacity 0.15s ease;
 		z-index: var(--z-sticky);
 	}
-	.manual-link:hover {
+	.manual-link:hover,
+	.manual-link.expanded {
 		color: var(--color-foreground);
+		opacity: 1;
 	}
 </style>
