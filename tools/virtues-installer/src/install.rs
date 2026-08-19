@@ -2120,6 +2120,35 @@ pub async fn relocate_postgres_to_data_dir(cfg: &InstallConfig) -> Result<()> {
         return Ok(());
     };
 
+    // A box whose fstab declares the data disk but does not have it mounted is
+    // MID-PROVISIONING: virtues-firstboot claims and mounts it on the next
+    // boot, and until then the pg mount guard refuses every start below the
+    // unmounted path — correctly. Attempting the move here can only produce
+    // copy → guard refuses → rollback, forever, with an error that reads as a
+    // broken cluster ("/var/lib/postgresql/18/main is not accessible") when
+    // nothing is broken at all. Found in the field 2026-08-19, on a freshly
+    // imaged clone that ran sh-pre before its claiming reboot. Defer with the
+    // same instruction build-dragon.sh gives for the same state.
+    let fstab_declares = fs::read_to_string("/etc/fstab")
+        .map(|s| s.contains("LABEL=virtues-data"))
+        .unwrap_or(false);
+    if fstab_declares {
+        let mounted = Command::new("mountpoint")
+            .args(["-q", &cfg.data_dir.display().to_string()])
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !mounted {
+            return Err(anyhow!(
+                "the data disk is declared in fstab but {} is not mounted — this box \
+                 has not claimed it yet.\n       Reboot (virtues-firstboot claims and \
+                 mounts the disk), then re-run this installer.",
+                cfg.data_dir.display()
+            ));
+        }
+    }
+
     fs::create_dir_all(&cfg.data_dir)
         .with_context(|| format!("mkdir {}", cfg.data_dir.display()))?;
 
@@ -2182,9 +2211,18 @@ pub async fn relocate_postgres_to_data_dir(cfg: &InstallConfig) -> Result<()> {
     if !serving {
         // Put it back. An installer that leaves a box without a database
         // because it was tidying disk layout is worse than one that never
-        // tried.
+        // tried. The rename is CHECKED: if it fails, the link was already
+        // removed and /var/lib/postgresql would simply not exist — a dangling
+        // half-rollback that presents as a destroyed cluster.
         let _ = fs::remove_file(link);
-        let _ = fs::rename(PG_PRE_MOVE, link);
+        if let Err(e) = fs::rename(PG_PRE_MOVE, link) {
+            ui::warn(&format!(
+                "rollback could not restore {}: {e} — the untouched cluster is at \
+                 {PG_PRE_MOVE}; restore it by hand: mv {PG_PRE_MOVE} {}",
+                link.display(),
+                link.display()
+            ));
+        }
         let mut back = Command::new("systemctl");
         back.args(["start", &format!("postgresql@{ver}-main")]);
         let _ = back.status().await;
