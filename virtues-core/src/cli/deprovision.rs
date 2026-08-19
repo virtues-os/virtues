@@ -152,6 +152,34 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
 
     remove_glob("/etc/ssh", "ssh_host_", "SSH host keys")?;
 
+    // The operator's OWN key — the one they SSH'd in with to run the seal — is
+    // authorized in root's and radxa's `authorized_keys`, and nothing above
+    // touched it. It would clone verbatim to every customer, handing the bench
+    // operator a root login on every box in the field. Host keys are minted
+    // per-unit on first boot (firstboot §1f); the authorized set is pure
+    // workshop residue. (Found in the second-bench audit, 2026-08-19.)
+    for kf in [
+        "/root/.ssh/authorized_keys",
+        "/home/radxa/.ssh/authorized_keys",
+    ] {
+        if Path::new(kf).exists() {
+            let _ = std::fs::remove_file(kf);
+            println!("  ✓ removed {kf}");
+        }
+    }
+    // A deterministic early-boot RNG seed shared fleet-wide is a weak seed on
+    // every unit; systemd regenerates it when absent.
+    let _ = std::fs::remove_file("/var/lib/systemd/random-seed");
+
+    // A prepared/staged release baked in at seal time. Walking BLE setup during
+    // the seal triggers a background prefetch (`prepare_release_now`); on a
+    // fresh master with no channel file that fetches the newest STABLE build
+    // into a release slot, and the customer's first update click would activate
+    // whatever was on the bench. Strip every slot except the one `current`
+    // points at, and drop the `prepared` pointer. (Second-bench audit,
+    // 2026-08-19.)
+    strip_staged_releases();
+
     // Saved wifi — the master's credentials must not ship. This is what takes
     // the box off the network, so it is deliberately last among the wipes.
     remove_glob(
@@ -759,6 +787,41 @@ fn remove_glob(dir: &str, prefix: &str, label: &str) -> Result<(), crate::Error>
         println!("  ✓ removed {n} {label}");
     }
     Ok(())
+}
+
+/// Remove every release slot except the one `current` points at, and drop the
+/// `prepared` pointer. A master must ship exactly the running release and no
+/// staged one: a prefetched update baked into the image would activate on the
+/// customer's first update click, moving them onto whatever build sat on the
+/// bench. Keeps `current` so the box still boots; the rollback slot is
+/// workshop history and goes.
+fn strip_staged_releases() {
+    // The channel file too: build-dragon pins `prerelease` before the seal walk
+    // so the prefetch declines, but that pin must NOT ship — a customer box with
+    // no channel file defaults to Stable (the correct default), and one shipping
+    // `prerelease` would silently track staging builds. Removing it here is what
+    // makes the build-time pin safe.
+    let _ = std::fs::remove_file("/var/lib/virtues/channel");
+
+    let layout = crate::cli::slots::SlotLayout::system();
+    let keep = layout.current_slot();
+    let _ = std::fs::remove_file(layout.prepared_link());
+    let Ok(entries) = std::fs::read_dir(layout.releases_dir()) else {
+        return;
+    };
+    let mut n = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if keep.as_deref() == Some(path.as_path()) {
+            continue;
+        }
+        if std::fs::remove_dir_all(&path).is_ok() {
+            n += 1;
+        }
+    }
+    if n > 0 {
+        println!("  ✓ removed {n} staged/rollback release slot(s)");
+    }
 }
 
 fn hostname() -> String {
