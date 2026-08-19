@@ -588,6 +588,16 @@ StartLimitBurst=5
 Type=simple
 User=virtues
 Group=virtues
+# The Hexagon DSPs load firmware from the rootfs, but the kernel's first
+# request comes at ~0.8s — before the rootfs is mounted — and NOTHING ever
+# retries: no unit, no udev hook, nothing. Both remoteprocs then sit offline
+# for the life of the boot, and every qnnd start dies in transport setup
+# (QNN error 14001) until StartLimit parks the unit. Found on the first
+# fresh-board master build, 2026-08-18. The `+` prefix runs this as root and
+# outside the sandbox (User=, ProtectKernelTunables= do not apply), which it
+# needs to write /sys; it starts any offline DSP and waits for the fastrpc
+# node to appear before the daemon reaches for it.
+ExecStartPre=+/bin/sh -c 'for r in /sys/class/remoteproc/remoteproc*; do [ "$(cat $r/state 2>/dev/null)" = offline ] && echo start > $r/state || :; done; i=0; while [ ! -e /dev/fastrpc-cdsp ] && [ $i -lt 20 ]; do i=$((i+1)); sleep 0.5; done'
 __SUPP_GROUPS____QNN_ENV__ExecStart=__BIN__ __EMBED_BIN__ __RERANK_BIN__ --burst --port 7788 --models-dir __QNN_DIR__
 Restart=on-failure
 RestartSec=5
@@ -1867,12 +1877,30 @@ pub async fn relocate_postgres_to_data_dir(cfg: &InstallConfig) -> Result<()> {
     fs::create_dir_all(&cfg.data_dir)
         .with_context(|| format!("mkdir {}", cfg.data_dir.display()))?;
 
-    // Stop it. `postgresql@<ver>-main` is `PartOf=postgresql.service`, so
-    // stopping the wrapper propagates to the instance — one call, and it is the
-    // one an operator would type.
+    // Stop it — naming BOTH the wrapper and the instance, and the second name
+    // is the fix for a copy that raced a shutdown. `postgresql@<ver>-main` is
+    // `PartOf=postgresql.service`, so stopping the wrapper does propagate — but
+    // `systemctl stop` only WAITS for the units named on the command line, and
+    // the wrapper is a one-shot that stops instantly. The propagated stop of
+    // the instance runs asynchronously, and on 2026-08-18 the copy below beat
+    // it: the copied pg_wal ended 8 bytes short of the shutdown checkpoint that
+    // the copied pg_control pointed at (Postgres writes the WAL record first,
+    // pg_control second — the copy read them on opposite sides of that write),
+    // and the relocated cluster PANICked with "could not locate a valid
+    // checkpoint record". Naming the instance makes systemctl wait for it.
     let mut stop = Command::new("systemctl");
-    stop.args(["stop", "postgresql"]);
+    stop.args(["stop", "postgresql", &format!("postgresql@{ver}-main")]);
     run_step("Stop Postgres for the move", stop).await?;
+
+    // Belt and braces: the postmaster pid file is removed as the very last act
+    // of a shutdown, after the checkpoint is on disk. If it is still there,
+    // the copy below would be of a cluster that is still writing.
+    for _ in 0..30u8 {
+        if !Path::new(&format!("{}/{ver}/main/postmaster.pid", link.display())).exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
 
     // Copy. `-a` carries ownership and modes, and both matter: Postgres refuses
     // to start on a data directory that is group- or world-readable.
@@ -2102,7 +2130,20 @@ if [ -L "$PG_LINK" ] && [ -n "$PG_VER" ] && [ ! -e "$PG_LINK/$PG_VER/main/PG_VER
         # same paths, same conf, nothing hand-edited that an apt upgrade could
         # disagree with later.
         pg_dropcluster "$PG_VER" main >/dev/null 2>&1 || true
-        if pg_createcluster "$PG_VER" main --start >/dev/null 2>&1; then
+        # Created WITHOUT --start, and started with pg_ctl directly, NOT
+        # systemd — because this script runs INSIDE a unit that is ordered
+        # Before=postgresql. `pg_createcluster --start` asks systemd to start
+        # the cluster and then waits for it; systemd queues that start behind
+        # this very unit finishing; deadlock, forever, on the first boot of
+        # every unit. Found on the first virgin-board boot, 2026-08-18 — this
+        # branch had never executed before that night (every earlier box got
+        # its cluster from the installer, not from first boot). The temp
+        # server below is stopped again before this script exits; systemd
+        # then starts the cluster through its own ordering, cleanly.
+        PG_CTL="/usr/lib/postgresql/$PG_VER/bin/pg_ctl"
+        PG_MAIN="$PG_LINK/$PG_VER/main"
+        if pg_createcluster "$PG_VER" main >/dev/null 2>&1 && \
+           su -s /bin/sh postgres -c "$PG_CTL -D $PG_MAIN -o '-c config_file=/etc/postgresql/$PG_VER/main/postgresql.conf' -w -t 60 start" >/dev/null 2>&1; then
             # The role and database the app connects as. Peer auth over the
             # Unix socket maps OS user -> role, so no password exists to set.
             #
@@ -2151,6 +2192,10 @@ if [ -L "$PG_LINK" ] && [ -n "$PG_VER" ] && [ ! -e "$PG_LINK/$PG_VER/main/PG_VER
             # No migrations here. `virtues server` runs them at startup, which
             # keeps ONE migration path for every box rather than a first-boot
             # copy of it that could drift.
+            # Hand the running server back to systemd: stop the pg_ctl one so
+            # the ordinary unit start (queued behind this script) finds the
+            # cluster stopped and owns it from here on.
+            su -s /bin/sh postgres -c "$PG_CTL -D $PG_MAIN -w -t 60 stop" >/dev/null 2>&1 || true
             logger -t virtues-firstboot "Postgres cluster $PG_VER/main created on the data disk"
         else
             logger -t virtues-firstboot "pg_createcluster FAILED - the box will not serve until this is fixed"

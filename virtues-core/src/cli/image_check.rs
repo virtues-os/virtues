@@ -156,6 +156,37 @@ pub async fn run() -> i32 {
         }
     }
 
+    // ── Database dumps ──────────────────────────────────────────────────────
+    // Asked of `deprovision::backups_dir()` rather than a path spelled again
+    // here, so the check cannot drift away from the cleaner and keep passing.
+    //
+    // This is not an image leak — backups live on the data disk, the master is
+    // the card. It is a BOARD leak, and the board is the thing that gets handed
+    // to somebody. Reported by size, because "a dump is present" understates it
+    // and an operator deserves to know how much of the record is sitting there.
+    {
+        let dir = crate::cli::deprovision::backups_dir();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            let mut n = 0usize;
+            let mut bytes = 0u64;
+            for e in entries.flatten() {
+                n += 1;
+                bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+            if n > 0 {
+                findings.push(Finding {
+                    what: "database dumps",
+                    detail: format!(
+                        "{} holds {n} dump(s), {} KB — a past upgrade's copy of the whole database, which survives on the board when it changes hands",
+                        dir.display(),
+                        bytes / 1024
+                    ),
+                    fix: "sudo virtues deprovision",
+                });
+            }
+        }
+    }
+
     // ── Somebody else's identity, which is not ours to delete ───────────────
     // Tailscale was on the lab board so we could reach it at all. Its
     // `tailscaled.state` is a node key: clones would all come up as the same
