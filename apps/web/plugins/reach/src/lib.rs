@@ -664,9 +664,10 @@ impl<R: Runtime, T: Manager<R>> ReachExt<R> for T {
   }
 }
 
-// The Swift half (`ios/Sources/ReachPlugin.swift`): programmatic wifi join via
-// NEHotspotConfiguration, for driving an appliance's setup-AP flow from inside
-// the app instead of sending the user to Settings and a captive sheet.
+// The Swift half (`ios/Sources/ReachPlugin.swift`): the CoreBluetooth Improv
+// client, for claiming and provisioning an appliance over BLE from inside the
+// app. (Its previous job — NEHotspotConfiguration wifi joins for the SoftAP
+// flow — was deleted 2026-08-18; see `commands.rs`.)
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_reach);
 
@@ -693,8 +694,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::provision_open,
       commands::provision_networks,
       commands::provision_join,
-      commands::wifi_join,
-      commands::wifi_forget,
       commands::improv_discover,
       commands::improv_claim,
       commands::improv_link_code,
