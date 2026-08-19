@@ -168,6 +168,12 @@ read -r walked
 
 # ── 4. Strip this board's identity ──────────────────────────────────────────
 say "Deprovisioning"
+# Stop the stack first — deprovision's database wipe refuses while
+# virtues.service holds connections, and this script never stopped it, so
+# step 4 could not actually run as written. Found on the first real seal,
+# 2026-08-18. (The walk-the-setup gate above needs the services UP, which is
+# why the stop lives here and not at the top.)
+systemctl stop virtues virtues-display virtues-qnnd 2>/dev/null || true
 virtues deprovision --yes
 
 # ── 5. Prove the strip worked ───────────────────────────────────────────────
