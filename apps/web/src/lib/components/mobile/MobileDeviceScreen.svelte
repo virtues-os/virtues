@@ -334,12 +334,21 @@
 		error = null;
 		try {
 			await invoke("plugin:reach|forget");
+			// Drop the just-paired marker too — it exists to bridge the launch
+			// that paired, and surviving an unpair would resurrect the pairing
+			// in the eyes of mobileLayout.
+			try {
+				localStorage.removeItem("virtues-just-paired");
+			} catch {
+				/* best effort */
+			}
 			// Go to the connect shell, don't reload. `reload()` re-requests the
 			// URL we are already on — the SPA root — so the app came back up
 			// unpaired, with no way to pair, and the only escape was force
 			// quitting. The shell confirms pairing with the plugin before it
 			// redirects, so landing here after a forget stays here.
-			window.location.replace("/mobile-pair.html");
+			// (connect.html absorbed mobile-pair.html on 2026-08-11.)
+			window.location.replace("/connect.html");
 		} catch (e) {
 			error = String(e);
 			forgetting = false;
