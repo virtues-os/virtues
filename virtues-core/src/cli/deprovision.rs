@@ -281,11 +281,12 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     write_firstboot_marker()?;
 
     println!();
-    println!("✓ deprovisioned — safe to image.");
-    println!("  Power off WITHOUT booting again (a boot re-mints machine-id and");
-    println!("  host keys, which then get baked into the image):");
+    println!("✓ deprovisioned — per-unit identity stripped.");
+    println!("  NOT safe to image yet: this cannot re-read its own disk. Confirm");
+    println!("  with a fresh check, THEN power off WITHOUT booting again (a boot");
+    println!("  re-mints machine-id and host keys, which get baked into the image):");
     println!();
-    println!("    sudo poweroff");
+    println!("    sudo virtues image-check && sudo poweroff");
     println!();
     println!("  On first boot each unit mints its own encryption key, identity,");
     println!("  and host keys via the first-boot unit.");
