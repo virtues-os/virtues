@@ -11,13 +11,13 @@ Default permissions for the reach plugin
 - `allow-provision-open`
 - `allow-provision-networks`
 - `allow-provision-join`
-- `allow-wifi-join`
-- `allow-wifi-forget`
 - `allow-improv-discover`
 - `allow-improv-claim`
 - `allow-improv-wifi-scan`
 - `allow-improv-provision`
 - `allow-improv-pair`
+- `allow-improv-link-code`
+- `allow-improv-pair-code`
 - `allow-improv-disconnect`
 - `allow-outbox-stats`
 - `allow-drain-now`
@@ -191,6 +191,32 @@ Denies the improv_discover command without any pre-configured scope.
 <tr>
 <td>
 
+`reach:allow-improv-link-code`
+
+</td>
+<td>
+
+Enables the improv_link_code command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-improv-link-code`
+
+</td>
+<td>
+
+Denies the improv_link_code command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `reach:allow-improv-pair`
 
 </td>
@@ -210,6 +236,32 @@ Enables the improv_pair command without any pre-configured scope.
 <td>
 
 Denies the improv_pair command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-improv-pair-code`
+
+</td>
+<td>
+
+Enables the improv_pair_code command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-improv-pair-code`
+
+</td>
+<td>
+
+Denies the improv_pair_code command without any pre-configured scope.
 
 </td>
 </tr>
@@ -444,58 +496,6 @@ Enables the reach_status command without any pre-configured scope.
 <td>
 
 Denies the reach_status command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-wifi-forget`
-
-</td>
-<td>
-
-Enables the wifi_forget command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-wifi-forget`
-
-</td>
-<td>
-
-Denies the wifi_forget command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-wifi-join`
-
-</td>
-<td>
-
-Enables the wifi_join command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-wifi-join`
-
-</td>
-<td>
-
-Denies the wifi_join command without any pre-configured scope.
 
 </td>
 </tr>
