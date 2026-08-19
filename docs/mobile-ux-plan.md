@@ -123,7 +123,7 @@ Slot this into the existing pages-editor roadmap rather than a separate track.
 ## Loose ends (each needs a one-line decision, not a project)
 
 1. **Unpair/sign-out routing**: More-sheet sign-out does `goto("/pair")`
-   (SvelteKit route); the native connect shell is `mobile-pair.html`, chosen
+   (SvelteKit route); the native connect shell is `connect.html`, chosen
    only at app launch (`lib.rs`). After unpair on the phone, the app should
    relaunch into the native pair shell — verify `location.reload()` actually
    lands there when unpaired.
