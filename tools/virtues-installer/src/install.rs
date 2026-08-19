@@ -1668,6 +1668,9 @@ Environment=XDG_RUNTIME_DIR=/run/user/0
 Environment=LIBSEAT_BACKEND=seatd
 Environment=WLR_BACKENDS=drm
 Environment=GDK_BACKEND=wayland
+# The shim's diagnostic page reports provisioning facts about the data dir
+# (file presence only, never contents), so it needs to know where it is.
+Environment=VIRTUES_DATA_DIR=__DATA_DIR__
 EnvironmentFile=-__DATA_DIR__/virtues.env
 ExecStartPre=/bin/sh -c "mkdir -p /run/user/0; chmod 700 /run/user/0; grep -qx connected /sys/class/drm/*/status"
 ExecStart=/usr/bin/cage -s -- /usr/bin/python3 /usr/local/lib/virtues/display.py
@@ -1690,12 +1693,30 @@ WantedBy=multi-user.target
 /// which is unreadable at any distance. Measured with a CSS `10cm` rule that
 /// came out 3 cm on glass. Never trust EDID-derived DPI on this hardware.
 ///
-/// Python + GTK because it is what the apt-installable WebKit binding gives us
-/// and it is ~15 lines. The intended end state is the Tauri app in kiosk mode,
-/// which shares this engine.
+/// Python + GTK because it is what the apt-installable WebKit binding gives
+/// us. Two jobs now: show the real UI, and — after a short grace window when
+/// the real UI won't load — show a locally-generated diagnostic page instead
+/// of a blank screen (the 2026-08-19 field lesson; see the shim's docstring).
+/// The intended end state is the Tauri app in kiosk mode, which shares this
+/// engine.
 const DISPLAY_SHIM: &str = r#"#!/usr/bin/env python3
-"""Virtues display kiosk — fullscreen WebKit onto the box's own /display route."""
+"""Virtues display kiosk — fullscreen WebKit onto the box's own /display route.
+
+NEVER A BLANK SCREEN. The first golden image handed to another person (2026-08-19)
+crash-looped its server behind a silently-retrying kiosk for 40 minutes; every
+fact needed to diagnose it was knowable on the box and none of it was displayed —
+the cost was a UART cable and a multi-hour investigation to find a missing
+784-byte file. So: retry silently through a short grace window (a normal boot's
+server takes seconds), then render a locally-generated diagnostic page — built
+here, served over file://, depending on nothing that might be the broken thing —
+and keep probing so a slow-but-healthy boot still lands on the real UI unattended.
+"""
+import html
 import os
+import subprocess
+import time
+import urllib.request
+
 import gi
 
 gi.require_version("Gtk", "3.0")
@@ -1711,6 +1732,10 @@ URL = os.environ.get("VIRTUES_DISPLAY_URL", "http://localhost:8000/display")
 # See DISPLAY_SHIM's Rust-side doc comment: the panel's EDID lies about its
 # physical size, so the scale factor is pinned, never derived.
 ZOOM = float(os.environ.get("VIRTUES_DISPLAY_ZOOM", "3.28"))
+DATA_DIR = os.environ.get("VIRTUES_DATA_DIR", "/var/lib/virtues")
+DIAG = "/run/virtues-diag.html"
+GRACE_S = 15  # silent retries before the diagnostic page appears
+PROBE_S = 4  # probe + refresh cadence while the diagnostic page is up
 
 window = Gtk.Window()
 window.fullscreen()
@@ -1739,26 +1764,205 @@ view.set_zoom_level(ZOOM)
 view.set_background_color(Gdk.RGBA(0.043, 0.059, 0.078, 1.0))
 
 
-def _retry(*_args):
-    """The box's server may still be coming up on first boot. Retry rather than
-    parking on WebKit's error page, which an owner would rightly read as
-    broken. Returning False from the timeout makes it fire once per failure."""
-    GLib.timeout_add_seconds(3, lambda: (view.load_uri(URL), False)[1])
+# ── the diagnostic page ──────────────────────────────────────────────────────
+# Facts only, degraded per-section: any probe that fails prints "unavailable"
+# rather than taking the page with it — every one of these may be the thing
+# that is broken. Secrets are reported by PRESENCE only, never value: the env
+# file this page describes holds the encryption key in plaintext.
+
+
+def _out(cmd, timeout=3):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _ok(cmd, timeout=3):
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=timeout).returncode == 0
+    except Exception:
+        return False
+
+
+def _env_facts():
+    env_file = os.path.join(DATA_DIR, "virtues.env")
+    f = {"env_exists": False, "has_db_url": False, "has_key": False}
+    try:
+        with open(env_file, "r") as fh:
+            body = fh.read()
+        f["env_exists"] = True
+        f["has_db_url"] = "\nDATABASE_URL=" in "\n" + body
+        f["has_key"] = "\nVIRTUES_ENCRYPTION_KEY=" in "\n" + body
+    except Exception:
+        pass
+    return f
+
+
+def _facts():
+    f = _env_facts()
+    f["mounted"] = _ok(["mountpoint", "-q", DATA_DIR])
+    f["fstab_disk"] = False
+    try:
+        with open("/etc/fstab") as fh:
+            f["fstab_disk"] = "LABEL=virtues-data" in fh.read()
+    except Exception:
+        pass
+    f["claimed"] = os.path.exists(os.path.join(DATA_DIR, ".claim-complete"))
+    f["marker"] = os.path.exists(os.path.join(DATA_DIR, ".needs-firstboot"))
+    f["units"] = []
+    for unit in ("virtues", "postgresql", "virtues-firstboot", "virtues-qnnd"):
+        state = _out(["systemctl", "is-active", unit + ".service"]) or "unknown"
+        f["units"].append((unit, state))
+    f["virtues_state"] = dict(f["units"]).get("virtues", "unknown")
+    f["hostname"] = _out(["hostname"]) or "unknown"
+    f["version"] = _out(["/usr/local/bin/virtues", "--version"]) or "unavailable"
+    f["uptime"] = _out(["uptime", "-p"]) or "unavailable"
+    f["ip"] = _out(["ip", "-brief", "-4", "addr"]) or "unavailable"
+    f["ntp"] = _out(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
+    f["clock"] = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+    f["journal"] = _out(
+        ["journalctl", "-u", "virtues.service", "-n", "10", "--no-pager", "-o", "cat"],
+        timeout=5,
+    ) or "journal unavailable"
+    return f
+
+
+def _verdict(f):
+    """One line, plain language, worst confirmed fact first."""
+    if f["fstab_disk"] and not f["mounted"]:
+        return "Storage disconnected — the data disk is not mounted."
+    if f["mounted"] and not f["env_exists"]:
+        return "Not provisioned — virtues.env is missing from the data disk. First-boot seeding did not complete."
+    if f["mounted"] and not f["has_db_url"]:
+        return "Not provisioned — virtues.env has no DATABASE_URL. The server cannot start."
+    if f["virtues_state"] not in ("active", "activating"):
+        return "The Virtues server is not running (" + f["virtues_state"] + "). Its last words are below."
+    return "Starting up — the server is not answering yet. This page will step aside when it does."
+
+
+def _build_page():
+    try:
+        f = _facts()
+        verdict = _verdict(f)
+    except Exception as e:  # the page must render even if fact-gathering dies
+        f, verdict = None, "Diagnostics failed to gather: " + str(e)
+    esc = html.escape
+    yes, no = "yes", "MISSING"
+    rows = []
+    if f:
+        rows.append(("box", f["hostname"] + " · " + f["version"]))
+        rows.append(("up", f["uptime"]))
+        clock = f["clock"] + ("" if f["ntp"] == "yes" else " (unsynced — may be wrong)")
+        rows.append(("clock", clock))
+        rows.append(("net", f["ip"]))
+        rows.append(("data disk", ("mounted" if f["mounted"] else "NOT MOUNTED") + (" · claim complete" if f["claimed"] else " · claim incomplete")))
+        rows.append(("env file", (yes if f["env_exists"] else no) + " · DATABASE_URL " + (yes if f["has_db_url"] else no) + " · key " + ("present" if f["has_key"] else "absent")))
+        units = " · ".join(u + " " + s for u, s in f["units"])
+        rows.append(("units", units))
+    body_rows = "".join(
+        "<div class='r'><span class='k'>" + esc(k) + "</span><span class='v'>" + esc(v) + "</span></div>"
+        for k, v in rows
+    )
+    journal = esc(f["journal"]) if f else ""
+    page = (
+        "<!doctype html><meta charset='utf-8'>"
+        "<style>"
+        "html{background:#0b0f14;color:#c8d0da;font:10px/1.5 monospace;margin:0}"
+        "body{margin:8px}"
+        ".verdict{color:#e8b04b;font-size:12px;margin:0 0 8px}"
+        ".r{display:flex;gap:6px;white-space:nowrap;overflow:hidden}"
+        ".k{color:#5c6773;min-width:58px;flex:none}"
+        ".v{overflow:hidden;text-overflow:ellipsis}"
+        "pre{color:#7a8494;margin:8px 0 0;font-size:8px;line-height:1.4;white-space:pre-wrap;word-break:break-all}"
+        "</style>"
+        "<p class='verdict'>" + esc(verdict) + "</p>"
+        + body_rows
+        + "<pre>" + journal + "</pre>"
+    )
+    tmp = DIAG + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write(page)
+    os.replace(tmp, DIAG)
+
+
+# ── loading + escalation ─────────────────────────────────────────────────────
+
+state = {"first_fail": None, "diag": False}
+
+
+def _probe():
+    """Is the real UI ready? Asked out-of-band so the answer never depends on
+    what the WebView happens to be showing."""
+    try:
+        with urllib.request.urlopen(URL, timeout=2) as r:
+            return 200 <= r.status < 400
+    except Exception:
+        return False
+
+
+def _tick():
+    if not state["diag"]:
+        return False
+    if _probe():
+        state["diag"] = False
+        state["first_fail"] = None
+        view.load_uri(URL)
+        return False
+    _build_page()
+    view.reload()
+    return True
+
+
+def _failed():
+    """One load of the real UI failed, network-level or HTTP. Retry silently
+    inside the grace window (a normal boot's server takes seconds and an owner
+    should never see machinery), then escalate to the diagnostic page — never
+    to nothing. The old version of this retried silently FOREVER, which is how
+    a hollow box stayed undiagnosable without a serial cable (2026-08-19)."""
+    if state["diag"]:
+        return
+    now = time.monotonic()
+    if state["first_fail"] is None:
+        state["first_fail"] = now
+    if now - state["first_fail"] >= GRACE_S:
+        state["diag"] = True
+        try:
+            _build_page()
+            view.load_uri("file://" + DIAG)
+        except Exception:
+            state["diag"] = False  # keep retrying the real UI rather than dying
+        GLib.timeout_add_seconds(PROBE_S, _tick)
+    else:
+        GLib.timeout_add_seconds(3, lambda: (state["diag"] or view.load_uri(URL), False)[1])
+
+
+def _retry(view_, event, uri, error):
+    """load-failed for the real UI escalates; for the diagnostic page itself it
+    must never loop — fall through to WebKit's own error page, which at least
+    says something."""
+    if uri and uri.startswith("file://"):
+        return False
+    _failed()
     return True  # we handled it; suppress WebKit's own error page
 
 
 def _check_http(view_, event):
     """`load-failed` never fires for an HTTP error — a 502/500 from the box
-    mid-start is a *successful* load of the wrong document, so without this the
-    error body renders and the screen parks there forever (a box answering
-    before it can serve is exactly what a long first boot produces). Check the
-    status once the load settles and treat a server error like a failure."""
+    mid-start is a *successful* load of the wrong document. Check the status
+    once the load settles; a good load of the real UI resets the grace clock."""
     if event != WebKit2.LoadEvent.FINISHED:
+        return
+    uri = view_.get_uri() or ""
+    if uri.startswith("file://"):
         return
     res = view_.get_main_resource()
     resp = res.get_response() if res else None
     if resp and resp.get_status_code() >= 400:
-        GLib.timeout_add_seconds(3, lambda: (view_.load_uri(URL), False)[1])
+        _failed()
+    elif resp:
+        state["first_fail"] = None
 
 
 view.connect("load-failed", _retry)
