@@ -146,7 +146,7 @@ Carried from the parked plan, unchanged — they were right.
    binary lacks is a broken app. The shell exposes its API/build version; each
    SPA bundle declares `minShellVersion`; incompatible bundles are never
    applied. Plugin and native changes always ride store releases.
-2. **The boot shell stays natively bundled.** `mobile-pair.html` and the
+2. **The boot shell stays natively bundled.** `connect.html` and the
    initialization script are never OTA'd — that is the recovery surface when a
    bundle is bad.
 3. **Rollback on failed boot.** Keep the previous bundle; a new bundle must emit
