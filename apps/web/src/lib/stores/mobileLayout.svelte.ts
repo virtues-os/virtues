@@ -28,9 +28,30 @@ function detectViewport(): boolean {
 
 // Shell flag is sticky (a phone never becomes a desktop mid-session); the
 // viewport fallback is reactive so dev-browser resizing flips the chrome.
+//
+// `__VIRTUES_PAIRED__` is baked into the window's init script when the shell
+// BUILDS the window, so on the very launch that pairs, a reload from
+// connect.html still reads the stale `false` — and the first-run permission
+// cards silently waited for the next cold launch. The connect shell therefore
+// leaves a marker in localStorage (same `virtues://localhost` origin) the
+// moment pairing finishes; it bridges exactly that one session. Once the baked
+// flag itself says paired, the marker has done its job and is cleared —
+// including after an unpair, so it can never resurrect a forgotten pairing.
+const JUST_PAIRED_KEY = "virtues-just-paired";
+
 function detectPaired(): boolean {
 	if (typeof window === "undefined") return false;
-	return (window as unknown as { __VIRTUES_PAIRED__?: boolean }).__VIRTUES_PAIRED__ === true;
+	const baked =
+		(window as unknown as { __VIRTUES_PAIRED__?: boolean }).__VIRTUES_PAIRED__ === true;
+	try {
+		if (baked) {
+			localStorage.removeItem(JUST_PAIRED_KEY);
+			return true;
+		}
+		return localStorage.getItem(JUST_PAIRED_KEY) === "true";
+	} catch {
+		return baked;
+	}
 }
 
 const ONBOARDING_KEY = "virtues-onboarding-done";

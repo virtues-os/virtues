@@ -518,11 +518,21 @@
       //     collecting nothing, permanently, while the UI reported success.
       //     Best-effort by design: Sources → This Mac is the manual path.
       //
-      // Both are wrapped in capability checks rather than platform checks —
-      // the commands simply do not exist on mobile, and asking "can you?" is
-      // more honest than asking "who are you?".
+      // Mobile takes an early return on IS_MOBILE — a platform check, because
+      // what differs is not a missing command but the destination itself (the
+      // SPA under this same origin vs a navigation to the loopback). One known
+      // cost: `offerUpgrade` never runs on a phone, so a shelf-aged box paired
+      // phone-first stays on its factory build until Settings or the CLI
+      // updates it. Acceptable while setup is a desktop job (the panel says
+      // "Get Virtues for Mac"); revisit if phone-first setup becomes real.
       async function finishPairing(say) {
         if (IS_MOBILE) {
+          // `__VIRTUES_PAIRED__` was baked false when this window was built and
+          // a reload does not re-bake it, so the SPA's first-run permission
+          // cards would wait for the next cold launch. The marker bridges this
+          // one session; mobileLayout consumes it (and clears it once the
+          // baked flag catches up).
+          try { localStorage.setItem('virtues-just-paired', 'true'); } catch { /* best effort */ }
           // Give the loopback a beat, then load the bundled SPA at root.
           setTimeout(() => window.location.replace('/'), 400);
           return;
@@ -904,7 +914,7 @@ its devices apart — type its address.",
           <p class="kicker">Setting up a new box</p>
           <h1>Looking for your box…</h1>
           <div class="wait"><span class="pip"></span><span>Scanning over Bluetooth</span></div>
-          <p class="sub">Your box shows <b>Get the Virtues app</b> on its screen while
+          <p class="sub">Your box shows <b>Get Virtues for Mac</b> on its screen while
             it waits to be found.</p>`;
         let boxes = [];
         try {
@@ -1071,7 +1081,7 @@ its devices apart — type its address.",
         app.innerHTML = `
           <p class="kicker">Setting up ${esc(box.name)}</p>
           <h1>Save this</h1>
-          <p class="sub">It's how you get back in if you lose this computer — and the
+          <p class="sub">It's how you get back in if you lose ${THIS_DEVICE} — and the
             only way. Your box will never show it again.</p>
           <div class="code phrase">${esc(phrase)}</div>
           <div class="row2">
@@ -1080,7 +1090,7 @@ its devices apart — type its address.",
           </div>
           <label class="attest" for="attest">
             <input type="checkbox" id="attest">
-            <span>I've saved these words somewhere I'll still have if this computer dies.</span>
+            <span>I've saved these words somewhere I'll still have if ${THIS_DEVICE} dies.</span>
           </label>
           <button class="primary" id="next" disabled>Continue</button>
           <div class="msg" id="msg"></div>`;
@@ -1668,10 +1678,6 @@ its devices apart — type its address.",
           const lan = servers.find((s) => !onSetupSubnet(s.origin));
           if (lan) {
             state.origin = lan.origin;
-            // Drop the setup-network config we added: the phone should glide
-            // back to its own wifi, not linger on a network that is gone.
-            // Fire-and-forget — cleanup must never block the pair step.
-            invoke('plugin:reach|wifi_forget', { ssidPrefix: 'Virtues-' }).catch(() => {});
             return renderPair([lan], '', `Your box is on ${ssid}.`);
           }
           const setupBox = await findSetupBox(servers);
