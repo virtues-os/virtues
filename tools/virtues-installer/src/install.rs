@@ -2370,14 +2370,18 @@ ExecStart=/usr/local/sbin/virtues-firstboot.sh
 WantedBy=multi-user.target
 "#;
 
-/// Idempotent and self-disarming: it does nothing at all unless
-/// `virtues deprovision` left the marker, and it removes the marker once the
-/// key is written, so a second boot is a no-op.
+/// Per-unit appliance provisioning, idempotent across boots. Only the KEY MINT
+/// (§2) is marker-gated; the disk claim, journal relocation, cluster creation,
+/// growpart, ssh-key mint and loud-fail all run on their own guards every boot
+/// (each a no-op once satisfied). So "does nothing without the marker" is false
+/// — do not remove the marker expecting the script to go inert.
 const FIRSTBOOT_SCRIPT: &str = r#"#!/bin/sh
-# Per-unit first-boot provisioning. Installed by virtues-installer.
+# Per-unit first-boot provisioning. Installed by virtues-installer (appliance
+# only — install_systemd_unit gates it on `appliance`).
 #
-# Runs on EVERY boot and does nothing on almost all of them. Two independent
-# jobs with two independent guards, deliberately NOT sharing one:
+# Runs on EVERY boot and is a no-op once each section's own guard is satisfied.
+# Several independent jobs with independent guards, deliberately NOT sharing
+# one (only §2, the key mint, keys off the deprovision marker):
 #
 #   1. claim a blank NVMe   — guarded on "the disk is blank"
 #   2. mint an encryption key — guarded on the deprovision marker
@@ -2574,7 +2578,7 @@ fi
 # A symlink rather than `Storage=` in journald.conf, because the config only
 # chooses persistent-vs-volatile, never where. Only when the data dir is really
 # mounted — a symlink into an unmounted directory would put the journal on the
-# eMMC anyway, under a path that claims otherwise, which is worse than not
+# boot card anyway, under a path that claims otherwise, which is worse than not
 # trying. And only when /var/log/journal is not already a symlink, so a
 # reboot is a no-op.
 if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -L /var/log/journal ]; then
@@ -2821,7 +2825,7 @@ StartLimitBurst=5
 # claimed at first boot). fstab carries `nofail` so a missing disk never blocks
 # boot — the box must still come up far enough to say so on the display — but
 # the app must NOT start without it. Otherwise Postgres cheerfully initdb's a
-# fresh empty cluster onto the eMMC and the box looks perfectly healthy while
+# fresh empty cluster onto the boot card and the box looks perfectly healthy while
 # being empty, which is the same silent-divergence class as a mis-numbered
 # migration. `nofail` for the boot, RequiresMountsFor for the app.
 RequiresMountsFor=__DATA_DIR__

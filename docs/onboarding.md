@@ -104,11 +104,12 @@ OS connectivity probe with its vendor's exact success token, so the Captive
 Network Assistant never opens. The reversal is earned: on hardware the CNA
 rendered our SPA as a blank sheet, force-reopened it, refused to let the owner
 leave, and cached a stale portal page per-SSID across a box upgrade. Every
-failure was on an OS surface we cannot patch. `/portal` (plain server-rendered
-HTML, no JS) survives as the unadvertised manual hatch — join the AP by hand,
-open `10.42.0.1` — for Android (until `WifiNetworkSpecifier` lands) and
-laptops. The old `/provision` URL 301s to it server-side, because phones cache
-captive URLs per-SSID and only a redirect can un-teach them.
+failure was on an OS surface we cannot patch. **`/portal` and `/provision` were
+deleted 2026-08-17** (see `server/mod.rs`) — a browser tab holds no iroh key and
+so cannot pair, and the routes only ever served a user who could not finish. The
+surviving breakglass for a box with a dead radio is the AP itself, gated behind
+`/var/lib/virtues/enable-setup-ap`, whose client is `/api/provision/*` + the
+airlock's LAN path — not a browser page.
 
 **The display shows one job at a time** (three states): offline + unclaimed →
 *get the app* (app QR — shown while the phone still has internet, the only

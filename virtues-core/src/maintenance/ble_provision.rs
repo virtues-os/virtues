@@ -14,10 +14,12 @@
 //! **The protocol is Improv (improv-wifi.com), implemented faithfully — not an
 //! in-house dialect.** Improv is the open standard from the Home Assistant /
 //! ESPHome world, which is this product's nearest neighborhood. Speaking it
-//! exactly buys interop with existing tooling (the improv-wifi.com web tester
-//! can provision this box from Chrome via Web Bluetooth, with no Virtues app
-//! involved) and keeps our client code boring. Extensions can ride the
-//! reserved command space later; the base protocol stays stock.
+//! exactly keeps our client code boring, and extensions ride the reserved
+//! command space. Note the base Improv wifi commands are now behind the phrase
+//! gate (see below), so the improv-wifi.com web tester — which cannot send the
+//! `0x86 ClaimSetup` that opens a session — gets `NotAuthorized` rather than
+//! provisioning the box; the generic-client interop is a non-goal, not a
+//! feature.
 //!
 //! **Lifecycle: advertised while the box is UNCLAIMED, gone once claimed.**
 //! Deliberately *not* "while offline": an unclaimed box on ethernet still
@@ -26,13 +28,15 @@
 //! subnet-scanning, which was its own source of flakiness. Claiming is what
 //! ends setup, exactly as with the display's screens and the (frozen) SoftAP.
 //!
-//! **Authorization: we skip Improv's authorization-required state.** It exists
-//! for devices with a button to prove physical possession; this box's only
-//! input surface is proximity itself. An attacker in radio range of an
-//! unclaimed box can, at worst, put it on a network of their choosing — which
-//! breaks the owner's setup *visibly* and confers nothing else, because the
-//! actual credential (pairing) still requires the code off the screen. This
-//! matches the SoftAP posture and the consumer-IoT norm (Sonos, eero).
+//! **Authorization: a four-word phrase gate replaces Improv's own
+//! authorization-required state.** `0x86 ClaimSetup` must present the words
+//! shown on the panel before any wifi/pair/link command is served (see "the
+//! gate" in `handle_rpc`) — so an attacker in radio range cannot even set the
+//! box's network without line of sight to the screen. The pair code itself is
+//! then fetched over BLE (`0x85`) into that authorized session, not read off
+//! the panel (`api/display.rs` deliberately does not render it). The earlier
+//! posture — "we skip authorization; the credential is on the screen" —
+//! predates the gate and the BLE-fetched code; do not trust it.
 //!
 //! The GATT plumbing is Linux-only (`bluer` → BlueZ). The protocol layer is
 //! platform-free and unit-tested everywhere.
