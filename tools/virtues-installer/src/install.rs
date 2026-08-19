@@ -2400,10 +2400,30 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
             fi
             rmdir /run/virtues-seed 2>/dev/null || true
             mkdir -p "$DATA_DIR"
+            # 300s, not 10s: this fstab line SHIPS IN THE IMAGE, so on a
+            # clone's first boot the generated mount unit starts waiting for a
+            # label that only exists once this claim creates it (~21s today,
+            # minutes once models grow). At 10s the device job timed out,
+            # systemd marked postgresql and virtues dependency-failed, and
+            # never retried even though the mount landed seconds later
+            # (2026-08-19, first shrunk-image boot). nofail keeps a truly
+            # absent disk from blocking boot regardless of the timeout.
             grep -q '^LABEL=virtues-data' /etc/fstab 2>/dev/null || \
-                echo "LABEL=virtues-data $DATA_DIR ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2" >> /etc/fstab
+                echo "LABEL=virtues-data $DATA_DIR ext4 defaults,nofail,x-systemd.device-timeout=300s 0 2" >> /etc/fstab
+            # Converge an already-shipped 10s line to the same answer.
+            sed -i 's/x-systemd.device-timeout=10s/x-systemd.device-timeout=300s/' /etc/fstab 2>/dev/null || true
             systemctl daemon-reload
             mount "$DATA_DIR" || logger -t virtues-firstboot "mount $DATA_DIR failed"
+            # The belt for the same race: if the device job already timed out
+            # this boot, every dependent is sitting in dependency-failed and
+            # nothing will retry it. The disk is mounted now, so clear the
+            # failures and queue the chain — no-block, because those units are
+            # ordered After this very script and a blocking start would
+            # deadlock exactly like pg_createcluster --start once did.
+            if mountpoint -q "$DATA_DIR"; then
+                systemctl reset-failed 2>/dev/null || true
+                systemctl --no-block start postgresql.service virtues.service 2>/dev/null || true
+            fi
             # LAST act, only on the mounted disk, and ONLY when the seed's
             # load-bearing file made it across. The sentinel means "the seed is
             # complete"; gating it on virtues.env is what keeps a failed copy
@@ -2504,6 +2524,19 @@ case "$ROOT_SRC" in
         fi
         ;;
 esac
+
+# ── 1f. Mint per-unit SSH host keys ─────────────────────────────────────────
+# deprovision strips /etc/ssh/ssh_host_* so clones never share an identity —
+# correctly — but stock Ubuntu has no ssh-keygen.service to make new ones, so
+# sshd restart-looped five times and gave up on every unit ever imaged
+# (found 2026-08-19). The keys are per-unit state, so they are minted here,
+# like the encryption key.
+if [ ! -f /etc/ssh/ssh_host_ed25519_key ] && command -v ssh-keygen >/dev/null 2>&1; then
+    ssh-keygen -A >/dev/null 2>&1 || true
+    systemctl reset-failed ssh.service 2>/dev/null || true
+    systemctl --no-block restart ssh.service 2>/dev/null || true
+    logger -t virtues-firstboot "minted per-unit SSH host keys"
+fi
 
 # ── 1c. Recreate the Postgres cluster on the claimed disk ───────────────────
 # /var/lib/postgresql is a SYMLINK into the data dir on an appliance — the

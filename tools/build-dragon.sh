@@ -174,6 +174,10 @@ say "Deprovisioning"
 # 2026-08-18. (The walk-the-setup gate above needs the services UP, which is
 # why the stop lives here and not at the top.)
 systemctl stop virtues virtues-display virtues-qnnd 2>/dev/null || true
+# The apt cache is ~1.3 GB of .debs nobody will ever install again — measured
+# at 14% of the shipped rootfs on 2026-08-19. Every byte here is pressed into
+# the master, shipped in the artifact, and restored onto every card.
+apt-get clean
 virtues deprovision --yes
 
 # ── 5. Prove the strip worked ───────────────────────────────────────────────
