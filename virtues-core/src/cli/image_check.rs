@@ -187,6 +187,19 @@ pub async fn run() -> i32 {
         }
     }
 
+    // ── The card-side data dir — the one UNDER the mount ────────────────────
+    // On an appliance, /var/lib/virtues is the NVMe mountpoint, and everything
+    // else in this file audits the mounted view — the disk, which does NOT
+    // ship. What ships is the directory the mount shadows: whatever the
+    // installer wrote there before the disk was first claimed. The first
+    // master, cut 2026-08-19, carried a full install-time Postgres cluster
+    // (box identity included) and the unstripped env under there, and every
+    // audit passed, because nothing had ever looked. A plain bind mount of the
+    // parent exposes it. It is also the SEED a clone's fresh disk is copied
+    // from, so this checks both directions: nothing secret present, and the
+    // things a clone needs (marker, env, models) present.
+    audit_card_side(&mut findings);
+
     // ── Somebody else's identity, which is not ours to delete ───────────────
     // Tailscale was on the lab board so we could reach it at all. Its
     // `tailscaled.state` is a node key: clones would all come up as the same
@@ -510,4 +523,87 @@ mod tests {
         assert!(matches!(cluster_state_of(&d), ClusterState::Present));
         let _ = std::fs::remove_dir_all(&d);
     }
+}
+
+/// See the call site. Best-effort on the bind mount: a box where the data dir
+/// is not a mountpoint has no shadowed directory and nothing to check.
+fn audit_card_side(findings: &mut Vec<Finding>) {
+    let data_dir = crate::cli::deprovision::backups_dir();
+    let data_dir = data_dir.parent().unwrap_or(Path::new("/var/lib/virtues"));
+    let mounted = std::process::Command::new("mountpoint")
+        .arg("-q")
+        .arg(data_dir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !mounted {
+        return;
+    }
+    let parent = data_dir.parent().unwrap_or(Path::new("/var/lib"));
+    let bind = Path::new("/run/virtues-imagecheck");
+    if std::fs::create_dir_all(bind).is_err() {
+        return;
+    }
+    let ok = std::process::Command::new("mount")
+        .args(["--bind"])
+        .arg(parent)
+        .arg(bind)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        findings.push(Finding {
+            what: "card-side data dir unreachable",
+            detail: "could not bind-mount to look under the data-disk mount — the directory that actually ships is unaudited".to_string(),
+            fix: "run as root; check `mount --bind /var/lib /run/virtues-imagecheck` by hand",
+        });
+        let _ = std::fs::remove_dir(bind);
+        return;
+    }
+    let card = bind.join(data_dir.file_name().unwrap_or(std::ffi::OsStr::new("virtues")));
+
+    if card.join("postgresql").exists() {
+        findings.push(Finding {
+            what: "card-side Postgres cluster",
+            detail: format!(
+                "{}/postgresql exists UNDER the data-disk mount — an install-time cluster (box identity included) baked into the image",
+                data_dir.display()
+            ),
+            fix: "sudo virtues deprovision   (wipes and reseeds the card side)",
+        });
+    }
+    match std::fs::read_to_string(card.join("virtues.env")) {
+        Ok(env) if env.contains("VIRTUES_ENCRYPTION_KEY=") => findings.push(Finding {
+            what: "card-side env carries the encryption key",
+            detail: format!(
+                "{}/virtues.env under the mount still holds VIRTUES_ENCRYPTION_KEY — shipped to every clone",
+                data_dir.display()
+            ),
+            fix: "sudo virtues deprovision",
+        }),
+        Ok(_) => {}
+        Err(_) => findings.push(Finding {
+            what: "card-side env missing",
+            detail: format!(
+                "no virtues.env under the data-disk mount — clones boot with no configuration at all (DATABASE_URL unset, service crash-loops)",
+                ),
+            fix: "sudo virtues deprovision   (reseeds env onto the card)",
+        }),
+    }
+    if !card.join(".needs-firstboot").exists() {
+        findings.push(Finding {
+            what: "card-side first boot not armed",
+            detail: "no .needs-firstboot under the mount — clones would claim a disk but never mint an encryption key".to_string(),
+            fix: "sudo virtues deprovision",
+        });
+    }
+    if !card.join("models").join("qnn").exists() {
+        findings.push(Finding {
+            what: "card-side models missing",
+            detail: "no models/qnn under the mount — clones boot with no NPU models and semantic search dead".to_string(),
+            fix: "sudo virtues deprovision   (reseeds models onto the card)",
+        });
+    }
+    let _ = std::process::Command::new("umount").arg(bind).status();
+    let _ = std::fs::remove_dir(bind);
 }
