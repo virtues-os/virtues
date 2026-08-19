@@ -88,6 +88,35 @@ read -r BASE_IMAGE
 
 [ "$OS" = "Darwin" ] && diskutil unmountDisk "$DEV" >/dev/null 2>&1
 
+# ── The operator's last session, which cannot delete itself ─────────────────
+# deprovision removes shell histories, but every shell still alive at that
+# moment flushes its history again at shutdown — including the very session
+# that ran the seal. Both masters cut so far carried them. No box-side fix can
+# win that race; the cutting bench is the only place that outlives the shells,
+# so scrub here, on the raw partition, when debugfs is available. Best-effort:
+# the histories hold typed commands, not secrets (passwords go through
+# prompts), so a host without e2fsprogs still cuts — with the residue noted.
+DEBUGFS=""
+for cand in debugfs /opt/homebrew/opt/e2fsprogs/sbin/debugfs /usr/sbin/debugfs; do
+    command -v "$cand" >/dev/null 2>&1 && { DEBUGFS="$cand"; break; }
+done
+ROOT_PART=""
+if [ "$OS" = "Darwin" ]; then
+    # Largest Linux partition = the rootfs. Buffered node: raw rdisk rejects
+    # debugfs/e2fsck's unaligned writes with EINVAL, observed 2026-08-19.
+    ROOT_PART=$(diskutil list "$DEV" 2>/dev/null | awk '/Linux Filesystem/{p=$NF} END{if(p) print "/dev/"p}')
+fi
+if [ -n "$DEBUGFS" ] && [ -n "$ROOT_PART" ]; then
+    say "Scrubbing shell histories from the sealed card"
+    for f in /root/.bash_history /home/radxa/.bash_history /root/build-dragon.sh /root/bd.sh /root/build.log; do
+        "$DEBUGFS" -w -R "rm $f" "$ROOT_PART" >/dev/null 2>&1 || true
+    done
+    command -v e2fsck >/dev/null 2>&1 && FSCK=e2fsck || FSCK="$(dirname "$DEBUGFS")/e2fsck"
+    "$FSCK" -fy "$ROOT_PART" >/dev/null 2>&1 || true
+else
+    warn "no debugfs available — if a shell was open during the seal, its history is in this image"
+fi
+
 DATE="$(date -u +%Y%m%d)"
 OUT="masters/virtues-master-$TAG-$DATE"
 mkdir -p masters
