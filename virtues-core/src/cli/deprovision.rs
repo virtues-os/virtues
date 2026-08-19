@@ -249,6 +249,7 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     // with no error, because the ciphertext is still there and still parses.
     // Minting must therefore be something deprovision explicitly asked for,
     // never a repair that happens on its own.
+    seed_card_side(&env_path)?;
     write_firstboot_marker()?;
 
     println!();
@@ -407,6 +408,122 @@ pub fn firstboot_marker_path() -> std::path::PathBuf {
         .parent()
         .unwrap_or(Path::new("/var/lib/virtues"))
         .join(".needs-firstboot")
+}
+
+/// Rebuild the CARD-side `/var/lib/virtues` — the one under the mount.
+///
+/// On an appliance the data dir is the NVMe mountpoint, and there are two
+/// directories at that path: the mounted disk (live state, what every command
+/// on the box sees, what the rest of this file cleans) and the card-side
+/// directory it shadows (what the installer wrote before the disk was ever
+/// claimed — and what actually ships in the image). Nothing ever looked under
+/// the mount: the first master, cut 2026-08-19, carried the install-time env
+/// (encryption key included) and a full pre-relocation Postgres cluster with
+/// the box's first iroh identity, invisibly, while every audit passed.
+///
+/// The card-side dir is also the SEED: it is the only /var/lib/virtues a clone
+/// has until its own blank NVMe is claimed, and firstboot copies it onto the
+/// fresh disk. So this does both jobs in one pass: wipe whatever install-time
+/// state is under there, then lay down exactly what a clone needs — the
+/// stripped env, the models, and the first-boot marker that licenses key
+/// minting. On a non-appliance box (no mount) the data dir IS the card and the
+/// rest of deprovision already handled it; this is a no-op.
+fn seed_card_side(env_path: &Path) -> Result<(), crate::Error> {
+    let data_dir = env_path.parent().unwrap_or(Path::new("/var/lib/virtues"));
+    let mounted = std::process::Command::new("mountpoint")
+        .arg("-q")
+        .arg(data_dir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !mounted {
+        return Ok(());
+    }
+    let parent = data_dir.parent().unwrap_or(Path::new("/var/lib"));
+    let bind = Path::new("/run/virtues-cardside");
+    std::fs::create_dir_all(bind)
+        .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", bind.display())))?;
+    // A plain (non-recursive) bind of the PARENT exposes the shadowed child.
+    let ok = std::process::Command::new("mount")
+        .args(["--bind"])
+        .arg(parent)
+        .arg(bind)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        return Err(crate::Error::Other(
+            "could not bind-mount to reach the card-side data dir — NOT safe to image".into(),
+        ));
+    }
+    // Everything below must not early-return without the umount; collect the
+    // result and unmount unconditionally.
+    let result = (|| -> Result<(), crate::Error> {
+        let card = bind.join(
+            data_dir.file_name().unwrap_or(std::ffi::OsStr::new("virtues")),
+        );
+        // Wipe the install-time state wholesale. The env (key), the relocated
+        // cluster copy (iroh identity), whatever else a pre-claim install left.
+        if card.exists() {
+            for e in std::fs::read_dir(&card)
+                .map_err(|e| crate::Error::Other(format!("read {}: {e}", card.display())))?
+                .flatten()
+            {
+                let p = e.path();
+                let gone = if p.is_dir() {
+                    std::fs::remove_dir_all(&p).is_ok()
+                } else {
+                    std::fs::remove_file(&p).is_ok()
+                };
+                if !gone {
+                    return Err(crate::Error::Other(format!(
+                        "could not remove card-side {} — NOT safe to image",
+                        p.display()
+                    )));
+                }
+            }
+        } else {
+            std::fs::create_dir_all(&card)
+                .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", card.display())))?;
+        }
+        // Seed. Models via cp -a (hundreds of MB, permissions matter); the env
+        // is copied AFTER strip_env_keys ran, so it carries no key; the marker
+        // licenses each clone to mint its own. journal/ and lake/ exist so
+        // journald and the server never fall back to the card silently.
+        let live_models = data_dir.join("models");
+        if live_models.exists() {
+            let st = std::process::Command::new("cp")
+                .arg("-a")
+                .arg(&live_models)
+                .arg(card.join("models"))
+                .status();
+            if !st.map(|s| s.success()).unwrap_or(false) {
+                return Err(crate::Error::Other(
+                    "seeding models onto the card failed — clones would have no NPU".into(),
+                ));
+            }
+        }
+        if env_path.exists() {
+            std::fs::copy(env_path, card.join("virtues.env"))
+                .map_err(|e| crate::Error::Other(format!("seed env: {e}")))?;
+        }
+        for d in ["journal", "lake"] {
+            let _ = std::fs::create_dir_all(card.join(d));
+        }
+        std::fs::write(
+            card.join(".needs-firstboot"),
+            "# Written by `virtues deprovision` (card-side seed).\n\
+             # Travels in the image: licenses each CLONE's first boot to mint\n\
+             # its own encryption key after the blank disk is claimed and\n\
+             # seeded from this directory.\n",
+        )
+        .map_err(|e| crate::Error::Other(format!("seed marker: {e}")))?;
+        println!("  ✓ card-side data dir wiped and reseeded (env, models, first-boot marker)");
+        Ok(())
+    })();
+    let _ = std::process::Command::new("umount").arg(bind).status();
+    let _ = std::fs::remove_dir(bind);
+    result
 }
 
 /// Arm first boot. Written last, so a deprovision that died partway through
