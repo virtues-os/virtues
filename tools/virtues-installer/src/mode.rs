@@ -109,6 +109,20 @@ impl InferenceMode {
             ui::ok("Dragon detected — inference is built in");
             return Ok(Self::Dragon);
         }
+        // When detection MISSES on hardware that smells like ours, say what
+        // was read: a field Dragon fell through to the DIY path on 2026-08-19
+        // and the transcript carried no clue why. This line makes the next
+        // such report self-diagnosing.
+        if let Ok(bytes) = std::fs::read("/proc/device-tree/compatible") {
+            let text = String::from_utf8_lossy(&bytes).replace('\0', " ");
+            if text.to_lowercase().contains("qcom") {
+                ui::warn(&format!(
+                    "board reports \"{}\" — not recognized as a Dragon; if it is one, \
+                     re-run with --appliance (and tell us that string)",
+                    text.trim()
+                ));
+            }
+        }
 
         // 3. Interactive flow. cliclack reads /dev/tty directly, so this works
         //    under `curl | sh` (stdin = pipe) — but not with no controlling
