@@ -102,6 +102,58 @@ pub async fn run() -> i32 {
         }
     }
 
+    // ── The operator's own login ────────────────────────────────────────────
+    // The key the bench operator SSH'd in with, authorized in root's and
+    // radxa's account, would clone to every customer and hand the bench a root
+    // login on every box. Host-key minting per unit does not touch this.
+    for kf in [
+        "/root/.ssh/authorized_keys",
+        "/home/radxa/.ssh/authorized_keys",
+    ] {
+        if std::path::Path::new(kf).exists() {
+            findings.push(Finding {
+                what: "authorized SSH key",
+                detail: format!("{kf} would ship — the operator's login on every customer box"),
+                fix: "sudo virtues deprovision",
+            });
+        }
+    }
+
+    // ── A baked-in staged release ───────────────────────────────────────────
+    // Walking BLE setup during a seal prefetches an update into a release slot;
+    // shipped, it activates on the customer's first update click, moving them
+    // onto whatever build was on the bench. The image must carry exactly the
+    // running release and no prepared one.
+    let layout = crate::cli::slots::SlotLayout::system();
+    if layout.prepared_slot().is_some() {
+        findings.push(Finding {
+            what: "staged release",
+            detail: "a prepared release is staged — it would activate on the customer's first update".to_string(),
+            fix: "sudo virtues deprovision",
+        });
+    }
+    if let Some(n) = extra_release_slots(&layout) {
+        if n > 0 {
+            findings.push(Finding {
+                what: "extra release slots",
+                detail: format!("{n} release slot(s) beyond the running one — workshop build history that would ship"),
+                fix: "sudo virtues deprovision",
+            });
+        }
+    }
+
+    // ── A pinned channel ────────────────────────────────────────────────────
+    // build-dragon pins `prerelease` before the setup walk so the prefetch
+    // declines; that pin must not ship, or the customer tracks staging instead
+    // of stable. Its absence is correct (absent = Stable).
+    if std::path::Path::new("/var/lib/virtues/channel").exists() {
+        findings.push(Finding {
+            what: "channel pinned",
+            detail: "/var/lib/virtues/channel would ship — the customer would track this channel instead of defaulting to stable".to_string(),
+            fix: "sudo virtues deprovision",
+        });
+    }
+
     // ── The workshop's own network ──────────────────────────────────────────
     if let Some(n) = count_prefixed("/etc/NetworkManager/system-connections", "") {
         if n > 0 {
@@ -465,6 +517,19 @@ fn count_prefixed(dir: &str, prefix: &str) -> Option<usize> {
             .filter(|e| {
                 prefix.is_empty() || e.file_name().to_string_lossy().starts_with(prefix)
             })
+            .count(),
+    )
+}
+
+/// How many release slots exist beyond the one `current` points at. `None`
+/// when there is no releases dir at all (a box that predates the slot layout).
+fn extra_release_slots(layout: &crate::cli::slots::SlotLayout) -> Option<usize> {
+    let keep = layout.current_slot();
+    let entries = std::fs::read_dir(layout.releases_dir()).ok()?;
+    Some(
+        entries
+            .flatten()
+            .filter(|e| keep.as_deref() != Some(e.path().as_path()))
             .count(),
     )
 }

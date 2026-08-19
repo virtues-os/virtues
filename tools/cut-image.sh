@@ -105,6 +105,10 @@ if [ "$OS" = "Darwin" ]; then
     # Largest Linux partition = the rootfs. Buffered node: raw rdisk rejects
     # debugfs/e2fsck's unaligned writes with EINVAL, observed 2026-08-19.
     ROOT_PART=$(diskutil list "$DEV" 2>/dev/null | awk '/Linux Filesystem/{p=$NF} END{if(p) print "/dev/"p}')
+else
+    # Linux: the largest ext-type partition on the device is the rootfs.
+    ROOT_PART=$(lsblk -bnro NAME,FSTYPE,SIZE "$DEV" 2>/dev/null \
+        | awk '$2 ~ /^ext/ { if ($3+0 > s) { s=$3+0; n=$1 } } END { if (n) print "/dev/"n }')
 fi
 if [ -n "$DEBUGFS" ] && [ -n "$ROOT_PART" ]; then
     say "Scrubbing shell histories from the sealed card"
@@ -141,7 +145,11 @@ if [ -n "${SIZE:-}" ]; then
 fi
 say "Reading → $RAW"
 warn "This takes a while. A 64 GB card is ~15-25 minutes on a fast reader."
-dd if="$READ_DEV" of="$RAW" bs=4m 2>/dev/null
+# bs=4M (uppercase) works on BOTH GNU and BSD dd; lowercase 'm' is a BSD-ism
+# that GNU dd rejects with "invalid number", which under set -eu killed this
+# script silently on the advertised Linux path (2026-08-19). No 2>/dev/null —
+# a read failure of the master card must be loud.
+dd if="$READ_DEV" of="$RAW" bs=4M
 
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     sh "$(dirname "$0")/shrink-image.sh" "$RAW" || \
@@ -188,7 +196,7 @@ cat <<'EOF'
       unreproducible, and eight months from now that is when you need it.
     • Restore needs a card >= image_bytes in the record (NOT the original
       card size — the image is shrunk; first boot grows it back to fill):
-          zstd -dc <file>.img.zst | sudo dd of=/dev/rdiskN bs=4m
+          zstd -dc <file>.img.zst | sudo dd of=/dev/rdiskN bs=4M
     • Store PRIVATELY — the image contains Qualcomm firmware from the vendor
       BSP, which we do not redistribute. Not GitHub Releases (public assets,
       2 GB cap), not virtues.com/downloads (that is the installer's path).

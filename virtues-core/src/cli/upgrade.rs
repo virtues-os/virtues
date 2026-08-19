@@ -808,10 +808,31 @@ pub async fn activate_prepared() -> Result<(), crate::Error> {
         .and_then(|b| b.version.clone())
         .unwrap_or_else(|| slot_id.clone());
 
+    // The real running version, not the crate literal — `run()` and `prepare()`
+    // both use this and document why (a box's tag is baked, the binary's
+    // CARGO_PKG_VERSION is whatever it was compiled as). Activation had neither
+    // this nor the downgrade guard below, so a staged release could move a box
+    // BACKWARDS with no check — which is exactly how a master that baked in an
+    // older stable build (before deprovision learned to strip staged releases)
+    // would have flipped a customer's box on their first update click.
+    let current = super::super::codename::version();
+    let current = current.trim_start_matches('v');
+
     ui::section("Activate");
-    ui::kv("current", env!("CARGO_PKG_VERSION"));
+    ui::kv("current", current);
     ui::kv("staged", &slot_id);
     println!();
+
+    let target_v = target.trim_start_matches('v');
+    if let (Ok(cur), Ok(tgt)) = (Version::parse(current), Version::parse(target_v)) {
+        if tgt < cur {
+            return Err(crate::Error::Other(format!(
+                "the staged release {target} is older than what's running ({current}) — \
+                 refusing to downgrade. Remove it with `virtues upgrade --check` guidance \
+                 or clear the prepared slot."
+            )));
+        }
+    }
 
     preflight(&slot, false)?;
 
@@ -825,7 +846,7 @@ pub async fn activate_prepared() -> Result<(), crate::Error> {
         &slot,
         &slot_id,
         &slot_id,
-        env!("CARGO_PKG_VERSION"),
+        current,
         &target,
         replaces_sidecars,
         prior_slot,
