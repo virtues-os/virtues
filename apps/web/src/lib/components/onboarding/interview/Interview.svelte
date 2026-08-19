@@ -1,9 +1,10 @@
 <!--
-  "In your own words" — twelve questions, one at a time.
+  "In your own words" — the onboarding slice of the question bank (see
+  `questions.ts`: ONBOARDING_ORDER picks five of fourteen), one at a time.
 
-  ONE QUESTION PER SCREEN, not a long form. A page of twelve prompts about
+  ONE QUESTION PER SCREEN, not a long form. A page of prompts about
   grief, vice and faith is a wall; it invites skimming, and skimming is how you
-  get twelve shallow answers instead of four real ones. One at a time also lets
+  get shallow answers instead of real ones. One at a time also lets
   each question carry its own guidance, which matters because they are not
   alike — a word target belongs on "list every hobby you've had" and is
   grotesque on "who did you lose".

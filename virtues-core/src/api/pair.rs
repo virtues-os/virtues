@@ -331,9 +331,9 @@ pub async fn ensure_review_code(pool: &PgPool) -> crate::Result<Option<String>> 
         return Ok(None);
     }
 
-    // Enforce the shape the mobile pairing screen can actually accept: its
+    // Enforce the shape the app's pairing screen can actually accept: its
     // input is `inputmode="numeric"` with `maxlength="7"` and a 6-digit check
-    // (src-tauri/ui/mobile-pair.html). A longer or non-numeric code would be
+    // (src-tauri/ui/connect.html). A longer or non-numeric code would be
     // silently untypeable there — better to refuse to start the code than to
     // hand a reviewer something that cannot be entered.
     if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {

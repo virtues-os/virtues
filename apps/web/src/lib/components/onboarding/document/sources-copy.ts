@@ -30,12 +30,6 @@ export interface SourceCopy {
 
 export const PROMINENCE_ORDER: Prominence[] = ['anchor', 'prominent', 'quiet'];
 
-export const PROMINENCE_HEADING: Record<Prominence, string> = {
-	anchor: 'Your devices — start here',
-	prominent: 'Your accounts',
-	quiet: 'More of your world'
-};
-
 // THIS MAC LEADS, then the phone, then accounts.
 //
 // Google was the anchor, on the reasoning that it is the easiest to connect. It
