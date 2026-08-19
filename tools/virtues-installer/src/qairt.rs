@@ -96,6 +96,11 @@ pub async fn ensure_libs(cfg: &InstallConfig) -> Result<(PathBuf, PathBuf)> {
 
     if verify_dir(&host_dir, HOST_LIBS) && verify_dir(&dsp_dir, DSP_LIBS) {
         ui::skip("QAIRT runtime libs already present");
+        // The symlink is not part of the digest set, so "already present"
+        // must still ensure it — a box with verified libs and no symlink is
+        // exactly the reinstall case, and skipping here would leave qnnd
+        // failing with the same three-layers-away 14001.
+        link_cdsprpc(&host_dir);
         return Ok((host_dir, dsp_dir));
     }
 
