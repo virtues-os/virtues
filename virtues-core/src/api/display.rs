@@ -37,15 +37,6 @@ pub struct DisplayState {
     /// The live standing pair code, digits only (rendered "123 456"). `None`
     /// when the box could not mint one — the display shows an honest fault
     /// rather than a blank space.
-    ///
-    /// The PANEL does not render this and must not start: RPC 0x85 hands the
-    /// code to an authorized BLE session, and the only box that would need it
-    /// printed here is one with no session — which is a box waiting for
-    /// someone to START, and that needs the phrase. The two secrets want the
-    /// same slot, and showing the wrong one stopped a live run dead
-    /// (2026-08-13). Kept in the payload for `virtues pair` on the box's own
-    /// terminal, which is the documented door when there is no Bluetooth.
-    pub pair_code: Option<String>,
     /// The box cannot find the disk its record lives on.
     ///
     /// `None` on every healthy box, and on every DIY box unconditionally — a
@@ -264,20 +255,22 @@ pub async fn display_state_handler(
 
     let pool = state.db.pool();
 
-    let pair_code = match crate::api::pair::ensure_standing(pool).await {
-        Ok(minted) => Some(minted.token),
-        Err(e) => {
-            // Not fatal: the rest of the screen is still worth drawing, and the
-            // display renders a fault line for the missing code.
-            tracing::warn!(error = %e, "display: could not ensure a standing pair code");
-            None
-        }
-    };
+    // NB: this handler no longer mints a standing pair code. The panel never
+    // rendered it (2026-08-13, the two-secrets-one-slot fix), and calling
+    // `ensure_standing` on every ~2s poll kept the always-live standing code
+    // continuously alive — one of the two things that made it a permanent,
+    // brute-forceable pairing password. `virtues pair` on the box's own
+    // terminal mints on demand; nothing needs it minted here. (Setup-runtime
+    // audit, 2026-08-19.)
 
     // Excludes `local-console` — otherwise a box nobody has paired reports one
     // device and the display skips its setup screen entirely. See
-    // `api::pair::paired_device_count`.
+    // `api::pair::paired_device_count`. `devices` is the ambient headline count;
+    // `unclaimed` is the fail-CLOSED door predicate that decides whether to show
+    // (and mint) a setup phrase — a DB blip must not drop a claimed box back to
+    // its setup screen and print fresh words.
     let devices = crate::api::pair::paired_device_count(pool).await;
+    let unclaimed = crate::api::pair::is_unclaimed(pool).await;
 
     let linked = crate::virtues_api::renew::read_api_key(pool)
         .await
@@ -288,7 +281,7 @@ pub async fn display_state_handler(
     let online = crate::cli::link::verdict_means_online(&connectivity);
     // Only during setup, and only when the verdict needs explaining: the
     // ambient screen doesn't render it, and `nmcli` ssid lookups aren't free.
-    let wifi_ssid = if devices == 0 && !online && connectivity != "none" {
+    let wifi_ssid = if unclaimed && !online && connectivity != "none" {
         crate::api::provision::active_client_ssid().await
     } else {
         None
@@ -308,7 +301,7 @@ pub async fn display_state_handler(
     // Unclaimed only — `display_phrase` returns None once frozen, but skipping
     // the query entirely on a claimed box keeps the ambient screen off the
     // encryptor and the DB.
-    let (setup_phrase, phrase_frozen) = if devices == 0 {
+    let (setup_phrase, phrase_frozen) = if unclaimed {
         let frozen = crate::api::setup_phrase::is_frozen(pool).await;
         // A frozen box has nothing to print and `display_phrase` would only
         // confirm that; don't ask.
@@ -331,7 +324,7 @@ pub async fn display_state_handler(
     // Only while the panel is on a setup screen: `session()` is a live mirror
     // of the BLE layer, and the ambient screen has no line for it.
     let setup_session =
-        (devices == 0).then(crate::api::setup_phrase::session).flatten();
+        unclaimed.then(crate::api::setup_phrase::session).flatten();
 
     let (record, record_since) = if devices > 0 {
         record_lines(pool)
@@ -342,7 +335,6 @@ pub async fn display_state_handler(
     (
         StatusCode::OK,
         Json(DisplayState {
-            pair_code,
             // Claimed only: an unclaimed box holds nothing, and the setup
             // screens have no line for it.
             record,
@@ -350,7 +342,7 @@ pub async fn display_state_handler(
             data_disk_fault: crate::data_disk::status().message(),
             button_held_secs: crate::maintenance::reset_button::hold_secs(),
             button_hold_target: crate::maintenance::reset_button::HOLD_SECS,
-            claimed: devices > 0,
+            claimed: !unclaimed,
             online,
             connectivity,
             wifi_ssid,

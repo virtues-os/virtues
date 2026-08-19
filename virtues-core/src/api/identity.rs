@@ -32,7 +32,8 @@ pub async fn identity_handler(State(state): State<AppState>) -> impl IntoRespons
         // Kebab for machines ("quaint-tern"), label for humans ("Quaint Tern").
         "name": name,
         "label": crate::codename::pretty(&name),
-        "claimed": crate::api::pair::paired_device_count(pool).await > 0,
+        // Fails CLOSED — a DB blip must not tell the LAN this box is unclaimed.
+        "claimed": !crate::api::pair::is_unclaimed(pool).await,
         // Setup's step 2, as one bit — see the module docs.
         "linked": crate::virtues_api::renew::read_api_key(pool)
             .await

@@ -192,9 +192,10 @@ async fn reconcile(pool: &PgPool) -> Result<(), crate::Error> {
     }
 
     // Excludes the always-present `local-console` row; see
-    // `api::pair::paired_device_count`. Counting it made a fresh box look
-    // claimed from first boot, so the AP never rose at all.
-    let claimed = crate::api::pair::paired_device_count(pool).await > 0;
+    // `api::pair::is_unclaimed`. Counting it made a fresh box look claimed from
+    // first boot, so the AP never rose at all. Fails CLOSED (a DB blip must not
+    // raise the AP on a claimed box, on top of the owner's association).
+    let claimed = !crate::api::pair::is_unclaimed(pool).await;
     let up = ap_is_up().await;
     // Only asked when it can change the answer — it shells out to nmcli, and
     // for a claimed box the AP is coming down regardless.
