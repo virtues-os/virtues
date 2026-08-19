@@ -1384,6 +1384,23 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     deps.env("DEBIAN_FRONTEND", "noninteractive");
     run_step("Install display runtime (cage + WebKit)", deps).await?;
 
+    // Boot text on the glass. From power to cage the panel used to be pure
+    // black — `quiet splash` hides the kernel and systemd entirely, so nobody
+    // can tell a booting box from a dead one until the kiosk paints
+    // (2026-08-19 bench feedback). With them dropped, fbcon scrolls the boot
+    // on the panel and cage takes the VT over when it starts; the shim's
+    // diagnostic page covers everything after that. Best-effort: only where
+    // the image boots through GRUB.
+    let mut cmdline = Command::new("sh");
+    cmdline.args([
+        "-c",
+        "if [ -f /etc/default/grub ] && command -v update-grub >/dev/null 2>&1; then \
+             sed -i -E '/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/\\b(quiet|splash)\\b//g' /etc/default/grub && \
+             update-grub >/dev/null 2>&1 && echo 'boot messages will show on the panel'; \
+         else echo 'no GRUB config found - boot stays quiet'; fi",
+    ]);
+    run_step("Show boot messages on the panel", cmdline).await?;
+
     // BLE provisioning needs bluetoothd up from boot; installing bluez does
     // not reliably enable it on a server image.
     let mut bt = Command::new("systemctl");
