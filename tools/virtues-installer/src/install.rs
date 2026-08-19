@@ -1653,7 +1653,13 @@ polkit.addRule(function(action, subject) {
 const DISPLAY_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues display (cage + WebKit kiosk)
 Documentation=https://virtues.com/docs
-After=systemd-user-sessions.service seatd.service
+# After=virtues.service narrows the first-boot race: the panel is served BY
+# virtues.service, and first boot is the longest boot there is (firstboot
+# claims the NVMe and creates the Postgres cluster before virtues can start).
+# Ordering-only, not Wants= — the kiosk must still come up to say "Storage
+# disconnected" when virtues can't run. And with Type=simple this only orders
+# process start, not listening, so the shim's retry remains the guarantee.
+After=systemd-user-sessions.service seatd.service virtues.service
 Wants=seatd.service
 
 [Service]
@@ -1741,7 +1747,22 @@ def _retry(*_args):
     return True  # we handled it; suppress WebKit's own error page
 
 
+def _check_http(view_, event):
+    """`load-failed` never fires for an HTTP error — a 502/500 from the box
+    mid-start is a *successful* load of the wrong document, so without this the
+    error body renders and the screen parks there forever (a box answering
+    before it can serve is exactly what a long first boot produces). Check the
+    status once the load settles and treat a server error like a failure."""
+    if event != WebKit2.LoadEvent.FINISHED:
+        return
+    res = view_.get_main_resource()
+    resp = res.get_response() if res else None
+    if resp and resp.get_status_code() >= 400:
+        GLib.timeout_add_seconds(3, lambda: (view_.load_uri(URL), False)[1])
+
+
 view.connect("load-failed", _retry)
+view.connect("load-changed", _check_http)
 view.load_uri(URL)
 
 window.add(view)
