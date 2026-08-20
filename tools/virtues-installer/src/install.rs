@@ -2586,6 +2586,18 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
             [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ] && mkfs.ext4 -q -F -L virtues-data "$DATA_PART"
             logger -t virtues-firstboot "NVMe-both: data partition ${DATA_PART:-<none>} on $BOOTDISK"
         fi
+        # Give the space back: the master ships the data partition shrunk
+        # (shrink-image trims the trailing partition), so grow it to fill the
+        # unit's disk here — the NVMe-both analogue of the root grow a card unit
+        # does in §1e. growpart no-ops when already full (a freshly-carved p4).
+        if [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ] && command -v growpart >/dev/null 2>&1; then
+            DP_NUM="${DATA_PART##*[!0-9]}"
+            if growpart "$BOOTDISK" "$DP_NUM" >/dev/null 2>&1; then
+                e2fsck -fy "$DATA_PART" >/dev/null 2>&1 || [ $? -le 2 ]
+                resize2fs "$DATA_PART" >/dev/null 2>&1 || true
+                logger -t virtues-firstboot "NVMe-both: grew the data partition to fill $BOOTDISK"
+            fi
+        fi
         if [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ]; then
             mkdir -p /run/virtues-seed
             if mount "$DATA_PART" /run/virtues-seed 2>/dev/null; then
