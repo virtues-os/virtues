@@ -2629,7 +2629,14 @@ fi
 
 # sudo resolves the hostname on every invocation; without a hosts entry each
 # privileged command eats a resolver timeout and prints a warning (2026-08-19).
-grep -q '^127.0.1.1' /etc/hosts 2>/dev/null || printf '127.0.1.1 %s\n' "$(hostname)" >> /etc/hosts
+# Read /etc/hostname, NOT `hostname`: firstboot runs before systemd-hostnamed
+# applies the persistent name, so `hostname` returns the transient boot/DHCP
+# name (e.g. "radxa-dragon-q6a") and the entry then does not match the name
+# sudo actually resolves ("virtues"). Verified on the bench 2026-08-20.
+VIRT_HOSTNAME="$(cat /etc/hostname 2>/dev/null | tr -d '[:space:]')"
+[ -n "$VIRT_HOSTNAME" ] || VIRT_HOSTNAME="$(hostname)"
+grep -q "127.0.1.1[[:space:]].*$VIRT_HOSTNAME" /etc/hosts 2>/dev/null || \
+    printf '127.0.1.1 %s\n' "$VIRT_HOSTNAME" >> /etc/hosts
 
 # ── 1e. Grow the root filesystem to the card it landed on ───────────────────
 # Masters are cut SHRUNK (tools/shrink-image.sh) so one image restores onto
