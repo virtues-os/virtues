@@ -1,8 +1,9 @@
 name: Release Mac App
 
 # Builds the Tauri desktop app (apps/web/src-tauri) into a signed + notarized
-# universal DMG and attaches it to a GitHub Release. Bundles both helper
-# sidecars: virtues-client (Rust) and virtues-collector (Swift).
+# universal DMG and attaches it to a GitHub Release. Bundles the
+# virtues-collector (Swift) helper sidecar; networking (reach) runs in-process
+# since 45e13811, so there is no virtues-client sidecar anymore.
 #
 # This replaces the old native-Xcode pipeline (apps/mac-source/mac.xcodeproj),
 # which was removed when the app moved to Tauri.
@@ -195,19 +196,6 @@ jobs:
           lipo -create "$ARM" "$X86" -output "$OUT/virtues-collector-universal-apple-darwin"
           chmod +x "$OUT"/virtues-collector-*
 
-      - name: Build virtues-client sidecar (Rust)
-        run: |
-          cargo build -p virtues-client --release --target aarch64-apple-darwin
-          cargo build -p virtues-client --release --target x86_64-apple-darwin
-          OUT="apps/web/src-tauri/binaries"
-          cp target/aarch64-apple-darwin/release/virtues-client "$OUT/virtues-client-aarch64-apple-darwin"
-          cp target/x86_64-apple-darwin/release/virtues-client "$OUT/virtues-client-x86_64-apple-darwin"
-          lipo -create \
-            "$OUT/virtues-client-aarch64-apple-darwin" \
-            "$OUT/virtues-client-x86_64-apple-darwin" \
-            -output "$OUT/virtues-client-universal-apple-darwin"
-          chmod +x "$OUT"/virtues-client-*
-
       - name: Install web deps (tauri CLI + plugins)
         working-directory: apps/web
         run: pnpm install --frozen-lockfile
@@ -271,12 +259,14 @@ jobs:
             echo "::error::DMG is not notarized/stapled"
             exit 1
           fi
-          # externalBin / #11992 guard: both sidecars must be validly signed
+          # externalBin / #11992 guard: every sidecar must be validly signed
           # inside the bundle, or the updater would ship a broken app that
           # Gatekeeper rejects on relaunch. (--deep above already walks them;
           # this asserts each explicitly so a regression fails loudly.)
+          # virtues-client is gone on purpose — reach runs in-process since
+          # 45e13811 — so only the collector remains.
           echo "== sidecars signed (externalBin guard) =="
-          for s in virtues-client virtues-collector; do
+          for s in virtues-collector; do
             codesign --verify --strict "$APP/Contents/MacOS/$s" \
               || { echo "::error::sidecar $s is not validly signed"; exit 1; }
           done
@@ -355,7 +345,7 @@ jobs:
             ## Virtues for Mac ${{ steps.version.outputs.IS_EDGE == 'true' && '(Edge — rolling test build)' || format('v{0}', steps.version.outputs.VERSION) }}
 
             Universal (Intel + Apple Silicon) Tauri app. Bundles the
-            `virtues-client` (networking) and `virtues-collector` (data) helpers.
+            `virtues-collector` (data) helper; networking runs in-process.
 
             ### Install
             1. Download the `.dmg`, open it, drag **Virtues** to Applications.
