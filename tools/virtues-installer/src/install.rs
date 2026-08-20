@@ -2569,21 +2569,43 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
         ROOT_NAME="${ROOT_SRC##*/}"
         ROOT_NUM="${ROOT_NAME##*[!0-9]}"
         BOOTDISK="/dev/${ROOT_NAME%"$ROOT_NUM"}"; BOOTDISK="${BOOTDISK%p}"
-        # Adopt an existing data partition (a prior boot may have made it),
-        # else carve one filling the space past root. NEVER touch config/ESP/root.
+        # Adopt an existing CLAIMED data partition — fs label virtues-data means
+        # a prior boot completed mkfs, seed and relabel, and the fs may hold the
+        # owner's data: adopted, never re-made, never re-seeded.
+        NEEDS_SEED=""
         DATA_PART="$(lsblk -rno NAME,LABEL "$BOOTDISK" 2>/dev/null | awk '$2=="virtues-data"{print "/dev/"$1; exit}')"
-        if [ -z "$DATA_PART" ] && command -v sgdisk >/dev/null 2>&1; then
-            # The shrunk master's GPT backup sits just past root; move it to the
-            # real end of this larger disk, then carve one partition to the end.
-            # Adding a partition to a disk whose root is mounted is allowed — the
-            # kernel refuses only to MODIFY a busy partition — and partx -a adds
-            # just the new one when partprobe declines the busy disk.
-            sgdisk -e "$BOOTDISK" >/dev/null 2>&1 || true
-            sgdisk -n 0:0:0 -c 0:virtues-data "$BOOTDISK" >/dev/null 2>&1
-            partprobe "$BOOTDISK" 2>/dev/null || partx -a "$BOOTDISK" 2>/dev/null || true
-            sleep 2
+        if [ -z "$DATA_PART" ]; then
+            # No claimed fs. Find the partition by its GPT name (an interrupted
+            # claim leaves it carved but fs-labeled virtues-seeding — provably
+            # unseeded, safe to re-make), else carve it from the space past
+            # root. NEVER touch config/ESP/root.
             DATA_PART="$(lsblk -rno NAME,PARTLABEL "$BOOTDISK" 2>/dev/null | awk '$2=="virtues-data"{print "/dev/"$1; exit}')"
-            [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ] && mkfs.ext4 -q -F -L virtues-data "$DATA_PART"
+            if [ -z "$DATA_PART" ] && command -v sgdisk >/dev/null 2>&1; then
+                # The shrunk master's GPT backup sits just past root; move it to
+                # the real end of this larger disk, then carve one partition to
+                # the end. Adding a partition to a disk whose root is mounted is
+                # allowed — the kernel refuses only to MODIFY a busy partition —
+                # and partx -a adds just the new one when partprobe declines the
+                # busy disk.
+                sgdisk -e "$BOOTDISK" >/dev/null 2>&1 || true
+                sgdisk -n 0:0:0 -c 0:virtues-data "$BOOTDISK" >/dev/null 2>&1
+                partprobe "$BOOTDISK" 2>/dev/null || partx -a "$BOOTDISK" 2>/dev/null || true
+                sleep 2
+                DATA_PART="$(lsblk -rno NAME,PARTLABEL "$BOOTDISK" 2>/dev/null | awk '$2=="virtues-data"{print "/dev/"$1; exit}')"
+            fi
+            # Make the filesystem under a TEMPORARY label. The image ships an
+            # fstab `LABEL=virtues-data` line and / is mounted shared, so the
+            # moment that label exists systemd auto-mounts this partition over
+            # $DATA_DIR — shadowing the root-side seed MID-COPY, and mount
+            # propagation carries the shadow into a parent bind taken earlier
+            # (both observed on the 2026-08-20 bench, two boots running). Under
+            # virtues-seeding nothing matches the fstab line, the seed below
+            # runs undisturbed, and e2label flips it to virtues-data only once
+            # the seed is complete.
+            if [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ]; then
+                mkfs.ext4 -q -F -L virtues-seeding "$DATA_PART"
+                NEEDS_SEED=1
+            fi
             logger -t virtues-firstboot "NVMe-both: data partition ${DATA_PART:-<none>} on $BOOTDISK"
         fi
         # Give the space back: the master ships the data partition shrunk
@@ -2598,31 +2620,39 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 logger -t virtues-firstboot "NVMe-both: grew the data partition to fill $BOOTDISK"
             fi
         fi
-        if [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ]; then
+        if [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ] && [ -n "$NEEDS_SEED" ]; then
             mkdir -p /run/virtues-seed /run/virtues-cardseed
             if mount "$DATA_PART" /run/virtues-seed 2>/dev/null; then
-                # Read the seed through a bind of the PARENT, not $DATA_DIR
-                # directly: the image ships an fstab `LABEL=virtues-data` line,
-                # so systemd auto-mounts this partition over $DATA_DIR the moment
-                # mkfs labels it — shadowing the root-side seed mid-copy. That is
-                # exactly what left env + marker off p4 on the 2026-08-20 bench
-                # boot (models copied, virtues.env lost when the source vanished
-                # under the copy). A plain (non-recursive) bind of /var/lib
-                # exposes the UNDERLYING virtues dir even while the partition is
-                # mounted over it.
+                # Belt and suspenders on top of the temporary label: read the
+                # seed through a PRIVATE bind of the parent, so no later mount
+                # over $DATA_DIR — by anything — can shadow the source, and no
+                # peer-group propagation can carry one into the bind.
                 SEEDSRC="$DATA_DIR"
-                mount --bind "$(dirname "$DATA_DIR")" /run/virtues-cardseed 2>/dev/null \
-                    && SEEDSRC="/run/virtues-cardseed/$(basename "$DATA_DIR")"
-                cp -a "$SEEDSRC/." /run/virtues-seed/ 2>/dev/null || \
-                    logger -t virtues-firstboot "seed copy reported errors - the sentinel gate below decides"
+                if mount --bind "$(dirname "$DATA_DIR")" /run/virtues-cardseed 2>/dev/null; then
+                    mount --make-private /run/virtues-cardseed 2>/dev/null || true
+                    SEEDSRC="/run/virtues-cardseed/$(basename "$DATA_DIR")"
+                fi
+                # Do NOT swallow the copy error — it is the difference between a
+                # working unit and a hollow one, and it was invisible once
+                # already (2026-08-20: two hollow first boots before the error
+                # text was ever seen).
+                CP_ERR="$(cp -a "$SEEDSRC/." /run/virtues-seed/ 2>&1)" || \
+                    logger -t virtues-firstboot "seed copy reported errors - the sentinel gate below decides: $CP_ERR"
                 umount /run/virtues-cardseed 2>/dev/null || true
                 rm -rf /run/virtues-seed/postgresql /run/virtues-seed/secrets /run/virtues-seed/backups
                 mkdir -p /run/virtues-seed/journal /run/virtues-seed/lake
                 chown root:systemd-journal /run/virtues-seed/journal 2>/dev/null || true
                 chmod 2755 /run/virtues-seed/journal 2>/dev/null || true
                 umount /run/virtues-seed
+                # The seed is complete — only now may the real label exist,
+                # which is what lets the fstab line (and the mount below) find
+                # the partition.
+                e2label "$DATA_PART" virtues-data 2>/dev/null || \
+                    logger -t virtues-firstboot "e2label to virtues-data FAILED on $DATA_PART - the box will stay hollow"
             fi
             rmdir /run/virtues-seed /run/virtues-cardseed 2>/dev/null || true
+        fi
+        if [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ]; then
             mkdir -p "$DATA_DIR"
             grep -q '^LABEL=virtues-data' /etc/fstab 2>/dev/null || \
                 echo "LABEL=virtues-data $DATA_DIR ext4 defaults,nofail,x-systemd.device-timeout=300s 0 2" >> /etc/fstab
