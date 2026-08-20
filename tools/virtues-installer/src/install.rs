@@ -2553,6 +2553,30 @@ fi
 if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
     for disk in /dev/nvme0n1 /dev/nvme1n1; do
         [ -b "$disk" ] || continue
+        # Not empty? Decide whether it is ours to clear. §0a has already adopted
+        # or repaired any mountable virtues-data disk, so contents remaining here
+        # are one of two things, told apart by the LABEL. A disk carrying
+        # 'virtues-data' that §0a could not mount is a possible owner record fsck
+        # could not save — NEVER wipe it; the box stays up and loud without it.
+        # Anything else is FOREIGN — a prior unit's leftover, a bench disk, an
+        # unrelated fs — and on a single-owner appliance that is ours to clear by
+        # default, so first boot is not wedged forever on a dirty disk (the
+        # 2026-08-20 bench hit exactly this: a stale prior-install fs whose label
+        # did not match left the box hollow until a hand `wipefs`). Clearing
+        # foreign contents is the DEFAULT; the labeled-but-unrecoverable disk is
+        # the one carve-out. After the wipe the disk is blank and the claim below
+        # runs normally.
+        if [ -n "$(lsblk -no FSTYPE,PTTYPE "$disk" 2>/dev/null | tr -d ' \n')" ]; then
+            if lsblk -no LABEL "$disk" 2>/dev/null | grep -qx 'virtues-data'; then
+                logger -t virtues-firstboot "$disk is labeled virtues-data but did not mount - possible owner record, NOT wiping; box stays up without it"
+                break
+            fi
+            logger -t virtues-firstboot "clearing foreign/stale contents on $disk (no virtues-data label) for a fresh claim"
+            for p in "${disk}"p*; do [ -b "$p" ] && wipefs -a "$p" >/dev/null 2>&1 || true; done
+            wipefs -a "$disk" >/dev/null 2>&1 || true
+            dd if=/dev/zero of="$disk" bs=1M count=16 >/dev/null 2>&1 || true
+            partprobe "$disk" 2>/dev/null || true; sleep 2
+        fi
         # Blank means: no partition table AND no filesystem anywhere on it.
         # `lsblk` over the whole device catches both in one shot; any non-empty
         # output means something is already there and we keep our hands off.
