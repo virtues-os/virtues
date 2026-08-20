@@ -3,8 +3,8 @@
 One vocabulary for a life in time. This page is the contract: what the timeline
 drawing can show, the system must be able to name — and everything here is
 named once, so schemas, prompts, UI copy, and docs use these words and no
-synonyms. The full argument lives in the timeline artifact ("One line, alpha to
-omega"); this page is only the law it settled.
+synonyms. The full argument lives in the timeline artifact ("The Lifeline"); this
+page is only the law it settled.
 
 ## The three axes
 
@@ -25,23 +25,31 @@ primitive below cannot.**
 
 | Primitive | What it is | Earns a page? |
 |---|---|---|
-| instant | a record's timestamp | no — signal, not life |
+| infinitesimal | a record's timestamp | no — signal, not life |
 | session | one continuous observation (a visit, a recording) | no — evidence for events |
 | event | a bounded stretch of a day | no — a line, not a page |
 | **day** | the unit of narrative | **yes** — the atom of story |
 | week | a rhythm you feel, not a story you tell | refused |
 | month · quarter | a window, not a unit | refused |
 | **year** | the other unit people narrate | **yes** |
-| **chapter** | a partition of the life — *where am I right now* | **yes** — named by the person |
-| **story** | a thread running across chapters | **yes** — declared |
+| **chapter** | a partition of the life — 4–8 in view at any age | **yes** — named by the person |
+| **story** | a throughline at any scale — narrative or investigative | **yes** — declared |
 | **life** | who this person is | **yes** — exactly one |
 | ∞ (telos) | what it is all for | no — a direction, not a page |
 
 - **Chapter** is a *partition*: contiguous, exclusive, tiles the life. It
   answers "where am I right now." Boundaries are shifts the record can notice;
-  a person names them.
-- **Story** is a *thread*: non-contiguous, overlapping, resumes. It answers
-  "what has been going on with X." Declared by the person, never inferred.
+  a person names them. The partition is **normalized, not linear**: a life
+  reads in 4–8 chapters at any age — new ones open at the front, older ones
+  concatenate behind (university and the first job blur into "the twenties"),
+  so resolution matches distance and the count stays human-scaled. Merges are
+  offered, never silent.
+- **Story** is a *throughline*: non-contiguous, overlapping, resumes — at any
+  scale. An afternoon (the recital), a year (learning to juggle), a trait
+  (learning patience) — and the throughline may be a *question* rather than a
+  narrative: a notebook-style investigation worked through the person's own
+  data ("why do I get sad at work sometimes"). Declared by the person, never
+  inferred.
 - A calendrical article is written once, when its period closes, and never
   again. The live maintenance load is four time-articles at any moment,
   whether the person is twenty or eighty.
@@ -84,7 +92,7 @@ Not everything with a page is on the clock.
 |---|---|---|
 | Subject · time-shaped | an interval that can hold a story | computed from the interval |
 | Subject · entity-shaped | someone or somewhere in the record | none — a person is not past or future |
-| Subject · thread-shaped | a declared span with a magnet — a story, a commitment | open until closed |
+| Subject · thread-shaped | a throughline with a magnet — a story told, a question investigated, a commitment | open until closed |
 | Attachment · claim | an unsettled observation, pending a person | whatever it cites |
 | Attachment · citation | record R mentions subject S at time T | the referring record's own |
 | Attachment · rule | a standing constraint that outranks context | none — rules do not expire |
@@ -136,7 +144,8 @@ holds in mind.
 | **significance** | what survives longest — weight the person assigns; declared, never inferred |
 
 One curve serves two consumers: rendered, it is the timeline's geometry
-(space is attention, band is resolution, height is salience); assembled as
-prose, it is the brief. Resolution must match distance — "yesterday you…",
+(space is attention, band is resolution); assembled as prose, it is the
+brief. Salience needs its own mark — height was tried on the spine and read
+as noise, so the spine draws uniform and the encoding is open. Resolution must match distance — "yesterday you…",
 "last week you…", "in 2015 you…" — a sentence at the wrong granularity is
 wrong tonally even when factually right.

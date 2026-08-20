@@ -115,10 +115,9 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		if (profileResponse.ok) {
 			const profile = await profileResponse.json();
 
-			// Note: Onboarding wizard redirect removed.
-			// Users now see "Getting Started" in chat and "ServerProvisioning" overlay
-			// if server_status is not 'ready'.
-
+			// (Onboarding redirects live above, off /api/setup/state. This fetch
+			// only feeds preferences and the ServerProvisioning overlay, which
+			// +layout.svelte shows while server_status is not 'ready'.)
 			return {
 				session: sessionData,
 				preferredName: profile.preferred_name || null,

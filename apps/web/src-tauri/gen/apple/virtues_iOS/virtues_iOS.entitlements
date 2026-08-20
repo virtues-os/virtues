@@ -2,12 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- NEHotspotConfiguration: the app joins a box's Virtues-XXXX setup
-	     network itself during onboarding. Self-serve entitlement (unlike
-	     NEHotspotHelper, which is Apple-gated); the matching capability must
-	     also be enabled on the App ID — automatic signing usually syncs it. -->
-	<key>com.apple.developer.networking.HotspotConfiguration</key>
-	<true/>
 	<key>com.apple.developer.financekit</key>
 	<array>
 		<string>financial-data</string>

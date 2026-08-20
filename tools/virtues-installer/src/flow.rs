@@ -139,7 +139,7 @@ pub async fn run(cli: Config) -> Result<()> {
     install::write_install_manifest(&cfg, &inference, appliance)?;
     install::write_env_file(&cfg, &inference, validation.as_ref()).await?;
     install::run_bringup(&cfg).await?;
-    install::install_systemd_unit(&cfg).await?;
+    install::install_systemd_unit(&cfg, appliance).await?;
 
     if appliance {
         ui::section("Appliance");

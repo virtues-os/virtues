@@ -37,7 +37,7 @@ multi-use and permanent for free. Migration `0058_review_pair_code.sql` only
 widens a CHECK constraint; it creates no row.
 
 The code stays **6 digits** because the mobile pairing input is
-`inputmode="numeric"` with `maxlength="7"` (`src-tauri/ui/mobile-pair.html`). A
+`inputmode="numeric"` with `maxlength="7"` (`src-tauri/ui/connect.html`). A
 longer, higher-entropy token would be untypeable there. Startup refuses
 anything that is not exactly 6 digits rather than installing a code a reviewer
 cannot enter.

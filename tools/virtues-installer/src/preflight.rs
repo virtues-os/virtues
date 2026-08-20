@@ -76,95 +76,17 @@ pub async fn run() -> Result<()> {
     // work), it just tells the user up front instead of letting them discover a
     // walled network the hard way after pairing. Not treated as a warning
     // (a home box behind IPv4 NAT is normal, not an install problem).
-    match egress_class() {
-        EgressClass::Ipv6 => {
-            ui::ok("Network: global IPv6 — direct remote access will work")
-        }
-        EgressClass::Ipv4Public => {
-            ui::ok("Network: global IPv4 — direct remote access via a router port-forward")
-        }
-        EgressClass::Nat => ui::network_critical(
-            "Behind NAT — no global IPv6",
-            &[
-                "Local and LAN access: always work",
-                "Remote from anywhere: depends on your router",
-                "  · You control it  → one port-forward and done",
-                "  · You don't       → you'll need a port-forward or a tunnel you run",
-            ],
-            "This won't block setup. Run `virtues doctor` for a network diagnosis.",
-        ),
-        EgressClass::Unknown => {}
-    }
-
-    // Remote access in the relay model needs no kernel capability — the box
-    // dials out to the blind relay over TCP/443 (no WireGuard, no inbound port),
-    // so there is nothing to gate on here. Reachability is verified at runtime.
+    // Remote access is the blind relay: the box dials OUT over TCP/443, so
+    // there is no inbound port to open and nothing about the local network
+    // class (public IPv4, NAT, IPv6) gates it — the port-forward advice this
+    // block used to print was left over from the WireGuard era and contradicted
+    // the very next paragraph. Local and LAN access always work; remote
+    // reachability is verified at runtime and reported by `virtues doctor`.
+    ui::ok("Network: local and LAN access always work; remote reachability is verified at runtime (`virtues doctor`)");
 
     Ok(())
 }
 
-/// The box's outbound reachability class, for the preflight verdict. Mirrors
-/// `virtues-core`'s `net_check` (the installer can't depend on the box binary,
-/// which isn't downloaded yet, so the global-routability logic is duplicated).
-enum EgressClass {
-    /// Has a globally-routable IPv6 source — the doctrine's direct path.
-    Ipv6,
-    /// Global IPv4 source, no global IPv6 (rare static home IP / a VPS).
-    Ipv4Public,
-    /// Private/CGNAT IPv4 source and no global IPv6 — behind NAT.
-    Nat,
-    /// No egress detected.
-    Unknown,
-}
-
-fn egress_class() -> EgressClass {
-    use std::net::{IpAddr, UdpSocket};
-
-    let probe = |dest: &str, bind: &str| -> Option<IpAddr> {
-        let s = UdpSocket::bind(bind).ok()?;
-        s.connect(dest).ok()?;
-        let ip = s.local_addr().ok()?.ip();
-        if ip.is_loopback() || ip.is_unspecified() {
-            None
-        } else {
-            Some(ip)
-        }
-    };
-
-    // Global IPv6? (not loopback/unspecified/multicast/link-local/ULA)
-    if let Some(IpAddr::V6(v)) = probe("[2606:4700:4700::1111]:53", "[::]:0") {
-        let seg0 = v.segments()[0];
-        let global = !v.is_loopback()
-            && !v.is_unspecified()
-            && !v.is_multicast()
-            && (seg0 & 0xffc0) != 0xfe80
-            && (seg0 & 0xfe00) != 0xfc00;
-        if global {
-            return EgressClass::Ipv6;
-        }
-    }
-
-    // IPv4 — global vs NAT (private/CGNAT/link-local).
-    match probe("1.1.1.1:53", "0.0.0.0:0") {
-        Some(IpAddr::V4(v)) => {
-            let o = v.octets();
-            let cgnat = o[0] == 100 && (o[1] & 0xc0) == 0x40;
-            let global = !v.is_loopback()
-                && !v.is_unspecified()
-                && !v.is_private()
-                && !v.is_link_local()
-                && !v.is_broadcast()
-                && !v.is_multicast()
-                && !cgnat;
-            if global {
-                EgressClass::Ipv4Public
-            } else {
-                EgressClass::Nat
-            }
-        }
-        _ => EgressClass::Unknown,
-    }
-}
 
 /// Free disk space on the given mount, in GB. Returns None on stat error.
 fn free_gb(path: &Path) -> Option<u64> {

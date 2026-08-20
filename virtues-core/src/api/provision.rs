@@ -113,9 +113,10 @@ fn is_setup_peer(peer: &SocketAddr, headers: &HeaderMap) -> bool {
 /// Setup is open only until the box has an owner.
 async fn setup_is_open(state: &AppState) -> bool {
     // Excludes `local-console`, which every box mints at boot — counting it
-    // closed this door before anyone had walked through it. See
-    // `api::pair::paired_device_count`.
-    crate::api::pair::paired_device_count(state.db.pool()).await == 0
+    // closed this door before anyone had walked through it. Fails CLOSED on a
+    // DB error (a blip must not reopen the wifi-provisioning surface). See
+    // `api::pair::is_unclaimed`.
+    crate::api::pair::is_unclaimed(state.db.pool()).await
 }
 
 /// Both gates. Returns the response to send when refused.

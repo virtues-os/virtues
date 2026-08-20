@@ -78,7 +78,6 @@
 		setup_phrase: string | null | undefined;
 		phrase_frozen: boolean;
 		setup_session: string | null | undefined;
-		pair_code: string | null;
 		data_disk_fault: string | null | undefined;
 		button_held_secs: number | null | undefined;
 		button_hold_target: number;
@@ -339,8 +338,16 @@
 		     are the same words that get the owner back in after a reset. They
 		     rotate every 15 minutes while the box is empty (so a photograph taken
 		     last week is worthless) and freeze forever the moment it is claimed.
-		     See docs/onboarding-paradigm.md §1. -->
-		<span class="lockup"><span class="mk">∴</span>{state_.box_name}</span>
+		     See docs/onboarding-paradigm.md §1.
+
+		     BRAND TOP-LEFT, CODENAME BOTTOM-LEFT (2026-08-19, bench feedback):
+		     an unboxed unit's first screen led with "Honest Kestrel", which reads
+		     as a mystery, not a product — the person at the shelf needs to know
+		     WHAT this is before which one it is. The codename keeps a corner
+		     because it is still the identity check against the app's chooser
+		     when two boxes share a house. -->
+		<span class="lockup"><span class="mk">∴</span>Virtues</span>
+		<span class="devname">{state_.box_name}</span>
 		<div class="body">
 			{#if session !== null}
 				<!-- The words have been accepted, so they leave the glass — two
@@ -507,6 +514,17 @@
 	.lockup .mk {
 		font-size: 0.82rem;
 		color: #46545f;
+	}
+	/* The codename, bottom-left on the setup screen — identity demoted to a
+	   corner, not deleted: it is what you check against the app's box chooser
+	   when two boxes share a house. */
+	.devname {
+		position: absolute;
+		bottom: 20px;
+		left: 40px;
+		font-size: 0.72rem;
+		color: #55636f;
+		letter-spacing: 0.04em;
 	}
 	/* Serif, because it is the one voiced line on an otherwise instrumental
 	   screen. Georgia is not on Ubuntu — the fallbacks are what actually ship. */

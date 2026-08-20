@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self' http://localhost:7117 http://*.virtues:8000; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:7117 ws://localhost:7117 http://*.virtues:8000 ws://*.virtues:8000"
+      "csp": "default-src 'self' http://localhost:7117 http://*.virtues:8000 http://*:8000; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:7117 ws://localhost:7117 http://*.virtues:8000 ws://*.virtues:8000 http://*:8000 ws://*:8000"
     }
   },
   "bundle": {
