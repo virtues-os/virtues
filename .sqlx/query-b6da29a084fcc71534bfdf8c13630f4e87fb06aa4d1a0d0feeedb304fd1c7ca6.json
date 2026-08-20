@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)\n                        VALUES ($1, 'person', $2, 'data_calendar_event', $3, 'attendee', $4)\n                        ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING\n                        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b6da29a084fcc71534bfdf8c13630f4e87fb06aa4d1a0d0feeedb304fd1c7ca6"
+}

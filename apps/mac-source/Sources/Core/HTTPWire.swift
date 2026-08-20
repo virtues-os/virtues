@@ -10,7 +10,7 @@
 //  speak plain HTTP/1.1 over the stream. We send `Connection: close` — the box
 //  then finishes its send half after the response, which is the EOF the Rust
 //  client reads to. This path carries the RPC-style calls that go through
-//  `BoxTransport` (uploads, action-ids, health); it does not stream (no SSE/WS).
+//  `BoxTransport` (uploads, applet-ids, health); it does not stream (no SSE/WS).
 //
 
 import Foundation

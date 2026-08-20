@@ -1,6 +1,10 @@
+<!-- Legacy reflections only. The reflection primitive is retired (2026-08-03):
+     writing about a day belongs to the day's article, or to a note on the day.
+     This card lists pages minted before the retirement so nothing you wrote is
+     stranded, and renders nothing on days that have none. -->
 <script lang="ts">
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { getReflectionsForDate, createReflection, type Page } from '$lib/api/client';
+	import { getReflectionsForDate, type Page } from '$lib/api/client';
 
 	let { date }: { date: string } = $props();
 
@@ -20,15 +24,9 @@
 	function openReflection(pageId: string) {
 		windowShellStore.openTabFromRoute(`/page/${pageId}`);
 	}
-
-	async function addReflection() {
-		const page = await createReflection(date);
-		reflections = [...reflections, page];
-		windowShellStore.openTabFromRoute(`/page/${page.id}`);
-	}
 </script>
 
-{#if loaded && (reflections.length > 0 || true)}
+{#if loaded && reflections.length > 0}
 	<div class="reflections-row">
 		<span class="reflections-label">Your writing:</span>
 		{#each reflections as reflection}
@@ -39,10 +37,6 @@
 				<span class="chip-sep">&middot;</span>
 			{/if}
 		{/each}
-		{#if reflections.length > 0}
-			<span class="chip-sep">&middot;</span>
-		{/if}
-		<button class="reflection-create" onclick={addReflection}>+ New</button>
 	</div>
 {/if}
 

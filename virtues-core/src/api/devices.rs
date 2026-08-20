@@ -31,6 +31,12 @@ use crate::middleware::auth::AuthUser;
 pub struct DeviceListItem {
     pub id: String,
     pub kind: String,
+    /// Catalog source this device ingests as (`ios`, `mac`), or null for a
+    /// device that only views — the Tauri shell, a CLI. This is the join that
+    /// lets the Sources catalog file a paired iPhone under iOS: device sources
+    /// never create a `credentials` row, so without it the two headline tiles
+    /// on that page could never show what was connected to them.
+    pub source_id: Option<String>,
     pub label: String,
     pub paired_at: DateTime<Utc>,
     pub last_seen_at: Option<DateTime<Utc>>,
@@ -58,9 +64,9 @@ pub struct DeviceListItem {
 /// `GET /api/devices` — list all active paired devices for the current user.
 pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl IntoResponse {
     #[allow(clippy::type_complexity)]
-    let rows: Result<Vec<(String, String, String, DateTime<Utc>, Option<DateTime<Utc>>, Option<String>, Option<String>, Option<String>, Option<String>, Option<Value>)>, _> =
+    let rows: Result<Vec<(String, String, Option<String>, String, DateTime<Utc>, Option<DateTime<Utc>>, Option<String>, Option<String>, Option<String>, Option<String>, Option<Value>)>, _> =
         sqlx::query_as(
-            "SELECT id, kind, label, paired_at, last_seen_at, paired_from_ip, \
+            "SELECT id, kind, source_id, label, paired_at, last_seen_at, paired_from_ip, \
                     device_info->'build'->>'version' AS version, \
                     device_info->'build'->>'sha'     AS sha, \
                     device_info->'build'->>'channel' AS channel, \
@@ -77,11 +83,12 @@ pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl In
         Ok(rows) => {
             let items: Vec<DeviceListItem> = rows
                 .into_iter()
-                .map(|(id, kind, label, paired_at, last_seen_at, ip, version, sha, channel, permissions)| {
+                .map(|(id, kind, source_id, label, paired_at, last_seen_at, ip, version, sha, channel, permissions)| {
                     let is_current = id == user.device_id;
                     DeviceListItem {
                         id,
                         kind,
+                        source_id,
                         label,
                         paired_at,
                         last_seen_at,
@@ -383,7 +390,7 @@ pub async fn enroll_peer(
                 StatusCode::OK,
                 Json(json!({
                     "device_id": p.device_id,
-                    "action_ids": p.action_ids,
+                    "applet_ids": p.applet_ids,
                     "box_node_id": box_node_id,
                     "relay_url": relay_url,
                     "box_direct_addrs": box_direct_addrs,
@@ -399,7 +406,7 @@ pub async fn enroll_peer(
 /// map. No bearer — the peer authenticates by its allowlisted iroh key.
 pub(crate) struct EnrolledPeer {
     pub device_id: String,
-    pub action_ids: std::collections::HashMap<String, String>,
+    pub applet_ids: std::collections::HashMap<String, String>,
 }
 
 pub(crate) enum EnrollError {
@@ -493,13 +500,13 @@ pub(crate) async fn enroll_peer_core(
     // Allowlist the EndpointId + register it with atlas so the relay admits it,
     // THEN fan out the device's ingest actions (anchored on device_id).
     crate::relay::after_pairing_change(pool.clone());
-    let action_ids = crate::api::pair::assemble_action_fanout(pool, &device_id)
+    let applet_ids = crate::api::pair::assemble_applet_fanout(pool, &device_id)
         .await
         .unwrap_or_default();
 
     Ok(EnrolledPeer {
         device_id,
-        action_ids,
+        applet_ids,
     })
 }
 

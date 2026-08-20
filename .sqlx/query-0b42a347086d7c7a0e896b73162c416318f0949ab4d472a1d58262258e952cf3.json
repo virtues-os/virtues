@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)\n            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'recipient', m.occurred_at\n            FROM UNNEST($1::text[], $2::text[], $3::text[]) AS u(ref_id, person_id, msg_id)\n            JOIN data_communication_message m ON m.id = u.msg_id\n            ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0b42a347086d7c7a0e896b73162c416318f0949ab4d472a1d58262258e952cf3"
+}

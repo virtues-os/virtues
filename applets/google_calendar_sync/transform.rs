@@ -76,14 +76,19 @@ fn attendee_identifiers(event: &Value) -> Value {
 /// `calendar_id` is the calendar this batch came from (used for `calendar_name`).
 /// `access_role` is that calendar's role from the calendarList — the flag that
 /// says whether these are the owner's own plans or a calendar they subscribe to.
+///
+/// Returns the `source_stream_id` of every row upserted. The caller needs the
+/// keys, not just a count: on a full resync, the events Google did *not* send
+/// are the ones deleted while we weren't listening, and absence is only
+/// legible against the set that did arrive.
 pub async fn write_events(
     db: &PgPool,
     calendar_id: &str,
     access_role: Option<&str>,
     events: &[Value],
-) -> Result<usize> {
+) -> Result<Vec<String>> {
     let mut pending: Vec<EventRow> = Vec::new();
-    let mut written = 0;
+    let mut written: Vec<String> = Vec::new();
 
     for event in events {
         let google_id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
@@ -183,12 +188,12 @@ pub async fn write_events(
         ));
 
         if pending.len() >= BATCH_SIZE {
-            written += flush(db, &pending).await?;
+            written.extend(flush(db, &pending).await?);
             pending.clear();
         }
     }
     if !pending.is_empty() {
-        written += flush(db, &pending).await?;
+        written.extend(flush(db, &pending).await?);
     }
     Ok(written)
 }
@@ -219,9 +224,9 @@ fn parse_event_times(event: &Value) -> Option<(DateTime<Utc>, DateTime<Utc>, boo
     None
 }
 
-async fn flush(db: &PgPool, records: &[EventRow]) -> Result<usize> {
+async fn flush(db: &PgPool, records: &[EventRow]) -> Result<Vec<String>> {
     if records.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
     // UPSERT, not DO NOTHING. A calendar event is mutable by nature — it gets
     // renamed, rescheduled, and cancelled after we first see it — and the sync
@@ -236,8 +241,8 @@ async fn flush(db: &PgPool, records: &[EventRow]) -> Result<usize> {
             "description",
             "calendar_name",
             "location_name",
-            "start_time",
-            "end_time",
+            "started_at",
+            "ended_at",
             "is_all_day",
             "external_id",
             "external_url",
@@ -257,8 +262,8 @@ async fn flush(db: &PgPool, records: &[EventRow]) -> Result<usize> {
             "title",
             "description",
             "location_name",
-            "start_time",
-            "end_time",
+            "started_at",
+            "ended_at",
             "is_all_day",
             "external_url",
             "metadata",
@@ -303,6 +308,17 @@ async fn flush(db: &PgPool, records: &[EventRow]) -> Result<usize> {
             .bind(&r.16)
             .bind(&r.17);
     }
-    // The upsert builder appends RETURNING, so drain the rows.
-    Ok(q.fetch_all(db).await?.len())
+    // The upsert builder appends RETURNING, so drain the rows. This is
+    // ON CONFLICT DO UPDATE, so every record sent is written — the returned
+    // count is a sanity check, not a filter, and the keys are what the caller
+    // needs (they mark these events as "still on the calendar").
+    let returned = q.fetch_all(db).await?.len();
+    if returned != records.len() {
+        tracing::warn!(
+            sent = records.len(),
+            returned,
+            "calendar upsert returned fewer rows than sent"
+        );
+    }
+    Ok(records.iter().map(|r| r.10.clone()).collect())
 }

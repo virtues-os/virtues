@@ -13,6 +13,10 @@ display_name = "iPhone"
 icon = "ri:smartphone-line"
 description = "Pair an iPhone to ingest HealthKit, Location, EventKit, FinanceKit, Contacts, and Microphone streams."
 auth = { kind = "self_issued_bearer" }
+# Read-the-code pointer, not an install path: the app arrives through the App
+# Store and updates itself. See docs/sources-packages-plan.md P1.
+repo = "https://github.com/virtues-os/virtues"
+repo_ref = "apps/web/src-tauri"
 
 [[source]]
 id = "mac"
@@ -20,6 +24,10 @@ display_name = "Mac"
 icon = "ri:macbook-line"
 description = "Pair a Mac to ingest app usage, browser activity, and iMessage history."
 auth = { kind = "self_issued_bearer" }
+# The collector daemon that reads this Mac. Same caveat as iOS — it ships as a
+# signed binary and updates itself; this is so you can read what it does.
+repo = "https://github.com/virtues-os/virtues"
+repo_ref = "apps/mac-source"
 
 [[source]]
 id = "google"
@@ -48,6 +56,15 @@ display_name = "Plaid"
 icon = "ri:bank-card-line"
 description = "Connect bank accounts via Plaid Hosted Link to sync transactions, balances, investments, and liabilities."
 auth = { kind = "via_proxy", start_path = "/plaid/start" }
+
+# PAT, not OAuth: the GitHub OAuth proxy app is dead, and a fine-grained token
+# with read-only scopes is the better fit for a personal appliance anyway.
+[[source]]
+id = "github"
+display_name = "GitHub"
+icon = "ri:github-fill"
+description = "Sync your starred repositories as bookmarks. Uses a personal access token (read-only)."
+auth = { kind = "api_key", fields = ["token"] }
 
 # One-time import (NOT a living/cron'd source): the user uploads an export file
 # which is parsed box-side and ingested once. Modeled as a source so it gets a

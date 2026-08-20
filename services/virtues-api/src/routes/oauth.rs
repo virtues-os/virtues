@@ -131,6 +131,28 @@ fn decode_state(s: &str) -> Option<(String, String)> {
 }
 
 /// Open-redirect guard (port of url-validator.ts).
+///
+/// This is the only control deciding where an `exchange_token` gets delivered,
+/// and `/exchange/{token}` has no auth — whoever receives that redirect can
+/// trade it for the user's provider tokens. So the guard is load-bearing.
+///
+/// It matches on the *shape* of an address rather than on the identity of the
+/// box that started the flow, which is a weaker thing than it looks: the box
+/// signs `state` with a key the proxy doesn't have, so the proxy cannot bind a
+/// return_url to whoever asked for it. The durable fix is a session row keyed to
+/// an authenticated box (the shape `plaid_link_session` already has, for a
+/// different reason). Until then this list is what we have — so it should be
+/// exactly as wide as the deployments we actually ship, and no wider.
+///
+/// Private IPv4/IPv6 is in the list because the box hands those out itself:
+/// `qr_pair_url` puts the raw LAN IP in the onboarding QR on purpose (phones
+/// fumble mDNS), and `virtues link` prints it as the `.local` fallback. Without
+/// this, every OAuth connect from a phone that scanned the QR fails with a 400
+/// raised on a host the box operator cannot see.
+///
+/// Public addresses stay rejected, which is what keeps an attacker's own server
+/// out. Note the redirect is issued to the *browser* — the proxy never dials a
+/// private address itself, so widening this opens no SSRF surface.
 fn is_valid_return_url(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
@@ -138,11 +160,53 @@ fn is_valid_return_url(url: &str) -> bool {
     let Some(host) = parsed.host_str() else {
         return false;
     };
+
+    // An IP literal is never a domain, so test it first. `host_str` brackets
+    // IPv6; strip them before parsing. Userinfo tricks (`http://192.168.1.1@evil
+    // .com`) never reach here as an IP — the parser already resolved the host to
+    // `evil.com`, which then falls through to the domain arm and is rejected.
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(v4) = bare.parse::<std::net::Ipv4Addr>() {
+        // RFC 1918 (10/8, 172.16/12, 192.168/16) plus loopback.
+        return v4.is_private() || v4.is_loopback();
+    }
+    if let Ok(v6) = bare.parse::<std::net::Ipv6Addr>() {
+        return is_private_v6(&v6);
+    }
+
     host == "localhost"
-        || host == "127.0.0.1"
         || host.ends_with(".virtues.com")
         || host.ends_with(".local")
         || host.ends_with(".localhost")
+}
+
+/// IPv6 counterpart to `Ipv4Addr::is_private`: unique-local (`fc00::/7`) and
+/// link-local unicast (`fe80::/10`), plus loopback. Hand-rolled because
+/// `is_unique_local` / `is_unicast_link_local` are still unstable in std.
+fn is_private_v6(ip: &std::net::Ipv6Addr) -> bool {
+    let first = ip.segments()[0];
+    ip.is_loopback() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+}
+
+/// Whether this return_url is reachable only from the user's own network — an
+/// mDNS name or a private address. Drives the "continue on your home network"
+/// interstitial in `redirect_back`.
+///
+/// Loopback is deliberately excluded: `localhost` always resolves, so a box
+/// serving its own browser needs the seamless 302, not a page telling it to go
+/// somewhere it already is.
+fn is_lan_only_host(u: &reqwest::Url) -> bool {
+    let Some(host) = u.host_str() else {
+        return false;
+    };
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(v4) = bare.parse::<std::net::Ipv4Addr>() {
+        return v4.is_private();
+    }
+    if let Ok(v6) = bare.parse::<std::net::Ipv6Addr>() {
+        return !v6.is_loopback() && is_private_v6(&v6);
+    }
+    host.ends_with(".local")
 }
 
 fn err(status: StatusCode, msg: &str) -> axum::response::Response {
@@ -161,19 +225,19 @@ fn redirect_back(return_url: &str, rust_state: &str, key: &str, val: &str) -> ax
         .append_pair(key, val);
     let target = u.as_str().to_string();
 
-    // For LAN-hosted boxes (`.local`), the final hop redirects the browser
-    // to a hostname that only resolves on the user's home WiFi. If the user
-    // is currently on a different network we can't deliver them to the
-    // box — but we can stop dumping them into a blank-page DNS error.
-    // Show an explanatory "click to continue on your home network" page
-    // first; the click itself still fails off-LAN, but the failure mode is
-    // explicit instead of mysterious. For non-`.local` return URLs (dev /
-    // future remote-access shapes) we keep the seamless 302.
-    let is_local_host = u
-        .host_str()
-        .map(|h| h.eq_ignore_ascii_case("virtues.local") || h.ends_with(".local"))
-        .unwrap_or(false);
-    if is_local_host {
+    // For LAN-hosted boxes, the final hop redirects the browser to an address
+    // that only resolves — or only routes — on the user's home WiFi. If the
+    // user is currently on a different network we can't deliver them to the
+    // box, but we can stop dumping them into a blank page. Show an explanatory
+    // "click to continue on your home network" page first; the click itself
+    // still fails off-LAN, but the failure mode is explicit instead of
+    // mysterious. For everything else (dev, `*.virtues.com`, future
+    // remote-access shapes) we keep the seamless 302.
+    //
+    // A private IP needs this at least as much as `.local` does: off-network it
+    // hangs on a TCP timeout rather than failing fast on DNS, so the unexplained
+    // version of it is the slower and more confusing one.
+    if is_lan_only_host(&u) {
         lan_continue_page(&target).into_response()
     } else {
         Redirect::to(&target).into_response()
@@ -1124,6 +1188,76 @@ async fn json_ok(resp: reqwest::Result<reqwest::Response>) -> Result<Value, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_the_addresses_the_box_hands_out() {
+        // `qr_pair_url` / `virtues link` print these; a connect started from one
+        // must not die on the proxy.
+        for url in [
+            "http://192.168.1.40:7117/oauth/callback",
+            "http://10.0.0.7:7117/oauth/callback",
+            "http://172.16.5.2:7117/oauth/callback",
+            "http://172.31.255.254:7117/oauth/callback",
+            "http://virtues.local:7117/oauth/callback",
+            "http://localhost:7117/oauth/callback",
+            "http://127.0.0.1:7117/oauth/callback",
+            "https://app.virtues.com/oauth/callback",
+        ] {
+            assert!(is_valid_return_url(url), "should accept {url}");
+        }
+    }
+
+    #[test]
+    fn rejects_public_and_near_miss_addresses() {
+        for url in [
+            // An attacker's own server is the whole threat model.
+            "https://evil.com/oauth/callback",
+            "http://8.8.8.8/oauth/callback",
+            // 172.15 and 172.32 sit just outside RFC 1918's 172.16/12.
+            "http://172.15.0.1/oauth/callback",
+            "http://172.32.0.1/oauth/callback",
+            // 169.254/16 is link-local, not a LAN the box is served on.
+            "http://169.254.1.1/oauth/callback",
+            // Suffix matching is not substring matching.
+            "https://virtues.com.evil.com/oauth/callback",
+            "https://notvirtues.com/oauth/callback",
+            "not a url",
+        ] {
+            assert!(!is_valid_return_url(url), "should reject {url}");
+        }
+    }
+
+    #[test]
+    fn ip_encoding_tricks_do_not_bypass_the_guard() {
+        // Userinfo: the host is `evil.com`, not the private-looking prefix.
+        assert!(!is_valid_return_url("http://192.168.1.1@evil.com/oauth/callback"));
+        // Integer-encoded IPv4 normalizes to 192.168.1.1 — an alias for an
+        // address we deliberately allow, so accepting it is correct, not a hole.
+        assert!(is_valid_return_url("http://3232235777/oauth/callback"));
+        // ...and the same encoding of a public address stays rejected.
+        assert!(!is_valid_return_url("http://134744072/oauth/callback")); // 8.8.8.8
+    }
+
+    #[test]
+    fn lan_only_hosts_get_the_interstitial() {
+        let lan = |s: &str| is_lan_only_host(&reqwest::Url::parse(s).unwrap());
+        // Off-network these hang or fail to resolve; explain rather than 302.
+        assert!(lan("http://virtues.local:7117/oauth/callback"));
+        assert!(lan("http://192.168.1.40:7117/oauth/callback"));
+        assert!(lan("http://[fd00::1]:7117/oauth/callback"));
+        // Loopback and public hosts always work where the browser already is.
+        assert!(!lan("http://localhost:7117/oauth/callback"));
+        assert!(!lan("http://127.0.0.1:7117/oauth/callback"));
+        assert!(!lan("https://app.virtues.com/oauth/callback"));
+    }
+
+    #[test]
+    fn ipv6_private_ranges_only() {
+        assert!(is_valid_return_url("http://[::1]:7117/oauth/callback"));
+        assert!(is_valid_return_url("http://[fd00::1]:7117/oauth/callback")); // unique-local
+        assert!(is_valid_return_url("http://[fe80::1]:7117/oauth/callback")); // link-local
+        assert!(!is_valid_return_url("http://[2001:4860:4860::8888]/oauth/callback"));
+    }
 
     fn plaid_cfg() -> ProviderCfg {
         ProviderCfg {

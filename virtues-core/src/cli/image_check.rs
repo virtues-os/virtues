@@ -1,0 +1,674 @@
+//! `virtues image-check` — is this disk safe to clone?
+//!
+//! The gate between [`crate::cli::deprovision`] and `dd`, and the reason it is
+//! a separate command is that deprovision cannot be its own witness. It prints
+//! "✓ deprovisioned — safe to image", and until this existed that sentence was
+//! the entire assurance: nothing re-read the disk afterwards, and nothing
+//! stopped an operator imaging a box that had been *booted* since (a boot
+//! re-mints machine-id and SSH host keys, which then travel into every clone).
+//!
+//! ## What a survived secret costs
+//!
+//! Every finding here is invisible on the bench and unfixable in the field.
+//!
+//! * **The iroh secret is the box's identity.** Two units flashed from a master
+//!   that still had one are not similar boxes; they are the same box. A device
+//!   paired to one dials the other, and the relay cannot tell them apart.
+//! * **One encryption key decrypts every unit ever shipped.** It protects
+//!   stored credentials, and a master's key baked into an image is a single
+//!   key for the whole fleet.
+//! * **A shared machine-id** collides in DHCP and journald; **shared SSH host
+//!   keys** make every unit trivially impersonable.
+//! * **Saved wifi** ships the workshop's network password to customers — and
+//!   on Ubuntu it is stored by netplan, not by NetworkManager, which is where
+//!   this check used to look and find nothing.
+//!
+//! ## Read-only, on purpose
+//!
+//! This never fixes anything. A check that repairs what it finds is a check
+//! that can be run once, pass, and tell you nothing about the disk you are
+//! actually about to clone — and the fix (`deprovision`) is destructive enough
+//! that it must stay an explicit act. Findings print the command that resolves
+//! them.
+
+use std::path::Path;
+
+use super::ui;
+
+/// One thing that must not be true of a disk about to be cloned.
+struct Finding {
+    what: &'static str,
+    detail: String,
+    fix: &'static str,
+}
+
+pub async fn run() -> i32 {
+    ui::section("Image check");
+    println!();
+
+    let mut findings: Vec<Finding> = Vec::new();
+
+    // ── Per-unit secrets in the env file ────────────────────────────────────
+    let env_path = crate::cli::deprovision::env_file_path();
+    if let Ok(body) = std::fs::read_to_string(&env_path) {
+        for key in ["VIRTUES_ENCRYPTION_KEY"] {
+            if body
+                .lines()
+                .any(|l| l.trim_start().starts_with(&format!("{key}=")))
+            {
+                findings.push(Finding {
+                    what: "per-unit secret",
+                    detail: format!("{key} is still in {}", env_path.display()),
+                    fix: "sudo virtues deprovision",
+                });
+            }
+        }
+    }
+
+    // ── The first-boot marker ───────────────────────────────────────────────
+    // Its ABSENCE is the finding. The marker is what licenses
+    // `virtues-firstboot` to mint a fresh encryption key on each unit; without
+    // it, every clone boots with no key and no permission to make one.
+    let marker = crate::cli::deprovision::firstboot_marker_path();
+    if !marker.exists() {
+        findings.push(Finding {
+            what: "first boot not armed",
+            detail: format!("{} is missing — clones would boot with no encryption key and no licence to mint one", marker.display()),
+            fix: "sudo virtues deprovision",
+        });
+    }
+
+    // ── Host identity ───────────────────────────────────────────────────────
+    // A non-empty machine-id means this box has BOOTED since it was
+    // deprovisioned. That is the failure deprovision's own closing note warns
+    // about and cannot itself prevent, because it happens after it exits.
+    if let Ok(id) = std::fs::read_to_string("/etc/machine-id") {
+        if !id.trim().is_empty() {
+            findings.push(Finding {
+                what: "machine-id present",
+                detail: "this box has booted since it was deprovisioned — machine-id and SSH host keys have been re-minted and would be baked into the image".to_string(),
+                fix: "sudo virtues deprovision   (then power off WITHOUT booting again)",
+            });
+        }
+    }
+
+    if let Some(n) = count_prefixed("/etc/ssh", "ssh_host_") {
+        if n > 0 {
+            findings.push(Finding {
+                what: "SSH host keys",
+                detail: format!("{n} key file(s) in /etc/ssh — every clone would be impersonable as every other"),
+                fix: "sudo virtues deprovision",
+            });
+        }
+    }
+
+    // ── The operator's own login ────────────────────────────────────────────
+    // The key the bench operator SSH'd in with, authorized in root's and
+    // radxa's account, would clone to every customer and hand the bench a root
+    // login on every box. Host-key minting per unit does not touch this.
+    for kf in [
+        "/root/.ssh/authorized_keys",
+        "/home/radxa/.ssh/authorized_keys",
+    ] {
+        if std::path::Path::new(kf).exists() {
+            findings.push(Finding {
+                what: "authorized SSH key",
+                detail: format!("{kf} would ship — the operator's login on every customer box"),
+                fix: "sudo virtues deprovision",
+            });
+        }
+    }
+
+    // ── A baked-in staged release ───────────────────────────────────────────
+    // Walking BLE setup during a seal prefetches an update into a release slot;
+    // shipped, it activates on the customer's first update click, moving them
+    // onto whatever build was on the bench. The image must carry exactly the
+    // running release and no prepared one.
+    let layout = crate::cli::slots::SlotLayout::system();
+    if layout.prepared_slot().is_some() {
+        findings.push(Finding {
+            what: "staged release",
+            detail: "a prepared release is staged — it would activate on the customer's first update".to_string(),
+            fix: "sudo virtues deprovision",
+        });
+    }
+    if let Some(n) = extra_release_slots(&layout) {
+        if n > 0 {
+            findings.push(Finding {
+                what: "extra release slots",
+                detail: format!("{n} release slot(s) beyond the running one — workshop build history that would ship"),
+                fix: "sudo virtues deprovision",
+            });
+        }
+    }
+
+    // ── A pinned channel ────────────────────────────────────────────────────
+    // build-dragon pins `prerelease` before the setup walk so the prefetch
+    // declines; that pin must not ship, or the customer tracks staging instead
+    // of stable. Its absence is correct (absent = Stable).
+    if std::path::Path::new("/var/lib/virtues/channel").exists() {
+        findings.push(Finding {
+            what: "channel pinned",
+            detail: "/var/lib/virtues/channel would ship — the customer would track this channel instead of defaulting to stable".to_string(),
+            fix: "sudo virtues deprovision",
+        });
+    }
+
+    // ── The workshop's own network ──────────────────────────────────────────
+    if let Some(n) = count_prefixed("/etc/NetworkManager/system-connections", "") {
+        if n > 0 {
+            findings.push(Finding {
+                what: "saved wifi",
+                detail: format!("{n} saved connection(s) — the workshop's network password would ship to customers"),
+                fix: "sudo virtues deprovision",
+            });
+        }
+    }
+
+    // …and the place the credentials actually are, on Ubuntu. NetworkManager
+    // renders netplan here rather than owning the profile, so the directory
+    // checked above is empty on a box that is very much joined to a network,
+    // and this check passed a card holding a corporate 802.1X password in plain
+    // text. Same helper as `deprovision`, deliberately — a checker that looks
+    // somewhere its own remedy does not is worse than no checker, because it
+    // signs off.
+    let wifi_yaml = super::deprovision::netplan_wifi_files();
+    if !wifi_yaml.is_empty() {
+        findings.push(Finding {
+            what: "wifi credentials in netplan",
+            detail: format!(
+                "{} file(s) under /etc/netplan carry an SSID and its password (and 802.1X identity, on an enterprise network) — readable in plain text on every unit imaged from this card",
+                wifi_yaml.len()
+            ),
+            fix: "sudo virtues deprovision",
+        });
+    }
+
+    // ── The journal, and whether the vacuum actually took ───────────────────
+    // `deprovision` runs `journalctl --rotate --vacuum-time=1s` and discards
+    // the result — so if it fails (no journalctl on PATH, a sealed archive it
+    // will not drop) nothing anywhere notices, and the master's whole history
+    // ships. That is the netplan mistake again in miniature: a remedy no check
+    // confirms. This is the confirmation.
+    //
+    // 64 MB is chosen to sit far above a freshly-vacuumed journal (a few MB of
+    // the current boot) and far below what a built master accumulates — 403 MB
+    // on the lab board, reaching back nine months.
+    if let Some(bytes) = dir_size("/var/log/journal") {
+        const LIMIT: u64 = 64 * 1024 * 1024;
+        if bytes > LIMIT {
+            findings.push(Finding {
+                what: "journal not vacuumed",
+                detail: format!(
+                    "/var/log/journal holds {} MB — the master's own operational history (networks, addresses, hostnames, stack traces), shipped to every unit",
+                    bytes / 1024 / 1024
+                ),
+                fix: "sudo virtues deprovision   (or: journalctl --rotate --vacuum-time=1s)",
+            });
+        }
+    }
+
+    // ── Database dumps ──────────────────────────────────────────────────────
+    // Asked of `deprovision::backups_dir()` rather than a path spelled again
+    // here, so the check cannot drift away from the cleaner and keep passing.
+    //
+    // This is not an image leak — backups live on the data disk, the master is
+    // the card. It is a BOARD leak, and the board is the thing that gets handed
+    // to somebody. Reported by size, because "a dump is present" understates it
+    // and an operator deserves to know how much of the record is sitting there.
+    {
+        let dir = crate::cli::deprovision::backups_dir();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            let mut n = 0usize;
+            let mut bytes = 0u64;
+            for e in entries.flatten() {
+                n += 1;
+                bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+            if n > 0 {
+                findings.push(Finding {
+                    what: "database dumps",
+                    detail: format!(
+                        "{} holds {n} dump(s), {} KB — a past upgrade's copy of the whole database, which survives on the board when it changes hands",
+                        dir.display(),
+                        bytes / 1024
+                    ),
+                    fix: "sudo virtues deprovision",
+                });
+            }
+        }
+    }
+
+    // ── The card-side data dir — the one UNDER the mount ────────────────────
+    // On an appliance, /var/lib/virtues is the NVMe mountpoint, and everything
+    // else in this file audits the mounted view — the disk, which does NOT
+    // ship. What ships is the directory the mount shadows: whatever the
+    // installer wrote there before the disk was first claimed. The first
+    // master, cut 2026-08-19, carried a full install-time Postgres cluster
+    // (box identity included) and the unstripped env under there, and every
+    // audit passed, because nothing had ever looked. A plain bind mount of the
+    // parent exposes it. It is also the SEED a clone's fresh disk is copied
+    // from, so this checks both directions: nothing secret present, and the
+    // things a clone needs (marker, env, models) present.
+    audit_card_side(&mut findings);
+
+    // ── Somebody else's identity, which is not ours to delete ───────────────
+    // Tailscale was on the lab board so we could reach it at all. Its
+    // `tailscaled.state` is a node key: clones would all come up as the same
+    // tailnet node. `deprovision` deliberately does NOT remove it — logging a
+    // remote operator out mid-run would strand a half-deprovisioned box — so
+    // this is flagged for a human with a manual fix, which is also the honest
+    // treatment for a product we do not own.
+    if Path::new("/var/lib/tailscale/tailscaled.state").exists() {
+        findings.push(Finding {
+            what: "Tailscale node identity",
+            detail: "/var/lib/tailscale/tailscaled.state is this board's tailnet key — every clone would join as the same node".to_string(),
+            fix: "sudo tailscale logout && sudo rm -rf /var/lib/tailscale",
+        });
+    }
+
+    // ── A leftover pre-move copy of the cluster ─────────────────────────────
+    // `relocate_postgres_to_data_dir` keeps the original as a rollback and
+    // tells the operator to remove it. On a box that is a rollback; inside an
+    // image it is the master's whole database, shipped to every customer.
+    if Path::new(PG_PRE_MOVE).exists() {
+        findings.push(Finding {
+            what: "pre-move Postgres copy",
+            detail: format!("{PG_PRE_MOVE} is still on the boot disk — this is the cluster from before it was relocated, and it would ship inside the image"),
+            fix: "sudo virtues deprovision   (or: rm -rf /var/lib/postgresql.pre-move)",
+        });
+    }
+
+    // ── The database ────────────────────────────────────────────────────────
+    // `box_secrets` holds the iroh secret. Checked by looking rather than by
+    // trusting that deprovision ran: this is the single most expensive thing
+    // to get wrong, and looking again is the whole point of a separate command.
+    //
+    // Two ways to pass, and the first is the stronger one. On a relocated
+    // appliance, deprovision removes the CLUSTER, not just the database — so
+    // there is no server left to ask, and "Postgres is unreachable" is the
+    // expected, correct end state rather than a failure to check. Asking first
+    // whether the cluster exists is what tells those two apart.
+    match cluster_state() {
+        ClusterState::Absent => {
+            ui::ok("no Postgres cluster on this disk — nothing to leak");
+        }
+        ClusterState::Present => match applet_schemas_present().await {
+            Some(n) if n > 0 => findings.push(Finding {
+                what: "applet schemas",
+                detail: format!("{n} `applet_*` schema(s) still in the database — an authored applet's DATA, which a wipe scoped to `public` does not touch"),
+                fix: "sudo virtues deprovision",
+            }),
+            _ => {}
+        },
+    }
+    match cluster_state() {
+        ClusterState::Absent => {}
+        ClusterState::Present => match database_is_present().await {
+            Some(true) => findings.push(Finding {
+                what: "database still exists",
+                detail: "the `virtues` database is present — box_secrets holds the iroh secret, which IS this box's network identity. Clones would all be the same box.".to_string(),
+                fix: "sudo virtues deprovision",
+            }),
+            Some(false) => {}
+            // A cluster exists but will not answer. Unlike the Absent case
+            // above, this genuinely is "I could not check the most important
+            // thing", and that must never render as a tick.
+            None => findings.push(Finding {
+                what: "database unreadable",
+                detail: "a Postgres cluster exists here but would not answer — this check cannot pass without knowing whether the `virtues` database is in it".to_string(),
+                fix: "start postgresql, then re-run",
+            }),
+        },
+    }
+
+    // ── Chat-authored applets ───────────────────────────────────────────────
+    // The owner's own writing, and the finding that prompted this check to
+    // exist at all: `reset` wiped only the `public` schema, so applet DATA
+    // survived a deprovision, and nothing ever removed their CODE from the
+    // state root. Three of them were sitting on the box that would have been
+    // the first master — a calorie diary, a weekly planner, a readings log.
+    //
+    // Checked here as well as fixed there, because a cleaner nobody audits is
+    // how it silently stops working: someone adds a fourth place applets can
+    // live, and only this notices.
+    if let Some(n) = count_prefixed(
+        &crate::cli::deprovision::authored_applets_dir().display().to_string(),
+        "",
+    ) {
+        if n > 0 {
+            findings.push(Finding {
+                what: "authored applets",
+                detail: format!("{n} chat-authored applet(s) still in the state root — this is the owner's own writing, and it would be cloned onto every unit"),
+                fix: "sudo virtues deprovision",
+            });
+        }
+    }
+
+    // ── The lake ────────────────────────────────────────────────────────────
+    let lake = crate::cli::deprovision::env_file_path()
+        .parent()
+        .unwrap_or(Path::new("/var/lib/virtues"))
+        .join("lake");
+    if let Some(n) = count_prefixed(&lake.display().to_string(), "") {
+        if n > 0 {
+            findings.push(Finding {
+                what: "data lake not empty",
+                detail: format!("{n} entr(y/ies) under {}", lake.display()),
+                fix: "sudo virtues deprovision",
+            });
+        }
+    }
+
+    println!();
+    if findings.is_empty() {
+        ui::ok("No per-unit identity found. This disk is safe to image.");
+        println!();
+        println!("  Power off WITHOUT booting again — a boot re-mints machine-id and");
+        println!("  host keys, and this check would then fail:");
+        println!();
+        println!("    sudo poweroff");
+        println!();
+        return 0;
+    }
+
+    for f in &findings {
+        ui::err(&format!("{}: {}", f.what, f.detail));
+        println!("      fix: {}", f.fix);
+    }
+    println!();
+    ui::err(&format!(
+        "{} finding(s) — DO NOT image this disk.",
+        findings.len()
+    ));
+    println!();
+    1
+}
+
+/// The pre-move copy `relocate_postgres_to_data_dir` leaves behind. Defined by
+/// `deprovision`, which removes it, so the checker cannot drift to a different
+/// path than the remedy — the netplan failure in one line.
+use super::deprovision::PG_PRE_MOVE;
+
+enum ClusterState {
+    /// A cluster directory with a `PG_VERSION` in it.
+    Present,
+    /// Nothing to ask, and on a deprovisioned appliance that is the goal.
+    Absent,
+}
+
+/// Is there a Postgres cluster on this disk at all?
+///
+/// Looks for `PG_VERSION`, the file `initdb` writes and every Postgres tool
+/// treats as "a cluster lives here" — rather than for the directory, which
+/// exists as an empty shell after a `remove_dir_all` race or a fresh `mkdir`.
+///
+/// Covers both layouts: a relocated appliance (`/var/lib/postgresql` is a
+/// symlink into the data dir) and a DIY box (it is a real directory), because
+/// the path resolves the same way from here either way.
+fn cluster_state() -> ClusterState {
+    cluster_state_of(Path::new(crate::cli::deprovision::PG_LINK))
+}
+
+fn cluster_state_of(root: &Path) -> ClusterState {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        // Missing, or a symlink into a data dir that is not mounted. Both mean
+        // no cluster is reachable on this disk.
+        return ClusterState::Absent;
+    };
+    for e in entries.flatten() {
+        // `<root>/<major>/<cluster>/PG_VERSION`, e.g. `18/main/PG_VERSION`.
+        if let Ok(inner) = std::fs::read_dir(e.path()) {
+            for c in inner.flatten() {
+                if c.path().join("PG_VERSION").exists() {
+                    return ClusterState::Present;
+                }
+            }
+        }
+    }
+    ClusterState::Absent
+}
+
+/// How many `applet_*` schemas are left?
+///
+/// `None` when Postgres cannot be asked, which the caller already treats as its
+/// own finding via the database check — no need to double-report it.
+async fn applet_schemas_present() -> Option<i64> {
+    let out = std::process::Command::new("sudo")
+        .args([
+            "-u",
+            "postgres",
+            "psql",
+            "-d",
+            "virtues",
+            "-tAc",
+            // Underscore escaped: unescaped it is a single-character wildcard.
+            r"SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'applet\_%'",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Does the `virtues` database exist?
+///
+/// `None` means we could not find out, which this command treats as a finding
+/// rather than a pass.
+async fn database_is_present() -> Option<bool> {
+    let out = std::process::Command::new("sudo")
+        .args([
+            "-u",
+            "postgres",
+            "psql",
+            "-tAc",
+            "SELECT 1 FROM pg_database WHERE datname='virtues'",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim() == "1")
+}
+
+/// Total bytes under `dir`, recursively. `None` if absent — a box with no
+/// persistent journal (log2ram, or `Storage=volatile`) has nothing to ship.
+///
+/// Walks by hand rather than shelling out to `du`: this runs on a box about to
+/// be imaged, and a check that depends on a coreutils binary being present is
+/// a check that silently passes when it is not.
+fn dir_size(dir: &str) -> Option<u64> {
+    fn walk(path: &Path, total: &mut u64) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            match entry.metadata() {
+                // Symlinks are not followed — `metadata()` on the DirEntry does
+                // follow them, so a link into the data disk would be counted as
+                // journal. `symlink_metadata` reads the link itself.
+                Ok(_) => match std::fs::symlink_metadata(entry.path()) {
+                    Ok(m) if m.is_dir() => walk(&entry.path(), total),
+                    Ok(m) if m.is_file() => *total += m.len(),
+                    _ => {}
+                },
+                Err(_) => {}
+            }
+        }
+    }
+    if !Path::new(dir).exists() {
+        return None;
+    }
+    let mut total = 0u64;
+    walk(Path::new(dir), &mut total);
+    Some(total)
+}
+
+/// How many entries in `dir` start with `prefix`? `None` if the directory is
+/// absent — which is a pass, not an error: not every box has sshd.
+fn count_prefixed(dir: &str, prefix: &str) -> Option<usize> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    Some(
+        entries
+            .flatten()
+            .filter(|e| {
+                prefix.is_empty() || e.file_name().to_string_lossy().starts_with(prefix)
+            })
+            .count(),
+    )
+}
+
+/// How many release slots exist beyond the one `current` points at. `None`
+/// when there is no releases dir at all (a box that predates the slot layout).
+fn extra_release_slots(layout: &crate::cli::slots::SlotLayout) -> Option<usize> {
+    let keep = layout.current_slot();
+    let entries = std::fs::read_dir(layout.releases_dir()).ok()?;
+    Some(
+        entries
+            .flatten()
+            .filter(|e| keep.as_deref() != Some(e.path().as_path()))
+            .count(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("imgchk-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_deprovisioned_appliance_has_no_cluster() {
+        // Deprovision removes the whole cluster on a relocated box, so there is
+        // nothing to ask — and that must read as a PASS, not as "Postgres is
+        // unreachable". Getting this backwards would fail the gate on every
+        // correctly prepared image.
+        let d = tmp("empty");
+        assert!(matches!(cluster_state_of(&d), ClusterState::Absent));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_symlink_into_an_unmounted_data_dir_is_absent() {
+        // The state a freshly imaged unit is in before firstboot claims its
+        // disk: the link exists, the target does not.
+        let d = tmp("dangling");
+        let link = d.join("postgresql");
+        std::os::unix::fs::symlink(d.join("nowhere"), &link).unwrap();
+        assert!(matches!(cluster_state_of(&link), ClusterState::Absent));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_empty_version_directory_is_not_a_cluster() {
+        // `PG_VERSION` is the file initdb writes and every Postgres tool keys
+        // on. Testing for the DIRECTORY instead would call a bare `mkdir -p
+        // 18/main` — which is exactly what firstboot does moments before
+        // initdb runs — a cluster, and then demand an answer from a server
+        // that was never going to start.
+        let d = tmp("shell");
+        std::fs::create_dir_all(d.join("18/main")).unwrap();
+        assert!(matches!(cluster_state_of(&d), ClusterState::Absent));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_real_cluster_is_present() {
+        let d = tmp("real");
+        std::fs::create_dir_all(d.join("18/main")).unwrap();
+        std::fs::write(d.join("18/main/PG_VERSION"), "18\n").unwrap();
+        assert!(matches!(cluster_state_of(&d), ClusterState::Present));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+/// See the call site. Best-effort on the bind mount: a box where the data dir
+/// is not a mountpoint has no shadowed directory and nothing to check.
+fn audit_card_side(findings: &mut Vec<Finding>) {
+    let data_dir = crate::cli::deprovision::backups_dir();
+    let data_dir = data_dir.parent().unwrap_or(Path::new("/var/lib/virtues"));
+    let mounted = std::process::Command::new("mountpoint")
+        .arg("-q")
+        .arg(data_dir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !mounted {
+        return;
+    }
+    let parent = data_dir.parent().unwrap_or(Path::new("/var/lib"));
+    let bind = Path::new("/run/virtues-imagecheck");
+    if std::fs::create_dir_all(bind).is_err() {
+        return;
+    }
+    let ok = std::process::Command::new("mount")
+        .args(["--bind"])
+        .arg(parent)
+        .arg(bind)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        findings.push(Finding {
+            what: "card-side data dir unreachable",
+            detail: "could not bind-mount to look under the data-disk mount — the directory that actually ships is unaudited".to_string(),
+            fix: "run as root; check `mount --bind /var/lib /run/virtues-imagecheck` by hand",
+        });
+        let _ = std::fs::remove_dir(bind);
+        return;
+    }
+    let card = bind.join(data_dir.file_name().unwrap_or(std::ffi::OsStr::new("virtues")));
+
+    if card.join("postgresql").exists() {
+        findings.push(Finding {
+            what: "card-side Postgres cluster",
+            detail: format!(
+                "{}/postgresql exists UNDER the data-disk mount — an install-time cluster (box identity included) baked into the image",
+                data_dir.display()
+            ),
+            fix: "sudo virtues deprovision   (wipes and reseeds the card side)",
+        });
+    }
+    match std::fs::read_to_string(card.join("virtues.env")) {
+        Ok(env) if env.contains("VIRTUES_ENCRYPTION_KEY=") => findings.push(Finding {
+            what: "card-side env carries the encryption key",
+            detail: format!(
+                "{}/virtues.env under the mount still holds VIRTUES_ENCRYPTION_KEY — shipped to every clone",
+                data_dir.display()
+            ),
+            fix: "sudo virtues deprovision",
+        }),
+        Ok(_) => {}
+        Err(_) => findings.push(Finding {
+            what: "card-side env missing",
+            detail: format!(
+                "no virtues.env under the data-disk mount — clones boot with no configuration at all (DATABASE_URL unset, service crash-loops)",
+                ),
+            fix: "sudo virtues deprovision   (reseeds env onto the card)",
+        }),
+    }
+    if !card.join(".needs-firstboot").exists() {
+        findings.push(Finding {
+            what: "card-side first boot not armed",
+            detail: "no .needs-firstboot under the mount — clones would claim a disk but never mint an encryption key".to_string(),
+            fix: "sudo virtues deprovision",
+        });
+    }
+    if !card.join("models").join("qnn").exists() {
+        findings.push(Finding {
+            what: "card-side models missing",
+            detail: "no models/qnn under the mount — clones boot with no NPU models and semantic search dead".to_string(),
+            fix: "sudo virtues deprovision   (reseeds models onto the card)",
+        });
+    }
+    let _ = std::process::Command::new("umount").arg(bind).status();
+    let _ = std::fs::remove_dir(bind);
+}

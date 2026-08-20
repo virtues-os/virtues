@@ -1,9 +1,11 @@
 name = "Notion Pages"
-description = "Sync pages and databases from a connected Notion workspace."
+description = "Keeps your Notion pages and databases here."
 owner = "system"
-runtime = "function"
 command = ["notion_pages_sync"]
 triggers = ["cron", "manual"]
-default_cron = "0 */30 * * * *"
+schedule = "0 */30 * * * *"
 per_credential = true
 source = { id = "notion" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["content_document"]

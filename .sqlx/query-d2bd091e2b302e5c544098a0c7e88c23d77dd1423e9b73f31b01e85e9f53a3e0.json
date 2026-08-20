@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH handle_owner AS (\n                SELECT h.handle,\n                       min(p.id)             AS person_id,\n                       min(p.name) AS name\n                FROM wiki_people p\n                CROSS JOIN LATERAL jsonb_array_elements_text(p.handles) AS h(handle)\n                GROUP BY h.handle\n                HAVING count(DISTINCT p.id) = 1\n            ),\n            -- The counterparty of each 1:1 thread: the single distinct known person\n            -- among its inbound handles. `HAVING count(DISTINCT …) = 1` drops any\n            -- thread whose inbound side resolves to two different people (bad contact\n            -- data) — guessing the recipient is worse than leaving it unresolved.\n            thread_party AS (\n                SELECT m.thread_id,\n                       min(o.person_id)      AS person_id,\n                       min(o.name) AS name\n                FROM data_communication_message m\n                JOIN handle_owner o ON o.handle = m.from_handle\n                WHERE m.from_handle <> ''\n                  AND m.is_group_message = FALSE\n                  AND m.thread_id IS NOT NULL\n                GROUP BY m.thread_id\n                HAVING count(DISTINCT o.person_id) = 1\n            )\n            SELECT m.id             AS \"msg_id!\",\n                   tp.person_id     AS \"person_id!\",\n                   tp.name AS \"name!\"\n            FROM data_communication_message m\n            JOIN thread_party tp ON tp.thread_id = m.thread_id\n            LEFT JOIN wiki_refs r\n                   ON r.source_table = 'data_communication_message'\n                  AND r.source_id = m.id\n                  AND r.role = 'recipient'\n            WHERE (m.metadata->>'is_from_me')::boolean IS TRUE\n              AND r.id IS NULL\n            LIMIT $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "msg_id!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "person_id!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "name!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "d2bd091e2b302e5c544098a0c7e88c23d77dd1423e9b73f31b01e85e9f53a3e0"
+}

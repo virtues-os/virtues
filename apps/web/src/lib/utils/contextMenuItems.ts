@@ -7,6 +7,7 @@
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { notebookStore } from '$lib/stores/notebook.svelte';
+import { pinMenuItem } from '$lib/pins/pinAction';
 import { promptText } from '$lib/stores/dialog.svelte';
 import { toast } from 'svelte-sonner';
 
@@ -86,6 +87,26 @@ export function getNotebookMenuItems(
 	name?: string | null,
 ): ContextMenuItem[] {
 	return getAddToNotebookMenuItems(url, name);
+}
+
+/**
+ * The two things you can do with anything that has a url: file it, or keep it.
+ *
+ * "Add to notebook" is retrieval scope; "Add to desk" is navigation. They are
+ * different verbs on the same object and they travel together, so every
+ * surface that lists routable things can offer both with one call instead of
+ * assembling the pair by hand — which is how the tab bar ended up with the
+ * notebook submenu and no pin for months.
+ */
+export function getKeepMenuItems(target: {
+	url: string;
+	label?: string | null;
+	icon?: string | null;
+}): ContextMenuItem[] {
+	return [
+		...getNotebookMenuItems(target.url, target.label),
+		pinMenuItem(target),
+	];
 }
 
 /**

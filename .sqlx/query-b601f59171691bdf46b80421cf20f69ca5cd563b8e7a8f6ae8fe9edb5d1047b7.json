@@ -1,0 +1,55 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO wiki_articles (id, subject_type, subject_id, page_id, last_written_at)\n        VALUES ($1, $2, $3, $4, now())\n        RETURNING id, subject_type, subject_id, page_id, auto_update, source_ref_count\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "subject_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "subject_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "page_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "auto_update",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "source_ref_count",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b601f59171691bdf46b80421cf20f69ca5cd563b8e7a8f6ae8fe9edb5d1047b7"
+}

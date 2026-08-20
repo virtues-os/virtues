@@ -5,32 +5,14 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
-	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
+	import { getKeepMenuItems } from "$lib/utils/contextMenuItems";
 	import { confirmAction } from "$lib/stores/dialog.svelte";
-	import { Page, Button } from "$lib";
+	import { Page } from "$lib";
 	import { onMount } from "svelte";
-	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
-
-	// Published to the pane toolbar rather than rendered beside the title, so
-	// every view's actions sit in the same place. An $effect rather than
-	// onMount: `creating` changes while the tab is open, and the toolbar has to
-	// see it — a one-shot registration would freeze the disabled state.
-	$effect(() =>
-		paneActions.set(tab.id, [
-			{
-				id: "page.new",
-				label: "New page",
-				icon: "ri:add-line",
-				primary: true,
-				disabled: creating,
-				run: createNewPage,
-			},
-		]),
-	);
 
 	let creating = $state(false);
 
@@ -101,7 +83,11 @@
 					});
 				},
 			},
-			...getNotebookMenuItems(`/page/${page.id}`),
+			...getKeepMenuItems({
+				url: `/page/${page.id}`,
+				label: page.title,
+				icon: page.icon,
+			}),
 			{
 				id: "delete",
 				label: "Delete",
@@ -146,6 +132,12 @@
 	description={`${pages.length} page${pages.length !== 1 ? "s" : ""}`}
 	maxWidth="wide"
 >
+	{#snippet actions()}
+		<button class="new-btn" onclick={createNewPage} disabled={creating}>
+			<Icon icon="ri:add-line" width="16" /> New page
+		</button>
+	{/snippet}
+
 	<UniversalDataGrid
 		items={pages}
 		{columns}
@@ -189,14 +181,18 @@
 		{#snippet card(page: PageSummary)}
 			{@const tags = parseTags(page.tags)}
 			<div class="card-content">
-				<div
-					class="card-cover"
-					style={page.cover_url ? `background-image: url(${page.cover_url})` : ""}
-				>
-					{#if !page.cover_url}
-						<Icon icon={getPageIcon(page)} width="32" />
-					{/if}
-				</div>
+				<!-- Only pages that have a cover get a cover. The empty state used
+				     to reserve the same 16:9 block and fill it with the page's
+				     icon — the icon that is already on the title line right below
+				     it — so most of a card was a placeholder for something that
+				     wasn't there. On a phone that was ~90px of the 142px card,
+				     and a five-page list scrolled like fifty. -->
+				{#if page.cover_url}
+					<div
+						class="card-cover"
+						style={`background-image: url(${page.cover_url})`}
+					></div>
+				{/if}
 				<div class="card-body">
 					<div class="card-title-row">
 						<Icon icon={getPageIcon(page)} width="16" />
@@ -217,6 +213,15 @@
 </Page>
 
 <style>
+	.new-btn {
+		display: inline-flex; align-items: center; gap: 5px;
+		padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 8px;
+		background: var(--color-surface-elevated); color: var(--color-foreground);
+		font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
+	}
+	.new-btn:hover { background: var(--color-surface); }
+	.new-btn:disabled { opacity: 0.5; cursor: default; }
+
 	.col-title {
 		font-weight: 500;
 		color: var(--color-foreground);
@@ -281,16 +286,14 @@
 		text-align: left;
 		width: 100%;
 	}
+	/* Rendered only when there is an image to show, so the centering that used
+	   to hold the placeholder icon is gone with it. */
 	.card-cover {
 		aspect-ratio: 16 / 9;
 		background-size: cover;
 		background-position: center;
 		background-color: var(--color-surface-elevated);
 		border-radius: 6px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: var(--color-foreground-subtle);
 	}
 	.card-body {
 		display: flex;

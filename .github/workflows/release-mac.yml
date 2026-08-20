@@ -45,8 +45,22 @@ jobs:
 
       # Resolve version + channel from the tag:
       #   • `mac-edge` (or dispatch "edge") → edge channel, prerelease, rolling;
-      #     version taken from the crate semver since the tag carries none.
+      #     version taken from tauri.conf.json since the tag carries none.
       #   • `mac-v0.1.0` → stable, prerelease:false, also updates `mac-latest`.
+      #
+      # That fallback used to read `virtues-core/Cargo.toml` — the BOX version —
+      # so the Mac app inherited a number belonging to a different product on a
+      # different release line. It broke twice over on 2026-08-17: the box reset
+      # to 0.1.0, which would have walked the app backwards from 1.0.21 (and an
+      # app version that goes backwards makes updaters stop seeing later builds
+      # as newer), and virtues-core stopped carrying a literal at all — it now
+      # inherits from the workspace, so the grep would have matched nothing and
+      # produced an empty version.
+      #
+      # tauri.conf.json is the app's own version and the one macOS actually
+      # reads out of the bundle. Parsed with jq rather than a regex over the
+      # file, because "the first line that looks like a version" is how the
+      # wrong field gets picked the day someone adds one above it.
       - name: Resolve version + channel
         id: version
         run: |
@@ -57,7 +71,11 @@ jobs:
           fi
           if [[ "$RAW" == "mac-edge" || "$RAW" == "edge" ]]; then
             IS_EDGE=true
-            VERSION="$(grep -m1 '^version = ' virtues-core/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+            VERSION="$(jq -r .version apps/web/src-tauri/tauri.conf.json)"
+            if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+              echo "::error::could not read .version from apps/web/src-tauri/tauri.conf.json"
+              exit 1
+            fi
             TAG="mac-edge"
           else
             IS_EDGE=false
@@ -68,6 +86,37 @@ jobs:
           echo "IS_EDGE=$IS_EDGE" >> "$GITHUB_OUTPUT"
           echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
           echo "channel: edge=$IS_EDGE  version=$VERSION  tag=$TAG"
+
+      # A version may only ever go UP, per channel. The updater compares semver,
+      # so publishing a manifest at or below what is already live either does
+      # nothing or — if an installed build sits between the two — offers users a
+      # DOWNGRADE that silently reverts fixes. That is not hypothetical: the
+      # tree sat at 1.0.15 while `mac-latest` served 1.0.20 from July, so every
+      # locally built app was told to "update" backwards into the old release.
+      #
+      # Nothing enforced monotonicity before, and care is not a mechanism.
+      - name: Version must exceed what is published
+        run: |
+          TAG="${{ steps.version.outputs.TAG }}"
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          CHANNEL_TAG="$([ "${{ steps.version.outputs.IS_EDGE }}" = "true" ] && echo mac-edge || echo mac-latest)"
+
+          URL="https://github.com/${{ github.repository }}/releases/download/$CHANNEL_TAG/latest.json"
+          LIVE="$(curl -fsSL "$URL" | jq -r .version 2>/dev/null || true)"
+
+          if [ -z "$LIVE" ] || [ "$LIVE" = "null" ]; then
+            echo "no published manifest on $CHANNEL_TAG yet — nothing to compare"
+            exit 0
+          fi
+
+          # sort -V puts the greater last; equal versions fail too.
+          HIGHEST="$(printf '%s\n%s\n' "$LIVE" "$VERSION" | sort -V | tail -1)"
+          if [ "$VERSION" = "$LIVE" ] || [ "$HIGHEST" != "$VERSION" ]; then
+            echo "::error::$TAG publishes $VERSION but $CHANNEL_TAG already serves $LIVE."
+            echo "::error::A release must be strictly greater. Bump the version and retag."
+            exit 1
+          fi
+          echo "✓ $VERSION > $LIVE on $CHANNEL_TAG"
 
       # Stamp the tag-derived version into tauri.conf.json so the bundler names
       # the DMG `Virtues_<VERSION>_universal.dmg` to match the tag. Without this

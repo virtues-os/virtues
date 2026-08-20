@@ -557,8 +557,10 @@ pub async fn set_notebook_item_role(
 }
 
 /// Entity ref-URL prefixes that can appear as a notebook member or inside a
-/// page's markdown. Kept in sync with the frontend's ref routes.
-const ENTITY_PREFIXES: [&str; 4] = ["/person/", "/place/", "/org/", "/thing/"];
+/// page's markdown. Kept in sync with the frontend's ref routes. (`/thing/`
+/// is gone: migration 0071 dropped wiki_things and swept every stored
+/// `/thing/` url — the stragglers here were what kept its ghost walking.)
+const ENTITY_PREFIXES: [&str; 3] = ["/person/", "/place/", "/org/"];
 
 /// Pull entity ref URLs out of markdown. Refs are stored inline as
 /// `[@Label](/person/pe_x)` — there is no link table — so this scans for the
@@ -660,10 +662,9 @@ pub async fn notebook_graph(pool: &PgPool, notebook_id: &str) -> Result<Notebook
     if !entity_ids.is_empty() {
         let rows: Vec<(String, String)> = sqlx::query_as(
             r#"
-            SELECT id, canonical_name AS name FROM wiki_people WHERE id = ANY($1)
+            SELECT id, name AS name FROM wiki_people WHERE id = ANY($1)
             UNION ALL SELECT id, name FROM wiki_places WHERE id = ANY($1)
-            UNION ALL SELECT id, canonical_name AS name FROM wiki_orgs WHERE id = ANY($1)
-            UNION ALL SELECT id, name FROM wiki_things WHERE id = ANY($1)
+            UNION ALL SELECT id, name AS name FROM wiki_orgs WHERE id = ANY($1)
             "#,
         )
         .bind(&entity_ids)

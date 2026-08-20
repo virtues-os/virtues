@@ -2,7 +2,7 @@
 //!
 //! Adapted from the deleted `core/src/sources/notion/pages/transform.rs`.
 //! Notion's `/v1/search` returns pages with `properties` (title is one), plus
-//! `created_time`, `last_edited_time`, `url`, `archived`, etc.
+//! `occurred_at`, `last_edited_time`, `url`, `archived`, etc.
 //!
 //! Body content fetching (block children) is deferred to a future iteration —
 //! this transform stores the page metadata only. Content can be lazily
@@ -23,7 +23,7 @@ type DocRow = (
     String,                    // document_type
     Option<String>,            // external_id (notion page id)
     Option<String>,            // external_url
-    Option<DateTime<Utc>>,     // created_time
+    Option<DateTime<Utc>>,     // occurred_at
     Option<DateTime<Utc>>,     // last_modified_time
     String,                    // source_stream_id
     Value,                     // metadata
@@ -48,8 +48,8 @@ pub async fn write_pages(db: &PgPool, pages: &[Value]) -> Result<usize> {
         let title = extract_title(page);
         let url = page.get("url").and_then(|v| v.as_str()).map(String::from);
 
-        let created_time = page
-            .get("created_time")
+        let occurred_at = page
+            .get("occurred_at")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<DateTime<Utc>>().ok());
         let last_modified_time = page
@@ -84,7 +84,7 @@ pub async fn write_pages(db: &PgPool, pages: &[Value]) -> Result<usize> {
             object_kind.to_string(),
             Some(notion_id.to_string()),
             url,
-            created_time,
+            occurred_at,
             last_modified_time,
             notion_id.to_string(),
             metadata,
@@ -134,7 +134,7 @@ async fn flush(db: &PgPool, records: &[DocRow]) -> Result<usize> {
             "document_type",
             "external_id",
             "external_url",
-            "created_time",
+            "occurred_at",
             "last_modified_time",
             "source_stream_id",
             "source_table",

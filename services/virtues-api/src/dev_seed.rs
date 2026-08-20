@@ -48,7 +48,7 @@ pub async fn seed_dev_account(pool: &PgPool) -> Result<()> {
         Some("dev-seed"),
     )
     .await?;
-    entitlement::register_device(pool, &key_hash, DEV_ACCOUNT_ID).await?;
+    entitlement::register_device(pool, &key_hash, DEV_ACCOUNT_ID, None).await?;
 
     tracing::warn!(
         "DEV SEED: funded account '{}' with ${} for api_key '{}' \

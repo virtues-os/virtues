@@ -1,0 +1,13 @@
+name = "Entity Articles"
+description = "Writes the article on each person, place, and organization in your life, and revises it as more accumulates."
+owner = "system"
+command = ["entity_article"]
+triggers = ["cron", "manual", "tool"]
+schedule = "0 30 * * * *"
+
+# Ships OFF. On a box with real history several hundred entities clear the gate
+# immediately, so the first thing this would do on upgrade is spend its way
+# through a backlog nobody asked for — writing about people the owner has never
+# opened. The schedule stays defined so turning it on is one switch, but the
+# first editions want reading before the cron is trusted to keep writing.
+default_enabled = false

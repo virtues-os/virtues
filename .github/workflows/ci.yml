@@ -8,12 +8,75 @@
 
 name: CI
 
+# Skips changes that cannot affect the build. A docs-only PR was costing a full
+# Rust compile plus a Postgres service on a paid runner, twice (once for the PR,
+# once when the merge landed on staging). Keep this list to things with no code
+# path — anything that even might be compiled or shipped must NOT be listed here.
+#
+# Safe because `staging` has no required status checks; if branch protection is
+# ever added, `paths-ignore` on `pull_request` means the check never reports and
+# such PRs can never merge. Use a skip-job that reports success instead.
+#
+# The two lists below are duplicated on purpose — GitHub Actions does not
+# support YAML anchors/aliases in workflow files. Keep them in sync.
 on:
   push:
     branches: [main, staging]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/images/**"
+      - LICENSE
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/images/**"
+      - LICENSE
 
 jobs:
+  # The frontend had NO CI at all until 2026-08-17. `pnpm check` and the airlock's
+  # router tests ran only on whichever laptop happened to run them, which meant
+  # the tests written for the most load-bearing file in the product could rot
+  # without anything noticing. Its own job rather than steps on `rust`: it shares
+  # nothing with that job, needs no Postgres, and finishes in a fraction of the
+  # time, so a type error in a Svelte file should not wait on a Rust build.
+  web:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+
+      # Versions pinned to match release-linux.yml — CI that passes on a
+      # different toolchain than the one that ships is CI about a different
+      # program.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      # The airlock's routing rules (apps/web/src-tauri/ui/). No dependencies —
+      # node's own test runner, reading `connect.html` and evaluating the marked
+      # region. Run BEFORE svelte-check: these are the rules that decide whether
+      # a box can be set up at all, and they take under a second.
+      - name: Airlock router tests
+        run: node --test "apps/web/src-tauri/ui/*.test.mjs"
+
+      # Errors fail; warnings do not. There are ~113 warnings today (mostly
+      # `@reference` at-rules and a11y advisories) and gating on them would mean
+      # this job is red on arrival and therefore ignored. Errors are the signal.
+      - name: svelte-check
+        working-directory: apps/web
+        run: pnpm check
+
   rust:
     runs-on: blacksmith-8vcpu-ubuntu-2204
     # A real Postgres for the #[sqlx::test] tests (action_templates,
@@ -50,6 +113,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci
+
+      # BEFORE the build, which is the whole point of it being its own step.
+      # These were installed further down, inside the step that sets up
+      # postgresql-client — so they arrived long after `cargo build` had
+      # already failed on them. `bluer` (the Improv/BLE service the appliance
+      # serves while unclaimed) pulls libdbus-sys, which is a pkg-config build
+      # script, so this is a hard prerequisite of compiling the box at all on
+      # Linux. Nothing caught it for weeks because BLE landed on `wave` and
+      # `wave` does not run CI.
+      - name: Install libdbus headers (bluer/BLE provisioning)
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
 
       - name: Build (debug — exercises the Linux cfg paths)
         run: cargo build -p virtues -p virtues-installer -p virtues-client -p virtues-iroh
@@ -96,7 +170,18 @@ jobs:
             https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
-          sudo apt-get install -y postgresql-client-18
+          # `git` is pinned here only to make the dependency explicit —
+          # `applet_git_import` shells out to it, and the box needs it for the
+          # same feature. The runner image already ships 2.52, so this is a
+          # no-op assertion rather than a fix.
+          #
+          # It was briefly mistaken FOR a fix: the test failed with "git init …
+          # failed to spawn: No such file or directory (os error 2)", which
+          # reads as a missing binary. `os error 2` on spawn also means the
+          # *working directory* does not exist, and that was the real cause —
+          # see the create_dir_all in applet_git_import.rs. Read the apt log
+          # before believing a package is missing.
+          sudo apt-get install -y postgresql-client-18 git
           # Installing the package is not enough: the runner already ships an
           # older postgresql-client, and /usr/bin/pg_dump keeps resolving to it.
           # Put the versioned bindir ahead of it for every later step.
@@ -129,9 +214,59 @@ jobs:
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT $role TO CURRENT_USER;"
           done
 
+      # Does `.sqlx/` still describe the real schema?
+      #
+      # The build above runs with SQLX_OFFLINE=true, so every `sqlx::query!` is
+      # validated against the recorded JSON in `.sqlx/` rather than against
+      # Postgres. That is the right default — it keeps the build and the release
+      # from needing a database — but it means the cache is the *only* thing
+      # asserting those queries are valid, and nothing was asserting the cache.
+      #
+      # The failure that shape allows is the worst kind this repo has:
+      # drop a column that `api/wiki.rs` selects, forget to regenerate, and the
+      # stale cache still says the column exists. `cargo check` passes. Clippy
+      # passes. CI is green. The release builds. Then `GET /api/wiki/people/:id`
+      # 500s on a real box, and the first person to find out is whoever is
+      # running it. Same shape as migration 52 and the pdfium 404: green here,
+      # broken there.
+      #
+      # `prepare --check` regenerates against the migrated service container and
+      # fails if the result differs from what is committed. It cannot be
+      # satisfied by discipline — that is the point. Fix is one command:
+      #   cargo sqlx prepare --workspace
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: sqlx-cli
+
+      - name: Verify the sqlx cache matches the schema
+        env:
+          SQLX_OFFLINE: 'false'
+        run: |
+          sqlx migrate run --source virtues-core/migrations
+          cargo sqlx prepare --check --workspace
+
+      # `--workspace`, not `-p virtues`. This used to test the one package, so
+      # virtues-registry, virtues-helpers, virtues-iroh and virtues-installer
+      # had their tests skipped entirely — a failing registry test sat on green
+      # staging until someone ran it by hand. A test that never runs is worse
+      # than no test: it reads as coverage.
+      #
       # api::code::tests::test_timeout needs the code-execution sandbox
       # runtime, which isn't provisioned on a bare runner — it's an
       # environment-dependent timing test, not a unit test. Everything else
-      # in --lib runs DB-free.
+      # runs DB-free or against the service Postgres above.
+      #
+      # NOTE: the Tauri mobile plugins and src-tauri are in the workspace
+      # `exclude` list, so `--workspace` still does not reach them. They are
+      # covered by the mobile build, not here.
       - name: Unit tests
-        run: cargo test -p virtues --lib -- --skip api::code::tests::test_timeout
+        run: cargo test --workspace -- --skip api::code::tests::test_timeout
+
+      # Audit the live models release against the installer's expected asset
+      # list (config.rs `models_release_assets`). Exists because libpdfium
+      # was wired into the install flow with no asset ever uploaded to
+      # models-1 — every real install then 404'd on its last step while CI
+      # stayed green. The test is #[ignore]d (network) so local `cargo test`
+      # stays offline; CI runs it by name here.
+      - name: Models-release asset audit
+        run: cargo test -p virtues-installer -- --ignored models_release_serves_every_expected_asset

@@ -1,6 +1,6 @@
 //! Just-in-time credential refresh.
 //!
-//! `ensure_fresh` is called from `action_runner::load_credentials` immediately
+//! `ensure_fresh` is called from `applet_runner::load_credentials` immediately
 //! before dispatching a subprocess. If the credential's access token has
 //! expired (or is within the 60s safety margin), it refreshes inline via the
 //! OAuth proxy and writes the new secrets back. The subprocess always sees a

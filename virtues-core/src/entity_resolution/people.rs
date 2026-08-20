@@ -108,7 +108,7 @@ const MESSAGE_BATCH: i64 = 5_000;
 ///
 /// An unrecognized email address at least carries a display name. A bare phone number
 /// carries nothing, so minting a person per unknown number would fill the graph with
-/// hundreds of ghosts called "+18334160379". They stay unresolved until a contact
+/// hundreds of ghosts called "+18005550199". They stay unresolved until a contact
 /// turns up — the honest state.
 async fn resolve_message_senders(db: &Database) -> Result<usize> {
     normalize_pending_handles(db).await?;
@@ -124,7 +124,7 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
             WITH handle_owner AS (
                 SELECT h.handle,
                        min(p.id)             AS person_id,
-                       min(p.canonical_name) AS canonical_name
+                       min(p.name) AS name
                 FROM wiki_people p
                 CROSS JOIN LATERAL jsonb_array_elements_text(p.handles) AS h(handle)
                 GROUP BY h.handle
@@ -132,10 +132,10 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
             )
             SELECT m.id            AS "msg_id!",
                    o.person_id     AS "person_id!",
-                   o.canonical_name AS "canonical_name!"
+                   o.name AS "name!"
             FROM data_communication_message m
             JOIN handle_owner o ON o.handle = m.from_handle
-            LEFT JOIN wiki_entity_refs r
+            LEFT JOIN wiki_refs r
                    ON r.source_table = 'data_communication_message'
                   AND r.source_id = m.id
                   AND r.role = 'sender'
@@ -155,7 +155,7 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
 
         let msg_ids: Vec<String> = rows.iter().map(|r| r.msg_id.clone()).collect();
         let person_ids: Vec<String> = rows.iter().map(|r| r.person_id.clone()).collect();
-        let names: Vec<String> = rows.iter().map(|r| r.canonical_name.clone()).collect();
+        let names: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
         let ref_ids: Vec<String> = rows
             .iter()
             .map(|r| ids::generate_id("eref", &[&r.msg_id, &r.person_id, "sender"]))
@@ -165,8 +165,8 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
         // everything else about the person who sent it.
         sqlx::query!(
             r#"
-            INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
-            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'sender', m.timestamp
+            INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'sender', m.occurred_at
             FROM UNNEST($1::text[], $2::text[], $3::text[]) AS u(ref_id, person_id, msg_id)
             JOIN data_communication_message m ON m.id = u.msg_id
             ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
@@ -209,8 +209,8 @@ async fn resolve_message_senders(db: &Database) -> Result<usize> {
 /// Link the messages *you* sent to the person you sent them to.
 ///
 /// This is the other half of a conversation. The sender pass (above) resolves every
-/// *inbound* message — "+16786463049" → Almu — but says nothing about your replies,
-/// and so "did we ever text Almu?" returned only her side: her three messages, none
+/// *inbound* message — "+15125550137" → Nick — but says nothing about your replies,
+/// and so "did we ever text Nick?" returned only their side: their three messages, none
 /// of yours. The reason is structural, not a bug in the join. A message you sent has
 /// `is_from_me = true`, which the transform records as `from_identifier = "me"` and
 /// `from_handle = ""` — because the chat.db `handle` names the *other* party even on
@@ -246,7 +246,7 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
             WITH handle_owner AS (
                 SELECT h.handle,
                        min(p.id)             AS person_id,
-                       min(p.canonical_name) AS canonical_name
+                       min(p.name) AS name
                 FROM wiki_people p
                 CROSS JOIN LATERAL jsonb_array_elements_text(p.handles) AS h(handle)
                 GROUP BY h.handle
@@ -259,7 +259,7 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
             thread_party AS (
                 SELECT m.thread_id,
                        min(o.person_id)      AS person_id,
-                       min(o.canonical_name) AS canonical_name
+                       min(o.name) AS name
                 FROM data_communication_message m
                 JOIN handle_owner o ON o.handle = m.from_handle
                 WHERE m.from_handle <> ''
@@ -270,10 +270,10 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
             )
             SELECT m.id             AS "msg_id!",
                    tp.person_id     AS "person_id!",
-                   tp.canonical_name AS "canonical_name!"
+                   tp.name AS "name!"
             FROM data_communication_message m
             JOIN thread_party tp ON tp.thread_id = m.thread_id
-            LEFT JOIN wiki_entity_refs r
+            LEFT JOIN wiki_refs r
                    ON r.source_table = 'data_communication_message'
                   AND r.source_id = m.id
                   AND r.role = 'recipient'
@@ -300,8 +300,8 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
 
         sqlx::query!(
             r#"
-            INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
-            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'recipient', m.timestamp
+            INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+            SELECT u.ref_id, 'person', u.person_id, 'data_communication_message', u.msg_id, 'recipient', m.occurred_at
             FROM UNNEST($1::text[], $2::text[], $3::text[]) AS u(ref_id, person_id, msg_id)
             JOIN data_communication_message m ON m.id = u.msg_id
             ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
@@ -315,7 +315,7 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
 
         // `from_name` is deliberately NOT filled here. It names who *sent* the
         // message — that is you — so writing the recipient's name onto your own row
-        // would render "Almu: <your reply>". The link lives in the ref; the plain
+        // would render "Nick: <your reply>". The link lives in the ref; the plain
         // column stays honest.
 
         resolved += batch;
@@ -438,7 +438,7 @@ async fn resolve_calendar_attendees(db: &Database, window: TimeWindow) -> Result
 
 /// Resolve people from email senders in time window
 ///
-/// Links from_email to person entity via wiki_entity_refs.
+/// Links from_email to person entity via wiki_refs.
 async fn resolve_email_senders(db: &Database, window: TimeWindow) -> Result<usize> {
     // Fetch emails without resolved from_person_id
     let emails = fetch_unresolved_emails(db, window).await?;
@@ -494,17 +494,17 @@ async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Ve
             e.from_email,
             e.from_name
         FROM data_communication_email e
-        WHERE e.timestamp >= $1
-          AND e.timestamp < $2
+        WHERE e.occurred_at >= $1
+          AND e.occurred_at < $2
           AND e.from_email IS NOT NULL
           AND e.from_email != ''
           AND NOT EXISTS (
-              SELECT 1 FROM wiki_entity_refs er
+              SELECT 1 FROM wiki_refs er
               WHERE er.source_table = 'data_communication_email'
                 AND er.source_id = e.id
                 AND er.role = 'sender'
           )
-        ORDER BY e.timestamp ASC
+        ORDER BY e.occurred_at ASC
         LIMIT 1000
         "#,
         window.start,
@@ -527,7 +527,7 @@ async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Ve
     Ok(emails)
 }
 
-/// Resolve email sender and link to person entity via wiki_entity_refs
+/// Resolve email sender and link to person entity via wiki_refs
 ///
 /// Returns true if a new person was created or linked.
 async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord) -> Result<bool> {
@@ -541,12 +541,12 @@ async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord
     )
     .await?;
 
-    // Link via wiki_entity_refs
+    // Link via wiki_refs
     let ref_id = ids::generate_id("eref", &[&email_record.id, &person_id, "sender"]);
     sqlx::query!(
         r#"
-        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
-        SELECT $1, 'person', $2, 'data_communication_email', $3, 'sender', timestamp
+        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+        SELECT $1, 'person', $2, 'data_communication_email', $3, 'sender', occurred_at
         FROM data_communication_email WHERE id = $3
         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
         "#,
@@ -561,7 +561,7 @@ async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord
         email_id = %email_record.id,
         from_email = %email_record.from_email,
         person_id = %person_id,
-        "Linked email sender to person via wiki_entity_refs"
+        "Linked email sender to person via wiki_refs"
     );
 
     Ok(true)
@@ -578,7 +578,7 @@ async fn resolve_or_create_person_with_name(
     // Check if person exists with this email
     let existing = sqlx::query!(
         r#"
-        SELECT id, canonical_name
+        SELECT id, name
         FROM wiki_people
         WHERE emails @> to_jsonb($1::text)
         LIMIT 1
@@ -593,7 +593,7 @@ async fn resolve_or_create_person_with_name(
 
         // Update canonical name if we have a better one (from email header vs extracted from email)
         if let Some(name) = display_name {
-            let current_name = row.canonical_name;
+            let current_name = row.name;
             // Only update if current name looks like it was extracted from email (no spaces, or matches email pattern)
             let name_trimmed = name.trim();
             if !name_trimmed.is_empty()
@@ -603,7 +603,7 @@ async fn resolve_or_create_person_with_name(
                 sqlx::query!(
                     r#"
                     UPDATE wiki_people
-                    SET canonical_name = $1,
+                    SET name = $1,
                         updated_at = now()
                     WHERE id = $2
                     "#,
@@ -626,7 +626,7 @@ async fn resolve_or_create_person_with_name(
     }
 
     // Create new person entity
-    let canonical_name = display_name
+    let name = display_name
         .filter(|n| !n.trim().is_empty())
         .map(|n| n.trim().to_string())
         .unwrap_or_else(|| extract_name_from_email(email));
@@ -639,14 +639,14 @@ async fn resolve_or_create_person_with_name(
         r#"
         INSERT INTO wiki_people (
             id,
-            canonical_name,
+            name,
             emails
         ) VALUES ($1, $2, $3)
         ON CONFLICT (id) DO NOTHING
         RETURNING id
         "#,
         person_id,
-        canonical_name,
+        name,
         emails_json,
     )
     .fetch_optional(db.pool())
@@ -655,7 +655,7 @@ async fn resolve_or_create_person_with_name(
     tracing::info!(
         email = %email,
         person_id = %person_id,
-        canonical_name = %canonical_name,
+        name = %name,
         source = "email_sender",
         "Created new person entity"
     );
@@ -678,8 +678,8 @@ async fn fetch_calendar_events(db: &Database, window: TimeWindow) -> Result<Vec<
             id,
             attendee_identifiers
         FROM data_calendar_event
-        WHERE start_time >= $1
-          AND start_time < $2
+        WHERE started_at >= $1
+          AND started_at < $2
           AND jsonb_array_length(attendee_identifiers) > 0
         "#,
         window.start,
@@ -703,7 +703,7 @@ async fn fetch_calendar_events(db: &Database, window: TimeWindow) -> Result<Vec<
     Ok(events)
 }
 
-/// Resolve all attendees for an event and link via wiki_entity_refs
+/// Resolve all attendees for an event and link via wiki_refs
 ///
 /// Returns the number of unique people resolved.
 async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) -> Result<usize> {
@@ -714,9 +714,9 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
     let mut unique_people = std::collections::HashSet::new();
     let event_id_str = event.id.to_string();
 
-    // Fetch event start_time for the wiki_entity_refs timestamp
+    // Fetch event start_time for the wiki_refs timestamp
     let timestamp: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT start_time FROM data_calendar_event WHERE id = $1",
+        "SELECT started_at FROM data_calendar_event WHERE id = $1",
     )
     .bind(&event_id_str)
     .fetch_optional(db.pool())
@@ -733,7 +733,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
                     let ref_id = ids::generate_id("eref", &[&event_id_str, &person_id, "attendee"]);
                     sqlx::query!(
                         r#"
-                        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+                        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
                         VALUES ($1, 'person', $2, 'data_calendar_event', $3, 'attendee', $4)
                         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
                         "#,
@@ -761,7 +761,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
         tracing::debug!(
             event_id = %event.id,
             people_count = unique_people.len(),
-            "Linked attendees to calendar event via wiki_entity_refs"
+            "Linked attendees to calendar event via wiki_refs"
         );
     }
 
@@ -796,7 +796,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<String> 
     }
 
     // Create new person entity
-    let canonical_name = extract_name_from_email(email);
+    let name = extract_name_from_email(email);
 
     let emails_json = serde_json::json!([email]);
 
@@ -806,7 +806,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<String> 
         r#"
         INSERT INTO wiki_people (
             id,
-            canonical_name,
+            name,
             emails
         ) VALUES (
             $1, $2, $3
@@ -814,7 +814,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<String> 
         RETURNING id
         "#,
         person_id,
-        canonical_name,
+        name,
         emails_json,
     )
     .fetch_one(db.pool())
@@ -825,7 +825,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<String> 
     tracing::info!(
         email = %email,
         person_id = %person_id_str,
-        canonical_name = %canonical_name,
+        name = %name,
         "Created new person entity"
     );
 
@@ -901,12 +901,12 @@ mod tests {
         // Namespaced so the seed can never collide with real rows and always cleans up.
         const P: &str = "test_recipient_pass";
         let person_id = format!("person_{P}");
-        let handle = "+16786463049";
+        let handle = "+15125550137";
         let thread = format!("iMessage;-;{handle};{P}");
 
         async fn cleanup(db: &Database, person_id: &str, thread: &str) {
             let _ = sqlx::query(
-                "DELETE FROM wiki_entity_refs r
+                "DELETE FROM wiki_refs r
                  USING data_communication_message m
                  WHERE r.source_table='data_communication_message'
                    AND r.source_id=m.id AND m.thread_id=$1",
@@ -938,7 +938,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO data_communication_message
                    (id, message_id, thread_id, channel, body, from_identifier,
-                    from_handle, is_group_message, timestamp, source_stream_id,
+                    from_handle, is_group_message, occurred_at, source_stream_id,
                     source_table, source_provider, metadata)
                  VALUES ($1,$1,$2,'imessage','hi',$3,$4,false, now(), $1,
                          'mac_imessage','mac', $5::jsonb)",
@@ -956,8 +956,8 @@ mod tests {
         cleanup(&db, &person_id, &thread).await; // in case a prior run died mid-way
 
         sqlx::query(
-            "INSERT INTO wiki_people (id, canonical_name, handles)
-             VALUES ($1, 'Almu', $2::jsonb)",
+            "INSERT INTO wiki_people (id, name, handles)
+             VALUES ($1, 'Nick', $2::jsonb)",
         )
         .bind(&person_id)
         .bind(serde_json::json!([handle]))
@@ -978,7 +978,7 @@ mod tests {
 
         // 1. Each outbound message now points at the contact via a recipient ref.
         let recipient_refs: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM wiki_entity_refs r
+            "SELECT count(*) FROM wiki_refs r
              JOIN data_communication_message m ON m.id = r.source_id
              WHERE m.thread_id=$1 AND r.role='recipient' AND r.entity_id=$2
                AND (m.metadata->>'is_from_me')::bool",
@@ -994,7 +994,7 @@ mod tests {
         let both_sides: i64 = sqlx::query_scalar(
             "SELECT count(DISTINCT m.id)
              FROM data_communication_message m
-             JOIN wiki_entity_refs r
+             JOIN wiki_refs r
                ON r.source_table='data_communication_message' AND r.source_id=m.id
               AND r.entity_type='person' AND r.role IN ('sender','recipient')
              WHERE r.entity_id=$1",

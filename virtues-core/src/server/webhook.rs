@@ -1,6 +1,6 @@
 //! Webhook ingestion endpoint for device / service pushes.
 //!
-//! Single route: `POST /webhook/:action_id`.
+//! Single route: `POST /webhook/:applet_id`.
 //!
 //! Auth: the caller's **proven, allowlisted iroh key**. Devices (iOS, the Mac
 //! collector) reach the box over iroh, so the transport proved their key and
@@ -9,7 +9,7 @@
 //! actions anchored to IT (`app_applets.device_id`); the on-box console
 //! (loopback) may drive any action.
 //!
-//! The unified `action_runner::run_action` enforces trigger validation,
+//! The unified `applet_runner::run_applet` enforces trigger validation,
 //! condition evaluation, and dispatch. This handler only does auth + routing.
 
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use axum::{
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::action_runner::{ActionRunStatus, RunnerDeps};
+use crate::applet_runner::{AppletRunStatus, RunnerDeps};
 use crate::api::chat::ChatCancellationState;
 use crate::database::Database;
 use crate::middleware::auth::AuthUser;
@@ -62,7 +62,7 @@ impl axum::extract::FromRef<AppState> for ChatCancellationState {
     }
 }
 
-/// Handler for `POST /webhook/:action_id`.
+/// Handler for `POST /webhook/:applet_id`.
 ///
 /// Flow:
 /// 1. `AuthUser` (proven iroh key / loopback console) — a hard extractor, so an
@@ -70,10 +70,10 @@ impl axum::extract::FromRef<AppState> for ChatCancellationState {
 /// 2. Fetch action → 404 if missing.
 /// 3. Ownership: the proven device must own the action (`app_applets.device_id`);
 ///    the on-box console may drive any action → 403 otherwise.
-/// 4. Dispatch via `run_action(.., "webhook", payload)`.
+/// 4. Dispatch via `run_applet(.., "webhook", payload)`.
 pub async fn webhook(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     user: AuthUser,
     headers: HeaderMap,
     payload: std::result::Result<Json<Value>, JsonRejection>,
@@ -96,7 +96,7 @@ pub async fn webhook(
         Ok(Json(v)) => v,
         Err(rej) => {
             tracing::warn!(
-                action_id = %action_id,
+                applet_id = %applet_id,
                 rejection = %rej,
                 content_length = ?headers.get("content-length"),
                 "webhook body rejected by Json extractor; returning 409 (retryable)"
@@ -127,7 +127,7 @@ pub async fn webhook(
             Value::Object(_) => "object",
         };
         tracing::warn!(
-            action_id = %action_id,
+            applet_id = %applet_id,
             kind = %kind,
             "webhook body is not a JSON object; returning 409 (retryable)"
         );
@@ -145,9 +145,9 @@ pub async fn webhook(
     // `user` (AuthUser) is already proven by the hard extractor above: the
     // request arrived over iroh with an allowlisted key (or from the on-box
     // console). Confirm the action exists, then that this device owns it.
-    tracing::debug!(device_id = %user.device_id, action_id = %action_id, "webhook authed by proven key");
+    tracing::debug!(device_id = %user.device_id, applet_id = %applet_id, "webhook authed by proven key");
 
-    if crate::scheduler::actions::get_action(state.db.pool(), &action_id)
+    if crate::scheduler::applets::get_applet(state.db.pool(), &applet_id)
         .await
         .is_err()
     {
@@ -163,18 +163,18 @@ pub async fn webhook(
     // action; an action with no device anchor (e.g. an OAuth action reachable
     // only from the owner's own devices) is likewise owner-level.
     if user.device_id != crate::middleware::auth::CONSOLE_DEVICE_ID {
-        let action_device: Option<String> =
+        let applet_device: Option<String> =
             sqlx::query_scalar("SELECT device_id FROM app_applets WHERE id = $1")
-                .bind(&action_id)
+                .bind(&applet_id)
                 .fetch_one(state.db.pool())
                 .await
                 .unwrap_or(None);
-        if let Some(owner_device) = action_device {
+        if let Some(owner_device) = applet_device {
             if owner_device != user.device_id {
                 tracing::warn!(
-                    action_id = %action_id,
+                    applet_id = %applet_id,
                     proven_device = %user.device_id,
-                    action_device = %owner_device,
+                    applet_device = %owner_device,
                     "webhook: proven device does not own this action"
                 );
                 return (
@@ -191,9 +191,9 @@ pub async fn webhook(
         yjs: state.yjs_state.clone(),
     };
 
-    match crate::action_runner::run_action(&deps, &action_id, "webhook", Some(&body)).await {
+    match crate::applet_runner::run_applet(&deps, &applet_id, "webhook", Some(&body)).await {
         Ok(result) => match result.status {
-            ActionRunStatus::Success => (
+            AppletRunStatus::Success => (
                 StatusCode::OK,
                 Json(WebhookResponse {
                     run_id: result.run_id,
@@ -208,7 +208,7 @@ pub async fn webhook(
             // 409 so the client keeps the records and resends on the next
             // cycle. `skipped` is not a 5xx, so it never trips the device's
             // server-error circuit breaker.
-            ActionRunStatus::Skipped => (
+            AppletRunStatus::Skipped => (
                 StatusCode::CONFLICT,
                 Json(WebhookResponse {
                     run_id: result.run_id,
@@ -216,19 +216,32 @@ pub async fn webhook(
                 }),
             )
                 .into_response(),
-            ActionRunStatus::Forbidden => (
+            // Same contract as `Skipped`, for the same reason: a run stopped
+            // at its spend ceiling did not durably ingest the payload, so the
+            // device must keep the batch and resend rather than delete it. A
+            // retryable 409 (not a 5xx) leaves the circuit breaker alone; the
+            // post succeeds once the rolling window frees the budget.
+            AppletRunStatus::BudgetExceeded => (
+                StatusCode::CONFLICT,
+                Json(WebhookResponse {
+                    run_id: result.run_id,
+                    status: "budget_exceeded",
+                }),
+            )
+                .into_response(),
+            AppletRunStatus::Forbidden => (
                 StatusCode::FORBIDDEN,
                 Json(serde_json::json!({
                     "error": result.error.unwrap_or_else(|| "webhook trigger not allowed".into()),
                 })),
             )
                 .into_response(),
-            ActionRunStatus::NotFound => (
+            AppletRunStatus::NotFound => (
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({ "error": "action disabled or not found" })),
             )
                 .into_response(),
-            ActionRunStatus::Failed => (
+            AppletRunStatus::Failed => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "error": "webhook action failed",
@@ -237,9 +250,9 @@ pub async fn webhook(
                 })),
             )
                 .into_response(),
-            // Webhook dispatch awaits via `run_action`, never `_detached`,
+            // Webhook dispatch awaits via `run_applet`, never `_detached`,
             // so this arm is unreachable in practice.
-            ActionRunStatus::Running => (
+            AppletRunStatus::Running => (
                 StatusCode::ACCEPTED,
                 Json(WebhookResponse {
                     run_id: result.run_id,

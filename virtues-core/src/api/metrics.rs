@@ -90,7 +90,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
             SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as failed,
             SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
             SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active,
-            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as total_records,
+            CAST(COALESCE(SUM(records_processed), 0) AS BIGINT) as total_records,
             AVG(CASE WHEN completed_at IS NOT NULL
                 THEN EXTRACT(EPOCH FROM (completed_at - started_at))
                 ELSE NULL END) as avg_duration
@@ -127,7 +127,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         SELECT
             CASE WHEN t.id IS NULL THEN 'transform'
                  WHEN t.command IS NULL AND (t.agent IS NULL OR btrim(t.agent) = '') THEN 'view'
-                 ELSE 'function' END as action_type,
+                 ELSE 'function' END as applet_type,
             COUNT(*) as total,
             SUM(CASE WHEN r.status = 'success' THEN 1 ELSE 0 END) as succeeded,
             SUM(CASE WHEN r.status = 'error' THEN 1 ELSE 0 END) as failed,
@@ -136,7 +136,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
                 ELSE NULL END) as avg_duration,
             CAST(COALESCE(SUM(r.records_processed), 0) AS BIGINT) as total_records
         FROM app_applet_runs r
-        LEFT JOIN app_applets t ON r.action_id = t.id
+        LEFT JOIN app_applets t ON r.applet_id = t.id
         GROUP BY 1
         ORDER BY total DESC
         "#,
@@ -147,7 +147,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
     let by_job_type: Vec<JobTypeStats> = job_type_rows
         .iter()
         .map(|row| JobTypeStats {
-            job_type: row.try_get("action_type").unwrap_or_default(),
+            job_type: row.try_get("applet_type").unwrap_or_default(),
             total: row.try_get("total").unwrap_or(0),
             succeeded: row.try_get("succeeded").unwrap_or(0),
             failed: row.try_get("failed").unwrap_or(0),
@@ -168,7 +168,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
             MAX(r.completed_at) as last_sync_at,
             CAST(COALESCE(SUM(r.records_processed), 0) AS BIGINT) as total_records
         FROM app_applet_runs r
-        LEFT JOIN app_applets t ON r.action_id = t.id
+        LEFT JOIN app_applets t ON r.applet_id = t.id
         GROUP BY COALESCE(t.name, '(deleted action)')
         ORDER BY job_count DESC
         "#,
@@ -204,10 +204,10 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         r#"
         SELECT r.id, CASE WHEN t.id IS NULL THEN 'transform'
                  WHEN t.command IS NULL AND (t.agent IS NULL OR btrim(t.agent) = '') THEN 'view'
-                 ELSE 'function' END as action_type,
-               r.transform_stage, r.error, r.completed_at
+                 ELSE 'function' END as applet_type,
+               r.error, r.completed_at
         FROM app_applet_runs r
-        LEFT JOIN app_applets t ON r.action_id = t.id
+        LEFT JOIN app_applets t ON r.applet_id = t.id
         WHERE r.status = 'error' AND r.error IS NOT NULL
         ORDER BY r.completed_at DESC NULLS LAST
         LIMIT 10
@@ -220,8 +220,11 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         .iter()
         .map(|row| RecentError {
             job_id: row.try_get::<String, _>("id").unwrap_or_default(),
-            job_type: row.try_get("action_type").unwrap_or_default(),
-            stream_name: row.try_get("transform_stage").ok(),
+            job_type: row.try_get("applet_type").unwrap_or_default(),
+            // Always None. It read `transform_stage`, a column nothing has
+            // ever written; reporting a null as if it were a measurement is
+            // the same lie in miniature as an unenforced limit.
+            stream_name: None,
             error_message: row.try_get("error").unwrap_or_default(),
             error_class: None,
             failed_at: row.try_get("completed_at").unwrap_or_else(|_| Utc::now()),
@@ -253,7 +256,7 @@ async fn get_period_stats(db: &Database, since: DateTime<Utc>) -> Result<PeriodS
         SELECT
             SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as completed,
             SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as failed,
-            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records
+            CAST(COALESCE(SUM(records_processed), 0) AS BIGINT) as records
         FROM app_applet_runs
         WHERE created_at >= $1
         "#,

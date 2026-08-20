@@ -5,21 +5,19 @@
 	import { listPages, listChats, listNotebooks, createNotebook, type ViewEntity } from "$lib/api/client";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import type { SystemSection } from "$lib/sidebar/sections";
+	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
 
 	interface Props {
 		section: SystemSection;
 		collapsed?: boolean;
 		accentColor?: string | null;
-		/** Waterfall offset, in ms, set by the sidebar from the row's position. */
-		animationDelay?: number;
 	}
 
 	let {
 		section,
 		collapsed = false,
 		accentColor = null,
-		animationDelay = 0,
 	}: Props = $props();
 
 	// Local expand state (folder/view expansion no longer lives in the window shell store)
@@ -132,7 +130,7 @@
 				const data = await listNotebooks();
 				const all = data.notebooks || [];
 				entities = (section.limit ? all.slice(0, section.limit) : all).map((n) => ({
-					id: `/notebooks/${n.id}`,
+					id: `/notebook/${n.id}`,
 					name: n.name,
 					namespace: 'notebook',
 					icon: n.icon || 'ri:booklet-line',
@@ -237,7 +235,7 @@
 	async function handleNewNotebook() {
 		try {
 			const notebook = await createNotebook({ name: 'Untitled notebook' });
-			windowShellStore.openTabFromRoute(`/notebooks/${notebook.id}`, {
+			windowShellStore.openTabFromRoute(`/notebook/${notebook.id}`, {
 				label: notebook.name,
 				forceNew: true,
 				preferEmptyPane: true,
@@ -258,7 +256,7 @@
 
 {#if !collapsed}
 	{#if section.type === 'link' && section.href}
-		<div class="system-section" style="--stagger-delay: {animationDelay}ms">
+		<div class="system-section">
 			<SidebarNavItem
 				item={{
 					id: section.id,
@@ -272,10 +270,11 @@
 				isSystemItem={true}
 				onQuickAdd={section.quickAdd ? handleQuickAdd : undefined}
 				quickAddTitle={section.quickAdd ? QUICK_ADD_LABEL[section.quickAdd] : undefined}
+				onActivate={section.mode ? () => sidebarMode.enter(section.mode!) : undefined}
 			/>
 		</div>
 	{:else}
-	<div class="system-section" style="--stagger-delay: {animationDelay}ms">
+	<div class="system-section">
 		<div
 			class="sidebar-interactive system"
 			role="button"
@@ -404,29 +403,15 @@
 	@reference "../../../app.css";
 	@reference "$lib/styles/sidebar.css";
 
+	/* The 2px seam the mode panels (Settings, Developer, Sources) already put
+	   between their rows. The Library shelf had none, so its seven rows read as
+	   one block while every sub-navigation read as a list — the same control at
+	   two different rhythms. Margin rather than a parent `gap`, because
+	   `.sidebar-expandable-inner` spaces its children this way for DnD. */
 	.system-section {
 		display: flex;
 		flex-direction: column;
-		animation: navRowIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
-		animation-delay: var(--stagger-delay, 0ms);
-	}
-
-	/* Matches the masthead's fadeSlideIn so the panel falls as one motion. */
-	@keyframes navRowIn {
-		from {
-			opacity: 0;
-			transform: translateX(-8px);
-		}
-		to {
-			opacity: 1;
-			transform: translateX(0);
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.system-section {
-			animation: none;
-		}
+		margin-bottom: 2px;
 	}
 
 	/* ------- Icon ↔ Chevron slide toggle (matches UnifiedFolder) ------- */

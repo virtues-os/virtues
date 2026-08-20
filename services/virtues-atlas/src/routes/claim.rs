@@ -271,6 +271,11 @@ pub(crate) async fn finalize_paid_session(
         state
             .virtues_api
             .register_device(&RegisterDevice {
+                // TODO(per-box keys): atlas learns the box's EndpointId through
+                // `/iroh/register`, a separate call, so it is not in hand here.
+                // None keeps the historical whole-account rotation; the
+                // virtues-api side already scopes per box when told which one.
+                box_id: None,
                 api_key_hash: hex::encode(&api_key_hash),
                 account_id: account_id.clone(),
             })

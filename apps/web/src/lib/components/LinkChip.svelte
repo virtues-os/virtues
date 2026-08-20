@@ -1,11 +1,25 @@
 <script lang="ts">
-	// External-link reference pill: same .ref-pill shape as entity/file chips,
-	// with the site favicon as the leading glyph (globe fallback while it loads).
+	// External-link citation. Renders in the same register as an internal `Ref`
+	// (`.ref-link`, prose-sized, underlined) rather than as a filled `.ref-pill`
+	// capsule — see the header of ref-badge.css: the pill belongs to EDITABLE
+	// surfaces (the chat composer, CodeMirror), and rendered output uses the
+	// link treatment. This was the only rendered-output consumer still wearing
+	// the editor's costume, which is why a web citation shouted in a paragraph
+	// where a citation of the owner's own data whispered.
+	//
+	// The favicon is gone with it. It cost a request to google.com per citation
+	// on a box whose whole premise is that nothing leaves, and fetching it is
+	// what forced `display: inline-flex` — a flex box on a text baseline, which
+	// is why the chip never sat straight in a line of prose.
 	import Icon from "$lib/components/Icon.svelte";
 	import RefPreview from "$lib/components/RefPreview.svelte";
 	import { createRefHover } from "$lib/utils/refHover.svelte";
 
-	let { href, label } = $props<{ href: string; label: string }>();
+	let { href, label, variant = "link" } = $props<{
+		href: string;
+		label: string;
+		variant?: "link" | "quiet";
+	}>();
 
 	const hover = createRefHover();
 
@@ -14,53 +28,42 @@
 	}
 
 	function handleClick(e: MouseEvent) {
-		// ⌘/Ctrl-click → open the link; plain click → peek (don't navigate away).
-		if (e.metaKey || e.ctrlKey) return; // let the anchor's default open a new tab
+		// Plain click opens, matching `Ref`. These used to disagree: clicking an
+		// internal citation took you to the record, while clicking an external
+		// one refused to navigate and only peeked, so the same gesture meant two
+		// things in one paragraph. Hover already peeks for both.
+		if (e.metaKey || e.ctrlKey) return; // let the anchor open a background tab
 		e.preventDefault();
-		hover.pin(e.currentTarget as HTMLElement);
+		open();
 	}
 
 	function domainOf(url: string): string {
 		try {
-			return new URL(url).hostname;
+			return new URL(url).hostname.replace(/^www\./, "");
 		} catch {
 			return "";
 		}
 	}
 
 	const domain = $derived(domainOf(href));
-	const faviconUrl = $derived(
-		domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=16` : "",
-	);
-	let faviconOk = $state(true);
 </script>
 
 <a
-	class="ref-pill link-chip"
+	class="ref-link {variant === 'quiet' ? 'ref-link--quiet' : ''}"
 	{href}
 	target="_blank"
 	rel="noopener noreferrer"
-	title={href}
+	title={domain ? `${label} — ${domain}` : href}
 	onclick={handleClick}
 	onmouseenter={(e) => hover.enter(e.currentTarget)}
 	onmouseleave={() => hover.leave()}
 	onfocus={(e) => hover.enter(e.currentTarget)}
 	onblur={() => hover.leave()}
->
-	{#if faviconUrl && faviconOk}
-		<img
-			class="link-chip-favicon"
-			src={faviconUrl}
-			alt=""
-			width="12"
-			height="12"
-			loading="lazy"
-			referrerpolicy="no-referrer"
-			onerror={() => (faviconOk = false)}
-		/>
-	{:else}
-		<Icon icon="ri:global-line" width="11" class="ref-pill-icon" />
-	{/if}{label}</a
+	>{#if variant !== "quiet"}<Icon
+			icon="ri:global-line"
+			width="11"
+			class="ref-pill-icon"
+		/>{/if}{label}</a
 >
 {#if hover.visible && hover.anchor}
 	<RefPreview
@@ -73,18 +76,3 @@
 		oncardleave={() => hover.leave()}
 	/>
 {/if}
-
-<style>
-	.link-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 3px;
-	}
-	.link-chip-favicon {
-		display: block;
-		width: 12px;
-		height: 12px;
-		border-radius: 2px;
-		flex-shrink: 0;
-	}
-</style>

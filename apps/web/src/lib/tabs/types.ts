@@ -20,13 +20,15 @@ export type TabType =
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
 	| 'notebook' // Notebooks (rooms a chat lives in): /notebooks, /notebook/{id}
+	| 'bookmarks' // Saved web content (browser bookmarks, stars, saved links): /bookmarks
+	| 'bookmark' // One saved thing, and the note on it: /bookmark/{id}
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
 	| 'source' // Data sources: /source, /source/source_{id}
-	| 'actions' // Actions list: /actions
-	| 'action' // Applet detail: /applet/action_{id}
-	| 'applet-view' // Applet full-page face: /applet/action_{id}/view
+	| 'applets' // Applets list: /applets
+	| 'applet' // Applet detail: /applet/applet_{id}
+	| 'applet-view' // Applet full-page face: /applet/applet_{id}/view
 	| 'developers' // Developers tools (SQL/Terminal/Lake): /developers
 	| 'ontology' // Ontology data: /ontologies, /ontologies/{name}
 	| 'record' // Single raw record viewer: /record/{ontology}/{id}

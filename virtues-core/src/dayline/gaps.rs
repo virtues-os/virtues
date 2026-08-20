@@ -166,10 +166,10 @@ pub async fn classify_day_gaps(pool: &PgPool, date: NaiveDate) -> crate::error::
 
     // The day's auto blocks, gapless and ordered.
     let rows = sqlx::query(
-        "SELECT id, start_time, end_time, is_unknown, is_transit, is_sleep \
+        "SELECT id, started_at, ended_at, is_unknown, is_transit, is_sleep \
          FROM wiki_events \
          WHERE day_id = $1 AND is_user_added = FALSE \
-         ORDER BY start_time",
+         ORDER BY started_at",
     )
     .bind(&day_id)
     .fetch_all(pool)
@@ -182,8 +182,8 @@ pub async fn classify_day_gaps(pool: &PgPool, date: NaiveDate) -> crate::error::
         .iter()
         .map(|r| Block {
             id: r.get("id"),
-            start: r.get("start_time"),
-            end: r.get("end_time"),
+            start: r.get("started_at"),
+            end: r.get("ended_at"),
             is_unknown: r.get("is_unknown"),
             is_transit: r.get("is_transit"),
             is_sleep: r.get("is_sleep"),
@@ -198,15 +198,15 @@ pub async fn classify_day_gaps(pool: &PgPool, date: NaiveDate) -> crate::error::
     let win_end = blocks.last().unwrap().end;
 
     // Visits for the day, each with its RESOLVED place id + name
-    // (data_location_visit → wiki_entity_refs[place] → wiki_places).
+    // (data_location_visit → wiki_refs[place] → wiki_places).
     let visits = sqlx::query(
-        "SELECT er.entity_id AS place_id, p.name AS place_name, v.arrival_time, v.departure_time \
+        "SELECT er.entity_id AS place_id, p.name AS place_name, v.started_at, v.ended_at \
          FROM data_location_visit v \
-         JOIN wiki_entity_refs er \
+         JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' AND er.source_id = v.id \
           AND er.entity_type = 'place' \
          JOIN wiki_places p ON p.id = er.entity_id \
-         WHERE v.departure_time >= $1::timestamptz AND v.arrival_time <= $2::timestamptz",
+         WHERE v.ended_at >= $1::timestamptz AND v.started_at <= $2::timestamptz",
     )
     .bind(win_start)
     .bind(win_end)
@@ -218,9 +218,9 @@ pub async fn classify_day_gaps(pool: &PgPool, date: NaiveDate) -> crate::error::
     for b in blocks.iter_mut() {
         let mut best: Option<(i64, String, String)> = None;
         for v in &visits {
-            let arr: DateTime<Utc> = v.get("arrival_time");
+            let arr: DateTime<Utc> = v.get("started_at");
             let dep: DateTime<Utc> = v
-                .try_get::<Option<DateTime<Utc>>, _>("departure_time")
+                .try_get::<Option<DateTime<Utc>>, _>("ended_at")
                 .ok()
                 .flatten()
                 .unwrap_or(win_end);
@@ -256,9 +256,9 @@ async fn apply(pool: &PgPool, op: Op) {
     match op {
         Op::Absorb { block_id, neighbour_id, into_prev, boundary } => {
             let extend = if into_prev {
-                "UPDATE wiki_events SET end_time = $1 WHERE id = $2 AND is_user_added = FALSE"
+                "UPDATE wiki_events SET ended_at = $1 WHERE id = $2 AND is_user_added = FALSE"
             } else {
-                "UPDATE wiki_events SET start_time = $1 WHERE id = $2 AND is_user_added = FALSE"
+                "UPDATE wiki_events SET started_at = $1 WHERE id = $2 AND is_user_added = FALSE"
             };
             let _ = sqlx::query(extend).bind(boundary).bind(&neighbour_id).execute(pool).await;
             let _ = sqlx::query("DELETE FROM wiki_events WHERE id = $1 AND is_user_added = FALSE")

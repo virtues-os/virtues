@@ -182,12 +182,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
         println!("  {}  {}", console::style("✓").green(), "Database ready");
 
-        // Print the handoff with the box's UNIVERSAL standing code — the same
-        // rotating code the panel shows and `virtues pair` prints. The fragment
-        // form (`/pair#t=…`) never leaks the code to server logs or referers.
-        // Opening it lands the browser in the setup wizard, which owns
-        // everything that used to be prompted here.
-        match virtues::api::pair::ensure_standing(db.pool()).await {
+        // Print the handoff pair code. On a fresh box (install time) this is the
+        // standing setup code; if the box is already claimed it is a one-time
+        // code — see `api::pair::cli_pair_code`.
+        match virtues::api::pair::cli_pair_code(db.pool()).await {
             Ok(minted) => print_link_output(&minted),
             Err(e) => {
                 println!();
@@ -284,18 +282,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(Commands::Pair { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
-        // Show the box's UNIVERSAL standing code — the same rotating code the
-        // panel displays — rather than minting a throwaway one. It's multi-use
-        // within its window and rotates (~20 min), so any device can pair with
-        // it. (The rotator keeps it fresh; we mint on the spot if the server
-        // hasn't run yet on this box.)
-        match virtues::api::pair::ensure_standing(db.pool()).await {
+        // On an UNCLAIMED box this shows the standing setup code (multi-use,
+        // what the panel and BLE flow use). On a CLAIMED box it mints a FRESH
+        // ONE-TIME code, consumed on use — the always-live standing code is
+        // retired at claim. See `api::pair::cli_pair_code`.
+        match virtues::api::pair::cli_pair_code(db.pool()).await {
             Ok(minted) => {
                 print_link_output(&minted);
                 if !*no_wait {
                     use virtues::cli::link::wait_for_new_device;
-                    println!("  Waiting for a device to connect… (Ctrl+C to exit;");
-                    println!("  the code stays valid while shown and rotates automatically)");
+                    println!("  Waiting for a device to connect… (Ctrl+C to exit)");
                     match wait_for_new_device(db.pool()).await {
                         Ok(()) => {
                             println!();
@@ -381,7 +377,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
             },
-            DeviceCommands::Add => match virtues::api::pair::ensure_standing(pool).await {
+            DeviceCommands::Add => match virtues::api::pair::cli_pair_code(pool).await {
                 Ok(minted) => {
                     print_link_output(&minted);
                     return Ok(());
@@ -516,6 +512,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues deprovision` ──────────────────────────────────────────────
+    // Prepares the box to be imaged. Wraps `reset` (for the DB + lake) and then
+    // strips the host-level identity, so like reset it runs against a bare pool
+    // before any app stack exists.
+    if let Some(Commands::Deprovision { yes, force }) = &cli.command {
+        match virtues::cli::deprovision::run(*yes, *force).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: deprovision failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues image-check` ──────────────────────────────────────────────
+    // The gate between deprovision and `dd`. Read-only, and handled here with
+    // the other bare-pool commands because a deprovisioned box has no app
+    // stack left to build — which is the state it is meant to be run in.
+    if matches!(cli.command, Some(Commands::ImageCheck)) {
+        std::process::exit(virtues::cli::image_check::run().await);
+    }
+
     // ─── `virtues configure-inference` ──────────────────────────────────────
     // Recover after a manual endpoint's model changed. Runs BEFORE the app
     // builds the guarded embedder — which would itself fail on the very
@@ -624,6 +642,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: rollback failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues prepare` ──────────────────────────────────────────────────
+    // Fetch + stage + preflight the next release WITHOUT installing it. Needs
+    // no DB (and must run without one — a box whose database is unhealthy is a
+    // box that wants the next release ready to go).
+    if let Some(Commands::Prepare { force }) = &cli.command {
+        match virtues::cli::upgrade::prepare(*force).await {
+            Ok(virtues::cli::upgrade::Prepared::UpToDate) => {
+                virtues::cli::ui::ok("already on the newest build for this channel");
+                return Ok(());
+            }
+            Ok(virtues::cli::upgrade::Prepared::Already { slot_id }) => {
+                virtues::cli::ui::ok(&format!(
+                    "{slot_id} is already staged — `virtues activate` installs it"
+                ));
+                return Ok(());
+            }
+            Ok(virtues::cli::upgrade::Prepared::Staged { slot_id }) => {
+                virtues::cli::ui::ok(&format!(
+                    "{slot_id} staged — `virtues activate` installs it"
+                ));
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("error: prepare failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues activate` ─────────────────────────────────────────────────
+    // Install what `prepare` staged. Like Upgrade, deliberately does NOT touch
+    // the DB here; the new binary's `migrate` does that after the flip.
+    if let Some(Commands::Activate) = &cli.command {
+        match virtues::cli::upgrade::activate_prepared().await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: activate failed: {e}");
                 std::process::exit(1);
             }
         }
@@ -752,7 +812,7 @@ fn print_pair_hero(display: &str) {
 }
 
 fn print_link_output(minted: &virtues::api::pair::MintedToken) {
-    use virtues::cli::link::{reachable_pair_urls, ssh_context, ssh_forward_host, ssh_handoff_block};
+    use virtues::cli::link::{reachable_box_origins, ssh_context, ssh_forward_host, ssh_handoff_block};
     let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
     let web_port = std::env::var("VIRTUES_WEB_PORT").unwrap_or_else(|_| "5173".to_string());
     let token = &minted.token;
@@ -781,27 +841,39 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
     if let Some(ssh) = ssh_context() {
         println!();
         let host = ssh_forward_host();
-        for line in ssh_handoff_block(&ssh, &host, token) {
+        for line in ssh_handoff_block(&ssh, &host) {
             println!("{line}");
         }
     }
 
-    // Secondary: browser URLs for users who don't have the app yet.
-    // Less prominent — the app flow is the intended path.
-    let urls = reachable_pair_urls(token, is_dev, &web_port);
+    // WHERE TO GET THE APP — not a browser URL to pair in.
+    //
+    // This block used to read "No app yet? Open in a browser on your network:"
+    // followed by the box's `/pair#t=…` URLs. Those URLs resolve to a page
+    // whose entire job is to say you are on the wrong surface: an allowlisted
+    // iroh key is the credential, a browser tab holds none, and
+    // `/api/pair/consume` rejects `kind: "browser"` outright. So the one line
+    // offered to someone who does NOT have the app sent them to a dead end,
+    // and it was the last thing the DIY installer printed.
+    //
+    // The honest fallback for "no app yet" is where to get one.
     println!();
-    println!("  No app yet? Open in a browser on your network:");
-    for url in &urls {
-        println!("    {}", url.url);
-    }
+    println!("  Don't have the app yet?  https://virtues.com/downloads");
+    println!("    Enter the code above in it. A browser cannot pair — pairing is");
+    println!("    a held key, and a browser tab has none.");
 
-    // The box's global IPv6 — what to type into the app's Advanced "enter its
-    // address" field when mDNS doesn't carry (off-network, isolated wifi). The
-    // box is reached directly here; only shown when it actually has a global v6.
-    if let Some(v6) = virtues::net_check::compute_net_status().ipv6_global {
+    // The box's addresses, for the app's "enter its address" field when mDNS
+    // does not carry — an isolated office LAN, or a box on another subnet.
+    let urls = reachable_box_origins(is_dev, &web_port);
+    if !urls.is_empty() {
         println!();
-        println!("  Box IPv6 (Advanced → \"enter its address\" if it isn't found):");
-        println!("    {v6}");
+        println!("  If the app can't find this box, give it an address:");
+        for url in &urls {
+            println!("    {}", url.url);
+        }
+        if let Some(v6) = virtues::net_check::compute_net_status().ipv6_global {
+            println!("    http://[{v6}]:8000");
+        }
     }
 
     println!("─────────────────────────────────────────────────────────");

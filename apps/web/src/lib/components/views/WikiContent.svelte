@@ -6,33 +6,27 @@
 		getPlaceById,
 		getOrganizationById,
 		getDayByDate,
-		getActById,
-		getChapterById,
-		getTelosById,
 	} from "$lib/wiki/api";
 	import {
 		apiToPersonPage,
 		apiToPlacePage,
 		apiToOrganizationPage,
 		apiToDayPage,
-		apiToActPage,
-		apiToChapterPage,
-		apiToTelosPage,
 	} from "$lib/wiki/converters";
 	import {
 		WikiPage,
-		DayPage,
 		YearPage,
+		DayPage,
 		PersonPage,
 		PlacePage,
 		OrganizationPage,
 	} from "$lib/components/wiki";
 	import {
 		isDayPage,
-		isYearPage,
 		isPersonPage,
 		isPlacePage,
 		isOrganizationPage,
+		isYearPage,
 	} from "$lib/wiki/types";
 	import type { WikiPage as WikiPageType } from "$lib/wiki/types";
 
@@ -123,7 +117,7 @@
 					const person = await getPersonById(entityId);
 					if (person) {
 						wikiPage = apiToPersonPage(person);
-						updateLabel(person.canonical_name);
+						updateLabel(person.name);
 					} else {
 						error = `Person "${entityId}" not found`;
 					}
@@ -145,7 +139,7 @@
 					const org = await getOrganizationById(entityId);
 					if (org) {
 						wikiPage = apiToOrganizationPage(org);
-						updateLabel(org.canonical_name);
+						updateLabel(org.name);
 					} else {
 						error = `Organization "${entityId}" not found`;
 					}
@@ -153,38 +147,8 @@
 				}
 
 
-				case "act": {
-					const act = await getActById(entityId);
-					if (act) {
-						wikiPage = apiToActPage(act);
-						updateLabel(act.title);
-					} else {
-						error = `Act "${entityId}" not found`;
-					}
-					break;
-				}
 
-				case "chapter": {
-					const chapter = await getChapterById(entityId);
-					if (chapter) {
-						wikiPage = apiToChapterPage(chapter);
-						updateLabel(chapter.title);
-					} else {
-						error = `Chapter "${entityId}" not found`;
-					}
-					break;
-				}
 
-				case "telos": {
-					const telos = await getTelosById(entityId);
-					if (telos) {
-						wikiPage = apiToTelosPage(telos);
-						updateLabel(telos.title);
-					} else {
-						error = `Telos "${entityId}" not found`;
-					}
-					break;
-				}
 
 				default:
 					error = `Unknown entity type: "${type}"`;
@@ -239,14 +203,14 @@
 	{:else if wikiPage}
 		{#if isDayPage(wikiPage)}
 			<DayPage page={wikiPage} />
-		{:else if isYearPage(wikiPage)}
-			<YearPage page={wikiPage} />
 		{:else if isPersonPage(wikiPage)}
 			<PersonPage page={wikiPage} />
 		{:else if isPlacePage(wikiPage)}
 			<PlacePage page={wikiPage} />
 		{:else if isOrganizationPage(wikiPage)}
 			<OrganizationPage page={wikiPage} />
+		{:else if isYearPage(wikiPage)}
+			<YearPage page={wikiPage} />
 		{:else}
 			<WikiPage page={wikiPage} />
 		{/if}

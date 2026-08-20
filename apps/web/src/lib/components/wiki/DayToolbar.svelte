@@ -336,7 +336,6 @@
 		font-weight: 500;
 		color: var(--color-foreground-subtle);
 		padding: 2px 0;
-		text-transform: uppercase;
 		letter-spacing: 0.03em;
 	}
 

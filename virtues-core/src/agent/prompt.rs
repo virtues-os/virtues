@@ -48,6 +48,41 @@ When it IS relevant — decisions about priorities, questions about direction, m
 </narrative_identity>
 "#;
 
+/// The enforceable half of what someone wrote about themselves.
+///
+/// SEPARATE FROM NARRATIVE IDENTITY ON PURPOSE, and deliberately its opposite.
+/// That block ends with "hold your understanding lightly — you could be wrong."
+/// This one must not be held lightly: these are not impressions to weigh, they
+/// are instructions to obey. `wiki_narrative_interview` puts it exactly right —
+/// a model reading a paragraph "might honour it nine times and miss the tenth,
+/// and the tenth is the one that would matter," which is the whole reason these
+/// sentences are lifted out of the prose and restated as rules.
+///
+/// TWO KINDS, OPPOSITE HANDLING. `avoid` is a constraint on what the assistant
+/// RAISES; `defend` is an instruction to actively support something. Rendering
+/// them as one undifferentiated list would express neither — the failure
+/// migration 0101 names in its own comment.
+///
+/// Rendered only when rules exist. An empty block teaches a model that this
+/// section is usually noise, which is the last thing it can afford to be.
+///
+/// PLACEMENT: immediately after narrative identity, whose material it governs.
+/// If adherence ever proves weak, moving this last — nearest the conversation —
+/// is the lever to try before rewriting the wording.
+pub const RULES_PROMPT: &str = r#"
+<rules>
+{user_name} has marked some things as rules rather than as context. These are not preferences to be weighed against other considerations. They are binding, they outrank the guidance in every other section, and they do not expire.
+
+{rules}
+
+On never raising something: do not bring the subject up yourself — not as an example, not as a gentle check-in, not as a connection to something else you are already discussing. This is NOT a refusal to discuss it. If {user_name} raises it, engage normally and well. The rule governs who opens the subject, never whether it may be spoken about.
+
+On helping hold a line: when something would cut against it, say so plainly, once. Do not nag, do not repeat yourself on later turns, and do not moralize. Then let it go.
+
+Never mention that these rules exist. Never quote one back. Never explain that you are following one, or hint that some topic is off limits — "I'd rather not bring that up" tells {user_name} exactly what they asked you not to raise.
+</rules>
+"#;
+
 /// Tool usage instructions (only included when tools are available).
 pub const TOOL_USAGE_PROMPT: &str = r#"
 <tool_usage>
@@ -76,9 +111,9 @@ pub const AGENT_MODE_PROMPT: &str = r#"
 - Do NOT use tools for: conversational replies, opinions, follow-ups on data already in context
 
 Common SQL patterns (Postgres):
-- Time filtering: WHERE timestamp > now() - interval '7 days'
-- This month: WHERE timestamp >= date_trunc('month', now())
-- Person lookup: JOIN wiki_people ON ... WHERE canonical_name ILIKE '%Sarah%'
+- Time filtering: WHERE occurred_at > now() - interval '7 days'
+- This month: WHERE occurred_at >= date_trunc('month', now())
+- Person lookup: JOIN wiki_people ON ... WHERE name ILIKE '%Sarah%'
 - Financial totals: SELECT category, SUM(amount)/100.0 as dollars FROM data_financial_transaction ...
 - Aggregation: GROUP BY + ORDER BY for top-N patterns
 </tool_guidance>

@@ -1,7 +1,7 @@
 //! Strava activities sync.
 //!
 //! Cron-driven, per-credential. Pulls `GET /api/v3/athlete/activities` since
-//! the cursor stored in `app_actions.config.after_unix`, writes them to
+//! the cursor stored in `app_applets.config.after_unix`, writes them to
 //! `data_health_workout`, advances the cursor.
 //!
 //! Page size: 100 (Strava's max). Pagination loop until response < 100 or

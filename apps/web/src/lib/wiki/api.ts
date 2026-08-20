@@ -11,8 +11,10 @@
 
 export interface WikiPersonApi {
 	id: string;
-	canonical_name: string;
+	name: string;
 	content: string | null;
+	article: string | null;
+	article_updated_at: string | null;
 	picture: string | null;
 	cover_image: string | null;
 	emails: string[];
@@ -25,9 +27,13 @@ export interface WikiPersonApi {
 	relationship_category: string | null;
 	nickname: string | null;
 	notes: string | null;
-	first_interaction: string | null;
-	last_interaction: string | null;
-	interaction_count: number | null;
+	/** Surfaces this entity also answers to (migration 0037). */
+	aliases: string[];
+	/** Is the record keeping this article up to date? Off unless asked. */
+	article_auto_update?: boolean;
+	first_seen: string | null;
+	last_seen: string | null;
+	seen_count: number | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -36,33 +42,42 @@ export interface WikiPlaceApi {
 	id: string;
 	name: string;
 	content: string | null;
+	article: string | null;
+	article_updated_at: string | null;
 	cover_image: string | null;
 	category: string | null;
 	address: string | null;
 	latitude: number | null;
 	longitude: number | null;
-	visit_count: number | null;
-	first_visit: string | null;
-	last_visit: string | null;
+	seen_count: number | null;
+	first_seen: string | null;
+	last_seen: string | null;
 	created_at: string;
 	updated_at: string;
+	/** Is the record keeping this article up to date? Off unless asked. */
+	article_auto_update?: boolean;
 }
 
 export interface WikiOrganizationApi {
 	id: string;
-	canonical_name: string;
+	name: string;
 	content: string | null;
+	article: string | null;
+	article_updated_at: string | null;
 	cover_image: string | null;
 	organization_type: string | null;
 	relationship_type: string | null;
 	role_title: string | null;
 	start_date: string | null;
 	end_date: string | null;
-	interaction_count: number | null;
-	first_interaction: string | null;
-	last_interaction: string | null;
+	seen_count: number | null;
+	first_seen: string | null;
+	last_seen: string | null;
 	created_at: string;
 	updated_at: string;
+	/** Is the record keeping this article up to date? Off unless asked. */
+	article_auto_update?: boolean;
+	aliases?: string[];
 }
 
 
@@ -70,8 +85,8 @@ export interface WikiDayApi {
 	id: string;
 	date: string; // ISO date string
 	start_timezone: string | null;
-	autobiography: string | null;
-	autobiography_sections: Array<{ id: string; heading: string; content: string; authored_by: string; last_edited_at: string }> | null;
+	/** The day's prose, from wiki_day_prose. The article page is its only home (0106). */
+	article?: string | null;
 	epigraph: string | null;
 	last_edited_by: string | null;
 	cover_image: string | null;
@@ -99,49 +114,27 @@ export interface WikiDayApi {
 	updated_at: string;
 }
 
-export interface WikiActApi {
+/**
+ * A story: a themed article that spans time. Unlike an act, it has no required
+ * dates and no place in an ordered spine — "the story of my wedding" overlaps
+ * whatever else was going on.
+ */
+export interface WikiStoryApi {
 	id: string;
 	title: string;
 	subtitle: string | null;
-	description: string | null;
 	content: string | null;
 	cover_image: string | null;
-	location: string | null;
-	start_date: string;
+	start_date: string | null;
 	end_date: string | null;
 	sort_order: number;
-	telos_id: string | null;
 	themes: string[] | null;
 	created_at: string;
 	updated_at: string;
 }
 
-export interface WikiChapterApi {
-	id: string;
-	title: string;
-	subtitle: string | null;
-	description: string | null;
-	content: string | null;
-	cover_image: string | null;
-	start_date: string;
-	end_date: string | null;
-	sort_order: number;
-	act_id: string | null;
-	themes: string[] | null;
-	created_at: string;
-	updated_at: string;
-}
 
-export interface WikiTelosApi {
-	id: string;
-	title: string;
-	description: string | null;
-	content: string | null;
-	cover_image: string | null;
-	is_active: boolean | null;
-	created_at: string;
-	updated_at: string;
-}
+
 
 export interface IdResolution {
 	entity_type: string;
@@ -154,10 +147,12 @@ export interface IdResolution {
 
 export interface WikiPersonListItem {
 	id: string;
-	canonical_name: string;
+	name: string;
 	picture: string | null;
 	relationship_category: string | null;
-	last_interaction: string | null;
+	last_seen: string | null;
+	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
+	ref_count: number;
 }
 
 export interface WikiPlaceListItem {
@@ -165,14 +160,18 @@ export interface WikiPlaceListItem {
 	name: string;
 	category: string | null;
 	address: string | null;
-	visit_count: number | null;
+	seen_count: number | null;
+	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
+	ref_count: number;
 }
 
 export interface WikiOrganizationListItem {
 	id: string;
-	canonical_name: string;
+	name: string;
 	organization_type: string | null;
 	relationship_type: string | null;
+	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
+	ref_count: number;
 }
 
 
@@ -204,6 +203,469 @@ export async function getPersonById(
 	const res = await fetchFn(`/api/wiki/person/${encodeURIComponent(id)}`);
 	if (!res.ok) return null;
 	return res.json();
+}
+
+/**
+ * File a person as an organization instead.
+ *
+ * Returns the new org route — the person route stops resolving the moment this
+ * succeeds, so callers must navigate or reload rather than keep the old id.
+ */
+export async function reclassifyPersonAsOrg(
+	id: string,
+	fetchFn: FetchFn = fetch
+): Promise<{ id: string; route: string }> {
+	const res = await fetchFn(`/api/entities/people/${id}/reclassify-as-org`, { method: 'POST' });
+	if (!res.ok) throw new Error(`Failed to reclassify: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Whether merging two buckets adds their values.
+ *
+ * `total` grows with the zoom level and stands on zero; `rate` is an average
+ * and floats between its own floor and ceiling. The distinction decides both
+ * the arithmetic and the drawing.
+ */
+export type MeasureKind = 'total' | 'rate';
+
+/** One entry in a lane's measure menu. */
+export interface MeasureInfo {
+	id: string;
+	label: string;
+	unit: string;
+	kind: MeasureKind;
+}
+
+/** One lane of the lifeline: a registry domain and its per-bucket series. */
+export interface LifelineLane {
+	id: string;
+	sources: string[];
+	density: number[];
+	peak: number;
+	/** Smallest non-empty bucket — the baseline a `rate` is drawn against. */
+	floor: number;
+	/** When this lane started collecting. Before it, the lane wasn't watching. */
+	first_seen: string | null;
+	/** Which measure produced `density`; `records` when none was chosen. */
+	measure: string;
+	measure_label: string;
+	unit: string;
+	kind: MeasureKind;
+	available: MeasureInfo[];
+}
+
+export interface LifelineData {
+	from: string;
+	to: string;
+	buckets: number;
+	lanes: LifelineLane[];
+}
+
+/** Per-lane series over a window. The server buckets; the client only draws. */
+export async function getLifeline(
+	buckets: number,
+	from?: string,
+	to?: string,
+	expand?: string[],
+	measures?: Record<string, string>,
+	fetchFn: FetchFn = fetch
+): Promise<LifelineData | null> {
+	const p = new URLSearchParams({ buckets: String(buckets) });
+	// Omitting the window asks the server for the whole record. A lifeline
+	// defaulted to the last year is not a lifeline — this corpus starts in 2017.
+	if (from) p.set('from', from);
+	if (to) p.set('to', to);
+	if (expand?.length) p.set('expand', expand.join(','));
+	const pairs = Object.entries(measures ?? {}).map(([lane, id]) => `${lane}:${id}`);
+	if (pairs.length) p.set('measures', pairs.join(','));
+	const res = await fetchFn(`/api/wiki/lifeline?${p}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/**
+ * Time of day against date — the day-clock raster.
+ *
+ * `cells` is flat and row-major by column: `cells[col * 24 + hour]`. 28,800
+ * numbers as objects would be a quarter-megabyte of punctuation.
+ */
+export interface Clock {
+	from: string;
+	to: string;
+	columns: number;
+	cells: number[];
+	peak: number;
+	/** Busiest cell per column, for normalising a day against its own shape. */
+	column_peak: number[];
+	timezone: string;
+}
+
+/**
+ * The day-clock.
+ *
+ * One timezone for the whole raster, deliberately: rendering each record in the
+ * zone it was recorded in would straighten the sleep band back out and destroy
+ * the most legible thing on the chart. Fixed to one zone, a fortnight abroad is
+ * a visible dislocation.
+ */
+export async function getClock(
+	from: string,
+	to: string,
+	columns: number,
+	tz: string,
+	fetchFn: FetchFn = fetch
+): Promise<Clock | null> {
+	const p = new URLSearchParams({ from, to, buckets: String(columns), tz });
+	const res = await fetchFn(`/api/wiki/lifeline/clock?${p}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** A place a window was spent, found by clustering arrivals. */
+export interface Stay {
+	lat: number;
+	lon: number;
+	visits: number;
+	minutes: number;
+	first: string | null;
+	last: string | null;
+}
+
+/** Where a window was spent. `bbox` is `[latMin, latMax, lonMin, lonMax]`. */
+export interface Ground {
+	bbox: [number, number, number, number] | null;
+	/** The trace, thinned server-side: `[lat, lon]` pairs in time order. */
+	track: [number, number][];
+	track_total: number;
+	stays: Stay[];
+}
+
+/**
+ * The ground under a window.
+ *
+ * A separate request from the lanes because it is answering a different
+ * question — where, not when — and because it is only wanted when someone is
+ * actually looking at location.
+ */
+export async function getGround(
+	from: string,
+	to: string,
+	fetchFn: FetchFn = fetch
+): Promise<Ground | null> {
+	const p = new URLSearchParams({ from, to });
+	const res = await fetchFn(`/api/wiki/lifeline/ground?${p}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** One row inside a window, rendered by its ontology's own declarations. */
+export interface LifelineRecord {
+	id: string;
+	ontology: string;
+	lane: string;
+	kind: string;
+	label: string | null;
+	preview: string | null;
+	at: string;
+}
+
+export interface LifelineFeed {
+	records: LifelineRecord[];
+	has_more: boolean;
+}
+
+/**
+ * The records inside a window.
+ *
+ * The reason to draw a timeline is that a range on it can hand back the rows —
+ * a panel of sums is the answer chat already gives badly.
+ */
+export async function getFeed(
+	from: string,
+	to: string,
+	opts: { lanes?: string[]; limit?: number; offset?: number } = {},
+	fetchFn: FetchFn = fetch
+): Promise<LifelineFeed | null> {
+	const p = new URLSearchParams({ from, to });
+	if (opts.lanes?.length) p.set('lanes', opts.lanes.join(','));
+	if (opts.limit) p.set('limit', String(opts.limit));
+	if (opts.offset) p.set('offset', String(opts.offset));
+	const res = await fetchFn(`/api/wiki/lifeline/feed?${p}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** A day or event Virtues has interpreted. */
+export interface Interpreted {
+	id: string;
+	kind: string;
+	/** The segmenter's classification — `sleep`, `transit`, `unknown`. */
+	tag: string | null;
+	label: string | null;
+	summary: string | null;
+	start: string;
+	end: string | null;
+}
+
+export interface ProcessedWindow {
+	items: Interpreted[];
+	/** The span over which ANY interpretation exists, whatever the window. */
+	coverage: [string, string] | null;
+	days_processed: number;
+}
+
+/**
+ * What Virtues has made of a window, as opposed to what was collected in it.
+ *
+ * Raw reaches back to 2017; the interpreted layer covers weeks. `coverage`
+ * comes back regardless of the window so an empty answer can say why.
+ */
+export async function getProcessed(
+	from: string,
+	to: string,
+	fetchFn: FetchFn = fetch
+): Promise<ProcessedWindow | null> {
+	const p = new URLSearchParams({ from, to });
+	const res = await fetchFn(`/api/wiki/lifeline/processed?${p}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** Create a person by hand — the record only ever discovered them before. */
+export async function createPerson(name: string, fetchFn: FetchFn = fetch): Promise<{ id: string; route: string }> {
+	const res = await fetchFn('/api/entities/people', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name })
+	});
+	if (!res.ok) throw new Error('Could not create that person');
+	return res.json();
+}
+
+/** Delete an entity, and everything that pointed at it. */
+export async function deleteEntity(
+	entityType: 'person' | 'place' | 'org',
+	id: string,
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const path = entityType === 'person' ? 'people' : entityType === 'org' ? 'orgs' : 'places';
+	const res = await fetchFn(`/api/entities/${path}/${id}`, { method: 'DELETE' });
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.error ?? body?.message ?? 'Could not delete that');
+	}
+}
+
+/** A note in the margin of a subject. */
+export interface WikiNote {
+	id: number;
+	subject_type: string;
+	subject_id: string;
+	kind: string;
+	body: string;
+	author: string;
+	source_refs: unknown;
+	created_at: string;
+	resolution: string | null;
+}
+
+/** Open notes on a subject. */
+export async function listNotes(
+	subjectType: string,
+	subjectId: string,
+	fetchFn: FetchFn = fetch
+): Promise<WikiNote[]> {
+	const res = await fetchFn(`/api/wiki/notes/${subjectType}/${subjectId}`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** Leave a note yourself. Human notes need no citation — you were there. */
+export async function createNote(
+	subjectType: string,
+	subjectId: string,
+	body: string,
+	kind = 'memo',
+	fetchFn: FetchFn = fetch
+): Promise<WikiNote> {
+	const res = await fetchFn(`/api/wiki/notes/${subjectType}/${subjectId}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ body, kind })
+	});
+	if (!res.ok) throw new Error('Could not save that note');
+	return res.json();
+}
+
+/** Close a note. Accepting hands the editing back to you. */
+export async function resolveNote(
+	id: number,
+	resolution: 'accepted' | 'dismissed',
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/notes/${id}/resolve`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ resolution })
+	});
+	if (!res.ok) throw new Error('Could not close that note');
+}
+
+/** One heart-rate sample for the day's Autonomic chart. */
+export interface DayHeartRateSample {
+	timestamp: string;
+	bpm: number;
+}
+
+/**
+ * The day's raw HR samples, oldest first. Sparse days are normal.
+ *
+ * `tz` anchors the local-day window. Without it the server falls back to the
+ * day's recorded zone, which is right for a past day and wrong for today when
+ * the box and the browser disagree about where midnight is.
+ */
+export async function getDayHeartRate(
+	date: string,
+	tz?: string,
+	fetchFn: FetchFn = fetch
+): Promise<DayHeartRateSample[]> {
+	const q = tz ? `?tz=${encodeURIComponent(tz)}` : '';
+	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/heart-rate${q}`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** The article join row for a subject. `page_id` is what the editor opens. */
+export interface WikiArticleApi {
+	id: string;
+	subject_type: string;
+	subject_id: string;
+	page_id: string;
+	auto_update: boolean;
+	source_ref_count: number;
+}
+
+/** A subject's article row, or null when no article exists yet. */
+export async function getArticle(
+	subjectType: string,
+	subjectId: string,
+	fetchFn: FetchFn = fetch
+): Promise<WikiArticleApi | null> {
+	const res = await fetchFn(
+		`/api/wiki/articles/${subjectType}/${encodeURIComponent(subjectId)}`
+	);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** Open notes across the whole record — the Overview's what-changed count. */
+export async function countOpenNotes(fetchFn: FetchFn = fetch): Promise<number> {
+	const res = await fetchFn('/api/wiki/notes-open-count');
+	if (!res.ok) return 0;
+	const j = await res.json();
+	return typeof j.open === 'number' ? j.open : 0;
+}
+
+/** One edit to some article, for the History room. */
+export interface HistoryEntry {
+	subject_type: string;
+	subject_id: string;
+	route: string;
+	title: string;
+	author: string;
+	at: string;
+	version_number: number;
+}
+
+/** One line of a diff. `kind` is 'add' | 'del' | 'ctx'. */
+export interface DiffLine {
+	kind: string;
+	text: string;
+}
+
+/** One edit to one article, with what changed. */
+export interface ArticleRevision {
+	version_number: number;
+	author: string;
+	at: string;
+	diff: DiffLine[];
+	is_current: boolean;
+}
+
+/** Every recent edit to any article, newest first. */
+export async function listHistory(
+	limit = 50,
+	fetchFn: FetchFn = fetch
+): Promise<HistoryEntry[]> {
+	const res = await fetchFn(`/api/wiki/history?limit=${limit}`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** One article's edit history, with diffs. */
+export async function getArticleHistory(
+	subjectType: string,
+	subjectId: string,
+	fetchFn: FetchFn = fetch
+): Promise<ArticleRevision[]> {
+	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/history`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** One piece of prose that mentions a subject. */
+export interface SubjectBacklink {
+	page_id: string;
+	title: string;
+	/** The subject's route if it is an article, else the page route. */
+	route: string;
+	is_article: boolean;
+}
+
+/** Everything whose prose links to this subject. Derived at read time. */
+export async function getSubjectBacklinks(
+	subjectType: string,
+	subjectId: string,
+	fetchFn: FetchFn = fetch
+): Promise<SubjectBacklink[]> {
+	const res = await fetchFn(`/api/wiki/subjects/${subjectType}/${subjectId}/backlinks`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/**
+ * Write a subject's first article, now.
+ *
+ * Synchronous by design — one model call the user is waiting on. Returns the
+ * created article; the caller should re-fetch the entity to pick up the prose.
+ */
+export async function writeArticle(
+	subjectType: string,
+	subjectId: string,
+	fetchFn: FetchFn = fetch
+): Promise<{ id: string; page_id: string }> {
+	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}`, { method: 'POST' });
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.error ?? body?.message ?? `Could not write the article`);
+	}
+	return res.json();
+}
+
+/** Turn maintenance on or off. Off means the AI never touches this article. */
+export async function setArticleAutoUpdate(
+	subjectType: string,
+	subjectId: string,
+	autoUpdate: boolean,
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/auto-update`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ auto_update: autoUpdate })
+	});
+	if (!res.ok) throw new Error('Could not change that');
 }
 
 export async function listPeople(fetchFn: FetchFn = fetch): Promise<WikiPersonListItem[]> {
@@ -292,57 +754,32 @@ export async function updateOrganization(
 
 // --- Telos ---
 
-export async function getActiveTelos(fetchFn: FetchFn = fetch): Promise<WikiTelosApi | null> {
-	const res = await fetchFn("/api/wiki/telos/active");
-	if (!res.ok) return null;
-	return res.json();
-}
 
-export async function getTelosById(
-	id: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiTelosApi | null> {
-	const res = await fetchFn(`/api/wiki/telos/${encodeURIComponent(id)}`);
-	if (!res.ok) return null;
-	return res.json();
-}
 
 // --- Act ---
 
-export async function getActById(
+
+
+// --- Story ---
+
+export async function getStoryById(
 	id: string,
 	fetchFn: FetchFn = fetch
-): Promise<WikiActApi | null> {
-	const res = await fetchFn(`/api/wiki/act/${encodeURIComponent(id)}`);
+): Promise<WikiStoryApi | null> {
+	const res = await fetchFn(`/api/wiki/story/${encodeURIComponent(id)}`);
 	if (!res.ok) return null;
 	return res.json();
 }
 
-export async function listActs(fetchFn: FetchFn = fetch): Promise<WikiActApi[]> {
-	const res = await fetchFn("/api/wiki/acts");
+export async function listStories(fetchFn: FetchFn = fetch): Promise<WikiStoryApi[]> {
+	const res = await fetchFn("/api/wiki/stories");
 	if (!res.ok) return [];
 	return res.json();
 }
 
 // --- Chapter ---
 
-export async function getChapterById(
-	id: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiChapterApi | null> {
-	const res = await fetchFn(`/api/wiki/chapter/${encodeURIComponent(id)}`);
-	if (!res.ok) return null;
-	return res.json();
-}
 
-export async function listChaptersForAct(
-	actId: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiChapterApi[]> {
-	const res = await fetchFn(`/api/wiki/act/${actId}/chapters`);
-	if (!res.ok) return [];
-	return res.json();
-}
 
 // --- Day ---
 
@@ -380,6 +817,140 @@ export async function listDays(
 	const query = params.toString() ? `?${params}` : "";
 	const res = await fetchFn(`/api/wiki/days${query}`);
 	if (!res.ok) return [];
+	return res.json();
+}
+
+/** One heatmap cell: how much recorded life a day holds. */
+export interface DayActivityApi {
+	date: string;
+	event_count: number;
+	narrated: boolean;
+}
+
+export async function listDayActivity(
+	startDate: string,
+	endDate: string,
+	fetchFn: FetchFn = fetch
+): Promise<DayActivityApi[]> {
+	const res = await fetchFn(
+		`/api/wiki/activity?start_date=${startDate}&end_date=${endDate}`
+	);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** One raw record linked to an entity via refs — the entity page's evidence feed. */
+export interface EntityRecordApi {
+	source_type: string;
+	id: string;
+	timestamp: string;
+	label: string;
+	preview: string | null;
+	role: string | null;
+	continuous: boolean;
+}
+
+export interface EntityRecordsPageApi {
+	items: EntityRecordApi[];
+	total: number;
+}
+
+/** Per-raw-source_type counts across ALL of an entity's records. */
+export interface EntityRecordFacetApi {
+	source_type: string;
+	count: number;
+	continuous: boolean;
+}
+
+export async function getEntityRecordsPage(
+	entityId: string,
+	opts: {
+		offset: number;
+		limit: number;
+		search?: string;
+		/** Raw source_types to include; empty = all. */
+		types?: string[];
+		dir?: "asc" | "desc";
+	},
+	fetchFn: FetchFn = fetch
+): Promise<EntityRecordsPageApi> {
+	const params = new URLSearchParams();
+	params.set("offset", String(opts.offset));
+	params.set("limit", String(opts.limit));
+	if (opts.search) params.set("search", opts.search);
+	if (opts.types?.length) params.set("types", opts.types.join(","));
+	if (opts.dir) params.set("dir", opts.dir);
+	// no-store: this endpoint predates some deployed boxes, whose SPA fallback
+	// used to answer unknown /api paths with cacheable HTML — never let a
+	// poisoned cache entry shadow the real data.
+	const res = await fetchFn(
+		`/api/wiki/entity/${encodeURIComponent(entityId)}/records?${params}`,
+		{ cache: "no-store" }
+	);
+	if (!res.ok) {
+		// A server error is not an empty history — let the caller show it.
+		throw new Error(`Failed to load entity records (${res.status})`);
+	}
+	return res.json();
+}
+
+export async function getEntityRecordFacets(
+	entityId: string,
+	fetchFn: FetchFn = fetch
+): Promise<EntityRecordFacetApi[]> {
+	const res = await fetchFn(
+		`/api/wiki/entity/${encodeURIComponent(entityId)}/records/facets`,
+		{ cache: "no-store" }
+	);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** A past year's entry sharing today's month and day. */
+export interface OnThisDayApi {
+	date: string;
+	epigraph: string | null;
+	narrated: boolean;
+	event_count: number;
+}
+
+export async function listOnThisDay(
+	date?: string,
+	fetchFn: FetchFn = fetch
+): Promise<OnThisDayApi[]> {
+	const query = date ? `?date=${encodeURIComponent(date)}` : "";
+	const res = await fetchFn(`/api/wiki/on-this-day${query}`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+// --- Narrative identity ---
+
+export interface NarrativeIdentityApi {
+	id: string;
+	content: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function getNarrativeIdentity(
+	fetchFn: FetchFn = fetch
+): Promise<NarrativeIdentityApi | null> {
+	const res = await fetchFn(`/api/wiki/narrative-identity`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+export async function updateNarrativeIdentity(
+	content: string,
+	fetchFn: FetchFn = fetch
+): Promise<NarrativeIdentityApi | null> {
+	const res = await fetchFn(`/api/wiki/narrative-identity`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ content }),
+	});
+	if (!res.ok) return null;
 	return res.json();
 }
 
@@ -830,7 +1401,7 @@ export async function getCalendarUpcoming(
 export interface UnnamedPlace {
 	id: string;
 	name: string;
-	visit_count: number;
+	ref_count: number;
 	latitude: number | null;
 	longitude: number | null;
 }

@@ -65,22 +65,40 @@ pub struct CredentialListItem {
     pub provider: String,
     pub name: String,
     pub auth_type: String,
-    /// Raw status enum: `pending` (mid-pairing), `active`, or `revoked`. The
-    /// frontend uses this to filter transient pending rows out of the list and
-    /// to distinguish revoked from pending in display.
+    /// Raw status enum: `pending` (mid-pairing), `active`, `revoked`,
+    /// `reauth_required`, or `error`. The frontend uses this to filter
+    /// transient pending rows out of the list, to distinguish revoked from
+    /// pending in display, and to offer Reconnect on the two broken states.
     pub status: String,
+    /// Why the credential is in a broken state — the provider's own words
+    /// where we have them (a Plaid `ITEM_LOGIN_REQUIRED`, a refresh failure).
+    /// Without it a Reconnect button can only say that something is wrong.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
     pub is_active: bool,
     pub device_info: Option<DeviceInfo>,
     pub last_seen_at: Option<String>,
     pub created_at: String,
     /// Number of `app_applets` rows linked to this credential.
-    pub action_count: i64,
+    pub applet_count: i64,
     /// Derived initial-sync lifecycle for active credentials (Tier 2 UX):
     /// `connected` (paired, no run yet) → `backfilling` (runs in flight, no
     /// success) → `live` (≥1 successful run). `None` for pending/revoked rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sync_state: Option<String>,
 }
+
+/// Credentials that are the box's own plumbing rather than a source the user
+/// connected: the subscription key that pays for inference (`virtues_api`) and
+/// the BYO provider key (`__byo_ai_key__`). Both are `credentials` rows because
+/// that is where encrypted secrets live, and neither has a `[[source]]` in the
+/// catalog — so the Sources room rendered them as orphaned connections whose
+/// "source is no longer installed", offering to disconnect the thing paying for
+/// the box. Each already has its own surface in Settings → Billing.
+const INTERNAL_SOURCE_IDS: [&str; 2] = [
+    crate::virtues_api::renew::SOURCE_ID,
+    crate::api::settings_byo::BYO_SOURCE_ID,
+];
 
 /// List credentials. Returns pending and revoked rows too so the UI can show
 /// them with a distinct status. Ordered newest first.
@@ -90,6 +108,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
         String,
         String,
         String,
+        Option<String>,
         String,
         Option<String>,
         String,
@@ -102,24 +121,27 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
               c.source_id,
               c.name,
               c.status,
+              c.status_reason,
               c.metadata::text,
               c.last_seen_at::text,
               c.created_at::text,
-              (SELECT COUNT(*) FROM app_applets WHERE credential_id = c.id) AS action_count,
-              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.action_id
+              (SELECT COUNT(*) FROM app_applets WHERE credential_id = c.id) AS applet_count,
+              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.applet_id
                  WHERE a.credential_id = c.id) AS total_runs,
-              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.action_id
+              (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.applet_id
                  WHERE a.credential_id = c.id AND r.status = 'success') AS success_runs
            FROM credentials c
+          WHERE c.source_id <> ALL($1)
            ORDER BY c.created_at DESC"#,
     )
+    .bind(&INTERNAL_SOURCE_IDS[..])
     .fetch_all(db)
     .await?;
 
     Ok(rows
         .into_iter()
         .map(
-            |(id, source_id, name, status, metadata_raw, last_seen_at, created_at, action_count, total_runs, success_runs)| {
+            |(id, source_id, name, status, status_reason, metadata_raw, last_seen_at, created_at, applet_count, total_runs, success_runs)| {
                 let device_info = device_info_from_metadata(Some(&metadata_raw));
                 let auth_type = auth_type_for_source(&source_id).to_string();
                 let is_active = status == "active";
@@ -131,10 +153,11 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
                     auth_type,
                     is_active,
                     status,
+                    status_reason,
                     device_info,
                     last_seen_at,
                     created_at,
-                    action_count,
+                    applet_count,
                     sync_state,
                 }
             },
@@ -158,7 +181,7 @@ fn sync_state_for(total_runs: i64, success_runs: i64) -> &'static str {
 /// Map a source id to the legacy `auth_type` string the frontend expects.
 /// Catalog-driven via `lookup_source` — no per-provider matching here.
 fn auth_type_for_source(source_id: &str) -> &'static str {
-    use crate::action_templates::{lookup_source, SourceAuth};
+    use crate::applet_templates::{lookup_source, SourceAuth};
     match lookup_source(source_id).map(|s| s.auth) {
         Some(SourceAuth::SelfIssuedBearer) => "device",
         Some(SourceAuth::ViaProxy { .. }) => "oauth",
@@ -190,12 +213,12 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
 ///
 /// Flow:
 /// 1. Set `status = 'revoked'` so template reconcile skips this credential.
-/// 2. Nullify `action_id` on any historical runs for the credential's
+/// 2. Nullify `applet_id` on any historical runs for the credential's
 ///    fan-out actions (FK safety).
 /// 3. Delete the per-credential action rows. Reconcile won't re-create
 ///    them because the credential is no longer active.
 ///
-/// Run history is preserved with `action_id = NULL` so the history view
+/// Run history is preserved with `applet_id = NULL` so the history view
 /// can still surface past runs.
 pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     let affected = sqlx::query(
@@ -215,8 +238,8 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     }
 
     sqlx::query(
-        r#"UPDATE app_applet_runs SET action_id = NULL
-           WHERE action_id IN (SELECT id FROM app_applets WHERE credential_id = $1)"#,
+        r#"UPDATE app_applet_runs SET applet_id = NULL
+           WHERE applet_id IN (SELECT id FROM app_applets WHERE credential_id = $1)"#,
     )
     .bind(credential_id)
     .execute(db)

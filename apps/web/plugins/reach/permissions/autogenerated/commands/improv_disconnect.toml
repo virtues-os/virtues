@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-improv-disconnect"
+description = "Enables the improv_disconnect command without any pre-configured scope."
+commands.allow = ["improv_disconnect"]
+
+[[permission]]
+identifier = "deny-improv-disconnect"
+description = "Denies the improv_disconnect command without any pre-configured scope."
+commands.deny = ["improv_disconnect"]

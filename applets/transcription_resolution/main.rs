@@ -7,8 +7,8 @@
 //!
 //! Currently invoked every ~60s via a hand-rolled tokio interval task in
 //! `core/src/server/mod.rs` — that's lunch-day duct tape. Post-lunch this
-//! moves to the proper scheduler with `cron_schedule = '*/1 * * * *'` on the
-//! action row, and the scheduler dispatches via `action_runner` instead of
+//! moves to the proper scheduler with `schedule = '*/1 * * * *'` on the
+//! action row, and the scheduler dispatches via `applet_runner` instead of
 //! match-dispatch.
 //!
 //! Stops early on virtues-api 429 to preserve unprocessed recordings for the
@@ -34,7 +34,7 @@ const BATCH_SIZE: i64 = 30;
 async fn main() -> Result<()> {
     virtues_applets::init_tracing();
 
-    // Cron actions still receive an ActionInput on stdin (config + null payload).
+    // Cron actions still receive an AppletInput on stdin (config + null payload).
     let input = read_input()?;
     let db = connect_from_env("virtues-action-transcription_resolution").await?;
 

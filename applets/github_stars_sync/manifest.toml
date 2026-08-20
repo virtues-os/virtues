@@ -1,0 +1,11 @@
+name = "GitHub Stars"
+description = "Files the repositories you star on GitHub with your bookmarks."
+owner = "system"
+command = ["github_stars_sync"]
+triggers = ["cron", "manual"]
+schedule = "0 15/30 * * * *"
+per_credential = true
+source = { id = "github" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["content_bookmark"]

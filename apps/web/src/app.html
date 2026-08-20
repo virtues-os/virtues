@@ -9,12 +9,11 @@
 		     visible in the Tauri webview, where there's no browser chrome to
 		     hide behind. Both values are written by applyTheme().
 
-		     The fallback tracks the DEFAULT theme (Caladan, #FFFFFF), not
-		     :root — :root is Pemberley's cream #FDFCF9, and it stopped being
-		     the default when Caladan took over. Only a first run reaches this
-		     line (afterwards localStorage has the real value), so getting it
-		     wrong meant every new box flashed cream on its very first paint
-		     and then settled to white. Keep this in step with
+		     The fallback tracks the DEFAULT theme — Pemberley, #FFFFFF, which
+		     is also what :root carries, so the two agree. Only a first run
+		     reaches this line (afterwards localStorage has the real value), so
+		     getting it wrong means every new box flashes one colour on its very
+		     first paint and then settles to another. Keep this in step with
 		     virtues-registry DEFAULT_THEME. -->
 		<script>
 			(function () {

@@ -14,11 +14,9 @@
 	interface Props {
 		source: SourceCatalogItem | null;
 		/**
-		 * Field names to collect (e.g. `["token"]` for single-field connectors,
-		 * `["api_key", "api_secret"]` for multi-field). Today the source catalog
-		 * doesn't surface the fields list to the frontend; we default to
-		 * `["token"]` and rely on backend validation. Future: include `fields`
-		 * in `SourceCatalogItem`.
+		 * Override for the field names to collect. Normally left unset — the
+		 * source declares them in its manifest and the catalog now carries the
+		 * list, so the form asks for exactly what the backend will validate.
 		 */
 		fields?: string[];
 		open: boolean;
@@ -26,7 +24,13 @@
 		onSuccess: (credentialId: string) => void;
 	}
 
-	let { source, fields = ['token'], open, onClose, onSuccess }: Props = $props();
+	let { source, fields: fieldsProp, open, onClose, onSuccess }: Props = $props();
+
+	// `["token"]` is the last resort for a catalog entry that declares nothing,
+	// not the default — an empty form would collect no secret at all.
+	const fields = $derived(
+		fieldsProp ?? (source?.fields?.length ? source.fields : ['token'])
+	);
 
 	let name = $state('');
 	let values = $state<Record<string, string>>({});

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS Info.plist additions. Tauri merges this into the generated bundle.
+
+  Bluetooth is here because the Mac is a FIRST-CLASS FIRST DEVICE: it finds an
+  unclaimed box over Improv/BLE and sets up its wifi, the same as the phone
+  does (see `virtues_improv::client`). Without this key CoreBluetooth refuses
+  the very first scan, and macOS surfaces nothing to the user — the app simply
+  finds no boxes, forever, which is indistinguishable from a box that isn't
+  advertising. The iOS side has carried the same key since BLE setup shipped;
+  this is its desktop twin.
+
+  Local networking covers the other half of setup: discovering an
+  already-online box on the LAN (mDNS + a subnet probe) and pairing to it.
+
+  CFBundleIconName points macOS at the `AppIcon` entry inside Assets.car, which
+  is what carries the Icon Composer layers — the light / dark / clear / tinted
+  renditions the system picks between. Without this key macOS falls back to the
+  flat CFBundleIconFile icns and the user's appearance setting does nothing.
+
+  Assets.car and AppIcon.icns are NOT produced by this build. They are compiled
+  from icons/AppIcon.icon by `actool` and committed under
+  icons/AppIcon.compiled/, then copied into Contents/Resources by
+  `bundle.resources` in tauri.conf.json — which runs before signing, so the
+  bundle is never modified after codesign.
+
+  They are committed rather than compiled here for two reasons. Listing a
+  `.icon` in `bundle.icon` switches tauri onto an actool path that fails
+  (d9752668), and release CI runs `pnpm tauri build` directly on a macos-15
+  runner rather than tools/build-mac-app.sh — so any pre-build compile step
+  would silently not run where it matters most. Regenerate them with
+  `make icons` after changing the mark.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Virtues uses Bluetooth to find your box during setup and put it on your Wi-Fi.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Virtues finds your box on this network so it can connect to it directly.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_virtues._tcp</string>
+        <string>_http._tcp</string>
+    </array>
+</dict>
+</plist>

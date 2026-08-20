@@ -17,6 +17,10 @@ path = "src/lib.rs"
 # fans it to the right ontology table; see ios_ingest/main.rs.
 
 [[bin]]
+name = "daily_readings"
+path = "daily_readings/main.rs"
+
+[[bin]]
 name = "backup_volumes"
 path = "backup_volumes/main.rs"
 
@@ -33,6 +37,10 @@ name = "day_summary_eod"
 path = "day_summary_eod/main.rs"
 
 [[bin]]
+name = "entity_article"
+path = "entity_article/main.rs"
+
+[[bin]]
 name = "narrative_identity_draft"
 path = "narrative_identity_draft/main.rs"
 
@@ -43,6 +51,10 @@ path = "embedding_index/main.rs"
 [[bin]]
 name = "document_extraction"
 path = "document_extraction/main.rs"
+
+[[bin]]
+name = "bookmark_enrichment"
+path = "bookmark_enrichment/main.rs"
 
 [[bin]]
 name = "credential_refresh"
@@ -79,6 +91,12 @@ path = "notion_pages_sync/main.rs"
 [[bin]]
 name = "strava_activities_sync"
 path = "strava_activities_sync/main.rs"
+
+# ── GitHub (api_key / PAT) ──────────────────────────────────────────────────
+
+[[bin]]
+name = "github_stars_sync"
+path = "github_stars_sync/main.rs"
 
 # ── Plaid streams (via_proxy with Hosted Link) ──────────────────────────────
 

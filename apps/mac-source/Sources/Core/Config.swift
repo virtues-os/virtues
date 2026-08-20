@@ -10,9 +10,9 @@ struct Config: Codable {
     /// The LAN origin used at pair time (`/api/pair/consume`). Kept for reference
     /// / re-pair; uploads no longer use it (they go over iroh).
     let apiEndpoint: String
-    /// `function_name → action_id` map from pair-consume — the webhook targets.
-    /// mac-source posts to `actionIds["mac_ingest"]`.
-    let actionIds: [String: String]
+    /// `function_name → applet_id` map from pair-consume — the webhook targets.
+    /// mac-source posts to `appletIds["mac_ingest"]`.
+    let appletIds: [String: String]
     /// The box's iroh reach ticket: EndpointId + relay URL. Dialed by BoxTransport.
     let boxNodeId: String
     let relayUrl: String
@@ -34,10 +34,67 @@ struct Config: Codable {
     private struct ConfigFile: Codable {
         let deviceId: String
         let apiEndpoint: String
-        let actionIds: [String: String]
+        let appletIds: [String: String]
         let boxNodeId: String
         let relayUrl: String
         let createdAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case deviceId, apiEndpoint, appletIds, boxNodeId, relayUrl, createdAt
+            /// Pre-rename spelling. Every collector paired before the applets
+            /// rename has this key on disk.
+            case actionIds
+        }
+
+        /// Accept `actionIds` as well as `appletIds`.
+        ///
+        /// The rename moved this key without a read-side fallback, so an
+        /// installed collector could not decode the config it wrote itself —
+        /// `load()` returned nil and the daemon exited on launch. That also
+        /// disarmed the recovery this same release shipped (a 404 clears the
+        /// cached id and refetches): it cannot run in a process that dies
+        /// before it starts. The VALUES are left alone deliberately — they are
+        /// stale `action_*` ids, and letting that recovery correct them is the
+        /// point of having it.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            deviceId = try c.decode(String.self, forKey: .deviceId)
+            apiEndpoint = try c.decode(String.self, forKey: .apiEndpoint)
+            appletIds =
+                try c.decodeIfPresent([String: String].self, forKey: .appletIds)
+                ?? c.decodeIfPresent([String: String].self, forKey: .actionIds)
+                ?? [:]
+            boxNodeId = try c.decode(String.self, forKey: .boxNodeId)
+            relayUrl = try c.decode(String.self, forKey: .relayUrl)
+            createdAt = try c.decode(Date.self, forKey: .createdAt)
+        }
+
+        /// Always writes the new key, so a legacy file upgrades itself the
+        /// first time anything saves. Explicit because `CodingKeys` carries a
+        /// case with no matching property, which defeats synthesis.
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(deviceId, forKey: .deviceId)
+            try c.encode(apiEndpoint, forKey: .apiEndpoint)
+            try c.encode(appletIds, forKey: .appletIds)
+            try c.encode(boxNodeId, forKey: .boxNodeId)
+            try c.encode(relayUrl, forKey: .relayUrl)
+            try c.encode(createdAt, forKey: .createdAt)
+        }
+
+        /// Memberwise init, restored — declaring `init(from:)` suppresses the
+        /// synthesized one, and `save()` builds this value directly.
+        init(
+            deviceId: String, apiEndpoint: String, appletIds: [String: String],
+            boxNodeId: String, relayUrl: String, createdAt: Date
+        ) {
+            self.deviceId = deviceId
+            self.apiEndpoint = apiEndpoint
+            self.appletIds = appletIds
+            self.boxNodeId = boxNodeId
+            self.relayUrl = relayUrl
+            self.createdAt = createdAt
+        }
     }
 
     static func load() -> Config? {
@@ -58,7 +115,7 @@ struct Config: Codable {
             return Config(
                 deviceId: cf.deviceId,
                 apiEndpoint: cf.apiEndpoint,
-                actionIds: cf.actionIds,
+                appletIds: cf.appletIds,
                 boxNodeId: cf.boxNodeId,
                 relayUrl: cf.relayUrl,
                 createdAt: cf.createdAt,
@@ -80,7 +137,7 @@ struct Config: Codable {
         let cf = ConfigFile(
             deviceId: deviceId,
             apiEndpoint: apiEndpoint,
-            actionIds: actionIds,
+            appletIds: appletIds,
             boxNodeId: boxNodeId,
             relayUrl: relayUrl,
             createdAt: createdAt
@@ -176,7 +233,7 @@ struct Config: Codable {
     struct Paired {
         let deviceId: String
         let endpoint: String
-        let actionIds: [String: String]
+        let appletIds: [String: String]
         let boxNodeId: String
         let relayUrl: String
         let seed: String
@@ -186,7 +243,7 @@ struct Config: Codable {
     /// (the same public, token-gated route the iOS app uses — no bearer). We
     /// generate an iroh keypair, submit its EndpointId (`device_node_id`) so the
     /// box allowlists it, declare `source = "mac"` so `reconcile_templates` fans
-    /// out the `mac_ingest` webhook action (anchored on this device), and read
+    /// out the `mac_ingest` webhook applet (anchored on this device), and read
     /// back the box's reach ticket for uploads over iroh. Consume runs over the
     /// LAN origin (`VIRTUES_API_URL`); everything after goes over iroh.
     static func pairConsume(token: String) async throws -> Paired {
@@ -244,11 +301,11 @@ struct Config: Codable {
                 + "(is the box's iroh endpoint up?)"
             )
         }
-        let actionIds = (json["action_ids"] as? [String: String]) ?? [:]
+        let appletIds = (json["applet_ids"] as? [String: String]) ?? [:]
         return Paired(
             deviceId: deviceId,
             endpoint: root,
-            actionIds: actionIds,
+            appletIds: appletIds,
             boxNodeId: boxNodeId,
             relayUrl: relayUrl,
             seed: seed

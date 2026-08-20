@@ -30,9 +30,36 @@ const THEME_STORAGE_KEY = 'virtues-theme';
 /** Resolved `--background` for the active theme; read by app.html pre-paint. */
 const THEME_BG_STORAGE_KEY = 'virtues-theme-bg';
 
+/**
+ * The two themes Virtues stands behind — one light, one dark.
+ *
+ * Sixteen themes with no marked pair is sixteen equal strangers: nothing tells
+ * you which one the app was designed in, so picking is guesswork and the answer
+ * to "just give me dark mode" is a shrug. These two are that answer. They are
+ * surfaced by name — Pemberley stays Pemberley — with the role as a qualifier,
+ * because the names are part of the product and "Light"/"Dark" are not names.
+ *
+ * `light` must agree with virtues-registry's DEFAULT_THEME (Rust), which is what
+ * a new box actually lands on. Calling a theme the default while new boxes open
+ * on a different one would be a label that isn't true.
+ */
+export const DEFAULT_THEMES = {
+	light: 'pemberley',
+	dark: 'asgard'
+} as const satisfies Record<'light' | 'dark', Theme>;
+
+/** "Virtues Light" / "Virtues Dark" for the two above; null for the rest. */
+export function themeDefaultLabel(theme: Theme): string | null {
+	if (theme === DEFAULT_THEMES.light) return 'Virtues Light';
+	if (theme === DEFAULT_THEMES.dark) return 'Virtues Dark';
+	return null;
+}
+
 // Fallback theme used only before the API responds (flash prevention).
-// The real default is set in virtues-registry (Rust) and delivered via /api/assistant-profile.
-const FALLBACK_THEME: Theme = 'caladan';
+// The real default is set in virtues-registry (Rust) and delivered via
+// /api/assistant-profile; this must match it, or a cold start paints one theme
+// and swaps to another the moment the profile lands.
+const FALLBACK_THEME: Theme = DEFAULT_THEMES.light;
 
 /**
  * Themes that no longer exist, and where their users go instead.
@@ -183,9 +210,9 @@ export function initTheme(): void {
 export function isValidTheme(theme: string): theme is Theme {
 	return [
 		'pemberley',
+		'oxford',
 		'caladan',
 		'rivendell',
-		'oxford',
 		'netherfield',
 		'lothlorien',
 		'hogwarts',
@@ -218,14 +245,19 @@ export function isThemeDark(theme: Theme): boolean {
 }
 
 /**
- * Get all available themes
+ * Get all available themes.
+ *
+ * The two defaults lead, light then dark, so the pair reads as a pair. Every
+ * surface that lists themes uses this order, which is the only thing keeping
+ * "recommended" from meaning something different in ⌘K than in Settings.
  */
 export function getAvailableThemes(): Theme[] {
 	return [
-		'pemberley',
+		DEFAULT_THEMES.light,
+		DEFAULT_THEMES.dark,
+		'oxford',
 		'caladan',
 		'rivendell',
-		'oxford',
 		'netherfield',
 		'lothlorien',
 		'hogwarts',
@@ -235,7 +267,6 @@ export function getAvailableThemes(): Theme[] {
 		'canterbury',
 		'borghese',
 		'lyceum',
-		'asgard',
 		'agora',
 		'shire'
 	];
@@ -283,13 +314,13 @@ export const themePreviewColors: Record<
 	}
 > = {
 	pemberley: {
-		background: '#FDFCF9',
+		background: '#FFFFFF',
 		surface: '#FFFFFF',
-		surfaceElevated: '#F5F4EF',
-		foreground: '#1A2030',
-		foregroundMuted: '#3E4459',
-		primary: '#1E3159',
-		syntax: ['#9A2B2E', '#1E3159', '#7E2225', '#1E4E8C', '#6C7185', '#1A2030']
+		surfaceElevated: '#FFFFFF',
+		foreground: '#17171A',
+		foregroundMuted: '#3F3F46',
+		primary: '#0A84FF',
+		syntax: ['#C4322B', '#0A84FF', '#7C3AED', '#0060DF', '#71717A', '#17171A']
 	},
 	caladan: {
 		background: '#FFFFFF',
@@ -310,13 +341,13 @@ export const themePreviewColors: Record<
 		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
 	},
 	oxford: {
-		background: '#FFFFFF',
+		background: '#FDFCF9',
 		surface: '#FFFFFF',
-		surfaceElevated: '#FAFAFA',
-		foreground: '#171717',
-		foregroundMuted: '#525252',
-		primary: '#2883DE',
-		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
+		surfaceElevated: '#F4F3F0',
+		foreground: '#1A2030',
+		foregroundMuted: '#3E4459',
+		primary: '#1E3159',
+		syntax: ['#9A2B2E', '#1E3159', '#7E2225', '#1E4E8C', '#6C7185', '#1A2030']
 	},
 	netherfield: {
 		background: '#FFFFFF',
@@ -364,12 +395,12 @@ export const themePreviewColors: Record<
 		syntax: ['#ff7b72', '#a5d6ff', '#d2a8ff', '#79c0ff', '#8b949e', '#e6edf3']
 	},
 	narnia: {
-		background: '#0C0E13',
-		surface: '#161820',
-		surfaceElevated: '#1e2028',
-		foreground: '#FAF9F5',
-		foregroundMuted: '#a8a29e',
-		primary: '#FF9D52',
+		background: '#0F1821',
+		surface: '#131E28',
+		surfaceElevated: '#18242F',
+		foreground: '#EDF1F4',
+		foregroundMuted: '#9BA7B2',
+		primary: '#7CC3DE',
 		syntax: ['#bb9af7', '#9ece6a', '#7aa2f7', '#ff9e64', '#565f89', '#a9b1d6']
 	},
 	canterbury: {
@@ -439,8 +470,8 @@ export const themeMetadata: Record<
 	}
 > = {
 	pemberley: {
-		icon: 'ph:feather-bold',
-		description: 'American heritage, navy & claret'
+		icon: 'ph:circle-bold',
+		description: 'White on white, hairlines & one blue'
 	},
 	caladan: {
 		icon: 'ph:waves-bold',
@@ -451,8 +482,8 @@ export const themeMetadata: Record<
 		description: 'Elven refuge, warm light'
 	},
 	oxford: {
-		icon: 'ph:book-open-bold',
-		description: 'Academic, studious'
+		icon: 'ph:feather-bold',
+		description: 'Heritage, navy & claret'
 	},
 	netherfield: {
 		icon: 'ph:building-bold',
@@ -475,8 +506,8 @@ export const themeMetadata: Record<
 		description: 'Victorian gaslight'
 	},
 	narnia: {
-		icon: 'ph:lamp-bold',
-		description: 'Magical lamppost glow'
+		icon: 'ph:compass-tool-bold',
+		description: 'Blueprint under lamplight'
 	},
 	canterbury: {
 		icon: 'ph:path-bold',

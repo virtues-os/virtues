@@ -47,6 +47,37 @@ export type AsyncFilterDef<T> = FilterDefBase<T> & {
 
 export type FilterDef<T> = EnumFilterDef<T> | MultiFilterDef<T> | AsyncFilterDef<T>;
 
+// ────────────────────────────────────────────────────────────────────────────
+// Server-side pagination. Passing a `server` source to the grid switches its
+// pipeline from client-side (search/filter/sort/page over `items`) to
+// forwarding those inputs as a query. Offset-based on purpose — at one life's
+// scale an indexed ORDER BY ... LIMIT/OFFSET is plenty, and the shape can grow
+// cursor fields later without breaking consumers.
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface GridQuery {
+	offset: number;
+	limit: number;
+	/** Debounced search text ('' when empty). */
+	search: string;
+	/** Active column sort, or null. Only offer `sortable` columns the server can order by. */
+	sort: { key: string; dir: 'asc' | 'desc' } | null;
+	/** Active filter values, keyed by FilterDef id. */
+	filters: Record<string, FilterValue>;
+	/** The grid's `serverExtra` prop, verbatim — consumer-owned query context
+	 *  (e.g. a chip row rendered outside the grid). Changing it refetches and
+	 *  resets to page 1, and it participates in the page cache key. */
+	extra?: Record<string, unknown>;
+}
+
+export interface GridPage<T> {
+	items: T[];
+	/** Total rows matching the query across all pages. */
+	total: number;
+}
+
+export type GridServerSource<T> = (query: GridQuery) => Promise<GridPage<T>>;
+
 /**
  * True when a filter value is "set" — i.e. should narrow the result set.
  * Empty string, null, and empty array all count as "not set".
@@ -73,7 +104,7 @@ export function applyFilter<T>(item: T, def: FilterDef<T>, value: FilterValue): 
 
 /**
  * Pretty-print a filter's current value for the chip label / summary line.
- * `Status: Enabled` or `Trigger: cron, manual` or `Action: Day Summary`.
+ * `Status: Enabled` or `Trigger: cron, manual` or `Applet: Day Summary`.
  */
 export function describeFilter<T>(
 	def: FilterDef<T>,

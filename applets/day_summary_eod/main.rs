@@ -147,9 +147,15 @@ async fn main() -> Result<()> {
         .await
         .context("event annotation failed")?;
 
-    // 4. Novelty scoring — writes `embedding`, which everything downstream
-    //    (autonomic's similarity baseline, class-by-neighbourhood, the W5
-    //    story magnet) depends on.
+    // 4. Novelty scoring — writes `wiki_events.embedding`, which is the
+    //    baseline cache the NEXT night's novelty run reads, and which step 5
+    //    (autonomic) reads for *today's* events in this same run. That second
+    //    reader is the reason this column exists rather than the scorer just
+    //    reading `search_vectors`: the search index is populated by a separate
+    //    15-minute cron and will not have seen these ids yet.
+    //    Note this is NOT the notebook magnet's input — that reads
+    //    `search_vectors` directly (see magnet.rs) and is unaffected by
+    //    anything in this chain.
     let novelty_count = virtues::dayline::novelty::compute_novelty_for_day(&pool, date)
         .await
         .context("novelty scoring failed")?;
@@ -181,7 +187,7 @@ async fn main() -> Result<()> {
     // Stash the last processed date in config so subsequent cron runs can
     // short-circuit in a condition or observe progress. Also strip any
     // `date` override that the caller passed in — the runner persists the
-    // returned config back to app_actions.config, and a sticky `date` would
+    // returned config back to app_applets.config, and a sticky `date` would
     // trap subsequent scheduled runs on the override's date forever. Chat
     // tools and manual-trigger with a date are always one-shot.
     let mut config = input.config.clone();
@@ -244,7 +250,8 @@ async fn oldest_unnarrated_day(pool: &sqlx::PgPool, yesterday: NaiveDate) -> Opt
          FROM wiki_days w \
          WHERE w.date BETWEEN $1 AND $2 \
            AND w.narrated_at IS NULL \
-           AND (SELECT count(*) FROM wiki_events e WHERE e.day_id = w.id) >= $3 \
+           AND (SELECT count(*) FROM wiki_events e \
+                WHERE e.day_id = w.id AND NOT e.is_unknown AND NOT e.user_hidden) >= $3 \
          ORDER BY w.date ASC LIMIT 1",
     )
     .bind(start)

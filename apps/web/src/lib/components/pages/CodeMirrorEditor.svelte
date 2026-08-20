@@ -8,6 +8,10 @@
 		focusMode,
 		focusModeCompartment,
 	} from "$lib/codemirror/extensions/focus-mode";
+	import {
+		renderMode,
+		renderModeCompartment,
+	} from "$lib/codemirror/extensions/render-mode";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import {
 		startAiSession,
@@ -26,7 +30,10 @@
 		filterSlashCommands,
 		type SlashCommand,
 	} from "$lib/codemirror/extensions/slash-commands";
-	import { createSelectionToolbar } from "$lib/codemirror/extensions/selection-toolbar";
+	import {
+		createSelectionToolbar,
+		dismissSelectionToolbar,
+	} from "$lib/codemirror/extensions/selection-toolbar";
 	import { createMediaPaste } from "$lib/codemirror/extensions/media-paste";
 	import RefPicker from "$lib/components/RefPicker.svelte";
 	import { toast } from "svelte-sonner";
@@ -254,6 +261,10 @@
 
 	function handleSelToolbarClose() {
 		selToolbarOpen = false;
+		// Tell the plugin too, or it re-opens the toolbar on the next update —
+		// closing the component only hides the symptom. The selection is left
+		// alone deliberately: Escape dismisses the bar, not the user's place.
+		if (view) dismissSelectionToolbar(view);
 	}
 
 	// --- Media upload ---
@@ -385,6 +396,7 @@
 			readOnly: false,
 			placeholder: placeholderText || "Start writing, or press / for commands…",
 			onDocChange: handleDocChange,
+			raw: pageDisplay.rawMode,
 			extensions: [
 				aiCursor,
 				entityPickerExt,
@@ -486,6 +498,14 @@
 		}
 	});
 
+	// Live-swap the rendered surface for raw markdown.
+	$effect(() => {
+		const raw = pageDisplay.rawMode;
+		if (view) {
+			view.dispatch({ effects: renderModeCompartment.reconfigure(renderMode(raw)) });
+		}
+	});
+
 	onDestroy(() => {
 		abortAiSession();
 		cleanupListeners?.();
@@ -522,7 +542,6 @@
 
 	{#if slashMenuOpen}
 		<SlashMenu
-			query={slashMenuQuery}
 			commands={filteredCommands}
 			position={slashMenuPos}
 			onSelect={handleSlashSelect}

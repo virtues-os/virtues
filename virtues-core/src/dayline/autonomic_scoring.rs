@@ -207,26 +207,17 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
 // Helpers
 // ============================================================================
 
-fn days_between_dates(from: &str, to: &str) -> f64 {
-    let from_date = chrono::NaiveDate::parse_from_str(from, "%Y-%m-%d");
-    let to_date = chrono::NaiveDate::parse_from_str(to, "%Y-%m-%d");
-    match (from_date, to_date) {
-        (Ok(f), Ok(t)) => (t - f).num_days() as f64,
-        _ => 84.0, // fallback to max window
-    }
-}
-
 /// Get the user's resting HR from recent data (14-day median).
 async fn get_resting_hr(pool: &PgPool, before_date: &str) -> Option<f64> {
     let row: Option<(f64,)> = sqlx::query_as(
         r#"
-        SELECT AVG(bpm) as avg_resting
+        SELECT AVG(bpm)::float8 as avg_resting
         FROM (
             SELECT MIN(bpm) as bpm
             FROM data_health_heart_rate
-            WHERE timestamp < $1
-            GROUP BY DATE(timestamp)
-            ORDER BY DATE(timestamp) DESC
+            WHERE occurred_at < $1
+            GROUP BY DATE(occurred_at)
+            ORDER BY DATE(occurred_at) DESC
             LIMIT 14
         )
         "#,
@@ -245,11 +236,11 @@ async fn get_resting_hr_std(pool: &PgPool, before_date: &str) -> Option<f64> {
     // stddev_samp(); kept in Rust to match the established scoring math.)
     let rows: Vec<(f64,)> = sqlx::query_as(
         r#"
-        SELECT MIN(bpm) as daily_min
+        SELECT MIN(bpm)::float8 as daily_min
         FROM data_health_heart_rate
-        WHERE timestamp < $1
-        GROUP BY DATE(timestamp)
-        ORDER BY DATE(timestamp) DESC
+        WHERE occurred_at < $1
+        GROUP BY DATE(occurred_at)
+        ORDER BY DATE(occurred_at) DESC
         LIMIT 14
         "#,
     )

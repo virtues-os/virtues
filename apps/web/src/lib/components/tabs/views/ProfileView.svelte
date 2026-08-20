@@ -86,7 +86,7 @@
 <Page
 	title="Profile"
 	description="Your personal information and preferences"
-	maxWidth="prose"
+	maxWidth="wide"
 >
 
 		{#if loading}

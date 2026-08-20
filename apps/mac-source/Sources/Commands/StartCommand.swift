@@ -7,6 +7,7 @@ private var globalMonitor: Monitor?
 private var globalUploader: Uploader?
 private var globalMessageMonitor: MessageMonitor?
 private var globalBrowserMonitor: BrowserMonitor?
+private var globalBookmarkMonitor: BookmarkMonitor?
 private var globalPresenceMonitor: PresenceMonitor?
 
 struct StartCommand: ParsableCommand {
@@ -84,6 +85,7 @@ struct StartCommand: ParsableCommand {
         // `data_communication_message` stayed empty no matter what the user granted.
         let messageMonitor = MessageMonitor(queue: queue)
         let browserMonitor = BrowserMonitor(queue: queue)
+        let bookmarkMonitor = BookmarkMonitor(queue: queue)
         // Presence: without this, walking away with an app focused is
         // indistinguishable from using it.
         let presenceMonitor = PresenceMonitor(queue: queue)
@@ -93,6 +95,7 @@ struct StartCommand: ParsableCommand {
         globalMonitor = monitor
         globalMessageMonitor = messageMonitor
         globalBrowserMonitor = browserMonitor
+        globalBookmarkMonitor = bookmarkMonitor
         globalPresenceMonitor = presenceMonitor
         globalUploader = uploader
 
@@ -100,6 +103,7 @@ struct StartCommand: ParsableCommand {
         monitor.start()
         messageMonitor.start()
         browserMonitor.start()
+        bookmarkMonitor.start()
         presenceMonitor.start()
         uploader.start()
         
@@ -109,6 +113,7 @@ struct StartCommand: ParsableCommand {
             globalMonitor?.stop()
             globalMessageMonitor?.stop()
             globalBrowserMonitor?.stop()
+            globalBookmarkMonitor?.stop()
             globalPresenceMonitor?.stop()
             globalUploader?.stop()
             Foundation.exit(0)
@@ -119,6 +124,7 @@ struct StartCommand: ParsableCommand {
             globalMonitor?.stop()
             globalMessageMonitor?.stop()
             globalBrowserMonitor?.stop()
+            globalBookmarkMonitor?.stop()
             globalPresenceMonitor?.stop()
             globalUploader?.stop()
             Foundation.exit(0)

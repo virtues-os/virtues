@@ -115,6 +115,27 @@ class Queue {
         if sqlite3_exec(db, createMessagesTableSQL, nil, nil, nil) != SQLITE_OK {
             throw QueueError.cannotCreateTable
         }
+
+        // Bookmark snapshots. Unlike the row-per-event tables above, a snapshot
+        // is one browser's ENTIRE bookmark state as a JSON records array — the
+        // box reconciles (upsert + tombstone-by-absence), so a newer snapshot
+        // for a browser supersedes an older pending one rather than queueing
+        // behind it (see replacePendingBookmarkSnapshot).
+        let createBookmarkTableSQL = """
+            CREATE TABLE IF NOT EXISTS bookmark_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                browser TEXT NOT NULL,
+                records_json TEXT NOT NULL,
+                uploaded INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_bookmark_snapshots_uploaded
+                ON bookmark_snapshots(uploaded);
+        """
+
+        if sqlite3_exec(db, createBookmarkTableSQL, nil, nil, nil) != SQLITE_OK {
+            throw QueueError.cannotCreateTable
+        }
     }
     
     func addEvent(_ event: Event, completion: ((Result<Void, Error>) -> Void)? = nil) {
@@ -364,6 +385,101 @@ class Queue {
             }
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw QueueError.cannotUpdateEvent
+            }
+        }
+    }
+
+    /// Enqueue a browser's full bookmark snapshot, superseding any pending one
+    /// for the same browser. A snapshot is total state, so uploading two of
+    /// them in one batch is pure waste and the older one is simply wrong.
+    /// Uploaded rows are left alone (cleanup reaps them).
+    func replacePendingBookmarkSnapshot(browser: String, recordsJSON: String) throws {
+        try queue.sync {
+            guard sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            var committed = false
+            defer { if !committed { sqlite3_exec(db, "ROLLBACK", nil, nil, nil) } }
+
+            var del: OpaquePointer?
+            defer { if del != nil { sqlite3_finalize(del) } }
+            guard sqlite3_prepare_v2(
+                db, "DELETE FROM bookmark_snapshots WHERE uploaded = 0 AND browser = ?",
+                -1, &del, nil) == SQLITE_OK
+            else { throw QueueError.cannotPrepareStatement }
+            sqlite3_bind_text(del, 1, (browser as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(del) == SQLITE_DONE else { throw QueueError.cannotDeleteEvents }
+
+            var ins: OpaquePointer?
+            defer { if ins != nil { sqlite3_finalize(ins) } }
+            guard sqlite3_prepare_v2(
+                db, "INSERT INTO bookmark_snapshots (browser, records_json) VALUES (?, ?)",
+                -1, &ins, nil) == SQLITE_OK
+            else { throw QueueError.cannotPrepareStatement }
+            sqlite3_bind_text(ins, 1, (browser as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(ins, 2, (recordsJSON as NSString).utf8String, -1, SQLITE_TRANSIENT)
+            guard sqlite3_step(ins) == SQLITE_DONE else { throw QueueError.cannotInsertEvent }
+
+            guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            committed = true
+        }
+    }
+
+    func getPendingBookmarkSnapshots() throws -> [(id: Int64, browser: String, recordsJSON: String)]
+    {
+        try queue.sync {
+            let sql = """
+                SELECT id, browser, records_json FROM bookmark_snapshots
+                WHERE uploaded = 0 ORDER BY id ASC
+            """
+            var statement: OpaquePointer?
+            defer { if statement != nil { sqlite3_finalize(statement) } }
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            var out: [(id: Int64, browser: String, recordsJSON: String)] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                out.append((
+                    sqlite3_column_int64(statement, 0),
+                    String(cString: sqlite3_column_text(statement, 1)),
+                    String(cString: sqlite3_column_text(statement, 2))
+                ))
+            }
+            return out
+        }
+    }
+
+    func markBookmarkSnapshotsUploaded(ids: [Int64]) throws {
+        guard !ids.isEmpty else { return }
+        try queue.sync {
+            let placeholders = ids.map { _ in "?" }.joined(separator: ",")
+            let sql = "UPDATE bookmark_snapshots SET uploaded = 1 WHERE id IN (\(placeholders))"
+            var statement: OpaquePointer?
+            defer { if statement != nil { sqlite3_finalize(statement) } }
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw QueueError.cannotPrepareStatement
+            }
+            for (i, id) in ids.enumerated() {
+                sqlite3_bind_int64(statement, Int32(i + 1), id)
+            }
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw QueueError.cannotUpdateEvent
+            }
+        }
+    }
+
+    func cleanupOldBookmarkSnapshots() throws {
+        try queue.sync {
+            var statement: OpaquePointer?
+            defer { if statement != nil { sqlite3_finalize(statement) } }
+            guard sqlite3_prepare_v2(
+                db, "DELETE FROM bookmark_snapshots WHERE uploaded = 1",
+                -1, &statement, nil) == SQLITE_OK
+            else { throw QueueError.cannotPrepareStatement }
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw QueueError.cannotDeleteEvents
             }
         }
     }

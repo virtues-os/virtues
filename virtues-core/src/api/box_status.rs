@@ -58,12 +58,13 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
     let linked = crate::virtues_api::renew::has_api_key(pool)
         .await
         .unwrap_or(false);
-    let paired_wg: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM credentials WHERE device_id IS NOT NULL AND status = 'active'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    // `app_device`, not `credentials`. This counted rows in a table by a column
+    // that does not exist, and `.unwrap_or(0)` swallowed the error — so the
+    // paired-device count in the box's own health snapshot has been reporting
+    // ZERO on every box, forever, however many devices were paired. A wrong
+    // query that returns an error is loud; a wrong query behind `unwrap_or` is
+    // a lie with a default value.
+    let paired_wg: i64 = crate::api::pair::paired_device_count(pool).await;
 
     Ok(BoxStatus {
         ready: true,
@@ -242,6 +243,24 @@ pub struct SetupState {
     pub setup: Vec<SetupStep>,
     pub setup_complete: bool,
     pub onboarding: Vec<SetupStep>,
+    /// Whether the box has anything to keep a record OF yet.
+    ///
+    /// Deliberately a lower bar than the whole `onboarding` list: this gates a
+    /// REDIRECT, and a gate that waits for the narrative-identity generator
+    /// would hold someone on a page while a background job runs. One connected
+    /// source is the honest line between "a box" and "your box".
+    pub onboarding_complete: bool,
+    /// `new` | `onboarding` | `active`, from `app_user_profile`.
+    ///
+    /// The routing gate reads this rather than a flag of its own. A second
+    /// boolean went into `ui_preferences` first, before noticing this column
+    /// already existed and already meant the same life stage — two records of
+    /// where someone is in onboarding is how they drift apart.
+    ///
+    /// `active` means finished OR dismissed, and both stop the redirect:
+    /// prescribe, never enforce, but a door that asks again every launch is a
+    /// wall with extra steps.
+    pub onboarding_status: String,
 }
 
 /// Compute the setup/onboarding state. Reuses [`compute_status`] for the
@@ -275,13 +294,11 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(0);
 
-    // First device = a paired collector (phone/Mac) with its own credential.
-    let first_device: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM credentials WHERE device_id IS NOT NULL AND status = 'active'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    // First device = a paired collector (phone/Mac). Same correction as
+    // `paired_wg` above: it asked `credentials` for a `device_id` it has never
+    // had, swallowed the error, and reported zero — which means the onboarding
+    // step this gates could never have completed on its own.
+    let first_device: i64 = crate::api::pair::paired_device_count(pool).await;
 
     // A paired phone, specifically (kind = 'mobile_app'). Distinct from
     // `first_device`, which counts ANY paired collector (incl. the Mac) — the
@@ -295,13 +312,13 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(0);
 
-    // Chat history imported = the one-time chat_import action has at least one
+    // Chat history imported = the one-time chat_import applet has at least one
     // successful run. Server-backed (not a client-local flag) so skipping it is
-    // recoverable from the dashboard backlog and survives a refresh. The action
-    // row's id is `action_chat_import` (see server::api::chat_import_upload).
+    // recoverable from the dashboard backlog and survives a refresh. The applet
+    // row's id is `applet_chat_import` (see server::api::chat_import_upload).
     let chat_imported: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_applet_runs \
-         WHERE action_id = 'action_chat_import' AND status = 'success')",
+         WHERE applet_id = 'applet_chat_import' AND status = 'success')",
     )
     .fetch_one(pool)
     .await
@@ -328,7 +345,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .unwrap_or(false);
     let nid_running: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_applet_runs \
-         WHERE action_id = 'action_narrative_identity_draft' AND status = 'running')",
+         WHERE applet_id = 'applet_narrative_identity_draft' AND status = 'running')",
     )
     .fetch_one(pool)
     .await
@@ -341,7 +358,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
         "SELECT EXISTS( \
            SELECT 1 FROM credentials c \
            JOIN app_applets a ON a.credential_id = c.id \
-           JOIN app_applet_runs r ON r.action_id = a.id AND r.status = 'success' \
+           JOIN app_applet_runs r ON r.applet_id = a.id AND r.status = 'success' \
            WHERE c.status = 'active' AND c.device_id IS NULL \
              AND c.source_id NOT IN ($1, $2, $3))",
     )
@@ -426,10 +443,23 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // weather-report the wizard renders but the user can't "do", and it flips
     // false on any transient LAN blip, which previously bounced a fully-set-up
     // user back into /setup.
-    const REQUIRED_SETUP_STEPS: &[&str] = &["claimed", "account"];
+    //
+    // `account` gates the APPLIANCE only. An appliance is a guided product: its
+    // panel sequences the three steps and the owner bought hardware that
+    // assumes a subscription, so requiring the link there is the intended
+    // shape. A DIY box is somebody's own server — forcing an account on it
+    // contradicts the doctrine outright ("prescribe, never enforce"), and until
+    // now this constant enforced it on both, with `/setup` offering no exit.
+    // That made the promise false for exactly the users it was written for.
+    let requires_account = crate::maintenance::setup_ap::is_appliance();
+    let required: &[&str] = if requires_account {
+        &["claimed", "account"]
+    } else {
+        &["claimed"]
+    };
     let setup_complete = setup
         .iter()
-        .filter(|s| REQUIRED_SETUP_STEPS.contains(&s.id))
+        .filter(|s| required.contains(&s.id))
         .all(|s| s.done);
 
     let onboarding = vec![
@@ -499,11 +529,51 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
         },
     ];
 
+    // Only the steps that mean the box has SOMETHING. `first_source` covers the
+    // Mac collector (the common path — iMessage is local, needs no OAuth, and
+    // the owner is already sitting at the machine that has it) as well as any
+    // connected account.
+    let onboarding_required: &[&str] = &["first_source"];
+    let onboarding_complete = onboarding
+        .iter()
+        .filter(|s| onboarding_required.contains(&s.id))
+        .all(|s| s.done);
+
+    let onboarding_status = onboarding_status(pool).await;
+
     Ok(SetupState {
         setup,
         setup_complete,
         onboarding,
+        onboarding_complete,
+        onboarding_status,
     })
+}
+
+/// Where the owner is in onboarding: `new`, `onboarding`, or `active`.
+///
+/// Reads `new` on any error, which errs toward OFFERING onboarding rather than
+/// silently swallowing it.
+pub async fn onboarding_status(pool: &PgPool) -> String {
+    sqlx::query_scalar::<_, String>("SELECT onboarding_status FROM app_user_profile LIMIT 1")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "new".to_string())
+}
+
+/// Mark onboarding finished or dismissed — both are `active`.
+///
+/// `false` puts it back to `onboarding` so the route can offer it again;
+/// something that can only ever be dismissed is a door that locks behind you.
+pub async fn set_onboarding_done(pool: &PgPool, done: bool) -> Result<()> {
+    sqlx::query("UPDATE app_user_profile SET onboarding_status = $1, updated_at = now()")
+        .bind(if done { "active" } else { "onboarding" })
+        .execute(pool)
+        .await
+        .map_err(|e| crate::Error::Database(format!("set onboarding_status: {e}")))?;
+    Ok(())
 }
 
 /// Three-state qualifier for the `device_collecting` step (behavior keys off
@@ -578,15 +648,61 @@ fn remote_access_step(endpoint_up: bool, endpoint_error: Option<&str>) -> SetupS
 }
 
 /// `GET /api/setup/state` — public-on-LAN like `/api/box/health`, and by the
-/// same argument: the wizard and the appliance panel must render it before
-/// any owner session exists, and it carries only booleans, step copy, and the
-/// already-public reachability verdict (plus the mDNS name once the owner has
-/// chosen it — which mDNS broadcasts to the LAN anyway).
+/// same argument: the onboarding flow and the appliance panel must render it
+/// before any owner session exists, and it carries only booleans and step
+/// copy. (No name field: there is no "named" step and no rename endpoint —
+/// the box keeps `virtues.local`.) Note the onboarding vec is a fuller
+/// behavioral sketch than `/api/box/identity`'s three bits — whether a phone
+/// is paired, chat history imported, a narrative identity written — visible
+/// to anyone on the LAN. Tolerated for now; worth revisiting if the checklist
+/// ever grows beyond booleans.
 pub async fn setup_state_handler(State(state): State<AppState>) -> impl IntoResponse {
     match compute_setup_state(state.db.pool()).await {
         Ok(setup) => (StatusCode::OK, Json(setup)).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "setup state failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// `POST /api/setup/skip-onboarding` — remember that the owner declined.
+///
+/// Authenticated: this changes what the app does on every future launch, and
+/// `/api/setup/state` is deliberately public (the wizard reads it before any
+/// session exists) — so the READ stays open and the WRITE does not.
+///
+/// Takes `{"skipped": bool}` so the same route un-skips. Onboarding that can
+/// only ever be dismissed is a door that locks behind you.
+#[derive(Debug, serde::Deserialize)]
+pub struct SkipOnboardingRequest {
+    #[serde(default = "default_true")]
+    pub skipped: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+pub async fn skip_onboarding_handler(
+    State(state): State<AppState>,
+    _user: crate::middleware::auth::AuthUser,
+    Json(req): Json<SkipOnboardingRequest>,
+) -> impl IntoResponse {
+    match set_onboarding_done(state.db.pool(), req.skipped).await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "onboarding_status": if req.skipped { "active" } else { "onboarding" }
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "skip onboarding failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": e.to_string() })),

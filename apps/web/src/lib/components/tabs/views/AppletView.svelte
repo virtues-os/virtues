@@ -1,17 +1,17 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import FaceFrame from '$lib/components/actions/FaceFrame.svelte';
+	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 
 	// Full-page applet view: nothing but the applet's face, filling the pane.
 	// The id comes from the route `/applet/<id>/view`.
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
-	const actionId = $derived(tab.route.match(/\/(action_[^/]+)\/view/)?.[1] ?? null);
+	const appletId = $derived(tab.route.match(/\/(applet_[^/]+)\/view/)?.[1] ?? null);
 </script>
 
 <div class="applet-view">
-	{#if actionId}
-		<FaceFrame {actionId} height="100%" />
+	{#if appletId}
+		<FaceFrame {appletId} height="100%" />
 	{:else}
 		<div class="state"><p class="muted">Applet not found.</p></div>
 	{/if}

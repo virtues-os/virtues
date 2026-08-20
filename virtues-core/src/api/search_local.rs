@@ -39,6 +39,14 @@ const MIN_QUERY_CHARS: usize = 2;
 pub struct LocalSearchRequest {
     pub q: String,
     pub limit: Option<i64>,
+    /// Restrict to these ontologies. Absent or empty = everything.
+    ///
+    /// The palette is global by definition, but the wiki's own search box is
+    /// not: asking a question from inside the wiki should search the wiki. That
+    /// is a scope, not a ranking change — `SearchFilters` already carries the
+    /// field; nothing had ever passed it here.
+    #[serde(default)]
+    pub ontologies: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,9 +82,18 @@ pub async fn search_local(
     let query_vector = pgvector::Vector::from(query_vec);
     let terms = crate::search::bm25::tokens(&query);
 
-    // No notebook scoping: the palette is global by definition. Scoped search
-    // is the notebook's own surface, not this one.
-    let filters = SearchFilters::default();
+    // No NOTEBOOK scoping: that is the notebook's own surface, not this one.
+    // Ontology scoping is different — it is the caller saying which room they
+    // are standing in, and an empty list means the whole house.
+    let filters = SearchFilters {
+        ontologies: request
+            .ontologies
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|o| !o.trim().is_empty())
+            .collect(),
+        ..SearchFilters::default()
+    };
 
     let mut hits = engine
         .recall_and_fuse(&query_vector, &terms, &filters, limit)

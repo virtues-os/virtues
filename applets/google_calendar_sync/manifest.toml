@@ -1,9 +1,11 @@
 name = "Google Calendar"
-description = "Sync events from a connected Google account."
+description = "Keeps your Google Calendar events here."
 owner = "system"
-runtime = "function"
 command = ["google_calendar_sync"]
 triggers = ["cron", "manual"]
-default_cron = "0 */15 * * * *"
+schedule = "0 */15 * * * *"
 per_credential = true
 source = { id = "google" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["calendar_event"]

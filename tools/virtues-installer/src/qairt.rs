@@ -96,6 +96,11 @@ pub async fn ensure_libs(cfg: &InstallConfig) -> Result<(PathBuf, PathBuf)> {
 
     if verify_dir(&host_dir, HOST_LIBS) && verify_dir(&dsp_dir, DSP_LIBS) {
         ui::skip("QAIRT runtime libs already present");
+        // The symlink is not part of the digest set, so "already present"
+        // must still ensure it — a box with verified libs and no symlink is
+        // exactly the reinstall case, and skipping here would leave qnnd
+        // failing with the same three-layers-away 14001.
+        link_cdsprpc(&host_dir);
         return Ok((host_dir, dsp_dir));
     }
 
@@ -115,7 +120,35 @@ pub async fn ensure_libs(cfg: &InstallConfig) -> Result<(PathBuf, PathBuf)> {
         bail!("QAIRT libs failed verification after fetch");
     }
     ui::ok(&format!("QAIRT runtime libs installed ({})", host_dir.display()));
+    link_cdsprpc(&host_dir);
     Ok((host_dir, dsp_dir))
+}
+
+/// Give QNN the unversioned `libcdsprpc.so` name it dlopens.
+///
+/// The Radxa image ships `libcdsprpc1`, which installs ONLY the soname
+/// (`libcdsprpc.so.1`); the bare `.so` symlink lives in a `-dev` package
+/// nobody has. QNN's HTP stub dlopens the bare name, walks every loader
+/// path, gets ENOENT — and reports it as `Transport layer setup failed:
+/// 14001`, three layers away from the cause. The lab box worked because
+/// someone left a hand-made symlink during NPU bring-up that never became
+/// an install step; the first fresh master build, 2026-08-18, is where it
+/// finally failed. Symlinked HERE, inside our own managed lib dir (already
+/// on the unit's LD_LIBRARY_PATH), so no system directory is touched.
+fn link_cdsprpc(host_dir: &Path) {
+    let target = Path::new("/usr/lib/aarch64-linux-gnu/libcdsprpc.so.1");
+    if !target.exists() {
+        ui::warn(
+            "libcdsprpc.so.1 not found — QNN needs the cdsp FastRPC lib \
+             (Radxa: apt install libcdsprpc1), the NPU will not serve without it",
+        );
+        return;
+    }
+    let link = host_dir.join("libcdsprpc.so");
+    let _ = fs::remove_file(&link);
+    if let Err(e) = std::os::unix::fs::symlink(target, &link) {
+        ui::warn(&format!("could not link {}: {e}", link.display()));
+    }
 }
 
 /// Every expected file present with the pinned digest.

@@ -10,9 +10,10 @@
 //! /usr/local/share/virtues/
 //!   releases/<slot-id>/        one whole release: virtues, llama-server?,
 //!                              virtues-qnnd?, web/, actions/, actions-bin/
-//!   current -> releases/<id>   THE flip point (atomic rename)
-//!   web     -> current/web     stable paths — env vars & unit files never
-//!   actions -> current/actions change; they resolve through `current`
+//!   current  -> releases/<id>  THE flip point (atomic rename)
+//!   prepared -> releases/<id>  downloaded + preflighted, NOT yet activated
+//!   web      -> current/web    stable paths — env vars & unit files never
+//!   actions  -> current/actions change; they resolve through `current`
 //! /usr/local/bin/virtues       -> ../share/virtues/current/virtues
 //! /usr/local/bin/llama-server  -> ../share/virtues/current/llama-server  (if shipped)
 //! /usr/local/bin/virtues-qnnd  -> ../share/virtues/current/virtues-qnnd  (if shipped)
@@ -23,6 +24,20 @@
 //! the slot layout shipped before any external box existed); `virtues
 //! upgrade` refuses politely on a box without it. Keep-count is 2: current +
 //! one previous. Rollback needs exactly one prior release; more is hoarding.
+//!
+//! `prepared` is the third pointer, and it is a POINTER rather than a state
+//! file on purpose: the fact that a release is staged is a fact about the
+//! filesystem, so it lives in the filesystem, next to the thing it describes.
+//! A state file can outlive the slot it names (someone clears `releases/`, a
+//! disk fills mid-write) and then claims a release is ready that isn't there.
+//! A dangling symlink is self-evidently dangling.
+//!
+//! It also has to exist for pruning to be correct. `prune` keeps the newest N
+//! by mtime, and a prepared slot is by definition the newest thing on disk —
+//! but so is the slot an upgrade just activated. Without a pointer saying "this
+//! one is spoken for", background preparation on a box that upgrades often
+//! would either evict the prepared release or evict the rollback target,
+//! depending on the order things happened in.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -54,6 +69,11 @@ impl SlotLayout {
         self.base.join("current")
     }
 
+    /// Where a downloaded-and-preflighted release waits for someone to say go.
+    pub fn prepared_link(&self) -> PathBuf {
+        self.base.join("prepared")
+    }
+
     pub fn slot_dir(&self, slot_id: &str) -> PathBuf {
         self.releases_dir().join(slot_id)
     }
@@ -67,10 +87,38 @@ impl SlotLayout {
     /// The release dir `current` points at, absolute. `None` if the layout is
     /// absent or the link dangles.
     pub fn current_slot(&self) -> Option<PathBuf> {
-        let link = self.current_link();
-        let target = fs::read_link(&link).ok()?;
+        self.resolve(&self.current_link())
+    }
+
+    /// The staged-but-not-activated release, absolute. `None` when nothing is
+    /// prepared — including when the link exists but its slot has been removed,
+    /// which is exactly the case a state file would get wrong.
+    pub fn prepared_slot(&self) -> Option<PathBuf> {
+        self.resolve(&self.prepared_link())
+    }
+
+    /// Resolve one of the pointer symlinks to a real directory.
+    fn resolve(&self, link: &Path) -> Option<PathBuf> {
+        let target = fs::read_link(link).ok()?;
         let abs = if target.is_absolute() { target } else { self.base.join(target) };
         abs.canonicalize().ok().filter(|p| p.is_dir())
+    }
+
+    /// Point `prepared` at a staged slot. Same atomic symlink-and-rename as
+    /// [`flip`] — a half-written pointer would be indistinguishable from a
+    /// release that is ready when it is not.
+    pub fn set_prepared(&self, slot: &Path) -> std::io::Result<()> {
+        let tmp = self.base.join(".prepared.tmp");
+        let _ = fs::remove_file(&tmp);
+        std::os::unix::fs::symlink(slot, &tmp)?;
+        fs::rename(&tmp, self.prepared_link())
+    }
+
+    /// Drop the `prepared` pointer, leaving the slot itself for `prune` to
+    /// reclaim in age order. Called once a prepared release is activated (it is
+    /// `current` now, not pending) and when a newer release supersedes it.
+    pub fn clear_prepared(&self) {
+        let _ = fs::remove_file(self.prepared_link());
     }
 
     /// Atomically repoint `current` at `slot`: create a temp symlink next to
@@ -112,15 +160,23 @@ impl SlotLayout {
         slots.into_iter().map(|(_, p)| p).collect()
     }
 
-    /// Delete all slots beyond the newest `keep`, never touching the one
-    /// `current` resolves to. Best-effort.
+    /// Delete all slots beyond the newest `keep`, never touching the ones
+    /// `current` or `prepared` resolve to. Best-effort.
+    ///
+    /// Both pointers are exempt rather than counted, because they answer
+    /// different questions: `current` is what the box runs, `prepared` is what
+    /// it is about to run, and `keep` is how much history to hold for rollback.
+    /// Counting a prepared slot against the history budget would mean that
+    /// staging an update silently discards the release you would roll back to —
+    /// paying for the next upgrade with the safety net of the last one.
     pub fn prune(&self, keep: usize) {
         let current = self.current_slot();
+        let prepared = self.prepared_slot();
         let mut kept = 0usize;
         for slot in self.slots_by_age() {
-            let is_current = current.as_ref().map(|c| c == &slot).unwrap_or(false);
-            if is_current || kept < keep {
-                if !is_current {
+            let spoken_for = current.as_ref() == Some(&slot) || prepared.as_ref() == Some(&slot);
+            if spoken_for || kept < keep {
+                if !spoken_for {
                     kept += 1;
                 }
                 continue;
@@ -196,5 +252,59 @@ mod tests {
         // Current is never pruned even with keep=0.
         layout.prune(0);
         assert!(c.exists());
+    }
+
+    #[test]
+    fn prepared_survives_prune_without_costing_the_rollback_target() {
+        let base = scratch("prepared-prune");
+        let layout = SlotLayout::new(&base);
+        let old = mk_slot(&base, "old");
+        let prev = mk_slot(&base, "prev");
+        let cur = mk_slot(&base, "cur");
+        let staged = mk_slot(&base, "staged"); // newest — a background prepare
+        layout.flip(&cur).unwrap();
+        layout.set_prepared(&staged).unwrap();
+
+        layout.prune(KEEP_SLOTS - 1);
+
+        assert!(staged.exists(), "prepared release kept");
+        assert!(cur.exists(), "current kept");
+        // The whole point of exempting `prepared`: preparing an update must not
+        // spend the rollback target to pay for itself.
+        assert!(prev.exists(), "rollback target kept");
+        assert!(!old.exists(), "genuinely old slot reclaimed");
+    }
+
+    #[test]
+    fn prepared_resolves_and_clears() {
+        let base = scratch("prepared-ptr");
+        let layout = SlotLayout::new(&base);
+        let s = mk_slot(&base, "s");
+        assert!(layout.prepared_slot().is_none(), "nothing prepared yet");
+
+        layout.set_prepared(&s).unwrap();
+        assert_eq!(layout.prepared_slot().unwrap(), s.canonicalize().unwrap());
+
+        // Re-pointing is the supersede case: a newer release replaces an older
+        // prepared one without an intervening clear.
+        let t = mk_slot(&base, "t");
+        layout.set_prepared(&t).unwrap();
+        assert_eq!(layout.prepared_slot().unwrap(), t.canonicalize().unwrap());
+
+        layout.clear_prepared();
+        assert!(layout.prepared_slot().is_none());
+    }
+
+    /// A pointer beats a state file precisely here: the slot can vanish under
+    /// it, and the answer must become "nothing is prepared" rather than a claim
+    /// that a missing release is ready to install.
+    #[test]
+    fn prepared_pointing_at_a_removed_slot_reads_as_nothing_prepared() {
+        let base = scratch("prepared-dangle");
+        let layout = SlotLayout::new(&base);
+        let s = mk_slot(&base, "s");
+        layout.set_prepared(&s).unwrap();
+        fs::remove_dir_all(&s).unwrap();
+        assert!(layout.prepared_slot().is_none());
     }
 }

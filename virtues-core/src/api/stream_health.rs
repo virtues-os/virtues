@@ -42,6 +42,136 @@ pub struct StreamHealth {
     /// Newest ingest time (`created_at`) — how fresh the *pipe* is, which can
     /// lag the event time when a derivation falls behind.
     pub last_ingest: Option<chrono::DateTime<chrono::Utc>>,
+    /// Sources that declare they write this stream, by display name. Answers
+    /// "what would fill this" — the question a page showing an empty stream
+    /// could not previously answer at all.
+    pub provided_by: Vec<String>,
+    /// True when at least one of those sources is actually connected. This is
+    /// the axis that was missing: `total == 0` alone cannot tell "nothing
+    /// provides this" from "provided, but switched off or not yet delivered".
+    pub connected: bool,
+    /// No source writes it, yet rows exist — the box computed it from other
+    /// streams (a sessionizer). "Connect something" is the wrong advice here,
+    /// so the UI must not offer it.
+    pub derived: bool,
+}
+
+/// The arrivals window: the UTC date `days[0]` refers to, and its length.
+/// Sent so the client labels the axis from the same calendar the server bucketed
+/// on — deriving it from a local `new Date()` shifts every tick and tooltip by a
+/// day for anyone west of UTC after 18:00, which undercuts the exact reading the
+/// grid exists for.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StreamDaysResponse {
+    pub start: chrono::NaiveDate,
+    pub days: i64,
+    pub streams: Vec<StreamDays>,
+}
+
+/// One stream's arrivals, one cell per day, oldest first.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StreamDays {
+    pub name: String,
+    pub display_name: String,
+    /// The provider that actually wrote these rows, from `source_provider` on
+    /// the data itself — ground truth, not the manifest's claim. One entry per
+    /// (stream, provider) pair, so a stream two sources both write (bookmarks
+    /// from a Mac and from GitHub) is two rows, each with its own shape.
+    pub provider: String,
+    /// `days[i]` is the row count for `from + i` days. Zero-filled, so the
+    /// caller can render a fixed grid without reconciling sparse dates.
+    pub days: Vec<i64>,
+}
+
+/// Daily arrival counts per stream over a window.
+///
+/// A scalar "last seen" per stream cannot show the only thing that matters at a
+/// glance: whether streams stopped *together*. Nineteen rows all reading `Jul 7`
+/// is one event — a device stopped — but as a list it reads as nineteen
+/// problems. Given a day axis the same data draws a vertical cliff across every
+/// row that device feeds, and the shape says it without a word.
+///
+/// It also exposes rhythm, which a scalar cannot: a calendar that only fills on
+/// weekdays is healthy, a heart rate that only fills on weekdays is a phone left
+/// at home.
+pub async fn stream_days(db: &Database, days: i64) -> Result<StreamDaysResponse> {
+    let days = days.clamp(7, 365);
+    let streams: Vec<_> = virtues_registry::ontologies::registered_ontologies()
+        .into_iter()
+        .filter(|o| o.table_name.starts_with("data_"))
+        .collect();
+    let today = chrono::Utc::now().date_naive();
+    let start = today - chrono::Duration::days(days - 1);
+    if streams.is_empty() {
+        return Ok(StreamDaysResponse { start, days, streams: vec![] });
+    }
+
+    // One UNION ALL, grouped per provider per day. Grouping on the data's own
+    // `source_provider` rather than on the manifest's declared `writes` means
+    // the grid shows what actually happened: if a stream is fed by two sources,
+    // or by one the manifest never claimed, the rows are still right. The
+    // declared map stays useful for the opposite question — what would fill a
+    // stream that has no rows at all — which no observation can answer.
+    //
+    // `table_name` is a compile-time registry constant, never user input, so
+    // interpolation is injection-safe; the freshness query above relies on the
+    // same argument.
+    let sql = streams
+        .iter()
+        .map(|o| {
+            format!(
+                "SELECT '{name}' AS name, \
+                        source_provider AS provider, \
+                        (created_at AT TIME ZONE 'UTC')::date AS day, \
+                        count(*)::int8 AS n \
+                   FROM {table} \
+                  WHERE created_at >= (($1::date)::timestamptz) \
+                  GROUP BY 1, 2, 3",
+                name = o.name,
+                table = o.table_name,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+
+    let rows = sqlx::query(&sql).bind(start).fetch_all(db.pool()).await?;
+
+    let width = days as usize;
+
+    // (stream, provider) -> daily counts.
+    let mut acc: std::collections::HashMap<(String, String), Vec<i64>> =
+        std::collections::HashMap::new();
+    for r in rows {
+        let name: String = r.get("name");
+        let provider: String = r.get("provider");
+        let day: chrono::NaiveDate = r.get("day");
+        let n: i64 = r.get("n");
+        let i = (day - start).num_days();
+        if i < 0 || i as usize >= width {
+            continue;
+        }
+        acc.entry((name, provider))
+            .or_insert_with(|| vec![0i64; width])[i as usize] = n;
+    }
+
+    let display: std::collections::HashMap<&str, &str> = streams
+        .iter()
+        .map(|o| (o.name, o.display_name))
+        .collect();
+
+    let mut out: Vec<StreamDays> = acc
+        .into_iter()
+        .map(|((name, provider), days)| StreamDays {
+            display_name: display.get(name.as_str()).copied().unwrap_or("").to_string(),
+            provider,
+            days,
+            name,
+        })
+        .collect();
+    // Stable order: provider, then stream, so the grid does not reshuffle
+    // between polls.
+    out.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.name.cmp(&b.name)));
+    Ok(StreamDaysResponse { start, days, streams: out })
 }
 
 /// Freshness for every ingest stream, worst-first (stalled → idle → never →
@@ -98,8 +228,9 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
             } else {
                 "idle"
             };
+            let name: String = r.get("name");
+            let writers = crate::applet_templates::sources_writing(&name);
             StreamHealth {
-                name: r.get("name"),
                 display_name: r.get("display_name"),
                 status: status.to_string(),
                 total,
@@ -107,9 +238,41 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
                 count_7d: c7,
                 last_event: r.get("last_event"),
                 last_ingest: r.get("last_ingest"),
+                provided_by: writers
+                    .iter()
+                    .map(|id| {
+                        crate::applet_templates::lookup_source(id)
+                            .map(|s| s.display_name)
+                            .unwrap_or_else(|| id.clone())
+                    })
+                    .collect(),
+                // Filled in below — needs one query, not one per stream.
+                connected: false,
+                derived: writers.is_empty() && total > 0,
+                name,
             }
         })
         .collect();
+
+    // Which sources are actually connected. One pass over both tables rather
+    // than a lookup per stream: OAuth and API-key sources mint a credential,
+    // device sources (iOS, Mac) pair into app_device and never do — a stream
+    // fed by an iPhone would look unconnected if only credentials were checked.
+    let live_sources: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT source_id FROM credentials WHERE status = 'active' \
+         UNION \
+         SELECT source_id FROM app_device WHERE source_id IS NOT NULL AND revoked_at IS NULL",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .collect();
+
+    for s in &mut out {
+        let ids = crate::applet_templates::sources_writing(&s.name);
+        s.connected = ids.iter().any(|id| live_sources.contains(id));
+    }
 
     fn rank(s: &str) -> u8 {
         match s {

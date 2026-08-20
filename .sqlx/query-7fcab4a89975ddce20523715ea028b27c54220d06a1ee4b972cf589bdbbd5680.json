@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            o.id, o.name, o.organization_type, o.relationship_type,\n            COALESCE(r.n, 0) AS \"ref_count!\"\n        FROM wiki_orgs o\n        LEFT JOIN (\n            SELECT entity_id, count(*) AS n\n            FROM wiki_refs WHERE entity_type = 'organization' GROUP BY entity_id\n        ) r ON r.entity_id = o.id\n        ORDER BY COALESCE(r.n, 0) DESC, o.name ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "organization_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "relationship_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "ref_count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "7fcab4a89975ddce20523715ea028b27c54220d06a1ee4b972cf589bdbbd5680"
+}

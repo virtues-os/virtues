@@ -1,6 +1,7 @@
 //! Library-level API functions.
 
-pub mod action_events;
+pub mod applet_events;
+pub mod applet_source;
 pub mod annotations;
 pub mod ai_calls;
 pub mod ai_complete;
@@ -12,10 +13,12 @@ pub mod auth;
 pub mod billing_state;
 pub mod box_status;
 pub mod devices;
+pub mod display;
 pub mod pair;
 pub mod settings_byo;
 pub mod setup;
 pub mod sudo;
+pub mod web_bundle;
 pub mod chat;
 pub mod chat_permissions;
 pub mod chat_usage;
@@ -28,7 +31,7 @@ pub mod day_summary;
 pub mod developer;
 pub mod drive;
 pub mod entities;
-pub mod exa;
+pub mod web_search;
 pub mod home;
 pub mod internal;
 pub mod lake;
@@ -36,7 +39,11 @@ pub mod media;
 pub mod metrics;
 pub mod model_catalog;
 pub mod models;
+pub mod entity_article_gen;
 pub mod narrative_identity_gen;
+pub mod narrative_draft;
+pub mod narrative_interview;
+pub mod bookmarks;
 pub mod pages;
 pub mod personas;
 pub mod updates;
@@ -44,8 +51,14 @@ pub mod pins;
 pub mod search_local;
 pub mod places;
 pub mod profile;
+pub mod census;
+pub mod identity;
+pub mod setup_phrase;
+pub mod network;
+pub mod provision;
 pub mod notebooks;
 pub mod records;
+pub mod refs;
 pub mod source_auth;
 pub mod subscription;
 pub mod stream_health;
@@ -56,6 +69,10 @@ pub mod token_estimation;
 pub mod unsplash;
 pub mod usage;
 pub mod wiki;
+pub mod lifeline;
+pub mod link_session;
+pub mod wiki_articles;
+pub mod wiki_notes;
 
 // Re-export all functions for convenience
 pub use assistant_profile::{
@@ -105,9 +122,6 @@ pub use entities::{
     create_place, delete_place, get_place, list_places, set_home_place as set_home_place_entity,
     update_place, CreatePlaceRequest, CreatePlaceResponse, Place, UpdatePlaceRequest,
 };
-pub use exa::{
-    search as exa_search, SearchRequest as ExaSearchRequest, SearchResponse as ExaSearchResponse,
-};
 pub use media::{
     get_media, is_audio_type, is_image_type, is_supported_media_type, is_video_type, upload_media,
     MediaFile, UploadMediaRequest,
@@ -147,7 +161,6 @@ pub use pages::{
     delete_page,
     delete_page_share,
     get_reflections_for_date,
-    create_reflection,
     get_page,
     get_page_backlinks,
     get_page_share,
@@ -182,6 +195,10 @@ pub use updates::{
     apply as apply_update, set_channel, status as update_status, ApplyResponse, SetChannelRequest,
 };
 pub use search_local::{search_local, LocalSearchRequest, LocalSearchResponse};
+pub use bookmarks::{
+    get_bookmark, list_bookmarks, save_bookmark, update_note, BookmarkDetail, BookmarkListItem,
+    BookmarkPage, ListBookmarksQuery, SaveBookmarkRequest, SavedBookmark, UpdateNoteRequest,
+};
 pub use pins::{
     create_pin, delete_pin, list_pins, reorder_pins, update_pin, CreatePinRequest, Pin,
     UpdatePinRequest,
@@ -226,13 +243,11 @@ pub use wiki::{
     create_temporal_event,
     delete_auto_events_for_day,
     delete_temporal_event,
-    get_act,
+    get_story,
     get_narrative_identity,
     update_narrative_identity,
     NarrativeIdentity,
     UpdateNarrativeIdentityRequest,
-    get_active_telos,
-    get_chapter,
     get_day_chats,
     get_day_events,
     get_day_sources,
@@ -243,10 +258,17 @@ pub use wiki::{
     get_or_create_day,
     get_organization,
     get_person,
-    get_telos,
     get_wiki_place,
-    list_acts,
-    list_chapters_for_act,
+    day_activity,
+    DayActivity,
+    on_this_day,
+    OnThisDayEntry,
+    get_entity_records_page,
+    get_entity_record_facets,
+    EntityRecord,
+    EntityRecordsPage,
+    EntityRecordFacet,
+    list_stories,
     list_days,
     list_organizations,
     list_people,
@@ -269,8 +291,7 @@ pub use wiki::{
     UpdateWikiOrganizationRequest,
     UpdateWikiPersonRequest,
     UpdateWikiPlaceRequest,
-    WikiAct,
-    WikiChapter,
+    WikiStory,
     WikiDay,
     WikiOrganization,
     WikiOrganizationListItem,
@@ -278,5 +299,4 @@ pub use wiki::{
     WikiPersonListItem,
     WikiPlace,
     WikiPlaceListItem,
-    WikiTelos,
 };

@@ -6,7 +6,8 @@
  */
 
 import { defaultKeymap } from '@codemirror/commands';
-import { markdown } from '@codemirror/lang-markdown';
+import { markdown, markdownKeymap } from '@codemirror/lang-markdown';
+import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { bracketMatching, indentOnInput } from '@codemirror/language';
 // GFM adds Strikethrough, Table, TaskList to the Lezer markdown parser.
 import { GFM } from '@lezer/markdown';
@@ -17,15 +18,10 @@ import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import type { Awareness } from 'y-protocols/awareness';
 import type { Text as YText } from 'yjs';
 
-import { checkboxes } from './extensions/checkboxes';
-import { codeBlocks } from './extensions/code-blocks';
-import { entityLinks } from './extensions/ref-links';
+import { smoothCaret } from './extensions/caret';
 import { markdownKeybindings } from './extensions/keybindings';
 import { listRenumber } from './extensions/list-renumber';
-import { livePreview } from './extensions/live-preview';
-import { mediaWidgets } from './extensions/media-widgets';
-import { shikiHighlight } from './extensions/shiki-highlight';
-import { tables } from './extensions/tables';
+import { renderMode, renderModeCompartment } from './extensions/render-mode';
 import { virtuesTheme } from './theme';
 
 export interface CodeMirrorEditorOptions {
@@ -36,6 +32,8 @@ export interface CodeMirrorEditorOptions {
 	placeholder?: string;
 	extensions?: Extension[];
 	onDocChange?: (content: string) => void;
+	/** Start in raw markdown instead of the rendered surface. */
+	raw?: boolean;
 }
 
 export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): EditorView {
@@ -47,6 +45,7 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		placeholder = 'Start writing, or press / for commands…',
 		extensions: extraExtensions = [],
 		onDocChange,
+		raw = false,
 	} = options;
 
 	const baseExtensions: Extension[] = [
@@ -61,23 +60,36 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		indentOnInput(),
 		bracketMatching(),
 
-		// Keymaps
+		// The rendered caret (drawSelection + presence/continuity/restraint).
+		// Also what constructs `.cm-selectionLayer`, so the selection rules in
+		// theme.ts finally apply to something.
+		smoothCaret,
+
+		// Keymaps. markdownKeymap sits ahead of defaultKeymap so Enter continues
+		// the surrounding list/quote (insertNewlineContinueMarkup) and Backspace
+		// deletes markup structurally (deleteMarkupBackward) before the plain
+		// insert/delete bindings get a look. Both commands return false outside
+		// markdown block context, falling through to the defaults.
 		keymap.of([
 			...yUndoManagerKeymap,
+			...markdownKeymap,
 			...defaultKeymap,
+			// Find-in-page: Mod-f opens the panel, Mod-g / Shift-Mod-g step
+			// through matches, Escape closes. Distinct from the app's global ⌘K.
+			...searchKeymap,
 		]),
+
+		// The find panel docks above the content; styling lives in theme.css
+		// (.cm-panel.cm-search) so it reads as the app, not stock CodeMirror.
+		search({ top: true }),
+		highlightSelectionMatches(),
 
 		// Theme
 		virtuesTheme,
 
-		// Live preview decorations
-		livePreview,
-		entityLinks,
-		checkboxes,
-		mediaWidgets,
-		codeBlocks,
-		shikiHighlight,
-		tables,
+		// The rendered surface (see extensions/render-mode.ts) — swapped out
+		// wholesale for raw markdown via the compartment.
+		renderModeCompartment.of(renderMode(raw)),
 
 		// Keep ordered lists sequential after edits
 		listRenumber,
@@ -136,13 +148,8 @@ export function createReadOnlyEditor(options: ReadOnlyEditorOptions): EditorView
 				markdown({ codeLanguages: languages, extensions: GFM }),
 				EditorView.lineWrapping,
 				virtuesTheme,
-				livePreview,
-				entityLinks,
-				checkboxes,
-				mediaWidgets,
-				codeBlocks,
-				shikiHighlight,
-				tables,
+				// Reading is always rendered — raw is an authoring escape hatch.
+				renderMode(false),
 				EditorView.editable.of(false),
 				EditorState.readOnly.of(true),
 			],

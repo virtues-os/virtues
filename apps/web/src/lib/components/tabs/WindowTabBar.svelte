@@ -17,14 +17,49 @@
 	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
 	import { updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
+	import { isAppleKeyboard } from "$lib/utils/platform";
+	import { pinMenuItem, pinIconMenuItem } from "$lib/pins/pinAction";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 
 	const FLIP_DURATION_MS = 150;
+
+	/**
+	 * What a page or chat actually chose for itself — icon and color — read
+	 * from the entity stores rather than from `tab.icon`.
+	 *
+	 * `tab.icon` is stamped when the tab OPENS, from the route registry, so it
+	 * is the species icon: every page a document, every chat a speech bubble.
+	 * A tab that has been open since before you picked an icon would keep
+	 * showing the type one until you closed and reopened it. The stores are
+	 * live and already loaded, so reading them is both cheaper and correct.
+	 */
+	function entityIdentity(route: string | undefined): {
+		icon: string | null;
+		color: string | null;
+	} {
+		if (!route) return { icon: null, color: null };
+		const [, type, id] = route.split("/");
+		if (!id) return { icon: null, color: null };
+		if (type === "page") {
+			const page = pagesStore.pages.find((p) => p.id === id);
+			return { icon: page?.icon ?? null, color: page?.icon_color ?? null };
+		}
+		if (type === "chat") {
+			const chat = chatSessions.sessions.find((c) => c.conversation_id === id);
+			return { icon: chat?.icon ?? null, color: chat?.icon_color ?? null };
+		}
+		return { icon: null, color: null };
+	}
+
+	/** The `--cat-*` key currently stored, for seeding the picker. */
+	function iconColorFor(type: string | undefined, id: string | undefined): string | null {
+		if (!type || !id) return null;
+		return entityIdentity(`/${type}/${id}`).color;
+	}
 
 	interface Props {
 		paneId?: "left" | "right"; // When set, renders as a pane tab bar in split mode
@@ -92,11 +127,22 @@
 	}
 	const isSplitMode = $derived(windowShellStore.isSplit);
 
-	// ⌘1/⌘2 badge, shown only while ⌘ is held. Single-pane mode is always ⌘1.
-	const paneNumber = $derived(paneId === "right" ? "2" : "1");
+	// ⌘N badges, shown only while ⌘ is held. Tabs number left-to-right across
+	// the whole window, so the right pane's tabs continue where the left
+	// pane's leave off. Only the first nine tabs get a badge — ⌘0 and beyond
+	// don't exist as shortcuts.
+	const ordinalOffset = $derived(
+		paneId === "right" ? (windowShellStore.leftPane?.tabs.length ?? 0) : 0,
+	);
 	const showPaneHint = $derived(
 		modifierHint.visible && !mobileLayout.isMobile,
 	);
+
+	// The word, not the glyph. ⌘1 is four pixels of symbol in a slot the width
+	// of a tab label — it read as an artefact rather than as an instruction,
+	// and the space was already paid for. Keyed off the keyboard layout, not
+	// the OS shell: a Mac user in a browser still presses Command.
+	const modKeyWord = isAppleKeyboard ? "Command" : "Ctrl";
 
 	// Per-tab history (browser model): back/forward act on this pane's active tab.
 	const canGoBack = $derived(windowShellStore.canGoBack(paneId));
@@ -209,27 +255,68 @@
 			},
 		];
 
+		// One entry, not two. Icon and color are the same decision and the
+		// picker holds both — a menu offering "Change icon" AND "Color" made
+		// them look like separate features and sent you back through the menu
+		// to finish one thought.
+		if (!canChangeIcon) {
+			// Not a page or chat, so there's no entity icon to set — but if the
+			// route is on the Desk, the PIN has an icon, and that's what the
+			// tab and the sidebar row both draw.
+			const pinIcon = pinIconMenuItem(tab.route, {
+				x: e.clientX,
+				y: e.clientY,
+				width: 0,
+				height: 0,
+			});
+			if (pinIcon) items.push(pinIcon);
+		}
+
 		// Change Icon (for page/chat tabs)
 		if (canChangeIcon) {
 			items.push({
 				id: "change-icon",
-				label: "Change Icon",
+				label: "Change icon",
 				icon: "ri:emotion-line",
 				action: () => {
-					iconPickerStore.show(tab.icon ?? null, async (icon) => {
-						try {
-							if (tabEntityType === 'page') {
-								await updatePage(tabEntityId, { icon });
-								await pagesStore.refresh();
-							} else if (tabEntityType === 'chat') {
-								await updateChat(tabEntityId, { icon });
-								chatSessions.updateSessionIcon(tabEntityId, icon);
+					iconPickerStore.show(
+						tab.icon ?? null,
+						async (icon) => {
+							try {
+								if (tabEntityType === 'page') {
+									await updatePage(tabEntityId, { icon });
+									await pagesStore.refresh();
+								} else if (tabEntityType === 'chat') {
+									await updateChat(tabEntityId, { icon });
+									chatSessions.updateSessionIcon(tabEntityId, icon);
+								}
+								windowShellStore.invalidateViewCache();
+							} catch (err) {
+								console.error("[WindowTabBar] Failed to change icon:", err);
 							}
-							windowShellStore.invalidateViewCache();
-						} catch (err) {
-							console.error("[WindowTabBar] Failed to change icon:", err);
-						}
-					});
+						},
+						{
+							anchor: { x: e.clientX, y: e.clientY, width: 0, height: 0 },
+							color: iconColorFor(tabEntityType, tabEntityId),
+							// Persisted on click, without closing — so you can
+							// try a color against the grid before choosing the
+							// glyph, which is the point of one panel.
+							onColorSelect: async (icon_color) => {
+								try {
+									if (tabEntityType === 'page') {
+										await updatePage(tabEntityId, { icon_color });
+										await pagesStore.refresh();
+									} else if (tabEntityType === 'chat') {
+										await updateChat(tabEntityId, { icon_color });
+										chatSessions.updateSessionIconColor(tabEntityId, icon_color);
+									}
+									windowShellStore.invalidateViewCache();
+								} catch (err) {
+									console.error("[WindowTabBar] Failed to change icon color:", err);
+								}
+							},
+						},
+					);
 				},
 			});
 		}
@@ -270,20 +357,54 @@
 		// Add "Add to Folder" / "Move to Workspace" submenus if tab has a route
 		if (tab.route) {
 			items.push(...getNotebookMenuItems(tab.route));
+			// Anything you can open, you can keep. The tab is the one surface
+			// that exists for every route in the app, so wiring the pin here
+			// makes the Desk reachable from everywhere by construction rather
+			// than by remembering to add a menu item per view.
+			items.push(
+				pinMenuItem({ url: tab.route, label: tab.label, icon: tab.icon }),
+			);
 		}
 
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 
+	/**
+	 * Commit a tab rename — to the ENTITY, not just to the tab.
+	 *
+	 * This used to set the local label and stop, so renaming from the tab bar
+	 * was cosmetic: the sidebar kept the old name and a reload threw the new
+	 * one away. That was survivable while the chat pane carried its own
+	 * renameable title; now that the tab is the only place a chat or page is
+	 * named, a rename here has to be the real one.
+	 *
+	 * Optimistic — the label updates immediately, and the store is corrected
+	 * from the server only if the write fails.
+	 */
 	function handleRenameSubmit() {
 		if (!renamingTabId || !renameValue.trim()) {
 			handleRenameCancel();
 			return;
 		}
 		const newLabel = renameValue.trim();
+		const tab = tabs.find((t) => t.id === renamingTabId);
 		windowShellStore.updateTab(renamingTabId, { label: newLabel });
 		renamingTabId = null;
 		renameValue = "";
+
+		const [, type, id] = tab?.route?.split("/") ?? [];
+		if (!id) return;
+		if (type === "chat") {
+			chatSessions.applyTitle(id, newLabel);
+			updateChat(id, { title: newLabel }).catch(async (e) => {
+				console.error("[WindowTabBar] rename failed:", e);
+				await chatSessions.refresh();
+			});
+		} else if (type === "page") {
+			updatePage(id, { title: newLabel })
+				.then(() => pagesStore.refresh())
+				.catch((e) => console.error("[WindowTabBar] rename failed:", e));
+		}
 	}
 
 	function handleRenameCancel() {
@@ -423,8 +544,11 @@
 		onconsider={handleDndConsider}
 		onfinalize={handleDndFinalize}
 	>
-		{#each dndItems as item (item.id)}
+		{#each dndItems as item, tabIndex (item.id)}
 			{@const tab = item.tab}
+			{@const tabOrdinal = ordinalOffset + tabIndex + 1}
+			{@const identity = entityIdentity(tab.route)}
+			{@const glyph = identity.icon || item.icon || getDefaultIcon(tab.type)}
 			<div
 				class="tab"
 				class:active={tab.id === activeTabId}
@@ -446,10 +570,20 @@
 				role="button"
 				tabindex="0"
 			>
-				{#if item.icon && isEmoji(item.icon)}
-					<span class="tab-emoji">{item.icon}</span>
+				<!-- The thing's own icon wins over the tab's stamped one, which
+				     wins over the species default. A pinned tab used to be
+				     filled edge to edge with its bookcloth; that read as a
+				     selected state and shouted down the actual selection, so
+				     identity now lives in the icon — which is where the user
+				     put it. -->
+				{#if glyph && isEmoji(glyph)}
+					<span class="tab-emoji">{glyph}</span>
 				{:else}
-					<Icon icon={item.icon || getDefaultIcon(tab.type)} class="tab-icon" />
+					<Icon
+						icon={glyph}
+						class="tab-icon"
+						style={identity.color ? `color: var(--cat-${identity.color})` : undefined}
+					/>
 				{/if}
 				{#if !tab.pinned}
 					{#if tab.id === renamingTabId}
@@ -464,19 +598,18 @@
 							autofocus
 						/>
 					{:else}
-						<!-- On a ⌘ hold the ACTIVE tab's own label becomes its pane
-						     number: the title slides up and out, ⌘1 slides up and
-						     in. Nothing new enters the screen, which is the point —
+						<!-- On a ⌘ hold each tab's own label becomes its number:
+						     the title slides up and out, ⌘N slides up and in.
+						     Nothing new enters the screen, which is the point —
 						     the old version floated a saturated blue chip into the
 						     toolbar, the loudest object in an otherwise quiet
 						     window, and it announced the shortcut instead of
-						     teaching which label it belongs to.
-						     Only the active tab flips: every tab in a pane shares
-						     the pane's number, so flipping all of them would say
-						     the same thing five times. -->
-						<span class="tab-label" class:flipping={showPaneHint && tab.id === activeTabId}>
+						     teaching which label it belongs to. Every tab flips
+						     because every tab has its own number, browser-style:
+						     leftmost is ⌘1, counting across both panes. -->
+						<span class="tab-label" class:flipping={showPaneHint && tabOrdinal <= 9}>
 							<span class="tab-label-text">{tab.label}</span>
-							<span class="tab-label-hint" aria-hidden="true">⌘{paneNumber}</span>
+							<span class="tab-label-hint" aria-hidden="true">{modKeyWord} + {tabOrdinal}</span>
 						</span>
 					{/if}
 				{/if}
@@ -571,11 +704,11 @@
 		min-height: var(--chrome-row-h);
 		align-items: center;
 		border-bottom: 1px solid var(--color-border);
-		/* Page colour, not a recessed strip. The browser model needs the strip
+		/* Page color, not a recessed strip. The browser model needs the strip
 		   to be darker so the active tab can read as a hole cut in it — but a
 		   recessed band next to a large recessed sidebar made the whole left
 		   half of the window a slab. Pills carry the state instead, so the strip
-		   has no reason to be a different colour from what it sits on. */
+		   has no reason to be a different color from what it sits on. */
 		background: var(--color-surface);
 		flex-shrink: 0;
 		position: relative;
@@ -644,7 +777,7 @@
 
 	/* Fill from the interaction ramp, not a surface token. A surface token is
 	   what made the active tab #FFFFFF on #FFFFFF; the ramp is defined against
-	   the text colour, so it is legible in all sixteen themes. */
+	   the text color, so it is legible in all sixteen themes. */
 	.tab.active {
 		background: var(--tab-active-bg-focused);
 		color: var(--color-foreground);
@@ -657,6 +790,12 @@
 		background: var(--tab-active-bg);
 		color: var(--color-foreground-muted);
 	}
+
+	/* The `.clothed` rules that lived here are gone with the fill. A pinned
+	   tab used to take its pin's bookcloth as a solid background, which meant
+	   the loudest tab in the bar was whichever one you had pinned rather than
+	   whichever one you were looking at — it read as permanently selected.
+	   Identity moved to the icon, which the user picks and can color. */
 
 	/* Dragging state - svelte-dnd-action applies aria-grabbed */
 	:global(.tab[aria-grabbed="true"]) {
@@ -709,16 +848,16 @@
 		transition: transform 140ms cubic-bezier(0.2, 0, 0, 1);
 	}
 
-	/* Same face and size as the label it replaces. It was monospace, which is
-	   decoration standing in for meaning — the shortcut isn't code, and a
-	   different typeface for one word makes the swap read as a glitch rather
-	   than as the same label saying something else. */
+	/* Same face, size AND weight as the label it replaces. It was monospace,
+	   then semibold — both decoration standing in for meaning. The shortcut
+	   isn't code and it isn't emphasis; it's the same label saying something
+	   else for as long as you hold the key, so it should look like the label. */
 	.tab-label-hint {
 		position: absolute;
 		inset: 0;
 		transform: translateY(100%);
-		font-weight: 600;
-		color: var(--color-foreground);
+		font-weight: inherit;
+		color: inherit;
 	}
 
 	.tab-label.flipping .tab-label-text {

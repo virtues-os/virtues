@@ -33,12 +33,12 @@ pub async fn drain(client: &VirtuesIrohClient, rec: &PairedBox) -> Result<usize>
             break;
         }
         // Resolve the concrete action id for this stream's ingest action.
-        let action_key = outbox::action_key_for(&stream)?.unwrap_or_else(|| "ios_ingest".into());
-        let action_id = rec
-            .action_ids
-            .get(&action_key)
-            .or_else(|| rec.action_ids.get("ios_ingest"))
-            .or_else(|| rec.action_ids.values().next())
+        let applet_key = outbox::applet_key_for(&stream)?.unwrap_or_else(|| "ios_ingest".into());
+        let applet_id = rec
+            .applet_ids
+            .get(&applet_key)
+            .or_else(|| rec.applet_ids.get("ios_ingest"))
+            .or_else(|| rec.applet_ids.values().next())
             .ok_or_else(|| anyhow!("no ingest action id in pairing — re-pair to fix"))?
             .clone();
 
@@ -51,10 +51,11 @@ pub async fn drain(client: &VirtuesIrohClient, rec: &PairedBox) -> Result<usize>
             if batch.ids.is_empty() {
                 break;
             }
-            match post_batch(client, &action_id, &stream, &batch.records).await {
+            match post_batch(client, &applet_id, &stream, &batch.records).await {
                 Ok(true) => {
                     outbox::ack(&batch.ids)?;
                     total += batch.ids.len();
+                    crate::stats::bump(|s| s.records += batch.ids.len() as u64);
                 }
                 // Delivered but not durable, or transport error — release the
                 // claim + back off, leave the rows for the next drain.
@@ -65,25 +66,33 @@ pub async fn drain(client: &VirtuesIrohClient, rec: &PairedBox) -> Result<usize>
             }
         }
     }
+    crate::stats::bump(|s| {
+        s.drains += 1;
+        s.last_drain_at = Some(crate::stats::now_secs());
+    });
     Ok(total)
 }
 
 /// POST one batch; returns `true` only on a durable `{status:"success"}`.
 async fn post_batch(
     client: &VirtuesIrohClient,
-    action_id: &str,
+    applet_id: &str,
     stream: &str,
     records: &[serde_json::Value],
 ) -> Result<bool> {
     let body = json!({ "stream": stream, "records": records }).to_string();
     let raw = format!(
-        "POST /webhook/{action_id} HTTP/1.1\r\nHost: box\r\nContent-Type: application/json\r\n\
+        "POST /webhook/{applet_id} HTTP/1.1\r\nHost: box\r\nContent-Type: application/json\r\n\
          Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     let resp = client.request(raw.as_bytes()).await?;
     let text = String::from_utf8_lossy(&resp);
-    Ok(body_acks(&text))
+    let acked = body_acks(&text);
+    if acked {
+        crate::stats::bump(|s| s.bytes += body.len() as u64);
+    }
+    Ok(acked)
 }
 
 /// The box returns `{"status":"success"}` on a durable ingest. Anything else

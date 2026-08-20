@@ -1,13 +1,18 @@
 <script lang="ts">
 	import { onMount } from "svelte";
+	import { fly } from "svelte/transition";
+	import { cubicIn, cubicOut } from "svelte/easing";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
+	import { search } from "$lib/stores/search.svelte";
 	import WorkspaceHeader from "./WorkspaceHeader.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
+	import DeskSection from "./DeskSection.svelte";
+	import ZoneHeader from "./ZoneHeader.svelte";
+	import { sidebarZones } from "$lib/stores/sidebarZones.svelte";
 	import { SECTION_GROUPS } from "$lib/sidebar/sections";
-	import SearchModal from "./SearchModal.svelte";
 	import SidebarModePanel from "./SidebarModePanel.svelte";
 	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
@@ -16,8 +21,8 @@
 	// Collapsed state from shared store (also consumed by WindowTabBar)
 	const isCollapsed = $derived(sidebarState.collapsed);
 
-	// Search modal state
-	let isSearchOpen = $state(false);
+	// The palette's open state lives in a store so the phone shell can reach it
+	// too; the modal itself mounts once at the app layout. See stores/search.
 
 	// Track if store is ready
 	let storeReady = $state(false);
@@ -45,7 +50,7 @@
 		let unlistenSummon: (() => void) | null = null;
 		let disposed = false;
 		void onSummon(() => {
-			isSearchOpen = true;
+			search.show();
 		}).then((un) => {
 			// onMount's cleanup may already have run — this resolves a tick late.
 			if (disposed) un();
@@ -115,15 +120,11 @@
 	});
 
 	function handleSearch() {
-		isSearchOpen = true;
+		search.show();
 	}
 
 	function toggleSearch() {
-		isSearchOpen = !isSearchOpen;
-	}
-
-	function closeSearch() {
-		isSearchOpen = false;
+		search.toggle();
 	}
 
 	function handleWikiOverview() {
@@ -163,33 +164,40 @@
 		sidebarState.toggle();
 	}
 
-	// Stagger delay per item
-	const STAGGER_DELAY = 30;
-
-	// Running offset of each group's first row, so the waterfall reads as one
-	// continuous fall down the panel rather than restarting per group. Slot 1
-	// is the masthead, so nav rows start at 2 and land under it rather than
-	// alongside it. The footer sits at slot 10, after the longest nav list.
-	const GROUP_OFFSETS = SECTION_GROUPS.reduce<number[]>(
-		(acc, group) => [...acc, acc[acc.length - 1] + group.items.length],
-		[2],
-	);
-
-	const navDelay = (groupIndex: number, itemIndex: number) =>
-		(GROUP_OFFSETS[groupIndex] + itemIndex) * STAGGER_DELAY;
+	// The panel swaps as one object, not as a cascade of rows.
+	//
+	// It used to waterfall: every row animated in on its own 30ms delay, so
+	// entering Settings played eleven little arrivals. That reads as a flourish
+	// the second time and as latency by the tenth — the panel appeared to take
+	// 300ms to assemble when the work was instant. A crossfade with 16px of
+	// travel says the same thing (these are different contents) in under
+	// 200ms, and says it about the panel rather than about each row.
+	//
+	// Sequential, not concurrent — this is the part that decides whether it
+	// feels good. Svelte runs `in:` and `out:` at the same time by default, so
+	// for the whole overlap you are looking at two half-transparent copies of
+	// a list sliding through each other. That reads as smeared, not as a
+	// swap; no amount of tuning the distance fixes it, because the problem is
+	// that both panels are visible at once.
+	//
+	// So the old panel leaves first (110ms, short travel — it is going away,
+	// it doesn't need to be watched), and the new one waits for it to finish
+	// before arriving (210ms over 18px). The grid cell holds the height
+	// throughout, so nothing collapses in the gap.
+	const swapKey = $derived(sidebarMode.activeId ?? "root");
 
 	// Tailwind utility class strings
 	const sidebarClass = $derived.by(() =>
 		[
 			"sidebar-container relative h-full bg-transparent",
 			"transition-[width] duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
-			isCollapsed ? "sidebar-collapsed" : "w-52 overflow-hidden",
+			isCollapsed ? "sidebar-collapsed" : "w-[220px] overflow-hidden",
 		].join(" "),
 	);
 
 	const sidebarInnerClass = $derived.by(() =>
 		[
-			"flex h-full min-w-52 w-52 flex-col",
+			"flex h-full min-w-[220px] w-[220px] flex-col",
 			isCollapsed ? "pointer-events-none" : "",
 		].join(" "),
 	);
@@ -223,7 +231,6 @@
 	<div class={sidebarInnerClass}>
 		<WorkspaceHeader
 			collapsed={isCollapsed}
-			animationDelay={STAGGER_DELAY}
 			onSearch={handleSearch}
 		/>
 
@@ -236,39 +243,74 @@
 					<Icon icon="ri:loader-4-line" width="16" class="spinner" />
 					<span>Loading...</span>
 				</div>
-			{:else if sidebarMode.active && !isCollapsed}
-				<SidebarModePanel mode={sidebarMode.active} stagger={STAGGER_DELAY} />
 			{:else}
+				<!-- One swap, not eleven. The two panels are stacked in a single
+				     grid cell so the outgoing one can leave while the incoming
+				     one arrives, with no reflow between them. -->
+				<div class="nav-swap">
+					{#key swapKey}
+						<div
+							class="nav-layer"
+							in:fly={{ x: 18, duration: 210, delay: 110, easing: cubicOut, opacity: 0 }}
+							out:fly={{ x: -10, duration: 110, easing: cubicIn, opacity: 0 }}
+						>
+							{#if sidebarMode.active && !isCollapsed}
+								<SidebarModePanel mode={sidebarMode.active} />
+							{:else}
+								<!-- The Desk: what the user has taken off the shelf.
+								     Serif spines with bookcloth dots — the type
+								     distinction encodes ownership, which is what keeps
+								     pins from reading as a tinted nav row (the failure
+								     that retired them the first time). -->
+								<DeskSection collapsed={isCollapsed} />
 
-				<!-- System destinations, grouped nouns-vs-verbs (from constants).
-				     The sidebar is a stable contents-page, not a mode rail. -->
-				{#each SECTION_GROUPS as group, groupIndex (group.id)}
-					<div class="nav-group">
-						{#if group.label && !isCollapsed}
-							<div class="nav-group-header">{group.label}</div>
-						{/if}
-						{#each group.items as section, itemIndex (section.id)}
-							<SystemSection
-								{section}
-								collapsed={isCollapsed}
-								accentColor={null}
-								animationDelay={navDelay(groupIndex, itemIndex)}
-							/>
-						{/each}
-					</div>
-				{/each}
-
+								<!-- The Library: every fixed room the app has, in
+								     one shelf. Stable forever, so muscle memory
+								     can live in it. Still a loop over groups —
+								     there is one today, and the Workbench that
+								     used to be the second one may not be the last
+								     shelf anyone proposes. -->
+								{#each SECTION_GROUPS as group, i (group.id)}
+									<div class="nav-group">
+										{#if group.label && !isCollapsed}
+											<ZoneHeader id={group.id} label={group.label} />
+										{/if}
+										<div
+											class="sidebar-expandable"
+											class:expanded={!sidebarZones.isCollapsed(group.id)}
+										>
+											<div class="sidebar-expandable-inner">
+												{#each group.items as section (section.id)}
+													<SystemSection
+														{section}
+														collapsed={isCollapsed}
+														accentColor={null}
+													/>
+												{/each}
+												<!-- The seam to the next zone, inside the fold
+												     that owns it — the Desk's trick, for the
+												     same reason: a spacer OUTSIDE the clipping
+												     box survives the fold and leaves a hole
+												     belonging to nothing. -->
+												{#if i < SECTION_GROUPS.length - 1}
+													<div class="zone-tail" aria-hidden="true"></div>
+												{/if}
+											</div>
+										</div>
+									</div>
+								{/each}
+							{/if}
+						</div>
+					{/key}
+				</div>
 			{/if}
 		</nav>
 
 		<SidebarFooter
 			collapsed={isCollapsed}
-			animationDelay={10 * STAGGER_DELAY}
 		/>
 	</div>
 </aside>
-
-<SearchModal open={isSearchOpen} onClose={closeSearch} />
 
 <style>
 	@reference "../../../app.css";
@@ -313,17 +355,6 @@
 		}
 	}
 
-	@keyframes fadeSlideIn {
-		from {
-			opacity: 0;
-			transform: translateX(-8px);
-		}
-		to {
-			opacity: 1;
-			transform: translateX(0);
-		}
-	}
-
 	@keyframes spin {
 		from {
 			transform: rotate(0deg);
@@ -333,12 +364,15 @@
 		}
 	}
 
+	/* The gap above the first zone is the same one row of air that sits
+	   between zones, so Search → Desk and Desk → Library read as one
+	   interval rather than two arbitrary ones. */
 	.workspace-nav {
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
 		overflow-x: hidden;
-		padding: 12px 0 12px 8px;
+		padding: var(--sidebar-interactive-height) 0 12px 8px;
 	}
 
 	.workspace-nav.collapsed {
@@ -347,24 +381,29 @@
 		align-items: center;
 	}
 
-	/* Group header — the "contents-page" treatment: serif smallcaps,
-	   letterspaced, quiet. Carries the classical register of the panel. */
-	/* The reflect↔work seam: a blank gap between groups, no text header. */
-	.nav-group + .nav-group {
-		margin-top: 14px;
+	/* Both layers share one grid cell, so the leaving panel doesn't push the
+	   arriving one around while they overlap. Cheaper and steadier than
+	   absolute positioning: the cell keeps the taller layer's height, so the
+	   scroll container never jumps mid-swap. */
+	.nav-swap {
+		display: grid;
 	}
 
-	.nav-group-header {
-		font-family: var(--font-serif);
-		font-size: 11px;
-		font-weight: 500;
-		text-transform: uppercase;
-		letter-spacing: 0.14em;
-		color: var(--color-foreground-subtle);
-		padding: 0 8px;
-		margin: 16px 0 4px;
-		user-select: none;
-		animation: fadeSlideIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
+	.nav-layer {
+		grid-area: 1 / 1;
+		min-width: 0;
+	}
+
+	/* Group header — the "contents-page" treatment: serif smallcaps,
+	/* No margin here. The row of air between the zones is owned by the Desk's
+	   own collapsible region, so it folds away with the pins — otherwise
+	   closing the Desk left a 28px hole between two adjacent subtitles, and
+	   the space read as belonging to nothing. */
+
+	/* Same token as every other interval in the column, so Desk → Workbench
+	   and Workbench → Library read as one repeated beat. */
+	.zone-tail {
+		height: var(--sidebar-interactive-height);
 	}
 
 	.loading-state {

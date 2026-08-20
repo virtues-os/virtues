@@ -45,7 +45,66 @@ struct ConsumeResponse {
     box_direct_addrs: Vec<String>,
     /// Device-anchored webhook mapping, e.g. `{"ios_ingest": "act_…"}`.
     #[serde(default)]
-    action_ids: std::collections::HashMap<String, String>,
+    applet_ids: std::collections::HashMap<String, String>,
+}
+
+/// A device identity minted for a pairing whose consume exchange rides another
+/// transport (the box's BLE RPC 0x83): the `node_id` travels to the box for
+/// allowlisting; the secret stays here until [`finish_consume`] persists it
+/// alongside the box's response.
+pub struct MintedIdentity {
+    pub node_id: String,
+    secret_hex: String,
+}
+
+/// Mint a fresh iroh identity for this device — the same generation
+/// [`consume`] performs inline for the HTTP path.
+pub fn mint_identity() -> MintedIdentity {
+    let mut seed = [0u8; 32];
+    {
+        use rand::RngCore;
+        rand::rng().fill_bytes(&mut seed);
+    }
+    MintedIdentity {
+        node_id: virtues_iroh::SecretKey::from_bytes(&seed).public().to_string(),
+        secret_hex: hex::encode(seed),
+    }
+}
+
+/// Complete a pairing whose consume exchange the box carried itself (BLE RPC
+/// 0x83 relays the code to the box's own consume endpoint and streams the
+/// response back). Parses that response and persists the same [`PairedBox`]
+/// the HTTP path stores.
+///
+/// `box_url` is derived rather than known: over BLE there is no origin the
+/// phone dialed. The box's first IPv4 direct address stands in (LAN HTTP is
+/// only the fallback path — iroh is the real reach), with the mDNS default
+/// when the box reported none.
+pub fn finish_consume(
+    store: &dyn BoxStore,
+    response_json: &str,
+    identity: MintedIdentity,
+) -> Result<PairedBox> {
+    let parsed: ConsumeResponse =
+        serde_json::from_str(response_json).context("decode BLE-relayed consume response")?;
+    let box_url = parsed
+        .box_direct_addrs
+        .iter()
+        .filter_map(|a| a.parse::<std::net::SocketAddr>().ok())
+        .find(|a| a.is_ipv4())
+        .map(|a| format!("http://{}:8000", a.ip()))
+        .unwrap_or_else(|| "http://virtues.local:8000".to_string());
+    let rec = PairedBox {
+        box_url,
+        device_id: parsed.device_id,
+        box_node_id: parsed.box_node_id.filter(|s| !s.is_empty()),
+        relay_url: parsed.relay_url.filter(|s| !s.is_empty()),
+        box_direct_addrs: parsed.box_direct_addrs,
+        device_secret_hex: Some(identity.secret_hex),
+        applet_ids: parsed.applet_ids,
+    };
+    store.save(&rec).context("store paired box")?;
+    Ok(rec)
 }
 
 /// Consume a pair token against `origin` (e.g. `http://10.0.0.5:8000`).
@@ -117,7 +176,7 @@ pub async fn consume(
         relay_url: parsed.relay_url.filter(|s| !s.is_empty()),
         box_direct_addrs: parsed.box_direct_addrs,
         device_secret_hex: Some(device_secret_hex),
-        action_ids: parsed.action_ids,
+        applet_ids: parsed.applet_ids,
     };
     store.save(&rec).context("store paired box")?;
 

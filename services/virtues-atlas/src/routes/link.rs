@@ -48,6 +48,16 @@ pub fn router() -> Router<AppState> {
         // verify_login GET endpoint clicks → marks the device_link ready.
         .route("/init/login", post(login_start))
         .route("/init/login/verify", get(login_verify))
+        // The same login, reachable from the PAGE. `/init/login` takes the
+        // box's secret device_code, which a browser cannot know — so without
+        // this an owner with an existing account had no way through the web
+        // flow at all and was pushed into a second subscription.
+        .route("/init/login-web", post(login_web))
+        .route("/init/checkout", get(checkout))
+        // The existing-account door, addressable on its own. The app asks
+        // "new or existing?" itself now, so sending an owner who already
+        // answered to a page that asks again is a wasted step.
+        .route("/init/signin", get(signin))
 }
 
 // ─── POST /init/start ───────────────────────────────────────────────────────
@@ -163,10 +173,58 @@ async fn verify(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> 
     .await
     .unwrap_or(None);
     let Some((expires_at,)) = row else {
-        return page("Link not found", "That code is invalid or already used. Start again from your box.");
+        return page(
+            "Link not found",
+            "That code is invalid, already used, or has been replaced by a newer one. \
+             Open the Virtues app and start the link again.",
+        );
     };
     if Utc::now() > expires_at {
-        return page("Link expired", "This code expired. Start again from your box.");
+        return page(
+            "Link expired",
+            "Your box has already replaced this code with a fresh one &mdash; nothing is wrong \
+             with it. Open the Virtues app and start the link again.",
+        );
+    }
+
+    // TWO DOORS. This used to 302 straight to Stripe, which meant an owner who
+    // already pays for Virtues could only ever buy a SECOND subscription —
+    // there was no way to attach a new box to the account they have. The
+    // magic-link half already existed (`/init/login`); nothing on the web could
+    // reach it. A household adding its second box is the common case, not the
+    // exotic one.
+    return choice_page(&code);
+}
+
+/// `GET /init/checkout?code=…` — the "new subscription" door.
+///
+/// Split out of `verify` when that page gained a choice. Re-validates the code
+/// rather than trusting the referrer: this is a link an owner can bookmark,
+/// re-open an hour later, or land on after a cancelled Stripe session.
+async fn checkout(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> axum::response::Response {
+    let Some(code) = q.code.map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()) else {
+        return connect_page();
+    };
+    let row: Option<(chrono::DateTime<Utc>,)> = sqlx::query_as(
+        "SELECT expires_at FROM device_link WHERE user_code = $1 AND status = 'pending'",
+    )
+    .bind(&code)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    let Some((expires_at,)) = row else {
+        return page(
+            "Link not found",
+            "That code is invalid, already used, or has been replaced by a newer one. \
+             Open the Virtues app and start the link again.",
+        );
+    };
+    if Utc::now() > expires_at {
+        return page(
+            "Link expired",
+            "Your box has already replaced this code with a fresh one &mdash; nothing is wrong \
+             with it. Open the Virtues app and start the link again.",
+        );
     }
 
     if !state.stripe.is_configured() || state.stripe_price_id.is_empty() {
@@ -351,6 +409,222 @@ fn connect_page() -> axum::response::Response {
     .into_response()
 }
 
+/// `GET /init/signin?code=…` — the "existing account" door, on its own URL.
+///
+/// The chooser at `/init` still exists for anyone who arrives cold. But the app
+/// asks which door you want BEFORE it opens a browser, so an owner who already
+/// said "I have an account" was being asked the same question twice. Validates
+/// the code the same way `checkout` does, and for the same reason: this is a URL
+/// someone can bookmark or come back to.
+async fn signin(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> axum::response::Response {
+    let Some(code) = q.code.map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()) else {
+        return connect_page();
+    };
+    let row: Option<(chrono::DateTime<Utc>,)> = sqlx::query_as(
+        "SELECT expires_at FROM device_link WHERE user_code = $1 AND status = 'pending'",
+    )
+    .bind(&code)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    let Some((expires_at,)) = row else {
+        return page(
+            "Link not found",
+            "That code is invalid, already used, or has been replaced by a newer one. \
+             Open the Virtues app and start the link again.",
+        );
+    };
+    if Utc::now() > expires_at {
+        return page(
+            "Link expired",
+            "Your box has already replaced this code with a fresh one &mdash; nothing is wrong \
+             with it. Open the Virtues app and start the link again.",
+        );
+    }
+    signin_page(&code)
+}
+
+/// The existing-account card alone. Keeps a way over to checkout: picking the
+/// wrong door in the app must not be a dead end.
+fn signin_page(code: &str) -> axum::response::Response {
+    Html(format!(
+        "<!doctype html><html><head><meta charset=utf-8>\
+         <meta name=viewport content='width=device-width,initial-scale=1'>\
+         <title>Sign in to link your box</title>\
+         <style>body{{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;line-height:1.5}}\
+         h1{{font-size:1.4rem}}\
+         .code{{font-family:ui-monospace,Menlo,monospace;letter-spacing:.08em}}\
+         .card{{border:1px solid #ddd;border-radius:12px;padding:1.1rem 1.2rem;margin-top:1.1rem}}\
+         p.sub{{margin:0 0 .8rem;color:#555;font-size:.92rem}}\
+         form{{display:flex;gap:.5rem}}\
+         input{{flex:1;font:inherit;padding:.55rem .7rem;border:1px solid #ccc;border-radius:8px}}\
+         button{{font:inherit;padding:.55rem 1.05rem;border:0;border-radius:8px;background:#111;color:#fff;\
+         cursor:pointer}}\
+         p.alt{{margin-top:1.6rem;font-size:.85rem;color:#666}}\
+         </style></head>\
+         <body>\
+         <h1>Sign in to link your box</h1>\
+         <p>Code <span class=code>{code}</span> &mdash; this box is waiting to be linked.</p>\
+         <div class=card>\
+         <p class=sub>We'll email you a link. Clicking it attaches this box to your \
+         subscription &mdash; no new charge.</p>\
+         <form method=post action=/init/login-web>\
+         <input type=hidden name=code value='{code}'>\
+         <input name=email type=email placeholder='you@example.com' autocomplete=email required \
+         autofocus aria-label='Email address'>\
+         <button type=submit>Email me a link</button>\
+         </form>\
+         </div>\
+         <p class=alt>Don't have an account yet? \
+         <a href='/init/checkout?code={code}'>Start a subscription</a>.</p>\
+         </body></html>"
+    ))
+    .into_response()
+}
+
+/// `GET /init?code=…` — the two doors, once the code is known good.
+///
+/// Deliberately a page and not a redirect. The owner is standing at a box that
+/// just told them to come here; this is the moment they decide whether this box
+/// joins an account they already pay for or starts a new subscription, and a
+/// 302 made that decision for them — always wrongly for an existing customer.
+fn choice_page(code: &str) -> axum::response::Response {
+    Html(format!(
+        "<!doctype html><html><head><meta charset=utf-8>\
+         <meta name=viewport content='width=device-width,initial-scale=1'>\
+         <title>Connect your Virtues box</title>\
+         <style>body{{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;line-height:1.5}}\
+         h1{{font-size:1.4rem}}\
+         .code{{font-family:ui-monospace,Menlo,monospace;letter-spacing:.08em}}\
+         .card{{border:1px solid #ddd;border-radius:12px;padding:1.1rem 1.2rem;margin-top:1.1rem}}\
+         h2{{font-size:1rem;margin:0 0 .35rem}}\
+         p.sub{{margin:0 0 .8rem;color:#555;font-size:.92rem}}\
+         form{{display:flex;gap:.5rem}}\
+         input{{flex:1;font:inherit;padding:.55rem .7rem;border:1px solid #ccc;border-radius:8px}}\
+         button,a.btn{{font:inherit;padding:.55rem 1.05rem;border:0;border-radius:8px;background:#111;color:#fff;\
+         cursor:pointer;text-decoration:none;display:inline-block}}\
+         </style></head>\
+         <body>\
+         <h1>Connect your Virtues box</h1>\
+         <p>Code <span class=code>{code}</span> &mdash; this box is waiting to be linked.</p>\
+         <div class=card>\
+         <h2>I already have a Virtues account</h2>\
+         <p class=sub>We'll email you a link. Clicking it attaches this box to your subscription \
+         &mdash; no new charge.</p>\
+         <form method=post action=/init/login-web>\
+         <input type=hidden name=code value='{code}'>\
+         <input name=email type=email placeholder='you@example.com' autocomplete=email required \
+         autofocus aria-label='Email address'>\
+         <button type=submit>Email me a link</button>\
+         </form>\
+         </div>\
+         <div class=card>\
+         <h2>I'm new</h2>\
+         <p class=sub>Start a subscription for this box.</p>\
+         <a class=btn href='/init/checkout?code={code}'>Continue to checkout &rarr;</a>\
+         </div>\
+         </body></html>"
+    ))
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct LoginWebBody {
+    code: String,
+    email: String,
+}
+
+/// `POST /init/login-web` — the existing-account door, keyed on the USER code.
+///
+/// `/init/login` needs the secret `device_code` because the BOX calls it. A
+/// browser only ever has the short user code, so this resolves one to the other
+/// through `device_link` and then does exactly what `login_start` does.
+///
+/// Accepting the user code here grants no more than the page already granted:
+/// the same code, one click away, could create a subscription and link this box.
+/// Reading it still requires standing in front of the box.
+async fn login_web(
+    State(state): State<AppState>,
+    axum::extract::Form(body): axum::extract::Form<LoginWebBody>,
+) -> axum::response::Response {
+    let code = body.code.trim().to_uppercase();
+    let email = body.email.trim().to_lowercase();
+    if email.is_empty() || !email.contains('@') {
+        return page(
+            "Check the address",
+            &format!(
+                "That doesn't look like an email address. \
+                 <a href='/init/signin?code={}'>Try again</a>.",
+                html_escape(&code)
+            ),
+        );
+    }
+
+    let row: Option<(Vec<u8>,)> = sqlx::query_as(
+        "SELECT device_code_hash FROM device_link \
+         WHERE user_code = $1 AND status = 'pending' AND expires_at > now()",
+    )
+    .bind(&code)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    let Some((device_code_hash,)) = row else {
+        return page(
+            "Link not found",
+            "That code is invalid, used, or has been replaced by a newer one. Open the \
+             Virtues app and start the link again.",
+        );
+    };
+
+    // EVERY outcome carries a way onward. These used to be flat statements —
+    // "go back and choose I'm new" named a choice on a page the reader had
+    // already left, with no link on the one they were looking at. A browser
+    // that autofills the wrong saved address (the common case: the address
+    // that pays is not always the address that signs in) put an owner in a
+    // dead end they could only leave by restarting from the box (2026-08-13).
+    // The address is echoed for the same reason: autofill is silent, so the
+    // one fact needed to understand the failure was the one not shown.
+    let who = html_escape(&email);
+    let back = format!("<a href='/init/signin?code={code}'>try another address</a>");
+    let buy = format!("<a href='/init/checkout?code={code}'>start a subscription</a>");
+    match begin_login(&state, &device_code_hash, &email).await {
+        LoginOutcome::Sent => page(
+            "Check your email",
+            &format!(
+                "We sent a link to <b>{who}</b>. Open it on any device &mdash; your box links \
+                 itself within a few seconds.<br><br>Wrong address? You can {back}."
+            ),
+        ),
+        LoginOutcome::NoAccount => page(
+            "No account with that address",
+            &format!(
+                "We couldn't find a Virtues subscription for <b>{who}</b>. If you pay for \
+                 Virtues under a different address, {back} &mdash; otherwise {buy}."
+            ),
+        ),
+        LoginOutcome::RateLimited => page(
+            "Too many attempts",
+            &format!(
+                "Too many login emails for <b>{who}</b> in the last hour. Wait an hour, or \
+                 {back}."
+            ),
+        ),
+        LoginOutcome::Failed => page(
+            "Something went wrong",
+            &format!("We couldn't send that email. You can {back}."),
+        ),
+    }
+}
+
+/// What `begin_login` decided — shared by the box-callable and web doors so the
+/// two can never drift into different rules about accounts or rate limits.
+enum LoginOutcome {
+    Sent,
+    NoAccount,
+    RateLimited,
+    Failed,
+}
+
 fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
     (status, Json(json!({ "error": { "code": code, "message": message } }))).into_response()
 }
@@ -411,43 +685,62 @@ async fn login_start(
         );
     }
 
-    // Rate limit: max 3 send attempts per email per hour.
+    match begin_login(&state, &device_code_hash, &email).await {
+        LoginOutcome::Sent => (StatusCode::OK, Json(json!({ "status": "sent" }))).into_response(),
+        LoginOutcome::NoAccount => {
+            (StatusCode::OK, Json(json!({ "status": "no_account" }))).into_response()
+        }
+        LoginOutcome::RateLimited => err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many login attempts for this email — try again in an hour",
+        ),
+        LoginOutcome::Failed => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "email_send_failed",
+            "could not send login email",
+        ),
+    }
+}
+
+/// Rate-limit, resolve the customer, mint a magic-link token, send it.
+///
+/// The one implementation behind both doors — the box's `/init/login` and the
+/// page's `/init/login-web`. They differ only in how they learned the
+/// `device_code_hash` (the box has the secret; the page looks it up from the
+/// short code), and everything after that must be identical or the two drift
+/// into different rules about who gets an email and how often.
+async fn begin_login(
+    state: &AppState,
+    device_code_hash: &[u8],
+    email: &str,
+) -> LoginOutcome {
+    // Max 3 send attempts per email per hour.
     let recent: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM login_attempt \
          WHERE email = $1 AND created_at > now() - interval '1 hour'",
     )
-    .bind(&email)
+    .bind(email)
     .fetch_one(&state.pool)
     .await
     .unwrap_or((0,));
     if recent.0 >= 3 {
-        return err(
-            StatusCode::TOO_MANY_REQUESTS,
-            "rate_limited",
-            "too many login attempts for this email — try again in an hour",
-        );
+        return LoginOutcome::RateLimited;
     }
 
-    // Look up the customer in atlas's local table (mirrors Stripe customers).
-    let customer: Option<(String,)> = sqlx::query_as(
-        "SELECT stripe_customer_id FROM customers WHERE email = $1 LIMIT 1",
-    )
-    .bind(&email)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let customer: Option<(String,)> =
+        sqlx::query_as("SELECT stripe_customer_id FROM customers WHERE email = $1 LIMIT 1")
+            .bind(email)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
+    // No email when there is no account: it would be a spam vector AND would
+    // not help anyone. The caller offers "start a subscription" instead.
     let Some((customer_id,)) = customer else {
-        // Don't send an email when there's no account — would be a spam
-        // vector AND wouldn't help anyway. Box surfaces "subscribe?" CTA.
-        return (
-            StatusCode::OK,
-            Json(json!({ "status": "no_account" })),
-        )
-            .into_response();
+        return LoginOutcome::NoAccount;
     };
 
-    // Mint the magic-link token (32 random bytes, hex-encoded).
     let token = random_hex(32);
     let token_hash = sha256(token.as_bytes());
     let expires_at = Utc::now() + Duration::minutes(LOGIN_TTL_MINUTES);
@@ -460,35 +753,27 @@ async fn login_start(
         "#,
     )
     .bind(&token_hash[..])
-    .bind(&email)
+    .bind(email)
     .bind(&customer_id)
-    .bind(&device_code_hash[..])
+    .bind(device_code_hash)
     .bind(expires_at)
     .execute(&state.pool)
     .await;
     if let Err(e) = ins {
         tracing::warn!("login_attempt insert failed: {e:#}");
-        return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not start login");
+        return LoginOutcome::Failed;
     }
 
     let base = state.public_url.trim_end_matches('/');
     let link = format!("{base}/init/login/verify?token={token}");
-    let from = std::env::var("VIRTUES_LOGIN_FROM")
-        .unwrap_or_else(|_| LOGIN_FROM_DEFAULT.to_string());
+    let from =
+        std::env::var("VIRTUES_LOGIN_FROM").unwrap_or_else(|_| LOGIN_FROM_DEFAULT.to_string());
 
-    match crate::email::send_login_magic_link(&state.resend_api_key, &from, &email, &link).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(json!({ "status": "sent" })),
-        )
-            .into_response(),
+    match crate::email::send_login_magic_link(&state.resend_api_key, &from, email, &link).await {
+        Ok(_) => LoginOutcome::Sent,
         Err(e) => {
             tracing::warn!("magic link send failed: {e:#}");
-            err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "email_send_failed",
-                "could not send login email",
-            )
+            LoginOutcome::Failed
         }
     }
 }
@@ -524,7 +809,9 @@ async fn login_verify(
     let Some((_email, device_code_hash, _exp, customer_id)) = row else {
         return page(
             "Link expired or already used",
-            "This login link is no longer valid. Restart the flow from your box's terminal to get a fresh link.",
+            "This login link is no longer valid. Open the Virtues app and start the link again \
+             &mdash; it fetches a fresh code from your box. (Set the box up from a terminal? \
+             Re-run the link command there.)",
         );
     };
 
@@ -563,6 +850,12 @@ async fn login_verify(
     if let Err(e) = state
         .virtues_api
         .register_device(&crate::virtues_api_client::RegisterDevice {
+            // TODO(per-box keys): atlas does not yet know which box is
+            // registering here — the box's EndpointId reaches atlas via
+            // `/iroh/register`, which is a separate call. Until they are
+            // joined up this stays None and rotation keeps its historical
+            // whole-account behaviour. The virtues-api side is ready.
+            box_id: None,
             api_key_hash: hex::encode(&api_key_hash),
             account_id,
         })
@@ -591,9 +884,16 @@ async fn login_verify(
 
     // Flip the bound device_link to ready with the api_key so the box's
     // existing poll handler picks it up on the next /init/poll.
+    // `expires_at > now()` is load-bearing, not belt-and-braces. Once its own
+    // link lapses the box STARTS A NEW ONE with a new device_code, abandoning
+    // this row while it sits pending forever. Without the check, a magic link
+    // clicked an hour later flipped the abandoned row and rendered "Box
+    // attached" at someone whose box would never hear a thing — the box is
+    // polling a different device_code entirely. An honest failure beats a
+    // false success (2026-08-13).
     let flip = sqlx::query(
         "UPDATE device_link SET status = 'ready', api_key = $2 \
-         WHERE device_code_hash = $1 AND status = 'pending'",
+         WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now()",
     )
     .bind(&device_code_hash[..])
     .bind(&api_key)
@@ -602,11 +902,12 @@ async fn login_verify(
     match flip {
         Ok(r) if r.rows_affected() == 1 => page(
             "✓ Box attached",
-            "Your Virtues box is now attached to your subscription. Return to your terminal — the install will continue automatically.",
+            "Your Virtues box is now attached to your subscription. Go back to the Virtues app — it continues on its own within a few seconds.",
         ),
         Ok(_) => page(
             "Link expired",
-            "The device_link this email was bound to is no longer pending. Restart from your terminal to get a fresh link.",
+            "This link took too long, and your box has already moved on to a fresh code. \
+             Nothing is wrong with it. Open the Virtues app and start the link again.",
         ),
         Err(e) => {
             tracing::warn!("device_link flip failed: {e:#}");

@@ -20,8 +20,15 @@ use crate::ids;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiPerson {
     pub id: String,
-    pub canonical_name: String,
+    pub name: String,
     pub content: Option<String>,
+    /// Machine-written wikipedia-style record (entity_article applet). Never
+    /// user-edited — `content`/`notes` carry the user's own writing.
+    pub article: Option<String>,
+    pub article_updated_at: Option<DateTime<Utc>>,
+    /// Is this article being kept up to date? Off unless the user asked.
+    #[serde(default)]
+    pub article_auto_update: bool,
     pub picture: Option<String>,
     pub cover_image: Option<String>,
     // vCard fields
@@ -35,10 +42,15 @@ pub struct WikiPerson {
     // Metadata
     pub relationship_category: Option<String>,
     pub nickname: Option<String>,
-    pub notes: Option<String>,
-    pub first_interaction: Option<DateTime<Utc>>,
-    pub last_interaction: Option<DateTime<Utc>>,
-    pub interaction_count: Option<i32>,
+    // `notes` retired to wiki_notes (migration 0082). The column still exists —
+    // drops trail by a release — but nothing reads or writes it from here, which
+    // is what lets the next migration drop it safely.
+    /// Surfaces this entity also answers to (0037). Read alongside write, or an
+    /// editor cannot show what is already there.
+    pub aliases: Vec<String>,
+    pub first_seen: Option<DateTime<Utc>>,
+    pub last_seen: Option<DateTime<Utc>>,
+    pub seen_count: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -49,14 +61,19 @@ pub struct WikiPlace {
     pub id: String,
     pub name: String,
     pub content: Option<String>,
+    pub article: Option<String>,
+    pub article_updated_at: Option<DateTime<Utc>>,
+    /// Is this article being kept up to date? Off unless the user asked.
+    #[serde(default)]
+    pub article_auto_update: bool,
     pub cover_image: Option<String>,
     pub category: Option<String>,
     pub address: Option<String>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
-    pub visit_count: Option<i32>,
-    pub first_visit: Option<DateTime<Utc>>,
-    pub last_visit: Option<DateTime<Utc>>,
+    pub seen_count: Option<i32>,
+    pub first_seen: Option<DateTime<Utc>>,
+    pub last_seen: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -65,17 +82,24 @@ pub struct WikiPlace {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiOrganization {
     pub id: String,
-    pub canonical_name: String,
+    pub name: String,
     pub content: Option<String>,
+    pub article: Option<String>,
+    pub article_updated_at: Option<DateTime<Utc>>,
+    /// Is this article being kept up to date? Off unless the user asked.
+    #[serde(default)]
+    pub article_auto_update: bool,
     pub cover_image: Option<String>,
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
     pub role_title: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
-    pub interaction_count: Option<i32>,
-    pub first_interaction: Option<DateTime<Utc>>,
-    pub last_interaction: Option<DateTime<Utc>>,
+    /// Surfaces this entity also answers to (0037).
+    pub aliases: Vec<String>,
+    pub seen_count: Option<i32>,
+    pub first_seen: Option<DateTime<Utc>>,
+    pub last_seen: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -85,55 +109,29 @@ pub struct WikiOrganization {
 // Wiki Page Types - Narrative Views
 // ============================================================================
 
-/// A telos wiki page (life purpose/mission)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiTelos {
-    pub id: String,
-    pub title: String,
-    pub description: Option<String>,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
-    pub is_active: Option<bool>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
 
-/// A narrative act wiki page
+
+/// A story: a themed article that spans time.
+///
+/// Not an act. Acts tile the timeline in order and each one has to start where
+/// the last ended; stories overlap, skip years, and are gathered by subject —
+/// "the story of my wedding", "the story of my sobriety". Dates are optional
+/// and never order the list, because plenty of stories have no clean edges.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiAct {
+pub struct WikiStory {
     pub id: String,
     pub title: String,
     pub subtitle: Option<String>,
-    pub description: Option<String>,
     pub content: Option<String>,
     pub cover_image: Option<String>,
-    pub location: Option<String>,
-    pub start_date: NaiveDate,
+    pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
     pub sort_order: i32,
-    pub telos_id: Option<String>,
     pub themes: Option<Vec<String>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-/// A narrative chapter wiki page
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiChapter {
-    pub id: String,
-    pub title: String,
-    pub subtitle: Option<String>,
-    pub description: Option<String>,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
-    pub start_date: NaiveDate,
-    pub end_date: Option<NaiveDate>,
-    pub sort_order: i32,
-    pub act_id: Option<String>,
-    pub themes: Option<Vec<String>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
 
 /// A day wiki page
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,8 +139,9 @@ pub struct WikiDay {
     pub id: String,
     pub date: NaiveDate,
     pub start_timezone: Option<String>,
-    pub autobiography: Option<String>,
-    pub autobiography_sections: Option<serde_json::Value>,
+    /// The day's prose, from `wiki_day_prose`. The article page is its only
+    /// home — the legacy `autobiography` column was dropped in 0106.
+    pub article: Option<String>,
     pub epigraph: Option<String>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
@@ -186,10 +185,12 @@ pub struct ScoredSleepCycle {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiPersonListItem {
     pub id: String,
-    pub canonical_name: String,
+    pub name: String,
     pub picture: Option<String>,
     pub relationship_category: Option<String>,
-    pub last_interaction: Option<DateTime<Utc>>,
+    pub last_seen: Option<DateTime<Utc>>,
+    /// How many records mention this entity — see `REF_COUNT` in this module.
+    pub ref_count: i64,
 }
 
 /// A place list item
@@ -199,16 +200,20 @@ pub struct WikiPlaceListItem {
     pub name: String,
     pub category: Option<String>,
     pub address: Option<String>,
-    pub visit_count: Option<i32>,
+    pub seen_count: Option<i32>,
+    /// How many records mention this entity — see `REF_COUNT` in this module.
+    pub ref_count: i64,
 }
 
 /// An organization list item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiOrganizationListItem {
     pub id: String,
-    pub canonical_name: String,
+    pub name: String,
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
+    /// How many records mention this entity — see `REF_COUNT` in this module.
+    pub ref_count: i64,
 }
 
 // ============================================================================
@@ -218,7 +223,7 @@ pub struct WikiOrganizationListItem {
 /// Request to update a person wiki page
 #[derive(Debug, Deserialize)]
 pub struct UpdateWikiPersonRequest {
-    pub canonical_name: Option<String>,
+    pub name: Option<String>,
     pub content: Option<String>,
     pub picture: Option<String>,
     pub cover_image: Option<String>,
@@ -231,7 +236,15 @@ pub struct UpdateWikiPersonRequest {
     pub x: Option<String>,
     pub relationship_category: Option<String>,
     pub nickname: Option<String>,
-    pub notes: Option<String>,
+    // `notes` retired to wiki_notes (migration 0082). The column still exists —
+    // drops trail by a release — but nothing reads or writes it from here, which
+    // is what lets the next migration drop it safely.
+    /// Surfaces this entity also answers to. 0037 calls an alias "the record of
+    /// a human decision" and built the column for exactly this — then nothing
+    /// ever wrote it: 3 of 573 people on a real box have one. Stored
+    /// lowercased; the resolver lowercases the surface before matching, so a
+    /// name linked once resolves every past and future mention of it.
+    pub aliases: Option<Vec<String>>,
 }
 
 /// Request to update a place wiki page
@@ -247,7 +260,7 @@ pub struct UpdateWikiPlaceRequest {
 /// Request to update an organization wiki page
 #[derive(Debug, Deserialize)]
 pub struct UpdateWikiOrganizationRequest {
-    pub canonical_name: Option<String>,
+    pub name: Option<String>,
     pub content: Option<String>,
     pub cover_image: Option<String>,
     pub organization_type: Option<String>,
@@ -255,13 +268,17 @@ pub struct UpdateWikiOrganizationRequest {
     pub role_title: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
+    /// Surfaces this entity also answers to. 0037 calls an alias "the record of
+    /// a human decision" and built the column for exactly this — then nothing
+    /// ever wrote it: 3 of 573 people on a real box have one. Stored
+    /// lowercased; the resolver lowercases the surface before matching, so a
+    /// name linked once resolves every past and future mention of it.
+    pub aliases: Option<Vec<String>>,
 }
 
 /// Request to update a day wiki page
 #[derive(Debug, Deserialize)]
 pub struct UpdateWikiDayRequest {
-    pub autobiography: Option<String>,
-    pub autobiography_sections: Option<serde_json::Value>,
     pub epigraph: Option<String>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
@@ -279,10 +296,10 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     let row = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, content, picture, cover_image,
+            id, name, content, article, article_updated_at, picture, cover_image,
             emails, phones, birthday, instagram, facebook, linkedin, x,
-            relationship_category, nickname, notes,
-            first_interaction, last_interaction, interaction_count,
+            relationship_category, nickname, aliases,
+            first_seen, last_seen, seen_count,
             created_at, updated_at
         FROM wiki_people
         WHERE id = $1
@@ -294,14 +311,21 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     .map_err(|e| Error::Database(format!("Failed to get person: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Person not found: {}", id)))?;
 
+    let (article, article_updated_at, auto_update) =
+        overlay_article(pool, "person", &row.id, row.article, row.article_updated_at).await;
+
     Ok(WikiPerson {
         id: row.id,
-        canonical_name: row.canonical_name,
+        name: row.name,
         content: row.content,
+        article,
+        article_updated_at,
+        article_auto_update: auto_update,
         picture: row.picture,
         cover_image: row.cover_image,
         emails: serde_json::from_value(row.emails).unwrap_or_default(),
         phones: serde_json::from_value(row.phones).unwrap_or_default(),
+        aliases: serde_json::from_value(row.aliases).unwrap_or_default(),
         birthday: row.birthday,
         instagram: row.instagram,
         facebook: row.facebook,
@@ -309,23 +333,96 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
         x: row.x,
         relationship_category: row.relationship_category,
         nickname: row.nickname,
-        notes: row.notes,
-        first_interaction: row.first_interaction,
-        last_interaction: row.last_interaction,
-        interaction_count: Some(row.interaction_count as i32),
+        first_seen: row.first_seen,
+        last_seen: row.last_seen,
+        seen_count: Some(row.seen_count as i32),
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
 }
 
 /// List all people
+
+/// Overlay a subject's article from `wiki_articles` onto the legacy column.
+///
+/// Prose moved to `app_pages` (migration 0081), but the per-entity `article`
+/// columns from 0072 are still there — drops trail their phase by a release, so
+/// a box in the middle can hold prose in either place. New articles live on the
+/// page; anything written before the move still lives in the column. Read the
+/// page first and fall back, so neither is lost while both exist.
+async fn overlay_article(
+    pool: &PgPool,
+    subject_type: &str,
+    subject_id: &str,
+    legacy: Option<String>,
+    legacy_at: Option<DateTime<Utc>>,
+) -> (Option<String>, Option<DateTime<Utc>>, bool) {
+    match crate::api::wiki_articles::get_article_prose(pool, subject_type, subject_id).await {
+        Ok(Some(a)) => (Some(a.content), Some(a.updated_at), a.auto_update),
+        // A read failure must not take the whole entity page down with it — the
+        // records below the article are the more important half.
+        Ok(None) => (legacy, legacy_at, false),
+        Err(e) => {
+            tracing::warn!(subject_id, error = %e, "article read failed; showing legacy column");
+            (legacy, legacy_at, false)
+        }
+    }
+}
+
+/// Aliases are stored lowercased, trimmed, deduped, and never empty.
+///
+/// 0037 stores them lowercased and matches with `aliases ? lower(surface)`, so
+/// a mixed-case alias is simply invisible to the resolver — it would look
+/// saved and never resolve anything. Normalizing on the way in is the only
+/// place that can be enforced once for every caller.
+fn normalize_aliases(input: Option<&Vec<String>>) -> Option<serde_json::Value> {
+    let list = input?;
+    let mut seen: Vec<String> = Vec::with_capacity(list.len());
+    for raw in list {
+        let a = raw.trim().to_lowercase();
+        if !a.is_empty() && !seen.contains(&a) {
+            seen.push(a);
+        }
+    }
+    Some(serde_json::json!(seen))
+}
+
+/// Entity indexes sort by how many records mention the entity, not by name.
+///
+/// The People index had no order at all: it sorted by `name`, and the
+/// column that was supposed to carry importance — `seen_count` — is 0 on
+/// every row on a real box, because nothing has ever written it. So an address
+/// book of 573 contacts arrived alphabetically, with `no-reply@slack.com` sitting
+/// level with the people you actually talk to.
+///
+/// The signal was always there: `wiki_refs` holds 130k message refs
+/// across 314 people. Counting them sorts the wall on its own — people you
+/// message rise, contacts with no traffic sink, transactional senders land at
+/// the bottom with two email refs each. No classifier, no model, no deletion:
+/// the noise does not need removing, it needs ordering.
+///
+/// **Computed per query, not materialized.** The obvious move is a counter
+/// column, but that needs a refresh path and can drift, and this is a sort key
+/// rather than a fact. Measured on the real corpus (131k refs, 573 people) the
+/// aggregate runs in 11 ms, which is cheaper than being wrong. Materialize it
+/// when the index gets slow, and not before.
+///
+/// Deliberately NOT `seen_count` or `wiki_places.seen_count`: those are
+/// two different quantities on two tables (and visits are not refs), so reusing
+/// either would make "the default sort" mean something different per index.
+/// Both are legacy; this is the one uniform measure.
 pub async fn list_people(pool: &PgPool) -> Result<Vec<WikiPersonListItem>> {
     let rows = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, picture, relationship_category, last_interaction
-        FROM wiki_people
-        ORDER BY canonical_name ASC
+            p.id, p.name, p.picture, p.relationship_category, p.last_seen,
+            COALESCE(r.n, 0) AS "ref_count!"
+        FROM wiki_people p
+        LEFT JOIN (
+            SELECT entity_id, count(*) AS n
+            FROM wiki_refs WHERE entity_type = 'person' GROUP BY entity_id
+        ) r ON r.entity_id = p.id
+        ORDER BY COALESCE(r.n, 0) DESC, p.name ASC
         "#
     )
     .fetch_all(pool)
@@ -336,10 +433,11 @@ pub async fn list_people(pool: &PgPool) -> Result<Vec<WikiPersonListItem>> {
         .into_iter()
         .map(|row| WikiPersonListItem {
             id: row.id,
-            canonical_name: row.canonical_name,
+            name: row.name,
             picture: row.picture,
             relationship_category: row.relationship_category,
-            last_interaction: row.last_interaction,
+            last_seen: row.last_seen,
+            ref_count: row.ref_count,
         })
         .collect())
 }
@@ -352,12 +450,13 @@ pub async fn update_person(
 ) -> Result<WikiPerson> {
     let emails_json: Option<serde_json::Value> = req.emails.as_ref().map(|e| serde_json::json!(e));
     let phones_json: Option<serde_json::Value> = req.phones.as_ref().map(|p| serde_json::json!(p));
+    let aliases_json = normalize_aliases(req.aliases.as_ref());
 
     sqlx::query!(
         r#"
         UPDATE wiki_people
         SET
-            canonical_name = COALESCE($2, canonical_name),
+            name = COALESCE($2, name),
             content = COALESCE($3, content),
             picture = COALESCE($4, picture),
             cover_image = COALESCE($5, cover_image),
@@ -370,12 +469,12 @@ pub async fn update_person(
             x = COALESCE($12, x),
             relationship_category = COALESCE($13, relationship_category),
             nickname = COALESCE($14, nickname),
-            notes = COALESCE($15, notes),
+            aliases = COALESCE($15, aliases),
             updated_at = now()
         WHERE id = $1
         "#,
         id,
-        req.canonical_name,
+        req.name,
         req.content,
         req.picture,
         req.cover_image,
@@ -388,7 +487,7 @@ pub async fn update_person(
         req.x,
         req.relationship_category,
         req.nickname,
-        req.notes
+        aliases_json
     )
     .execute(pool)
     .await
@@ -406,9 +505,9 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
     let row = sqlx::query!(
         r#"
         SELECT
-            id, name, content, cover_image, category, address,
+            id, name, content, article, article_updated_at, cover_image, category, address,
             latitude, longitude,
-            visit_count, first_visit, last_visit,
+            seen_count, first_seen, last_seen,
             created_at, updated_at
         FROM wiki_places
         WHERE id = $1
@@ -420,18 +519,24 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
     .map_err(|e| Error::Database(format!("Failed to get place: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Place not found: {}", id)))?;
 
+    let (article, article_updated_at, auto_update) =
+        overlay_article(pool, "place", &row.id, row.article.clone(), row.article_updated_at).await;
+
     Ok(WikiPlace {
         id: row.id,
         name: row.name.clone(),
         content: row.content.clone(),
+        article,
+        article_updated_at,
+        article_auto_update: auto_update,
         cover_image: row.cover_image.clone(),
         category: row.category.clone(),
         address: row.address.clone(),
         latitude: row.latitude,
         longitude: row.longitude,
-        visit_count: Some(row.visit_count as i32),
-        first_visit: row.first_visit,
-        last_visit: row.last_visit,
+        seen_count: Some(row.seen_count as i32),
+        first_seen: row.first_seen,
+        last_seen: row.last_seen,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -442,9 +547,14 @@ pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
     let rows = sqlx::query!(
         r#"
         SELECT
-            id, name, category, address, visit_count
-        FROM wiki_places
-        ORDER BY name ASC
+            p.id, p.name, p.category, p.address, p.seen_count,
+            COALESCE(r.n, 0) AS "ref_count!"
+        FROM wiki_places p
+        LEFT JOIN (
+            SELECT entity_id, count(*) AS n
+            FROM wiki_refs WHERE entity_type = 'place' GROUP BY entity_id
+        ) r ON r.entity_id = p.id
+        ORDER BY COALESCE(r.n, 0) DESC, p.name ASC
         "#
     )
     .fetch_all(pool)
@@ -458,7 +568,8 @@ pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
             name: row.name,
             category: row.category,
             address: row.address,
-            visit_count: Some(row.visit_count as i32),
+            seen_count: Some(row.seen_count as i32),
+            ref_count: row.ref_count,
         })
         .collect())
 }
@@ -504,10 +615,10 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
     let row = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, content, cover_image,
-            organization_type, relationship_type, role_title,
-            start_date, end_date, interaction_count,
-            first_interaction, last_interaction,
+            id, name, content, article, article_updated_at, cover_image,
+            organization_type, relationship_type, role_title, aliases,
+            start_date, end_date, seen_count,
+            first_seen, last_seen,
             created_at, updated_at
         FROM wiki_orgs
         WHERE id = $1
@@ -519,19 +630,26 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
     .map_err(|e| Error::Database(format!("Failed to get organization: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Organization not found: {}", id)))?;
 
+    let (article, article_updated_at, auto_update) =
+        overlay_article(pool, "organization", &row.id, row.article, row.article_updated_at).await;
+
     Ok(WikiOrganization {
         id: row.id,
-        canonical_name: row.canonical_name,
+        name: row.name,
         content: row.content,
+        article,
+        article_updated_at,
+        article_auto_update: auto_update,
         cover_image: row.cover_image,
         organization_type: row.organization_type,
         relationship_type: row.relationship_type,
         role_title: row.role_title,
         start_date: row.start_date,
         end_date: row.end_date,
-        interaction_count: Some(row.interaction_count as i32),
-        first_interaction: row.first_interaction,
-        last_interaction: row.last_interaction,
+        aliases: serde_json::from_value(row.aliases).unwrap_or_default(),
+        seen_count: Some(row.seen_count as i32),
+        first_seen: row.first_seen,
+        last_seen: row.last_seen,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -542,9 +660,14 @@ pub async fn list_organizations(pool: &PgPool) -> Result<Vec<WikiOrganizationLis
     let rows = sqlx::query!(
         r#"
         SELECT
-            id, canonical_name, organization_type, relationship_type
-        FROM wiki_orgs
-        ORDER BY canonical_name ASC
+            o.id, o.name, o.organization_type, o.relationship_type,
+            COALESCE(r.n, 0) AS "ref_count!"
+        FROM wiki_orgs o
+        LEFT JOIN (
+            SELECT entity_id, count(*) AS n
+            FROM wiki_refs WHERE entity_type = 'organization' GROUP BY entity_id
+        ) r ON r.entity_id = o.id
+        ORDER BY COALESCE(r.n, 0) DESC, o.name ASC
         "#
     )
     .fetch_all(pool)
@@ -555,9 +678,10 @@ pub async fn list_organizations(pool: &PgPool) -> Result<Vec<WikiOrganizationLis
         .into_iter()
         .map(|row| WikiOrganizationListItem {
             id: row.id,
-            canonical_name: row.canonical_name,
+            name: row.name,
             organization_type: row.organization_type,
             relationship_type: row.relationship_type,
+            ref_count: row.ref_count,
         })
         .collect())
 }
@@ -572,7 +696,7 @@ pub async fn update_organization(
         r#"
         UPDATE wiki_orgs
         SET
-            canonical_name = COALESCE($2, canonical_name),
+            name = COALESCE($2, name),
             content = COALESCE($3, content),
             cover_image = COALESCE($4, cover_image),
             organization_type = COALESCE($5, organization_type),
@@ -580,18 +704,20 @@ pub async fn update_organization(
             role_title = COALESCE($7, role_title),
             start_date = COALESCE($8, start_date),
             end_date = COALESCE($9, end_date),
+            aliases = COALESCE($10, aliases),
             updated_at = now()
         WHERE id = $1
         "#,
         id,
-        req.canonical_name,
+        req.name,
         req.content,
         req.cover_image,
         req.organization_type,
         req.relationship_type,
         req.role_title,
         req.start_date,
-        req.end_date
+        req.end_date,
+        normalize_aliases(req.aliases.as_ref())
     )
     .execute(pool)
     .await
@@ -654,11 +780,16 @@ pub async fn update_narrative_identity(
     pool: &PgPool,
     request: UpdateNarrativeIdentityRequest,
 ) -> Result<NarrativeIdentity> {
-    sqlx::query("UPDATE wiki_narrative_identity SET content = $1 WHERE id = 'nar_identity_001'")
-        .bind(&request.content)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to update narrative identity: {}", e)))?;
+    // Upsert: the singleton row is not seeded by any migration, so a plain
+    // UPDATE on a fresh box would silently no-op and drop the user's writing.
+    sqlx::query(
+        "INSERT INTO wiki_narrative_identity (id, content) VALUES ('nar_identity_001', $1) \
+         ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content",
+    )
+    .bind(&request.content)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to update narrative identity: {}", e)))?;
 
     get_narrative_identity(pool).await
 }
@@ -667,215 +798,93 @@ pub async fn update_narrative_identity(
 // Telos CRUD Operations
 // ============================================================================
 
-/// Get active telos
-pub async fn get_active_telos(pool: &PgPool) -> Result<Option<WikiTelos>> {
+
+
+// ============================================================================
+// Story Operations
+// ============================================================================
+//
+// Read-only for now, and deliberately so: stories are hand-authored and there
+// is no pipeline that writes one. Authoring lands with the editor, not here.
+
+/// Get a story by ID
+pub async fn get_story(pool: &PgPool, id: String) -> Result<WikiStory> {
     let row = sqlx::query!(
         r#"
         SELECT
-            id, title, description, content, cover_image, is_active,
+            id, title, subtitle, content, cover_image,
+            start_date, end_date, sort_order, themes,
             created_at, updated_at
-        FROM wiki_telos
-        WHERE is_active = true
-        "#
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get active telos: {}", e)))?;
-
-    Ok(row.map(|r| WikiTelos {
-        id: r.id,
-        title: r.title,
-        description: r.description,
-        content: r.content,
-        cover_image: r.cover_image,
-        is_active: Some(r.is_active),
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-    }))
-}
-
-/// Get a telos by ID
-pub async fn get_telos(pool: &PgPool, id: &str) -> Result<WikiTelos> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, title, description, content, cover_image, is_active,
-            created_at, updated_at
-        FROM wiki_telos
+        FROM wiki_stories
         WHERE id = $1
         "#,
         id
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to get telos: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Telos not found: {}", id)))?;
+    .map_err(|e| Error::Database(format!("Failed to get story: {}", e)))?
+    .ok_or_else(|| Error::NotFound(format!("Story not found: {}", id)))?;
 
-    Ok(WikiTelos {
+    Ok(WikiStory {
         id: row.id,
         title: row.title,
-        description: row.description,
+        subtitle: row.subtitle,
         content: row.content,
         cover_image: row.cover_image,
-        is_active: Some(row.is_active),
+        start_date: row.start_date,
+        end_date: row.end_date,
+        sort_order: row.sort_order,
+        themes: serde_json::from_value(row.themes).ok(),
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
+}
+
+/// List all stories — hand-ordered first, then newest.
+pub async fn list_stories(pool: &PgPool) -> Result<Vec<WikiStory>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            id, title, subtitle, content, cover_image,
+            start_date, end_date, sort_order, themes,
+            created_at, updated_at
+        FROM wiki_stories
+        ORDER BY sort_order, created_at DESC
+        "#
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list stories: {}", e)))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| WikiStory {
+            id: row.id,
+            title: row.title,
+            subtitle: row.subtitle,
+            content: row.content,
+            cover_image: row.cover_image,
+            start_date: row.start_date,
+            end_date: row.end_date,
+            sort_order: row.sort_order,
+            themes: serde_json::from_value(row.themes).ok(),
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+        .collect())
 }
 
 // ============================================================================
 // Act CRUD Operations
 // ============================================================================
 
-/// Get an act by ID
-pub async fn get_act(pool: &PgPool, id: String) -> Result<WikiAct> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, title, subtitle, description, content, cover_image, location,
-            start_date, end_date, sort_order, telos_id, themes,
-            created_at, updated_at
-        FROM wiki_acts
-        WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get act: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Act not found: {}", id)))?;
 
-    Ok(WikiAct {
-        id: row.id,
-        title: row.title,
-        subtitle: row.subtitle,
-        description: row.description,
-        content: row.content,
-        cover_image: row.cover_image,
-        location: row.location,
-        start_date: row.start_date,
-        end_date: row.end_date,
-        sort_order: row.sort_order as i32,
-        telos_id: row.telos_id,
-        themes: serde_json::from_value(row.themes).ok(),
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    })
-}
-
-/// List all acts
-pub async fn list_acts(pool: &PgPool) -> Result<Vec<WikiAct>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            id, title, subtitle, description, content, cover_image, location,
-            start_date, end_date, sort_order, telos_id, themes,
-            created_at, updated_at
-        FROM wiki_acts
-        ORDER BY sort_order ASC, start_date ASC
-        "#
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list acts: {}", e)))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| WikiAct {
-            id: row.id,
-            title: row.title,
-            subtitle: row.subtitle,
-            description: row.description,
-            content: row.content,
-            cover_image: row.cover_image,
-            location: row.location,
-            start_date: row.start_date,
-            end_date: row.end_date,
-            sort_order: row.sort_order as i32,
-            telos_id: row.telos_id,
-            themes: serde_json::from_value(row.themes).ok(),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        })
-        .collect())
-}
 
 // ============================================================================
 // Chapter CRUD Operations
 // ============================================================================
 
-/// Get a chapter by ID
-pub async fn get_chapter(pool: &PgPool, id: String) -> Result<WikiChapter> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, title, subtitle, description, content, cover_image,
-            start_date, end_date, sort_order, act_id, themes,
-            created_at, updated_at
-        FROM wiki_chapters
-        WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get chapter: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Chapter not found: {}", id)))?;
 
-    Ok(WikiChapter {
-        id: row.id,
-        title: row.title,
-        subtitle: row.subtitle,
-        description: row.description,
-        content: row.content,
-        cover_image: row.cover_image,
-        start_date: row.start_date,
-        end_date: row.end_date,
-        sort_order: row.sort_order as i32,
-        act_id: row.act_id,
-        themes: serde_json::from_value(row.themes).ok(),
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    })
-}
-
-/// List chapters for an act
-pub async fn list_chapters_for_act(pool: &PgPool, act_id: String) -> Result<Vec<WikiChapter>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            id, title, subtitle, description, content, cover_image,
-            start_date, end_date, sort_order, act_id, themes,
-            created_at, updated_at
-        FROM wiki_chapters
-        WHERE act_id = $1
-        ORDER BY sort_order ASC, start_date ASC
-        "#,
-        act_id
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list chapters: {}", e)))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| WikiChapter {
-            id: row.id,
-            title: row.title,
-            subtitle: row.subtitle,
-            description: row.description,
-            content: row.content,
-            cover_image: row.cover_image,
-            start_date: row.start_date,
-            end_date: row.end_date,
-            sort_order: row.sort_order as i32,
-            act_id: row.act_id,
-            themes: serde_json::from_value(row.themes).ok(),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-        })
-        .collect())
-}
 
 // ============================================================================
 // Day CRUD Operations
@@ -889,7 +898,8 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
     let existing: Option<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            id, date, start_timezone, autobiography, autobiography_sections,
+            id, date, start_timezone,
+            (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
@@ -916,7 +926,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         INSERT INTO wiki_days (id, date)
         VALUES ($1, $2)
         RETURNING
-            id, date, start_timezone, autobiography, autobiography_sections,
+            id, date, start_timezone,
             epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
@@ -946,8 +956,9 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         id,
         date,
         start_timezone: row.try_get("start_timezone").ok().flatten(),
-        autobiography: row.try_get("autobiography").ok().flatten(),
-        autobiography_sections: row.try_get("autobiography_sections").ok().flatten(),
+        // Absent from the INSERT..RETURNING path (a just-created day has no
+        // prose anyway) — `.ok()` makes that read as None rather than an error.
+        article: row.try_get("article").ok().flatten(),
         epigraph: row.try_get("epigraph").ok().flatten(),
         last_edited_by: row.try_get("last_edited_by").ok().flatten(),
         cover_image: row.try_get("cover_image").ok().flatten(),
@@ -979,9 +990,9 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleep
     // 1. Get sleep record for this night (overlaps with this calendar day)
     let sleep_row: Option<sqlx::postgres::PgRow> = sqlx::query(
         r#"SELECT sleep_stages FROM data_health_sleep
-           WHERE start_time >= $1
-             AND start_time < $2
-           ORDER BY start_time ASC LIMIT 1"#,
+           WHERE started_at >= $1
+             AND started_at < $2
+           ORDER BY started_at ASC LIMIT 1"#,
     )
     .bind(start)
     .bind(end)
@@ -1061,9 +1072,9 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleep
         r#"SELECT AVG(CAST(hr.bpm AS REAL))
            FROM data_health_heart_rate hr
            INNER JOIN data_health_sleep s
-             ON hr.timestamp >= s.start_time AND hr.timestamp < s.end_time
-           WHERE s.start_time >= $1
-             AND s.start_time < $2
+             ON hr.occurred_at >= s.started_at AND hr.occurred_at < s.ended_at
+           WHERE s.started_at >= $1
+             AND s.started_at < $2
            GROUP BY s.id"#,
     )
     .bind(baseline_start)
@@ -1089,7 +1100,7 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleep
         let avg_hr: Option<f64> = sqlx::query_scalar(
             r#"SELECT AVG(CAST(bpm AS REAL))
                FROM data_health_heart_rate
-               WHERE timestamp >= $1 AND timestamp < $2"#,
+               WHERE occurred_at >= $1 AND occurred_at < $2"#,
         )
         .bind(start)
         .bind(end)
@@ -1120,7 +1131,7 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleep
 }
 
 /// Count new entities and new topics for a date.
-/// "New entity" = an entity whose earliest wiki_entity_refs.timestamp falls on this date.
+/// "New entity" = an entity whose earliest wiki_refs.timestamp falls on this date.
 /// "New topic" = a topic in search_topic_cache whose created_at falls on this date.
 async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i64)> {
     // New entities: count distinct entity_ids where their earliest ref timestamp is on this date
@@ -1129,13 +1140,13 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
         .unwrap_or_default();
     let new_entities: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(DISTINCT r.entity_id)
-           FROM wiki_entity_refs r
-           WHERE r.timestamp >= ($1 || 'T00:00:00Z')::timestamptz
-             AND r.timestamp < ($2 || 'T00:00:00Z')::timestamptz
+           FROM wiki_refs r
+           WHERE r.occurred_at >= ($1 || 'T00:00:00Z')::timestamptz
+             AND r.occurred_at < ($2 || 'T00:00:00Z')::timestamptz
              AND NOT EXISTS (
-               SELECT 1 FROM wiki_entity_refs r2
+               SELECT 1 FROM wiki_refs r2
                WHERE r2.entity_id = r.entity_id
-                 AND r2.timestamp < ($1 || 'T00:00:00Z')::timestamptz
+                 AND r2.occurred_at < ($1 || 'T00:00:00Z')::timestamptz
              )"#,
     )
     .bind(date_str)
@@ -1153,7 +1164,7 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
              AND NOT EXISTS (
                SELECT 1 FROM wiki_events e2, jsonb_array_elements_text(e2.topics) jt2
                WHERE e2.day_id != e.day_id
-                 AND e2.start_time < e.start_time
+                 AND e2.started_at < e.started_at
                  AND jt2 = jt
              )"#,
     )
@@ -1179,25 +1190,17 @@ pub async fn update_day(
         r#"
         UPDATE wiki_days
         SET
-            autobiography = COALESCE($2, autobiography),
-            -- $3 is jsonb (bound as a Value). It was previously serialized to a
-            -- String and bound as TEXT, so Postgres rejected COALESCE(text, jsonb)
-            -- at plan time — even when NULL — which meant narration could NEVER
-            -- write a day (the box had 0 autobiographies as a direct result).
-            autobiography_sections = COALESCE($3, autobiography_sections),
-            epigraph = COALESCE($4, epigraph),
-            last_edited_by = COALESCE($5, last_edited_by),
-            cover_image = COALESCE($6, cover_image),
-            start_timezone = COALESCE($7, start_timezone),
-            data_quality = COALESCE($8, data_quality),
-            snapshot = COALESCE($9, snapshot),
+            epigraph = COALESCE($2, epigraph),
+            last_edited_by = COALESCE($3, last_edited_by),
+            cover_image = COALESCE($4, cover_image),
+            start_timezone = COALESCE($5, start_timezone),
+            data_quality = COALESCE($6, data_quality),
+            snapshot = COALESCE($7, snapshot),
             updated_at = now()
         WHERE id = $1
         "#,
     )
     .bind(&day_id_str)
-    .bind(&req.autobiography)
-    .bind(&req.autobiography_sections)
     .bind(&req.epigraph)
     .bind(&req.last_edited_by)
     .bind(&req.cover_image)
@@ -1222,7 +1225,8 @@ pub async fn list_days(
     let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            id, date, start_timezone, autobiography, autobiography_sections,
+            id, date, start_timezone,
+            (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
@@ -1237,14 +1241,131 @@ pub async fn list_days(
     .await
     .map_err(|e| Error::Database(format!("Failed to list days: {}", e)))?;
 
-    Ok(rows
-        .iter()
-        .filter_map(|row| {
-            let date_str: String = row.try_get("date").ok()?;
-            let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
-            wiki_day_from_row(row, date).ok()
+    rows.iter()
+        .map(|row| {
+            // `date` is a Postgres DATE — decode it as NaiveDate. (This used
+            // to try_get::<String> inside a filter_map, which failed to decode
+            // on every row and silently returned an empty list.)
+            let date: NaiveDate = row
+                .try_get("date")
+                .map_err(|e| Error::Database(format!("Failed to decode day date: {}", e)))?;
+            wiki_day_from_row(row, date)
         })
-        .collect())
+        .collect()
+}
+
+/// One day of the wiki activity calendar: how much recorded life the day
+/// holds. Event count is the honest signal — it exists as soon as the day is
+/// segmented, independent of whether the nightly narration has run yet.
+#[derive(Debug, Serialize)]
+pub struct DayActivity {
+    pub date: NaiveDate,
+    pub event_count: i64,
+    pub narrated: bool,
+}
+
+/// Per-day activity for a date range, for the wiki's calendar heatmap.
+/// Deliberately tiny — the full `WikiDay` list is heavyweight (narration
+/// text, snapshots) and this gets called for a year at a time.
+pub async fn day_activity(
+    pool: &PgPool,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> Result<Vec<DayActivity>> {
+    use sqlx::Row;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            d.date,
+            COUNT(e.id) FILTER (WHERE e.user_hidden = false) AS event_count,
+            (d.narrated_at IS NOT NULL) AS narrated
+        FROM wiki_days d
+        LEFT JOIN wiki_events e ON e.day_id = d.id
+        WHERE d.date >= $1 AND d.date <= $2
+        GROUP BY d.id, d.date, d.narrated_at
+        ORDER BY d.date
+        "#,
+    )
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load day activity: {}", e)))?;
+
+    rows.iter()
+        .map(|row| {
+            Ok(DayActivity {
+                date: row
+                    .try_get("date")
+                    .map_err(|e| Error::Database(format!("Failed to decode date: {}", e)))?,
+                event_count: row
+                    .try_get("event_count")
+                    .map_err(|e| Error::Database(format!("Failed to decode event_count: {}", e)))?,
+                narrated: row
+                    .try_get("narrated")
+                    .map_err(|e| Error::Database(format!("Failed to decode narrated: {}", e)))?,
+            })
+        })
+        .collect()
+}
+
+
+/// A past year's entry for the same calendar date — the wiki front page's
+/// "on this day" register.
+#[derive(Debug, Serialize)]
+pub struct OnThisDayEntry {
+    pub date: NaiveDate,
+    pub epigraph: Option<String>,
+    pub narrated: bool,
+    pub event_count: i64,
+}
+
+/// Days from earlier years sharing `date`'s month and day, newest first.
+pub async fn on_this_day(pool: &PgPool, date: NaiveDate) -> Result<Vec<OnThisDayEntry>> {
+    use sqlx::Row;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            d.date,
+            d.epigraph,
+            (d.narrated_at IS NOT NULL) AS narrated,
+            COUNT(e.id) FILTER (WHERE e.user_hidden = false) AS event_count
+        FROM wiki_days d
+        LEFT JOIN wiki_events e ON e.day_id = d.id
+        WHERE EXTRACT(MONTH FROM d.date) = $1
+          AND EXTRACT(DAY FROM d.date) = $2
+          AND d.date < $3
+        GROUP BY d.id, d.date, d.epigraph, d.narrated_at
+        ORDER BY d.date DESC
+        "#,
+    )
+    .bind(chrono::Datelike::month(&date) as i32)
+    .bind(chrono::Datelike::day(&date) as i32)
+    .bind(date)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load on-this-day: {}", e)))?;
+
+    rows.iter()
+        .map(|row| {
+            Ok(OnThisDayEntry {
+                date: row
+                    .try_get("date")
+                    .map_err(|e| Error::Database(format!("Failed to decode date: {}", e)))?,
+                epigraph: row
+                    .try_get("epigraph")
+                    .map_err(|e| Error::Database(format!("Failed to decode epigraph: {}", e)))?,
+                narrated: row
+                    .try_get("narrated")
+                    .map_err(|e| Error::Database(format!("Failed to decode narrated: {}", e)))?,
+                event_count: row
+                    .try_get("event_count")
+                    .map_err(|e| Error::Database(format!("Failed to decode event_count: {}", e)))?,
+            })
+        })
+        .collect()
 }
 
 
@@ -1327,7 +1448,7 @@ pub struct TemporalEvent {
     pub topic_novelty: Option<serde_json::Value>,
     pub entity_novelty: Option<serde_json::Value>,
     /// Map of entity_id → ISO8601 timestamp of earliest ref within event window.
-    /// Sourced from wiki_entity_refs. Used to position entity dots at their actual
+    /// Sourced from wiki_refs. Used to position entity dots at their actual
     /// moment (not event center).
     pub entity_timestamps: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
@@ -1379,7 +1500,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
     let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            id, day_id, start_time, end_time,
+            id, day_id, started_at, ended_at,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,
             novelty_z, avg_hr, autonomic_z, hr_z, hrv_z,
@@ -1389,7 +1510,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             created_at, updated_at
         FROM wiki_events
         WHERE day_id = $1
-        ORDER BY start_time ASC
+        ORDER BY started_at ASC
         "#,
     )
     .bind(&day_id)
@@ -1398,13 +1519,13 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
     .map_err(|e| Error::Database(format!("Failed to get day events: {}", e)))?;
 
     // Fetch entity timestamps for the day: for each event's window, the earliest
-    // timestamp each entity appears in wiki_entity_refs.
+    // timestamp each entity appears in wiki_refs.
     let event_windows: Vec<(String, DateTime<Utc>, DateTime<Utc>)> = rows
         .iter()
         .filter_map(|row| {
             let id: String = row.try_get("id").ok()?;
-            let start: DateTime<Utc> = row.try_get("start_time").ok()?;
-            let end: DateTime<Utc> = row.try_get("end_time").ok()?;
+            let start: DateTime<Utc> = row.try_get("started_at").ok()?;
+            let end: DateTime<Utc> = row.try_get("ended_at").ok()?;
             Some((id, start, end))
         })
         .collect();
@@ -1413,11 +1534,11 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
     for (event_id, start, end) in &event_windows {
         let ref_rows: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
             r#"
-            SELECT entity_id, MIN(timestamp) as earliest
-            FROM wiki_entity_refs
-            WHERE timestamp IS NOT NULL
-              AND timestamp >= $1
-              AND timestamp < $2
+            SELECT entity_id, MIN(occurred_at) as earliest
+            FROM wiki_refs
+            WHERE occurred_at IS NOT NULL
+              AND occurred_at >= $1
+              AND occurred_at < $2
             GROUP BY entity_id
             "#,
         )
@@ -1446,8 +1567,8 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             // (timestamptz is not text), so `.ok()?` dropped every row and the
             // timeline came back empty. JSONB decodes into serde_json::Value and
             // BOOLEAN into bool — no string round-trip, no `!= 0`.
-            let start_time: DateTime<Utc> = row.try_get("start_time").ok()?;
-            let end_time: DateTime<Utc> = row.try_get("end_time").ok()?;
+            let start_time: DateTime<Utc> = row.try_get("started_at").ok()?;
+            let end_time: DateTime<Utc> = row.try_get("ended_at").ok()?;
             let created_at: DateTime<Utc> = row.try_get("created_at").ok()?;
             let updated_at: DateTime<Utc> = row.try_get("updated_at").ok()?;
             let entity_timestamps = entity_ts_by_event.get(&id).cloned();
@@ -1536,7 +1657,7 @@ pub async fn create_temporal_event(
     let row = sqlx::query(
         r#"
         INSERT INTO wiki_events (
-            id, day_id, start_time, end_time,
+            id, day_id, started_at, ended_at,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, kind, is_user_added, event_summary,
             topics
@@ -1628,7 +1749,7 @@ pub async fn update_temporal_event(
             updated_at = now()
         WHERE id = $1
         RETURNING
-            id, day_id, start_time, end_time,
+            id, day_id, started_at, ended_at,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,
             created_at, updated_at
@@ -1646,8 +1767,8 @@ pub async fn update_temporal_event(
     Ok(TemporalEvent {
         id: row.id,
         day_id: row.day_id,
-        start_time: row.start_time,
-        end_time: row.end_time,
+        start_time: row.started_at,
+        end_time: row.ended_at,
         auto_label: row.auto_label,
         auto_location: row.auto_location,
         user_label: row.user_label,
@@ -1694,14 +1815,30 @@ pub async fn delete_temporal_event(pool: &PgPool, id: String) -> Result<()> {
     Ok(())
 }
 
-/// Delete all auto-generated events for a day (for regeneration)
+/// Delete all auto-generated events for a day (for regeneration).
+///
+/// "Auto-generated" means UNTOUCHED BY THE USER, and that is three flags, not
+/// one. `is_user_added` alone was the guard, and it is only set by
+/// `create_temporal_event` — relabelling an event the machine cut sets
+/// `is_user_edited` (see `update_temporal_event`) and leaves `is_user_added`
+/// false, so every re-cut silently deleted the user's own label. That fires
+/// whenever late audio or a backfilled message changes the day's
+/// `sources_fingerprint`, which is exactly when a day gets re-cut in practice.
+/// `user_hidden` is the same class: a hide the re-cut eats comes back visible.
+///
+/// Preserved events can now overlap the fresh cut — but that was already true
+/// of `is_user_added` events, so this widens an accepted condition rather than
+/// introducing one. A user's judgement outranks a gapless timeline.
 pub async fn delete_auto_events_for_day(pool: &PgPool, day_id: String) -> Result<u64> {
     let day_id_str = day_id;
 
     let result = sqlx::query!(
         r#"
         DELETE FROM wiki_events
-        WHERE day_id = $1 AND is_user_added = false
+        WHERE day_id = $1
+          AND is_user_added = false
+          AND is_user_edited = false
+          AND user_hidden = false
         "#,
         day_id_str
     )
@@ -1940,6 +2077,229 @@ pub async fn get_day_sources(
     Ok(sources)
 }
 
+/// One raw record linked to an entity via `wiki_refs` — the entity
+/// page's CRM-style evidence feed. Same shape as `DaySource` plus the ref's
+/// `role` (sender, attendee, merchant, location, …).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityRecord {
+    pub source_type: String,
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub label: String,
+    pub preview: Option<String>,
+    pub role: Option<String>,
+    pub continuous: bool,
+}
+
+/// One page of an entity's records, plus the true total for the query — the
+/// server half of the grid's server-side pagination.
+#[derive(Debug, Serialize)]
+pub struct EntityRecordsPage {
+    pub items: Vec<EntityRecord>,
+    pub total: i64,
+}
+
+/// Per-raw-source_type counts across ALL of an entity's records, for the chip
+/// rail. Computed server-side because the grid only ever holds one page —
+/// chips counted from loaded rows would lie.
+#[derive(Debug, Serialize)]
+pub struct EntityRecordFacet {
+    pub source_type: String,
+    pub count: i64,
+    pub continuous: bool,
+}
+
+/// Requests can't ask for unbounded pages.
+const ENTITY_RECORDS_MAX_LIMIT: i64 = 100;
+
+/// Build the UNION ALL body over every source table holding refs for this
+/// entity, each subquery rendered with its ontology's `DaySourceConfig` SQL
+/// (same labels/previews as the day page). Roles are merged per record inside
+/// each subquery, so pagination and totals count records, not refs. Returns
+/// `None` when the entity has no refs in any renderable table.
+///
+/// All subqueries bind the entity id as `$1`; callers add outer binds from $2.
+async fn entity_records_union(pool: &PgPool, entity_id: &str) -> Result<Option<String>> {
+    use virtues_registry::ontologies::registered_ontologies;
+
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT source_table FROM wiki_refs WHERE entity_id = $1",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list entity ref tables: {}", e)))?;
+
+    let mut subqueries: Vec<String> = Vec::new();
+    for table in &tables {
+        let Some(ont) = registered_ontologies()
+            .into_iter()
+            .find(|o| o.table_name == table.as_str() && o.day_source.is_some())
+        else {
+            // Refs exist but no ontology knows how to render them. Unlike the
+            // day pipeline (where a hole feeds an LLM), this only starves a
+            // reading surface — so skip loudly instead of failing the page,
+            // and treat the log line as the bug report it is.
+            tracing::warn!(
+                source_table = %table,
+                entity_id = %entity_id,
+                "entity refs point at a table with no day-source config; its records are invisible"
+            );
+            continue;
+        };
+        let cfg = ont.day_source.as_ref().unwrap();
+
+        let source_type_col = cfg
+            .source_type_sql
+            .map(|sql| format!("{} as source_type_dyn", sql))
+            .unwrap_or_else(|| format!("'{}' as source_type_dyn", cfg.source_type));
+
+        // Notes on the shape:
+        //  - `WHERE true` so `extra_where` (which carries its own leading AND)
+        //    splices the same way it does in the day-source template.
+        //  - The refs JOIN introduces a second `timestamp` column, so the
+        //    ontology's timestamp must be `t.`-qualified or Postgres calls it
+        //    ambiguous.
+        //  - The refs unique key includes `role`, so one record can join once
+        //    per role (sender AND recipient): the GROUP BY collapses those to
+        //    one row with the roles aggregated. Positional GROUP BY, because
+        //    the grouped expressions are registry-supplied SQL.
+        //  - `src_cont` is a bare literal, which Postgres exempts from
+        //    GROUP BY.
+        subqueries.push(format!(
+            "SELECT {id} as src_id, t.{ts} as src_ts, {label} as src_label, \
+                    {preview} as src_preview, {st}, \
+                    string_agg(DISTINCT er.role, ', ') as src_role, \
+                    {cont} as src_cont \
+             FROM {table} t \
+             JOIN wiki_refs er \
+               ON er.source_table = '{table}' AND er.source_id = {id} AND er.entity_id = $1 \
+             WHERE true \
+             {extra} \
+             GROUP BY 1, 2, 3, 4, 5",
+            id = cfg.id_sql,
+            ts = ont.timestamp_column,
+            label = cfg.label_sql,
+            preview = cfg.preview_sql,
+            st = source_type_col,
+            cont = if ont.temporal_type == virtues_registry::ontologies::TemporalType::Continuous {
+                "TRUE"
+            } else {
+                "FALSE"
+            },
+            table = ont.table_name,
+            extra = cfg.extra_where.unwrap_or(""),
+        ));
+    }
+
+    Ok(if subqueries.is_empty() {
+        None
+    } else {
+        Some(subqueries.join(" UNION ALL "))
+    })
+}
+
+/// Shared narrowing clause for the union: $2 = search text ('' = all),
+/// $3 = raw source_type allowlist (empty array = all).
+const ENTITY_RECORDS_WHERE: &str = "($2 = '' \
+       OR u.src_label ILIKE '%' || $2 || '%' \
+       OR COALESCE(u.src_preview, '') ILIKE '%' || $2 || '%') \
+   AND (cardinality($3::text[]) = 0 OR u.source_type_dyn = ANY($3::text[]))";
+
+fn entity_record_from_row(row: &sqlx::postgres::PgRow) -> Option<EntityRecord> {
+    use sqlx::Row;
+    Some(EntityRecord {
+        id: row.try_get("src_id").ok()?,
+        // TIMESTAMPTZ — decode directly, never via String (see get_day_sources).
+        timestamp: row.try_get("src_ts").ok()?,
+        label: row.try_get("src_label").unwrap_or_default(),
+        preview: row.try_get("src_preview").ok().flatten(),
+        source_type: row.try_get("source_type_dyn").unwrap_or_default(),
+        role: row.try_get("src_role").ok().flatten(),
+        continuous: row.try_get("src_cont").unwrap_or(false),
+    })
+}
+
+/// One page of the records linked to an entity (registry-driven, refs-driven),
+/// with search and source_type narrowing applied server-side.
+pub async fn get_entity_records_page(
+    pool: &PgPool,
+    entity_id: &str,
+    offset: i64,
+    limit: i64,
+    search: &str,
+    types: &[String],
+    newest_first: bool,
+) -> Result<EntityRecordsPage> {
+    let limit = limit.clamp(1, ENTITY_RECORDS_MAX_LIMIT);
+    let offset = offset.max(0);
+
+    let Some(union) = entity_records_union(pool, entity_id).await? else {
+        return Ok(EntityRecordsPage { items: Vec::new(), total: 0 });
+    };
+
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM ({union}) u WHERE {ENTITY_RECORDS_WHERE}"
+    ))
+    .bind(entity_id)
+    .bind(search)
+    .bind(types)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("entity records count failed: {e}")))?;
+
+    let dir = if newest_first { "DESC" } else { "ASC" };
+    let rows = sqlx::query(&format!(
+        "SELECT * FROM ({union}) u WHERE {ENTITY_RECORDS_WHERE} \
+         ORDER BY u.src_ts {dir} LIMIT $4 OFFSET $5"
+    ))
+    .bind(entity_id)
+    .bind(search)
+    .bind(types)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("entity records page failed: {e}")))?;
+
+    Ok(EntityRecordsPage {
+        items: rows.iter().filter_map(entity_record_from_row).collect(),
+        total,
+    })
+}
+
+/// Facet counts over ALL of an entity's records (unnarrowed), for the chips.
+pub async fn get_entity_record_facets(
+    pool: &PgPool,
+    entity_id: &str,
+) -> Result<Vec<EntityRecordFacet>> {
+    use sqlx::Row;
+
+    let Some(union) = entity_records_union(pool, entity_id).await? else {
+        return Ok(Vec::new());
+    };
+
+    let rows = sqlx::query(&format!(
+        "SELECT u.source_type_dyn as st, count(*) as n, bool_and(u.src_cont) as cont \
+         FROM ({union}) u GROUP BY 1 ORDER BY 1"
+    ))
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("entity record facets failed: {e}")))?;
+
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            Some(EntityRecordFacet {
+                source_type: row.try_get("st").ok()?,
+                count: row.try_get("n").ok()?,
+                continuous: row.try_get("cont").unwrap_or(false),
+            })
+        })
+        .collect())
+}
+
 // ============================================================================
 // Timeline Day - Location chunks for movement map
 // ============================================================================
@@ -1947,7 +2307,7 @@ pub async fn get_day_sources(
 /// A location chunk for the timeline day view.
 ///
 /// One chunk per `data_location_visit` row, joined to its canonical place
-/// (via `wiki_entity_refs` → `wiki_places`) when one exists. Visits with no
+/// (via `wiki_refs` → `wiki_places`) when one exists. Visits with no
 /// place link have `place_id`/`place_name` set to None and the frontend
 /// renders them as "Unknown".
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1993,14 +2353,14 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
         .unwrap()
         .and_utc();
 
-    // JOIN visits → wiki_entity_refs → wiki_places.
+    // JOIN visits → wiki_refs → wiki_places.
     // er.source_id is the visit's UUID; both sides are stored as TEXT UUIDs,
     // so the join is a straight text match.
     let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            v.arrival_time           AS arrival_time,
-            v.departure_time         AS departure_time,
+            v.started_at           AS started_at,
+            v.ended_at         AS ended_at,
             v.duration_minutes       AS duration_minutes,
             v.latitude               AS visit_lat,
             v.longitude              AS visit_lon,
@@ -2010,13 +2370,13 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
             p.longitude              AS place_lon,
             p.category               AS place_category
         FROM data_location_visit v
-        LEFT JOIN wiki_entity_refs er
+        LEFT JOIN wiki_refs er
             ON er.source_table = 'data_location_visit'
            AND er.source_id    = v.id
            AND er.entity_type  = 'place'
         LEFT JOIN wiki_places p ON p.id = er.entity_id
-        WHERE v.arrival_time >= $1 AND v.arrival_time < $2
-        ORDER BY v.arrival_time ASC
+        WHERE v.started_at >= $1 AND v.started_at < $2
+        ORDER BY v.started_at ASC
         "#,
     )
     .bind(start_of_day)
@@ -2029,12 +2389,12 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
     let chunks: Vec<TimelineChunk> = rows
         .iter()
         .filter_map(|row| {
-            // arrival_time / departure_time are TIMESTAMPTZ in Postgres; read
+            // started_at / ended_at are TIMESTAMPTZ in Postgres; read
             // them as DateTime<Utc> and stringify with RFC-3339 for the JSON.
-            let arrival_ts: DateTime<Utc> = row.try_get("arrival_time").ok()?;
+            let arrival_ts: DateTime<Utc> = row.try_get("started_at").ok()?;
             let arrival = arrival_ts.to_rfc3339();
             let departure: Option<String> = row
-                .try_get::<Option<DateTime<Utc>>, _>("departure_time")
+                .try_get::<Option<DateTime<Utc>>, _>("ended_at")
                 .ok()
                 .flatten()
                 .map(|d| d.to_rfc3339());
@@ -2070,10 +2430,10 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
     // not just lines connecting visit centroids.
     let point_rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
-        SELECT latitude, longitude, timestamp
+        SELECT latitude, longitude, occurred_at
         FROM data_location_point
-        WHERE timestamp >= $1 AND timestamp < $2
-        ORDER BY timestamp ASC
+        WHERE occurred_at >= $1 AND occurred_at < $2
+        ORDER BY occurred_at ASC
         "#,
     )
     .bind(start_of_day)
@@ -2088,7 +2448,7 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
             let lat: Option<f64> = row.try_get("latitude").ok();
             let lng: Option<f64> = row.try_get("longitude").ok();
             let ts: Option<String> = row
-                .try_get::<Option<DateTime<Utc>>, _>("timestamp")
+                .try_get::<Option<DateTime<Utc>>, _>("occurred_at")
                 .ok()
                 .flatten()
                 .map(|t| t.to_rfc3339());
@@ -2168,6 +2528,42 @@ pub struct TodayStreamsView {
     pub audio: Vec<TodayAudioSpan>,
 }
 
+/// One heart-rate sample, for the day page's Autonomic chart.
+#[derive(Debug, serde::Serialize)]
+pub struct DayHeartRateSample {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub bpm: i32,
+}
+
+/// Raw heart-rate samples across a day's window, oldest first. The client
+/// draws; sparse days (a dozen samples) are normal and the chart must read
+/// honestly at that density — dots joined by a line, never a smoothed curve
+/// that invents continuity the record does not hold.
+pub async fn get_day_heart_rate(
+    pool: &PgPool,
+    date: NaiveDate,
+    client_tz: Option<&str>,
+) -> Result<Vec<DayHeartRateSample>> {
+    let timezone = resolve_render_timezone(pool, date, client_tz).await;
+    let (start_str, end_str) = super::day_summary::day_boundaries_utc(date, Some(&timezone));
+
+    let rows: Vec<(chrono::DateTime<chrono::Utc>, i32)> = sqlx::query_as(
+        r#"SELECT occurred_at, bpm FROM data_health_heart_rate
+           WHERE occurred_at >= $1::timestamptz AND occurred_at < $2::timestamptz
+           ORDER BY occurred_at"#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load heart rate: {}", e)))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(timestamp, bpm)| DayHeartRateSample { timestamp, bpm })
+        .collect())
+}
+
 /// Get the three raw record streams (location, calendar, audio) for a day as
 /// spans. Anchored to the day's effective timezone exactly like `get_day_sources`.
 pub async fn get_today_streams(
@@ -2185,19 +2581,19 @@ pub async fn get_today_streams(
         r#"
         SELECT
             v.id               AS id,
-            v.arrival_time     AS arrival_time,
-            v.departure_time   AS departure_time,
+            v.started_at     AS started_at,
+            v.ended_at   AS ended_at,
             v.duration_minutes AS duration_minutes,
             p.name             AS place_name,
             p.category         AS place_category
         FROM data_location_visit v
-        LEFT JOIN wiki_entity_refs er
+        LEFT JOIN wiki_refs er
             ON er.source_table = 'data_location_visit'
            AND er.source_id    = v.id
            AND er.entity_type  = 'place'
         LEFT JOIN wiki_places p ON p.id = er.entity_id
-        WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time < $2::timestamptz
-        ORDER BY v.arrival_time ASC
+        WHERE v.started_at >= $1::timestamptz AND v.started_at < $2::timestamptz
+        ORDER BY v.started_at ASC
         "#,
     )
     .bind(&start_str)
@@ -2209,9 +2605,9 @@ pub async fn get_today_streams(
     let location: Vec<TodayLocationSpan> = loc_rows
         .iter()
         .filter_map(|row| {
-            let arrival: DateTime<Utc> = row.try_get("arrival_time").ok()?;
+            let arrival: DateTime<Utc> = row.try_get("started_at").ok()?;
             let departure: Option<DateTime<Utc>> =
-                row.try_get::<Option<DateTime<Utc>>, _>("departure_time").ok().flatten();
+                row.try_get::<Option<DateTime<Utc>>, _>("ended_at").ok().flatten();
             Some(TodayLocationSpan {
                 id: row.try_get("id").ok()?,
                 start_time: arrival.to_rfc3339(),
@@ -2226,11 +2622,11 @@ pub async fn get_today_streams(
     // --- Calendar: the day as intended ---
     let cal_rows = sqlx::query(
         r#"
-        SELECT id, title, start_time, end_time, is_all_day,
+        SELECT id, title, started_at, ended_at, is_all_day,
                COALESCE(is_sacred, FALSE) AS is_sacred, location_name, calendar_name
         FROM data_calendar_event
-        WHERE start_time >= $1::timestamptz AND start_time < $2::timestamptz
-        ORDER BY start_time ASC
+        WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz
+        ORDER BY started_at ASC
         "#,
     )
     .bind(&start_str)
@@ -2242,8 +2638,8 @@ pub async fn get_today_streams(
     let calendar: Vec<TodayCalendarSpan> = cal_rows
         .iter()
         .filter_map(|row| {
-            let start: DateTime<Utc> = row.try_get("start_time").ok()?;
-            let end: DateTime<Utc> = row.try_get("end_time").ok()?;
+            let start: DateTime<Utc> = row.try_get("started_at").ok()?;
+            let end: DateTime<Utc> = row.try_get("ended_at").ok()?;
             Some(TodayCalendarSpan {
                 id: row.try_get("id").ok()?,
                 start_time: start.to_rfc3339(),
@@ -2692,11 +3088,11 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
     // in-app chat that was also synced into the ontology lake.
     let ext_rows = sqlx::query(
         r#"
-        SELECT conversation_id, role, content, provider, timestamp
+        SELECT conversation_id, role, content, provider, occurred_at
         FROM data_content_conversation
-        WHERE timestamp >= $1 AND timestamp <= $2
+        WHERE occurred_at >= $1 AND occurred_at <= $2
           AND source_provider != 'virtues'
-        ORDER BY conversation_id, timestamp ASC
+        ORDER BY conversation_id, occurred_at ASC
         "#,
     )
     .bind(start_of_day)
@@ -2725,7 +3121,7 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
         // `timestamp` is a TIMESTAMPTZ column — decode directly. Reading it as
         // String failed at decode and `continue`d past every message, so
         // external AI conversations never showed up on the day page.
-        let ts: DateTime<Utc> = match row.try_get("timestamp") {
+        let ts: DateTime<Utc> = match row.try_get("occurred_at") {
             Ok(v) => v,
             Err(_) => continue,
         };
@@ -2784,5 +3180,48 @@ fn truncate_title(s: &str) -> String {
     } else {
         let truncated: String = chars.iter().take(80).collect();
         format!("{}…", truncated.trim_end())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole point of normalizing is that 0037 matches with
+    /// `aliases ? lower(surface)`. An alias stored with capitals or padding is
+    /// not "slightly wrong" — it is invisible to the resolver, so it looks
+    /// saved and resolves nothing. These cases are the ones a human actually
+    /// types.
+    #[test]
+    fn aliases_are_lowercased_trimmed_and_deduped() {
+        let input = vec![
+            "  Sarah ".to_string(),
+            "SARAH".to_string(), // same surface, different case
+            "sarah".to_string(), // exact duplicate
+            "Mum".to_string(),
+            "   ".to_string(), // whitespace only
+            "".to_string(),
+        ];
+        let out = normalize_aliases(Some(&input)).expect("some input");
+        assert_eq!(out, serde_json::json!(["sarah", "mum"]));
+    }
+
+    /// `None` must stay `None`: the update statement is
+    /// `aliases = COALESCE($n, aliases)`, so a null leaves the column alone.
+    /// Returning an empty array instead would silently erase every alias on
+    /// any request that simply did not mention them.
+    #[test]
+    fn absent_aliases_do_not_clear_the_column() {
+        assert!(normalize_aliases(None).is_none());
+    }
+
+    /// Clearing has to remain possible, and is distinct from "not mentioned".
+    #[test]
+    fn an_explicit_empty_list_clears() {
+        let empty: Vec<String> = vec![];
+        assert_eq!(
+            normalize_aliases(Some(&empty)).expect("some"),
+            serde_json::json!([])
+        );
     }
 }

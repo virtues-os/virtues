@@ -45,7 +45,7 @@
 		"title",
 		"subject",
 		"name",
-		"canonical_name",
+		"name",
 		"merchant",
 		"summary",
 		"headline",
@@ -118,7 +118,10 @@
 		});
 	}
 
-	type Rendered = { kind: "text" | "date" | "bool" | "num" | "json"; text: string };
+	type Rendered = {
+		kind: "text" | "date" | "bool" | "num" | "json" | "link";
+		text: string;
+	};
 
 	function render(value: unknown): Rendered {
 		if (typeof value === "boolean") return { kind: "bool", text: value ? "Yes" : "No" };
@@ -126,6 +129,10 @@
 			return { kind: "num", text: value.toLocaleString() };
 		if (typeof value === "string") {
 			if (looksLikeDate(value)) return { kind: "date", text: formatDate(value) };
+			// A record whose whole point is an address — a bookmark, an asset —
+			// is useless if the address is only selectable text. Linkifying is
+			// generic on purpose: any ontology with a url field benefits.
+			if (/^https?:\/\//i.test(value)) return { kind: "link", text: value };
 			return { kind: "text", text: value };
 		}
 		if (value && typeof value === "object")
@@ -163,6 +170,11 @@
 						<dd class:mono={r.kind === "json"} class:muted={r.kind === "date"}>
 							{#if r.kind === "json"}
 								<pre>{r.text}</pre>
+							{:else if r.kind === "link"}
+								<a href={r.text} target="_blank" rel="noopener noreferrer">
+									{r.text}
+									<Icon icon="ri:external-link-line" width="12" />
+								</a>
 							{:else}
 								{r.text}
 							{/if}
@@ -211,8 +223,6 @@
 		gap: 0.35rem;
 		font-family: var(--font-mono);
 		font-size: 0.7rem;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
 		color: var(--color-foreground-subtle);
 		margin-bottom: 0.75rem;
 	}
@@ -234,6 +244,19 @@
 		margin: 0;
 		border-top: 1px solid var(--color-border);
 	}
+	.field dd a {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		color: var(--color-primary);
+		text-decoration: none;
+		word-break: break-all;
+	}
+
+	.field dd a:hover {
+		text-decoration: underline;
+	}
+
 	.field {
 		display: grid;
 		grid-template-columns: 180px 1fr;
@@ -257,6 +280,13 @@
 	dd.muted {
 		color: var(--color-foreground-muted, var(--color-foreground-subtle));
 	}
+	/* JSON blobs wrap rather than scroll sideways.
+	   `white-space: pre` kept the record's own indentation but turned every
+	   long value — an extraction record's likely_queries, a signed image URL —
+	   into a horizontal scroll the reader had to find and drag. `pre-wrap`
+	   keeps the indentation and lets lines fold; `overflow-wrap: anywhere`
+	   handles the unbreakable case, a single token longer than the column,
+	   which is exactly what a URL is. */
 	dd.mono pre {
 		font-family: var(--font-mono);
 		font-size: 0.8rem;
@@ -264,8 +294,8 @@
 		padding: 0.75rem;
 		background: var(--color-surface-elevated);
 		border-radius: 6px;
-		overflow-x: auto;
-		white-space: pre;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 
 	.foot {

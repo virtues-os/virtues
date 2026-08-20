@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM search_embeddings WHERE ontology = 'wiki_article' AND record_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bf872fd93c9d94e5f90e02315a8b0c50b694eeeb78e3c9f5e90fcd8c57f01d8e"
+}

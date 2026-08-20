@@ -29,8 +29,9 @@ async fn main() -> Result<()> {
     // run here returns PRODUCTS_NOT_SUPPORTED until the Plaid account is enabled
     // for investments. On a 12-hour cron that would have painted the whole Plaid
     // source permanently red for a condition that isn't a fault.
-    let (status, resp) = virtues_applets::plaid_proxy_raw(
+    let (status, resp) = virtues_applets::service_proxy_raw(
         &pool,
+        "plaid",
         "investments/holdings/get",
         &json!({ "access_token": access_token }),
     )

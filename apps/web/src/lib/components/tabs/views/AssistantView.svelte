@@ -8,7 +8,13 @@
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 </script>
 
-<Page title="Assistant" description="Configure AI models and behavior" maxWidth="prose">
+<!--
+	`wide`, like every other room (Chat History, Sources, Usage, Box). The
+	settings sections were the only pages measured at `prose`, which made the
+	column jump width every time you moved between a settings row and anything
+	else — for pages that are forms and lists, not reading.
+-->
+<Page title="Assistant" description="Configure AI models and behavior" maxWidth="wide">
 	<div class="space-y-6">
 		<AssistantNameSettings />
 		<ModelSettings />

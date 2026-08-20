@@ -1,0 +1,16 @@
+name = "Bookmark Enrichment"
+description = "Reads the pages you saved, so you can find them again by what they were about."
+owner = "system"
+command = ["bookmark_enrichment"]
+triggers = ["cron"]
+# Every 10 minutes. The batch is small and the daily cap does the real
+# throttling, so frequency here just decides how quickly a fresh save stops
+# being a bare URL — a bookmark saved now should be searchable within minutes,
+# not tomorrow.
+schedule = "0 */10 * * * *"
+
+# One run is a bounded batch, but each item is a network fetch plus an LLM
+# call, and a slow site can sit near the fetch timeout. This is that ceiling
+# times the batch, plus margin.
+[config.limits]
+timeout_s = 1200

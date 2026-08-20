@@ -2,194 +2,307 @@
 
 > This is not a spec. It's the *why* — the philosophy, the motifs, and the
 > plain-language way we tell people about it. The technical design lives in
-> `docs/`.
+> [`entitlement.md`](entitlement.md).
+>
+> **Everything on this page is true of what ships today.** It was rewritten
+> 2026-07-30, because it previously described the double-blind voucher model —
+> which was collapsed to a linked prepaid ledger in
+> [`0005_accounts_ledger.sql`](../services/virtues-api/migrations/0005_accounts_ledger.sql)
+> and is no longer what runs. The old claims are preserved, clearly fenced, in
+> [Where we're going](#where-were-going-the-claim-we-gave-up) at the bottom.
+> **Do not lift copy from that section.**
 
 ---
 
 ## The one sentence
 
-**The only machine on Earth that can connect your identity to your usage is the one in your house.**
+**We can see what your usage cost. We never keep what it was.**
 
 Everything else follows from that.
+
+It is a smaller sentence than the one this page used to lead with, and it has
+the advantage of being true.
 
 ---
 
 ## The core idea
 
-Most companies promise privacy: *"we won't look at your data."* That promise is only as good as the company, its lawyers, its next owner, and whatever a court compels. We didn't want a promise. We wanted it to be **impossible** — so that even we, even under subpoena, even if we wanted to, cannot tie what you do to who you are.
+Most companies promise privacy: *"we won't look at your data."* That promise is
+only as good as the company, its lawyers, its next owner, and whatever a court
+compels. So the interesting question about any privacy claim is: **which part is
+architecture, and which part is policy?** Architecture holds when we're not in
+the room. Policy doesn't.
 
-So we split the company's knowledge in two and made sure the two halves can never be rejoined:
+Here is ours, split honestly.
 
-- **Billing** knows *who you are* — your email, your card, that you pay us $20/month. It knows **nothing** about what you do.
-- **The API** knows *what gets used* — that some anonymous token spent a few cents on a map lookup. It knows **nothing** about who you are.
+**Architecture — holds by construction:**
 
-The link between "who" and "what" exists in exactly one place: **your own server, in your own home.** That's your data, on your hardware. We never hold it.
+- **Your data lives on your box.** Notes, location, health, messages, files. We
+  have no copy and no way to fetch one. This is not a retention policy; there is
+  nothing to retain.
+- **The relay cannot read your traffic.** When you reach your box from away, the
+  bytes pass through our relay — which holds **no TLS key** for that connection.
+  Your box terminates the encryption with its own key. The relay physically
+  cannot decrypt what it forwards. See
+  [`privacy-model.md`](privacy-model.md).
+- **We keep no record of what you did.** The API stores a ledger of amounts —
+  `-4200 micros, kind=charge` — and nothing about the request that caused it.
+  There is no prompt log, no completion log, no history table.
+
+**Policy and structure together — real, but not impossible to undo:**
+
+- **The API holds no names, emails, or payment details.** It knows an opaque
+  `account_id` and a balance. Identity lives in Billing.
+- **But Billing and the API share that `account_id`**, so *we* can join the two
+  sides: Billing turns it into a customer, the API turns it into a spend
+  history. A subpoena of both databases would produce that join.
+
+That last bullet is the honest limit, and it used to be the thing this page
+promised was impossible. Restoring it is the v2 objective; until then we don't
+claim it.
+
+---
+
+## What actually passes through us
+
+Worth being exact, because "we never see your data" is the kind of sentence
+that's easy to say and easy to falsify.
+
+**AI requests transit our gateway.** When you ask Virtues something, the request
+goes from your box to `virtues-api`, which forwards it to an upstream model
+provider and passes the answer back. Your prompt is *in that request*. We do not
+log it, store it, or train on it — the proxy reads the response only to extract
+the cost, and what lands in the database is a number — but it does pass through
+our server on its way to a third party, and honesty requires saying so rather
+than hiding behind "we don't store it."
+
+**Everything else does not.** Your actual life-data — the notes, the location
+history, the health records, the files, the day pages — is collected, indexed,
+and queried entirely on your box. It never transits our infrastructure at all.
+
+**If that trade doesn't suit you, remove it — for chat.** Bring your own
+provider key and the conversation goes box → provider directly, with the
+gateway out of that path. **It does not yet cover everything.** Conversation
+compaction, day summaries, image generation, and transcription still run
+through the gateway and bill the wallet, because only `stream()` consults the
+key. Say "your chat" rather than "your AI" until those four close.
 
 ---
 
 ## The three parties
 
-Think of it as three rooms that never share a filing cabinet:
+Three rooms. Two of them are ours, and they *can* compare notes — which is the
+part we say plainly rather than the part we used to claim was impossible.
 
-1. **Your home server** (VirtuesOS) — yours. Holds both your billing identity and your usage token, linked together. This is fine, because it's *your* box and *your* data. Nobody subpoenas your living room and finds Virtues' records there — they find *your* records, which you already control.
+1. **Your home server** (VirtuesOS) — yours. Holds your data and your device
+   api_key. Nobody subpoenas your living room and finds *Virtues'* records
+   there; they find *your* records, which you already control.
 
-2. **Billing (Atlas)** — ours. Talks to Stripe. Knows you're a paying customer. Issues a monthly "you're paid" voucher. **Never sees your usage token.**
+2. **Billing (Atlas)** — ours. Talks to Stripe. Knows who you are, that you pay,
+   and your opaque `account_id`. **Holds no usage detail and no content.**
 
-3. **The API (virtues-api)** — ours. Serves your requests — AI, maps, search, integrations — and counts down a prepaid budget. Knows a token has money left. **Never sees you.**
+3. **The API (virtues-api)** — ours. Serves requests and counts a prepaid wallet
+   down. Knows an `account_id`, a balance, and a ledger of amounts. **Holds no
+   names, emails, or cards — and stores no content.**
 
----
-
-## The four parties and every credential (reference)
-
-> A little more concrete than the rest of this page — the actual moving parts,
-> for when you need them. Full detail in `docs/`.
-
-**The parties — who knows what:**
-
-| Party | Its job — and *only* this | Knows | Never sees |
-|---|---|---|---|
-| **Your home server** (VirtuesOS) | runs your stuff; the one place the link lives | everything (it's yours) | — |
-| **Billing** (Atlas) | who pays, plus admin / support | customer, email, that you pay $20/mo | your usage token |
-| **The API** (virtues-api) | serves requests, counts the budget down | an anonymous token has budget left | who you are |
-
-Billing and the API are the "two rooms, no shared cabinet"; the home server is
-the only place they meet. (Your phone finds your home server by dialing the
-global IPv6 baked into its pairing bundle — Virtues runs no lookup service for
-it.)
-
-**Where every credential lives:**
-
-| Credential | Created by | Raw value lives on | Reference kept at | What it does | Never sees it |
-|---|---|---|---|---|---|
-| **Billing token** | Billing, at signup | your home server | Billing (hashed) | proves "I'm paid" → request vouchers | the API |
-| **Voucher** | Billing, monthly | passes *through* your server | the API (hashed, until spent) | one-time baton, Billing → API | both forget it after |
-| **Usage token** *(bearer)* | your home server, monthly | your home server | the API (hashed) | anonymous spend — AI, maps, search | Billing |
-| **Device key** *(pairing bearer)* | your box, at pairing | each of your devices | your box | your phone / laptop ↔ your own box (local) | all of Virtues' cloud |
-
-Two "bearers" people conflate, kept distinct:
-- The **usage token** is *home server ↔ the API* — your anonymous "I'm a paying
-  subscriber" pass that gates everything Virtues-operated.
-- The **device key** is *your phone ↔ your own box* — pure local auth that
-  **never leaves your house**; Virtues' cloud never sees it.
-
-The wall in one line: **Billing holds `token ↔ customer`, the API holds
-`bearer ↔ budget`, and the only place those two halves meet is your home
-server.**
+The wall in one line: **Billing knows who you are but not what you did; the API
+knows what it cost but not what it was.** Neither holds the thing people
+actually worry about — a record of your activity — because that record does not
+exist on our side at all.
 
 ---
 
-## The voucher — how the two halves stay apart
+## Every credential (reference)
 
-Every month, on the **same day for everyone** (so the timing reveals nothing), your home server quietly does three things:
+| Credential | Created by | Raw value lives on | Reference kept at | What it does |
+|---|---|---|---|---|
+| **Device api_key** | Billing, at signup (rotatable) | your home server | Billing *and* the API, both hashed | proves "I'm paid" *and* spends the wallet |
+| **Device key** *(pairing bearer)* | your box, at pairing | each of your devices | your box only | your phone / laptop ↔ your own box; **never leaves your house** |
 
-1. Mints a brand-new, random usage token for the month.
-2. Asks Billing: *"am I paid up?"* Billing checks, says yes, and hands back a **voucher** — a one-time "good for 30 days" ticket. Billing never sees the new token.
-3. Redeems that voucher at the API, loading the month's budget onto the new token. The API never sees who you are.
-
-The voucher is a relay baton. It passes from Billing to the API *through your home server* — and the instant it's spent, both sides forget it ever existed. The two halves touched a shared object for a moment and kept no record of it.
-
-Because everyone's token rotates on the same day, even the *timing* of all this carries no fingerprint. You're one indistinguishable rotation among thousands.
-
----
-
-## Why this needs no clever cryptography
-
-People expect a privacy claim like this to rest on some exotic crypto. Ours doesn't, and that's the point. The whole guarantee comes from one structural fact:
-
-**Issuance and redemption live in two separate places that share no storage.**
-
-- **Billing issues the voucher** → it sees `customer + voucher`, and *never the usage token*.
-- **The API redeems the voucher** → it sees `voucher + usage token`, and *never the customer*.
-
-No single system ever holds both ends of the chain. There's nothing to "promise not to correlate," because no one is in a position to correlate it in the first place. Separation does the work that secrecy would otherwise have to.
-
-(For the technically curious: anonymous-token schemes like blind signatures exist precisely for the *opposite* situation — when one party must both issue and redeem and therefore has to blind itself from the link. We don't have that problem, so we don't reach for that tool. Architecture beats cryptography when you can arrange for the link to simply not exist on any one desk.)
+Two "bearers" people conflate, kept distinct: the **api_key** is *home server ↔
+our cloud*; the **device key** is *your phone ↔ your own box*, pure local auth
+that Virtues' cloud never sees. Your phone finds your box by dialing its iroh
+node id — Virtues runs no lookup service that maps you to an address.
 
 ---
 
-## By construction, not by promise
+## What we keep, exactly
 
-This is the line that matters, and we mean it literally:
+The complete list. If it isn't here, we don't have it.
 
-- We don't have a "usage log we promise not to read." **There is no usage log.** We keep counters — a number that goes down — never a list of what you did.
-- We don't have a "customer-to-activity table we promise not to join." **There is no shared key to join on.** Billing's records and the API's records have no field in common.
-- We don't *decline* to link your identity to your behavior. **We are unable to.** The only copy of that link lives on hardware we don't own and can't reach.
+| Where | What | What it is *not* |
+|---|---|---|
+| Billing | email, Stripe customer, subscription status, `account_id` | no usage, no content |
+| The API | `account_id`, balance, daily counter, ledger rows (`amount`, `kind`, `timestamp`, pre-markup cost) | no prompts, no completions, no files, **not even which model you used** — an AI charge writes no reference to the call |
+| The relay | in-memory only: destination name (SNI) and byte counts | no logs, no database, no key to decrypt with |
+| Your box | everything | — |
 
-A subpoena to Billing yields: *"This customer pays us $20/month."* Nothing else.
-A subpoena to the API yields: *"Some token has $4.40 left this month."* Nothing else.
-A subpoena to both yields: *those two facts, still unjoinable.*
+**Counters and amounts, not logs of events.** A ledger row says money moved and
+when. It does not say what for.
 
 ---
 
-## What we honestly give up (and why it's fine)
+## By construction, not by promise — what still earns that phrase
 
-We're not going to pretend this is free. The architecture costs us two conveniences, and we chose privacy over both:
+We used this line for everything. It applies to three things, and we should use
+it for exactly those three:
 
-- **No instant "off switch" per person.** If you cancel, your current month finishes and then simply doesn't renew — the prepaid time runs out. We can't reach into your token and kill it mid-month, because we don't know which token is yours. (This is how every prepaid thing works — a transit card, a gift card.)
-- **We can't claw back on a disputed charge.** If a payment reverses, we can't find the token to drain it. The loss is capped at one month, and the hardware/subscription costs far more than a month of abuse is worth. Fair trade.
+- **The relay cannot read your traffic.** It has no key. Not "won't" — *can't*.
+- **We cannot produce your data.** It's on your box. We have no copy, and no
+  path to one.
+- **We cannot produce a history of your activity.** It was never written down.
 
-Neither of these is something a normal, honest customer ever notices. They're the price of a guarantee that holds even when we're not in the room.
+And the honest counterpart, which we state rather than bury:
+
+- **We *can* connect your identity to your spending**, by joining Billing to the
+  API on `account_id`. A subpoena of both would get: *this customer spent these
+  amounts at these times.* Not what you asked. Not what came back. Not even
+  which model. But not nothing, either.
+
+A subpoena to Billing alone yields: *"This customer pays us $20/month."*
+A subpoena to the API alone yields: *"Account `acct_9f…` has $4.40 left."*
+A subpoena to both yields: *those two facts, joined — a spend timeline with a
+name on it.* Amounts and timestamps. Not content, and not even which model
+served which request: an AI charge writes no reference to the call it paid for.
 
 ---
 
 ## Thematic motifs (use these consistently)
 
-These are the recurring images. Reach for them in copy, docs, support replies, talks:
+The recurring images. Reach for them in copy, docs, support replies, talks:
 
-- **"The link lives in your house."** The single source of truth for who-does-what is the user's own server. Always bring it back to this.
-- **"By construction, not by promise."** Whenever we state a privacy property, frame it as architecturally impossible, not policy-restrained.
-- **"Counters, not logs."** We track a number going down, never a history of events.
-- **"Two rooms, no shared cabinet."** Billing and the API are separate by design.
-- **"A baton, not a record."** The voucher passes through and is forgotten.
-- **"One rotation among thousands."** Cohort timing erases the fingerprint.
-- **"Nothing to hand over."** The subpoena test — when compelled, we have nothing that ties you to your usage.
+- **"Your data lives in your house."** The life-data is on the user's own
+  server. Always bring it back to this.
+- **"Counters, not logs."** We track amounts moving, never a history of events.
+- **"We know the price, not the purchase."** The cleanest one-line summary of
+  what the ledger is.
+- **"Nothing to decrypt with."** The relay's blindness — the strongest fully
+  structural claim we have.
+- **"Bring your own key and we're out of your chat."** Use this wording, not
+  "out of the path" — the key covers `stream()` only, so compaction, day
+  summaries, image generation, and transcription still run through us. True as
+  stated, false if broadened. `docs/byo-ai-plan.md` phase 1 closes the gap.
 
-Avoid: "zero-knowledge" (that's a specific cryptographic term we don't use), "anonymous" without qualification (issuance is unlinkable; we still see per-token usage at the gate — be precise), "military-grade," "unhackable." Overclaiming poisons the well.
+**Retired — do not use.** These described the voucher model and are now false:
+*"the link lives in your house"* (it also lives with us), *"two rooms, no shared
+cabinet"* (they share `account_id`), *"a baton, not a record"* (no vouchers),
+*"one rotation among thousands"* (no token rotation), *"nothing to hand over"*
+(a spend timeline can be handed over).
+
+**Also avoid:** "zero-knowledge" (a specific cryptographic term we don't use),
+"anonymous" without qualification (the account is pseudonymous to the proxy, not
+anonymous), "military-grade," "unhackable." Overclaiming poisons the well — and
+this page is itself the cautionary tale, having promised structural
+unlinkability for a month after the structure changed.
 
 ---
 
 ## Marketing sentences (FAQ-ready, lift verbatim)
 
 **Q: Do you know what I use Virtues AI for?**
-> No. Our API sees an anonymous prepaid token spending its budget — never your name, email, or account. The only place your identity and your usage are connected is your own server, at home.
+> No. We don't log or store your prompts or the answers, and we never train on
+> them. All that lands in our database is an amount and a timestamp — the charge
+> row doesn't even record which model served the request. Your prompts do pass
+> through our gateway on the way to the model provider; if you'd rather they
+> didn't, bring your own provider key and your chat goes straight from your box
+> to the provider. Some background work — summarizing your day, compacting long
+> conversations, generating images, transcription — still runs through us even
+> then.
+
+**Q: Can you see my notes, location, or health data?**
+> No, and not as a matter of policy — that data never leaves your box. We have
+> no copy of it and no way to request one. When you reach your box from away,
+> the traffic goes through our relay, which holds no key to decrypt it.
 
 **Q: Could you be forced to hand over my activity?**
-> There's nothing to hand over. Our billing system knows you pay us; our API knows a token has budget left. Neither database shares a single field with the other, so there's no way to join them — not by us, not by a court, not by a future owner of the company.
+> We could be compelled to produce what our systems hold: that you're a
+> customer, and a ledger of what your account spent and when. We could not
+> produce your prompts, your files, or your data, because we don't have them.
+> We'd rather tell you that precisely than claim there's nothing to hand over.
 
 **Q: How is this different from "we don't sell your data" promises?**
-> A promise can be broken, subpoenaed, or sold with the company. We built this so the link between you and your usage doesn't exist on our side at all. It's a property of the architecture, not a line in a policy.
+> Partly it isn't — some of what we do is policy, and we say which parts. The
+> part that isn't policy: your data is on hardware we don't own, and the relay
+> that carries your traffic has no key to read it. Those hold whether or not you
+> trust us.
 
 **Q: What *can* you see?**
-> Your email, your payment method, and that you're a paying customer — the same things any store knows. On the usage side: that some anonymous token spent some budget. That's the complete list.
+> Your email, your payment method, that you're a paying customer, and a ledger
+> of amounts your account spent, with timestamps. That's the complete list. No
+> prompts, no completions, no model names, no files, no browsing, no location.
 
 **Q: Do I have to use Virtues' servers at all?**
-> No. You can run VirtuesOS on your own hardware and pay only for the API conveniences you want — or bring your own keys and use none of ours. The choice is yours; the privacy guarantee is the same either way.
+> No. Run VirtuesOS on your own hardware and pay only for the conveniences you
+> want — or bring your own provider keys and use none of ours.
 
 **Q: What happens if I cancel?**
-> Your current month finishes, then it simply stops renewing — like a prepaid card running out. We don't reach into your device to switch anything off, because we can't find your token to begin with.
+> Your prepaid balance runs out at the end of the month and doesn't renew, like
+> a prepaid card.
 
 **Q: Is it open source? Can I verify this?**
-> Yes. Both billing and the API are open source. You can read the exact code that handles your subscription and your usage, and the lint rules that enforce the two halves never share a key.
+> Yes. Both Billing and the API are in the public repository — you can read the
+> exact code that handles your subscription and your usage, including the ledger
+> schema that shows what we store and the proxy that shows what we don't. A lint
+> rule keeps customer-identity columns (email, Stripe ids) out of the API's
+> schema entirely.
 
 ---
 
 ## How to tell a non-technical person (the 20-second version)
 
-> "Virtues works like a prepaid phone, but split in two halves that can't talk
-> to each other. One half knows you paid. The other half serves what you ask
-> for and watches a balance tick down. Neither half knows the other exists.
-> The only thing that connects them is the little server sitting in your
-> house — which is yours, not ours. So if anyone ever asks us what you've been
-> doing, the honest answer is: we have no idea, and we built it that way on
-> purpose."
+> "Everything Virtues knows about you — your notes, your location, your health,
+> your days — lives on a little server in your house. Not with us. When you use
+> the AI, the question goes through us to reach the model, but we don't keep it;
+> what we keep is what it cost, the way a phone company keeps your bill and not
+> your conversations. And if even that bothers you, you can plug in your own AI
+> key and we're out of the loop completely."
 
 ---
 
 ## The standard we hold ourselves to
 
-Every future feature gets measured against the one sentence at the top. If a
-feature would require Billing and the API to share a key — a "usage dashboard
-in your account," a "personalized recommendation from your history," a
-referral program that tracks who invited whom — the answer is **no**, or we
-find a way to do it that keeps the halves apart. We will refuse features to
-keep this true. That refusal *is* the product.
+Every future feature gets measured against the one sentence at the top: *we can
+see what your usage cost, we never keep what it was.*
+
+The line we will not cross is **storing what you did.** A "usage dashboard" that
+lists your past prompts, a "personalized recommendation from your history," any
+feature that requires the cloud to remember the *content* of your activity — the
+answer is no, or we find a way to do it on the box where the data already lives.
+That refusal is the product.
+
+The line we *have* crossed, and should be honest about, is identity↔spend
+unlinkability. We traded it for recoverability and operability at a point when
+the userbase was one box. Getting it back is below.
+
+---
+
+## Where we're going — the claim we gave up
+
+**Nothing in this section describes what ships. Do not lift copy from it.**
+
+The original design made the subpoena answer *"we cannot"* rather than *"here is
+a spend timeline."* Billing and the API shared **no column**. Each month your box
+minted a fresh random usage token, asked Billing for a one-time **voucher**
+proving you were paid up, and redeemed that voucher at the API to load the
+month's budget — with the voucher passing between the two halves *through your
+own server*, and both sides forgetting it the instant it was spent. Billing saw
+`customer + voucher` and never the token; the API saw `voucher + token` and never
+the customer. No single system held both ends of the chain. Everyone's token
+rotated on the same day, so even the timing carried no fingerprint.
+
+It was collapsed because it made every renewal a round-trip, made the bearer a
+precious unrecoverable secret, and needed a 25-day anti-stacking rule that could
+lock a paying customer out for an afternoon. The capabilities it cost us —
+instant per-account revocation, chargeback clawback, recovery without losing the
+wallet — are itemized in
+[`entitlement.md` §6](entitlement.md#6-what-the-linked-model-gave-up-and-got-back).
+
+The way back is **not** to rebuild the voucher dance. That design argued we
+needed no clever cryptography because separation did the work; without the
+separation, the conclusion flips, and blind signatures
+([RFC 9474](https://www.rfc-editor.org/rfc/rfc9474.html)) become exactly the
+right tool — one party issuing and redeeming while blinding itself from the
+link. That is the v2 path.
+
+When it ships, the sentence at the top of this page can get its ambition back.
+Until then, it says what's true.

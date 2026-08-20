@@ -20,6 +20,13 @@ ends with `ON CONFLICT DO NOTHING` so a re-run is a no-op.
   Originally split into four week-range files; consolidated here for the
   Postgres cutover.
 
+- **`demo_bookmarks.sql`** — the same designer's saves (11 rows), covering
+  every enrichment state the `/bookmarks` room renders: enriched, pending,
+  held-for-the-image-pass, and tombstoned-but-kept. Deliberately not uniformly
+  happy — a room built against all-enriched data hides its own empty states.
+  `extraction_text` mirrors `ExtractionRecord::to_embed_text`, so if that
+  rendering changes this file should follow it.
+
 ## Why these are different from migrations
 
 Migrations (under [core/migrations/](../migrations/)) describe schema.

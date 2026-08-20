@@ -101,7 +101,29 @@ impl InstallConfig {
         let arch = "arm64";
         #[cfg(target_arch = "x86_64")]
         let arch = "x64";
+        Self::pdfium_asset_for(arch)
+    }
+
+    fn pdfium_asset_for(arch: &str) -> String {
         format!("libpdfium-{}-linux-{arch}.so", Self::PDFIUM_VERSION)
+    }
+
+    /// Every asset name this installer can fetch from the models release,
+    /// across ALL target arches — one release tag serves every box, so the
+    /// release must carry the union, not just the current compile target's
+    /// slice. Anything fetched through `download::fetch_asset` belongs here;
+    /// the release audit test below holds the models release to this list.
+    #[cfg(test)]
+    pub fn models_release_assets(&self) -> Vec<String> {
+        let mut assets = vec![
+            self.embed_gguf.clone(),
+            self.rerank_gguf.clone(),
+            self.qnn_embed_bin.clone(),
+            self.qnn_rerank_bin.clone(),
+        ];
+        assets.extend(self.qnn_tokenizers.iter().map(|(_dest, asset)| asset.clone()));
+        assets.extend(["arm64", "x64"].map(Self::pdfium_asset_for));
+        assets
     }
 
     /// Where libpdfium lands on the box. virtues-core's PDF extractor finds
@@ -133,19 +155,28 @@ impl InstallConfig {
         self.install_prefix.join("share/virtues")
     }
 
-    /// Where the action tree (manifests + UI + sources.toml) lands on the box.
-    /// virtues-core reads this via `VIRTUES_ACTIONS_DIR` (see
-    /// `action_templates::actions_root`); the default here must match
-    /// `WELL_KNOWN_ACTIONS_DIR` in virtues-core. Shipped in the release
-    /// tarball as `actions/`; not baked into the binary, so a box with no
-    /// copy here has no actions at all.
-    pub fn actions_dir(&self) -> PathBuf {
-        self.install_prefix.join("share/virtues/actions")
+    /// Where the applet tree (manifests + UI + sources.toml) lands on the box.
+    ///
+    /// The installer writes `VIRTUES_APPLETS_DIR=<prefix>/share/virtues/applets`,
+    /// matching `WELL_KNOWN_APPLETS_DIR` in virtues-core.
+    ///
+    /// Safe on an existing box because activation already symlinks BOTH
+    /// `share/virtues/applets` and the legacy `share/virtues/actions` at the
+    /// slot's `applets/` (see `download::atomic_flip`), and core resolves
+    /// `VIRTUES_APPLETS_DIR` then `VIRTUES_ACTIONS_DIR` then the two well-known
+    /// paths. So old env files, new env files, and either directory name all
+    /// land in the same place — which is what made this a rename rather than a
+    /// migration.
+    ///
+    /// Shipped in the release tarball; not baked into the binary, so a box with
+    /// no copy here has no applets at all.
+    pub fn applets_dir(&self) -> PathBuf {
+        self.install_prefix.join("share/virtues/applets")
     }
 
     /// The WRITABLE applet tree — chat-authored applets and imported packs.
     ///
-    /// Separate from [`Self::actions_dir`] because the two have opposite
+    /// Separate from [`Self::applets_dir`] because the two have opposite
     /// lifecycles: that one is package data the installer replaces wholesale
     /// on every release, this one is user data that must survive it. They
     /// used to be the same directory, which meant the slot flip deleted
@@ -160,9 +191,9 @@ impl InstallConfig {
     /// Where the compiled function-action executables land (libexec = helper
     /// binaries not meant for direct user invocation). virtues-core resolves
     /// action `command[0]` here via `VIRTUES_ACTIONS_BIN_DIR` (see
-    /// `action_runner::resolve_program`); the default must match
+    /// `applet_runner::resolve_program`); the default must match
     /// `WELL_KNOWN_ACTIONS_BIN_DIR` in virtues-core. Shipped as `actions-bin/`.
-    pub fn actions_bin_dir(&self) -> PathBuf {
+    pub fn applets_bin_dir(&self) -> PathBuf {
         self.install_prefix.join("libexec/virtues")
     }
 
@@ -210,5 +241,49 @@ impl InstallConfig {
     /// which the daemon unit adds to `LD_LIBRARY_PATH`.
     pub fn qnn_lib_dir(&self) -> Option<String> {
         std::env::var("VIRTUES_QNN_LIB_DIR").ok().filter(|s| !s.trim().is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audit the live models release against `models_release_assets`: every
+    /// asset must be downloadable WITH its `.sha256` sidecar (fetch_asset
+    /// hard-fails on a missing sidecar). Exists because libpdfium was wired
+    /// into the install flow without its assets ever being uploaded to
+    /// models-1 — every real install then died 404 on its last step while CI
+    /// stayed green. Network test: ignored by default, run explicitly by
+    /// ci.yml's "Models-release asset audit" step.
+    #[tokio::test]
+    #[ignore = "network: audits the live models release"]
+    async fn models_release_serves_every_expected_asset() {
+        // Same provider install main() does — rustls panics on first TLS use
+        // without it, and the test binary never runs main().
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let cfg = InstallConfig::recommended_defaults();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap();
+        let mut missing = Vec::new();
+        for name in cfg.models_release_assets() {
+            for url in [
+                format!("{}/{name}", cfg.models_base),
+                format!("{}/{name}.sha256", cfg.models_base),
+            ] {
+                match client.head(&url).send().await {
+                    Ok(resp) if resp.status().is_success() => {}
+                    Ok(resp) => missing.push(format!("{url} — HTTP {}", resp.status())),
+                    Err(e) => missing.push(format!("{url} — {e}")),
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "models release is missing assets the installer will 404 on:\n{}",
+            missing.join("\n")
+        );
     }
 }

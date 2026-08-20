@@ -1,7 +1,10 @@
 name = "Credential Refresh"
-description = "Sweep via_proxy credentials whose access tokens are nearing expiry and refresh them."
+description = "Keeps your connected accounts signed in, renewing access before it lapses."
 owner = "system"
-runtime = "function"
 command = ["credential_refresh"]
 triggers = ["cron", "manual"]
-default_cron = "0 */15 * * * *"
+schedule = "0 */15 * * * *"
+
+# Re-encrypts rotated tokens through ensure_fresh, so unlike every other
+# applet it needs the vault key rather than just the secrets handed to it.
+needs_vault_key = true

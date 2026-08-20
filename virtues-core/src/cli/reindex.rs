@@ -102,7 +102,6 @@ async fn wipe(pool: &PgPool) -> Result<()> {
     for stmt in [
         "TRUNCATE search_embeddings CASCADE",
         "TRUNCATE search_topic_cache",
-        "TRUNCATE search_embedding_progress",
         // Corpus stats AND geometry. Clearing the geometry is what makes a model
         // swap possible at all: the indexer refuses to write vectors from a model
         // the index was not built with, and `reindex` is precisely the act of

@@ -113,19 +113,46 @@ jobs:
         with:
           shared-key: release-${{ matrix.arch }}
 
+      # bluer (maintenance::ble_provision, the Improv BLE setup service) pulls
+      # libdbus-sys, which needs the libdbus headers at build time. Runtime on a
+      # box needs only libdbus-1-3, which Ubuntu server always has (systemd/NM
+      # depend on it).
+      - name: Install libdbus headers (bluer/BLE provisioning)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
+
       # Sqlx queries are checked at compile-time against a recorded schema
       # under .sqlx/ — offline mode avoids needing a live DB in CI.
-      - name: Build virtues binary
+      # ONE INVOCATION, THREE PACKAGES. cargo parallelises across the whole
+      # build graph it is given, but two invocations cannot overlap: the first
+      # one's link phase — where parallelism collapses to roughly one core —
+      # runs while the second waits its turn. Split across four steps this left
+      # an 8-vCPU runner idle through every tail.
+      #
+      # Measured on the aarch64 leg (2026-08-13): virtues 515s + applets 391s +
+      # installer 29s = 935s, 65% of a 24-minute build, on a machine that was
+      # not busy for much of it. The packages are independent, so merging costs
+      # nothing in correctness and lets the scheduler fill the box.
+      #
+      # The action binaries matter as much as the box: the function-runtime
+      # actions (ios_*, day_summary_eod, google_*_sync, plaid_*, …) are separate
+      # executables the box forks via `command = ["<name>"]`. They are NOT
+      # compiled into `virtues`, so without them (and the packaging below) the
+      # box has manifest rows it can never run — resolve_program finds nothing
+      # on PATH and every webhook 5xxs. `--bins` builds every [[bin]] in
+      # applets/Cargo.toml from one source of truth.
+      #
+      # `virtues-client` stays OUT of this on purpose — it is a preview whose
+      # compile is allowed to fail (`continue-on-error` below), and folding it
+      # in here would make its breakage gate the box and the installer, which
+      # is the exact thing that step's separation exists to prevent.
+      - name: Build box, installer + action binaries
         env:
           SQLX_OFFLINE: 'true'
         run: |
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues --bin virtues --target ${{ matrix.target }}
-
-      - name: Build virtues-installer binary
-        env:
-          SQLX_OFFLINE: 'true'
-        run: |
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-installer --bin virtues-installer --target ${{ matrix.target }}
+          cargo build --profile ${{ env.CARGO_PROFILE }} --target ${{ matrix.target }} \
+            -p virtues --bin virtues \
+            -p virtues-installer --bin virtues-installer \
+            -p virtues-applets --bins
 
       # Desktop daemon (v0.2). Linux-only today — macOS / Windows daemons land
       # in v0.2.1+. A PREVIEW whose tunnel isn't finished (see PR #18) — its
@@ -137,19 +164,6 @@ jobs:
         run: |
           cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-client --bin virtues-client --target ${{ matrix.target }}
 
-      # Action binaries — the function-runtime actions (ios_*, day_summary_eod,
-      # google_*_sync, plaid_*, …) are separate executables the box forks via
-      # `command = ["<name>"]`. They are NOT compiled into `virtues`, so without
-      # this step + the packaging below the box has manifest rows it can never
-      # run (resolve_program finds nothing on PATH and every webhook 5xxs).
-      # `--bins` builds every [[bin]] in applets/Cargo.toml from one source of
-      # truth; the package is pure server-side Rust and cross-compiles like core.
-      - name: Build action binaries
-        env:
-          SQLX_OFFLINE: 'true'
-        run: |
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-applets --bins --target ${{ matrix.target }}
-
       # llama-server — the engine behind the virtues-embed/-rerank sidecars
       # (one CPU binary per arch — the universal floor for Manual mode and the
       # Dragon fallback). GGML_NATIVE=OFF keeps the build portable
@@ -157,10 +171,19 @@ jobs:
       # so the tarball ships one self-contained executable.
       #
       # The binary is byte-determined by (LLAMA_CPP_TAG, arch, cmake flags), so
-      # we cache the OUTPUT keyed on the pinned tag — no source hash. It hits on
-      # every run until LLAMA_CPP_TAG is bumped, then misses exactly once and
-      # rebuilds. Bump the `-vN` suffix by hand if the cmake flags above change.
-      # Saves the ~5 min compile on every cache hit.
+      # we cache the OUTPUT keyed on the pinned tag — no source hash. Bump the
+      # `-vN` suffix by hand if the cmake flags above change.
+      #
+      # This used to claim the cache "hits on every run until LLAMA_CPP_TAG is
+      # bumped". It never hit once. This workflow runs ONLY on tag pushes, and
+      # per GitHub's caching reference a tag can only read caches created in the
+      # DEFAULT BRANCH — never another tag's. Every release wrote a cache scoped
+      # to its own tag that the next release could not see, so llama.cpp was
+      # compiled from scratch on both arches every single time.
+      #
+      # `warm-release-caches.yml` now builds the same key on the default branch
+      # on a schedule, which is the one scope tag runs are allowed to read. The
+      # flags below and the key must stay identical to that file.
       - name: Cache llama-server (CPU)
         id: llama_cpu
         uses: actions/cache@v4
@@ -184,6 +207,15 @@ jobs:
           cmake --build /tmp/llama.cpp/build --target llama-server -j "$(nproc)"
           mkdir -p /tmp/llama-bin
           cp /tmp/llama.cpp/build/bin/llama-server /tmp/llama-bin/
+
+      # Say out loud whether the cache worked. `cache-hit` was always available
+      # and never surfaced, which is how a cache that never hit went unnoticed
+      # across every release since it was added — a miss looks exactly like a
+      # slow build unless something names it.
+      - name: Report llama cache outcome
+        run: |
+          echo "llama-server cache: ${{ steps.llama_cpu.outputs.cache-hit == 'true' && 'HIT' || 'MISS (rebuilt)' }}"
+          echo "key: llama-server-${{ env.LLAMA_CPP_TAG }}-${{ matrix.arch }}-cpu-v1"
 
       # Smoke runs on cache HIT and MISS alike: the binary must start and report
       # its version (also proves a restored cache isn't corrupt).
@@ -283,6 +315,29 @@ jobs:
           cp "$LLAMA_PATH" staging/llama-server
           cp -r apps/web/build staging/web
           cp -r applets staging/applets
+          # Ship only what the box READS at runtime: manifests, faces, schemas
+          # and sources.toml. `cp -r applets` brought the whole crate — 46 Rust
+          # source files (~10k lines) already compiled into applets-bin above,
+          # plus its Cargo.toml, the shared `src/` lib, the dev-only `vad_sweep`
+          # calibration example, and the authoring docs. None of it is opened by
+          # virtues-core; it was shipping to every customer because copying the
+          # directory was easier than saying what the directory is for.
+          # `applets/user/` is the owner's OWN chat-authored applets — per-box
+          # state, gitignored, and never package data (see CLAUDE.md). Absent on
+          # a clean CI checkout, present on any machine that has authored one,
+          # so a local release build would otherwise ship a person's private
+          # applets to every customer. Removed unconditionally rather than
+          # trusting the checkout to be clean.
+          rm -rf staging/applets/user
+          find staging/applets -name '*.rs' -delete
+          rm -rf staging/applets/src staging/applets/examples \
+                 staging/applets/Cargo.toml staging/applets/AGENTS.md \
+                 staging/applets/AUTHORING.md staging/applets/MANIFEST_SCHEMA.json
+          # A manifest with no face and no schema is still a valid applet, but
+          # zero manifests means the box has no actions at all — catch that here
+          # rather than on a customer's first boot.
+          test "$(find staging/applets -name manifest.toml | wc -l)" -gt 0 \
+            || (echo "no applet manifests staged" >&2 && exit 1)
 
           # Stage every action binary. The list comes from cargo metadata so it
           # tracks applets/Cargo.toml's [[bin]] entries automatically (no

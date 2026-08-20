@@ -1,9 +1,8 @@
 /**
  * connectDispatch — the single place that maps a catalog source to the right
- * connect flow, so the onboarding "Connect your world" view and the /sources
- * ConnectionsPanel can't drift. Returns a descriptor the caller turns into
- * modal state; the OAuth case performs the redirect itself and returns
- * `{ kind: 'oauth' }`.
+ * connect flow, so the onboarding "Connect your world" view and the Sources
+ * room can't drift. Returns a descriptor the caller turns into modal state;
+ * the OAuth case performs the redirect itself and returns `{ kind: 'oauth' }`.
  */
 import { oauthStart, type SourceCatalogItem } from '$lib/api/client';
 import { getBackendOrigin } from '$lib/config/backend';
@@ -67,6 +66,12 @@ export function reloadOnReturn(reload: () => void): void {
 }
 
 export async function connectIntent(source: SourceCatalogItem): Promise<ConnectIntent> {
+	// One narrative for every device app: get the app, then enter the code. The
+	// Mac briefly had its own flow because pairing the Mac app pairs a *viewer*
+	// and the collector is a separate daemon — but that split is ours to solve,
+	// not something a user should have to hold in their head. The modal states
+	// the one extra Mac step plainly instead; making it disappear entirely means
+	// the Mac app installing its collector on pair, which is the real fix.
 	if (source.auth_kind === 'self_issued_bearer') {
 		return {
 			kind: 'pair',

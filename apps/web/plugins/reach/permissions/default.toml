@@ -1,3 +1,3 @@
 [default]
 description = "Default permissions for the reach plugin"
-permissions = ["allow-pair", "allow-reach-status", "allow-forget", "allow-discover", "allow-outbox-stats", "allow-drain-now"]
+permissions = ["allow-pair", "allow-reach-status", "allow-forget", "allow-discover", "allow-provision-open", "allow-provision-networks", "allow-provision-join", "allow-improv-discover", "allow-improv-claim", "allow-improv-wifi-scan", "allow-improv-provision", "allow-improv-pair", "allow-improv-link-code", "allow-improv-pair-code", "allow-improv-disconnect", "allow-outbox-stats", "allow-drain-now", "allow-radio-stats"]

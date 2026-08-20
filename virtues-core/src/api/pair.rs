@@ -81,6 +81,50 @@ fn random_pair_code() -> String {
     code
 }
 
+/// How many devices the owner has actually paired.
+///
+/// **Excludes `local-console`.** Every box mints that row at first boot —
+/// `middleware::auth::ensure_console_device` creates it so a browser running on
+/// the box itself is authenticated — so a bare `count(*) FROM app_device` is
+/// `1` on a box nobody has ever touched. Anything asking "has someone claimed
+/// this box" and counting rows naively gets `true` from the moment it powers
+/// on. Found on a fresh Dragon 2026-08-07, where it silently disabled the whole
+/// appliance onboarding path: the setup AP never rose, `/api/provision/*` 404'd,
+/// and the display skipped to its ambient screen.
+///
+/// `api::box_status::compute_setup_state` deliberately still counts the console
+/// row. Its `claimed` step is in `REQUIRED_SETUP_STEPS`, so making it honest
+/// would push a box whose only session is the on-box browser permanently back
+/// into `/setup` — that surface's console user has no device to pair *with*.
+/// The two answers differ because the questions do: "is there any session here"
+/// versus "did a human bring a device to this box".
+pub async fn paired_device_count(pool: &PgPool) -> i64 {
+    try_paired_device_count(pool).await.unwrap_or(0)
+}
+
+async fn try_paired_device_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM app_device WHERE revoked_at IS NULL AND id <> $1",
+    )
+    .bind(crate::middleware::auth::CONSOLE_DEVICE_ID)
+    .fetch_one(pool)
+    .await
+}
+
+/// Whether this box can be CONFIRMED to have no paired device — the predicate
+/// that opens the setup surface (BLE advertising, the AP, `/api/provision/*`,
+/// the panel's setup screens).
+///
+/// It FAILS CLOSED: a DB error returns `false` (assume claimed), because the
+/// cost of a wrong "unclaimed" is a claimed box reopening its provisioning
+/// surface to the LAN, while the cost of a wrong "claimed" is only a delayed
+/// setup screen. `paired_device_count().unwrap_or(0)` — which every door used
+/// to call — failed the opposite way: a transient blip read as "nobody has
+/// paired, open everything." (Setup-runtime audit, 2026-08-19.)
+pub async fn is_unclaimed(pool: &PgPool) -> bool {
+    matches!(try_paired_device_count(pool).await, Ok(0))
+}
+
 pub(crate) fn hash_token(token: &str) -> String {
     let mut h = Sha256::new();
     h.update(token.as_bytes());
@@ -252,14 +296,53 @@ pub async fn current_standing(pool: &PgPool) -> crate::Result<Option<MintedToken
     }
 }
 
-/// Return the current standing code (minting one if none is valid). Used by the
-/// CLI and at rotator startup so a fresh box always has a code to show.
-/// (Expired standing rows are pruned by `maintenance::sweeper`.)
+/// Return the current standing code (minting one if none is valid). Used during
+/// SETUP (unclaimed) — the rotator keeps one fresh so the panel and the BLE
+/// `0x85` fetch always have a valid code, and it is multi-use so a device can
+/// pair with it. Callers on a CLAIMED box must not use this: see `cli_pair_code`
+/// and `expire_standing_codes` for why the standing code does not outlive claim.
 pub async fn ensure_standing(pool: &PgPool) -> crate::Result<MintedToken> {
     if let Some(m) = current_standing(pool).await? {
         return Ok(m);
     }
     mint_standing_code(pool).await
+}
+
+/// Expire every live standing code, immediately.
+///
+/// Called at CLAIM. The standing code is the one setup surface that used to
+/// outlive claim — an always-live, multi-use, 6-digit code is a permanent
+/// brute-forceable pairing password, and every other setup surface (BLE, the
+/// phrase, the AP) shuts off the moment the box has an owner. This makes the
+/// code do the same. Post-claim device adds mint a fresh ONE-TIME code on
+/// demand (`cli_pair_code`). Sets `expires_at` rather than touching `status`, so
+/// `current_standing`'s `expires_at > now()` filter drops them at once and the
+/// sweeper reaps the rows. (Setup-runtime audit, 2026-08-19.)
+pub async fn expire_standing_codes(pool: &PgPool) -> crate::Result<u64> {
+    let r = sqlx::query(
+        "UPDATE app_pair_token SET expires_at = now() \
+         WHERE kind = 'standing' AND expires_at > now()",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::Error::Database(format!("expire standing codes: {e}")))?;
+    Ok(r.rows_affected())
+}
+
+/// The pair code the CLI (`virtues pair`, `device add`) and the init handoff
+/// should show.
+///
+/// UNCLAIMED → the standing setup code (multi-use, also what the BLE flow hands
+/// over). CLAIMED → a FRESH ONE-TIME code (kind defaults to `oneoff`, consumed
+/// on first use, 30-min TTL). This is the "mint as needed, not everlasting"
+/// rule: after the box has an owner, adding a device produces a code that dies
+/// on use, and the always-live standing code is gone.
+pub async fn cli_pair_code(pool: &PgPool) -> crate::Result<MintedToken> {
+    if is_unclaimed(pool).await {
+        ensure_standing(pool).await
+    } else {
+        mint_pair_token(pool, None, None).await
+    }
 }
 
 /// Thin wrapper: the current standing code as a raw string, minting if needed.
@@ -304,9 +387,9 @@ pub async fn ensure_review_code(pool: &PgPool) -> crate::Result<Option<String>> 
         return Ok(None);
     }
 
-    // Enforce the shape the mobile pairing screen can actually accept: its
+    // Enforce the shape the app's pairing screen can actually accept: its
     // input is `inputmode="numeric"` with `maxlength="7"` and a 6-digit check
-    // (src-tauri/ui/mobile-pair.html). A longer or non-numeric code would be
+    // (src-tauri/ui/connect.html). A longer or non-numeric code would be
     // silently untypeable there — better to refuse to start the code than to
     // hand a reviewer something that cannot be entered.
     if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
@@ -370,6 +453,96 @@ pub struct MintResponse {
 /// device. The token is minted `authorized` (the caller is the authenticated
 /// owner), so the QR is immediately redeemable; closing the modal cancels it
 /// via `/api/pair/deny/:id`.
+/// `POST /api/pair/reopen-onboarding` — revoke every paired device, keep
+/// everything else. The `virtues reset --keep-data` path, reachable from the
+/// app.
+///
+/// Deliberately NOT the full reset, which drops every table and belongs behind
+/// the CLI's typed-hostname confirmation — a settings screen is the wrong place
+/// for a screwdriver.
+///
+/// Two reasons it earns a button. Re-pairing was otherwise a shell on the box,
+/// which an appliance owner does not have. And it is the ONLY way to reach a
+/// box that is unclaimed with its phrase already frozen — the "your saved words
+/// still work" panel state, which had no way to be produced and so had never
+/// run on hardware (2026-08-13).
+///
+/// Requires an authenticated device: whoever is revoking every device has to
+/// already be one of them.
+pub async fn reopen_onboarding_handler(
+    State(pool): State<PgPool>,
+    user: AuthUser,
+) -> impl IntoResponse {
+    match revoke_all_devices(&pool).await {
+        Ok((devices, creds)) => {
+            tracing::info!(
+                by_device = %user.device_id,
+                devices, creds,
+                "onboarding re-opened from the app — every device revoked"
+            );
+            (StatusCode::OK, Json(json!({ "devices": devices, "credentials": creds })))
+        }
+        Err(e) => {
+            tracing::warn!("reopen onboarding: {e:#}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+        }
+    }
+}
+
+/// Revoke every paired device and its credentials, in one transaction.
+///
+/// Returns `(devices, credentials)` revoked.
+///
+/// **This is the whole of "reset".** Shared by the app's
+/// `/api/pair/reopen-onboarding` and the appliance's physical button
+/// (`maintenance::reset_button`) so the two cannot drift — a physical control
+/// and a software one that do subtly different things is how an owner ends up
+/// unable to predict what their own hardware will do.
+///
+/// ## What it deliberately does NOT touch
+///
+/// The network, the account link, the data, and the phrase. `onboarding-paradigm.md`
+/// originally had the button forget the network and unlink the account too; that
+/// is worse on every axis. It adds no security — the phrase is the entire gate,
+/// and a stranger with a screwdriver still cannot claim the box without four
+/// words that are frozen and shown nowhere — while it actively harms the case
+/// the button exists for. The owner who has lost their laptop presses it and now
+/// has a box that is also offline and unlinked, so it can reach neither the
+/// relay nor atlas: recovery got harder, in exchange for nothing.
+///
+/// Credentials go with the devices deliberately. Leaving them active would let a
+/// revoked device keep talking, which is the whole thing being undone.
+pub async fn revoke_all_devices(pool: &PgPool) -> Result<(u64, u64), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let devices = sqlx::query("UPDATE app_device SET revoked_at = now() WHERE revoked_at IS NULL")
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    // There is no second statement here, and there never should have been one.
+    // This used to also run `UPDATE credentials … WHERE device_id IS NOT NULL`,
+    // against a column `credentials` HAS NEVER HAD — `0004` created that table
+    // without it and no migration ever added it. `device_id` is real on
+    // `app_auth_event`, `app_applets` and `link_session`; on `credentials` it
+    // was only ever a wrong idea about the schema.
+    //
+    // The error propagated, so the transaction rolled back and NOTHING was
+    // revoked. Both doors were dead: the app's start-over button and the case
+    // button. Found by pressing the button on real hardware — the press was
+    // detected correctly and then failed with `column "device_id" does not
+    // exist`, which is a much better outcome than a partial revoke, and is why
+    // the whole thing being in one transaction was worth having.
+    //
+    // A device is a row in `app_device`. Credentials belong to SOURCES.
+    let creds = 0u64;
+    tx.commit().await?;
+    // The box is unclaimed again, so the Improv service should come back and the
+    // panel should return to a setup screen. Both reconcile on their own timers.
+    Ok((devices, creds))
+}
+
 pub async fn mint_handler(
     State(pool): State<PgPool>,
     user: AuthUser,
@@ -565,7 +738,7 @@ pub async fn deny_handler(
 pub(crate) fn resolve_source_id(kind: &str, source: Option<&str>) -> Result<String, ()> {
     match source.map(str::trim).filter(|s| !s.is_empty()) {
         Some(s) => {
-            if crate::action_templates::lookup_source(s).is_none() {
+            if crate::applet_templates::lookup_source(s).is_none() {
                 Err(())
             } else {
                 Ok(s.to_string())
@@ -605,7 +778,7 @@ pub struct ConsumeResponse {
     /// so the device knows which webhook id to POST each stream flush to. Empty
     /// for non-collector devices.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
-    pub action_ids: std::collections::HashMap<String, String>,
+    pub applet_ids: std::collections::HashMap<String, String>,
     /// The box's iroh **EndpointId** (hex) — the device dials this to reach the
     /// box. Present once the box's iroh endpoint is up; `None` otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -659,6 +832,7 @@ pub(crate) fn box_reach_fields() -> (Option<String>, Option<String>, Vec<String>
 /// `POST /api/pair/consume` — anonymous, but valid token required.
 pub async fn consume_handler(
     State(pool): State<PgPool>,
+    peer: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     headers: axum::http::HeaderMap,
     Json(body): Json<ConsumeRequest>,
 ) -> axum::response::Response {
@@ -668,13 +842,39 @@ pub async fn consume_handler(
             .into_response();
     }
 
-    // Per-IP rate limit: 10 attempts per 30-minute window. Defends the 6-char
-    // code space against LAN enumeration. We key on the proxy-appended
-    // (right-most) XFF entry so a client can't earn a fresh budget by spoofing
-    // the header. A request with NO XFF didn't transit our proxy (direct
-    // loopback / dev) and isn't remotely reachable, so it's exempt rather than
-    // sharing one bucket with every other header-less caller.
-    if let Some(ip_key) = rate_limit_ip(&headers) {
+    // Per-IP rate limit: 10 attempts per 30-minute window, defending the 6-digit
+    // code space against LAN enumeration.
+    //
+    // KEY ON THE SOCKET PEER, not the header. A stock box has no reverse proxy
+    // (the app answers `:8000` directly), so any `X-Forwarded-For` is entirely
+    // client-supplied — trusting it let a LAN attacker mint a fresh budget per
+    // request and brute-force the code at full speed, then enroll a PERMANENT
+    // allowlisted device reachable from anywhere via the relay. `rate_limit_ip`
+    // now returns the header only when `VIRTUES_TRUSTED_PROXY` is set (the cloud
+    // deployment behind Caddy); on a box it returns None and we fall to the real
+    // socket peer, bucketed to a /64 for IPv6 (the box binds `[::]`, and one LAN
+    // host owns a whole /64 it could otherwise rotate within).
+    //
+    // Loopback stays exempt: `middleware/auth.rs` already treats an unforwarded
+    // loopback request as the owner, so a limit there protects nothing and would
+    // throttle the box's own BLE-driven setup consume.
+    let rl_key = rate_limit_ip(&headers).or_else(|| {
+        peer.as_ref().and_then(|axum::extract::ConnectInfo(addr)| {
+            let ip = crate::peer_addr::canonical_peer(addr);
+            // Bucket an IPv6 peer by its /64: the box binds `[::]`, and a single
+            // LAN host owns a whole /64 it can rotate source addresses within,
+            // which would otherwise each get a fresh budget. IPv4 is keyed whole.
+            let key = match ip {
+                std::net::IpAddr::V6(v6) => {
+                    let s = v6.segments();
+                    format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+                }
+                std::net::IpAddr::V4(v4) => v4.to_string(),
+            };
+            (!ip.is_loopback()).then_some(key)
+        })
+    });
+    if let Some(ip_key) = rl_key {
         if !crate::middleware::rate_limit::pair_limiter().check_and_record(&ip_key) {
             return (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -876,11 +1076,33 @@ pub async fn consume_handler(
     // the fan-out, so its ingest action is created against an allowlisted device.
     crate::relay::after_pairing_change(pool.clone());
 
+    // FIRST claim freezes the setup phrase: it stops rotating, leaves the panel
+    // forever, and becomes this box's permanent credential — the one thing that
+    // will let its owner back in after a reset. Doing it here, at the moment the
+    // box stops being empty, is what makes the reset button safe: from now on a
+    // screwdriver can clear the claim but cannot re-make it.
+    //
+    // Best-effort and idempotent. A failure leaves the phrase rotating, which is
+    // a live-secret-on-glass problem worth shouting about — but never a reason to
+    // undo a pairing the device already believes in.
+    if let Err(e) = crate::api::setup_phrase::freeze_current(&pool).await {
+        tracing::error!(error = %e, "pair: could not freeze the setup phrase — it is still on the panel");
+    }
+
+    // Same moment, same reason: the standing pair code does not outlive claim.
+    // The box now has an owner, so the always-live multi-use code is retired;
+    // further devices are added with a one-time code minted on demand. The
+    // rotator also stops once claimed, but expiring here kills the current one
+    // promptly rather than waiting out its ~20-min TTL.
+    if let Err(e) = expire_standing_codes(&pool).await {
+        tracing::warn!(error = %e, "pair: could not expire the standing code after claim");
+    }
+
     // Assemble the per-device action fan-out so the device knows which
     // `app_applets.id` to POST each stream flush to. Post-commit best-effort: a
     // failure here doesn't undo the pairing — the device shows up paired but with
     // no ingest actions until the next reconcile.
-    let action_ids = match assemble_action_fanout(&pool, &device_id).await {
+    let applet_ids = match assemble_applet_fanout(&pool, &device_id).await {
         Ok(map) => map,
         Err(e) => {
             tracing::warn!(
@@ -898,7 +1120,7 @@ pub async fn consume_handler(
         Json(ConsumeResponse {
             device_id,
             redirect: "/".to_string(),
-            action_ids,
+            applet_ids,
             box_node_id,
             relay_url,
             box_direct_addrs,
@@ -915,17 +1137,17 @@ pub async fn consume_handler(
 
 /// Reconcile action templates (so per-credential `app_applets` rows are
 /// fanned out) and read back the binary-name → action-id map the device
-/// uses to route stream flushes to `POST /webhook/<action_id>`. Lifted
+/// uses to route stream flushes to `POST /webhook/<applet_id>`. Lifted
 /// out of the legacy `pair_complete_handler` so the unified pair flow
 /// produces identical device-side behavior.
-pub(crate) async fn assemble_action_fanout(
+pub(crate) async fn assemble_applet_fanout(
     pool: &PgPool,
     device_id: &str,
 ) -> Result<std::collections::HashMap<String, String>, crate::Error> {
-    crate::action_templates::reconcile_templates(pool).await?;
-    virtues_helpers::auth::fanout_action_ids(pool, device_id)
+    crate::applet_templates::reconcile_templates(pool).await?;
+    virtues_helpers::auth::fanout_applet_ids(pool, device_id)
         .await
-        .map_err(|e| crate::Error::Other(format!("fanout_action_ids: {e}")))
+        .map_err(|e| crate::Error::Other(format!("fanout_applet_ids: {e}")))
 }
 
 /// Atomically claim a pair token by its hash: locks the valid 'authorized' row
@@ -1006,7 +1228,7 @@ pub(crate) async fn insert_device_row(
     Ok(row.0)
 }
 
-fn render_qr_svg(data: &str) -> String {
+pub(crate) fn render_qr_svg(data: &str) -> String {
     use qrcode::{render::svg, QrCode};
     match QrCode::new(data.as_bytes()) {
         Ok(code) => code

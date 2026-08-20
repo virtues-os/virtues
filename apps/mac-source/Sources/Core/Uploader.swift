@@ -5,9 +5,20 @@ class Uploader {
     private let config: Config
     private var timer: DispatchSourceTimer?
 
-    /// Resolved `mac_ingest` webhook action id. Normally comes from
-    /// `config.actionIds`; cached here if a one-shot refetch was needed.
-    private var cachedActionId: String?
+    /// Resolved `mac_ingest` webhook applet id. Normally comes from
+    /// `config.appletIds`; refetched into here when that one is dead.
+    ///
+    /// Takes precedence over `config.appletIds` once set. It has to: the
+    /// config is a `let` read from disk at pair time, so if the id there ever
+    /// stops existing box-side there is no other way to move off it.
+    private var cachedAppletId: String?
+
+    /// Set when the box answers 404 for the id we used, which means that id is
+    /// gone — the applet was deleted, re-created, or renamed. Distinct from the
+    /// transient failures the backoff is for: retrying a 404 with the same id
+    /// never succeeds, however long you wait. Cleared once a refetch produces
+    /// a new one.
+    private var appletIdIsStale = false
 
     // Thread-safe state management
     private let stateQueue = DispatchQueue(label: "com.virtues.uploader.state")
@@ -107,7 +118,7 @@ class Uploader {
         var totalUploaded = 0
         var totalFailed = 0
 
-        // One combined batch → the single `mac_ingest` webhook action.
+        // One combined batch → the single `mac_ingest` webhook applet.
         let result = await uploadBatch()
         totalUploaded += result.uploaded
         totalFailed += result.failed
@@ -126,7 +137,7 @@ class Uploader {
     }
 
     /// Upload all pending app events + iMessages as ONE batch to the
-    /// `mac_ingest` webhook action, authenticated with the device bearer.
+    /// `mac_ingest` webhook applet, authenticated with the device bearer.
     /// The action expects a flat payload with top-level `app_events` /
     /// `browser_history` / `imessages` arrays (see `actions/mac_ingest`).
     private func uploadBatch() async -> (uploaded: Int, failed: Int) {
@@ -134,13 +145,16 @@ class Uploader {
             let eventsWithIds = try queue.getPendingEvents()
             let messagesWithIds = try queue.getPendingMessages()
             let visitsWithIds = try queue.getPendingBrowserVisits()
-            let pending = eventsWithIds.count + messagesWithIds.count + visitsWithIds.count
+            let snapshotsWithIds = try queue.getPendingBookmarkSnapshots()
+            let pending =
+                eventsWithIds.count + messagesWithIds.count + visitsWithIds.count
+                + snapshotsWithIds.count
             if pending == 0 {
                 return (0, 0)
             }
 
             // Resolve the webhook target (from pair, else a one-shot refetch).
-            guard let actionId = await macActivityActionId() else {
+            guard let appletId = await macActivityAppletId() else {
                 print("⚠️ No 'mac_ingest' action id — re-pair this collector " +
                       "(`virtues-collector init <token>`). Skipping upload.")
                 return (0, pending)
@@ -157,7 +171,25 @@ class Uploader {
             let appEvents = eventsWithIds.map { $0.event.toDictionary }
             let imessages = messagesWithIds.map { mapMessageForWebhook($0.message.toDictionary) }
             let browserHistory = visitsWithIds.map { $0.visit.toDictionary() }
-            let payload: [String: Any] = [
+            // Per-browser FULL snapshots (absence is the delete signal on the
+            // box, so a snapshot must never be sent partially). Rarely present —
+            // the monitor only queues one when a bookmark file's hash moved.
+            // Track WHICH ids made it into the payload: a row that fails to
+            // re-parse is dropped here, and marking it uploaded anyway would
+            // orphan it as sent-but-never-sent.
+            var sentSnapshotIds: [Int64] = []
+            var bookmarkSnapshots: [[String: Any]] = []
+            for snap in snapshotsWithIds {
+                guard let data = snap.recordsJSON.data(using: .utf8),
+                    let records = try? JSONSerialization.jsonObject(with: data)
+                else {
+                    print("⚠️ bookmark snapshot[\(snap.browser)] failed to re-parse — skipping")
+                    continue
+                }
+                bookmarkSnapshots.append(["browser": snap.browser, "records": records])
+                sentSnapshotIds.append(snap.id)
+            }
+            var payload: [String: Any] = [
                 // Sessions are stateful on the box: it holds an app's session open
                 // across batches and closes it when the matching unfocus arrives. So
                 // it has to know WHOSE session — two Macs (a laptop and a desktop)
@@ -175,10 +207,13 @@ class Uploader {
                 // is exactly how a four-day iMessage outage looked "healthy".
                 "collector_health": collectorHealthPayload(),
             ]
+            if !bookmarkSnapshots.isEmpty {
+                payload["bookmarks"] = bookmarkSnapshots
+            }
 
             // Host is ignored over iroh (the box is dialed by EndpointId); only
             // the path matters. Auth is this device's allowlisted key — no bearer.
-            guard let url = URL(string: "\(config.apiEndpoint)/webhook/\(actionId)") else {
+            guard let url = URL(string: "\(config.apiEndpoint)/webhook/\(appletId)") else {
                 print("Invalid API endpoint")
                 return (0, pending)
             }
@@ -194,9 +229,11 @@ class Uploader {
                 try queue.markEventsAsUploaded(eventsWithIds.map { $0.id })
                 try queue.markMessagesAsUploaded(messagesWithIds.map { $0.id })
                 try queue.markBrowserVisitsUploaded(ids: visitsWithIds.map { $0.id })
+                try queue.markBookmarkSnapshotsUploaded(ids: sentSnapshotIds)
                 try queue.cleanupOldEvents()
                 try queue.cleanupOldMessages()
                 try queue.cleanupOldBrowserVisits()
+                try queue.cleanupOldBookmarkSnapshots()
 
                 print(
                     "✓ Uploaded \(eventsWithIds.count) events + \(visitsWithIds.count) visits "
@@ -212,6 +249,20 @@ class Uploader {
                 return (pending, 0)
             } else if httpResponse.statusCode == 401 {
                 handle401(data)
+                return (0, pending)
+            } else if httpResponse.statusCode == 404 {
+                // The box does not know this applet id. That is terminal for
+                // the id, not for the upload: nothing is dropped, the records
+                // stay pending, and the next cycle resolves a fresh id rather
+                // than posting to the same dead one. Backoff is deliberately
+                // NOT escalated — the retry will differ, so waiting longer
+                // buys nothing.
+                print(
+                    "⚠️ Webhook 404 for applet id \(appletId) — it no longer exists on the box. "
+                        + "Refetching on the next cycle; \(pending) records held.")
+                appletIdIsStale = true
+                cachedAppletId = nil
+                consecutive401Errors = 0
                 return (0, pending)
             } else {
                 print("Upload failed with status: \(httpResponse.statusCode)")
@@ -252,25 +303,66 @@ class Uploader {
         }
     }
 
-    /// The `mac_ingest` action id: from the paired config, else a cached
-    /// value, else a one-shot refetch from `/api/devices/action-ids` (covers a
-    /// config that predates the box-side fanout fix).
-    private func macActivityActionId() async -> String? {
-        if let id = config.actionIds["mac_ingest"] {
+    /// The `mac_ingest` applet id: a refetched one if we have it, else the
+    /// paired config, else a one-shot refetch.
+    ///
+    /// The refetch used to be unreachable whenever the config held any value —
+    /// and the config is a `let` loaded at pair time, so a collector whose id
+    /// had gone away box-side would post to it forever, take a 404, back off,
+    /// and retry the same dead id until someone re-paired. Nothing surfaced but
+    /// a `print`. So the order is deliberate: a value we fetched from the box
+    /// beats a value we read off disk, and `appletIdIsStale` forces a refetch
+    /// even when the config still has something to offer.
+    private func macActivityAppletId() async -> String? {
+        if !appletIdIsStale, let id = cachedAppletId {
             return id
         }
-        if let id = cachedActionId {
+        if !appletIdIsStale, let id = config.appletIds["mac_ingest"] {
             return id
         }
-        if let id = await refetchMacActivityActionId() {
-            cachedActionId = id
+        if let id = await refetchMacActivityAppletId() {
+            cachedAppletId = id
+            appletIdIsStale = false
+            persistAppletId(id)
             return id
         }
+        // The refetch failed (box unreachable, or it genuinely has no
+        // mac_ingest applet). Keep the stale flag set so the next cycle tries
+        // again rather than falling back to the id we already know is dead.
         return nil
     }
 
-    private func refetchMacActivityActionId() async -> String? {
-        guard let url = URL(string: "\(config.apiEndpoint)/api/devices/action-ids") else {
+    /// Write a recovered applet id back to `config.json`.
+    ///
+    /// Without this the recovery is in-memory only, so the id on disk stays
+    /// dead forever: every restart posts to it, takes a 404, holds the batch,
+    /// and refetches — a wasted cycle and a scary log line on every launch, in
+    /// perpetuity. Observed twice on this machine before it was fixed.
+    ///
+    /// Best-effort: a failed write costs one more recovery cycle next launch,
+    /// which is strictly better than taking collection down over it.
+    private func persistAppletId(_ id: String) {
+        var ids = config.appletIds
+        guard ids["mac_ingest"] != id else { return }
+        ids["mac_ingest"] = id
+        do {
+            try Config(
+                deviceId: config.deviceId,
+                apiEndpoint: config.apiEndpoint,
+                appletIds: ids,
+                boxNodeId: config.boxNodeId,
+                relayUrl: config.relayUrl,
+                createdAt: config.createdAt,
+                deviceSeed: config.deviceSeed
+            ).save()
+            print("✓ recovered applet id written to config: \(id)")
+        } catch {
+            print("⚠️ could not persist recovered applet id: \(error.localizedDescription)")
+        }
+    }
+
+    private func refetchMacActivityAppletId() async -> String? {
+        guard let url = URL(string: "\(config.apiEndpoint)/api/devices/applet-ids") else {
             return nil
         }
         // Over iroh (BoxTransport) — authenticated by this device's proven key.
@@ -280,7 +372,7 @@ class Uploader {
             let (data, http) = try await BoxTransport.shared.send(request)
             guard http.statusCode == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let ids = json["action_ids"] as? [String: String] else {
+                  let ids = json["applet_ids"] as? [String: String] else {
                 return nil
             }
             return ids["mac_ingest"]
@@ -289,7 +381,7 @@ class Uploader {
         }
     }
 
-    /// Rename the iMessage record keys to the `mac_ingest` action's contract
+    /// Rename the iMessage record keys to the `mac_ingest` applet's contract
     /// (`message_id`→`guid`, `handle_id`→`from_handle`). The action drops any
     /// message with an empty `guid`, so the rename is required.
     private func mapMessageForWebhook(_ dict: [String: Any]) -> [String: Any] {

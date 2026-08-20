@@ -1,0 +1,43 @@
+{
+  "fill" : {
+    "automatic-gradient" : "display-p3:0.07843,0.15686,0.23922,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "solid" : "display-p3:0.96881,1.00000,0.96631,1.00000"
+          },
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "mark-base.svg",
+          "name" : "mark-base"
+        },
+        {
+          "fill" : {
+            "solid" : "display-p3:0.85255,0.88000,0.85035,1.00000"
+          },
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "mark-apex.svg",
+          "name" : "mark-apex"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

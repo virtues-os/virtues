@@ -31,7 +31,12 @@
 	import { toast } from "svelte-sonner";
 
 	type Props = {
-		action: "export_data" | "change_byo_key" | "wipe_box" | "revoke_last_device";
+		action:
+			| "export_data"
+			| "change_byo_key"
+			| "wipe_box"
+			| "revoke_last_device"
+			| "import_applet_package";
 		title: string;
 		description: string;
 		actionPayload?: Record<string, unknown>;

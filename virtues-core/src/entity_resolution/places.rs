@@ -103,7 +103,7 @@ async fn resolve_location_visits(db: &Database, window: TimeWindow) -> Result<us
     // Run density-adaptive clustering
     let visits = cluster_location_points(&points, sampling_rate)?;
 
-    tracing::debug!(visit_count = visits.len(), "Completed clustering");
+    tracing::debug!(ref_count = visits.len(), "Completed clustering");
 
     // Write visits idempotently and link to place entities
     let mut records_written = 0;
@@ -189,17 +189,17 @@ async fn fetch_unresolved_transactions(
             t.merchant_name,
             t.merchant_category
         FROM data_financial_transaction t
-        WHERE t.timestamp >= $1
-          AND t.timestamp < $2
+        WHERE t.occurred_at >= $1
+          AND t.occurred_at < $2
           AND t.merchant_name IS NOT NULL
           AND t.merchant_name != ''
           AND NOT EXISTS (
-              SELECT 1 FROM wiki_entity_refs er
+              SELECT 1 FROM wiki_refs er
               WHERE er.source_table = 'data_financial_transaction'
                 AND er.source_id = t.id
                 AND er.role = 'merchant'
           )
-        ORDER BY t.timestamp ASC
+        ORDER BY t.occurred_at ASC
         LIMIT 500
         "#,
         window.start,
@@ -222,7 +222,7 @@ async fn fetch_unresolved_transactions(
     Ok(transactions)
 }
 
-/// Resolve merchant to wiki_orgs and link to transaction via wiki_entity_refs
+/// Resolve merchant to wiki_orgs and link to transaction via wiki_refs
 async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Result<bool> {
     let merchant_name = txn.merchant_name.trim();
     if merchant_name.is_empty() {
@@ -235,18 +235,18 @@ async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Re
 
     // Get transaction timestamp for the entity reference
     let timestamp: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT timestamp FROM data_financial_transaction WHERE id = $1",
+        "SELECT occurred_at FROM data_financial_transaction WHERE id = $1",
     )
     .bind(&txn.id)
     .fetch_optional(db.pool())
     .await?
     .flatten();
 
-    // Link via wiki_entity_refs
+    // Link via wiki_refs
     let ref_id = ids::generate_id("eref", &[&txn.id, &org_id, "merchant"]);
     sqlx::query!(
         r#"
-        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+        INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
         VALUES ($1, 'organization', $2, 'data_financial_transaction', $3, 'merchant', $4)
         ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
         "#,
@@ -262,7 +262,7 @@ async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Re
         transaction_id = %txn.id,
         merchant_name = %merchant_name,
         org_id = %org_id,
-        "Linked transaction to merchant organization via wiki_entity_refs"
+        "Linked transaction to merchant organization via wiki_refs"
     );
 
     Ok(true)
@@ -282,8 +282,8 @@ async fn resolve_or_create_merchant_org(
         r#"
         SELECT id
         FROM wiki_orgs
-        WHERE LOWER(canonical_name) = LOWER($1)
-           OR LOWER(canonical_name) = LOWER($2)
+        WHERE LOWER(name) = LOWER($1)
+           OR LOWER(name) = LOWER($2)
         LIMIT 1
         "#,
         merchant_name,
@@ -321,7 +321,7 @@ async fn resolve_or_create_merchant_org(
         r#"
         INSERT INTO wiki_orgs (
             id,
-            canonical_name,
+            name,
             organization_type,
             relationship_type,
             metadata
@@ -338,7 +338,7 @@ async fn resolve_or_create_merchant_org(
 
     tracing::info!(
         org_id = %org_id,
-        canonical_name = %normalized_name,
+        name = %normalized_name,
         organization_type = %organization_type,
         "Created new merchant organization"
     );
@@ -346,47 +346,89 @@ async fn resolve_or_create_merchant_org(
     Ok(org_id)
 }
 
-/// Normalize merchant name for matching
+/// Normalize a merchant descriptor down to the business it names.
 ///
-/// Removes common suffixes, special characters, and normalizes capitalization.
+/// THIS FUNCTION USED TO MERGE UNRELATED BUSINESSES. It walked a list it called
+/// "suffixes" and truncated at the FIRST occurrence of each — `find`, not
+/// `ends_with` — and the list contained `"*"` and `" CO"`. So:
+///
+///   "SQ *BLUE BOTTLE"     → truncate at `*` → "Sq"
+///   "TST* PIZZERIA"       → truncate at `*` → "Tst"
+///   "BLUE BOTTLE COFFEE"  → `" CO"` matches inside " COFFEE" → "Blue Bottle"
+///
+/// Every Square, Toast and PayPal charge on the box therefore resolved to ONE
+/// shared `wiki_orgs` row, which then accumulated refs from unrelated
+/// transactions. Silent graph corruption, from a deterministic writer, on the
+/// one path the doctrine trusts precisely because it does not guess.
+///
+/// Two fixes, in order:
+///
+///   1. A processor tag is a PREFIX and the merchant is what follows it. Take
+///      the text after the marker, never before.
+///   2. A corporate suffix only counts as a suffix — matched on whole trailing
+///      words, so "COFFEE" is never mistaken for "CO".
 fn normalize_merchant_name(name: &str) -> String {
-    let mut normalized = name.to_string();
-
-    // Remove common suffixes
-    let suffixes = [
-        " INC",
-        " LLC",
-        " LTD",
-        " CORP",
-        " CO",
-        " #",
-        "*",
-        " - ",
-        "  ",
+    /// Trailing words that name a legal form rather than a business.
+    const CORP_SUFFIXES: &[&str] = &[
+        "INC", "INC.", "LLC", "L.L.C.", "LTD", "LTD.", "CORP", "CORP.", "CO", "CO.", "PLC",
     ];
-    for suffix in &suffixes {
-        if let Some(pos) = normalized.to_uppercase().find(suffix) {
-            normalized.truncate(pos);
+
+    let original = name.trim();
+
+    // 1. Payment-processor tags: "SQ *", "TST*", "PAYPAL *", "SP ". The marker
+    //    introduces the merchant, so everything BEFORE it is the processor and
+    //    everything after is the name we want. Split on the LAST marker, since
+    //    some descriptors carry two ("PP*SQ *SHOP").
+    let mut s = match original.rfind('*') {
+        Some(pos) => original[pos + 1..].trim().to_string(),
+        None => original.to_string(),
+    };
+
+    // 2. Store and reference numbers: "STARBUCKS #1234", "SHELL - 4471".
+    for sep in [" #", "#", " - "] {
+        if let Some(pos) = s.find(sep) {
+            s.truncate(pos);
         }
     }
 
-    // Title case
-    normalized
+    // 3. Trailing legal-form words, repeatedly — "ACME CO LTD" loses both.
+    //    Compared whole-word against the last token, which is the difference
+    //    between this and the bug above.
+    loop {
+        let trimmed = s.trim_end();
+        let Some((head, last)) = trimmed.rsplit_once(char::is_whitespace) else {
+            break;
+        };
+        if CORP_SUFFIXES.contains(&last.to_uppercase().as_str()) {
+            s = head.to_string();
+        } else {
+            s = trimmed.to_string();
+            break;
+        }
+    }
+
+    let titled = s
         .split_whitespace()
         .map(|word| {
             let mut chars = word.chars();
             match chars.next() {
                 None => String::new(),
                 Some(first) => {
-                    first.to_uppercase().collect::<String>()
-                        + &chars.as_str().to_lowercase()
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
                 }
             }
         })
         .collect::<Vec<_>>()
-        .join(" ")
-        .trim()
-        .to_string()
+        .join(" ");
+
+    // Never return nothing. A descriptor that is entirely processor tag and
+    // punctuation would otherwise mint an org with an empty name, and empty
+    // names collide with each other — the very failure this rewrite exists to
+    // end.
+    if titled.trim().is_empty() {
+        return original.to_string();
+    }
+    titled
 }
 
 /// Categorize merchant based on Plaid category
@@ -419,13 +461,13 @@ async fn fetch_location_points(db: &Database, window: TimeWindow) -> Result<Vec<
             id,
             latitude,
             longitude,
-            timestamp,
+            occurred_at,
             horizontal_accuracy
         FROM data_location_point
-        WHERE timestamp >= $1
-          AND timestamp < $2
+        WHERE occurred_at >= $1
+          AND occurred_at < $2
           AND (horizontal_accuracy IS NULL OR horizontal_accuracy < $3)
-        ORDER BY timestamp ASC
+        ORDER BY occurred_at ASC
         "#,
         window.start,
         window.end,
@@ -442,7 +484,7 @@ async fn fetch_location_points(db: &Database, window: TimeWindow) -> Result<Vec<
                 id,
                 latitude: row.latitude,
                 longitude: row.longitude,
-                timestamp: row.timestamp,
+                timestamp: row.occurred_at,
                 horizontal_accuracy: row.horizontal_accuracy,
                 _speed: None,
             })
@@ -614,7 +656,7 @@ fn generate_visit_id(centroid_lat: f64, centroid_lon: f64, start_time: DateTime<
 /// rather than minting a new one every time the clusterer re-runs.
 ///
 /// The bug this fixes: the maintenance loop re-clusters a 30-hour window every 15
-/// minutes, and the visit id was `uuid_v5(lat, lon, start_time)`. Across re-runs
+/// minutes, and the visit id was `uuid_v5(lat, lon, started_at)`. Across re-runs
 /// the cluster's earliest point drifts, so the start — and therefore the id —
 /// changes, and `ON CONFLICT (id)` never fires. One 3-hour stay at home became a
 /// dozen overlapping rows (arriving 00:04, 00:19, 00:34…, all departing 03:07),
@@ -636,19 +678,19 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     });
 
     // Existing visits at THIS place whose span overlaps (or nearly touches) the
-    // candidate's. `resolve_or_create_place` is the spatial key; wiki_entity_refs
+    // candidate's. `resolve_or_create_place` is the spatial key; wiki_refs
     // is how a visit is linked to it. The ± gap merges re-clusters that a tiny
     // backgrounding gap would otherwise leave adjacent rather than overlapping.
     let overlapping: Vec<(String, chrono::DateTime<Utc>, chrono::DateTime<Utc>)> = sqlx::query_as(
         r#"
-        SELECT v.id, v.arrival_time, v.departure_time
+        SELECT v.id, v.started_at, v.ended_at
         FROM data_location_visit v
-        JOIN wiki_entity_refs r
+        JOIN wiki_refs r
           ON r.source_table = 'data_location_visit' AND r.source_id = v.id
              AND r.entity_type = 'place' AND r.entity_id = $1
-        WHERE v.arrival_time   <= $3 + ($4 || ' minutes')::interval
-          AND v.departure_time >= $2 - ($4 || ' minutes')::interval
-        ORDER BY v.arrival_time
+        WHERE v.started_at   <= $3 + ($4 || ' minutes')::interval
+          AND v.ended_at >= $2 - ($4 || ' minutes')::interval
+        ORDER BY v.started_at
         "#,
     )
     .bind(&place_id)
@@ -676,7 +718,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
 
         sqlx::query(
             "UPDATE data_location_visit \
-             SET arrival_time = $2, departure_time = $3, duration_minutes = $4, \
+             SET started_at = $2, ended_at = $3, duration_minutes = $4, \
                  latitude = $5, longitude = $6, metadata = $7, updated_at = now() \
              WHERE id = $1",
         )
@@ -695,7 +737,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
         let absorbed: Vec<String> = overlapping.iter().skip(1).map(|(id, _, _)| id.clone()).collect();
         if !absorbed.is_empty() {
             sqlx::query(
-                "DELETE FROM wiki_entity_refs \
+                "DELETE FROM wiki_refs \
                  WHERE source_table = 'data_location_visit' AND source_id = ANY($1)",
             )
             .bind(&absorbed)
@@ -716,7 +758,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     let duration_minutes = (visit.end_time - visit.start_time).num_minutes() as i32;
 
     // Conflict on `source_stream_id`, NOT `id`. A stay carries two identities and
-    // only one of them is stable: `id` is derived from (centroid, start_time) and
+    // only one of them is stable: `id` is derived from (centroid, started_at) and
     // DRIFTS every time re-clustering nudges either, while `source_stream_id` (the
     // first point) does not — and the stable one is what holds the UNIQUE
     // constraint. Guarding `id` meant a re-clustered stay arrived with a fresh id,
@@ -727,15 +769,15 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     // across passes extends in place rather than spawning a rival row.
     let visit_id: String = sqlx::query_scalar(
         "INSERT INTO data_location_visit \
-         (id, latitude, longitude, arrival_time, departure_time, duration_minutes, \
+         (id, latitude, longitude, started_at, ended_at, duration_minutes, \
           source_stream_id, source_table, source_provider, metadata) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'location_point', 'ios', $8) \
          ON CONFLICT (source_stream_id) DO UPDATE SET \
-           arrival_time   = LEAST(data_location_visit.arrival_time, EXCLUDED.arrival_time), \
-           departure_time = GREATEST(data_location_visit.departure_time, EXCLUDED.departure_time), \
+           started_at   = LEAST(data_location_visit.started_at, EXCLUDED.started_at), \
+           ended_at = GREATEST(data_location_visit.ended_at, EXCLUDED.ended_at), \
            duration_minutes = GREATEST(0, (EXTRACT(EPOCH FROM \
-             GREATEST(data_location_visit.departure_time, EXCLUDED.departure_time) \
-             - LEAST(data_location_visit.arrival_time, EXCLUDED.arrival_time)) / 60)::int), \
+             GREATEST(data_location_visit.ended_at, EXCLUDED.ended_at) \
+             - LEAST(data_location_visit.started_at, EXCLUDED.started_at)) / 60)::int), \
            latitude = EXCLUDED.latitude, \
            longitude = EXCLUDED.longitude, \
            metadata = EXCLUDED.metadata, \
@@ -759,7 +801,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     // by ref), which is what let the collision recur every pass.
     let ref_id = ids::generate_id("eref", &[&visit_id, &place_id, "location"]);
     sqlx::query(
-        "INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp) \
+        "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at) \
          VALUES ($1, 'place', $2, 'data_location_visit', $3, 'location', $4) \
          ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING",
     )
@@ -907,6 +949,43 @@ fn calculate_visit_radius(visit: &Visit) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The exact descriptors that used to collapse into one org.
+    #[test]
+    fn processor_tags_do_not_eat_the_merchant() {
+        // Was "Sq" — and so was every other Square charge on the box.
+        assert_eq!(normalize_merchant_name("SQ *BLUE BOTTLE"), "Blue Bottle");
+        assert_eq!(normalize_merchant_name("TST* PIZZERIA DELFINA"), "Pizzeria Delfina");
+        assert_eq!(normalize_merchant_name("PAYPAL *STEAM GAMES"), "Steam Games");
+        // Two tags, innermost wins.
+        assert_eq!(normalize_merchant_name("PP*SQ *CORNER SHOP"), "Corner Shop");
+    }
+
+    /// " CO" used to match inside " COFFEE".
+    #[test]
+    fn a_suffix_must_actually_be_a_suffix() {
+        assert_eq!(normalize_merchant_name("BLUE BOTTLE COFFEE"), "Blue Bottle Coffee");
+        assert_eq!(normalize_merchant_name("COSTCO WHOLESALE"), "Costco Wholesale");
+        assert_eq!(normalize_merchant_name("CORNER STORE"), "Corner Store");
+        // But a real trailing legal form still goes, including stacked ones.
+        assert_eq!(normalize_merchant_name("ACME CO"), "Acme");
+        assert_eq!(normalize_merchant_name("ACME CO LTD"), "Acme");
+        assert_eq!(normalize_merchant_name("INITECH INC."), "Initech");
+    }
+
+    #[test]
+    fn store_numbers_are_dropped() {
+        assert_eq!(normalize_merchant_name("STARBUCKS #1234"), "Starbucks");
+        assert_eq!(normalize_merchant_name("SHELL - 4471"), "Shell");
+    }
+
+    /// An empty name would collide with every other empty name — the failure
+    /// this rewrite exists to end, reintroduced by the fix itself.
+    #[test]
+    fn never_normalizes_to_nothing() {
+        assert_eq!(normalize_merchant_name("SQ *"), "SQ *");
+        assert_eq!(normalize_merchant_name("   "), "");
+    }
 
     #[test]
     fn test_haversine_distance() {

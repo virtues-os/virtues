@@ -13,7 +13,7 @@ use virtues::storage::lake::{self, Envelope};
 use virtues_helpers::{connect_from_env, output, read_input};
 
 const PROVIDER: &str = "mac";
-const STREAM_KEYS: [&str; 3] = ["app_events", "browser_history", "imessages"];
+const STREAM_KEYS: [&str; 4] = ["app_events", "browser_history", "imessages", "bookmarks"];
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -42,6 +42,13 @@ async fn main() -> Result<()> {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
+    // Per-browser FULL snapshots, present only when a bookmark file changed
+    // (see transform::write_bookmarks for the shape and reconcile semantics).
+    let bookmarks: Vec<Value> = payload
+        .get("bookmarks")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     // Land the raw records BEFORE transforming them. If a transform below is
     // wrong we still fail loudly (500 → the device retries), but the bytes are
@@ -57,6 +64,7 @@ async fn main() -> Result<()> {
         ("app_events", &app_events),
         ("browser_history", &browser),
         ("imessages", &imessages),
+        ("bookmarks", &bookmarks),
     ] {
         lake::archive(
             &pool,
@@ -80,6 +88,8 @@ async fn main() -> Result<()> {
     let app_written = sessionize::ingest(&pool, device_id, &app_events).await?;
     let browser_written = transform::write_browser_history(&pool, &browser).await?;
     let imessage_written = transform::write_imessages(&pool, &imessages).await?;
+    let (bm_written, bm_tombstoned) =
+        transform::write_bookmarks(&pool, device_id, &bookmarks).await?;
 
     // A batch with zero messages because the Mac has none, and one with zero
     // because macOS is denying the collector `chat.db`, are identical on the
@@ -98,9 +108,16 @@ async fn main() -> Result<()> {
     }
 
     let denied = denied_capabilities(payload);
-    let summary = format!(
+    let mut summary = format!(
         "apps: {app_written} sessions, browser: {browser_written} visits, imessages: {imessage_written}"
     );
+    // Bookmarks are absent from most batches (snapshots ship only on change),
+    // so only report when the batch actually carried some.
+    if !bookmarks.is_empty() {
+        summary.push_str(&format!(
+            ", bookmarks: {bm_written} upserted / {bm_tombstoned} tombstoned"
+        ));
+    }
     let summary = if denied.is_empty() {
         summary
     } else {
@@ -110,7 +127,10 @@ async fn main() -> Result<()> {
             "mac collector is missing permissions — affected streams cannot be read \
              and will look merely idle until this is granted"
         );
-        format!("{summary} — DENIED: {} (grant on the Mac)", denied.join(", "))
+        format!(
+            "{summary} — DENIED: {} (grant on the Mac)",
+            denied.join(", ")
+        )
     };
     output(&summary, &input.config)
 }

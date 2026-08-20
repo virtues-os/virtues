@@ -9,10 +9,6 @@
 // =============================================================================
 
 export type WikiPageType =
-	// Narrative (story structure - subjective meaning)
-	| "telos"
-	| "act"
-	| "chapter"
 	// Temporal (calendar-based - objective time)
 	| "year"
 	| "day"
@@ -22,18 +18,12 @@ export type WikiPageType =
 	| "organization";
 
 export const PAGE_TYPE_META: Record<WikiPageType, { label: string; icon: string }> = {
-	telos: { label: "Telos", icon: "ri:compass-3-line" },
-	act: { label: "Act", icon: "ri:book-open-line" },
-	chapter: { label: "Chapter", icon: "ri:bookmark-line" },
 	year: { label: "Year", icon: "ri:calendar-2-line" },
 	day: { label: "Day", icon: "ri:calendar-line" },
 	person: { label: "Person", icon: "ri:user-line" },
 	place: { label: "Place", icon: "ri:map-pin-line" },
 	organization: { label: "Organization", icon: "ri:building-line" },
 };
-
-// Narrative page types (story structure)
-export const NARRATIVE_PAGE_TYPES: WikiPageType[] = ["telos", "act", "chapter"];
 
 // Temporal page types (calendar-based)
 export const TEMPORAL_PAGE_TYPES: WikiPageType[] = ["year", "day"];
@@ -166,6 +156,13 @@ export interface WikiPageBase {
 
 	// Content (markdown body)
 	content: string;
+
+	// Machine-written wikipedia-style article (entity pages; entity_article
+	// applet). Separate from `content`, which is the user's own writing.
+	article?: string;
+	articleUpdatedAt?: Date;
+	/** Is the record keeping this article up to date? Off unless asked. */
+	articleAutoUpdate?: boolean;
 
 	// Timestamps
 	createdAt: Date;

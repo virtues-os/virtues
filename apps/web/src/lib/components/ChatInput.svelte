@@ -75,52 +75,12 @@
 	// The turn is in flight (content queued/sending) — show the spinner.
 	const isBusy = $derived(sendDisabled && (!inputIsEmpty || allowEmptySubmit));
 
-	// --- Dictation (Web Speech API, progressive enhancement) ---
-	const micSupported = $derived(
-		typeof window !== "undefined" &&
-			!!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition),
-	);
-	let recognizing = $state(false);
-	let recognition: any = null;
-	function toggleMic() {
-		if (!micSupported) return;
-		if (recognizing) {
-			recognition?.stop();
-			return;
-		}
-		const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-		recognition = new SR();
-		recognition.lang = navigator.language || "en-US";
-		recognition.interimResults = false;
-		recognition.continuous = false;
-		recognition.onresult = (e: any) => {
-			const text = Array.from(e.results)
-				.map((r: any) => r[0]?.transcript || "")
-				.join(" ")
-				.trim();
-			if (text) {
-				inputEl?.focus();
-				document.execCommand("insertText", false, (value ? " " : "") + text);
-				handleInput();
-			}
-		};
-		recognition.onend = () => (recognizing = false);
-		recognition.onerror = () => (recognizing = false);
-		recognizing = true;
-		recognition.start();
-	}
-
 	// Which action the single trailing button performs right now.
-	const trailingMode = $derived(
-		isStreaming ? "stop" : !inputIsEmpty || allowEmptySubmit || !micSupported ? "send" : "mic",
-	);
-	const trailingLabel = $derived(
-		trailingMode === "stop" ? "Stop" : trailingMode === "mic" ? (recognizing ? "Stop dictation" : "Dictate") : "Send",
-	);
+	const trailingMode = $derived(isStreaming ? "stop" : "send");
+	const trailingLabel = $derived(trailingMode === "stop" ? "Stop" : "Send");
 	function trailingAction() {
 		if (trailingMode === "stop") handleStop();
-		else if (trailingMode === "send") handleSubmit();
-		else toggleMic();
+		else handleSubmit();
 	}
 
 	// Sync internal focus state with external bindable prop
@@ -427,25 +387,18 @@
 			style:overflow-y={shouldScroll ? 'auto' : 'hidden'}
 		></div>
 
-		<!-- Trailing controls: mic / send -->
+		<!-- Trailing controls: send / stop -->
 		<div class="composer-actions">
-			<!-- One persistent trailing button — its icon flips between mic ↔ send
-			     (↔ stop) so typing the first character animates rather than swaps. -->
+			<!-- One persistent trailing button — its icon flips between send and
+			     stop so a turn starting animates rather than swaps. -->
 			<button
 				type="button"
 				onclick={trailingAction}
 				disabled={trailingMode === "send" && !canSubmit}
-				class="pill-btn action-btn"
-				class:btn-primary={trailingMode !== "mic"}
-				class:mic-btn={trailingMode === "mic"}
-				class:recording={recognizing}
+				class="pill-btn action-btn btn-primary"
 				aria-label={trailingLabel}
-				title={trailingMode === "mic" ? "Dictate" : undefined}
 			>
 				<span class="icon-swap">
-					<span class="swap-icon" class:active={trailingMode === "mic"}>
-						<Icon icon={recognizing ? "ri:stop-circle-line" : "ri:mic-line"} width="16" />
-					</span>
 					<span class="swap-icon" class:active={trailingMode === "send" && !isBusy}>
 						<Icon icon="ri:arrow-up-line" width="15" style="color: inherit" />
 					</span>
@@ -557,6 +510,27 @@
 			opacity 0.15s ease;
 	}
 
+	/* The composer's buttons are 32px because the pill they sit in is tight, and
+	   growing them would push it open. So the hit area grows instead of the
+	   button: an invisible 44pt square centred on each, which is what a finger
+	   actually aims at. They sit at opposite ends of the pill, so the two
+	   expanded areas never meet. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.pill-btn {
+			position: relative;
+		}
+
+		.pill-btn::after {
+			content: "";
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			width: max(100%, 44px);
+			height: max(100%, 44px);
+			transform: translate(-50%, -50%);
+		}
+	}
+
 	.attach-button {
 		color: var(--color-foreground-muted);
 	}
@@ -604,15 +578,4 @@
 		transform: rotate(0deg) scale(1);
 	}
 
-	.mic-btn {
-		color: var(--color-foreground-muted);
-	}
-	.mic-btn:hover {
-		background: var(--hover-bg);
-		color: var(--color-foreground);
-	}
-	.mic-btn.recording {
-		color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
-	}
 </style>
