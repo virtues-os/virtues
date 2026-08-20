@@ -2550,6 +2550,73 @@ fi
 # been written against. The disk has to be claimed here, on the unit, or Postgres
 # and the lake land on the card — which has modest write endurance and is exactly
 # what we're trying to keep writes off. See docs/appliance-image.md.
+#
+# TWO layouts, told apart by where root is mounted from. If root is on the NVMe
+# (NVMe-both, no SD in the unit) the data partition lives on the SAME disk,
+# carved from the free space the shrunk master left after root — handled by
+# §1-NVMe just below, which runs FIRST and, if it mounts $DATA_DIR, makes the
+# classic separate-disk claim skip itself via its own `! mountpoint` guard. If
+# root is on the card, the classic claim (the `for disk` loop) takes the whole
+# separate NVMe. NB: the seed + fstab + mount + sentinel are duplicated across
+# the two paths deliberately — the classic path is load-bearing and tested, so
+# it is left untouched; keep the two in step.
+
+# ── 1-NVMe. NVMe-both: the data partition is p4 on the boot disk ─────────────
+if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
+    ROOT_SRC="$(findmnt -no SOURCE / 2>/dev/null || true)"
+    case "$ROOT_SRC" in
+      /dev/nvme*)
+        ROOT_NAME="${ROOT_SRC##*/}"
+        ROOT_NUM="${ROOT_NAME##*[!0-9]}"
+        BOOTDISK="/dev/${ROOT_NAME%"$ROOT_NUM"}"; BOOTDISK="${BOOTDISK%p}"
+        # Adopt an existing data partition (a prior boot may have made it),
+        # else carve one filling the space past root. NEVER touch config/ESP/root.
+        DATA_PART="$(lsblk -rno NAME,LABEL "$BOOTDISK" 2>/dev/null | awk '$2=="virtues-data"{print "/dev/"$1; exit}')"
+        if [ -z "$DATA_PART" ] && command -v sgdisk >/dev/null 2>&1; then
+            # The shrunk master's GPT backup sits just past root; move it to the
+            # real end of this larger disk, then carve one partition to the end.
+            # Adding a partition to a disk whose root is mounted is allowed — the
+            # kernel refuses only to MODIFY a busy partition — and partx -a adds
+            # just the new one when partprobe declines the busy disk.
+            sgdisk -e "$BOOTDISK" >/dev/null 2>&1 || true
+            sgdisk -n 0:0:0 -c 0:virtues-data "$BOOTDISK" >/dev/null 2>&1
+            partprobe "$BOOTDISK" 2>/dev/null || partx -a "$BOOTDISK" 2>/dev/null || true
+            sleep 2
+            DATA_PART="$(lsblk -rno NAME,PARTLABEL "$BOOTDISK" 2>/dev/null | awk '$2=="virtues-data"{print "/dev/"$1; exit}')"
+            [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ] && mkfs.ext4 -q -F -L virtues-data "$DATA_PART"
+            logger -t virtues-firstboot "NVMe-both: data partition ${DATA_PART:-<none>} on $BOOTDISK"
+        fi
+        if [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ]; then
+            mkdir -p /run/virtues-seed
+            if mount "$DATA_PART" /run/virtues-seed 2>/dev/null; then
+                cp -a "$DATA_DIR/." /run/virtues-seed/ 2>/dev/null || \
+                    logger -t virtues-firstboot "seed copy reported errors - the sentinel gate below decides"
+                rm -rf /run/virtues-seed/postgresql /run/virtues-seed/secrets /run/virtues-seed/backups
+                mkdir -p /run/virtues-seed/journal /run/virtues-seed/lake
+                chown root:systemd-journal /run/virtues-seed/journal 2>/dev/null || true
+                chmod 2755 /run/virtues-seed/journal 2>/dev/null || true
+                umount /run/virtues-seed
+            fi
+            rmdir /run/virtues-seed 2>/dev/null || true
+            mkdir -p "$DATA_DIR"
+            grep -q '^LABEL=virtues-data' /etc/fstab 2>/dev/null || \
+                echo "LABEL=virtues-data $DATA_DIR ext4 defaults,nofail,x-systemd.device-timeout=300s 0 2" >> /etc/fstab
+            sed -i 's/x-systemd.device-timeout=10s/x-systemd.device-timeout=300s/' /etc/fstab 2>/dev/null || true
+            systemctl daemon-reload
+            mount "$DATA_DIR" || logger -t virtues-firstboot "mount $DATA_DIR failed (NVMe-both)"
+            if mountpoint -q "$DATA_DIR"; then
+                systemctl reset-failed postgresql.service virtues.service 2>/dev/null || true
+                systemctl --no-block start postgresql.service virtues.service 2>/dev/null || true
+            fi
+            if mountpoint -q "$DATA_DIR" && grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null; then
+                touch "$DATA_DIR/.claim-complete"
+                logger -t virtues-firstboot "NVMe-both: claimed data partition $DATA_PART"
+            fi
+        fi
+        ;;
+    esac
+fi
+
 if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
     for disk in /dev/nvme0n1 /dev/nvme1n1; do
         [ -b "$disk" ] || continue
@@ -2732,6 +2799,14 @@ grep -q "127.0.1.1[[:space:]].*$VIRT_HOSTNAME" /etc/hosts 2>/dev/null || \
 # journal) lives on the NVMe anyway.
 ROOT_SRC="$(findmnt -no SOURCE / 2>/dev/null || true)"
 case "$ROOT_SRC" in
+    /dev/nvme*)
+        # NVMe-both: root shares the disk with the data partition, which §1
+        # carved from the free space the shrunk master left AFTER root. Growing
+        # root to fill would swallow exactly that space. Leave root at its
+        # shrunk size (+2 GiB margin); the data partition owns the remainder,
+        # and everything heavy lives there anyway.
+        logger -t virtues-firstboot "root is on the NVMe (NVMe-both) - not growing it; the data partition owns the free space"
+        ;;
     /dev/*[0-9])
         ROOT_PART_NAME="${ROOT_SRC##*/}"
         ROOT_PART_NUM="${ROOT_PART_NAME##*[!0-9]}"
