@@ -1408,39 +1408,7 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     deps.env("DEBIAN_FRONTEND", "noninteractive");
     run_step("Install display runtime (cage + WebKit)", deps).await?;
 
-    // Boot text on the glass. From power to cage the panel used to be pure
-    // black — `quiet splash` hides the kernel and systemd entirely, so nobody
-    // can tell a booting box from a dead one until the kiosk paints
-    // (2026-08-19 bench feedback). With them dropped, fbcon scrolls the boot on
-    // the panel and cage takes the VT over when it starts; the shim's
-    // diagnostic page covers everything after that.
-    //
-    // The Dragon boots SYSTEMD-BOOT, not GRUB (docs/appliance-image.md) — the
-    // cmdline lives in the `options` line of each loader entry, so that is the
-    // real edit. An earlier version only touched /etc/default/grub, which the
-    // product has none of, so the step reported success while changing nothing.
-    // GRUB is kept as a fallback for non-Dragon appliance hosts.
-    let mut cmdline = Command::new("sh");
-    cmdline.args([
-        "-c",
-        "changed=0; \
-         for d in /boot/efi/loader/entries /boot/loader/entries; do \
-             [ -d \"$d\" ] || continue; \
-             for e in \"$d\"/*.conf; do \
-                 [ -f \"$e\" ] || continue; \
-                 grep -qE '^options .*\\b(quiet|splash)\\b' \"$e\" || continue; \
-                 sed -i -E '/^options /{s/\\b(quiet|splash)\\b//g; s/  +/ /g; s/ +$//}' \"$e\"; \
-                 changed=1; \
-             done; \
-         done; \
-         if [ -f /etc/default/grub ] && command -v update-grub >/dev/null 2>&1; then \
-             sed -i -E '/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/\\b(quiet|splash)\\b//g' /etc/default/grub && \
-             update-grub >/dev/null 2>&1; changed=1; \
-         fi; \
-         [ \"$changed\" = 1 ] && echo 'boot messages will show on the panel' \
-                             || echo 'no loader entries or GRUB found - boot stays quiet'",
-    ]);
-    run_step("Show boot messages on the panel", cmdline).await?;
+    install_boot_splash().await?;
 
     // BLE provisioning needs bluetoothd up from boot; installing bluez does
     // not reliably enable it on a server image.
@@ -1620,6 +1588,113 @@ Unattended-Upgrade::Allowed-Origins {
 Unattended-Upgrade::Automatic-Reboot "false";
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
 Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+"#;
+
+/// A branded boot splash on the panel.
+///
+/// From power to cage the panel is the owner's first impression, and a stock
+/// image gives them the Radxa logo then a scroll of kernel logs. This replaces
+/// both with a plain Virtues "loading" splash (plymouth) — and it is a better
+/// answer than the raw-logs approach it supersedes: the splash proves the box
+/// is alive AND is ours, while the SERIAL console keeps every boot message for
+/// our own debugging (plymouth only paints the framebuffer, never ttyMSM0), and
+/// the kiosk's diagnostic page covers "what's wrong" once cage is up.
+///
+/// Needs `splash` on the cmdline and the theme baked into the initramfs — both
+/// done here. DRM on this board comes up ~10s in, so the splash appears a beat
+/// late rather than instantly; acceptable, and validated on the bench.
+async fn install_boot_splash() -> Result<()> {
+    apt_install("Boot splash (plymouth)", &["plymouth", "plymouth-label"]).await?;
+
+    let dir = "/usr/share/plymouth/themes/virtues";
+    fs::create_dir_all(dir).with_context(|| format!("mkdir {dir}"))?;
+    fs::write(format!("{dir}/virtues.plymouth"), VIRTUES_PLYMOUTH_CONF)
+        .context("writing virtues.plymouth")?;
+    fs::write(format!("{dir}/virtues.script"), VIRTUES_PLYMOUTH_SCRIPT)
+        .context("writing virtues.script")?;
+
+    // Set the default theme and rebuild the initramfs (-R). `|| true`: on a host
+    // without the plymouth tooling this is a no-op, not a failed install.
+    let mut set = Command::new("plymouth-set-default-theme");
+    set.args(["-R", "virtues"]);
+    if set.output().await.map(|o| o.status.success()).unwrap_or(false) {
+        ui::ok("Virtues boot splash installed");
+    } else {
+        ui::warn("plymouth not available — boot splash skipped");
+    }
+
+    // `splash` must be on the kernel cmdline for plymouth to paint. The Dragon
+    // boots systemd-boot (options line in each loader entry); GRUB is the
+    // fallback for other appliance hosts. `quiet` too, so kernel text does not
+    // race the splash on the framebuffer — the serial console still gets it.
+    let mut cmdline = Command::new("sh");
+    cmdline.args([
+        "-c",
+        "for d in /boot/efi/loader/entries /boot/loader/entries; do \
+             [ -d \"$d\" ] || continue; \
+             for e in \"$d\"/*.conf; do \
+                 [ -f \"$e\" ] || continue; \
+                 grep -q '^options ' \"$e\" || continue; \
+                 grep -qE '^options .*\\bsplash\\b' \"$e\" || sed -i -E '/^options /s/$/ quiet splash/' \"$e\"; \
+             done; \
+         done; \
+         if [ -f /etc/default/grub ] && command -v update-grub >/dev/null 2>&1; then \
+             grep -q 'splash' /etc/default/grub || sed -i -E '/^GRUB_CMDLINE_LINUX_DEFAULT=\"/ s/\"$/ quiet splash\"/' /etc/default/grub; \
+             update-grub >/dev/null 2>&1 || true; \
+         fi; true",
+    ]);
+    let _ = cmdline.output().await;
+    Ok(())
+}
+
+const VIRTUES_PLYMOUTH_CONF: &str = r#"[Plymouth Theme]
+Name=Virtues
+Description=Virtues boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/virtues
+ScriptFile=/usr/share/plymouth/themes/virtues/virtues.script
+"#;
+
+// Plymouth's own scripting language (not shell). Dark ground matching the
+// panel, the wordmark centred, three dots below it breathing in sequence — a
+// quiet "loading", no spinner chrome. Text-drawn so there is no binary asset to
+// carry; the mark is literal dots rather than the ∴ glyph, which the boot font
+// may not have.
+const VIRTUES_PLYMOUTH_SCRIPT: &str = r#"# Virtues boot splash.
+Window.SetBackgroundTopColor(0.043, 0.059, 0.078);
+Window.SetBackgroundBottomColor(0.043, 0.059, 0.078);
+
+cx = Window.GetWidth() / 2;
+cy = Window.GetHeight() / 2;
+
+word = Image.Text("Virtues", 0.85, 0.87, 0.90, 1, "Sans 40");
+word_s = Sprite(word);
+word_s.SetX(cx - word.GetWidth() / 2);
+word_s.SetY(cy - word.GetHeight() / 2);
+
+dot = Image.Text("· · ·", 0.55, 0.60, 0.66, 1, "Sans 28");
+dot_s = Sprite(dot);
+dot_s.SetX(cx - dot.GetWidth() / 2);
+dot_s.SetY(cy + word.GetHeight());
+
+tick = 0;
+fun refresh() {
+    tick++;
+    o = 0.35 + 0.35 * Math.Sin(tick / 18);
+    dot_s.SetOpacity(o);
+}
+Plymouth.SetRefreshFunction(refresh);
+
+# Leave a clean field for messages plymouth may relay (fsck, etc).
+fun message(text) {
+    msg = Image.Text(text, 0.5, 0.55, 0.6, 1, "Sans 14");
+    msg_s = Sprite(msg);
+    msg_s.SetX(cx - msg.GetWidth() / 2);
+    msg_s.SetY(Window.GetHeight() - msg.GetHeight() * 3);
+}
+Plymouth.SetMessageFunction(message);
 "#;
 
 /// Tear down the captive-portal artifacts an older appliance install left.
