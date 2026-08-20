@@ -12,16 +12,38 @@
 > `mmcblk1` looks like an eMMC device name and is not one, and the only way to
 > know is to ask (`/sys/block/mmcblk1/device/type` → `SD`).
 >
+> **Corrected 2026-08-20**, after an eMMC-spec look-up and a fresh read of
+> Radxa's docs — two factual claims below were wrong. Following this document's
+> own practice, the body is fixed and the mistakes recorded here, because they
+> are the kind that repeat:
+>
+> - **The Q6A CAN boot from the NVMe.** Radxa documents NVMe as a first-class OS
+>   target, and the firmware boots SD/eMMC/USB/UFS/NVMe (documented order
+>   USB > SD > NVMe > eMMC > UFS). "Does not boot from the NVMe" was true only of
+>   *our* setup — the lab board's NVMe carries no ESP, so the firmware falls
+>   through to the card. An NVMe with its own ESP + loader entry should boot on
+>   its own; the "twenty minutes on the bench" test below is being run now, and
+>   if it passes, NVMe-for-both (no card in the BOM) reopens the SD-boot
+>   conclusion here.
+> - **eMMC is a removable module, not soldered and not simply absent.** The Q6A
+>   has a shared eMMC/UFS module socket (press-to-click); the lab board just has
+>   none fitted. eMMC modules (16/32/64 GB) are ordered separately, and the SKUs
+>   differ by RAM, not storage. So "a dead eMMC is an RMA" below is wrong for
+>   this board — an eMMC module is swappable like a card.
+>
 > Companion to [onboarding.md](onboarding.md) (what the owner does),
 > [deployment.md](deployment.md) (how the software ships), and
 > [recovery.md](recovery.md) (what happens when it breaks).
 
 ## The one thing to know first
 
-**The Q6A does not boot from the NVMe.** It boots systemd-boot from an ESP on
-the **microSD card**, and that ESP holds the kernel, the initrd and the device
-tree. The NVMe only supplies the root filesystem, named by UUID in a loader
-entry that also lives on the card.
+**As we ship it, the Q6A boots from an ESP on the microSD card** — not from the
+NVMe. That ESP holds systemd-boot, the kernel, the initrd and the device tree.
+This is a property of *our layout*, not a firmware limit (see the 2026-08-20
+correction above): the firmware can boot NVMe, but only from an ESP, and the
+lab board's NVMe carries none — so the firmware falls through to the card. The
+NVMe there only supplies the root filesystem, named by UUID in a loader entry
+that also lives on the card.
 
 Measured on the lab board:
 
@@ -36,7 +58,9 @@ mmcblk1 (microSD, 29 GiB, on mmc1)    nvme0n1 (119 GiB)
 
 `efibootmgr` reports exactly one entry — `\EFI\systemd\systemd-bootaa64.efi` on
 card p2 — and the NVMe carries a single partition with no ESP. `mmc0` (the eMMC
-controller) enumerates no device: this board has **no eMMC**.
+controller) enumerates no device: this board has **no eMMC module fitted**. The
+Q6A has a removable eMMC/UFS module socket, not soldered eMMC (see the
+2026-08-20 correction above); the lab board's socket is simply empty.
 
 Two consequences fall out, and every decision below is downstream of them:
 
@@ -87,10 +111,12 @@ a card duplicator. No EDL, no USB-C flashing, no per-board firmware step. The
 NVMe ships blank and is claimed on first boot (`virtues-firstboot.sh`), so there
 is no shared root UUID to coordinate and no kernel/module skew possible.
 
-**A removable boot medium is also a better support story than a soldered one.**
-A dead card is a mail-out and a screwdriver; a dead eMMC is an RMA. Since almost
-nothing writes to it after install, the endurance objection that would normally
-argue for eMMC mostly evaporates.
+**A removable boot medium is a fine support story.** A dead card is a mail-out
+and a screwdriver. (An earlier draft contrasted this with "a dead eMMC is an
+RMA" — but the Q6A's eMMC is a *removable module*, not soldered, so it is
+swappable too; see the 2026-08-20 correction above.) Since almost nothing
+writes to the boot medium after install, the endurance objection that would
+argue for faster storage mostly evaporates.
 
 > **BOM question — answered 2026-08-18.** Shipping boards arrive with **no OS
 > on internal storage**. The Q6A carries pre-installed SPI boot firmware (UEFI)
