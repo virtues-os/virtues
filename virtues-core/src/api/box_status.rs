@@ -312,10 +312,10 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(0);
 
-    // Chat history imported = the one-time chat_import action has at least one
+    // Chat history imported = the one-time chat_import applet has at least one
     // successful run. Server-backed (not a client-local flag) so skipping it is
-    // recoverable from the dashboard backlog and survives a refresh. The action
-    // row's id is `action_chat_import` (see server::api::chat_import_upload).
+    // recoverable from the dashboard backlog and survives a refresh. The applet
+    // row's id is `applet_chat_import` (see server::api::chat_import_upload).
     let chat_imported: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_applet_runs \
          WHERE applet_id = 'applet_chat_import' AND status = 'success')",
@@ -648,10 +648,14 @@ fn remote_access_step(endpoint_up: bool, endpoint_error: Option<&str>) -> SetupS
 }
 
 /// `GET /api/setup/state` — public-on-LAN like `/api/box/health`, and by the
-/// same argument: the wizard and the appliance panel must render it before
-/// any owner session exists, and it carries only booleans, step copy, and the
-/// already-public reachability verdict (plus the mDNS name once the owner has
-/// chosen it — which mDNS broadcasts to the LAN anyway).
+/// same argument: the onboarding flow and the appliance panel must render it
+/// before any owner session exists, and it carries only booleans and step
+/// copy. (No name field: there is no "named" step and no rename endpoint —
+/// the box keeps `virtues.local`.) Note the onboarding vec is a fuller
+/// behavioral sketch than `/api/box/identity`'s three bits — whether a phone
+/// is paired, chat history imported, a narrative identity written — visible
+/// to anyone on the LAN. Tolerated for now; worth revisiting if the checklist
+/// ever grows beyond booleans.
 pub async fn setup_state_handler(State(state): State<AppState>) -> impl IntoResponse {
     match compute_setup_state(state.db.pool()).await {
         Ok(setup) => (StatusCode::OK, Json(setup)).into_response(),

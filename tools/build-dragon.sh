@@ -148,6 +148,15 @@ fi
 say "Verifying"
 virtues doctor || die "virtues doctor found problems — fix them before imaging"
 
+# Pin the channel to prerelease BEFORE the setup walk. Walking BLE setup fires
+# a background release prefetch (`prepare_release_now`), which on the default
+# (absent = stable) channel would fetch the newest STABLE build into a release
+# slot and bake it into the master. On the prerelease channel that prefetch
+# declines (api::updates::spawn_prepare). deprovision strips the channel file
+# and any staged slot regardless; this stops one from ever being fetched.
+mkdir -p /var/lib/virtues
+printf 'prerelease\n' > /var/lib/virtues/channel
+
 cat <<'EOF'
 
   Before the card is sealed, WALK THE SETUP FLOW on this board:
@@ -174,6 +183,9 @@ say "Deprovisioning"
 # 2026-08-18. (The walk-the-setup gate above needs the services UP, which is
 # why the stop lives here and not at the top.)
 systemctl stop virtues virtues-display virtues-qnnd 2>/dev/null || true
+# (The apt cache — ~1.3 GB of .debs, ~14% of the rootfs — is cleaned in §5b
+# below, together with the free-space zeroing, so its freed blocks are actually
+# scrubbed rather than merely unlinked.)
 virtues deprovision --yes
 
 # ── 5. Prove the strip worked ───────────────────────────────────────────────
@@ -182,6 +194,22 @@ virtues deprovision --yes
 # master that kept a secret cannot reach the `dd`.
 say "Checking"
 virtues image-check || die "image-check found per-unit identity — DO NOT image this card"
+
+# ── 5b. Zero the free space, AFTER the check ────────────────────────────────
+# The image is a whole-device `dd` including free blocks, so everything
+# deprovision just *unlinked* — the encryption key, the iroh secret, the
+# dropped Postgres cluster, the journal, the apt cache — still ships,
+# recoverable, in the gaps between live files. `apt-get clean` freed blocks it
+# never zeroed. Fill the free space with zeros then delete the filler: the live
+# tree is untouched (image-check already passed against it), and zeros
+# compress to nothing, so this shrinks the artifact as a side effect. `|| true`
+# on the fill because ENOSPC is the expected, successful end of it.
+say "Zeroing free space (so unlinked secrets don't ship)"
+apt-get clean
+dd if=/dev/zero of=/zero.fill bs=4M status=none 2>/dev/null || true
+sync
+rm -f /zero.fill
+fstrim -av 2>/dev/null || true
 
 # ── 6. Off, without booting again ───────────────────────────────────────────
 # Work out which device to image rather than naming one. The card enumerates as

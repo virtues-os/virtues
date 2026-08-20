@@ -543,66 +543,12 @@ pub(crate) async fn improv_disconnect<R: Runtime>(app: AppHandle<R>) -> Result<(
   }
 }
 
-/// Join a wifi network whose SSID starts with `ssid_prefix`, natively.
-///
-/// iOS only — `NEHotspotConfiguration` (NOT Personal Hotspot, NOT the
-/// gated `NEHotspotHelper`; see `ios/Sources/ReachPlugin.swift`). Used by the
-/// connect screen to put the phone on a box's `Virtues-XXXX` setup network
-/// without a trip to Settings, a camera banner, or a captive sheet — the three
-/// OS surfaces that each failed on hardware 2026-08-10. The user types only
-/// the passphrase off the box's display; the prefix join finds the SSID.
-///
-/// Raises one system dialog ("Wants to Join…"). `joinOnce` on the Swift side
-/// scopes the config to this app session, so nothing lingers in the phone's
-/// network list after setup.
-#[command]
-pub(crate) async fn wifi_join<R: Runtime>(
-  app: AppHandle<R>,
-  ssid_prefix: String,
-  passphrase: String,
-) -> Result<serde_json::Value> {
-  #[cfg(target_os = "ios")]
-  {
-    use tauri::Manager;
-    let handle = app.state::<crate::IosPluginHandle<R>>();
-    return handle
-      .0
-      .run_mobile_plugin(
-        "wifi_join",
-        serde_json::json!({ "ssidPrefix": ssid_prefix, "passphrase": passphrase }),
-      )
-      .map_err(|e| crate::Error::Reach(e.to_string()));
-  }
-  #[cfg(not(target_os = "ios"))]
-  {
-    let _ = (app, ssid_prefix, passphrase);
-    // Android's equivalent is WifiNetworkSpecifier — not built yet. The
-    // connect screen treats this error as "fall back to manual join".
-    Err(crate::Error::Reach("programmatic wifi join is iOS-only for now".into()))
-  }
-}
-
-/// Drop any setup-network config this app added (prefix-matched).
-#[command]
-pub(crate) async fn wifi_forget<R: Runtime>(
-  app: AppHandle<R>,
-  ssid_prefix: String,
-) -> Result<serde_json::Value> {
-  #[cfg(target_os = "ios")]
-  {
-    use tauri::Manager;
-    let handle = app.state::<crate::IosPluginHandle<R>>();
-    return handle
-      .0
-      .run_mobile_plugin("wifi_forget", serde_json::json!({ "ssidPrefix": ssid_prefix }))
-      .map_err(|e| crate::Error::Reach(e.to_string()));
-  }
-  #[cfg(not(target_os = "ios"))]
-  {
-    let _ = (app, ssid_prefix);
-    Ok(serde_json::json!({ "removed": false }))
-  }
-}
+// `wifi_join`/`wifi_forget` (NEHotspotConfiguration) were deleted 2026-08-18.
+// They put the phone on a box's `Virtues-XXXX` setup network programmatically —
+// the SoftAP era's answer to the camera-QR banner and the captive sheet, both
+// of which failed on hardware 2026-08-10. BLE provisioning (the improv_*
+// commands above) made the phone never leave its own network at all, so the
+// join, the forget, and their HotspotConfiguration entitlement all went.
 
 /// Sync-queue health for a stream (device screen's Sync section).
 #[command]

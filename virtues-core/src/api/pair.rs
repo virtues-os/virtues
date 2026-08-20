@@ -99,13 +99,30 @@ fn random_pair_code() -> String {
 /// The two answers differ because the questions do: "is there any session here"
 /// versus "did a human bring a device to this box".
 pub async fn paired_device_count(pool: &PgPool) -> i64 {
+    try_paired_device_count(pool).await.unwrap_or(0)
+}
+
+async fn try_paired_device_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT count(*) FROM app_device WHERE revoked_at IS NULL AND id <> $1",
     )
     .bind(crate::middleware::auth::CONSOLE_DEVICE_ID)
     .fetch_one(pool)
     .await
-    .unwrap_or(0)
+}
+
+/// Whether this box can be CONFIRMED to have no paired device — the predicate
+/// that opens the setup surface (BLE advertising, the AP, `/api/provision/*`,
+/// the panel's setup screens).
+///
+/// It FAILS CLOSED: a DB error returns `false` (assume claimed), because the
+/// cost of a wrong "unclaimed" is a claimed box reopening its provisioning
+/// surface to the LAN, while the cost of a wrong "claimed" is only a delayed
+/// setup screen. `paired_device_count().unwrap_or(0)` — which every door used
+/// to call — failed the opposite way: a transient blip read as "nobody has
+/// paired, open everything." (Setup-runtime audit, 2026-08-19.)
+pub async fn is_unclaimed(pool: &PgPool) -> bool {
+    matches!(try_paired_device_count(pool).await, Ok(0))
 }
 
 pub(crate) fn hash_token(token: &str) -> String {
@@ -279,14 +296,53 @@ pub async fn current_standing(pool: &PgPool) -> crate::Result<Option<MintedToken
     }
 }
 
-/// Return the current standing code (minting one if none is valid). Used by the
-/// CLI and at rotator startup so a fresh box always has a code to show.
-/// (Expired standing rows are pruned by `maintenance::sweeper`.)
+/// Return the current standing code (minting one if none is valid). Used during
+/// SETUP (unclaimed) — the rotator keeps one fresh so the panel and the BLE
+/// `0x85` fetch always have a valid code, and it is multi-use so a device can
+/// pair with it. Callers on a CLAIMED box must not use this: see `cli_pair_code`
+/// and `expire_standing_codes` for why the standing code does not outlive claim.
 pub async fn ensure_standing(pool: &PgPool) -> crate::Result<MintedToken> {
     if let Some(m) = current_standing(pool).await? {
         return Ok(m);
     }
     mint_standing_code(pool).await
+}
+
+/// Expire every live standing code, immediately.
+///
+/// Called at CLAIM. The standing code is the one setup surface that used to
+/// outlive claim — an always-live, multi-use, 6-digit code is a permanent
+/// brute-forceable pairing password, and every other setup surface (BLE, the
+/// phrase, the AP) shuts off the moment the box has an owner. This makes the
+/// code do the same. Post-claim device adds mint a fresh ONE-TIME code on
+/// demand (`cli_pair_code`). Sets `expires_at` rather than touching `status`, so
+/// `current_standing`'s `expires_at > now()` filter drops them at once and the
+/// sweeper reaps the rows. (Setup-runtime audit, 2026-08-19.)
+pub async fn expire_standing_codes(pool: &PgPool) -> crate::Result<u64> {
+    let r = sqlx::query(
+        "UPDATE app_pair_token SET expires_at = now() \
+         WHERE kind = 'standing' AND expires_at > now()",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::Error::Database(format!("expire standing codes: {e}")))?;
+    Ok(r.rows_affected())
+}
+
+/// The pair code the CLI (`virtues pair`, `device add`) and the init handoff
+/// should show.
+///
+/// UNCLAIMED → the standing setup code (multi-use, also what the BLE flow hands
+/// over). CLAIMED → a FRESH ONE-TIME code (kind defaults to `oneoff`, consumed
+/// on first use, 30-min TTL). This is the "mint as needed, not everlasting"
+/// rule: after the box has an owner, adding a device produces a code that dies
+/// on use, and the always-live standing code is gone.
+pub async fn cli_pair_code(pool: &PgPool) -> crate::Result<MintedToken> {
+    if is_unclaimed(pool).await {
+        ensure_standing(pool).await
+    } else {
+        mint_pair_token(pool, None, None).await
+    }
 }
 
 /// Thin wrapper: the current standing code as a raw string, minting if needed.
@@ -331,9 +387,9 @@ pub async fn ensure_review_code(pool: &PgPool) -> crate::Result<Option<String>> 
         return Ok(None);
     }
 
-    // Enforce the shape the mobile pairing screen can actually accept: its
+    // Enforce the shape the app's pairing screen can actually accept: its
     // input is `inputmode="numeric"` with `maxlength="7"` and a 6-digit check
-    // (src-tauri/ui/mobile-pair.html). A longer or non-numeric code would be
+    // (src-tauri/ui/connect.html). A longer or non-numeric code would be
     // silently untypeable there — better to refuse to start the code than to
     // hand a reviewer something that cannot be entered.
     if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
@@ -786,36 +842,36 @@ pub async fn consume_handler(
             .into_response();
     }
 
-    // Per-IP rate limit: 10 attempts per 30-minute window. Defends the 6-char
-    // code space against LAN enumeration. We key on the proxy-appended
-    // (right-most) XFF entry so a client can't earn a fresh budget by spoofing
-    // the header. A request with NO XFF didn't transit our proxy (direct
-    // loopback / dev) and isn't remotely reachable, so it's exempt rather than
-    // sharing one bucket with every other header-less caller.
-    // Rate-limit key: the forwarding header when we sat behind a proxy,
-    // otherwise the actual socket peer.
+    // Per-IP rate limit: 10 attempts per 30-minute window, defending the 6-digit
+    // code space against LAN enumeration.
     //
-    // Header-only was the bug, and it disabled the limiter on every real box.
-    // A stock appliance has NO reverse proxy, so nothing carries
-    // `X-Forwarded-For` — `rate_limit_ip` returned `None` for every caller and
-    // the limiter never ran. Meanwhile the server binds `[::]`, so the LAN can
-    // reach it directly. The comment justifying the exemption ("only reachable
-    // by something already on the box") described the loopback case and was
-    // applied to everyone.
+    // KEY ON THE SOCKET PEER, not the header. A stock box has no reverse proxy
+    // (the app answers `:8000` directly), so any `X-Forwarded-For` is entirely
+    // client-supplied — trusting it let a LAN attacker mint a fresh budget per
+    // request and brute-force the code at full speed, then enroll a PERMANENT
+    // allowlisted device reachable from anywhere via the relay. `rate_limit_ip`
+    // now returns the header only when `VIRTUES_TRUSTED_PROXY` is set (the cloud
+    // deployment behind Caddy); on a box it returns None and we fall to the real
+    // socket peer, bucketed to a /64 for IPv6 (the box binds `[::]`, and one LAN
+    // host owns a whole /64 it could otherwise rotate within).
     //
-    // That left a 6-digit code — 10^6, and the standing code is multi-use and
-    // always present for the panel — brute-forceable at full speed from the
-    // home or guest wifi. A successful consume enrolls a PERMANENT allowlisted
-    // device that then reaches the box from anywhere via the relay.
-    //
-    // Loopback stays exempt, because that is the one case the original comment
-    // was actually right about: `middleware/auth.rs` already treats an
-    // unforwarded loopback request as the owner, so a limit there protects
-    // nothing and would throttle the box's own setup flow.
+    // Loopback stays exempt: `middleware/auth.rs` already treats an unforwarded
+    // loopback request as the owner, so a limit there protects nothing and would
+    // throttle the box's own BLE-driven setup consume.
     let rl_key = rate_limit_ip(&headers).or_else(|| {
         peer.as_ref().and_then(|axum::extract::ConnectInfo(addr)| {
             let ip = crate::peer_addr::canonical_peer(addr);
-            (!ip.is_loopback()).then(|| ip.to_string())
+            // Bucket an IPv6 peer by its /64: the box binds `[::]`, and a single
+            // LAN host owns a whole /64 it can rotate source addresses within,
+            // which would otherwise each get a fresh budget. IPv4 is keyed whole.
+            let key = match ip {
+                std::net::IpAddr::V6(v6) => {
+                    let s = v6.segments();
+                    format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+                }
+                std::net::IpAddr::V4(v4) => v4.to_string(),
+            };
+            (!ip.is_loopback()).then_some(key)
         })
     });
     if let Some(ip_key) = rl_key {
@@ -1031,6 +1087,15 @@ pub async fn consume_handler(
     // undo a pairing the device already believes in.
     if let Err(e) = crate::api::setup_phrase::freeze_current(&pool).await {
         tracing::error!(error = %e, "pair: could not freeze the setup phrase — it is still on the panel");
+    }
+
+    // Same moment, same reason: the standing pair code does not outlive claim.
+    // The box now has an owner, so the always-live multi-use code is retired;
+    // further devices are added with a one-time code minted on demand. The
+    // rotator also stops once claimed, but expiring here kills the current one
+    // promptly rather than waiting out its ~20-min TTL.
+    if let Err(e) = expire_standing_codes(&pool).await {
+        tracing::warn!(error = %e, "pair: could not expire the standing code after claim");
     }
 
     // Assemble the per-device action fan-out so the device knows which

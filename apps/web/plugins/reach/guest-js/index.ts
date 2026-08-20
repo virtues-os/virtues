@@ -88,31 +88,6 @@ export async function provisionJoin(
   return await invoke<ProvisionJoinResult>('plugin:reach|provision_join', { server, ssid, psk })
 }
 
-// ─── Programmatic wifi join (iOS: NEHotspotConfiguration) ────────────────────
-
-export interface WifiJoinResult {
-  joined: boolean
-  /** True when the phone was already on a matching network. */
-  already?: boolean
-  /** iOS's own words on failure — user-meaningful, show as-is. */
-  error?: string
-}
-
-/**
- * Join a network whose SSID starts with `ssidPrefix` (e.g. `Virtues-`),
- * natively — one system dialog instead of a trip to Settings, a camera
- * banner, and a captive sheet. iOS only; rejects elsewhere, and the caller
- * falls back to instructing a manual join.
- */
-export async function wifiJoin(ssidPrefix: string, passphrase: string): Promise<WifiJoinResult> {
-  return await invoke<WifiJoinResult>('plugin:reach|wifi_join', { ssidPrefix, passphrase })
-}
-
-/** Remove any setup-network config this app added. Safe to always call. */
-export async function wifiForget(ssidPrefix: string): Promise<void> {
-  await invoke('plugin:reach|wifi_forget', { ssidPrefix })
-}
-
 // ─── Improv BLE setup (the primary path) ─────────────────────────────────────
 
 export interface ImprovBox {
@@ -136,6 +111,19 @@ export interface ImprovNetwork {
   secured: boolean
 }
 
+/**
+ * Open a session with an unclaimed box by typing the four words its panel
+ * shows (RPC 0x86). `gated: false` means old firmware with no phrase gate —
+ * the session is simply open.
+ */
+export async function improvClaim(
+  id: string,
+  phrase: string,
+  label?: string,
+): Promise<{ ok: boolean; gated?: boolean; error?: string }> {
+  return await invoke('plugin:reach|improv_claim', { id, phrase, label })
+}
+
 /** Ask THAT BOX what wifi it can see, over BLE. */
 export async function improvWifiScan(
   id: string,
@@ -155,6 +143,41 @@ export async function improvProvision(
   identity?: string,
 ): Promise<{ ok: boolean; url?: string; error?: string }> {
   return await invoke('plugin:reach|improv_provision', { id, ssid, password, identity })
+}
+
+/**
+ * Fetch the box's account-link code over BLE (RPC 0x84). `code: null` means
+ * the box has no link in flight — already linked, or no internet to start one.
+ */
+export async function improvLinkCode(
+  id: string,
+): Promise<{ ok: boolean; code?: string | null; url?: string; error?: string }> {
+  return await invoke('plugin:reach|improv_link_code', { id })
+}
+
+/**
+ * Fetch the box's standing pair code over BLE (RPC 0x85; first device only).
+ * `code: null` = nothing to give, or firmware that predates the RPC — either
+ * way, fall back to typing the code by hand.
+ */
+export async function improvPairCode(
+  id: string,
+): Promise<{ ok: boolean; code?: string | null; error?: string }> {
+  return await invoke('plugin:reach|improv_pair_code', { id })
+}
+
+/**
+ * Redeem a pair code over BLE (RPC 0x83). Resolves with the consume response
+ * verbatim, as a string — parse it with the same code the LAN path uses.
+ */
+export async function improvPair(
+  id: string,
+  code: string,
+  label?: string,
+  /** This device's iroh EndpointId — the box allowlists it at enrollment. */
+  endpointId?: string,
+): Promise<{ ok: boolean; response?: string; error?: string }> {
+  return await invoke('plugin:reach|improv_pair', { id, code, label, endpointId })
 }
 
 /** Drop the BLE connection when leaving setup. Always safe. */

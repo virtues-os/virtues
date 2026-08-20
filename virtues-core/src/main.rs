@@ -182,12 +182,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
         println!("  {}  {}", console::style("✓").green(), "Database ready");
 
-        // Print the handoff with the box's UNIVERSAL standing code — the same
-        // rotating code the panel shows and `virtues pair` prints. The fragment
-        // form (`/pair#t=…`) never leaks the code to server logs or referers.
-        // Opening it lands the browser in the setup wizard, which owns
-        // everything that used to be prompted here.
-        match virtues::api::pair::ensure_standing(db.pool()).await {
+        // Print the handoff pair code. On a fresh box (install time) this is the
+        // standing setup code; if the box is already claimed it is a one-time
+        // code — see `api::pair::cli_pair_code`.
+        match virtues::api::pair::cli_pair_code(db.pool()).await {
             Ok(minted) => print_link_output(&minted),
             Err(e) => {
                 println!();
@@ -284,18 +282,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(Commands::Pair { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
-        // Show the box's UNIVERSAL standing code — the same rotating code the
-        // panel displays — rather than minting a throwaway one. It's multi-use
-        // within its window and rotates (~20 min), so any device can pair with
-        // it. (The rotator keeps it fresh; we mint on the spot if the server
-        // hasn't run yet on this box.)
-        match virtues::api::pair::ensure_standing(db.pool()).await {
+        // On an UNCLAIMED box this shows the standing setup code (multi-use,
+        // what the panel and BLE flow use). On a CLAIMED box it mints a FRESH
+        // ONE-TIME code, consumed on use — the always-live standing code is
+        // retired at claim. See `api::pair::cli_pair_code`.
+        match virtues::api::pair::cli_pair_code(db.pool()).await {
             Ok(minted) => {
                 print_link_output(&minted);
                 if !*no_wait {
                     use virtues::cli::link::wait_for_new_device;
-                    println!("  Waiting for a device to connect… (Ctrl+C to exit;");
-                    println!("  the code stays valid while shown and rotates automatically)");
+                    println!("  Waiting for a device to connect… (Ctrl+C to exit)");
                     match wait_for_new_device(db.pool()).await {
                         Ok(()) => {
                             println!();
@@ -381,7 +377,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
             },
-            DeviceCommands::Add => match virtues::api::pair::ensure_standing(pool).await {
+            DeviceCommands::Add => match virtues::api::pair::cli_pair_code(pool).await {
                 Ok(minted) => {
                     print_link_output(&minted);
                     return Ok(());

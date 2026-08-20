@@ -34,7 +34,7 @@ pub enum DeviceCommands {
         id: String,
     },
 
-    /// Print a one-time pair code to bring a new device onto the allowlist.
+    /// Print the pair code to bring a new device onto the allowlist.
     /// Alias for `virtues pair` scoped to the allowlist framing.
     Add,
 }
@@ -56,20 +56,19 @@ pub enum Commands {
     #[command(hide = true)]
     Init,
 
-    /// Pair a device with your box: print a one-time code (+ URL/QR) to enter
-    /// in the desktop app or open in any browser, then wait until it's used.
+    /// Pair a device with your box: print the standing code to type into the
+    /// app, then wait until it's used.
     ///
-    /// Mints a fresh pair token in the DB; no `.env` touching, no prompts.
-    /// Idempotent — run as often as needed. THE one human verb for connecting
-    /// a device to the box (docs/onboarding.md). `login` and `link` survive as
-    /// aliases (this used to be `virtues login`).
-    ///
-    /// Honors `ENVIRONMENT=dev` to print `http://localhost:<VIRTUES_WEB_PORT>/...`
-    /// (vite dev server) instead of `http://localhost:8000/...` (the production
-    /// HTTP server on the box).
+    /// Prints the box's multi-use standing code (minting one if none is live),
+    /// NOT a fresh one-time token, and NOT a URL or QR — a browser cannot pair
+    /// (it holds no iroh key) and the desktop app has no camera, so the code is
+    /// typed by hand. No `.env` touching, no prompts. Idempotent — run as often
+    /// as needed. THE one human verb for connecting a device to the box
+    /// (docs/onboarding.md). `login` and `link` survive as aliases (this used
+    /// to be `virtues login`).
     #[command(alias = "login", alias = "link")]
     Pair {
-        /// Print the code/URL and exit immediately instead of waiting for it
+        /// Print the code and exit immediately instead of waiting for it
         /// to be used (scripts, copy-paste workflows).
         #[arg(long)]
         no_wait: bool,
