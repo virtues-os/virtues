@@ -11,9 +11,6 @@ import type {
 	WikiPlaceApi,
 	WikiOrganizationApi,
 	WikiDayApi,
-	WikiActApi,
-	WikiChapterApi,
-	WikiTelosApi,
 	TemporalEventApi,
 } from "./api";
 
@@ -21,9 +18,6 @@ import type { PersonPage } from "./types/person";
 import type { PlacePage, PlaceType } from "./types/place";
 import type { OrganizationPage, OrganizationType } from "./types/organization";
 import type { DayPage, DayEvent, LinkedEntities, LinkedTemporal } from "./types/day";
-import type { ActPage } from "./types/act";
-import type { ChapterPage } from "./types/chapter";
-import type { TelosPage } from "./types/telos";
 import { parseDateSlug, formatLongDate } from "$lib/utils/dateUtils";
 
 // ============================================================================
@@ -46,11 +40,12 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 	return {
 		type: "person",
 		id: api.id,
-				title: api.canonical_name,
+				title: api.name,
 		cover: api.picture ?? undefined,
 
 		// Person-specific fields
 		nickname: api.nickname ?? undefined,
+		aliases: api.aliases ?? [],
 		relationship: api.relationship_category ?? "Contact",
 		emails: api.emails,
 		phones: api.phones,
@@ -64,6 +59,9 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 
 		// Content
 		content: api.content ?? "",
+		article: api.article ?? undefined,
+		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
+		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Metadata (empty for now - will be computed from entity_edges)
 		citations: [],
@@ -103,12 +101,15 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 		address: api.address ?? undefined,
 		coordinates:
 			api.latitude && api.longitude ? { lat: api.latitude, lng: api.longitude } : undefined,
-		visitCount: api.visit_count ?? 0,
-		firstVisit: api.first_visit ? new Date(api.first_visit) : undefined,
-		lastVisit: api.last_visit ? new Date(api.last_visit) : undefined,
+		visitCount: api.seen_count ?? 0,
+		firstVisit: api.first_seen ? new Date(api.first_seen) : undefined,
+		lastVisit: api.last_seen ? new Date(api.last_seen) : undefined,
 
 		// Content
 		content: api.content ?? "",
+		article: api.article ?? undefined,
+		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
+		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Connections (populated from entity_edges later)
 		associatedPeople: [],
@@ -147,7 +148,7 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 	return {
 		type: "organization",
 		id: api.id,
-				title: api.canonical_name,
+				title: api.name,
 		cover: api.cover_image ?? undefined,
 
 		// Org-specific fields
@@ -161,9 +162,13 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 				}
 			: undefined,
 		role: api.role_title ?? undefined,
+		aliases: api.aliases ?? [],
 
 		// Content
 		content: api.content ?? "",
+		article: api.article ?? undefined,
+		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
+		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Connections (populated from entity_edges later)
 		keyContacts: [],
@@ -205,16 +210,7 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		linkedEntities: emptyLinkedEntities(),
 		linkedTemporal: emptyLinkedTemporal(),
 		events: [],
-		autobiography: api.autobiography ?? "",
-		autobiographySections: api.autobiography_sections
-			? api.autobiography_sections.map(s => ({
-				id: s.id,
-				heading: s.heading,
-				content: s.content,
-				authoredBy: s.authored_by as "ai" | "human",
-				lastEditedAt: new Date(s.last_edited_at),
-			}))
-			: undefined,
+		autobiography: api.article ?? "",
 		epigraph: api.epigraph ?? undefined,
 		dataQuality: api.data_quality ?? undefined,
 		newEntityCount: api.new_entity_count ?? 0,
@@ -233,7 +229,8 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		citations: [],
 		linkedPages: [],
 		tags: [],
-		content: api.autobiography ?? "", // DayPage uses autobiography as main content
+		// The day's prose: the article page (via wiki_day_prose) with the
+		content: api.article ?? "",
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
 		lastEditedBy: (api.last_edited_by as "ai" | "human") ?? "ai",
@@ -284,109 +281,13 @@ export function apiToDayEvent(api: TemporalEventApi): DayEvent {
 // Act Converter
 // ============================================================================
 
-export function apiToActPage(api: WikiActApi): ActPage {
-	return {
-		type: "act",
-		id: api.id,
-				title: api.title,
-		subtitle: api.subtitle ?? undefined,
-		cover: api.cover_image ?? undefined,
-
-		// Act-specific fields
-		period: {
-			start: new Date(api.start_date),
-			end: api.end_date ? new Date(api.end_date) : undefined,
-		},
-		location: api.location ?? undefined,
-		themes: api.themes ?? [],
-
-		// Content
-		content: api.content ?? api.description ?? "",
-
-		// Connections (populated from queries later)
-		telos: undefined,
-		chapters: [],
-		keyPeople: [],
-		keyPlaces: [],
-
-		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
-		createdAt: new Date(api.created_at),
-		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
-	};
-}
 
 // ============================================================================
 // Chapter Converter
 // ============================================================================
 
-export function apiToChapterPage(api: WikiChapterApi): ChapterPage {
-	return {
-		type: "chapter",
-		id: api.id,
-				title: api.title,
-		subtitle: api.subtitle ?? undefined,
-		cover: api.cover_image ?? undefined,
-
-		// Chapter-specific fields
-		period: {
-			start: new Date(api.start_date),
-			end: api.end_date ? new Date(api.end_date) : undefined,
-		},
-		arc: "stable", // Default arc, could be stored in metadata
-
-		// Content
-		content: api.content ?? api.description ?? "",
-
-		// Connections (populated from queries later)
-		act: undefined,
-		keyPeople: [],
-		keyPlaces: [],
-		notableDays: [],
-		lessons: [],
-
-		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
-		createdAt: new Date(api.created_at),
-		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
-	};
-}
 
 // ============================================================================
 // Telos Converter
 // ============================================================================
 
-export function apiToTelosPage(api: WikiTelosApi): TelosPage {
-	return {
-		type: "telos",
-		id: api.id,
-				title: api.title,
-		cover: api.cover_image ?? undefined,
-
-		// Telos-specific fields
-		coreValues: [], // Could be parsed from content or stored in metadata
-		visionStatement: api.description ?? "",
-
-		// Content
-		content: api.content ?? api.description ?? "",
-
-		// Connections (populated from queries later)
-		acts: [],
-		guidingIdeas: [],
-		influentialPeople: [],
-
-		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
-		createdAt: new Date(api.created_at),
-		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
-	};
-}

@@ -29,13 +29,28 @@
 
 # <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h1-virtues-dark.svg"><img alt="Virtues" src=".github/images/headings/h1-virtues-light.svg" height="40"></picture>
 
-A private intelligence that connects your digital life — health, finance, location, conversations — into a coherent, queryable picture of who you are. Self-hosted or cloud.
+**A computer for your own life.** It sits in your home, collects what you
+already generate — health, location, money, calendar, mail, messages, what you
+record and read — and turns it into a record you can actually ask questions of.
+One household, one box, no account on somebody else's server.
 
-> **Status**: v1 — single-user, **pair-only auth** (no passwords, no email, no
-> magic links). The only way in is to walk to the box. LAN-first by default;
-> the v0.2 desktop daemon (`virtues-client`, Linux preview) pairs over
-> WireGuard so any browser on a paired machine sees the box at
-> `http://localhost:8000`. Expect rough edges.
+Two ways to run it. **The appliance** is a small board we flash and ship, with a
+screen on the front; you plug it in and pair a phone to it. **Do it yourself** is
+the same software on your own Linux machine, installed with one command. The
+appliance is the product; the DIY path is how it stays honest — it is the same
+binary, and you can always leave with your data.
+
+> **Status: 0.1.0, and early in the way that word should mean.** Exactly one box
+> exists and it was built by hand. The appliance path — flashing, first boot,
+> pairing over Bluetooth, the case button — has been walked end to end once, on
+> that board. No stable release is published yet, so the install command below
+> does not work today; see [Installing](#install-linux-home-server).
+>
+> Auth is **pair-only**: no passwords, no email, no magic links. The only way to
+> get in the first time is to be standing next to it. A paired device then
+> reaches the box from anywhere by its iroh key.
+>
+> Expect rough edges, and expect us to say where they are.
 
 [![License: BUSL-1.1 + MIT](https://img.shields.io/badge/License-BUSL--1.1%20%2B%20MIT-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/sSQKzDWqgv)
@@ -50,7 +65,24 @@ Virtues replaces a fragmented app ecosystem with a single, unified system:
 - **Write** an autobiography that maintains itself — daily summaries, narrative arcs, temporal navigation
 - **Query** your life with an AI that has real context — not a chatbot guessing, but an agent with access to your actual data via SQL, web search, and code execution
 
-All of it runs on a single Rust server with a Postgres database and S3 storage. Your data stays on your infrastructure.
+All of it runs as a single Rust binary against a Postgres database on the box's
+own disk.
+
+**Where your data goes, stated plainly.** It is stored on the box and it stays
+there. Search runs on the box — embeddings and reranking never leave it. GPS is
+reduced to distance and pace before anything is sent anywhere.
+
+The exception is the assistant, and it is not a leak, it is the feature: asking a
+question, or letting the box write your day, sends the relevant part of your
+record to a model provider — and a voice recording is sent as **audio**, not as a
+transcript, to be transcribed. Point Virtues at a local model and that stops too;
+the trade is quality and speed, and it is yours to make.
+
+We will not tell you this is private by construction. The relay genuinely cannot
+read your data — that is physics. The inference boundary rests on a contract with
+a provider, which is a different kind of promise, and
+[the privacy model](docs/privacy-model.md#the-inference-boundary-where-your-data-does-leave)
+says exactly what crosses it and what never does.
 
 <a id="architecture"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-architecture-dark.svg"><img alt="Architecture" src=".github/images/headings/h2-architecture-light.svg" height="28"></picture>
@@ -82,7 +114,7 @@ All of it runs on a single Rust server with a Postgres database and S3 storage. 
 
 **Core** handles data ingestion, entity resolution, the wiki, pages, chat, and serves the web UI. **virtues-api** is a sidecar proxy that mediates all external API calls — LLM requests, web search, bank connections — with budget tracking and key isolation. Core never touches API keys directly.
 
-**Remote access** is a blind relay: your box dials out and holds a connection open, so any browser can reach it from anywhere with no port opened at home — and the relay forwards only sealed, end-to-end-encrypted bytes it has no key to read. See **[Privacy &amp; security model](docs/privacy-model.md)** (who holds which secret, and who deliberately doesn't) and the [visual walkthrough](docs/relay-walkthrough.html).
+**Remote access** has no public surface at all. The box is an iroh endpoint whose Ed25519 key *is* its identity, so a paired device reaches it by key — LAN-direct, hole-punched, or bounced off a blind relay — with no inbound port opened at home and no hostname anyone can type. The relay forwards only sealed, end-to-end-encrypted bytes it has no key to read. See **[Privacy &amp; security model](docs/privacy-model.md)** (who holds which secret, and who deliberately doesn't) and the [visual walkthrough](docs/relay-walkthrough.html).
 
 <a id="data-sources"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-data-sources-dark.svg"><img alt="Data Sources" src=".github/images/headings/h2-data-sources-light.svg" height="28"></picture>
@@ -97,7 +129,7 @@ All of it runs on a single Rust server with a Postgres database and S3 storage. 
 | iOS | HealthKit, Location, Microphone, Contacts, FinanceKit, EventKit | Device |
 | macOS | Apps, Browser, iMessage | Device |
 
-Extensible: add a new source as an action in `actions/<name>/` with a `manifest.toml` — see [`actions/AUTHORING.md`](actions/AUTHORING.md).
+Extensible: add a new source as an applet in `applets/<name>/` with a `manifest.toml` — see [`applets/AUTHORING.md`](applets/AUTHORING.md).
 
 <a id="overview"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-overview-dark.svg"><img alt="Overview" src=".github/images/headings/h2-overview-light.svg" height="28"></picture>
@@ -130,7 +162,7 @@ Extensible: add a new source as an action in `actions/<name>/` with a `manifest.
 |---|---|
 | **Host OS** | Debian 13+, Ubuntu 24.04 LTS+, or Fedora 40+. Debian 13 and Ubuntu 26.04+ ship Postgres 18 natively; on Ubuntu 24.04/25.04 the installer adds the [PGDG repo](https://www.postgresql.org/download/linux/) automatically. x86_64 or aarch64. |
 | **Hardware** | 8 GB RAM, an SSD. GPU optional. |
-| **Network** | Standard residential ISP. v1 is LAN-first. The web UI is reachable from a browser on the box itself (Chromium on the Jetson → `http://localhost:8000`) or from any machine running the v0.2 desktop daemon (see [Connect from another machine](#connect-from-another-machine-v02-preview) below). Linux client only in v0.2; macOS lands in v0.2.2. |
+| **Network** | Standard residential ISP — outbound 443 only, no port forwarding, no inbound rule. LAN-first: the web UI is reachable from a browser on the box itself (Chromium on the box → `http://localhost:8000`) or anywhere else from a paired client — the mobile app, or the desktop helper at `http://localhost:7117` (see [Connect from another machine](#connect-from-another-machine-v02-preview) below). |
 | **Mac / Windows** | Not supported as host — Virtues needs root, native Postgres, and full SSD ownership. Use a Linux box. |
 
 <a id="install-in-one-command"></a>
@@ -140,24 +172,38 @@ Extensible: add a new source as an action in `actions/<name>/` with a `manifest.
 curl -sSL https://virtues.com/sh | sudo sh
 ```
 
+> **This does not work yet.** `virtues.com/sh` serves the newest *stable*
+> release, and there is not one: the version line was reset to 0.1.0 before
+> launch and the older tags were withdrawn. Until `v0.1.0` is cut, install the
+> prerelease channel instead — same installer, same steps, cut from the branch
+> we are actually testing:
+>
+> ```bash
+> curl -sSL https://virtues.com/sh-pre | sudo sh
+> ```
+>
+> On the appliance you will not run either: the boot medium arrives flashed, and
+> first boot mints the box its own identity.
+
 That:
 - Downloads the latest `virtues` binary into `/usr/local/bin/`
 - Installs Postgres 18 + pgvector, Avahi (mDNS), and the rest of the system deps via your package manager
 - Configures `/etc/avahi/services/virtues.service` so the box advertises itself on the LAN as `virtues.local`
-- Mints the box's WG identity (its SPKI fingerprint) and enables the `virtues.service` systemd unit
-- Prints a one-time URL — open it in Chromium on the Jetson to land in a logged-in session
+- Enables the `virtues.service` systemd unit (the box mints and keeps its own iroh secret — that key *is* its identity, and nothing external issues it)
+- Prints a **6-digit pair code** to type into the app
 
 ```bash
-sudo systemctl enable --now virtues
-sudo -u virtues virtues link   # prints the one-time login URL for the box's browser
+sudo -u virtues virtues pair   # prints the code again, any time
 ```
 
-After that you're in the web UI on `http://localhost:8000` (run Chromium on the Jetson). Connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](docs/auth-model.md) under Settings).
+Enter that code in the desktop or mobile app ([virtues.com/downloads](https://virtues.com/downloads)). **A browser cannot pair** — authentication is a held Ed25519 key and a browser tab has none, so `/pair` in a browser only explains itself. The one exception is a browser running *on the box*, which is trusted as the loopback console and lands straight in the UI at `http://localhost:8000`.
+
+Then connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](docs/auth-model.md) under Settings).
 
 | Command | What it does |
 |---|---|
-| `virtues link` | Print a one-time URL to log in to the web UI |
-| `virtues sudo` | Approve a pending sensitive action from a paired browser |
+| `virtues pair` | Print the 6-digit code to connect a device (`login`/`link` are aliases) |
+| `virtues sudo` | Approve a pending sensitive action — proves physical access to the box |
 | `virtues status` | Health dashboard (identity / inference / subscription / devices) |
 | `virtues status --json` | Machine-readable status snapshot for support tickets |
 | `virtues subscribe` | Connect this box to your Virtues subscription via Stripe |
@@ -173,32 +219,43 @@ restore from backup, BYO key reset, and more.
 <a id="connect-from-another-machine-v02-preview"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-connect-from-another-machine-v0-2-preview-dark.svg"><img alt="Connect from another machine (v0.2 preview)" src=".github/images/headings/h2-connect-from-another-machine-v0-2-preview-light.svg" height="28"></picture>
 
-Reach your box from **any browser, anywhere** — no app to install, no tunnel, no
-port forwarding — at its relay URL:
+Reach your box from anywhere — no tunnel, no port forwarding, no DNS name.
+**There is no URL that reaches your box.** Reaching it requires holding a paired
+Ed25519 key, not knowing an address.
 
-```
-https://<boxhash>.virtues.ch
-```
-
-Your box **dials out** to a blind relay and holds the connection open, so a
-browser hitting that URL is spliced through to the box over end-to-end TLS the
-relay can't read. It works behind CGNAT, coworking/café wifi, and IPv6-only home
-ISPs — anywhere outbound 443 reaches, which is everywhere. The relay sees only
-the destination name and sealed bytes; it has no key to decrypt your traffic. See
+Your box is an **iroh endpoint**, and its Ed25519 `EndpointId` *is* its identity —
+mutual-key auth, no certificate authority. A paired device dials that identity
+and iroh finds a path: direct on your LAN, hole-punched across NATs, or bounced
+off our blind relay when neither works. The box holds an outbound connection to
+the relay, so nothing inbound is ever opened at home. It works behind CGNAT,
+coworking/café wifi, and IPv6-only ISPs — anywhere outbound 443 reaches, which is
+everywhere. The relay moves sealed bytes it has no key to read. See
 **[Privacy &amp; security model](docs/privacy-model.md)** and the
 [visual walkthrough](docs/relay-walkthrough.html).
 
-The box is provisioned with its relay URL automatically once it's linked to a
-subscription (atlas mints a per-box name + token; the box dials the relay and
-registers). On your home network you can still reach the box directly, no relay.
+Pairing is **local-first**: you walk to the box, run `virtues pair` (or
+`virtues device add`), and it prints a one-time code that puts the new device's
+key on the allowlist. The box generates and keeps its own iroh secret, so its
+identity is stable across restarts and nothing external mints it.
+
+Access is enforced in two independent layers. iroh applies an `AllowPolicy` over
+paired `EndpointId`s at the transport, so an unpaired key is refused *before HTTP
+exists*; the app-layer bearer/cookie remains the authorization keystone on top.
+Revocation is real — `virtues device rm <id>` de-allowlists a key and the next
+dial is refused.
+
+Day to day you don't type any of this. The mobile app and the desktop helper
+(`virtues-reach-client`, which serves the box at `http://localhost:7117`) hold
+the key and do the dialing.
 
 **Honest scope today:**
 
-- The box currently serves a **self-signed** cert, so browsers show a one-time
-  warning — per-box browser-trusted (ACME) certificates are the next step.
-- The relay is **single-region and IPv4-only** for now (IPv6 + multi-region later).
-- This replaces the earlier WireGuard desktop-tunnel preview, which has been
-  removed.
+- Reach needs a **paired client** that can hold a key — the mobile app or the
+  desktop helper. An arbitrary browser on an unpaired machine cannot connect.
+- On your home network the box is reachable directly on `:8000` without the
+  relay.
+- This replaces both the earlier WireGuard desktop tunnel and the per-box
+  `*.virtues.ch` hostname, which have been removed.
 
 <a id="development"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-development-dark.svg"><img alt="Development" src=".github/images/headings/h2-development-light.svg" height="28"></picture>
@@ -267,28 +324,32 @@ virtues/
 │   ├── src/
 │   │   ├── agent/           # AI agent loop, prompts, tool execution
 │   │   ├── api/             # HTTP route handlers
-│   │   ├── action_runner/   # Spawns & supervises action subprocesses
+│   │   ├── applet_runner/   # Spawns & supervises applet subprocesses
 │   │   ├── entity_resolution/  # People, places extraction from raw data
 │   │   ├── dayline/         # Day-page scoring + autobiography
 │   │   ├── storage/         # S3 and local filesystem abstraction
 │   │   └── tools/           # AI tool implementations (SQL, search, code, pages)
 │   └── migrations/          # Postgres schema migrations
-├── actions/                 # Extension system: ingestion + behavior as subprocesses (functions/views)
+├── applets/                 # Extension system: ingestion + behavior as subprocesses (functions/views)
 ├── crates/                  # Shared Rust libraries
-│   ├── virtues-helpers/     # Shared helpers for action authors (auth, db, crypto, wire contract)
-│   ├── virtues-wg/          # WireGuard engine (privileged daemon)
+│   ├── virtues-helpers/     # Shared helpers for applet authors (auth, db, crypto, wire contract)
+│   ├── virtues-iroh/        # iroh transport: endpoint, AllowPolicy, serve/dial
+│   ├── virtues-iroh-ffi/    # C ABI over virtues-iroh, for the mobile clients
+│   ├── virtues-reach-client/# Reach proxy: holds the key, serves the box on localhost
+│   ├── virtues-qnnd/        # Dragon NPU daemon (QNN, on-device embedding + rerank)
 │   └── virtues-registry/    # Static config: models, sources, tools, personas, ontologies
 ├── services/                # Backend Rust services (the metered cloud edge)
 │   ├── virtues-api/         # API proxy: LLM/web/bank/oauth gateway + per-user budgets
-│   └── atlas/               # Identity, billing (Stripe), entitlement issuance
+│   └── virtues-atlas/       # Identity, billing (Stripe), entitlement issuance
 ├── apps/                    # Client applications
-│   ├── web/                 # SvelteKit web UI (static; served by the box)
-│   ├── desktop/             # virtues-client daemon: pair + WG tunnel + localhost proxy (Linux; macOS/Windows planned)
-│   ├── ios/                 # iOS companion app (Swift)
+│   ├── web/                 # SvelteKit web UI (static; served by the box) — also the Tauri iOS/desktop app
+│   ├── desktop/             # Desktop helper: pair + localhost proxy over iroh (:7117)
+│   ├── ios/                 # Vestigial xcodeproj shell; the live iOS app is the Tauri build of apps/web
 │   └── mac-source/          # macOS data source: HealthKit / EventKit / activity collector
 ├── deploy/                  # Model-fetch + sandbox scripts (cloud Docker lives under services/)
 ├── tools/                   # bootstrap.sh + virtues-installer (virtues.com/sh)
-├── docs/                    # Architecture + concept docs (flat)
+├── vendor/                  # Vendored third-party sources
+├── docs/                    # Architecture + concept docs (docs/archive/ holds superseded ones)
 └── .data/                   # Gitignored runtime state (Postgres cluster, drive files)
 ```
 
@@ -418,7 +479,7 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 
 **Drive & Trash** — Personal file storage with S3 backend. Folder hierarchy, drag-and-drop upload, breadcrumb navigation, storage quotas. Soft delete moves files to trash with restore and permanent purge options.
 
-**macOS Source Collector** — Swift LaunchAgent (`apps/mac-source/`) that streams app usage, browser history, and iMessage data from a Mac into your box. Manages Full Disk Access and Accessibility permissions. Pairs over the v0.2 desktop daemon's tunnel.
+**macOS Source Collector** — Swift LaunchAgent (`apps/mac-source/`) that streams app usage, browser history, and iMessage data from a Mac into your box. Manages Full Disk Access and Accessibility permissions. Pairs over the desktop helper's tunnel.
 
 **SSH into Your Server** — Built-in terminal for direct server access from the web UI. Developer tools include an interactive SQL console, data lake browser, task/run inspector, and sitemap viewer.
 

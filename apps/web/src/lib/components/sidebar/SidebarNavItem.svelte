@@ -2,6 +2,8 @@
 	import { page } from "$app/state";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
+	import AtlasIcon from "./AtlasIcon.svelte";
+	import { pinMenuItem } from "$lib/pins/pinAction";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { deleteChat, updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
@@ -25,6 +27,12 @@
 		/** Tooltip for the quick-add button */
 		quickAddTitle?: string;
 		/**
+		 * Fired after the row navigates. Rows that are also a door into a
+		 * sidebar mode use this to swap the rail — the navigation still
+		 * happens, so the pane lands on the section's front page.
+		 */
+		onActivate?: () => void;
+		/**
 		 * Children of an expanded collection render without an icon.
 		 *
 		 * A notebook's icon next to a notebook's name, indented under a
@@ -43,6 +51,7 @@
 		accentColor = null,
 		onQuickAdd,
 		quickAddTitle,
+		onActivate,
 		showIcon = true,
 	}: Props = $props();
 
@@ -102,6 +111,8 @@
 			label: item.label,
 			preferEmptyPane: true,
 		});
+
+		onActivate?.();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -224,6 +235,13 @@
 			});
 		}
 
+		// Every named row in the rail is somewhere you might want to keep.
+		if (item.href) {
+			items.push(
+				pinMenuItem({ url: item.href, label: item.label, icon: item.icon }),
+			);
+		}
+
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 
@@ -245,6 +263,8 @@
 	>
 		{#if showIcon && item.icon && isEmoji(item.icon)}
 			<span class="sidebar-emoji">{item.icon}</span>
+		{:else if showIcon && item.icon && item.icon.startsWith("atlas:")}
+			<AtlasIcon name={item.icon.slice(6)} />
 		{:else if showIcon && item.icon}
 			<Icon icon={item.icon} width="16" class="sidebar-icon" />
 		{/if}
@@ -269,6 +289,8 @@
 		{/if}
 		{#if showIcon && item.icon && isEmoji(item.icon)}
 			<span class="sidebar-emoji">{item.icon}</span>
+		{:else if showIcon && item.icon && item.icon.startsWith("atlas:")}
+			<AtlasIcon name={item.icon.slice(6)} />
 		{:else if showIcon && item.icon}
 			<Icon icon={item.icon} width="16" class="sidebar-icon" />
 		{/if}

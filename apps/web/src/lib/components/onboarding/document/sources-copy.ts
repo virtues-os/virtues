@@ -16,31 +16,48 @@ export interface SourceCopy {
 	/** The honest privacy line, mono receipt. */
 	receipt: string;
 	prominence: Prominence;
+	/**
+	 * Order WITHIN a prominence group, low first.
+	 *
+	 * Prominence alone was not enough: the Mac and the iPhone are both anchors,
+	 * and with nothing to separate them the list fell back to catalog order and
+	 * put the phone first. The Mac has to lead — it is the machine the person is
+	 * sitting at, it needs no OAuth, and it is the only source that can produce
+	 * something to look at before they get up.
+	 */
+	rank?: number;
 }
 
 export const PROMINENCE_ORDER: Prominence[] = ['anchor', 'prominent', 'quiet'];
 
-export const PROMINENCE_HEADING: Record<Prominence, string> = {
-	anchor: 'Start here',
-	prominent: 'The richest sources',
-	quiet: 'More of your world'
-};
-
+// THIS MAC LEADS, then the phone, then accounts.
+//
+// Google was the anchor, on the reasoning that it is the easiest to connect. It
+// is not the one that pays off first. The Mac is LOCAL: no OAuth, no round-trip
+// out of the app, no server between you and years of iMessage — and it is the
+// only source that can produce something to LOOK at while you are still sitting
+// here. Everything else makes you wait.
+//
+// The devices also carry the argument. "Read locally on your Mac, never sent to
+// Virtues" is the claim the letter just made, arriving as the first thing you
+// are asked to do rather than a footnote under an OAuth screen.
 export const SOURCE_COPY: Record<string, SourceCopy> = {
-	google: {
+	mac: {
 		prominence: 'anchor',
-		why: 'Your Gmail and Google Calendar — who you talk to and what’s on your schedule. The easiest place to start.',
-		receipt: 'read-only · stays on your box'
+		rank: 0,
+		why: 'This Mac — your iMessages, the apps you use, the sites you visit. Nothing to sign into, and years of history already on the disk.',
+		receipt: 'read locally on your Mac · never sent to Virtues'
 	},
 	ios: {
-		prominence: 'prominent',
-		why: 'Your iPhone — location, messages, calls, health, and photos.',
+		prominence: 'anchor',
+		rank: 1,
+		why: 'Your iPhone — where you go, who you call, your health, your photos. The half of your life that never touches a computer.',
 		receipt: 'read on your device · stays on your box'
 	},
-	mac: {
+	google: {
 		prominence: 'prominent',
-		why: 'Your Mac — the apps you use, the sites you visit, and your iMessages.',
-		receipt: 'read locally on your Mac · never sent to Virtues'
+		why: 'Gmail and Google Calendar — who you write to, and what your weeks actually looked like.',
+		receipt: 'read-only · stays on your box'
 	},
 	chat_import: {
 		prominence: 'prominent',

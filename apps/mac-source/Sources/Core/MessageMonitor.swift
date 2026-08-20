@@ -73,6 +73,21 @@ class MessageMonitor {
     }
     
     private func syncMessages() {
+        // Republish permissions FIRST, on every tick, before any early return.
+        //
+        // This used to live inside the `!hasFullDiskAccess` branch below, which
+        // made the record fresh only while something was broken: the moment a
+        // user granted the permission, the branch became unreachable and the
+        // record froze at its last value forever. A permission REVOKED after
+        // startup was then never noticed — the box kept being told "granted"
+        // indefinitely — and `isStale` flipped true 15 minutes into normal,
+        // healthy operation, which is what taught readers to ignore it.
+        //
+        // Before the pause check too: pausing collection is a statement about
+        // data, not about permissions, and a paused Mac still owes the box an
+        // honest answer about what it can read.
+        CollectorHealth.recordFromDaemon()
+
         // Check pause state - skip syncing when paused
         let pausePath = Config.configDir.appendingPathComponent("paused").path
         if FileManager.default.fileExists(atPath: pausePath) {
@@ -85,12 +100,6 @@ class MessageMonitor {
             if now.timeIntervalSince(lastPermissionCheck) >= permissionCheckInterval {
                 lastPermissionCheck = now
                 permissionCheckAttempts += 1
-                
-                // Republish on every re-check so the record tracks reality
-                // within one interval — including the *good* transition, so a
-                // freshly granted permission clears the warning everywhere
-                // without waiting for a restart.
-                CollectorHealth.recordFromDaemon()
 
                 if canAccessMessagesDB() {
                     print("✅ Full Disk Access detected! Starting iMessage sync...")

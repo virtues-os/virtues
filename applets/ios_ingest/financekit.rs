@@ -262,7 +262,7 @@ async fn flush_transactions(db: &PgPool, records: &[TransactionRow]) -> Result<u
     let query_str = format!(
         "INSERT INTO data_financial_transaction (
             id, account_id, transaction_id, amount, merchant_name, category, description,
-            is_pending, timestamp, source_stream_id, source_table, source_provider, metadata
+            is_pending, occurred_at, source_stream_id, source_table, source_provider, metadata
         ) VALUES {}
         ON CONFLICT (id) DO UPDATE SET
             amount = EXCLUDED.amount,

@@ -1,6 +1,47 @@
-//! Ontology registry - Normalized data schema definitions
+//! The registry of observation types, and how each takes part in the pipeline.
 //!
-//! This module defines the metadata for ontology tables (health, location, social, etc.).
+//! ## What "ontology" means here — and what it does not
+//!
+//! It is a misnomer we have kept, and it is worth being precise about because the
+//! word invites the wrong expectations. There is no concept hierarchy in this
+//! module, no relations between concepts, no inference. What an
+//! `OntologyDescriptor` actually declares is a **participation contract**: given
+//! one table of observations, how to read its time, whether to embed it for
+//! search, whether it carries prose worth extracting entities from, how it
+//! reaches a day page, which lifeline lane it plots on, and whether its presence
+//! means the owner was DOING something rather than merely being measured.
+//!
+//! The accurate vocabulary, if you are reasoning about the design rather than
+//! reading the code:
+//!
+//!   * A `data_*` table is an **observation type** — one kind of thing that can
+//!     be observed about a life. One row is one observation at one time, with
+//!     provenance back to the stream that delivered it. It is never derived from
+//!     another table (that is `wiki_*`) and never product state (that is
+//!     `app_*`). It is the only layer that can be re-collected; everything
+//!     downstream is rebuildable from it.
+//!   * A descriptor here is that type's **participation contract**.
+//!   * The thing with actual ontological commitments is the PIPELINE —
+//!     ingest → resolve → index → cite → narrate — not this table of metadata.
+//!
+//! The name is not being changed today because `ontology` appears ~340 times and,
+//! more to the point, is a stored value in `search_embeddings.ontology` — so a
+//! rename is a data migration plus a full reindex, for a word. Written down
+//! instead, so at least it means one thing.
+//!
+//! ## The contract is load-bearing, and silence is its failure mode
+//!
+//! `search/indexer.rs` decides what is searchable by iterating
+//! `registered_ontologies()`. A `data_*` table with no descriptor is therefore
+//! collected and then invisible: not searchable, absent from the lifeline, the
+//! dayline and day summaries. The collector succeeds, the rows are there, and the
+//! data never appears anywhere. That had happened to SEVEN tables before anyone
+//! noticed — including imported AI chat history, which is prose.
+//!
+//! `every_data_table_participates_or_is_exempted` now fails the build for a new
+//! one. Exemptions are named individually there, so leaving a table out is a
+//! decision rather than an oversight.
+//!
 //! The actual SQL schema lives in Core migrations.
 
 use serde::{Deserialize, Serialize};
@@ -58,6 +99,18 @@ pub struct EmbeddingConfig {
     pub author_sql: Option<&'static str>,
     /// SQL expression for timestamp (use `t.` prefix — query aliases table as `t`)
     pub timestamp_sql: &'static str,
+    /// Optional extra predicate restricting WHICH ROWS of the table this
+    /// ontology owns. Must begin with `AND` — it is spliced into the indexer's
+    /// backlog query (see `extra_where_carries_its_own_and`).
+    ///
+    /// Exists because one table can hold two kinds of document. `app_pages`
+    /// holds pages a person wrote and articles the record wrote about itself;
+    /// they want different `content_type` labels, different day-source
+    /// behaviour, and different retrieval treatment, so they are two
+    /// ontologies over one table. Without a filter here they are not two
+    /// ontologies at all — the indexer would embed every row twice, once under
+    /// each name, because `embedding_id` is keyed `{ontology}:{record}:{chunk}`.
+    pub embed_where: Option<&'static str>,
 }
 
 /// Whether an ontology produces discrete events or continuous measurement streams
@@ -111,6 +164,19 @@ pub struct OntologyDescriptor {
     pub description: &'static str,
     /// Domain grouping (e.g., "health", "location", "social")
     pub domain: &'static str,
+    /// Which lifeline lane this belongs to, if any.
+    ///
+    /// `None` means "not part of a life you would scan" — the record's own
+    /// artifacts (pages, chats, articles, extracted chunks), intent rather than
+    /// evidence (calendar), ambient conditions rather than conduct (weather),
+    /// and anything derived from other lanes (`wiki_events`, which is a
+    /// SUMMARY of the lanes and would double-count them).
+    ///
+    /// Declared per descriptor rather than derived from `domain`, because
+    /// `domain` describes which collector family the data came from and this
+    /// describes what it means to a person. They coincide today; a blocklist
+    /// over `domain` would silently admit the next domain someone adds.
+    pub lane: Option<&'static str>,
     /// Full database table name (e.g., "data_health_sleep", "chats")
     pub table_name: &'static str,
     /// Source streams that feed into this ontology
@@ -137,6 +203,174 @@ pub struct OntologyDescriptor {
     pub is_activation_signal: bool,
 }
 
+/// What a lifeline lane can plot besides "how many rows landed here".
+///
+/// A row count is an artifact of COLLECTION, not of life: 300 heart-rate
+/// samples on Tuesday against 280 on Wednesday tells you about the watch. The
+/// financial lane counting transactions says nothing about money, and the
+/// health lane counting samples says nothing about a body. A measure names the
+/// number a person would actually ask for.
+///
+/// Kept as one flat table rather than a field on all 26 descriptors, because
+/// measures are worth reading AS a table — every number the lifeline can draw,
+/// in sixty lines you can scan — and because most ontologies have none.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct LaneMeasure {
+    /// Stable id; appears in the URL, so renaming one breaks saved views.
+    pub id: &'static str,
+    pub lane: &'static str,
+    /// The single table this reads. A measure never spans tables: averaging a
+    /// heart rate together with a step count is not a number.
+    pub table: &'static str,
+    pub timestamp_column: &'static str,
+    pub label: &'static str,
+    /// Suffix for the readout. Empty when the label already says it.
+    pub unit: &'static str,
+    /// The bucket aggregate. References only `table`'s columns — it is
+    /// interpolated into SQL, so it must stay a compile-time constant.
+    pub agg: &'static str,
+    /// Rows that carry this measure at all, ANDed onto the window.
+    pub filter: Option<&'static str>,
+    pub kind: MeasureKind,
+}
+
+/// Whether merging two buckets adds their values.
+///
+/// This decides how a lane may be drawn and rescaled. Zooming out merges
+/// buckets: a `Total` legitimately grows (a month holds more steps than a day),
+/// a `Rate` must not (a month of heart rate is not a bigger heart rate). Drawn
+/// differently for the same reason — bars stand on zero and mean quantity, a
+/// band floats between its own floor and ceiling and means level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MeasureKind {
+    /// Steps, spend, messages, hours asleep.
+    Total,
+    /// Heart rate, HRV — an average, and only ever an average.
+    Rate,
+}
+
+/// Every measure the lifeline can draw.
+///
+/// `is_from_me` lives in `metadata` rather than a column, so the sent/received
+/// split reads JSONB; it is present on all 169k message rows as the text
+/// 'true'/'false'. Financial amounts follow the Plaid sign convention —
+/// POSITIVE is money leaving — which is why `spend` filters `> 0` and `income`
+/// negates. Both were checked against a real box rather than assumed.
+pub fn lane_measures() -> &'static [LaneMeasure] {
+    use MeasureKind::{Rate, Total};
+    const M: &[LaneMeasure] = &[
+        // ── health ──────────────────────────────────────────────────────────
+        LaneMeasure { id: "heart_rate", lane: "health", table: "data_health_heart_rate",
+            timestamp_column: "occurred_at", label: "heart rate", unit: "bpm",
+            agg: "avg(bpm)", filter: Some("bpm > 0"), kind: Rate },
+        LaneMeasure { id: "hrv", lane: "health", table: "data_health_hrv",
+            timestamp_column: "occurred_at", label: "HRV", unit: "ms",
+            agg: "avg(hrv_ms)", filter: Some("hrv_ms > 0"), kind: Rate },
+        LaneMeasure { id: "sleep", lane: "health", table: "data_health_sleep",
+            timestamp_column: "started_at", label: "sleep", unit: "h",
+            agg: "sum(duration_minutes) / 60.0", filter: None, kind: Total },
+        LaneMeasure { id: "steps", lane: "health", table: "data_health_steps",
+            timestamp_column: "occurred_at", label: "steps", unit: "",
+            agg: "sum(step_count)", filter: None, kind: Total },
+        LaneMeasure { id: "workouts", lane: "health", table: "data_health_workout",
+            timestamp_column: "started_at", label: "workouts", unit: "",
+            agg: "count(*)", filter: None, kind: Total },
+        // ── location ────────────────────────────────────────────────────────
+        LaneMeasure { id: "visits", lane: "location", table: "data_location_visit",
+            timestamp_column: "started_at", label: "visits", unit: "",
+            agg: "count(*)", filter: None, kind: Total },
+        LaneMeasure { id: "time_out", lane: "location", table: "data_location_visit",
+            timestamp_column: "started_at", label: "time out", unit: "h",
+            agg: "sum(duration_minutes) / 60.0", filter: None, kind: Total },
+        LaneMeasure { id: "places", lane: "location", table: "data_location_visit",
+            timestamp_column: "started_at", label: "distinct places", unit: "",
+            agg: "count(DISTINCT place_name)", filter: Some("place_name IS NOT NULL"),
+            kind: Total },
+        // ── communication ───────────────────────────────────────────────────
+        LaneMeasure { id: "sent", lane: "communication", table: "data_communication_message",
+            timestamp_column: "occurred_at", label: "messages sent", unit: "",
+            agg: "count(*)", filter: Some("metadata->>'is_from_me' = 'true'"), kind: Total },
+        LaneMeasure { id: "received", lane: "communication", table: "data_communication_message",
+            timestamp_column: "occurred_at", label: "messages received", unit: "",
+            agg: "count(*)", filter: Some("metadata->>'is_from_me' = 'false'"), kind: Total },
+        LaneMeasure { id: "people", lane: "communication", table: "data_communication_message",
+            timestamp_column: "occurred_at", label: "people spoken to", unit: "",
+            agg: "count(DISTINCT from_handle)", filter: Some("from_handle IS NOT NULL"),
+            kind: Total },
+        LaneMeasure { id: "talk", lane: "communication", table: "data_communication_transcription",
+            timestamp_column: "started_at", label: "speech heard", unit: "min",
+            agg: "sum(duration_seconds) / 60.0", filter: None, kind: Total },
+        // ── financial ───────────────────────────────────────────────────────
+        LaneMeasure { id: "spend", lane: "financial", table: "data_financial_transaction",
+            timestamp_column: "occurred_at", label: "spend", unit: "$",
+            agg: "sum(amount) / 100.0", filter: Some("amount > 0"), kind: Total },
+        LaneMeasure { id: "income", lane: "financial", table: "data_financial_transaction",
+            timestamp_column: "occurred_at", label: "income", unit: "$",
+            agg: "sum(-amount) / 100.0", filter: Some("amount < 0"), kind: Total },
+        LaneMeasure { id: "transactions", lane: "financial", table: "data_financial_transaction",
+            timestamp_column: "occurred_at", label: "transactions", unit: "",
+            agg: "count(*)", filter: None, kind: Total },
+        // ── activity ────────────────────────────────────────────────────────
+        LaneMeasure { id: "screen", lane: "activity", table: "data_activity_app_session",
+            timestamp_column: "started_at", label: "screen time", unit: "h",
+            agg: "sum(EXTRACT(EPOCH FROM (ended_at - started_at))) / 3600.0",
+            filter: Some("ended_at IS NOT NULL"), kind: Total },
+        LaneMeasure { id: "apps", lane: "activity", table: "data_activity_app_session",
+            timestamp_column: "started_at", label: "distinct apps", unit: "",
+            agg: "count(DISTINCT app_name)", filter: Some("app_name IS NOT NULL"), kind: Total },
+        LaneMeasure { id: "browsing", lane: "activity", table: "data_activity_web_browsing",
+            timestamp_column: "occurred_at", label: "pages visited", unit: "",
+            agg: "count(*)", filter: None, kind: Total },
+        LaneMeasure { id: "listening", lane: "activity", table: "data_activity_listening",
+            timestamp_column: "occurred_at", label: "listening", unit: "h",
+            agg: "sum(duration_ms) / 3600000.0", filter: None, kind: Total },
+    ];
+    M
+}
+
+/// The measures offered for one lane, in declaration order.
+pub fn measures_for_lane(lane: &str) -> Vec<LaneMeasure> {
+    lane_measures().iter().copied().filter(|m| m.lane == lane).collect()
+}
+
+/// A stream that means "awake, and doing something".
+#[derive(Debug, Clone, Copy)]
+pub struct ActivitySource {
+    pub table: &'static str,
+    pub timestamp_column: &'static str,
+    /// Narrowing beyond the ontology, where the table mixes signals.
+    pub filter: Option<&'static str>,
+}
+
+/// What the day-clock raster is allowed to draw.
+///
+/// The raster's whole value is that SLEEP shows up as a dark band, and that
+/// only works if every mark means a person was awake. `is_activation_signal`
+/// already draws that line — it is documented as true for app usage, visits,
+/// outbound messages, transcription, browsing, listening and workouts, and
+/// false for heart rate, HRV, steps and sleep. A watch samples a pulse all
+/// night; including it would fill the exact rows the band is made of.
+///
+/// The one narrowing the descriptor cannot express: a message table holds both
+/// directions, and a text ARRIVING at 3am says nothing about whether anyone was
+/// awake to read it. The registry's own comment says the signal is *outbound*
+/// messages, so that is what this asks for.
+pub fn activity_sources() -> Vec<ActivitySource> {
+    registered_ontologies()
+        .into_iter()
+        .filter(|o| o.lane.is_some() && o.is_activation_signal)
+        .map(|o| ActivitySource {
+            table: o.table_name,
+            timestamp_column: o.timestamp_column,
+            filter: match o.table_name {
+                "data_communication_message" => Some("metadata->>'is_from_me' = 'true'"),
+                _ => None,
+            },
+        })
+        .collect()
+}
+
 /// Get all registered ontology descriptors
 pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
     vec![
@@ -146,9 +380,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Heart Rate",
             description: "Heart rate measurements from HealthKit",
             domain: "health",
+            lane: Some("health"),
             table_name: "data_health_heart_rate",
             source_streams: vec!["stream_ios_healthkit"],
-            timestamp_column: "timestamp",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: None,
             extraction: None,
@@ -178,9 +413,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Heart Rate Variability",
             description: "HRV measurements indicating stress and recovery",
             domain: "health",
+            lane: Some("health"),
             table_name: "data_health_hrv",
             source_streams: vec!["stream_ios_healthkit"],
-            timestamp_column: "timestamp",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: None,
             extraction: None,
@@ -207,9 +443,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Steps",
             description: "Step count data from HealthKit",
             domain: "health",
+            lane: Some("health"),
             table_name: "data_health_steps",
             source_streams: vec!["stream_ios_healthkit"],
-            timestamp_column: "timestamp",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: None,
             extraction: None,
@@ -232,14 +469,101 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             is_activation_signal: false,
         },
         OntologyDescriptor {
+            name: "environment_weather",
+            display_name: "Weather",
+            description: "Weather where the owner was — observations, and forecasts kept separately",
+            domain: "environment",
+            // NOT a lane, and this is a decision already made and tested twice:
+            // `lane`'s own doc excludes "ambient conditions rather than conduct
+            // (weather)", and `the_exclusions_hold` asserts it with the reason
+            // "weather is a condition you were in, not something you did".
+            //
+            // A descriptor without a lane is still worth having — it is what
+            // makes this table visible to the registry at all, and stops it
+            // being collected into silence. Whether ambient context should ALSO
+            // plot on the lifeline is a product reversal, not a gap, and belongs
+            // to whoever owns that doctrine.
+            lane: None,
+            table_name: "data_environment_weather",
+            source_streams: vec!["stream_weather"],
+            timestamp_column: "occurred_at",
+            end_timestamp_column: None,
+            // Numbers, not prose. Nothing here is worth embedding — "18°C" does
+            // not answer a question anybody phrases in words, and the day page
+            // renders the reading directly.
+            embedding: None,
+            // No entity extraction: weather mentions no one.
+            extraction: None,
+            temporal_type: TemporalType::Continuous,
+            // Ambient context on the day page rather than a day SOURCE: a day is
+            // not evidenced by the weather, and counting weather rows as sources
+            // would inflate a quiet day into a busy one. The lane measures carry
+            // it instead.
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            // Not activation: rain is not the owner doing something.
+            is_activation_signal: false,
+        },
+        OntologyDescriptor {
+            name: "content_conversation",
+            display_name: "AI Conversations",
+            description: "Imported chat history from other AI providers — one row per turn",
+            domain: "content",
+            // No lane. This is content the owner produced and consumed, like a
+            // bookmark or a document — not a rhythm of the day worth plotting.
+            lane: None,
+            table_name: "data_content_conversation",
+            source_streams: vec!["stream_chat_import"],
+            timestamp_column: "occurred_at",
+            end_timestamp_column: None,
+            // THE POINT OF GIVING THIS A CONTRACT AT ALL. It is prose, it is the
+            // owner's own thinking, and it was unsearchable — "what was I working
+            // on last spring" could not reach a year of it.
+            embedding: Some(EmbeddingConfig {
+                embed_text_sql: "COALESCE(t.content, '')",
+                content_type: "conversation",
+                // The provider is the closest thing to a counterpart's name.
+                title_sql: Some("COALESCE(t.provider, 'AI') || ' conversation'"),
+                preview_sql: "left(COALESCE(t.content, ''), 200)",
+                // `role` is who said it — 'user' or 'assistant'. That is the
+                // honest author for a turn, and it lets a result say which half
+                // of the exchange matched.
+                author_sql: Some("t.role"),
+                timestamp_sql: "t.occurred_at",
+                embed_where: None,
+            }),
+            // NO ENTITY EXTRACTION, deliberately, and this is the one judgement
+            // call in the descriptor. Extraction resolves the people, places and
+            // organizations named in prose into the owner's graph — but the names
+            // in an AI conversation are usually DISCUSSED, not known: characters,
+            // public figures, examples, a company being researched. Running it
+            // here would populate `wiki_people` with people the owner has never
+            // met, and there is no signal in the row to tell those apart from the
+            // ones they have.
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            // Not a day source yet. A turn is too granular to list on a day page
+            // — a single session can be two hundred of them — and the right unit
+            // (a conversation, grouped by `conversation_id`) is a rollup nothing
+            // builds today.
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            // Talking to an AI is the owner doing something, and the activation
+            // gate is about whether the box saw activity at all.
+            is_activation_signal: true,
+        },
+        OntologyDescriptor {
             name: "health_sleep",
             display_name: "Sleep Sessions",
             description: "Sleep analysis from HealthKit with quality metrics",
             domain: "health",
+            lane: Some("health"),
             table_name: "data_health_sleep",
             source_streams: vec!["stream_ios_healthkit"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: None,
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -261,10 +585,11 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Workouts",
             description: "Workout sessions from HealthKit and Strava",
             domain: "health",
+            lane: Some("health"),
             table_name: "data_health_workout",
             source_streams: vec!["stream_ios_healthkit", "stream_strava_activities"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: None,
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -287,9 +612,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Location Points",
             description: "Raw GPS coordinates from device location services",
             domain: "location",
+            lane: Some("location"),
             table_name: "data_location_point",
             source_streams: vec!["stream_ios_location"],
-            timestamp_column: "timestamp",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: None,
             extraction: None,
@@ -304,10 +630,11 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Location Visits",
             description: "Clustered location visits with place resolution",
             domain: "location",
+            lane: Some("location"),
             table_name: "data_location_visit",
             source_streams: vec![], // Derived from location_point via clustering
-            timestamp_column: "arrival_time",
-            end_timestamp_column: Some("departure_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: None,
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -335,9 +662,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Email",
             description: "Email messages from Gmail and other providers",
             domain: "communication",
+            lane: Some("communication"),
             table_name: "data_communication_email",
             source_streams: vec!["stream_google_gmail"],
-            timestamp_column: "timestamp",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: Some(EmbeddingConfig {
                 embed_text_sql: "COALESCE(t.subject, '') || '\n\n' || COALESCE(t.body, '')",
@@ -345,7 +673,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 title_sql: Some("t.subject"),
                 preview_sql: "COALESCE(SUBSTR(t.body_preview, 1, 200), SUBSTR(t.body, 1, 200), '')",
                 author_sql: Some("t.from_name"),
-                timestamp_sql: "t.timestamp",
+                timestamp_sql: "t.occurred_at",
+                embed_where: None,
             }),
             // Bodies only. The From:/To: headers are ALREADY resolved
             // structurally (entity_resolution::people) — that is a join, not a
@@ -382,9 +711,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Messages",
             description: "SMS and iMessage conversations",
             domain: "communication",
+            lane: Some("communication"),
             table_name: "data_communication_message",
             source_streams: vec!["stream_mac_imessage"],
-            timestamp_column: "timestamp",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: Some(EmbeddingConfig {
                 embed_text_sql: "'From ' || COALESCE(t.from_name, 'Unknown') || ': ' || COALESCE(t.body, '')",
@@ -392,7 +722,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 title_sql: None,
                 preview_sql: "SUBSTR(t.body, 1, 200)",
                 author_sql: Some("t.from_name"),
-                timestamp_sql: "t.timestamp",
+                timestamp_sql: "t.occurred_at",
+                embed_where: None,
             }),
             extraction: Some(ExtractionConfig {
                 text_sql: "COALESCE(t.body, '')",
@@ -419,17 +750,19 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Calendar Events",
             description: "Scheduled events from Google Calendar and iOS EventKit",
             domain: "calendar",
+            lane: None,
             table_name: "data_calendar_event",
             source_streams: vec!["stream_google_calendar", "stream_ios_eventkit"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: Some(EmbeddingConfig {
                 embed_text_sql: "COALESCE(t.title, '') || '\n\n' || COALESCE(t.description, '')",
                 content_type: "calendar",
                 title_sql: Some("t.title"),
                 preview_sql: "COALESCE(SUBSTR(t.description, 1, 200), '')",
                 author_sql: None,
-                timestamp_sql: "t.start_time",
+                timestamp_sql: "t.started_at",
+                embed_where: None,
             }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -452,10 +785,11 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "App Usage",
             description: "Attended time in an app — bounded by idle, lock and machine suspend",
             domain: "activity",
+            lane: Some("activity"),
             table_name: "data_activity_app_session",
             source_streams: vec!["stream_mac_apps"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: None,
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -465,7 +799,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 label_sql: "COALESCE(t.app_name, 'Unknown app')",
                 preview_sql: "t.window_title",
                 id_sql: "t.id",
-                // An open session's end_time is provisional (it walks forward with
+                // An open session's ended_at is provisional (it walks forward with
                 // each heartbeat), so it would otherwise show up in a day's timeline
                 // as a zero-length blip until it closes.
                 // The `AND` is not decoration: `extra_where` is spliced raw after
@@ -484,9 +818,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Web Browsing",
             description: "Browser history from Safari and Chrome",
             domain: "activity",
+            lane: Some("activity"),
             table_name: "data_activity_web_browsing",
             source_streams: vec!["stream_mac_browser"],
-            timestamp_column: "timestamp",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: None,
             extraction: None,
@@ -509,9 +844,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Listening History",
             description: "Music and audio listening history from Spotify",
             domain: "activity",
+            lane: Some("activity"),
             table_name: "data_activity_listening",
             source_streams: vec!["stream_spotify_recently_played"],
-            timestamp_column: "played_at",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: None,
             extraction: None,
@@ -534,10 +870,11 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Voice Transcriptions",
             description: "Transcribed audio from microphone recordings",
             domain: "communication",
+            lane: Some("communication"),
             table_name: "data_communication_transcription",
             source_streams: vec!["stream_ios_microphone"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             // What you actually SAID — and until now, the one thing search could
             // not find. A row here is not an audio chunk: `transcription_resolution`
             // has already assembled the whole conversation (durations run to 6300s)
@@ -553,7 +890,21 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 title_sql: Some("t.title"),
                 preview_sql: "COALESCE(SUBSTR(t.summary, 1, 200), SUBSTR(t.text, 1, 200), '')",
                 author_sql: None,
-                timestamp_sql: "t.start_time",
+                timestamp_sql: "t.started_at",
+                // Silence is not a document.
+                //
+                // 68.6% of rows on a real box are silent chunks — the collector
+                // records continuously and most of a day has nobody talking. They
+                // were all being embedded anyway, producing 1,911 identical
+                // "Silence / No speech detected" vectors: no recall value, real
+                // cost, and enough repeated points to distort HNSW neighbourhoods
+                // and skew the BM25 corpus statistics that every other query is
+                // scored against.
+                //
+                // The row stays — it is an honest record that the microphone was
+                // on and heard nothing, and the day pipeline reads coverage from
+                // it. It just is not something a retriever should ever match.
+                embed_where: Some("AND btrim(COALESCE(t.text, '')) <> ''"),
             }),
             // No ExtractionConfig, deliberately: the transcription action's own LLM
             // call already emits `entities`, and `entity_resolution::extract` drains
@@ -581,10 +932,11 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Audio Sessions",
             description: "Coherent audio context sessions (changepoint rollup of transcription chunks)",
             domain: "communication",
+            lane: Some("communication"),
             table_name: "data_audio_session",
             source_streams: vec!["stream_ios_microphone"],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: None,
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -612,9 +964,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Documents",
             description: "Pages from Notion and other document sources",
             domain: "content",
+            lane: None,
             table_name: "data_content_document",
             source_streams: vec!["stream_notion_pages"],
-            timestamp_column: "created_time",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: Some(EmbeddingConfig {
                 embed_text_sql: "COALESCE(t.title, '') || '\n\n' || COALESCE(t.content_summary, SUBSTR(t.content, 1, 8000), '')",
@@ -623,6 +976,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 preview_sql: "COALESCE(SUBSTR(t.content_summary, 1, 200), SUBSTR(t.content, 1, 200), '')",
                 author_sql: Some("t.source_provider"),
                 timestamp_sql: "COALESCE(t.last_modified_time, t.created_at)",
+                embed_where: None,
             }),
             extraction: Some(ExtractionConfig {
                 text_sql: "COALESCE(t.title, '') || E'\n\n' || COALESCE(t.content, '')",
@@ -669,10 +1023,11 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Events",
             description: "Segmented narrative events — the day as it was lived",
             domain: "narrative",
+            lane: None,
             table_name: "wiki_events",
             source_streams: vec![],
-            timestamp_column: "start_time",
-            end_timestamp_column: Some("end_time"),
+            timestamp_column: "started_at",
+            end_timestamp_column: Some("ended_at"),
             embedding: Some(EmbeddingConfig {
                 // The user's own label wins over the machine's: autonomy over
                 // tidiness, everywhere.
@@ -691,7 +1046,8 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 title_sql: Some("COALESCE(t.user_label, t.auto_label)"),
                 preview_sql: "SUBSTR(COALESCE(t.event_summary, ''), 1, 200)",
                 author_sql: None,
-                timestamp_sql: "t.start_time",
+                timestamp_sql: "t.started_at",
+                embed_where: None,
             }),
             // Entities are already resolved onto events by the day pipeline
             // (`dayline::annotate`). Re-reading the summary for names would build a
@@ -710,6 +1066,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Financial Accounts",
             description: "Bank accounts, credit cards, and other financial accounts from Plaid",
             domain: "financial",
+            lane: Some("financial"),
             table_name: "data_financial_account",
             source_streams: vec!["stream_plaid_accounts", "stream_ios_financekit"],
             timestamp_column: "created_at",
@@ -727,9 +1084,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Financial Transactions",
             description: "Bank and credit card transactions from Plaid with merchant and category info",
             domain: "financial",
+            lane: Some("financial"),
             table_name: "data_financial_transaction",
             source_streams: vec!["stream_plaid_transactions", "stream_ios_financekit"],
-            timestamp_column: "timestamp",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: Some(EmbeddingConfig {
                 // `t.category` is JSONB now (a string array). Cast to text and
@@ -738,9 +1096,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 embed_text_sql: "COALESCE(t.merchant_name, t.description, '') || ' ' || COALESCE((SELECT string_agg(value::text, ', ') FROM jsonb_array_elements_text(t.category) AS value), '')",
                 content_type: "transaction",
                 title_sql: Some("COALESCE(t.merchant_name, t.description)"),
-                preview_sql: "COALESCE(t.merchant_name, t.description) || ' - $' || CAST(ABS(t.amount / 100.0) AS TEXT) || ' on ' || t.timestamp::text",
+                preview_sql: "COALESCE(t.merchant_name, t.description) || ' - $' || CAST(ABS(t.amount / 100.0) AS TEXT) || ' on ' || t.occurred_at::text",
                 author_sql: None,
-                timestamp_sql: "t.timestamp",
+                timestamp_sql: "t.occurred_at",
+                embed_where: None,
             }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -762,17 +1121,66 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Bookmarks",
             description: "Saved/curated items: GitHub stars, browser bookmarks, saved links",
             domain: "content",
+            lane: None,
             table_name: "data_content_bookmark",
             source_streams: vec!["stream_github_events"],
-            timestamp_column: "timestamp",
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
+            // THE USER'S OWN WORDS ARE THE BEST TEXT ON THE ROW.
+            //
+            // `note` is user-authored marginalia (migration 0073) and `tags` are
+            // containers harvested at the source — browser folder paths, GitHub
+            // topics. Both were absent here, which meant the one thing a person
+            // deliberately wrote about a save was invisible to search, and a
+            // bookmark filed under "Kitchen reno" could not be found by that
+            // phrase. Intent language is also the closest match to future query
+            // language, so it earns its place ahead of most machine text.
+            //
+            // `extraction_text` (0095) is the machine half: the enrichment
+            // sweep's record rendered as prose, which is what makes a saved
+            // Instagram post — no title, no description — findable at all. It
+            // is written by `ExtractionRecord::to_embed_text` rather than
+            // assembled from JSONB here, so the rendering has one definition.
+            // Rows not yet enriched contribute an empty string and lose
+            // nothing.
+            //
+            // The `jsonb_typeof` guard is load-bearing: `jsonb_array_elements_text`
+            // raises on a non-array, and this expression is interpolated into the
+            // indexer's scan for EVERY bookmark row — so one malformed `tags`
+            // value from any producer would abort indexing for the whole
+            // ontology, not just skip its own row.
             embedding: Some(EmbeddingConfig {
-                embed_text_sql: "COALESCE(t.title, '') || '\n\n' || COALESCE(t.description, '')",
+                embed_text_sql: "COALESCE(t.title, '') || '\n\n' || COALESCE(t.description, '') \
+                     || '\n\n' || COALESCE(t.note, '') || '\n\n' || \
+                     CASE WHEN jsonb_typeof(t.tags) = 'array' \
+                          THEN COALESCE((SELECT string_agg(tag, ', ') \
+                                           FROM jsonb_array_elements_text(t.tags) AS tag), '') \
+                          ELSE '' END \
+                     || '\n\n' || COALESCE(t.extraction_text, '')",
                 content_type: "bookmark",
                 title_sql: Some("t.title"),
                 preview_sql: "COALESCE(SUBSTR(t.description, 1, 200), t.url)",
                 author_sql: Some("t.author"),
-                timestamp_sql: "t.timestamp",
+                timestamp_sql: "t.occurred_at",
+                // A saved URL with no title, no description, no note and no
+                // extraction record yet has NOTHING to embed — the expression
+                // above evaluates to a few newlines. Indexing that is not
+                // merely wasteful: an empty document is a vector at an
+                // arbitrary point in the space that can match any query, and it
+                // skews the BM25 corpus statistics every other query is scored
+                // against (the same reason silent transcriptions are excluded).
+                //
+                // The row stays and stays visible; it simply is not something a
+                // retriever should match. Enrichment gives it text, and the
+                // indexer picks it up on the next pass with no intervention.
+                //
+                // Tags are deliberately not part of this test: a bookmark whose
+                // only text is a folder name is a bare link, and the folder is
+                // already searchable as structure.
+                embed_where: Some(
+                    "AND btrim(COALESCE(t.title, '') || COALESCE(t.description, '') \
+                     || COALESCE(t.note, '') || COALESCE(t.extraction_text, '')) <> ''",
+                ),
             }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -797,6 +1205,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Chat Sessions",
             description: "Conversations with Virtues AI assistant",
             domain: "app",
+            lane: None,
             table_name: "app_chats",
             source_streams: vec![],
             timestamp_column: "created_at",
@@ -832,6 +1241,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 // The document changes as the conversation grows, so its time is
                 // when it last did.
                 timestamp_sql: "t.updated_at",
+                embed_where: None,
             }),
             // Entity extraction on the same unit as retrieval. Chats carried NO
             // entity refs before, so a conversation about Rachel was unreachable
@@ -878,6 +1288,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Page Edits",
             description: "Wiki page creations and modifications",
             domain: "app",
+            lane: None,
             table_name: "app_pages",
             source_streams: vec![],
             timestamp_column: "updated_at",
@@ -895,6 +1306,9 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 preview_sql: "SUBSTR(COALESCE(t.content, ''), 1, 200)",
                 author_sql: None,
                 timestamp_sql: "t.updated_at",
+                // `app_pages` now holds two kinds of document (migration 0081).
+                // This descriptor owns only the ones a person wrote.
+                embed_where: Some("AND t.kind = 'page'"),
             }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -904,9 +1318,57 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 label_sql: "COALESCE(t.icon || ' ', '') || COALESCE(t.title, 'Untitled')",
                 preview_sql: "NULL",
                 id_sql: "t.id",
-                extra_where: None,
+                extra_where: Some("AND t.kind = 'page'"),
                 use_date_filter: true,
             }),
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
+        },
+        // ===== Wiki articles =====
+        //
+        // The same table as `app_page`, deliberately, and split from it for one
+        // reason that is not cosmetic: `day_source`.
+        //
+        // A day source asks "what did you do that day", and `app_page` answers
+        // it with `use_date_filter: true` over `updated_at` — every page edit
+        // shows in the day as authorship. Articles are written by the record
+        // about itself, on a schedule, and every CRDT flush bumps `updated_at`.
+        // Left in the same ontology, a nightly maintenance pass over a few
+        // dozen articles would fill the day view with "you wrote a page today"
+        // for prose the user never touched. That is the same provenance failure
+        // that once read calendar RSVPs as attendance, and it lands at applet
+        // volume rather than one row at a time.
+        //
+        // So: `day_source: None`. An article is not something you did.
+        //
+        // It stays SEARCHABLE, because prose about your life is exactly what
+        // you want to find — but under its own `content_type`, so a citation
+        // chip can say what it is rather than labelling machine prose as your
+        // own writing.
+        OntologyDescriptor {
+            name: "wiki_article",
+            display_name: "Wiki Articles",
+            description: "The record's own prose about a subject — people, places, days",
+            domain: "wiki",
+            lane: None,
+            table_name: "app_pages",
+            source_streams: vec![],
+            timestamp_column: "updated_at",
+            end_timestamp_column: None,
+            embedding: Some(EmbeddingConfig {
+                embed_text_sql: "COALESCE(t.title, '') || E'\n\n' || COALESCE(t.content, '')",
+                content_type: "article",
+                title_sql: Some("t.title"),
+                preview_sql: "SUBSTR(COALESCE(t.content, ''), 1, 200)",
+                author_sql: None,
+                timestamp_sql: "t.updated_at",
+                embed_where: Some("AND t.kind = 'article'"),
+            }),
+            extraction: None,
+            temporal_type: TemporalType::Discrete,
+            // Not a day source. See above — this is the whole reason for the split.
+            day_source: None,
             continuous_agg: None,
             //                    who  whom what when where why  how
             is_activation_signal: false,
@@ -920,6 +1382,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             display_name: "Documents",
             description: "Extracted text chunks from files in Drive (PDF, DOCX, text, HTML)",
             domain: "documents",
+            lane: None,
             table_name: "extracted_document_chunks",
             source_streams: vec![],
             timestamp_column: "created_at",
@@ -936,6 +1399,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 preview_sql: "SUBSTR(t.text, 1, 200)",
                 author_sql: None,
                 timestamp_sql: "t.created_at",
+                embed_where: None,
             }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -950,11 +1414,12 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
         // own marks are dense signal — embedding quote + note makes "what did
         // I highlight about X" work, and annotations out-rank raw text.
         OntologyDescriptor {
-            name: "document_annotation",
+            name: "document_marginalia",
             display_name: "Highlights",
             description: "Highlights and margin notes on documents in Drive",
             domain: "documents",
-            table_name: "app_annotations",
+            lane: None,
+            table_name: "app_marginalia",
             source_streams: vec![],
             timestamp_column: "created_at",
             end_timestamp_column: None,
@@ -969,6 +1434,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 preview_sql: "SUBSTR(t.quote_text, 1, 200)",
                 author_sql: None,
                 timestamp_sql: "t.created_at",
+                embed_where: None,
             }),
             extraction: None,
             temporal_type: TemporalType::Discrete,
@@ -1103,8 +1569,8 @@ mod tests {
         assert!(sleep.is_some());
         let s = sleep.unwrap();
         assert_eq!(s.domain, "health");
-        assert_eq!(s.timestamp_column, "start_time");
-        assert_eq!(s.end_timestamp_column, Some("end_time"));
+        assert_eq!(s.timestamp_column, "started_at");
+        assert_eq!(s.end_timestamp_column, Some("ended_at"));
     }
 
     #[test]
@@ -1265,6 +1731,59 @@ mod tests {
                  begin with AND. Got: {w:?}",
                 o.name
             );
+        }
+    }
+
+    /// Same rule as `extra_where_carries_its_own_and`, for the embedding path.
+    ///
+    /// Split from that test rather than folded into it because the two splice
+    /// into different queries and a failure means different things: a bad
+    /// `day_source.extra_where` drops rows from a day view, a bad
+    /// `embedding.embed_where` corrupts the search index under the wrong
+    /// ontology name. Naming them separately makes the failure legible.
+    #[test]
+    fn embed_where_carries_its_own_and() {
+        for o in registered_ontologies() {
+            let Some(e) = &o.embedding else { continue };
+            let Some(w) = e.embed_where else { continue };
+            let t = w.trim_start();
+            assert!(
+                t.starts_with("AND ") || t.starts_with("AND("),
+                "{}: embed_where is spliced after the staleness predicate, so it must \
+                 begin with AND. Got: {w:?}",
+                o.name
+            );
+        }
+    }
+
+    /// Two ontologies over one table must partition it, or the indexer embeds
+    /// the overlap twice — once per ontology name, since `embedding_id` is
+    /// `{ontology}:{record_id}:{chunk}`. An unscoped descriptor claims every
+    /// row, so it can only be the sole owner of its table.
+    #[test]
+    fn tables_shared_by_two_ontologies_are_scoped() {
+        use std::collections::HashMap;
+        let all = registered_ontologies();
+        let mut by_table: HashMap<&str, Vec<&OntologyDescriptor>> = HashMap::new();
+        for o in &all {
+            if o.embedding.is_some() {
+                by_table.entry(o.table_name).or_default().push(o);
+            }
+        }
+        for (table, owners) in by_table {
+            if owners.len() < 2 {
+                continue;
+            }
+            for o in &owners {
+                assert!(
+                    o.embedding.as_ref().unwrap().embed_where.is_some(),
+                    "{table} is indexed by {} ontologies ({}), so each needs an \
+                     embed_where that carves out its share — {} claims the whole table",
+                    owners.len(),
+                    owners.iter().map(|x| x.name).collect::<Vec<_>>().join(", "),
+                    o.name
+                );
+            }
         }
     }
 

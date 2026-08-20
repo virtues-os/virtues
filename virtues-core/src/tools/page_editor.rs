@@ -137,6 +137,7 @@ impl PageEditorTool {
             title: args.title.clone(),
             content: clean_content,
             icon: None,
+            icon_color: None,
             cover_url: None,
             tags: None,
             notebook_id: None,
@@ -238,7 +239,7 @@ impl PageEditorTool {
 
         // Editing a page is reversible (Yjs keeps history) and local, so it runs freely — no
         // permission prompt. Write-permission gating lives in the executor and applies only to
-        // destructive/outbound tools (run_action, delete_action).
+        // destructive/outbound tools (run_applet, delete_applet).
 
         // Strip CriticMarkup markers from replace text
         let replace_content = Self::strip_critic_markup(&args.replace);
@@ -293,6 +294,7 @@ impl PageEditorTool {
                 title: None,
                 content: Some(new_content),
                 icon: None,
+                icon_color: None,
                 cover_url: None,
                 tags: None,
             };
@@ -308,6 +310,7 @@ impl PageEditorTool {
                 title: Some(new_title.clone()),
                 content: None,
                 icon: None,
+                icon_color: None,
                 cover_url: None,
                 tags: None,
             };

@@ -95,8 +95,9 @@ async fn main() -> Result<()> {
     // Log external services configuration. (Plaid/OAuth providers read their
     // own env in routes/oauth.rs, so they're not surfaced here.)
     tracing::info!(
-        "External services: Exa={}, GooglePlaces={}",
-        config.exa_api_key.is_some(),
+        // Web search runs on the AI Gateway key, not a search vendor key —
+        // there is no separate search credential to report any more.
+        "External services: GooglePlaces={}",
         config.google_api_key.is_some(),
     );
 
@@ -158,7 +159,7 @@ async fn main() -> Result<()> {
         // AI (`/v1/ai/*`) covers both streaming and non-streaming chat; the
         // charge fires from a callback once the upstream usage is known.
         .merge(routes::places::router())
-        .merge(routes::exa::router())
+        .merge(routes::search::router())
         .merge(routes::unsplash::router())
         // Plaid bank-data proxy (/v1/services/plaid/*): keeps the master Plaid
         // secret server-side; the box sends only per-user access_tokens.

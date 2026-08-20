@@ -8,6 +8,7 @@
 	import { onMount } from "svelte";
 	import { formatRelativeTimestamp } from "$lib/utils/dateUtils";
 	import { listChats } from "$lib/api/client";
+	import Icon from "$lib/components/Icon.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -81,6 +82,13 @@
 			label: item.title || "Chat",
 		});
 	}
+
+	function handleNewChat() {
+		windowShellStore.openTabFromRoute("/", {
+			label: "New Chat",
+			forceNew: true,
+		});
+	}
 </script>
 
 <Page
@@ -88,6 +96,12 @@
 	description={`${sessions.length} conversation${sessions.length !== 1 ? "s" : ""}`}
 	maxWidth="wide"
 >
+	{#snippet actions()}
+		<button class="new-btn" onclick={handleNewChat}>
+			<Icon icon="ri:add-line" width="16" /> New Chat
+		</button>
+	{/snippet}
+
 	<UniversalDataGrid
 		{items}
 		{columns}
@@ -99,6 +113,7 @@
 		loadingMessage="Loading conversations..."
 		searchPlaceholder="Search chats..."
 		onItemClick={handleItemClick}
+		rowHref={(c) => `/chat/${c.id}`}
 		onRetry={loadSessions}
 	>
 		{#snippet tableRow(item: ChatItem)}
@@ -124,6 +139,14 @@
 </Page>
 
 <style>
+	.new-btn {
+		display: inline-flex; align-items: center; gap: 5px;
+		padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 8px;
+		background: var(--color-surface-elevated); color: var(--color-foreground);
+		font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
+	}
+	.new-btn:hover { background: var(--color-surface); }
+
 	.title-text {
 		font-weight: 500;
 		color: var(--color-foreground);

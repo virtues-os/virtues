@@ -1,0 +1,41 @@
+<!--
+  Virtues ∴ — app-icon master, 1024×1024, full-bleed canvas.
+
+  Proportions are calibrated against Tailscale's icon, which is the reference
+  for how much tile a dot mark should take. Theirs (from tailscale.com
+  favicon.svg): r 3, pitch 9 on a 48 tile — so the dot grid is a 24-unit bbox,
+  exactly 50% of the tile. Ours matches that 50%: bbox is 512 wide, x 256→768.
+
+  The dot-to-gap ratio is deliberately NOT theirs. Tailscale runs Ø/pitch 0.667,
+  which is right for nine dots but turns three into a clover. We keep the ∴'s
+  own 0.40 (146/366) and only bring the footprint down — the mark was at 64.5%
+  of the tile and read oversized next to every other icon in the Dock.
+
+  Geometry: equilateral, side 366, r 73.
+    apex (512, 338)   base (329, 655) (695, 655)
+  Vertical drop 317 = 366·√3/2, so the triangle is equilateral to 0.1%.
+
+  Mark bbox is 512×463, sat 15.5px above true center — a ∴ is bottom-heavy
+  (two dots below, one above), so a bbox-centered triangle reads as sitting
+  low. That 15.5px is the optical correction, held at the same 3.35% of bbox
+  height the 1024-canvas mark has always used.
+
+  Transparent ground on purpose: Icon Composer owns the background layer.
+
+  The bundler does NOT give iOS an opaque ground — assuming it did cost a
+  TestFlight upload (409: "The large app icon ... can't be transparent or
+  contain an alpha channel"). `tauri icon` writes RGBA into
+  gen/apple/Assets.xcassets/AppIcon.appiconset, and App Store validation
+  rejects an alpha channel on the app icon even when it is fully opaque —
+  ours was alpha 254-255 everywhere and still failed.
+
+  So after any `tauri icon` run, flatten that appiconset back to RGB before
+  archiving, or the upload dies at validation. See tools/strip-icon-alpha.py.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+	<g fill="#17171A">
+		<circle cx="512" cy="338" r="73"/>
+		<circle cx="329" cy="655" r="73"/>
+		<circle cx="695" cy="655" r="73"/>
+	</g>
+</svg>

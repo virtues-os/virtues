@@ -22,8 +22,8 @@ export default defineConfig(({ mode }) => {
 		server: {
 			fs: {
 				// Allow Vite to serve files from the repo root, not just apps/web/.
-				// View-runtime action UIs live at actions/<name>/ui/ and are
-				// imported via `import.meta.glob` from $lib/action-views.
+				// View-runtime applet UIs live at applets/<name>/ui/ and are
+				// imported via `import.meta.glob` from $lib/applet-views.
 				allow: ['../..']
 			},
 			proxy: {

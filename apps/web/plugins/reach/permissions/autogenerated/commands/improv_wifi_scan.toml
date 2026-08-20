@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-improv-wifi-scan"
+description = "Enables the improv_wifi_scan command without any pre-configured scope."
+commands.allow = ["improv_wifi_scan"]
+
+[[permission]]
+identifier = "deny-improv-wifi-scan"
+description = "Denies the improv_wifi_scan command without any pre-configured scope."
+commands.deny = ["improv_wifi_scan"]

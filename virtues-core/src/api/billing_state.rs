@@ -43,6 +43,11 @@ pub struct AutoTopupState {
 #[derive(Debug, Serialize)]
 pub struct ByoState {
     pub configured: bool,
+    /// Where AI actually goes. The summary line shows this host — it is the
+    /// honest answer to "is BYO on, and to where", which `provider` never was.
+    pub endpoint_url: Option<String>,
+    /// Legacy label, present only on credentials saved before the provider
+    /// picker was removed. Display fallback; never routing.
     pub provider: Option<String>,
     pub default_model: Option<String>,
 }
@@ -82,6 +87,10 @@ pub async fn state_handler(
     let byo = match byo_row {
         Some((meta,)) => ByoState {
             configured: true,
+            endpoint_url: meta
+                .get("endpoint_url")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             provider: meta.get("provider").and_then(|v| v.as_str()).map(String::from),
             default_model: meta
                 .get("default_model")
@@ -90,6 +99,7 @@ pub async fn state_handler(
         },
         None => ByoState {
             configured: false,
+            endpoint_url: None,
             provider: None,
             default_model: None,
         },

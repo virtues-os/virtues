@@ -6,9 +6,11 @@
   "windows": ["*"],
   "permissions": [
     "core:default",
+    "reach:default",
     "core:window:allow-create",
     "core:window:allow-get-all-windows",
     "core:window:allow-set-focus",
+    "core:webview:allow-set-webview-zoom",
     "opener:default",
     "updater:default",
     "notification:default",

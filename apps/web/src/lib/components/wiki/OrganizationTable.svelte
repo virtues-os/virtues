@@ -29,7 +29,7 @@
 
 	const columns: Column<WikiOrganizationListItem>[] = [
 		{
-			key: 'canonical_name',
+			key: 'name',
 			label: 'Name',
 			icon: 'ri:building-2-line',
 			width: '50%',
@@ -101,7 +101,7 @@
 			<div class="org-icon">
 				<Icon icon="ri:building-2-line" width="24" />
 			</div>
-			<span class="card-name">{org.canonical_name}</span>
+			<span class="card-name">{org.name}</span>
 			{#if org.organization_type}
 				<span class="badge {getOrgTypeClass(org.organization_type)}">
 					{org.organization_type}

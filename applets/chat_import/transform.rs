@@ -253,7 +253,7 @@ async fn flush(db: &PgPool, records: &[Msg]) -> Result<usize> {
             "role",
             "content",
             "provider",
-            "timestamp",
+            "occurred_at",
             "source_stream_id",
             "source_table",
             "source_provider",

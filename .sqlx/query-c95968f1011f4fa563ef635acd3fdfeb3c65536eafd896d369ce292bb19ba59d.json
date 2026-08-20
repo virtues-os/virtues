@@ -1,0 +1,82 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT name, emails, phones, handles, nickname,\n               first_seen, last_seen, seen_count,\n               metadata, content, aliases\n        FROM wiki_people WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "emails",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 2,
+        "name": "phones",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 3,
+        "name": "handles",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "nickname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "first_seen",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "last_seen",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "seen_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 9,
+        "name": "content",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "aliases",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "c95968f1011f4fa563ef635acd3fdfeb3c65536eafd896d369ce292bb19ba59d"
+}

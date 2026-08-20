@@ -71,9 +71,31 @@ impl DocCache {
         page_id: &str,
         pool: &PgPool,
     ) -> Result<Arc<RwLock<PageDoc>>, anyhow::Error> {
-        // Check cache first
+        // Check cache first — but not blindly. A cached doc persists
+        // `yjs_state` on every save, so `yjs_state IS NULL` in the database
+        // while a warm entry exists means an EXTERNAL writer rewrote the page
+        // via the pool since we last saved (the nightly narration, a
+        // migration, a manual reset). Serving the cached doc then resurrects
+        // stale prose over the rewrite on the next debounced save — observed
+        // live: a re-narrated day article was clobbered back to its old text
+        // by a doc cached before the narration. The DB is the authority;
+        // evict and reseed.
         if let Some(doc) = self.pages.get(page_id) {
-            return Ok(doc);
+            let externally_rewritten: bool = sqlx::query_scalar::<_, bool>(
+                "SELECT yjs_state IS NULL FROM app_pages WHERE id = $1",
+            )
+            .bind(page_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false);
+            if !externally_rewritten {
+                return Ok(doc);
+            }
+            tracing::info!(
+                page_id,
+                "page was rewritten outside the CRDT — dropping the cached doc and reseeding"
+            );
+            self.pages.invalidate(page_id);
         }
 
         // Load from database
@@ -140,6 +162,9 @@ impl Default for DocCache {
 struct PendingSave {
     yjs_state: Vec<u8>,
     queued_at: Instant,
+    /// How many times saving this page has failed. Drives the backoff, and
+    /// escalates the log once a transient blip looks like a real fault.
+    attempts: u32,
 }
 
 /// Debounced save queue - waits for typing to stop before saving
@@ -161,6 +186,7 @@ impl SaveQueue {
             PendingSave {
                 yjs_state,
                 queued_at: Instant::now(),
+                attempts: 0,
             },
         );
     }
@@ -178,8 +204,11 @@ impl SaveQueue {
             {
                 let mut pending = self.pending.write().await;
                 pending.retain(|page_id, save| {
-                    if now.duration_since(save.queued_at) >= DEBOUNCE_DURATION {
-                        to_save.push((page_id.clone(), save.yjs_state.clone()));
+                    // Back off after a failure, so a database that is briefly
+                    // unavailable is not hammered every 500 ms.
+                    let wait = DEBOUNCE_DURATION * (1 << save.attempts.min(5));
+                    if now.duration_since(save.queued_at) >= wait {
+                        to_save.push((page_id.clone(), save.yjs_state.clone(), save.attempts));
                         false
                     } else {
                         true
@@ -187,9 +216,35 @@ impl SaveQueue {
                 });
             }
 
-            for (page_id, yjs_state) in to_save {
+            for (page_id, yjs_state, attempts) in to_save {
                 if let Err(e) = save_and_materialize(&pool, &page_id, &yjs_state).await {
-                    tracing::error!("Failed to save page {}: {}", page_id, e);
+                    // Put it BACK. This is the owner's only copy.
+                    //
+                    // The entry was removed from `pending` before the save was
+                    // attempted, so a failure used to drop the bytes on the
+                    // floor with one log line. The editor is a CRDT and keeps
+                    // showing the text, so nothing looked wrong — until moka
+                    // evicted the doc ~30 minutes later and the page reverted to
+                    // its last successful save. A Postgres blip (pool exhausted
+                    // by the nightly narration, a restart during `virtues
+                    // upgrade`, an OOM on an SBC) is enough, and the window is
+                    // exactly when someone is typing.
+                    let attempts = attempts.saturating_add(1);
+                    if attempts <= 3 {
+                        tracing::warn!(page = %page_id, attempts, error = %e,
+                            "page save failed; requeued");
+                    } else {
+                        tracing::error!(page = %page_id, attempts, error = %e,
+                            "page save still failing — the owner's edits are unsaved");
+                    }
+                    let mut pending = self.pending.write().await;
+                    // A newer edit may have arrived while we were away; it
+                    // supersedes this one and already carries the full state.
+                    pending.entry(page_id).or_insert(PendingSave {
+                        yjs_state,
+                        queued_at: Instant::now(),
+                        attempts,
+                    });
                 }
             }
         }
@@ -204,8 +259,14 @@ impl Default for SaveQueue {
 
 /// Apply a Yjs update to a document and return the new state for saving
 /// This is a synchronous function to avoid Send issues with yrs types
-fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<Vec<u8>> {
+///
+/// Returns the full doc state for the debounced save, plus whether the update
+/// actually CHANGED the doc. The distinction matters: a freshly-opened client
+/// answers sync step 1 with an empty diff, which applies cleanly but changes
+/// nothing — opening a page to read it must not count as editing it.
+fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<(Vec<u8>, bool)> {
     if let Ok(update) = Update::decode_v1(data) {
+        let sv_before = doc.doc.transact().state_vector();
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let mut txn = doc.doc.transact_mut();
             txn.apply_update(update);
@@ -222,9 +283,41 @@ fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<Vec<u8>> {
 
         // Get current state for debounced save
         let txn = doc.doc.transact();
-        Some(txn.encode_state_as_update_v1(&yrs::StateVector::default()))
+        let changed = txn.state_vector() != sv_before;
+        Some((txn.encode_state_as_update_v1(&yrs::StateVector::default()), changed))
     } else {
         None
+    }
+}
+
+/// A doc update arriving over the WebSocket is, by definition, a human edit —
+/// the machine's writes go through `YjsState` methods server-side and never
+/// traverse a client connection. If the page is a KEPT article
+/// (`auto_update = true`), that edit claims it: the article becomes yours,
+/// and the record stops rewriting it. New evidence arrives as notes instead.
+///
+/// This is the whole authorship model: an article has exactly one pen at a
+/// time, so "whose sentence is this" never needs to be answered.
+async fn claim_article_on_user_edit(pool: &PgPool, page_id: &str) {
+    let claimed = sqlx::query_as::<_, (String, String)>(
+        "UPDATE wiki_articles SET auto_update = false \
+         WHERE page_id = $1 AND auto_update = true \
+         RETURNING subject_type, subject_id",
+    )
+    .bind(page_id)
+    .fetch_optional(pool)
+    .await;
+    match claimed {
+        Ok(Some((subject_type, subject_id))) => {
+            tracing::info!(
+                page_id,
+                subject_type,
+                subject_id,
+                "article claimed by user edit — the record stops updating it"
+            );
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!(page_id, error = %e, "article claim check failed"),
     }
 }
 
@@ -362,7 +455,7 @@ fn extract_sync_payload(data: &[u8]) -> Option<&[u8]> {
 }
 
 /// Extract text content from Yjs state bytes (Y.Text)
-fn extract_text_content(yjs_state: &[u8]) -> String {
+pub fn extract_text_content(yjs_state: &[u8]) -> String {
     let doc = Doc::new();
     if let Ok(update) = Update::decode_v1(yjs_state) {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -442,6 +535,35 @@ impl YjsState {
         tokio::spawn(async move {
             save_queue.process_loop(pool).await;
         });
+    }
+
+    /// Write every queued edit now, ignoring the debounce.
+    ///
+    /// Called on shutdown. Without it, SIGTERM discards whatever is inside the
+    /// debounce window — which means every `systemctl restart virtues` and every
+    /// self-update silently drops the last couple of seconds of the owner's
+    /// typing. `server/mod.rs` used to carry a comment saying no flush was
+    /// needed on shutdown; that was true of the old StreamWriter and was never
+    /// true of this queue.
+    ///
+    /// Best-effort by design: a failure here has nowhere left to go, since the
+    /// process is exiting. It is logged at error so the next boot's journal
+    /// says what was lost.
+    pub async fn flush_pending_saves(&self) {
+        let drained: Vec<(String, Vec<u8>)> = {
+            let mut pending = self.save_queue.pending.write().await;
+            pending.drain().map(|(id, s)| (id, s.yjs_state)).collect()
+        };
+        if drained.is_empty() {
+            return;
+        }
+        tracing::info!(pages = drained.len(), "flushing unsaved page edits before shutdown");
+        for (page_id, state) in drained {
+            if let Err(e) = save_and_materialize(&self.pool, &page_id, &state).await {
+                tracing::error!(page = %page_id, error = %e,
+                    "could not flush page on shutdown — these edits are lost");
+            }
+        }
     }
 
     /// Get the current Yjs document state as bytes (for snapshots/versioning).
@@ -701,8 +823,16 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                             }
                                         };
                                         let mut doc = page_doc.write().await;
-                                        if let Some(full_state) = apply_yjs_update(&mut doc, update_bytes) {
+                                        if let Some((full_state, changed)) = apply_yjs_update(&mut doc, update_bytes) {
                                             drop(doc);
+                                            // Every changing update, not once per cached doc: the
+                                            // WHERE auto_update=true makes it a no-op after the
+                                            // first flip, and re-enabling the toggle mid-session
+                                            // must re-arm the claim — a memo held that flag
+                                            // hostage until cache eviction.
+                                            if changed {
+                                                claim_article_on_user_edit(&state.pool, &page_id).await;
+                                            }
                                             state.save_queue.queue_save(page_id.clone(), full_state).await;
                                         }
                                     }
@@ -717,8 +847,16 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                             }
                                         };
                                         let mut doc = page_doc.write().await;
-                                        if let Some(full_state) = apply_yjs_update(&mut doc, update_bytes) {
+                                        if let Some((full_state, changed)) = apply_yjs_update(&mut doc, update_bytes) {
                                             drop(doc);
+                                            // Every changing update, not once per cached doc: the
+                                            // WHERE auto_update=true makes it a no-op after the
+                                            // first flip, and re-enabling the toggle mid-session
+                                            // must re-arm the claim — a memo held that flag
+                                            // hostage until cache eviction.
+                                            if changed {
+                                                claim_article_on_user_edit(&state.pool, &page_id).await;
+                                            }
                                             state.save_queue.queue_save(page_id.clone(), full_state).await;
                                         }
                                     }
@@ -775,6 +913,56 @@ mod tests {
     fn read_content(doc: &Doc) -> String {
         let txn = doc.transact();
         txn.get_text("content").unwrap().get_string(&txn)
+    }
+
+    // ── the claim signal: only a CHANGING update counts as an edit ──────────
+
+    /// Helper: a PageDoc around an existing Doc, for apply_yjs_update.
+    fn page_doc(doc: Doc) -> PageDoc {
+        let (broadcast_tx, _) = broadcast::channel(4);
+        PageDoc {
+            doc,
+            broadcast_tx,
+            last_update: Instant::now(),
+        }
+    }
+
+    /// Opening a page must never claim it. A freshly-synced client answers
+    /// the server's state vector with a diff of everything the server lacks —
+    /// which, on open, is NOTHING, so the update applies cleanly and changes
+    /// nothing. `changed` is the entire basis of the article-claim flip, so
+    /// this pins both directions: a no-op replay is not an edit, a real
+    /// insertion is.
+    #[test]
+    fn a_noop_update_is_not_an_edit_and_a_real_one_is() {
+        let server = setup_doc("The record's prose.");
+        let mut page = page_doc(server);
+
+        // A second client that has synced the same state.
+        let client = Doc::new();
+        {
+            let state = page.doc.transact().encode_state_as_update_v1(&yrs::StateVector::default());
+            let mut txn = client.transact_mut();
+            txn.apply_update(Update::decode_v1(&state).unwrap());
+        }
+
+        // Replaying the shared state back at the server: applies, changes nothing.
+        let replay = client.transact().encode_state_as_update_v1(&yrs::StateVector::default());
+        let (_, changed) = apply_yjs_update(&mut page, &replay).expect("decodable");
+        assert!(!changed, "an update carrying nothing new must not read as an edit");
+
+        // A real edit on the client → the diff the server lacks → an edit.
+        {
+            let mut txn = client.transact_mut();
+            let text = txn.get_or_insert_text("content");
+            let len = text.len(&txn);
+            text.insert(&mut txn, len, " Your line.");
+        }
+        let sv = page.doc.transact().state_vector();
+        let diff = client.transact().encode_state_as_update_v1(&sv);
+        let (_, changed) = apply_yjs_update(&mut page, &diff).expect("decodable");
+        assert!(changed, "a real insertion must read as an edit");
+        assert_eq!(read_content(&page.doc), "The record's prose. Your line.");
     }
 
     // ── append (researcher-plan D4.1) ───────────────────────────────────────

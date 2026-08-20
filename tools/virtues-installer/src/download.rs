@@ -182,7 +182,7 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     if staged_bins {
         // The bin dir is a single filesystem path (libexec/virtues) regardless
         // of the env var name, so one symlink serves both schemes.
-        force_symlink(&current.join("applets-bin"), &cfg.actions_bin_dir())?;
+        force_symlink(&current.join("applets-bin"), &cfg.applets_bin_dir())?;
     }
     ui::ok(&format!("Activated {slot_id} (current → releases/{slot_id})"));
 

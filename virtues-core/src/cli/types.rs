@@ -34,34 +34,41 @@ pub enum DeviceCommands {
         id: String,
     },
 
-    /// Print a one-time pair code to bring a new device onto the allowlist.
+    /// Print the pair code to bring a new device onto the allowlist.
     /// Alias for `virtues pair` scoped to the allowlist framing.
     Add,
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Interactive setup wizard. Mostly historical — fresh hardware boots use
-    /// `install.sh` which writes `.env` non-interactively. Kept for niche manual
-    /// setups. Safe by default: backs up an existing `.env` to `.env.bak.<ts>`
-    /// before overwriting.
+    /// Finish a fresh install: run migrations, mint a pair code, print the
+    /// handoff. Idempotent — safe to re-run at any time.
+    ///
+    /// PLUMBING, not a wizard. The account/subscribe/naming conversation this
+    /// used to host has moved to the app, because a TTY is the worst available
+    /// medium for billing and OAuth. `virtues-installer` execs this as the last
+    /// step of `curl virtues.com/sh | sudo sh`; it writes no config of its own
+    /// and touches no `.env`.
+    ///
+    /// (Its help used to describe an interactive wizard that backed up `.env`
+    /// before overwriting it, and pointed at an `install.sh` that no longer
+    /// exists. It did none of those things.)
     #[command(hide = true)]
     Init,
 
-    /// Pair a device with your box: print a one-time code (+ URL/QR) to enter
-    /// in the desktop app or open in any browser, then wait until it's used.
+    /// Pair a device with your box: print the standing code to type into the
+    /// app, then wait until it's used.
     ///
-    /// Mints a fresh pair token in the DB; no `.env` touching, no prompts.
-    /// Idempotent — run as often as needed. THE one human verb for connecting
-    /// a device to the box (docs/onboarding.md). `login` and `link` survive as
-    /// aliases (this used to be `virtues login`).
-    ///
-    /// Honors `ENVIRONMENT=dev` to print `http://localhost:<VIRTUES_WEB_PORT>/...`
-    /// (vite dev server) instead of `http://localhost:8000/...` (the production
-    /// HTTP server on the box).
+    /// Prints the box's multi-use standing code (minting one if none is live),
+    /// NOT a fresh one-time token, and NOT a URL or QR — a browser cannot pair
+    /// (it holds no iroh key) and the desktop app has no camera, so the code is
+    /// typed by hand. No `.env` touching, no prompts. Idempotent — run as often
+    /// as needed. THE one human verb for connecting a device to the box
+    /// (docs/onboarding.md). `login` and `link` survive as aliases (this used
+    /// to be `virtues login`).
     #[command(alias = "login", alias = "link")]
     Pair {
-        /// Print the code/URL and exit immediately instead of waiting for it
+        /// Print the code and exit immediately instead of waiting for it
         /// to be used (scripts, copy-paste workflows).
         #[arg(long)]
         no_wait: bool,
@@ -257,6 +264,44 @@ pub enum Commands {
         force: bool,
     },
 
+    /// Strip every per-unit identity so this box's disk can be imaged and
+    /// cloned. The LAST command before a box ships or its boot card is `dd`'d.
+    ///
+    /// Not a reset and not an uninstall — the software stays installed and
+    /// configured. It removes only what must be unique per unit: the database
+    /// (which holds the iroh secret that IS the box's network identity), the
+    /// lake, `VIRTUES_ENCRYPTION_KEY`, machine-id, SSH host keys, and saved
+    /// wifi. Each clone re-mints them on first boot.
+    ///
+    /// Cloning without this ships every unit as the same box: one EndpointId
+    /// across the fleet, and one data-at-rest key. Neither is visible on the
+    /// bench and neither is fixable in the field.
+    #[command(hide = true)]
+    Deprovision {
+        /// Skip the typed-hostname confirmation (scripts/CI).
+        #[arg(long)]
+        yes: bool,
+
+        /// Bypass the "service is running" check.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Is this disk safe to image and clone? Read-only; changes nothing.
+    ///
+    /// The gate between `virtues deprovision` and `dd`. Deprovision reports
+    /// success and tells you to power off, and until now that was the whole
+    /// assurance — nothing ever re-checked the result. A per-unit secret that
+    /// survived into a master image is invisible on the bench and catastrophic
+    /// in the field: the iroh secret IS the box's identity, so clones of an
+    /// un-deprovisioned master are literally the same box, and one leaked
+    /// encryption key decrypts every unit ever shipped.
+    ///
+    /// Exits non-zero on any finding, so it can be the last line of a
+    /// manufacturing script. See docs/appliance-image.md.
+    #[command(name = "image-check")]
+    ImageCheck,
+
     /// Self-update from the latest GitHub Release, via atomic release slots.
     ///
     /// Stages the whole release into `releases/<slot>/`, preflights it (the
@@ -316,6 +361,35 @@ pub enum Commands {
     /// forward); the previous binary tolerates a newer schema.
     Rollback,
 
+    /// Download, verify, and preflight the newest release — without installing.
+    ///
+    /// The first half of `upgrade`, on its own: the release is staged into its
+    /// slot and made to prove itself (`--version` smoke + `migrate --check`),
+    /// but `current` is not touched, so the box is byte-identical afterwards
+    /// whether this succeeds or fails. `virtues activate` installs the result.
+    ///
+    /// Costs nothing when there is nothing to do — two small API calls settle
+    /// "already on it" before any transfer starts. The box runs this on a
+    /// schedule on the stable channel; running it by hand is the same work.
+    Prepare {
+        /// Re-fetch and re-stage even if the newest build is already staged.
+        /// Also skips the migration lineage gate.
+        ///
+        /// Does NOT re-stage the release this box is already RUNNING: that
+        /// resolves to the live slot, and staging starts by deleting it. Use
+        /// `upgrade --force` to reinstall in place, which restarts into the
+        /// result rather than leaving it half-written underneath a live box.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Install the release `prepare` staged: flip, migrate, restart.
+    ///
+    /// The second half of `upgrade`. Preflights the staged release again first,
+    /// because the box's schema may have moved since it was prepared. Fails
+    /// cleanly if nothing is staged.
+    Activate,
+
     /// Start the HTTP server
     #[command(hide = true)]
     Server {
@@ -368,19 +442,25 @@ pub enum Commands {
     /// flow). Prints a QR + URL and waits for you to complete checkout on a
     /// phone or browser; the box never holds a Stripe key.
     ///
-    /// Most users want `virtues init` instead (full first-run wizard: config
-    /// + subscribe + migrate). `subscribe` is the lower-level subscribe-only
-    /// command for re-subscribing or dev iteration.
+    /// A power-user hatch for re-subscribing or dev iteration. In the normal
+    /// flow the app carries the account grant to the box over Bluetooth and
+    /// nobody runs this. (It used to point at `virtues init` as the "full
+    /// first-run wizard: config + subscribe + migrate" — init has been
+    /// plumbing-only since the account conversation left the TTY.)
     #[command(alias = "claim", hide = true)]
     Subscribe,
 
     /// Attach this box to an existing Virtues subscription via the
-    /// magic-link login flow. Pairs with `virtues init`'s [1] Log in
-    /// branch — same code path, just standalone for retries.
+    /// magic-link login flow. Standalone, for retries.
     ///
-    /// Hidden power-user command: `virtues pair` is the device-pairing verb
-    /// (the pair code/URL); this is the *account* attach, which the web wizard
-    /// owns in the normal flow (docs/onboarding.md).
+    /// Hidden power-user command, and the distinction it turns on is worth
+    /// keeping straight: `virtues pair` attaches a DEVICE to this box, this
+    /// attaches this box to an ACCOUNT. In the normal flow the app carries the
+    /// account grant over Bluetooth (docs/onboarding-paradigm.md §7) and
+    /// neither is typed.
+    ///
+    /// (It used to describe itself as pairing with `virtues init`'s "[1] Log
+    /// in" branch — a menu that no longer exists.)
     #[command(name = "account-login", hide = true)]
     AccountLogin,
 

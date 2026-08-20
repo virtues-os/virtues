@@ -92,6 +92,12 @@ export function getRouteFromEntityId(entityId: string): string {
 // ============================================================================
 
 const TAB_STORAGE_KEY_PREFIX = 'virtues-window-tabs';
+// The phone shell keeps its own state, under a key that deliberately does NOT
+// start with the prefix above (the per-space migration sweeps that prefix). One
+// window's worth of state and many windows' worth are not the same shape, and a
+// desktop browser dragged below the mobile breakpoint must not overwrite the
+// tabs the user had open at full width.
+const MOBILE_STORAGE_KEY = 'virtues-window-mobile';
 const TAB_STORAGE_VERSION = 10; // Per-tab navigation history (browser model)
 const HISTORY_CAP = 50; // Max routes kept in a single tab's history stack
 
@@ -118,6 +124,16 @@ class WindowShellStore {
 	// Derived - computed, not stored
 	get isSplit(): boolean {
 		return this.panes.length > 1;
+	}
+
+	/**
+	 * Single-window mode: the phone shell shows ONE view and mounts nothing
+	 * else. Panes and tabs both collapse to that one window, and everything
+	 * that would have opened a second one navigates it in place instead — its
+	 * history stack is the only back button the phone has.
+	 */
+	private get singleWindow(): boolean {
+		return mobileLayout.isMobile;
 	}
 
 	get activePane(): PaneState | undefined {
@@ -192,8 +208,37 @@ class WindowShellStore {
 
 		try {
 			this.restoreTabState();
+			if (this.singleWindow) this.collapseToSingleWindow();
 		} catch (e) {
 			console.error('[WindowShellStore] Failed to initialize:', e);
+		}
+	}
+
+	/**
+	 * Fold whatever was restored down to one pane holding one tab.
+	 *
+	 * The phone shell mounts only the active view, so a second tab would be both
+	 * unreachable (there is no tab strip to reach it with) and expensive — it
+	 * would keep its sockets, Yjs document and polling alive off-screen. Runs on
+	 * every phone boot, so state written before this mode existed, or by a
+	 * desktop browser dragged below the breakpoint, still lands on one window.
+	 */
+	collapseToSingleWindow(): void {
+		const pane = this.activePane ?? this.panes[0];
+		const keep = pane?.tabs.find(t => t.id === pane.activeTabId) ?? pane?.tabs[0] ?? null;
+
+		this.activePaneId = 'left';
+		this.panes = [{
+			id: 'left',
+			tabs: keep ? [keep] : [],
+			activeTabId: keep?.id ?? null,
+			width: 100
+		}];
+
+		if (keep) {
+			this.persistTabState();
+		} else {
+			this.openDefaultTab();
 		}
 	}
 
@@ -264,8 +309,9 @@ class WindowShellStore {
 			}
 
 			if (rightRoute && mobileLayout.isMobile) {
-				// No split on the phone shell — a ?right= deep link opens the
-				// right-hand route as a normal tab instead.
+				// No split, and no second window, on the phone — a ?right= deep
+				// link lands in the one window, with the left-hand route behind
+				// it in history where back can reach it.
 				this.openTabFromRoute(rightRoute, { focusExisting: true });
 			} else if (rightRoute) {
 				if (!this.isSplit) {
@@ -343,8 +389,9 @@ class WindowShellStore {
 	// ============================================================================
 
 	private getTabStorageKey(): string {
-		// Single global key — multi-space carousel removed.
-		return TAB_STORAGE_KEY_PREFIX;
+		// Single global key — multi-space carousel removed. The phone shell keeps
+		// its one window separately (see MOBILE_STORAGE_KEY).
+		return this.singleWindow ? MOBILE_STORAGE_KEY : TAB_STORAGE_KEY_PREFIX;
 	}
 
 	private persistTabState(): void {
@@ -370,8 +417,9 @@ class WindowShellStore {
 
 		try {
 			// One-time migration: if the global key doesn't exist but a per-space
-			// key does, adopt the most recent one and clean up the rest.
-			if (!localStorage.getItem(storageKey)) {
+			// key does, adopt the most recent one and clean up the rest. Desktop
+			// only — the per-space keys were never a phone shape.
+			if (!this.singleWindow && !localStorage.getItem(storageKey)) {
 				this.migratePerSpaceTabKeys(storageKey);
 			}
 
@@ -486,6 +534,16 @@ class WindowShellStore {
 	// ============================================================================
 
 	openTab(input: TabInput, paneId?: string): string {
+		// One window on the phone. Every caller that means "open this somewhere"
+		// — a new tab, a tab beside, a forced-new chat — means "show this" here,
+		// and showing it is a navigation of the window already open. Replacing
+		// the tab instead would throw away the history stack that back walks.
+		if (this.singleWindow) {
+			const pane = this.panes[0];
+			const active = pane?.tabs.find(t => t.id === pane.activeTabId);
+			if (active) return this.navigate(input.route, { label: input.label });
+		}
+
 		const id = crypto.randomUUID();
 		// Seed the history stack with the tab's opening route.
 		const tab: Tab = {
@@ -495,7 +553,7 @@ class WindowShellStore {
 			historyIndex: 0,
 			createdAt: Date.now()
 		};
-		const targetPaneId = paneId ?? this.activePaneId;
+		const targetPaneId = this.singleWindow ? 'left' : (paneId ?? this.activePaneId);
 
 		this.updatePane(targetPaneId, pane => ({
 			...pane,
@@ -572,7 +630,7 @@ class WindowShellStore {
 	}): string {
 		const { effectiveRoute, fields } = this.identityFromRoute(route, options?.label);
 
-		let targetPaneId = options?.paneId ?? this.activePaneId;
+		let targetPaneId = this.singleWindow ? 'left' : (options?.paneId ?? this.activePaneId);
 		if (options?.preferEmptyPane && this.isSplit) {
 			if (this.panes[0].tabs.length === 0) targetPaneId = 'left';
 			else if (this.panes[1]?.tabs.length === 0) targetPaneId = 'right';
@@ -1094,6 +1152,16 @@ class WindowShellStore {
 	}
 
 	/**
+	 * Activate the Nth tab (1-based) counting left-to-right across the whole
+	 * window: the left pane's tabs first, then the right pane's. Focus follows
+	 * the tab into its pane. Out-of-range ordinals no-op.
+	 */
+	activateTabByOrdinal(n: number): void {
+		const tab = this.panes.flatMap(p => p.tabs)[n - 1];
+		if (tab) this.setActiveTab(tab.id);
+	}
+
+	/**
 	 * Move to the next/previous tab within the focused pane, wrapping at both
 	 * ends. No-ops on a pane with fewer than two tabs.
 	 */
@@ -1114,6 +1182,9 @@ class WindowShellStore {
 	 * the pane you were working in visible instead of burying it behind a tab.
 	 */
 	openRouteBeside(route: string, label?: string): string {
+		// Nothing is beside anything on a phone — "open" is just open.
+		if (this.singleWindow) return this.openTabFromRoute(route, { label });
+
 		const other: 'left' | 'right' = this.activePaneId === 'right' ? 'left' : 'right';
 		if (!this.isSplit) this.enableSplit();
 		return this.openTabFromRoute(route, { paneId: other, forceNew: true, label });
@@ -1199,9 +1270,9 @@ class WindowShellStore {
 			return existing.tab.id;
 		}
 
-		// No split on the phone shell — "beside" degrades to a normal tab.
-		if (mobileLayout.isMobile) {
-			return this.openTab(input, this.activePaneId);
+		// No split on the phone shell — "beside" degrades to opening it here.
+		if (this.singleWindow) {
+			return this.openTab(input, 'left');
 		}
 
 		// Target the *other* pane from the currently active one.

@@ -219,7 +219,6 @@ export interface DayPage extends WikiPageBase {
 	autobiography: string;
 
 	/** Section-level tracking for granular authorship */
-	autobiographySections?: AutobiographySection[];
 
 	/** One-line literary subtitle for the day (Austen register, generated alongside autobiography) */
 	epigraph?: string;

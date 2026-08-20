@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import { accentCss } from '$lib/sidebar/pin-colors';
 	import { notebookStore } from '$lib/stores/notebook.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { Page } from '$lib';
@@ -157,6 +158,7 @@
 			defaultViewMode="grid"
 			gridMinWidth="200px"
 			onItemClick={(nb) => open(nb.id)}
+			rowHref={(nb) => `/notebook/${nb.id}`}
 			onRetry={() => notebookStore.load()}
 		>
 			{#snippet tableRow(nb: NotebookSummary)}
@@ -165,7 +167,7 @@
 						<span
 							class="row-icon"
 							class:tinted={!!nb.accent_color}
-							style={nb.accent_color ? `--room-accent: ${nb.accent_color}` : ''}
+							style={accentCss(nb.accent_color) ? `--room-accent: ${accentCss(nb.accent_color)}` : ''}
 						>
 							<Icon icon={nb.icon || 'ri:layout-masonry-line'} width="15" />
 						</span>
@@ -195,7 +197,7 @@
 				<div
 					class="nb-card"
 					class:tinted={!!nb.accent_color}
-					style={nb.accent_color ? `--room-accent: ${nb.accent_color}` : ''}
+					style={accentCss(nb.accent_color) ? `--room-accent: ${accentCss(nb.accent_color)}` : ''}
 				>
 					<div class="nb-card-icon"><Icon icon={nb.icon || 'ri:layout-masonry-line'} width="20" /></div>
 					<div class="nb-card-name">{nb.name}</div>

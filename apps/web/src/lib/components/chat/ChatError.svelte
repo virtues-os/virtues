@@ -140,7 +140,7 @@
 							{kind === "wallet_empty" || kind === "topup_disabled" ? "Add credits" : "Manage billing"}
 						</a>
 					{:else if kind === "reconnect" || kind === "subscription"}
-						<a href="/setup" class="usage-link">
+						<a href="/onboarding" class="usage-link">
 							<Icon icon="ri:link" width="16" />
 							Reconnect subscription
 						</a>

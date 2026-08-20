@@ -1,8 +1,10 @@
 name = "iOS Ingest"
-description = "Ingest every paired-iPhone stream (health, location, calendar, contacts, audio, finance). The phone tags each push with a `stream` field; one action fans it to the right ontology table."
+description = "Receives everything your iPhone collects — health, location, calendar, contacts, audio, finance, and what you share to it."
 owner = "system"
-runtime = "function"
 command = ["ios_ingest"]
 triggers = ["webhook"]
 per_credential = true
 source = { id = "ios" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["calendar_event", "communication_transcription", "content_bookmark", "financial_account", "financial_transaction", "health_heart_rate", "health_hrv", "health_sleep", "health_steps", "health_workout", "location_point"]

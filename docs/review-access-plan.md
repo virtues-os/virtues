@@ -37,42 +37,58 @@ multi-use and permanent for free. Migration `0058_review_pair_code.sql` only
 widens a CHECK constraint; it creates no row.
 
 The code stays **6 digits** because the mobile pairing input is
-`inputmode="numeric"` with `maxlength="7"` (`src-tauri/ui/mobile-pair.html`). A
+`inputmode="numeric"` with `maxlength="7"` (`src-tauri/ui/connect.html`). A
 longer, higher-entropy token would be untypeable there. Startup refuses
 anything that is not exactly 6 digits rather than installing a code a reviewer
 cannot enter.
 
 ### Why the env gate is the whole safety story
 
-A 1M keyspace on a public origin is only acceptable because such a box holds
-synthetic seed data — a successful guess exposes a fake life. Absent the env
-var no review row is ever created, so customer boxes cannot grow a permanent
-remote-pairing credential. **Never set this variable on a box holding a real
-person's data.** An active review code logs a warning on every boot for exactly
-this reason.
+A 1M keyspace on a public origin is acceptable only because two things hold at
+once. First, `/api/pair/consume` is rate-limited to **10 attempts per IP per
+30-minute window**, which puts a single-source sweep of the space far out of
+reach. Second, such a box holds synthetic seed data — a successful guess exposes
+a fake life. Absent the env var no review row is ever created, so customer boxes
+cannot grow a permanent remote-pairing credential. **Never set this variable on a
+box holding a real person's data.** An active review code logs a warning on every
+boot for exactly this reason.
 
-Residual risks on the demo box, all bounded and accepted: a successful guess
+Residual risks on the demo box, all bounded and accepted: the rate limit is
+per-IP, so a distributed sweep is slowed rather than stopped; a successful guess
 earns a permanent iroh allowlist entry, could burn inference credits via
 `virtues-api`, and would see anything the reviewer's device synced.
 
+**Rotate the code whenever the box's address becomes known outside App Review**
+— publishing the two together is what turns a slow, bounded guess into a targeted
+one. Rotation is a one-line env change plus a restart; see
+[Between review rounds](#between-review-rounds).
+
 ## Current demo box
+
+**The live box's address, instance ID, security-group ID, and current pair code
+are deliberately not in this repo.** They live in the private ops note alongside
+the App Review submission record. This file describes the *shape* of the box, not
+its coordinates.
 
 | | |
 |---|---|
-| Instance | `i-04e515dab909e10ef` (t4g.medium, 4 GB, arm64, us-east-1c) |
-| Elastic IP | `52.205.15.22` |
-| URL | https://demo-d5873b.virtues.ch |
-| Security group | `sg-0e8503ced8f9a1a4e` — 80/443 public, no SSH |
-| Access | SSM via `virtues-ec2-profile` |
+| Instance | t4g.medium (4 GB, arm64), 30 GB gp3 |
+| Address | Elastic IP + a random `demo-<rand>.virtues.ch` Route 53 record |
+| Security group | 80/443 public, no SSH |
+| Access | SSM via an instance profile — no key pair |
 | Cost | ~$27/mo running, ~$6/mo stopped |
 
 An obscure hostname is not a security control — it only keeps opportunistic
-scanners away. The controls are the synthetic data and the disposability.
+scanners away, and it does even that only while it stays unpublished. The real
+controls are the per-IP rate limit on `/api/pair/consume` (10 attempts per
+30-minute window, keyed on the proxy-appended XFF entry — see
+`ensure_review_code` and `consume_handler` in `virtues-core/src/api/pair.rs`),
+the synthetic seed data, and the box's disposability.
 
 ## Provisioning
 
 1. Launch t4g.medium (arm64 — both `x86_64` and `aarch64` are built), 30 GB
-   gp3, instance profile `virtues-ec2-profile`, SG with 80/443 open and 22
+   gp3, the SSM-enabled EC2 instance profile, SG with 80/443 open and 22
    closed. Allocate an Elastic IP so DNS survives stop/start.
 2. Route 53 A record → the EIP.
 3. Caddy in front: `demo-<rand>.virtues.ch { reverse_proxy 127.0.0.1:8000 }`.
@@ -81,7 +97,9 @@ scanners away. The controls are the synthetic data and the disposability.
    sidecars ≈ 2.5–3 GB) but the seed index build wants headroom. Slow is fine
    here; OOM is not.
 5. Install `virtues` from a release that contains migration 0058.
-6. `/etc/virtues/env`: `VIRTUES_PUBLIC_URL` + `VIRTUES_REVIEW_PAIR_CODE`.
+6. `/etc/virtues/env`: `VIRTUES_PUBLIC_URL` + `VIRTUES_REVIEW_PAIR_CODE`. Draw
+   the code randomly per round (`shuf -i 100000-999999 -n 1`) and record it in
+   the private ops note — never in this repo, a commit message, or an issue.
 7. `virtues seed` — the 12-week narrative plus the instrumented demo day, so
    the reviewer sees a life rather than an empty shell.
 8. **Subscribe the box's account.** Atlas only issues a `relay_url` to a

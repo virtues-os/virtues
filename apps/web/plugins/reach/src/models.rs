@@ -16,6 +16,8 @@ pub struct PairRequest {
 pub struct FoundServer {
   pub name: String,
   pub origin: String,
+  /// None = box too old to say. See DiscoveredBox::claimed.
+  pub claimed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -25,6 +27,21 @@ pub struct DiscoverResponse {
   /// Diagnostic: what the scan saw (local IPs / subnets), shown small in the UI.
   #[serde(default)]
   pub debug: String,
+}
+
+/// Result of a provisioning join attempt.
+///
+/// `outcome` is `"joined" | "failed" | "unknown"`. Three values and not a
+/// boolean because the third is real and common — the box takes its AP down to
+/// perform the join, so the requesting phone routinely never sees the reply.
+/// Collapsing that into `false` would tell an owner their box failed to connect
+/// at the moment it succeeded.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvisionJoinResult {
+  pub outcome: String,
+  /// NetworkManager's own words on failure, passed through unreworded.
+  pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

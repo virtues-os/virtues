@@ -18,8 +18,14 @@ use tokio::sync::Semaphore;
 /// A box found on the LAN. `origin` is an IP URL (no DNS needed to reach it).
 #[derive(Debug, Clone, Serialize)]
 pub struct DiscoveredBox {
+  /// Human label ("Quaint Tern") from `/api/box/identity`; a generic
+  /// "Virtues box" only when that endpoint is absent (pre-codename builds).
   pub name: String,
   pub origin: String,
+  /// Whether a device has already paired. `None` when unknowable (old box).
+  /// The chips render "ready to set up" vs "already set up" off this — the
+  /// distinction that matters when two boxes share a LAN.
+  pub claimed: Option<bool>,
 }
 
 /// The box port. Matches the Avahi advertisement + desktop reach.
@@ -86,10 +92,28 @@ pub async fn scan_subnet() -> Vec<DiscoveredBox> {
         let _permit = sem.acquire().await.ok()?;
         let url = format!("http://{ip}:{BOX_PORT}/api/pair/consume");
         match client.post(&url).json(&serde_json::json!({})).send().await {
-          Ok(r) if matches!(r.status().as_u16(), 400 | 401 | 422) => Some(DiscoveredBox {
-            name: "Virtues box".to_string(),
-            origin: format!("http://{ip}:{BOX_PORT}"),
-          }),
+          Ok(r) if matches!(r.status().as_u16(), 400 | 401 | 422) => {
+            let origin = format!("http://{ip}:{BOX_PORT}");
+            // Ask who it is. Best-effort: a hit stays a hit even if the box
+            // predates the identity endpoint.
+            let (name, claimed) = match client
+              .get(format!("{origin}/api/box/identity"))
+              .send()
+              .await
+            {
+              Ok(resp) if resp.status().is_success() => {
+                match resp.json::<serde_json::Value>().await {
+                  Ok(v) => (
+                    v["label"].as_str().unwrap_or("Virtues box").to_string(),
+                    v["claimed"].as_bool(),
+                  ),
+                  Err(_) => ("Virtues box".to_string(), None),
+                }
+              }
+              _ => ("Virtues box".to_string(), None),
+            };
+            Some(DiscoveredBox { name, origin, claimed })
+          }
           _ => None,
         }
       }));

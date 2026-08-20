@@ -73,6 +73,7 @@ pub struct ToolConfig {
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
         think_tool(),
+        propose_narrative_identity_tool(),
         update_memory_tool(),
         set_user_name_tool(),
         set_assistant_name_tool(),
@@ -86,15 +87,16 @@ pub fn default_tools() -> Vec<ToolConfig> {
         get_page_content_tool(),
         edit_page_tool(),
         setup_applet_tool(),
-        update_action_memory_tool(),
-        list_actions_tool(),
-        get_action_tool(),
-        edit_action_tool(),
-        delete_action_tool(),
-        run_action_tool(),
+        update_applet_memory_tool(),
+        list_applets_tool(),
+        get_applet_tool(),
+        edit_applet_tool(),
+        delete_applet_tool(),
+        run_applet_tool(),
         dayline_event_tool(),
         get_project_item_tool(),
         generate_image_tool(),
+        read_asset_tool(),
     ]
 }
 
@@ -129,6 +131,85 @@ Returns: the generated image (rendered inline to the user)."#.to_string(),
         category: ToolCategory::Edit,
         icon: "ri:image-add-line".to_string(),
         display_order: 22,
+        is_system: false,
+    }
+}
+
+/// Propose an addition to the user's narrative identity — never write one.
+fn propose_narrative_identity_tool() -> ToolConfig {
+    ToolConfig {
+        id: "propose_narrative_identity_edit".to_string(),
+        name: "Propose identity note".to_string(),
+        description: "Suggest something for the user's narrative identity".to_string(),
+        llm_description: r#"Propose an addition to the user's narrative identity — the short document of who they are: values, aspirations, character, temperament, what they want.
+
+This document goes into EVERY conversation you have with them, so it is the most consequential text in the system and it is not yours to edit. This tool does not change it. It leaves a note the user sees, with Add and Dismiss; nothing happens unless they choose.
+
+Use it RARELY. Not for facts (those belong in the record), not for preferences about how to format an answer, and never for something they told you in passing. Use it when they say something durable about who they are or what they are for — the kind of thing that would still be true in a year and that would change how you understand a future question.
+
+Say it in their own register, one or two sentences, as an addition to the document rather than a report about the conversation. Write "I" as the user, because the document is theirs.
+
+Good: "I'd rather ship something imperfect early than polish in private."
+Bad: "The user mentioned they prefer shipping early." (a report, not the document)
+Bad: "The user's favourite editor is vim." (a fact, not an identity)
+
+If you are unsure whether something qualifies, it does not."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["text", "why"],
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The sentence(s) to add, written in the user's voice"
+                },
+                "why": {
+                    "type": "string",
+                    "description": "What in this conversation prompted it — shown to the user so they can judge"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:compass-3-line".to_string(),
+        display_order: 0,
+        is_system: false,
+    }
+}
+
+/// Look at a file — actually look, not read a description of it.
+fn read_asset_tool() -> ToolConfig {
+    ToolConfig {
+        id: "read_asset".to_string(),
+        name: "Read file".to_string(),
+        description: "Look at an image or file the user has stored".to_string(),
+        llm_description: r#"Look at a file in the user's drive. For an image, the image itself comes back and you see it, exactly as if the user had pasted it into the conversation.
+
+Use this when the user refers to a specific file — a screenshot, a photo, a diagram — and answering means seeing what is actually in it.
+
+Take the id from the file's ref URL: `/drive/dr_abc123` means `file_id: "dr_abc123"`. Notebook members list theirs.
+
+When to reach for this instead of searching:
+- A member of the active notebook carries `text="none"` — nothing was extracted from it, so semantic_search cannot see inside it and will return nothing. That is not evidence the file lacks what the user is asking about. Look at it.
+- The user says "this screenshot" / "that photo" / "the image in here". Look before answering.
+- A document's extracted text is not enough and the layout matters.
+
+Do NOT use it to sweep a folder hoping to find something — one file per call, when you know which file you want. Images are sent whole and cost real context.
+
+If the file cannot be shown you are told why. Say that plainly to the user; never describe a file you were not shown."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["file_id"],
+            "properties": {
+                "file_id": {
+                    "type": "string",
+                    "description": "Drive file id, e.g. `dr_abc123`. A full `/drive/dr_abc123` ref URL is also accepted."
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Search,
+        icon: "ri:image-line".to_string(),
+        display_order: 0,
         is_system: false,
     }
 }
@@ -274,7 +355,7 @@ fn web_search_tool() -> ToolConfig {
         id: "web_search".to_string(),
         name: "Web Search".to_string(),
         description: "Search the web for current information".to_string(),
-        llm_description: r#"Search the web for current information using Exa AI.
+        llm_description: r#"Search the web for current information.
 
 Use this tool when:
 - User asks about recent events, news, or current information
@@ -286,16 +367,15 @@ Do NOT use when:
 - User is asking about their personal data (use sql_query instead)
 - The question is purely conversational or opinion-based
 
-You synthesize the results yourself — Exa returns evidence, not answers. Two tiers:
-- Default search: fast, for most lookups.
-- deep=true: comprehensive multi-step search for hard, multi-faceted, or
-  thin-result questions (e.g. cross-referenced standings, multi-entity research).
-  Costs more and is slower — escalate to it, don't default to it.
+You synthesize the results yourself — the search returns evidence, not answers.
 
 For time-sensitive topics (news, sports scores, odds, prices, live data) set
 max_age_hours=1 so results are fresh rather than cached.
 
-Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.to_string(),
+Set `objective` to what you are actually trying to learn whenever the query
+alone is ambiguous — it disambiguates a short query and improves results.
+
+Returns: Relevant web pages with titles, URLs, and the passages judged relevant."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["query"],
@@ -311,16 +391,9 @@ Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.t
                     "minimum": 1,
                     "maximum": 10
                 },
-                "search_type": {
+                "objective": {
                     "type": "string",
-                    "enum": ["auto", "keyword", "neural"],
-                    "description": "Search type: 'auto' (recommended), 'keyword' for exact matches, 'neural' for semantic",
-                    "default": "auto"
-                },
-                "deep": {
-                    "type": "boolean",
-                    "description": "Escalate to comprehensive multi-step research for hard or thin-result queries. Slower and costlier — off by default.",
-                    "default": false
+                    "description": "What you are trying to learn, in a sentence. Optional, but it disambiguates a short or broad query."
                 },
                 "max_age_hours": {
                     "type": "integer",
@@ -366,7 +439,7 @@ including the user's uploaded documents. When the conversation is grounded in a
 notebook, ALWAYS omit `domains`: the notebook already scopes the results, and an
 extra domain filter will wrongly exclude the notebook's materials.
 
-Returns ranked results with title, preview, author, timestamp, and a similarity score.
+Returns results in relevance order (rank 1 = best match) with title, preview, author, and timestamp. Rank is relative order within THIS result set only — it says nothing about absolute match quality, so do not describe rank-1 as a strong match unless its content shows it.
 Use sql_query with the returned record_ids to get full details.
 
 RECALL TIP: for a broad, vague, or many-worded need, pass 2-4 phrasings in `queries`
@@ -485,7 +558,6 @@ ENTITIES (resolved nouns in user's life)
 
 TEMPORAL (daily/yearly context)
   wiki_days         Day summaries with autobiography, context vector
-  wiki_years        Year summaries with highlights, themes
   wiki_events       Timeline events within a day
 
 REFERENCES
@@ -494,15 +566,12 @@ REFERENCES
 ================================================================================
 NARRATIVE TABLES (life story structure — wiki_* prefix)
 ================================================================================
-  wiki_telos     User's life purpose/direction
-  wiki_acts      Major life periods (multi-year)
-  wiki_chapters  Chapters within acts (months/seasons)
 
 ================================================================================
 QUERY TIPS (PostgreSQL dialect)
 ================================================================================
 - Use 'get_schema' to see columns before writing queries
-- Date filter: WHERE timestamp > now() - interval '7 days'
+- Date filter: WHERE occurred_at > now() - interval '7 days'
 - Truncate to a period: date_trunc('month', now()), date_trunc('day', now())
 - Cast a timestamp to a date: timestamp::date  (today = current_date)
 - Financial: amount/100.0 for dollars
@@ -516,27 +585,27 @@ EXAMPLE QUERIES
 -- Spending by category this month
 SELECT category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
 FROM data_financial_transaction
-WHERE timestamp >= date_trunc('month', now())
+WHERE occurred_at >= date_trunc('month', now())
 GROUP BY category ORDER BY dollars DESC
 
 -- Most contacted people this week
 SELECT wp.name, COUNT(*) as messages
 FROM data_communication_message m
 JOIN wiki_people wp ON m.sender_url = wp.url OR m.recipient_url = wp.url
-WHERE m.timestamp > now() - interval '7 days'
+WHERE m.occurred_at > now() - interval '7 days'
 GROUP BY wp.name ORDER BY messages DESC LIMIT 10
 
 -- Sleep patterns last 2 weeks
-SELECT timestamp::date as day, duration_hours, quality
+SELECT started_at::date as day, duration_minutes, sleep_quality_score
 FROM data_health_sleep
-WHERE timestamp > now() - interval '14 days'
-ORDER BY timestamp DESC
+WHERE started_at > now() - interval '14 days'
+ORDER BY occurred_at DESC
 
 -- Calendar events today
-SELECT title, start_time, end_time, location
+SELECT title, started_at, ended_at, location
 FROM data_calendar_event
-WHERE start_time::date = current_date
-ORDER BY start_time"#.to_string(),
+WHERE started_at::date = current_date
+ORDER BY started_at"#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["operation"],
@@ -780,8 +849,8 @@ Use this tool when:
 ALWAYS call this before using edit_page so you know what text to find.
 
 IMPORTANT - Extracting page_id:
-When user mentions a page using entity syntax like [Page Name](entity:page_abc123),
-extract the ID from the link: page_abc123 (everything after "entity:").
+When the user mentions a page it arrives as a route link, [Page Name](/page/page_abc123).
+Extract the ID from the link: page_abc123 (the last path segment).
 You MUST pass this page_id parameter when the user references a specific page.
 
 Returns the page title, content, and content length."#.to_string(),
@@ -791,7 +860,7 @@ Returns the page title, content, and content length."#.to_string(),
             "properties": {
                 "page_id": {
                     "type": "string",
-                    "description": "Page ID to read. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
+                    "description": "Page ID to read. Extract from the page link: [Name](/page/page_xxx) -> page_xxx"
                 }
             }
         }),
@@ -820,12 +889,12 @@ Use this tool when:
 IMPORTANT: Call get_page_content FIRST to see the current document!
 
 IMPORTANT - Extracting page_id:
-When user mentions a page using entity syntax like [Page Name](entity:page_abc123),
-extract the ID from the link: page_abc123 (everything after "entity:").
+When the user mentions a page it arrives as a route link, [Page Name](/page/page_abc123).
+Extract the ID from the link: page_abc123 (the last path segment).
 You MUST pass this page_id parameter when the user references a specific page.
 
 How it works:
-1. Provide 'page_id' - extracted from the entity link
+1. Provide 'page_id' - extracted from the page link
 2. Provide 'find' - the exact text to locate in the document
 3. Provide 'replace' - the new text you want instead
 4. Optionally provide 'title' - new title for the page
@@ -865,7 +934,7 @@ Tips:
             "properties": {
                 "page_id": {
                     "type": "string",
-                    "description": "Page ID to edit. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
+                    "description": "Page ID to edit. Extract from the page link: [Name](/page/page_xxx) -> page_xxx"
                 },
                 "title": {
                     "type": "string",
@@ -950,12 +1019,18 @@ Parameters:
 - description (required): ONE sentence of the user's intent — shown as the applet's headline.
 - agent (required): the runtime prompt. It runs with a kickoff message "Run your action instruction now." and NO chat history — write it self-contained.
 - schedule: 6-field cron (sec min hour day month dow), box-LOCAL timezone. "0 0 9 25 7 *" = July 25, 9am. Date-anchored one-offs: nearest future occurrence + until="once".
-- triggers: subset of cron/manual/tool/api/webhook. Defaults: with schedule ["cron","manual","tool"], else ["manual","tool"].
+- triggers: subset of cron/manual/tool/api/webhook/message. Defaults: with schedule ["cron","manual","tool"], else ["manual","tool"]. Add "message" when the user should be able to TALK to the applet — their text becomes the run's opening turn and the reply is the run result. This is the front door for trackers ("I had eggs" → sql_write a row) and anything the user feeds rather than schedules; check it before declining an ask for lack of input.
 - condition: SQL boolean gating each run (skipped when false). Local data only.
 - until: omit = forever · "once" = archive after first success · SQL boolean = archive when true after a success.
-- schema_sql: idempotent DDL, MUST target only schema applet_<slug> (start with CREATE SCHEMA IF NOT EXISTS applet_<slug>;).
+- schema_sql: ONE MIGRATION, not the whole schema. MUST target only schema applet_<slug>. First call: CREATE SCHEMA IF NOT EXISTS applet_<slug>; then your CREATE TABLEs. Later calls: submit ONLY what changed (ALTER TABLE applet_<slug>.t ADD COLUMN ...) — re-sending a CREATE TABLE IF NOT EXISTS with an extra column silently adds nothing, and the check will refuse it with the ALTER to write. Resubmitting identical DDL is recognized as already applied.
 - face_html: a complete index.html for the applet's face (sandboxed iframe; include <link rel="stylesheet" href="virtues.css"> and <script src="virtues.js"></script>; read data with await virtues.query(sql); max 48KB).
-- limits: {max_llm_cost, timeout, max_runs} — protective defaults, user-editable.
+- limits: protective ceilings, user-editable. Only these keys are enforced; any other key is a check failure, because a stored-but-ignored limit reads as protection and is not:
+    max_llm_cost         — DOLLARS, ceiling on model spend within one run (0.25 = 25 cents). The run stops mid-loop and records `budget_exceeded`.
+    max_llm_cost_per_day — DOLLARS, ceiling across a rolling 24h; checked before the run starts.
+    max_runs_per_day     — whole runs in a rolling 24h (`max_runs` means this). Manual "Run now" is exempt.
+    max_runs_per_hour    — whole runs in a rolling hour. Manual "Run now" is exempt.
+    timeout_s            — SECONDS of wall clock for the subprocess phase.
+  Set a spend ceiling on anything scheduled that calls a model: it is the difference between a cap and a hope.
 
 If the result status is "check_failed", fix the findings and call again — nothing was created."#.to_string(),
         parameters: serde_json::json!({
@@ -968,13 +1043,23 @@ If the result status is "check_failed", fix the findings and call again — noth
                 "schedule": { "type": "string", "description": "6-field cron, box-local tz" },
                 "triggers": {
                     "type": "array",
-                    "items": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook"] }
+                    "items": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook", "message"] }
                 },
                 "condition": { "type": "string", "description": "SQL boolean run gate" },
                 "until": { "type": "string", "description": "forever (omit) | 'once' | SQL boolean" },
-                "schema_sql": { "type": "string", "description": "Idempotent DDL in schema applet_<slug> only" },
+                "schema_sql": { "type": "string", "description": "ONE migration in schema applet_<slug> only. First call CREATEs; later calls submit only the change (ALTER TABLE ...)." },
                 "face_html": { "type": "string", "description": "Complete face index.html (48KB max)" },
-                "limits": { "type": "object", "description": "{max_llm_cost, timeout, max_runs}" }
+                "limits": {
+                    "type": "object",
+                    "description": "Enforced ceilings only. max_llm_cost / max_llm_cost_per_day in DOLLARS; max_runs_per_day (alias max_runs) / max_runs_per_hour as whole runs; timeout_s in seconds. Unknown keys fail the check.",
+                    "properties": {
+                        "max_llm_cost":         { "type": "number"  },
+                        "max_llm_cost_per_day": { "type": "number"  },
+                        "max_runs_per_day":     { "type": "integer" },
+                        "max_runs_per_hour":    { "type": "integer" },
+                        "timeout_s":            { "type": "integer" }
+                    }
+                }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -986,12 +1071,12 @@ If the result status is "check_failed", fix the findings and call again — noth
 }
 
 /// List actions — lightweight catalog for chat-driven discovery
-fn list_actions_tool() -> ToolConfig {
+fn list_applets_tool() -> ToolConfig {
     ToolConfig {
         id: "list_applets".to_string(),
         name: "List Applets".to_string(),
         description: "List scheduled actions".to_string(),
-        llm_description: r#"List the user's scheduled actions (both system and user-owned). Returns id, name, owner, enabled, cron_schedule, triggers, and last_run for each.
+        llm_description: r#"List the user's scheduled actions (both system and user-owned). Returns id, name, owner, enabled, schedule, triggers, and last_run for each.
 
 Use this when:
 - User asks "what automations do I have?"
@@ -1001,7 +1086,7 @@ Use this when:
 Optional filters:
 - owner: "system" or "user" (system = built-in, user = user-created)
 - enabled: true/false
-- trigger: "cron" | "manual" | "tool" | "api" | "webhook"
+- trigger: "cron" | "manual" | "tool" | "api" | "webhook" | "message"
 "#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
@@ -1020,12 +1105,12 @@ Optional filters:
 }
 
 /// Get a single action's full details + recent runs
-fn get_action_tool() -> ToolConfig {
+fn get_applet_tool() -> ToolConfig {
     ToolConfig {
         id: "get_applet".to_string(),
         name: "Get Applet".to_string(),
         description: "Fetch a single action".to_string(),
-        llm_description: r#"Fetch a single action by id, including its full configuration (agent, cron_schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
+        llm_description: r#"Fetch a single action by id, including its full configuration (agent, schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
 
 Use this when:
 - User asks "what does this action do?"
@@ -1036,7 +1121,7 @@ Use this when:
             "type": "object",
             "required": ["id"],
             "properties": {
-                "id": { "type": "string", "description": "The action id (e.g. 'action_user_weekly_planner')" }
+                "id": { "type": "string", "description": "The action id (e.g. 'applet_user__weekly_planner')" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1048,7 +1133,7 @@ Use this when:
 }
 
 /// Edit an existing action — partial update with system-owner guard
-fn edit_action_tool() -> ToolConfig {
+fn edit_applet_tool() -> ToolConfig {
     ToolConfig {
         id: "edit_applet".to_string(),
         name: "Edit Applet".to_string(),
@@ -1058,14 +1143,14 @@ fn edit_action_tool() -> ToolConfig {
 Editable fields:
 - name (user rows only)
 - agent (user rows only; the LLM prompt)
-- cron_schedule (nullable — set to null to remove)
+- schedule (nullable — set to null to remove)
 - enabled (bool)
 - config (object — full replace)
 - condition (nullable SQL expression; user rows only)
 - triggers (array of cron|manual|tool|api|webhook; user rows only)
 - memory (nullable markdown scratchpad)
 
-System-owned rows (built-in pipelines like day_summary_eod) only accept: enabled, cron_schedule, config, memory. Attempting to edit other fields on a system row will error with a clear message.
+System-owned rows (built-in pipelines like day_summary_eod) only accept: enabled, schedule, config, memory. Attempting to edit other fields on a system row will error with a clear message.
 
 Use this when the user asks to:
 - Change an action's prompt
@@ -1083,7 +1168,7 @@ Use this when the user asks to:
                     "properties": {
                         "name": { "type": "string" },
                         "agent": { "type": ["string", "null"] },
-                        "cron_schedule": { "type": ["string", "null"] },
+                        "schedule": { "type": ["string", "null"] },
                         "enabled": { "type": "boolean" },
                         "config": { "type": "object" },
                         "condition": { "type": ["string", "null"] },
@@ -1102,7 +1187,7 @@ Use this when the user asks to:
 }
 
 /// Delete a user-owned action
-fn delete_action_tool() -> ToolConfig {
+fn delete_applet_tool() -> ToolConfig {
     ToolConfig {
         id: "delete_applet".to_string(),
         name: "Delete Applet".to_string(),
@@ -1126,7 +1211,7 @@ This is destructive. Confirm with the user before calling unless the request is 
 }
 
 /// Manually run an action
-fn run_action_tool() -> ToolConfig {
+fn run_applet_tool() -> ToolConfig {
     ToolConfig {
         id: "run_applet".to_string(),
         name: "Run Applet".to_string(),
@@ -1158,7 +1243,7 @@ Use when the user asks to "run it now" or "re-run yesterday's summary"."#.to_str
 }
 
 /// Update action memory — persistent markdown scratchpad for actions
-fn update_action_memory_tool() -> ToolConfig {
+fn update_applet_memory_tool() -> ToolConfig {
     ToolConfig {
         id: "update_applet_memory".to_string(),
         name: "Update Applet Memory".to_string(),
@@ -1265,7 +1350,7 @@ Use this when:
 
 Supported urls: /page/, /chat/, /notebook/, /person/, /place/, /org/.
 Returns the item's content (page text, recent chat messages, space members,
-person/place/org/thing details). Don't fetch a reference you don't need."#.to_string(),
+person/place/org details). Don't fetch a reference you don't need."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["item_url"],
@@ -1298,7 +1383,7 @@ pub fn default_enabled_tools() -> serde_json::Value {
         "create_page": true,
         "get_page_content": true,
         "edit_page": true,
-        "setup_action": true,
+        "setup_applet": true,
         "get_project_item": true
     })
 }
@@ -1338,7 +1423,7 @@ mod tests {
         assert!(ids.contains(&"create_page"));
         assert!(ids.contains(&"get_page_content"));
         assert!(ids.contains(&"edit_page"));
-        assert!(ids.contains(&"setup_action"));
+        assert!(ids.contains(&"setup_applet"));
         assert!(ids.contains(&"dayline_event"));
     }
 

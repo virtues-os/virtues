@@ -7,7 +7,10 @@
 
 /* =============================================================================
    LIVE PREVIEW — HEADINGS (applied via line decorations)
-   ============================================================================= */
+   =============================================================================
+   Sizes/weights/line-heights cite the --md-* tokens (themes.css) shared with
+   the read path's .markdown rules — the editor and the rendered page must
+   move together. Only the PADDING below is editor-owned; see next comment. */
 
 /*
  * Vertical rhythm: headings use ASYMMETRIC padding — a generous push above
@@ -16,60 +19,180 @@
  * and creates dead click-zones / caret-gap artifacts in CodeMirror.
  */
 .cm-heading-1 {
-	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-	font-size: 1.75rem;
-	line-height: 1.3;
-	font-weight: 400;
+	font-family: var(--md-heading-major-family, Georgia, serif);
+	font-size: var(--md-h1-size);
+	line-height: var(--md-h1-lh);
+	font-weight: var(--md-h1-weight);
 	color: var(--color-foreground);
 	padding-top: 1.75rem !important;
 	padding-bottom: 0.2rem !important;
 }
 
 .cm-heading-2 {
-	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-	font-size: 1.375rem;
-	line-height: 1.35;
-	font-weight: 400;
+	font-family: var(--md-heading-major-family, Georgia, serif);
+	font-size: var(--md-h2-size);
+	line-height: var(--md-h2-lh);
+	font-weight: var(--md-h2-weight);
 	color: var(--color-foreground);
 	padding-top: 1.25rem !important;
 	padding-bottom: 0.2rem !important;
 }
 
 .cm-heading-3 {
-	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-	font-size: 1.125rem;
-	line-height: 1.4;
-	font-weight: 500;
+	font-family: var(--md-heading-major-family, Georgia, serif);
+	font-size: var(--md-h3-size);
+	line-height: var(--md-h3-lh);
+	font-weight: var(--md-h3-weight);
 	color: var(--color-foreground);
 	padding-top: 0.85rem !important;
 	padding-bottom: 0.15rem !important;
 }
 
 .cm-heading-4 {
-	font-size: 1rem;
-	line-height: 1.5;
-	font-weight: 500;
+	font-size: var(--md-h4-size);
+	line-height: var(--md-h4-lh);
+	font-weight: var(--md-h4-weight);
 	color: var(--color-foreground);
 	padding-top: 0.6rem !important;
 	padding-bottom: 0.1rem !important;
 }
 
 .cm-heading-5 {
-	font-size: 0.9375rem;
-	line-height: 1.5;
-	font-weight: 600;
+	font-size: var(--md-h5-size);
+	line-height: var(--md-h5-lh);
+	font-weight: var(--md-h5-weight);
 	color: var(--color-foreground);
 	padding-top: 0.5rem !important;
 	padding-bottom: 0.1rem !important;
 }
 
 .cm-heading-6 {
-	font-size: 0.875rem;
-	line-height: 1.5;
-	font-weight: 600;
+	font-size: var(--md-h6-size);
+	line-height: var(--md-h6-lh);
+	font-weight: var(--md-h6-weight);
 	color: var(--color-foreground);
 	padding-top: 0.5rem !important;
 	padding-bottom: 0.1rem !important;
+}
+
+/*
+ * The `#` markers, shown only while the caret is on the heading line.
+ *
+ * `position: absolute` with no offsets keeps the span at its static position
+ * but OUT OF FLOW, so it has zero inline width; translateX(-100%) then hangs it
+ * in the margin to the left of the heading. This is what lets the syntax be
+ * visible without the heading text moving a single pixel when the caret lands.
+ * A fixed rem size (not em) keeps the marker the same size at every level.
+ */
+.cm-heading-mark {
+	position: absolute;
+	transform: translateX(-100%);
+	padding-right: 0.45em;
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.8rem;
+	font-weight: 400;
+	line-height: inherit;
+	color: var(--color-foreground-subtle);
+	opacity: 0.55;
+	user-select: none;
+	pointer-events: none;
+}
+
+/* =============================================================================
+   FIND-IN-PAGE — the @codemirror/search panel, restyled to read as the app
+   ============================================================================= */
+
+.cm-panels {
+	background: var(--color-background);
+	border: none;
+	z-index: 10;
+}
+
+.cm-panels-top {
+	border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+}
+
+.cm-panel.cm-search {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 8px 12px;
+	font-family: var(--font-sans);
+	font-size: 12px;
+	color: var(--color-foreground-muted);
+}
+
+.cm-panel.cm-search input[type='checkbox'] {
+	accent-color: var(--color-primary);
+	margin-right: 2px;
+}
+
+.cm-panel.cm-search .cm-textfield {
+	padding: 5px 8px;
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	background: var(--color-surface-elevated);
+	color: var(--color-foreground);
+	font-size: 12px;
+	font-family: var(--font-sans);
+}
+
+.cm-panel.cm-search .cm-textfield:focus {
+	outline: none;
+	border-color: var(--color-primary);
+}
+
+.cm-panel.cm-search .cm-button {
+	padding: 4px 10px;
+	border: 1px solid var(--color-border);
+	border-radius: 6px;
+	background: transparent;
+	background-image: none;
+	color: var(--color-foreground);
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	text-transform: none;
+}
+
+.cm-panel.cm-search .cm-button:hover {
+	background: var(--hover-bg);
+}
+
+.cm-panel.cm-search [name='close'] {
+	position: static;
+	margin-left: auto;
+	padding: 2px 6px;
+	border: none;
+	background: transparent;
+	color: var(--color-foreground-muted);
+	font-size: 15px;
+	cursor: pointer;
+}
+
+.cm-panel.cm-search [name='close']:hover {
+	color: var(--color-foreground);
+}
+
+/* Matches: the current one gets the theme highlight, the rest a faint wash.
+   Selector depth matters: CodeMirror injects its own `.ͼx .cm-searchMatch`
+   rules at runtime (one class + descendant), so these need to be one level
+   more specific to win — a bare `.cm-searchMatch` loses and the stock yellow
+   shows through. */
+.cm-editor .cm-content .cm-searchMatch {
+	background-color: color-mix(in srgb, var(--color-highlight, #fae082) 35%, transparent);
+	border-radius: 2px;
+}
+
+.cm-editor .cm-content .cm-searchMatch.cm-searchMatch-selected {
+	background-color: var(--color-highlight, rgba(250, 224, 130, 0.45));
+}
+
+/* Quiet echo of other occurrences of the selected word. */
+.cm-editor .cm-content .cm-selectionMatch {
+	background-color: color-mix(in srgb, var(--color-primary) 12%, transparent);
+	border-radius: 2px;
 }
 
 /* =============================================================================
@@ -105,18 +228,20 @@
 
 .cm-inline-code {
 	font-family: var(--font-mono, ui-monospace, monospace);
-	font-size: 0.875em;
-	background-color: var(--color-surface-elevated);
+	font-size: var(--md-inline-code-size);
+	background-color: var(--md-inline-code-bg);
 	padding: 0.125rem 0.375rem;
-	border-radius: 0.25rem;
-	border: 1px solid var(--color-border-subtle);
+	border-radius: var(--md-inline-code-radius);
+	border: var(--md-inline-code-border);
 }
 
-/* Dim markdown syntax markers (##, **, *, etc.) */
+/* Revealed syntax markers (**, *, ==, <u>) — shown in place, dimmed, when the
+   selection touches their construct (reveal-on-touch; see inline-marks.ts).
+   Same size as the text so the reveal is a small horizontal shift, never a
+   vertical one. */
 .cm-formatting-mark {
 	color: var(--color-foreground-subtle);
 	opacity: 0.4;
-	font-size: 0.9em;
 }
 
 /* Ordered list markers (1., 2.) — subtler than content but still readable */
@@ -144,27 +269,41 @@
    target/type distinctions live in the hover preview and the block embed, not
    in inline chrome. Colour inherits the surrounding text; the underline is a
    muted hairline that firms up on hover. */
+/*
+ * The app-wide "quiet ref" idiom (see .ref-link--quiet in ref-badge.css):
+ * body-colored text over a dotted hairline that firms and warms on hover.
+ * Dotted = "this text is a live ref — hover peeks, click opens", the same
+ * signal as refs woven into the day biography and other reading prose. The
+ * editor used a solid underline here until reveal-on-touch made its surface
+ * the reading surface too; now the two would sit side by side meaning the
+ * same thing, so they say it the same way.
+ */
 .cm-ref-link {
 	color: inherit;
-	text-decoration: underline;
-	text-decoration-color: color-mix(in srgb, currentColor 32%, transparent);
-	text-decoration-thickness: 1px;
-	text-underline-offset: 2px;
+	text-decoration: underline dotted 1px;
+	text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+	text-underline-offset: 3px;
 	cursor: pointer;
-	transition: text-decoration-color 0.12s ease;
+	transition:
+		color 0.15s ease,
+		text-decoration-color 0.15s ease;
 }
 
 .cm-ref-link:hover {
-	text-decoration-color: currentColor;
+	text-decoration-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
+	color: var(--color-primary);
 }
 
 /* =============================================================================
    LIVE PREVIEW — IMAGES
    ============================================================================= */
 
+/* Padding, not margin — CodeMirror cannot measure margins. See the note on
+   .cm-table-wrapper; margins here desynchronize the heightmap and break
+   vertical caret motion for every line below the widget. */
 .cm-image-wrapper {
 	display: block;
-	margin: 0.5rem 0;
+	padding: 0.5rem 0;
 }
 
 .cm-image {
@@ -182,9 +321,14 @@
    LIVE PREVIEW — AUDIO PLAYER
    ============================================================================= */
 
+/* Transparent borders rather than padding here: this wrapper paints a surface,
+   so padding would inflate the visible card. Borders ARE included in the box
+   CodeMirror measures, and background-clip keeps the surface off them. */
 .cm-audio-wrapper {
 	display: block;
-	margin: 0.5rem 0;
+	border-top: 0.5rem solid transparent;
+	border-bottom: 0.5rem solid transparent;
+	background-clip: padding-box;
 	padding: 0.75rem;
 	background-color: var(--color-surface);
 	border-radius: 0.5rem;
@@ -217,7 +361,7 @@
 
 .cm-video-wrapper {
 	display: block;
-	margin: 0.5rem 0;
+	padding: 0.5rem 0;
 }
 
 .cm-video-player {
@@ -232,12 +376,19 @@
    LIVE PREVIEW — FILE CARD
    ============================================================================= */
 
+.cm-file-card-wrapper {
+	display: block;
+	padding: 0.5rem 0;
+}
+
+/* No vertical margin: this card is a block widget root (and also nests inside
+   .cm-image-wrapper as the broken-image fallback). Spacing comes from the
+   wrapper so CodeMirror can measure it — see .cm-table-wrapper. */
 .cm-file-card {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.625rem;
 	padding: 0.5rem 0.75rem;
-	margin: 0.5rem 0;
 	background-color: var(--color-surface);
 	border: 1px solid var(--color-border);
 	border-radius: 0.5rem;
@@ -338,10 +489,16 @@
    LIVE PREVIEW — HORIZONTAL RULE
    ============================================================================= */
 
+/* The rule is a 1px CONTENT box with the color clipped to it, and the breathing
+   room is padding — so the whole 33px is measurable. Drawn with border-top and
+   margins, the 32px of margin was invisible to CodeMirror's heightmap. */
 .cm-hr-widget {
+	box-sizing: content-box;
 	border: none;
-	border-top: 1px solid var(--color-border);
-	margin: 1rem 0;
+	height: 1px;
+	padding: 1rem 0;
+	background-color: var(--color-border);
+	background-clip: content-box;
 }
 
 /* =============================================================================
@@ -349,7 +506,7 @@
    ============================================================================= */
 
 .cm-blockquote-line {
-	border-left: 3px solid var(--color-border);
+	border-left: var(--md-quote-border);
 	padding-left: 1.25rem !important;
 	padding-right: 0.5rem !important;
 	color: var(--color-foreground-muted);
@@ -361,6 +518,13 @@
    ============================================================================= */
 
 /* Header widget (block widget, rendered above the opening fence line) */
+/* The block widget's root. The gap above the code block lives HERE, as padding
+   on a transparent box, because getBoundingClientRect excludes margins and the
+   heightmap would be short by exactly that much. See widget-height.ts. */
+.cm-code-header-wrap {
+	padding-top: 0.5rem;
+}
+
 .cm-code-header {
 	display: flex;
 	align-items: center;
@@ -370,15 +534,28 @@
 	border: 1px solid var(--color-border-subtle);
 	border-bottom: none;
 	border-radius: 0.5rem 0.5rem 0 0;
-	margin-top: 0.5rem;
 	font-family: var(--font-mono, ui-monospace, monospace);
 	font-size: 0.75rem;
 	color: var(--color-foreground-muted);
 	user-select: none;
 }
 
+/* A button now (it opens the language picker) — reset the chrome so it still
+   reads as the quiet label it always was, with hover as the affordance. */
 .cm-code-language {
+	border: none;
+	background: transparent;
+	padding: 1px 5px;
+	margin-left: -5px;
+	border-radius: 4px;
+	font: inherit;
 	color: var(--color-foreground-muted);
+	cursor: pointer;
+}
+
+.cm-code-language:hover {
+	background: var(--hover-bg);
+	color: var(--color-foreground);
 }
 
 .cm-code-copy {
@@ -433,9 +610,23 @@
    ============================================================================= */
 
 /* --- Wrapper (positions control overlays) --- */
+/*
+ * PADDING, never margin — the same rule the heading rhythm follows above, and
+ * for a sharper reason here.
+ *
+ * CodeMirror measures a block widget with getBoundingClientRect, which
+ * EXCLUDES margins, and stores that height in its heightmap. Margins therefore
+ * make the heightmap disagree with the real layout by exactly their size, and
+ * that gap breaks vertical caret motion outright: posAtCoords' widget-skipping
+ * scan compares each line's heightmap position against its true DOM position,
+ * the comparison never matches once the two have drifted, and the scan walks
+ * up past the table and off the top of the document — returning position 0.
+ * The symptom is ArrowUp anywhere below a table teleporting the caret to the
+ * document start (16px of margin was enough to do it).
+ */
 .cm-table-wrapper {
 	position: relative;
-	margin: 0.5rem 0;
+	padding: 0.5rem 0;
 }
 
 /* --- Table --- */
@@ -444,16 +635,16 @@
 	border-collapse: separate;
 	border-spacing: 0;
 	font-size: 0.875rem;
-	border: 1px solid var(--color-border);
+	border: 1px solid var(--md-table-border-color);
 	border-radius: 0.5rem;
 	overflow: hidden;
 }
 
 .cm-table-widget th,
 .cm-table-widget td {
-	padding: 0.375rem 0.75rem;
-	border-bottom: 1px solid var(--color-border);
-	border-right: 1px solid var(--color-border);
+	padding: var(--md-cell-pad);
+	border-bottom: 1px solid var(--md-table-border-color);
+	border-right: 1px solid var(--md-table-border-color);
 }
 
 .cm-table-widget th:last-child,
@@ -467,9 +658,9 @@
 
 .cm-table-widget th {
 	background-color: var(--color-surface-elevated);
-	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-	font-weight: 600;
-	font-size: 0.8125rem;
+	font-family: var(--md-heading-major-family, Georgia, serif);
+	font-weight: var(--md-th-weight);
+	font-size: var(--md-th-size);
 	color: var(--color-foreground);
 }
 
@@ -795,5 +986,127 @@
 	100% {
 		transform: scaleY(1);
 		box-shadow: 0 0 0 transparent;
+	}
+}
+
+/* =============================================================================
+   THE CARET (see extensions/caret.ts for the behavior it pairs with)
+   =============================================================================
+   CodeMirror draws `.cm-cursor` as a left BORDER on a zero-width div, with
+   `left`/`top`/`height` set inline. Only the inline three are off-limits here;
+   everything below is ours. The border becomes a real bar so it can carry a
+   radius and a width that answers to the type size around it. */
+
+/* Scoped through `.cm-editor` so it outranks CodeMirror's own injected
+   `.cm-cursor` rule on specificity rather than on stylesheet order. */
+.cm-editor .cm-cursorLayer .cm-cursor {
+	border-left: none;
+	width: var(--cm-caret-width, 2px);
+	/* Straddle the character boundary rather than sitting to its right. */
+	margin-left: calc(var(--cm-caret-width, 2px) / -2);
+	background: var(--color-primary);
+	border-radius: 2px;
+
+	/* CodeMirror's inline `height` is the LINE BOX, which carries the 1.7 prose
+	   leading and towers over the glyphs. Left alone (overriding it would fight
+	   the measured geometry) and corrected by a scale the plugin derives from
+	   the font size at the caret, so the bar hugs the type at every level.
+	   Centered, because that is where the text sits in its line box. */
+	transform: scaleY(var(--cm-caret-scale-y, 0.74));
+	transform-origin: center;
+
+	/* Front-loaded curve: leaves fast, settles slow. A symmetric ease at
+	   105ms reads as lag; this reads as travel. */
+	transition:
+		left 105ms cubic-bezier(0.22, 0.61, 0.36, 1),
+		top 105ms cubic-bezier(0.22, 0.61, 0.36, 1),
+		height 105ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* A click is a teleport. Gliding toward the spot someone just pointed at is
+   the fastest way to make an editor feel slow. */
+.cm-editor[data-caret-input='pointer'] .cm-cursorLayer .cm-cursor {
+	transition: none;
+}
+
+/* =============================================================================
+   REVIEW MARKS (extensions/review-marks.ts)
+   =============================================================================
+   Proposals, not prose. They must read as provisional at a glance and still be
+   comfortable to read THROUGH, because the surrounding paragraph is what the
+   writer is judging them against — so: tinted grounds and a hairline, never a
+   heavy fill or a badge.
+
+   Horizontal padding only. Vertical padding on an inline mark changes the line
+   box and moves the text, which is the reveal-shifts-the-page problem in
+   another costume. */
+
+.cm-review-ins {
+	background: var(--color-success-subtle);
+	border-bottom: 1px solid var(--color-success);
+	border-radius: 2px;
+	padding: 0 1px;
+}
+
+.cm-review-del {
+	background: var(--color-error-subtle);
+	color: var(--color-foreground-muted);
+	text-decoration: line-through;
+	text-decoration-color: var(--color-error);
+	border-radius: 2px;
+	padding: 0 1px;
+}
+
+/* A remark about the text, not a change to it — so it takes the neutral
+   surface, and no diff color that would imply something to apply. */
+.cm-review-note {
+	background: var(--color-surface-elevated);
+	border: 1px solid var(--color-border-subtle);
+	color: var(--color-foreground-muted);
+	border-radius: 3px;
+	padding: 0 4px;
+	font-size: 0.92em;
+}
+
+/* Widget-owned editable regions get the NATIVE caret back.
+   `.cm-content` sets `caret-color: transparent` because the rendered caret
+   replaces it — but a table cell is a `contenteditable` inside the widget, and
+   its selection is a native DOM selection, not a position in the CodeMirror
+   document. The rendered caret therefore cannot follow it, and the transparent
+   rule was leaving those cells with no visible caret at all. Same color, so it
+   reads as one caret; it cannot glide or scale, because it is genuinely a
+   different editing surface. */
+.cm-editor .cm-content [contenteditable='true'] {
+	caret-color: var(--color-primary);
+}
+
+/* Blinking is opt-IN, applied by the plugin after 500ms of stillness, so the
+   caret never blinks under the writer's own typing. */
+.cm-editor .cm-cursorLayer.cm-caret-blinking .cm-cursor {
+	animation: cm-caret-blink 1s infinite;
+}
+
+/* Long on, quick dip, back — a fade the eye reads as breathing. The stock
+   `steps(1)` square wave is what makes a native caret feel mechanical. */
+@keyframes cm-caret-blink {
+	0%,
+	40% {
+		opacity: 1;
+	}
+	80% {
+		opacity: 0;
+	}
+	100% {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.cm-editor .cm-cursorLayer .cm-cursor {
+		transition: none;
+	}
+
+	.cm-editor .cm-cursorLayer.cm-caret-blinking .cm-cursor {
+		animation: none;
 	}
 }

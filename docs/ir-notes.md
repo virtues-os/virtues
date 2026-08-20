@@ -3,7 +3,7 @@
 *Working notes — 2026-07-22. A grounded map of the retrieval stack as it exists,
 the non-obvious truths a full read exposed, and a ranked set of improvements with
 spikes. Written after cutting `wiki_stories` from v1 (see
-[stories-plan.md](stories-plan.md), now shelved) and fixing the notebook magnet
+[stories-plan.md](archive/stories-plan.md), now shelved) and fixing the notebook magnet
 (branch `fix/notebook-magnet-drop-stories`). File references are to
 `virtues-core/src/` and `crates/virtues-registry/src/` unless noted.*
 
@@ -179,6 +179,16 @@ spike. Prefer, in order:
 *Spike:* implement (2) or (3) in `LocalReranker`; re-run the magnet gate + the
 search rerank-gap on Dragon **and** a sidecar box; confirm one threshold works on
 both. (Harness from the magnet spike is reusable.)
+
+> **Status 2026-08-01:** ② and ③ are LANDED — `recall_and_fuse` /
+> `rerank_and_finalize` exist with three callers (magnet, ⌘K `search_local`,
+> multi-query RRF), and the magnet keeps no private ANN. Also landed since this
+> doc was written: the conditional-rerank gap is now a *relative* margin
+> (`(s1−s2)/(s1−s_last)`, default 0.4 via `VIRTUES_RERANK_GAP` — fraction, not
+> z-units; the old absolute 1.5 was unreachable in RRF-weight space, so every
+> multi-phrasing search reranked unconditionally), and §2.1's "sigmoid in
+> query.rs" never existed — scores are used as order only, then min-max
+> normalized, which is why the ColBERT/cross-encoder scale schism is benign.
 
 ### ② Split `search()` into vector-capable stages (the keystone refactor)
 

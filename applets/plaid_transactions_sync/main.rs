@@ -4,7 +4,7 @@
 //! which is incremental — we pass the cursor from our last sync, Plaid returns
 //! `added`, `modified`, `removed`, and a new cursor.
 //!
-//! Cursor stored in `app_actions.config.plaid_cursor`. First run: empty string
+//! Cursor stored in `app_applets.config.plaid_cursor`. First run: empty string
 //! (Plaid interprets as "give me everything").
 
 mod transform;
@@ -67,8 +67,9 @@ async fn main() -> Result<()> {
     for _ in 0..MAX_CHUNKS {
         // Proxied through virtues-api: the box sends only its per-user
         // access_token; the master Plaid secret stays server-side.
-        let resp: Value = virtues_applets::plaid_proxy(
+        let resp: Value = virtues_applets::service_proxy(
             &pool,
+        "plaid",
             "transactions/sync",
             &json!({
                 "access_token": access_token,

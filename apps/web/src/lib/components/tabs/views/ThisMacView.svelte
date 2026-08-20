@@ -17,9 +17,11 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { onDestroy, onMount } from "svelte";
 	import { isTauri, isMacOS, thisComputerLabel } from "$lib/utils/platform";
+	import { backToDevices } from "$lib/devices/shared";
 	import * as api from "$lib/api/client";
 	import {
 		getCollectorStatus,
+		probeCollectorStatus,
 		installCollector,
 		pauseCollector,
 		resumeCollector,
@@ -34,6 +36,17 @@
 
 	let status = $state<CollectorStatus | null>(null);
 	let loading = $state(true);
+	/**
+	 * Why the last read failed, when it did and we have never had a good one.
+	 *
+	 * Without this the page had one waiting state and no way out of it: a Mac
+	 * whose `virtues-collector status` exits non-zero answers "error" forever,
+	 * and "Checking this Mac…" is a sentence that promises it will resolve.
+	 * Kept null once any read succeeds — a running collector's transient blip
+	 * must not flash the panel below (the reason `refresh` discards failures
+	 * rather than clearing `status`).
+	 */
+	let probeError = $state<string | null>(null);
 	let installing = $state(false);
 	let toggling = $state(false);
 	let error = $state<string | null>(null);
@@ -54,8 +67,16 @@
 	});
 
 	async function refresh() {
-		const s = await getCollectorStatus();
-		if (s) status = s;
+		const probe = await probeCollectorStatus();
+		if (probe.kind === 'ok') {
+			status = probe.status;
+			probeError = null;
+		} else if (!status) {
+			// Only when we have nothing good to show. A blip mid-session keeps
+			// the last-good panel rather than replacing it with a failure.
+			probeError =
+				probe.kind === 'error' ? probe.message : "This Mac's collector didn't answer.";
+		}
 		loading = false;
 	}
 
@@ -118,6 +139,18 @@
 	description={`${thisComputerLabel} — what this computer remembers, kept on your box.`}
 	maxWidth="prose"
 >
+	<!--
+		This is `devices/this` now, reached by clicking a row in the Devices
+		list — so it needs the way back that every other device page has. It was
+		a top-level Settings section until 2026-08-17 and had no use for one.
+	-->
+	{#snippet actions()}
+		<Button variant="ghost" onclick={backToDevices}>
+			<Icon icon="ri:arrow-left-line" />
+			Devices
+		</Button>
+	{/snippet}
+
 	{#if !isTauri || !isMacOS}
 		<!-- Browser / non-Mac: can't drive a local daemon. -->
 		<div class="rounded-lg border border-border bg-surface p-4">
@@ -127,13 +160,37 @@
 				the people you message, and your on-screen activity — all stored on your box.
 			</p>
 		</div>
-	{:else if !status}
-		<!-- No successful read yet (initial load, or the daemon read errored and
-		     was discarded in refresh()). Don't render this as "off" — that's how
-		     a running collector wrongly showed "isn't collecting yet." -->
-		<div class="text-sm text-foreground-muted">
-			{loading ? "Loading…" : "Checking this Mac…"}
+	{:else if !status && loading}
+		<!-- First read in flight. Don't render this as "off" — that's how a
+		     running collector wrongly showed "isn't collecting yet." -->
+		<div class="text-sm text-foreground-muted">Checking this Mac…</div>
+	{:else if !status && probeError}
+		<!-- The daemon was asked and couldn't answer. Say so and offer the two
+		     things that fix it, rather than waiting on a read that has already
+		     failed and will keep failing. -->
+		<div class="rounded-lg border border-border bg-surface p-4 space-y-3">
+			<div>
+				<p class="text-base text-foreground mb-1">Can't read this Mac's collector</p>
+				<p class="text-sm text-foreground-muted">
+					The collector is installed but its status couldn't be read, so what this Mac is
+					sending can't be shown. Setting it up again usually clears this.
+				</p>
+				<p class="text-xs text-foreground-subtle font-mono mt-2 break-words">{probeError}</p>
+			</div>
+			{#if error}
+				<p class="text-sm text-error">{error}</p>
+			{/if}
+			<div class="flex items-center gap-2">
+				<Button variant="primary" onclick={turnOn} disabled={installing}>
+					{installing ? "Starting…" : "Set up this Mac"}
+				</Button>
+				<Button variant="secondary" onclick={() => void refresh()}>Retry</Button>
+			</div>
 		</div>
+	{:else if !status}
+		<!-- Neither loading nor a recorded failure: only reachable if a read
+		     resolved to nothing at all. -->
+		<div class="text-sm text-foreground-muted">Checking this Mac…</div>
 	{:else if !status.running}
 		<!-- Collector not running: offer to set it up. -->
 		<div class="rounded-lg border border-border bg-surface p-4 space-y-3">
@@ -196,7 +253,12 @@
 					<span class="text-foreground">Unverified.</span>
 					<span class="text-foreground-muted">
 						The collector hasn't reported its own access, so the state below may not match what
-						it can actually read. Update the collector to confirm.
+						it can actually read.
+						{#if status.permissionsCheckedAt}
+							It last reported {new Date(status.permissionsCheckedAt).toLocaleString()}.
+						{:else}
+							It has never reported.
+						{/if}
 					</span>
 				</div>
 			</div>

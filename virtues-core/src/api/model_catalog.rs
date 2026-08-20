@@ -195,6 +195,42 @@ pub fn model_for_slot(slot: virtues_registry::models::ModelSlot) -> String {
     }
 }
 
+/// Which slot, if any, currently resolves to this model id — the inverse of
+/// [`model_for_slot`].
+///
+/// Exists for the BYO fork. A model id is an *address on a specific gateway*,
+/// not a name: `xai/grok-4.5` is where our gateway keeps the chat model, and
+/// means nothing on someone else's. Callers build bodies with our address, so
+/// the fork has to turn it back into the role it stands for before it can look
+/// up the user's address for that role.
+///
+/// `None` when the id is not a slot default — which is the case for a user who
+/// pinned an arbitrary model from the picker. Nothing to translate then: their
+/// choice is passed through, and a route that does not carry it fails loudly.
+pub fn slot_for_model(model_id: &str) -> Option<virtues_registry::models::ModelSlot> {
+    use virtues_registry::models::ModelSlot;
+    ModelSlot::all()
+        .into_iter()
+        .find(|slot| model_for_slot(*slot) == model_id)
+}
+
+/// Whether a model can read images, per the live catalog. `None` when we are
+/// cold or the model is unknown.
+///
+/// `None` is not `false`, for the same reason `pricing` refuses to answer zero.
+/// The compiled floor sets every capability flag to `false` because it knows
+/// nothing, and a caller that reads that as a real "no" would silently
+/// downgrade a vision-capable model on any box that has not reached the cloud
+/// yet. Callers must distinguish "cannot" from "do not know" and say which.
+pub fn supports_vision(model_id: &str) -> Option<bool> {
+    let snap = cache().read().ok()?;
+    if snap.models.is_empty() {
+        return None;
+    }
+    let m = snap.models.iter().find(|m| m.model_id == model_id)?;
+    Some(m.supports_vision)
+}
+
 /// `(input_per_1k, output_per_1k)` from the live catalog, or None when we are
 /// cold or the model is unknown. Callers must NOT substitute zero.
 pub fn pricing(model_id: &str) -> Option<(f64, f64)> {
@@ -265,5 +301,45 @@ mod tests {
         // Zero would be a free-money bug on the usage tab; None renders blank.
         assert!(pricing("anthropic/claude-opus-4.8").is_none());
         assert!(models().iter().all(|m| m.input_cost_per_1k.is_none()));
+    }
+}
+
+/// Live check of the one fact the tool-attachment path depends on.
+///   cargo test -p virtues --lib api::model_catalog::live -- --ignored --nocapture
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn the_chat_slot_model_can_actually_read_images() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = PgPool::connect(&url).await.expect("dev database");
+
+        let resp = match fetch(&pool).await {
+            Ok(r) => r,
+            Err(e) => {
+                println!("catalog unreachable ({e}) — cannot verify the vision gate here");
+                return;
+            }
+        };
+        println!("catalog: {} models", resp.data.len());
+        store(resp);
+
+        let chat = model_for_slot(virtues_registry::models::ModelSlot::Chat);
+        println!("chat slot: {chat}");
+        for m in models() {
+            println!(
+                "  {:<45} vision={:<5} pdf={:<5} audio={:<5} tools={}",
+                m.model_id, m.supports_vision, m.supports_pdf, m.supports_audio, m.supports_tools
+            );
+        }
+
+        match supports_vision(&chat) {
+            Some(true) => println!("\nOK: read_asset attachments will reach the model"),
+            Some(false) => panic!("chat slot {chat} cannot read images — read_asset is inert"),
+            None => panic!("chat slot {chat} is absent from the catalog — gate reads as cannot"),
+        }
     }
 }

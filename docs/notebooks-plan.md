@@ -112,7 +112,7 @@ Hosts:
 ```
 
 Notebook home = tabbed: **Overview** (state-of-room + instructions) · **Library** · **Chats** · **Map**.
-- Notebook home is a **built-in default view** (plain Svelte components — NOT the `view`-action
+- Notebook home is a **built-in default view** (plain Svelte components — NOT the `view`-applet
   system, no user customization layer). "Pluggable" only in the mild sense that Library and Map are
   separate components, so a **Timeline** or **Outline** module could be added later without a
   rewrite. v1 ships **Library + Map** only.
@@ -142,7 +142,7 @@ Notebooks
 
 Wiki            ← substrate: life-graph · files · automation
 Drive
-Actions
+Applets
 ```
 
 (Note: "Wiki" fits entities better than narrative/telos — flag for possible rename if the
@@ -239,7 +239,7 @@ Explicitly NOT in Phase 1: Library/Map/tabbed home, asset viewer refactor, extra
 ### 1e. Sidebar restructure — `src/lib/sidebar/sections.ts`
 - `SPACES` section → `NOTEBOOKS` (`id: sys_notebooks`, `href: /notebooks`, pick icon).
 - Regroup into three gap-separated clusters: **[Home, Today]** · **[Chats, Pages, Notebooks]** ·
-  **[Wiki, Drive, Actions]**.
+  **[Wiki, Drive, Applets]**.
 - Remove **Narrative** as a top-level item; surface it inside Wiki (minimal: a link/entry in
   `WikiView`). NOTE: the full "Wiki = entities + temporal + narrative" landing redesign is a
   follow-on, NOT Phase 1 — Phase 1 only demotes Narrative and regroups.
@@ -318,7 +318,7 @@ room this chat lives in") — it's the documented internal design language. Only
   BLOCKS video/audio seeking and pdf.js streaming. Add `Storage::download_range` + a 206/Content-
   Range handler — a required Phase 2 backend task, not optional.
 - `http_client` (reqwest) exists; no readability/web-fetch/YouTube yet. No PDF text extraction. The
-  `transcription_resolution` action (Gemini) exists and IS reusable for audio/video assets.
+  `transcription_resolution` applet (Gemini) exists and IS reusable for audio/video assets.
 - Sidecars `app_assets` + `app_asset_text` keyed by `file_id`; new `ontology='asset'` registered in
   the indexer (`registered_ontologies`). Keep `/drive/file_{id}` canonical, add `/asset/{id}` alias.
 
@@ -347,7 +347,7 @@ room this chat lives in") — it's the documented internal design language. Only
 - Char-precise citation highlights.
 - **Templates + suggest-a-notebook** (adoption on-ramp) — much later, not worth it now.
 - Extra views (**Timeline**, **Outline/Board**) — built-in modules could be added later; not in v1.
-- **Notebook views as customizable `view` actions** — explicitly out. Built-in default only.
+- **Notebook views as customizable `view` applets** — explicitly out. Built-in default only.
 
 ---
 

@@ -19,7 +19,7 @@
 /// );
 /// let mut q = sqlx::query(&sql);
 /// for r in &records {
-///     q = q.bind(&r.id).bind(r.bpm).bind(r.timestamp)...;
+///     q = q.bind(&r.id).bind(r.bpm).bind(r.occurred_at)...;
 /// }
 /// q.execute(&pool).await?;
 /// ```

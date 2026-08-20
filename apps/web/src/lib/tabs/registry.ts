@@ -19,10 +19,10 @@ import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
 import WikiView from '$lib/components/tabs/views/WikiView.svelte';
 import WikiDetailView from '$lib/components/tabs/views/WikiDetailView.svelte';
 import WikiListView from '$lib/components/tabs/views/WikiListView.svelte';
-import ConnectionsPanel from '$lib/components/actions/ConnectionsPanel.svelte';
+import SourcesView from '$lib/components/sources/SourcesView.svelte';
 import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
-import ActionsView from '$lib/components/tabs/views/ActionsView.svelte';
-import ActionDetailView from '$lib/components/tabs/views/ActionDetailView.svelte';
+import AppletsView from '$lib/components/tabs/views/AppletsView.svelte';
+import AppletDetailView from '$lib/components/tabs/views/AppletDetailView.svelte';
 import AppletView from '$lib/components/tabs/views/AppletView.svelte';
 import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
 import SettingsView from '$lib/components/tabs/views/SettingsView.svelte';
@@ -32,6 +32,8 @@ import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
+import BookmarksView from '$lib/components/tabs/views/BookmarksView.svelte';
+import BookmarkDetailView from '$lib/components/tabs/views/BookmarkDetailView.svelte';
 import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svelte';
 import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
@@ -62,6 +64,31 @@ export interface TabDefinition {
 }
 
 // Complete tab registry with namespace-based URL patterns
+/**
+ * Every path the wiki room answers to — the ONE list.
+ *
+ * This regex used to be written out twice, here and in WikiView's own section
+ * parser. Adding Lifeline and History to one copy and not the other made both
+ * rooms unreachable: the section rendered fine, the sidebar linked to it, the
+ * typechecker was happy, and no tab would open because the router did not
+ * recognise the path. Two lists that must agree is a bug waiting for the next
+ * section.
+ */
+export const WIKI_SECTION_RE =
+	/^\/wiki\/(days|years|stories|entities|identity|lifeline|history|people|places|orgs|unlinked)$/;
+
+/**
+ * Sections of the Sources room. Same one-list rule as the wiki above, and here
+ * it also disambiguates: `/sources/<x>` is a credential detail unless `<x>` is
+ * one of these words, so the router and the view must agree about which words
+ * are reserved or a section silently becomes a lookup for a credential that
+ * does not exist.
+ *
+ * Overview is the bare `/sources` and so is not in this list.
+ */
+export const SOURCES_SECTIONS = ['catalog', 'activity'] as const;
+export type SourcesSection = (typeof SOURCES_SECTIONS)[number];
+
 export const tabRegistry: Record<TabType, TabDefinition> = {
 	// ========================================================================
 	// HOME: /home — the default landing / "Return" page (synthesis surface)
@@ -173,13 +200,15 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// WIKI: /wiki, /wiki/{entities|people|places|orgs|unlinked}
-	// (/entities is a legacy alias — the unified list now lives at /wiki/entities)
+	// WIKI: /wiki, /wiki/{days|entities|identity}
+	// Legacy paths still match so old pins/deep-links land in the wiki:
+	// /entities, and /wiki/{people|places|orgs|unlinked} (folded into the
+	// unified entities section).
 	// ========================================================================
 	wiki: {
 		match: (path) =>
 			path === '/wiki' ||
-			/^\/wiki\/(entities|people|places|orgs|unlinked)$/.test(path) ||
+			WIKI_SECTION_RE.test(path) ||
 			path === '/entities',
 		parse: () => ({
 			type: 'wiki',
@@ -293,6 +322,51 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Organizations',
 		component: WikiListView,
 		detailComponent: WikiDetailView,
+	},
+
+	// ========================================================================
+	// BOOKMARK NAMESPACE: /bookmarks
+	//
+	// Saved web content — browser bookmarks, GitHub stars, hand-saved links.
+	//
+	// /bookmark/{id} is the detail. It used to be "a bookmark's detail IS the
+	// page it points at" — true when a row was just a URL, wrong once a row
+	// carries a note, tags, an extraction record and a read-state. The generic
+	// /record/… view still renders the raw row for anyone who wants it; this
+	// one leads with the note, because that is the only text on the page a
+	// person wrote.
+	// ========================================================================
+	bookmarks: {
+		match: (path) => path === '/bookmarks',
+		parse: () => ({
+			type: 'bookmarks',
+			label: 'Bookmarks',
+			icon: 'ri:bookmark-line',
+			normalizedRoute: '/bookmarks',
+		}),
+		serialize: () => 'bookmarks',
+		deserialize: () => '/bookmarks',
+		icon: 'ri:bookmark-line',
+		defaultLabel: 'Bookmarks',
+		component: BookmarksView,
+	},
+
+	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /notebook/{id}.
+	bookmark: {
+		match: (path) => /^\/bookmark\/.+$/.test(path),
+		parse: (path) => ({
+			type: 'bookmark',
+			label: 'Bookmark',
+			icon: 'ri:bookmark-line',
+			entityId: path.match(/^\/bookmark\/(.+)$/)?.[1],
+		}),
+		serialize: (id) => (id ? `bookmark_${id}` : 'bookmark'),
+		deserialize: (serialized) =>
+			serialized.startsWith('bookmark_') ? `/bookmark/${serialized.slice(9)}` : '/bookmarks',
+		icon: 'ri:bookmark-line',
+		defaultLabel: 'Bookmark',
+		component: BookmarkDetailView,
+		detailComponent: BookmarkDetailView,
 	},
 
 	// ========================================================================
@@ -435,11 +509,15 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// SOURCE NAMESPACE: /sources, /sources/<credential_id>
-	//   - `/sources` (and `/source` legacy alias) → list of credentials
-	//   - `/sources/<id>` → CredentialDetailView for one credential
-	// "Source" in the URL is user-facing vocabulary; under the hood each row
-	// is a credential (one connection to a provider).
+	// SOURCE NAMESPACE: /sources, /sources/<section>, /sources/<credential_id>
+	//   - `/sources` (and `/source` legacy alias) → Overview
+	//   - `/sources/catalog`, `/sources/activity` → the other two sections
+	//   - `/sources/<id>` → CredentialDetailView for one connection
+	// "Source" in the URL is user-facing vocabulary; under the hood a connection
+	// is a credential (OAuth/API-key) or a paired device (iOS/Mac).
+	//
+	// Sections are matched before ids — see SOURCES_SECTIONS for why the two
+	// must not be decided in two places.
 	// ========================================================================
 	source: {
 		match: (path) =>
@@ -454,48 +532,61 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				};
 			}
 			const m = path.match(/^\/sources\/([^/]+)$/);
+			const seg = m?.[1] ?? '';
+			if ((SOURCES_SECTIONS as readonly string[]).includes(seg)) {
+				return {
+					type: 'source',
+					label: `Sources · ${seg[0].toUpperCase()}${seg.slice(1)}`,
+					icon: 'ri:database-2-line',
+				};
+			}
 			return {
 				type: 'source',
 				label: 'Source',
 				icon: 'ri:database-2-line',
-				entityId: m?.[1],
+				entityId: seg,
 			};
 		},
 		serialize: (id) => (id ? id : 'sources'),
 		deserialize: (serialized) => (serialized === 'sources' ? '/sources' : `/sources/${serialized}`),
 		icon: 'ri:database-2-line',
 		defaultLabel: 'Sources',
-		component: ConnectionsPanel,
-		detailComponent: CredentialDetailView,
+		// No `detailComponent`. TabContent decides list-vs-detail with a generic
+		// `/^\/[a-z]+\/([^/]+)$/` on the route, which cannot tell `/sources/catalog`
+		// (a section) from `/sources/cred_abc` (a credential) — it called both
+		// details and rendered "Credential not found" on the catalog. SourcesView
+		// owns the whole namespace and dispatches the detail itself, against the
+		// same SOURCES_SECTIONS list the matcher above uses.
+		component: SourcesView,
 	},
 
 	// ========================================================================
-	// ACTIONS: /actions, /actions/{actions|templates|history}
+	// APPLETS: /applets (legacy /actions/* still resolves)
 	// ========================================================================
-	actions: {
+	applets: {
 		match: (path) =>
 			path === '/applets' ||
 			path === '/actions' || /^\/actions\/(actions|templates|history)$/.test(path),
 		parse: () => ({
-			type: 'actions',
+			type: 'applets',
 			label: 'Applets',
 			icon: 'ri:flashlight-line',
 		}),
-		serialize: () => 'actions',
+		serialize: () => 'applets',
 		deserialize: () => '/applets',
 		icon: 'ri:flashlight-line',
 		defaultLabel: 'Applets',
-		component: ActionsView,
+		component: AppletsView,
 	},
 
 	// ========================================================================
-	// APPLET VIEW: /applet/action_{id}/view — the applet's face, full-page.
-	// Must precede `action` (whose match ends at $, so order is belt-and-braces).
+	// APPLET VIEW: /applet/applet_{id}/view — the applet's face, full-page.
+	// Must precede `applet` (whose match ends at $, so order is belt-and-braces).
 	// ========================================================================
 	'applet-view': {
-		match: (path) => /^\/(?:applet|action)\/action_[^/]+\/view$/.test(path),
+		match: (path) => /^\/(?:applet|action)\/applet_[^/]+\/view$/.test(path),
 		parse: (path) => {
-			const match = path.match(/^\/(?:applet|action)\/(action_[^/]+)\/view$/);
+			const match = path.match(/^\/(?:applet|action)\/(applet_[^/]+)\/view$/);
 			return {
 				type: 'applet-view',
 				label: 'Applet',
@@ -506,7 +597,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		serialize: (id) => (id ? `${id}__view` : 'applet-view'),
 		deserialize: (serialized) => {
 			const id = serialized.replace(/__view$/, '');
-			if (id.startsWith('action_')) return `/applet/${id}/view`;
+			if (id.startsWith('applet_')) return `/applet/${id}/view`;
 			return '/applets';
 		},
 		icon: 'ri:layout-2-line',
@@ -515,28 +606,28 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// ACTION DETAIL: /applet/action_{id} — settings, prompt, runs (no face).
+	// APPLET DETAIL: /applet/applet_{id} — settings, prompt, runs (no face).
 	// ========================================================================
-	action: {
-		match: (path) => /^\/(applet|action)\/action_[^/]+$/.test(path),
+	applet: {
+		match: (path) => /^\/(applet|action)\/applet_[^/]+$/.test(path),
 		parse: (path) => {
-			const match = path.match(/^\/(?:applet|action)\/(action_[^/]+)$/);
+			const match = path.match(/^\/(?:applet|action)\/(applet_[^/]+)$/);
 			return {
-				type: 'action',
+				type: 'applet',
 				label: 'Applet',
 				icon: 'ri:flashlight-line',
 				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => (id ? `action_${id}` : 'action'),
+		serialize: (id) => (id ? `applet_${id}` : 'applet'),
 		deserialize: (serialized) => {
-			if (serialized.startsWith('action_')) return `/applet/${serialized}`;
+			if (serialized.startsWith('applet_')) return `/applet/${serialized}`;
 			return '/applets';
 		},
 		icon: 'ri:flashlight-line',
 		defaultLabel: 'Applet',
-		component: ActionDetailView,
-		detailComponent: ActionDetailView,
+		component: AppletDetailView,
+		detailComponent: AppletDetailView,
 	},
 
 	// ========================================================================
@@ -848,9 +939,9 @@ export function parseRoute(route: string): ParsedRoute {
 		'home',
 		// Specific patterns first
 		'source', // Source list and detail views
-		'actions', // Actions list page (must come before singular 'action')
-		'applet-view', // Applet full-page face (must come before 'action')
-		'action', // Action detail page
+		'applets', // Applets list page (must come before singular 'applet')
+		'applet-view', // Applet full-page face (must come before 'applet')
+		'applet', // Applet detail page
 		'developers', // Developers tab group (SQL/Terminal/Lake)
 		'ontology', // Ontology data browsing
 		'record', // /record/<ontology>/<id> — single raw record
@@ -868,6 +959,12 @@ export function parseRoute(route: string): ParsedRoute {
 		'place',
 		'org',
 		'notebook',
+		// Detail before the room: /bookmark/{id} and /bookmarks are distinct
+		// paths, but keeping the pair adjacent is how the next person notices
+		// that BOTH have to be listed here. An entry in `tabRegistry` alone is
+		// unreachable — this array is what routing actually walks.
+		'bookmark',
+		'bookmarks',
 		'day',
 		'year',
 		'narrative-identity',

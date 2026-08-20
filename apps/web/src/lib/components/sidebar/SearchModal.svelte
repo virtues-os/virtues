@@ -14,6 +14,7 @@
 		getTheme,
 		applyTheme,
 		setTheme,
+		themeDefaultLabel,
 		themeMetadata,
 		type Theme,
 	} from "$lib/utils/theme";
@@ -482,7 +483,17 @@
 									width="16"
 									class="result-icon"
 								/>
-								<span class="result-label">{getThemeDisplayName(theme)}</span>
+								<span class="result-label">
+									{getThemeDisplayName(theme)}
+									<!-- The role rides on the name rather than replacing it:
+									     the theme is called Asgard, and "Virtues Dark" is what
+									     it's for. Both surfaces list the two defaults first
+									     (getAvailableThemes), so this labels the top of the
+									     list rather than asking anyone to search for it. -->
+									{#if themeDefaultLabel(theme)}
+										<span class="theme-role">({themeDefaultLabel(theme)})</span>
+									{/if}
+								</span>
 								<span class="theme-description">{themeMetadata[theme].description}</span>
 							</button>
 						{/each}
@@ -719,15 +730,31 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: center;
-		/* Bottom inset keeps tall result lists above the home indicator. */
+		/* Bottom inset keeps tall result lists above the home indicator — and,
+		   on a phone, above the keyboard this palette raises the moment it
+		   opens. `--keyboard-inset` is 0 anywhere there isn't one, so the
+		   desktop measure is untouched. */
 		padding-top: max(15vh, env(safe-area-inset-top));
-		padding-bottom: max(16px, env(safe-area-inset-bottom));
+		padding-bottom: max(16px, env(safe-area-inset-bottom), var(--keyboard-inset, 0px));
 		z-index: var(--z-modal);
+	}
+
+	/* 15vh is a comfortable drop on a desktop window and most of the usable
+	   height on a phone with the keyboard up. */
+	@media (max-width: 768px) {
+		.modal-backdrop {
+			padding-top: max(6vh, env(safe-area-inset-top));
+		}
 	}
 
 	.modal {
 		width: 100%;
 		max-width: 520px;
+		/* Fits the space the backdrop's padding leaves, rather than running past
+		   it: a column so the results list is the part that gives. */
+		display: flex;
+		flex-direction: column;
+		max-height: 100%;
 		background: var(--surface);
 		border: 1px solid var(--border);
 		border-radius: 12px;
@@ -784,6 +811,11 @@
 
 	.results {
 		max-height: 400px;
+		/* …but never more than the modal was given. `min-height: 0` is what lets
+		   a flex child shrink below its content — without it the list keeps its
+		   full height and pushes the palette off the bottom of the screen. */
+		flex: 1 1 auto;
+		min-height: 0;
 		overflow-y: auto;
 		padding: 8px;
 	}
@@ -796,7 +828,6 @@
 		display: block;
 		font-size: 11px;
 		font-weight: 500;
-		text-transform: uppercase;
 		letter-spacing: 0.02em;
 		color: var(--foreground-subtle);
 		padding: 6px 8px;
@@ -963,5 +994,12 @@
 		font-size: 12px;
 		color: var(--foreground-subtle);
 		white-space: nowrap;
+	}
+
+	/* Quieter than the name it follows — it names a role, not the theme. */
+	.theme-role {
+		font-size: 12px;
+		font-weight: 400;
+		color: var(--foreground-subtle);
 	}
 </style>

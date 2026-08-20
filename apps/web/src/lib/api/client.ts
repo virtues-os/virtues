@@ -101,24 +101,34 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
 // Actions — new schema (post cutover + PR 2 endpoints)
 // ============================================================================
 
-export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook';
+export type AppletTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message';
 
-export interface ActionRun {
+export interface AppletRun {
 	id: string;
-	action_id: string | null;
-	status: 'running' | 'success' | 'error' | 'cancelled' | 'skipped';
+	applet_id: string | null;
+	/** `budget_exceeded` is not a failure: a spend ceiling the owner set in
+	 *  `config.limits` was reached, so the run stopped deliberately. It stays
+	 *  out of the needs-attention strip for that reason. */
+	status: 'running' | 'success' | 'error' | 'cancelled' | 'skipped' | 'budget_exceeded';
 	started_at: string;
 	completed_at: string | null;
 	records_processed: number;
 	error: string | null;
-	trigger: ActionTrigger;
+	trigger: AppletTrigger;
 	parent_run_id: string | null;
 	transform_stage: string | null;
 	result_summary: string | null;
+	/** What the user said, for `message` runs. This plus `result_summary` is
+	 *  the exchange — the conversation lives on the run, not in a thread. */
+	message: string | null;
+	/** What this run spent with the model, in micros-USD — summed from the
+	 *  gateway's authoritative per-call figures. Zero for runs that called no
+	 *  model, and for every run recorded before spend was attributed. */
+	cost_micros: number;
 	created_at: string;
 }
 
-export interface ActionLastRun {
+export interface AppletLastRun {
 	status: string;
 	started_at: string | null;
 	completed_at?: string | null;
@@ -128,29 +138,35 @@ export interface ActionLastRun {
 }
 
 /**
- * Two-runtime model — see ARCHITECTURE.md.
+ * Which of the four things made this applet — the facet lists and filters use.
  *
- * - `function`: fork-per-trigger CLI; the default. Server forks the binary
- *   on every trigger, pipes ActionInput/Output JSON.
- * - `view`: pure Svelte component, never invoked server-side. Lives at
- *   `apps/web/src/lib/applets/<name>/`.
+ * Derived server-side, not stored: `owner` is the write-authority field
+ * (reconcile overwrites and GCs `system` rows, leaves `user`/`ai` alone), and
+ * every source fan-out row is `system` under it. Faceting on `owner` therefore
+ * files a Gmail sync with the embedding indexer; `origin` splits them.
  */
-export type ActionRuntime = 'function' | 'view';
+export type AppletOrigin = 'source' | 'system' | 'user' | 'ai';
 
-export interface Action {
+export interface Applet {
 	id: string;
 	owner: 'system' | 'user' | 'ai';
 	name: string;
+	/** The applet's one-sentence intent, from its manifest — what it is for,
+	 *  in the user's terms. The list row's plain-English line and the detail
+	 *  headline. Null only for a row whose manifest omits it. */
+	description: string | null;
 	agent: string | null;
-	cron_schedule: string | null;
+	schedule: string | null;
 	enabled: boolean;
 	config: Record<string, unknown>;
 	condition: string | null;
-	triggers: ActionTrigger[];
+	triggers: AppletTrigger[];
 	memory: string | null;
-	function_name: string | null;
+	/** Set when the applet is one source connection's fan-out (OAuth/API-key). */
 	credential_id: string | null;
-	runtime: ActionRuntime;
+	/** Set when the applet is one paired device's ingest webhook (iOS/Mac). */
+	device_id: string | null;
+	origin: AppletOrigin;
 	/** Polyglot escape: explicit argv to spawn instead of resolving a Cargo
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */
@@ -160,33 +176,45 @@ export interface Action {
 	until: string | null;
 	/** Set when the lifecycle completed; archived applets are disabled. */
 	archived_at: string | null;
+	/** The scheduled slot this applet currently owes. Null when it has no
+	 *  schedule, or the scheduler has not seen it yet. Far enough in the past
+	 *  means it was expected and didn't run. */
+	next_due_at: string | null;
+	/** The last scheduled slot actually handled — fired, or consciously
+	 *  skipped. Not the same as the last run's `started_at`: a catch-up run at
+	 *  07:12 handles the 06:00 slot. */
+	last_slot_at: string | null;
 	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
 	has_face: boolean;
-	is_system: boolean;
+	/** The last 10 run statuses, newest first — the card's pulse. Comes with
+	 *  the row so the list does not fetch it per applet. */
+	pulse: AppletRun['status'][];
+	/** The last successful run's summary — what the applet last produced. */
+	last_success_summary: string | null;
 	created_at: string;
 	updated_at: string;
-	last_run: ActionLastRun | null;
+	last_run: AppletLastRun | null;
 }
 
-export interface ActionDetail extends Action {
-	recent_runs?: ActionRun[];
+export interface AppletDetail extends Applet {
+	recent_runs?: AppletRun[];
 }
 
 export async function mintFaceToken(
-	actionId: string
+	appletId: string
 ): Promise<{ token: string; expires_in_seconds: number }> {
-	return request(`/applets/${encodeURIComponent(actionId)}/face-token`);
+	return request(`/applets/${encodeURIComponent(appletId)}/face-token`);
 }
 
-export async function listActions(): Promise<Action[]> {
+export async function listApplets(): Promise<Applet[]> {
 	const res = await fetch(`${API_BASE}/applets`);
-	if (!res.ok) throw new Error(`Failed to list actions: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to list applets: ${res.statusText}`);
 	return res.json();
 }
 
-export async function getAction(id: string): Promise<Action> {
+export async function getApplet(id: string): Promise<Applet> {
 	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`Failed to get action: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to get applet: ${res.statusText}`);
 	return res.json();
 }
 
@@ -237,11 +265,38 @@ export async function searchLocal(
 // Box updates (Settings → Box)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** A release already downloaded, verified and preflighted on the box. */
+export interface StagedRelease {
+	/** Slot directory name, e.g. `v0.3.1-a1b2c3d`. */
+	slot_id: string;
+	/** Version from the release's own BUILD.json, when it carries one. */
+	version: string | null;
+	/** Commit the release was built from, when known. */
+	sha: string | null;
+}
+
 export interface UpdateStatus {
+	/** The BUILD COUNTER (crate version). Not what the box is running — see
+	 *  `running_version`. Kept because it is the compat coordinate. */
 	current: string;
+	/** The stored update PREFERENCE: what the box will be offered next. */
 	channel: string;
+	/** RELEASE IDENTITY — what this box is actually running, from the baked
+	 *  build tag: `edge`, `staging.4`, `v0.3.0`, `dev`. */
+	running_version: string;
+	/** Channel of the running BUILD: `stable` | `staging` | `edge` | `dev`. */
+	running_channel: string;
+	/** The running build is off a later track than the channel being followed,
+	 *  so that channel's newest tag is probably behind this box. */
+	running_ahead: boolean;
 	latest: string | null;
 	update_available: boolean;
+	/**
+	 * Set when the box has already fetched the update. Installing it is then a
+	 * restart plus migrations rather than a download — seconds, not minutes —
+	 * which is the difference the UI has to tell the truth about.
+	 */
+	staged: StagedRelease | null;
 	check_error: string | null;
 }
 
@@ -260,8 +315,134 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 	if (!res.ok) throw new Error(`Failed to set channel: ${res.statusText}`);
 }
 
+/** One line of the census: a thing the box holds, and how many of it. */
+export interface CensusLine {
+	id: string;
+	/** Plural, lowercase, already in the words a person would use. */
+	label: string;
+	count: number;
+}
+
+export interface Census {
+	/** Only non-empty lines. A box with nothing connected returns []. */
+	lines: CensusLine[];
+	total: number;
+	earliest: string | null;
+	latest: string | null;
+	span_days: number;
+}
+
+/** What the box actually holds, counted — the reveal's first movement. */
+export async function getCensus(): Promise<Census> {
+	const res = await fetch(`${API_BASE}/census`);
+	if (!res.ok) throw new Error(`Failed to read the census: ${res.statusText}`);
+	return res.json();
+}
+
+export interface NarrativeDraft {
+	document: string;
+	core: string;
+	/** Proposed only. Nothing binds the assistant until it is confirmed. */
+	proposed_rules: string[];
+}
+
+/** Draft the document from the answers. Spends money; POST, never on load. */
+export async function draftNarrative(): Promise<NarrativeDraft> {
+	const res = await fetch(`${API_BASE}/narrative/draft`, { method: 'POST' });
+	if (!res.ok) {
+		let detail = res.statusText;
+		try {
+			const b = await res.json();
+			if (b?.error) detail = b.error;
+		} catch {
+			/* status text is all we have */
+		}
+		throw new Error(detail);
+	}
+	return res.json();
+}
+
+/**
+ * Replace the rule set with exactly what was confirmed.
+ *
+ * A replace, not an append: this is the screen where someone sees every rule
+ * their box obeys, so leaving it has to mean the list says what they saw.
+ */
+export async function saveNarrativeRules(rules: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/narrative/rules`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ rules }),
+	});
+	if (!res.ok) throw new Error(`Couldn't save your rules: ${res.statusText}`);
+}
+
+export interface InterviewAnswer {
+	question_id: string;
+	answer: string;
+	word_count: number;
+	completed_at: string | null;
+}
+
+export async function getInterviewAnswers(): Promise<InterviewAnswer[]> {
+	const res = await fetch(`${API_BASE}/narrative/interview`);
+	if (!res.ok) throw new Error(`Failed to load your answers: ${res.statusText}`);
+	return (await res.json()).answers ?? [];
+}
+
+/**
+ * Save one answer. Called while the person is still typing, because this is an
+ * hour of writing about grief, vice and family and losing it to a reload is a
+ * betrayal rather than an inconvenience.
+ *
+ * Throws on failure so the caller can SAY so — a save that fails quietly is the
+ * worst outcome available here.
+ */
+export async function saveInterviewAnswer(
+	question_id: string,
+	answer: string,
+	completed = false,
+): Promise<void> {
+	const res = await fetch(`${API_BASE}/narrative/interview`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ question_id, answer, completed }),
+	});
+	if (!res.ok) throw new Error(`Couldn't save: ${res.statusText}`);
+}
+
+export interface ReopenOnboardingResponse {
+	devices: number;
+	credentials: number;
+}
+
+/**
+ * Revoke every paired device, keeping data, sources, subscription and box
+ * identity. The box becomes unclaimed: it advertises over Bluetooth again and
+ * the panel returns to a setup screen.
+ *
+ * This device is revoked too — the caller loses its own session, by design.
+ */
+export async function reopenOnboarding(): Promise<ReopenOnboardingResponse> {
+	const res = await fetch(`${API_BASE}/pair/reopen-onboarding`, { method: 'POST' });
+	if (!res.ok) {
+		let detail = res.statusText;
+		try {
+			const body = await res.json();
+			if (body?.error) detail = body.error;
+		} catch {
+			/* non-JSON body — the status text is all we have */
+		}
+		throw new Error(detail);
+	}
+	return res.json();
+}
+
 export interface ApplyUpdateResponse {
 	unit: string;
+	/** Whether this activated an already-downloaded release (fast) or had to
+	 *  fetch one first (slow). */
+	staged: boolean;
 	detail: string;
 }
 
@@ -367,7 +548,20 @@ export async function adminReconcile(): Promise<{ upserted: number }> {
 export async function importActionsFromGit(body: {
 	url: string;
 	ref?: string;
-}): Promise<{ added: string[]; updated: string[]; removed: string[] }> {
+	/** From `/api/sudo/request` — importing runs someone else's code. */
+	sudo_request_id: string;
+}): Promise<{
+	/** Folder the package landed in — host + owner + repo, so two remotes with
+	 *  the same repo name can't claim each other's. */
+	slug: string;
+	/** Commit actually checked out. The server has always resolved this; the
+	 *  client used to drop it, which is why "is there a newer version" was
+	 *  unanswerable. */
+	commit: string | null;
+	added: string[];
+	updated: string[];
+	removed: string[];
+}> {
 	const res = await fetch(`${API_BASE}/admin/applets/import-git`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -380,15 +574,15 @@ export async function importActionsFromGit(body: {
 	return res.json();
 }
 
-export interface CreateActionRequest {
+export interface CreateAppletRequest {
 	name: string;
 	agent?: string;
-	cron_schedule?: string;
-	triggers?: ActionTrigger[];
+	schedule?: string;
+	triggers?: AppletTrigger[];
 	config?: Record<string, unknown>;
 }
 
-export async function createAction(body: CreateActionRequest): Promise<Action> {
+export async function createApplet(body: CreateAppletRequest): Promise<Applet> {
 	const res = await fetch(`${API_BASE}/applets`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -396,23 +590,23 @@ export async function createAction(body: CreateActionRequest): Promise<Action> {
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to create action: ${res.statusText}`);
+		throw new Error(err.error || `Failed to create applet: ${res.statusText}`);
 	}
 	return res.json();
 }
 
-export interface PatchActionBody {
+export interface PatchAppletBody {
 	name?: string;
 	agent?: string | null;
-	cron_schedule?: string | null;
+	schedule?: string | null;
 	enabled?: boolean;
 	config?: Record<string, unknown>;
 	condition?: string | null;
-	triggers?: ActionTrigger[];
+	triggers?: AppletTrigger[];
 	memory?: string | null;
 }
 
-export async function patchAction(id: string, patch: PatchActionBody): Promise<Action> {
+export async function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet> {
 	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },
@@ -420,20 +614,59 @@ export async function patchAction(id: string, patch: PatchActionBody): Promise<A
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to update action: ${res.statusText}`);
+		throw new Error(err.error || `Failed to update applet: ${res.statusText}`);
 	}
 	return res.json();
 }
 
-export async function deleteAction(id: string, dropData = false): Promise<void> {
+export async function deleteApplet(id: string, dropData = false): Promise<void> {
 	const q = dropData ? '?drop_data=true' : '';
 	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}${q}`, {
 		method: 'DELETE'
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to delete action: ${res.statusText}`);
+		throw new Error(err.error || `Failed to delete applet: ${res.statusText}`);
 	}
+}
+
+/** One line of an applet's log: consecutive runs that shared an outcome,
+ *  counted. `occurrences > 1` means the applet repeated itself — which on a
+ *  real box is most of history, since a poll that finds nothing still records
+ *  a run. An agent's output varies, so its entries never group. */
+export interface AppletLogEntry {
+	run_id: string | null;
+	status: AppletRun['status'];
+	trigger: AppletTrigger | null;
+	summary: string | null;
+	/** What the user said, for `message` runs. */
+	message: string | null;
+	error: string | null;
+	occurrences: number;
+	first_at: string | null;
+	last_at: string | null;
+	cost_micros: number;
+}
+
+export async function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/log?limit=${limit}`);
+	if (!res.ok) throw new Error(`Failed to load log: ${res.statusText}`);
+	return res.json();
+}
+
+/** Say something to an applet — the `message` wake. Returns once the run row
+ *  exists; the agent turn continues detached. */
+export async function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/message`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ message })
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `Failed to send: ${res.statusText}`);
+	}
+	return res.json();
 }
 
 /** The private tables an applet owns — shown on the delete confirm so the user
@@ -451,13 +684,13 @@ export async function getAppletData(id: string): Promise<AppletData> {
 
 export interface TriggerActionResponse {
 	run_id: string | null;
-	action_id: string;
+	applet_id: string;
 	status: string;
 	summary: string;
 	error: string | null;
 }
 
-export async function runAction(
+export async function runApplet(
 	id: string,
 	payload?: Record<string, unknown>
 ): Promise<TriggerActionResponse> {
@@ -468,15 +701,58 @@ export async function runAction(
 	});
 	if (!res.ok && res.status !== 500) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to run action: ${res.statusText}`);
+		throw new Error(err.error || `Failed to run applet: ${res.statusText}`);
 	}
 	return res.json();
 }
 
-export async function listActionRuns(
+// ── Applet source ───────────────────────────────────────────────────────────
+// Reading the code that ran. Every applet, whatever its provenance.
+
+export interface AppletSourceFile {
+	path: string;
+	size: number;
+	/** False for binary or oversized files — don't offer to open them. */
+	readable: boolean;
+}
+
+export interface AppletSourceListing {
+	dir: string;
+	/** Which root the folder resolved in — `shipped` came with the box. */
+	origin_root: 'shipped' | 'state';
+	files: AppletSourceFile[];
+	truncated: boolean;
+}
+
+export async function getAppletSource(id: string): Promise<AppletSourceListing> {
+	return apiGet<AppletSourceListing>(`/applets/${encodeURIComponent(id)}/source`);
+}
+
+/**
+ * Copy a shipped applet onto this box so it can be changed. Reverting is
+ * deleting the copy; the shipped version is never touched.
+ */
+export async function forkApplet(id: string): Promise<{ status: string; dir: string }> {
+	return apiSend<{ status: string; dir: string }>(
+		'POST',
+		`/applets/${encodeURIComponent(id)}/fork`
+	);
+}
+
+export async function getAppletSourceFile(
+	id: string,
+	path: string
+): Promise<{ path: string; text: string }> {
+	const safe = path.split('/').map(encodeURIComponent).join('/');
+	return apiGet<{ path: string; text: string }>(
+		`/applets/${encodeURIComponent(id)}/source/${safe}`
+	);
+}
+
+export async function listAppletRuns(
 	id: string,
 	opts?: { limit?: number; status?: string }
-): Promise<ActionRun[]> {
+): Promise<AppletRun[]> {
 	const params = new URLSearchParams();
 	if (opts?.limit != null) params.set('limit', String(opts.limit));
 	if (opts?.status) params.set('status', opts.status);
@@ -491,12 +767,12 @@ export async function listActionRuns(
 export async function listRuns(opts?: {
 	limit?: number;
 	status?: string;
-	action_id?: string;
-}): Promise<ActionRun[]> {
+	applet_id?: string;
+}): Promise<AppletRun[]> {
 	const params = new URLSearchParams();
 	if (opts?.limit != null) params.set('limit', String(opts.limit));
 	if (opts?.status) params.set('status', opts.status);
-	if (opts?.action_id) params.set('action_id', opts.action_id);
+	if (opts?.applet_id) params.set('applet_id', opts.applet_id);
 	const qs = params.toString();
 	const res = await fetch(`${API_BASE}/runs${qs ? `?${qs}` : ''}`);
 	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
@@ -524,7 +800,18 @@ export interface DeviceInfo {
 	app_version: string | null;
 }
 
-export type CredentialStatus = 'pending' | 'active' | 'revoked';
+/**
+ * Mirrors the CHECK constraint on `credentials.status`. `reauth_required` and
+ * `error` are the states most worth surfacing — a Plaid `ITEM_LOGIN_REQUIRED`
+ * arrives as one — and they were missing here, so the two rows that need a
+ * Reconnect button were the two that rendered as unstyled raw text.
+ */
+export type CredentialStatus =
+	| 'pending'
+	| 'active'
+	| 'revoked'
+	| 'reauth_required'
+	| 'error';
 
 export interface Credential {
 	id: string;
@@ -532,11 +819,14 @@ export interface Credential {
 	name: string;
 	auth_type: string;
 	status: CredentialStatus;
+	/** The provider's own words for why a broken credential broke, when we
+	 *  have them. Absent on healthy rows. */
+	status_reason?: string | null;
 	is_active: boolean;
 	device_info: DeviceInfo | null;
 	last_seen_at: string | null;
 	created_at: string;
-	action_count: number;
+	applet_count: number;
 	/** Tier-2 init-sync lifecycle for active credentials:
 	 *  'connected' → 'backfilling' → 'live'. Absent for pending/revoked. */
 	sync_state?: 'connected' | 'backfilling' | 'live';
@@ -584,6 +874,19 @@ export interface SourceCatalogItem {
 	description: string | null;
 	auth_kind: SourceAuthKind;
 	credential_count: number;
+	/** Secret names an `api_key` source expects, in manifest order. Empty for
+	 *  every other auth kind. */
+	fields: string[];
+	/** Where this source's code can be read. Provenance only — the collectors
+	 *  ship through the App Store and update themselves; no git ref installs
+	 *  them. Null when the code is entirely the box's. */
+	repo?: string | null;
+	repo_ref?: string | null;
+	/** Ontologies this source can produce, by display name — what connecting it
+	 *  would actually give you. */
+	provides?: string[];
+	/** The life-domains those fall in (`health`, `financial`, …). */
+	domains?: string[];
 }
 
 /**
@@ -607,12 +910,48 @@ export interface StreamHealth {
 	count_7d: number;
 	last_event: string | null;
 	last_ingest: string | null;
+	/** Sources that declare they write this stream, by display name. */
+	provided_by: string[];
+	/** At least one of those sources is connected. Distinguishes "nothing
+	 *  provides this" from "provided, but switched off or not yet delivering". */
+	connected: boolean;
+	/** No source writes it, yet rows exist — the box computes it from other
+	 *  streams, so "connect something" is the wrong advice. */
+	derived: boolean;
 }
 
 /**
  * Per-stream ingest freshness, worst-first. The signal that was missing while
  * messages, the calendar sync, and finance each went dark unnoticed.
  */
+/** One stream's arrivals, one entry per day, oldest first and zero-filled. */
+export interface StreamDays {
+	name: string;
+	display_name: string;
+	/** The provider that actually wrote these rows (`source_provider` on the
+	 *  data), not the manifest's claim. One entry per (stream, provider). */
+	provider: string;
+	days: number[];
+}
+
+/**
+ * Daily arrival counts per stream. A scalar "last seen" cannot show whether
+ * streams stopped *together* — nineteen rows reading the same date is one
+ * event, not nineteen — and on a day axis that becomes a visible cliff.
+ */
+export interface StreamDaysResponse {
+	/** UTC date that `days[0]` refers to. Labels come from this, not from a
+	 *  local `new Date()` — deriving them locally shifts every tick by a day for
+	 *  anyone west of UTC in the evening. */
+	start: string;
+	days: number;
+	streams: StreamDays[];
+}
+
+export async function getStreamDays(days = 84): Promise<StreamDaysResponse> {
+	return apiGet<StreamDaysResponse>(`/streams/days?days=${days}`);
+}
+
 export async function getStreamHealth(): Promise<StreamHealth[]> {
 	return apiGet<StreamHealth[]>('/streams/health');
 }
@@ -856,6 +1195,8 @@ export interface Profile {
 	update_check_hour?: number | null;
 	home_timezone?: string | null;
 	home_place_id?: string | null;
+	/** Which wiki_people row is the owner (migration 0080). */
+	self_person_id?: string | null;
 	home_city?: string | null;
 	home_country?: string | null;
 	onboarding_status?: string | null;
@@ -1407,8 +1748,19 @@ export async function createChat(
  */
 export async function updateChat(
 	chatId: string,
-	updates: { title?: string; icon?: string | null; notebookId?: string | null }
-): Promise<{ conversation_id: string; title: string; icon?: string | null; updated_at: string }> {
+	updates: {
+		title?: string;
+		icon?: string | null;
+		icon_color?: string | null;
+		notebookId?: string | null;
+	}
+): Promise<{
+	conversation_id: string;
+	title: string;
+	icon?: string | null;
+	icon_color?: string | null;
+	updated_at: string;
+}> {
 	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },
@@ -1686,6 +2038,8 @@ export interface Page {
 	content: string;
 	notebook_id: string | null;
 	icon: string | null;
+	/** `--cat-*` token key ('orange', 'emerald'), never a hex. Migration 0079. */
+	icon_color: string | null;
 	cover_url: string | null;
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
 	created_at: string;
@@ -1697,6 +2051,7 @@ export interface PageSummary {
 	title: string;
 	notebook_id: string | null;
 	icon: string | null;
+	icon_color: string | null;
 	cover_url: string | null;
 	tags: string | null; // JSON array string: '["tag1", "tag2"]'
 	created_at: string;
@@ -1775,6 +2130,7 @@ export async function updatePage(
 		content?: string;
 		notebook_id?: string | null;
 		icon?: string | null;
+		icon_color?: string | null;
 		cover_url?: string | null;
 		tags?: string | null;
 	}
@@ -1870,20 +2226,14 @@ export async function getSharedPage(token: string): Promise<SharedPage> {
 }
 
 // ============================================================================
-// Reflections API (pages linked to a day)
+// Reflections API (legacy pages linked to a day — read only; the primitive
+// is retired: writing about a day belongs to the day's article or a note)
 // ============================================================================
 
-/** Get all reflections for a date. */
+/** Legacy reflections for a date. Nothing creates new ones. */
 export async function getReflectionsForDate(date: string): Promise<Page[]> {
 	const res = await fetch(`${API_BASE}/pages/reflections/${date}`);
 	if (!res.ok) throw new Error(`Failed to get reflections: ${res.statusText}`);
-	return res.json();
-}
-
-/** Create a new reflection page for a date. */
-export async function createReflection(date: string): Promise<Page> {
-	const res = await fetch(`${API_BASE}/pages/reflections/${date}`, { method: 'POST' });
-	if (!res.ok) throw new Error(`Failed to create reflection: ${res.statusText}`);
 	return res.json();
 }
 
@@ -1995,8 +2345,30 @@ export interface SetupStep {
 
 export interface SetupState {
 	setup: SetupStep[];
+	/** The box is up: claimed, and linked to an account on an appliance. */
 	setup_complete: boolean;
 	onboarding: SetupStep[];
+	/** The box has something to keep a record of — at least one source. */
+	onboarding_complete: boolean;
+	/** `new` | `onboarding` | `active`. `active` means finished OR dismissed —
+	 *  both stop the redirect. Backed by app_user_profile.onboarding_status,
+	 *  which already tracked this life stage before a second flag was added. */
+	onboarding_status: string;
+}
+
+/**
+ * Remember that onboarding was declined — or offer it again with `false`.
+ *
+ * The app routes on this, so a skip that wasn't persisted would put the same
+ * page back in front of someone on every launch.
+ */
+export async function skipOnboarding(skipped = true): Promise<void> {
+	const res = await fetch(`${API_BASE}/setup/skip-onboarding`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ skipped }),
+	});
+	if (!res.ok) throw new Error(`Failed to record onboarding choice: ${res.statusText}`);
 }
 
 export async function getSetupState(): Promise<SetupState> {
@@ -2188,11 +2560,39 @@ export function getSystemHistory<T = unknown>(): Promise<T> {
 export function getMetricsActivity<T = unknown>(): Promise<T> {
 	return apiGet<T>('/metrics/activity');
 }
-export function getAiCalls<T = unknown>(): Promise<T> {
-	return apiGet<T>('/telemetry/ai-calls');
+/** One row of the box-local AI-call log. Metadata only — never content. */
+export interface AiCallRow {
+	id: string;
+	created_at: string;
+	feature: string | null;
+	model: string | null;
+	prompt_tokens: number;
+	completion_tokens: number;
+	reasoning_tokens: number;
+	/**
+	 * Micros-USD, authoritative ONLY when `route === 'wallet'`. Our gateway is
+	 * the only upstream that reports a price, so a BYO row is 0-as-unknown —
+	 * render it as "your key", never as "$0.00".
+	 */
+	cost_micros: number;
+	/** `wallet` | `byo` — which purse paid. */
+	route: string;
+	status: string;
 }
-export function getAuthAudit<T = unknown>(): Promise<T> {
-	return apiGet<T>('/audit/auth');
+
+/** GET /api/telemetry/ai-calls — one page of the call log, newest first. */
+export function getAiCallsPage(opts: {
+	offset: number;
+	limit: number;
+	search?: string;
+	dir?: 'asc' | 'desc';
+}): Promise<{ items: AiCallRow[]; total: number }> {
+	return apiGet<{ items: AiCallRow[]; total: number }>('/telemetry/ai-calls', {
+		offset: opts.offset,
+		limit: opts.limit,
+		search: opts.search,
+		dir: opts.dir
+	});
 }
 export function getUsageSummary<T = unknown>(): Promise<T> {
 	return apiGet<T>('/usage/summary');
@@ -2213,9 +2613,6 @@ export function updateNarrativeIdentity<T = unknown>(body: Record<string, unknow
 export function listDevices<T = unknown>(): Promise<T> {
 	return apiGet<T>('/devices');
 }
-export function pairConfirm<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/pair/confirm/${encodeURIComponent(id)}`);
-}
 export function pairConsume<T = unknown>(body?: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/pair/consume', body);
 }
@@ -2233,7 +2630,7 @@ export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Prom
 export function getServerInfo<T = unknown>(): Promise<T> {
 	return apiGet<T>('/app/server-info');
 }
-export function triggerAction<T = unknown>(id: string): Promise<T> {
+export function triggerApplet<T = unknown>(id: string): Promise<T> {
 	return apiSend<T>('POST', `/applets/${encodeURIComponent(id)}/trigger`);
 }
 export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {

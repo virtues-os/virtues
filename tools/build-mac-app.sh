@@ -3,7 +3,9 @@
 # build-mac-app.sh — build the one-DMG macOS app: Virtues.app bundling both
 # helper sidecars (virtues-client, virtues-collector), signed + notarized.
 #
-# Produces:  apps/web/src-tauri/target/release/bundle/dmg/Virtues_*.dmg
+# Produces:  <cargo target dir>/release/bundle/dmg/Virtues_*.dmg
+#            (the target dir is whatever `.cargo/config.toml` says — printed at
+#            the end of the run; it is NOT ./target in this repo)
 #
 # Steps:
 #   1. cargo build -p virtues-client --release   -> sidecar
@@ -33,6 +35,15 @@ TAURI_DIR="$REPO_ROOT/apps/web/src-tauri"
 BINARIES_DIR="$TAURI_DIR/binaries"
 SWIFT_DIR="$REPO_ROOT/apps/mac-source"
 
+# Where cargo actually writes. NOT `$REPO_ROOT/target`: `.cargo/config.toml`
+# points `build.target-dir` at the shared cache (~/.cargo/shared-target), so
+# that path has not existed since it landed — this script assumed it and died
+# on the sidecar's existence check. Ask cargo instead of guessing, so the
+# answer stays right whoever sets the dir and however.
+target_dir_for() {
+  cargo metadata --no-deps --format-version 1 --manifest-path "$1" | jq -r .target_directory
+}
+
 TARGET="${1:-}"
 if [[ "$TARGET" == "--target" ]]; then TARGET="${2:-}"; fi
 if [[ -z "$TARGET" ]]; then
@@ -43,7 +54,7 @@ echo "→ target triple: $TARGET"
 # ── 1. virtues-client (Rust) sidecar ────────────────────────────────────────
 echo "→ building virtues-client (release)…"
 cargo build -p virtues-client --release --manifest-path "$REPO_ROOT/Cargo.toml"
-CLIENT_BIN="$REPO_ROOT/target/release/virtues-client"
+CLIENT_BIN="$(target_dir_for "$REPO_ROOT/Cargo.toml")/release/virtues-client"
 [[ -x "$CLIENT_BIN" ]] || { echo "error: $CLIENT_BIN not found"; exit 1; }
 
 # ── 2. virtues-collector (Swift) sidecar ────────────────────────────────────
@@ -79,5 +90,7 @@ fi
 
 echo ""
 echo "✓ done. DMG:"
-ls -1 "$TAURI_DIR/target/release/bundle/dmg/"*.dmg 2>/dev/null || \
+BUNDLE_DIR="$(target_dir_for "$TAURI_DIR/Cargo.toml")/release/bundle"
+ls -1 "$BUNDLE_DIR/dmg/"*.dmg 2>/dev/null || \
   echo "  (no dmg — check the tauri build output above)"
+echo "  app: $BUNDLE_DIR/macos/Virtues.app"

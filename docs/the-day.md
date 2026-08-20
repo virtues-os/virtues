@@ -116,7 +116,7 @@ The autobiography is the **meaning layer** — synthesis, not chronology. Event 
 #### Right column (~65% width): Detail panel for selected/hovered event
 
 - **Event label** (large, editable on click)
-- **Location** (editable on click, entity-resolved: "Home" not "30.2961, -97.7325")
+- **Location** (editable on click, entity-resolved: "Home" not "41.8781, -87.6298")
 - **Duration** and **time range**
 - **Event summary** (1-3 sentences from the AI, editable)
 - **Novelty score** with context ("Rare for a Friday" or "Part of your routine")

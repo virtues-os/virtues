@@ -41,6 +41,8 @@ pub struct Page {
     pub title: String,
     pub content: String,
     pub icon: Option<String>,
+    /// `--cat-*` token key ('orange', 'emerald'), never a hex. See migration 0079.
+    pub icon_color: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<serde_json::Value>, // JSONB array: ["tag1", "tag2"]
     pub date: Option<String>, // YYYY-MM-DD — if set, this page is a reflection for that day
@@ -54,6 +56,7 @@ pub struct PageSummary {
     pub id: String,
     pub title: String,
     pub icon: Option<String>,
+    pub icon_color: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<serde_json::Value>, // JSONB array: ["tag1", "tag2"]
     pub date: Option<String>,
@@ -70,6 +73,7 @@ pub struct CreatePageRequest {
     #[serde(rename = "notebookId")]
     pub notebook_id: Option<String>,  // For auto-add to notebook_items (not stored on page)
     pub icon: Option<String>,
+    pub icon_color: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<serde_json::Value>, // JSONB array: ["tag1", "tag2"]
 }
@@ -81,6 +85,8 @@ pub struct UpdatePageRequest {
     pub content: Option<String>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub icon: Option<Option<String>>,      // None = don't change, Some(None) = clear, Some(Some(x)) = set
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub icon_color: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub cover_url: Option<Option<String>>, // None = don't change, Some(None) = clear, Some(Some(x)) = set
     #[serde(default, deserialize_with = "deserialize_double_option")]
@@ -200,18 +206,28 @@ pub async fn list_pages(
     let limit = limit.unwrap_or(50).min(100);
     let offset = offset.unwrap_or(0);
 
-    // Get total count (exclude day-linked reflections from regular page list)
-    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages WHERE date IS NULL"#)
+    // Two exclusions, for two different reasons.
+    //
+    // `date IS NULL` drops day-linked reflections, which belong to their day.
+    //
+    // `kind = 'page'` drops ARTICLES (migration 0081). An article is a page in
+    // storage — same table, same editor, same revision history — but it is not
+    // a document a person made, and the Pages list is a list of things you
+    // made. Without this, opening the wiki on a real box would eventually push
+    // hundreds of machine-written entity articles into it, and the destination
+    // would be swallowed by an implementation detail. Articles remain in
+    // SEARCH, because prose about your life is exactly what you want to find.
+    let total: i64 =
+        sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages WHERE date IS NULL AND kind = 'page'"#)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to count pages: {}", e)))?;
 
-    // Get pages (exclude day-linked reflections)
     let pages = sqlx::query_as::<_, PageSummary>(
         r#"
-        SELECT id, title, icon, cover_url, tags, date, created_at, updated_at
+        SELECT id, title, icon, icon_color, cover_url, tags, date, created_at, updated_at
         FROM app_pages
-        WHERE date IS NULL
+        WHERE date IS NULL AND kind = 'page'
         ORDER BY updated_at DESC
         LIMIT $1 OFFSET $2
         "#,
@@ -234,7 +250,7 @@ pub async fn list_pages(
 pub async fn get_page(pool: &PgPool, id: &str) -> Result<Page> {
     let page = sqlx::query_as::<_, Page>(
         r#"
-        SELECT id, title, content, icon, cover_url, tags, date, created_at, updated_at
+        SELECT id, title, content, icon, icon_color, cover_url, tags, date, created_at, updated_at
         FROM app_pages
         WHERE id = $1
         "#,
@@ -354,15 +370,16 @@ pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> 
 
     let page = sqlx::query_as::<_, Page>(
         r#"
-        INSERT INTO app_pages (id, title, content, icon, cover_url, tags)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, title, content, icon, cover_url, tags, date, created_at, updated_at
+        INSERT INTO app_pages (id, title, content, icon, icon_color, cover_url, tags)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id, title, content, icon, icon_color, cover_url, tags, date, created_at, updated_at
         "#,
     )
     .bind(&id)
     .bind(title)
     .bind(&req.content)
     .bind(&req.icon)
+    .bind(&req.icon_color)
     .bind(&req.cover_url)
     .bind(req.tags.clone().unwrap_or_else(|| serde_json::json!([])))
     .fetch_one(pool)
@@ -398,6 +415,10 @@ pub async fn update_page(pool: &PgPool, id: &str, req: UpdatePageRequest) -> Res
         Some(val) => val.clone(),
         None => existing.icon,
     };
+    let icon_color = match &req.icon_color {
+        Some(val) => val.clone(),
+        None => existing.icon_color,
+    };
     let cover_url = match &req.cover_url {
         Some(val) => val.clone(),
         None => existing.cover_url,
@@ -414,15 +435,16 @@ pub async fn update_page(pool: &PgPool, id: &str, req: UpdatePageRequest) -> Res
     let page = sqlx::query_as::<_, Page>(
         r#"
         UPDATE app_pages
-        SET title = $2, content = $3, icon = $4, cover_url = $5, tags = $6
+        SET title = $2, content = $3, icon = $4, icon_color = $5, cover_url = $6, tags = $7
         WHERE id = $1
-        RETURNING id, title, content, icon, cover_url, tags, date, created_at, updated_at
+        RETURNING id, title, content, icon, icon_color, cover_url, tags, date, created_at, updated_at
         "#,
     )
     .bind(id)
     .bind(title.trim())
     .bind(content)
     .bind(icon)
+    .bind(icon_color)
     .bind(cover_url)
     .bind(tags)
     .fetch_one(pool)
@@ -460,11 +482,15 @@ pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
 // Reflections (pages linked to a day)
 // ============================================================================
 
-/// Get all reflections for a specific date.
+/// Legacy reflections for a date — READ ONLY. The reflection primitive is
+/// retired (2026-08-03): writing about a day belongs to the day's article
+/// (or a note on the day), not to a parallel date-linked page. This reader
+/// stays so pages minted before the retirement remain reachable; nothing
+/// creates new ones.
 pub async fn get_reflections_for_date(pool: &PgPool, date: &str) -> Result<Vec<Page>> {
     let pages = sqlx::query_as::<_, Page>(
         r#"
-        SELECT id, title, content, icon, cover_url, tags, date, created_at, updated_at
+        SELECT id, title, content, icon, icon_color, cover_url, tags, date, created_at, updated_at
         FROM app_pages
         WHERE date = $1
         ORDER BY created_at ASC
@@ -476,38 +502,6 @@ pub async fn get_reflections_for_date(pool: &PgPool, date: &str) -> Result<Vec<P
     .map_err(|e| Error::Database(format!("Failed to get reflections: {}", e)))?;
 
     Ok(pages)
-}
-
-/// Create a new reflection page linked to a date.
-pub async fn create_reflection(pool: &PgPool, date: &str, title: Option<&str>) -> Result<Page> {
-    // Default title is the formatted date
-    let title = title.unwrap_or_else(|| "").trim();
-    let title = if title.is_empty() {
-        chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
-            .map(|d| d.format("%B %-d, %Y").to_string())
-            .unwrap_or_else(|_| date.to_string())
-    } else {
-        title.to_string()
-    };
-
-    let timestamp = chrono::Utc::now().to_rfc3339();
-    let id = generate_id(PAGE_PREFIX, &[&title, &timestamp]);
-
-    let page = sqlx::query_as::<_, Page>(
-        r#"
-        INSERT INTO app_pages (id, title, content, icon, date)
-        VALUES ($1, $2, '', '✎', $3)
-        RETURNING id, title, content, icon, cover_url, tags, date, created_at, updated_at
-        "#,
-    )
-    .bind(&id)
-    .bind(&title)
-    .bind(date)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to create reflection: {}", e)))?;
-
-    Ok(page)
 }
 
 // ============================================================================
@@ -562,29 +556,46 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
         (format!("%{}%", query), format!("{}%", query))
     };
 
+    // The exact surface, lowercased, for the alias leg.
+    //
+    // A separate bind because $1 and $2 are LIKE PATTERNS (`%q%`, `q%`) and
+    // aliases are matched by containment, not by pattern: `jsonb_exists` on
+    // `%sarah%` finds nothing. 0037 stores aliases lowercased and the resolver
+    // lowercases the surface before matching, so this must too.
+    let exact = query.to_lowercase();
+
     let limit = 15i64;
 
     // Search across multiple tables with UNION
     // Relevance: 0 = prefix match (highest), 1 = contains match
     let raw_results = sqlx::query_as::<_, RawRefSearchResult>(
         r#"
-        SELECT id, canonical_name as name, 'person' as entity_type, 'ri:user-line' as icon,
+        -- Aliases are the whole point of 0037: "a mention resolves iff its
+        -- normalized surface matches EXACTLY ONE entity, by canonical name,
+        -- nickname, or an alias a human put here". The column shipped and this
+        -- navigator never read it, so linking "Sarah" once resolved nothing —
+        -- the decision had a home and no door. An exact alias hit ranks with a
+        -- prefix hit: it is not a fuzzy match, it is a name you declared.
+        SELECT id, name, 'person' as entity_type, 'ri:user-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN canonical_name ILIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN name ILIKE $2 OR jsonb_exists(aliases, $4)
+                    THEN 0 ELSE 1 END as relevance
         FROM wiki_people
-        WHERE canonical_name ILIKE $1
+        WHERE name ILIKE $1 OR nickname ILIKE $1 OR jsonb_exists(aliases, $4)
         UNION ALL
         SELECT id, name, 'place' as entity_type, 'ri:map-pin-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN name ILIKE $2 OR jsonb_exists(aliases, $4)
+                    THEN 0 ELSE 1 END as relevance
         FROM wiki_places
-        WHERE name ILIKE $1
+        WHERE name ILIKE $1 OR jsonb_exists(aliases, $4)
         UNION ALL
-        SELECT id, canonical_name as name, 'org' as entity_type, 'ri:building-line' as icon,
+        SELECT id, name, 'org' as entity_type, 'ri:building-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN canonical_name ILIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN name ILIKE $2 OR jsonb_exists(aliases, $4)
+                    THEN 0 ELSE 1 END as relevance
         FROM wiki_orgs
-        WHERE canonical_name ILIKE $1
+        WHERE name ILIKE $1 OR jsonb_exists(aliases, $4)
         UNION ALL
         SELECT id, filename as name, 'file' as entity_type, 'ri:file-line' as icon,
                mime_type, updated_at,
@@ -596,7 +607,10 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
                NULL as mime_type, updated_at,
                CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_pages
-        WHERE title ILIKE $1
+        -- Articles are excluded here and surfaced under their SUBJECT instead:
+        -- typing "Sarah" should land on Sarah, not on a page that happens to be
+        -- about her (migration 0081).
+        WHERE title ILIKE $1 AND kind = 'page'
         UNION ALL
         SELECT id, title as name, 'chat' as entity_type,
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:chat-3-line' END as icon,
@@ -618,6 +632,7 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
     .bind(&contains_pattern)
     .bind(&prefix_pattern)
     .bind(limit)
+    .bind(&exact)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to search entities: {}", e)))?;

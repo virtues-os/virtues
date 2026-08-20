@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { slide } from 'svelte/transition';
-	import CitedMarkdown from './CitedMarkdown.svelte';
+	import Markdown from './Markdown.svelte';
 
 	let { text }: { text: string } = $props();
 
@@ -28,7 +28,7 @@
 		class="text-base text-primary user-message-content"
 		style="max-height: {maxHeight}; overflow: hidden;"
 	>
-		<CitedMarkdown content={text} />
+		<Markdown content={text} />
 	</div>
 
 	{#if shouldTruncate}

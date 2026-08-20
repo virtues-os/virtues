@@ -41,6 +41,7 @@ serde_json = "1.0"
 anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
+url = "2"
 
 [features]
 # Enables the dev-local transport profile (loopback HTTP, no WG, no TLS,
@@ -51,3 +52,4 @@ dev-transport = []
 [dev-dependencies]
 serial_test = "3.1"
 base64 = "0.22"
+dotenv = "0.15"

@@ -21,9 +21,13 @@
 	background: transparent;
 	color: var(--sidebar-interactive-color);
 	font-size: var(--sidebar-interactive-font-size);
-	/* Destinations carry a touch more weight than their children. This is the
-	   first of the four registers — see --sidebar-child-* in themes.css. */
-	font-weight: 500;
+	/* Regular, not medium.
+	   Destinations used to be 500 to separate them from their expanded
+	   children — but the Library's rows are plain links now, so there are no
+	   children to out-weigh, and the register was doing nothing except making
+	   the shelf heavier than the two rows at the foot of the same panel.
+	   400 at 13px is also what a native sidebar sets. */
+	font-weight: 400;
 	border: none;
 	cursor: pointer;
 	width: 100%;

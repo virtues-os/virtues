@@ -3,6 +3,7 @@
 		getAvailableThemes,
 		getThemeDisplayName,
 		setTheme,
+		themeDefaultLabel,
 		themePreviewColors,
 		type Theme
 	} from '$lib/utils/theme';
@@ -98,10 +99,34 @@
 				</div>
 			</div>
 
-			<!-- Theme name -->
-			<span class="text-sm font-medium {isSelected ? 'text-primary' : 'text-foreground'}">
-				{getThemeDisplayName(theme)}
+			<!--
+				Name, then its role if it has one. Two lines for every card, not
+				just the two that carry a role — a caption that appears on some
+				cards and not others shunts the whole row out of alignment, which
+				is a worse cost than a little empty space.
+			-->
+			<span class="theme-caption">
+				<span class="text-sm font-medium {isSelected ? 'text-primary' : 'text-foreground'}">
+					{getThemeDisplayName(theme)}
+				</span>
+				<span class="theme-role">{themeDefaultLabel(theme) ?? ''}</span>
 			</span>
 		</button>
 	{/each}
 </div>
+
+<style>
+	.theme-caption {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.125rem;
+	}
+	.theme-role {
+		font-size: 0.6875rem;
+		line-height: 1rem;
+		/* Reserved even when empty, so all captions occupy the same height. */
+		min-height: 1rem;
+		color: var(--color-foreground-subtle, #9ca3af);
+	}
+</style>

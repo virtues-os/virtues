@@ -343,15 +343,27 @@ pub async fn check_quota(config: &DriveConfig, size_bytes: i64) -> Result<bool> 
 async fn update_usage_add(pool: &PgPool, size_bytes: i64, is_folder: bool) -> Result<()> {
     let (file_delta, folder_delta): (i64, i64) = if is_folder { (0, 1) } else { (1, 0) };
 
+    // Upsert, not UPDATE. The `app_drive_usage` singleton row is created by no
+    // migration, no seed, and no other code path — so on every box this UPDATE
+    // has always matched ZERO rows, and the storage meter has never counted
+    // anything. It failed silently because an UPDATE that matches nothing is
+    // not an error.
+    //
+    // Created by the first writer rather than seeded, so the row cannot go
+    // missing again: a singleton whose absence silently disables a feature
+    // should be born the first time that feature is used. The constant id and
+    // its CHECK constraint keep it a singleton.
+
     sqlx::query(
         r#"
-        UPDATE app_drive_usage
-        SET drive_bytes = drive_bytes + $1,
-            total_bytes = total_bytes + $1,
-            file_count = file_count + $2,
-            folder_count = folder_count + $3,
+        INSERT INTO app_drive_usage (id, drive_bytes, total_bytes, file_count, folder_count)
+        VALUES ($4, GREATEST(0, $1), GREATEST(0, $1), GREATEST(0, $2), GREATEST(0, $3))
+        ON CONFLICT (id) DO UPDATE
+        SET drive_bytes = app_drive_usage.drive_bytes + $1,
+            total_bytes = app_drive_usage.total_bytes + $1,
+            file_count = app_drive_usage.file_count + $2,
+            folder_count = app_drive_usage.folder_count + $3,
             updated_at = now()
-        WHERE id = $4
         "#,
     )
     .bind(size_bytes)
@@ -372,10 +384,10 @@ async fn update_usage_remove(pool: &PgPool, size_bytes: i64, is_folder: bool) ->
     sqlx::query(
         r#"
         UPDATE app_drive_usage
-        SET drive_bytes = MAX(0, drive_bytes - $1),
-            total_bytes = MAX(0, total_bytes - $1),
-            file_count = MAX(0, file_count - $2),
-            folder_count = MAX(0, folder_count - $3),
+        SET drive_bytes = GREATEST(0, drive_bytes - $1),
+            total_bytes = GREATEST(0, total_bytes - $1),
+            file_count = GREATEST(0, file_count - $2),
+            folder_count = GREATEST(0, folder_count - $3),
             updated_at = now()
         WHERE id = $4
         "#,
@@ -1228,7 +1240,7 @@ pub async fn list_trash(pool: &PgPool) -> Result<Vec<DriveFile>> {
                is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE deleted_at IS NOT NULL
-          AND deleted_at > datetime('now', '-30 days')
+          AND deleted_at > now() - interval '30 days'
         ORDER BY deleted_at DESC
         "#,
     )
@@ -1314,8 +1326,8 @@ pub async fn restore_file(pool: &PgPool, file_id: &str) -> Result<DriveFile> {
     sqlx::query(
         r#"
         UPDATE app_drive_usage
-        SET trash_bytes = MAX(0, trash_bytes - $1),
-            trash_count = MAX(0, trash_count - 1),
+        SET trash_bytes = GREATEST(0, trash_bytes - $1),
+            trash_count = GREATEST(0, trash_count - 1),
             updated_at = now()
         WHERE id = $2
         "#,
@@ -1356,8 +1368,8 @@ pub async fn purge_file(pool: &PgPool, config: &DriveConfig, file_id: &str) -> R
         sqlx::query(
             r#"
             UPDATE app_drive_usage
-            SET trash_bytes = MAX(0, trash_bytes - $1),
-                trash_count = MAX(0, trash_count - 1),
+            SET trash_bytes = GREATEST(0, trash_bytes - $1),
+                trash_count = GREATEST(0, trash_count - 1),
                 updated_at = now()
             WHERE id = $2
             "#,
@@ -1405,7 +1417,7 @@ pub async fn purge_old_trash(pool: &PgPool, config: &DriveConfig) -> Result<u64>
                is_folder, parent_id, sha256_hash, extraction_status, deleted_at, created_at, updated_at
         FROM app_drive_files
         WHERE deleted_at IS NOT NULL
-          AND deleted_at < datetime('now', '-30 days')
+          AND deleted_at < now() - interval '30 days'
         "#,
     )
     .fetch_all(pool)

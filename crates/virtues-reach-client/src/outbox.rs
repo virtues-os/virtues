@@ -41,8 +41,11 @@ static DB_PATH: OnceLock<PathBuf> = OnceLock::new();
 static DEVICE_ID: Mutex<String> = Mutex::new(String::new());
 static INGEST_KEY: Mutex<String> = Mutex::new(String::new());
 
-/// Backoff schedule (seconds) indexed by attempt count, capped at 5 min.
-const BACKOFF_SECS: [i64; 6] = [0, 30, 60, 120, 240, 300];
+/// Backoff schedule (seconds) indexed by attempt count, capped at 5 min. The
+/// first retry waits too (30s, not 0): with an unreachable box, an immediate
+/// retry just burns a QUIC dial per drain tick — on cellular that keeps the
+/// radio from ever idling while offline.
+const BACKOFF_SECS: [i64; 6] = [30, 60, 120, 240, 300, 300];
 
 /// A batch claimed for delivery: the ids to ack/nack, and the box-shaped records.
 pub struct Claimed {
@@ -73,7 +76,7 @@ pub fn init(db_path: impl AsRef<Path>, device_id: &str, ingest_key: &str) -> Res
         "CREATE TABLE IF NOT EXISTS outbox (
             source_stream_id TEXT PRIMARY KEY,
             stream           TEXT NOT NULL,
-            action_key       TEXT NOT NULL,
+            applet_key       TEXT NOT NULL,
             payload          TEXT NOT NULL,
             created_at       INTEGER NOT NULL,
             attempts         INTEGER NOT NULL DEFAULT 0,
@@ -83,6 +86,22 @@ pub fn init(db_path: impl AsRef<Path>, device_id: &str, ingest_key: &str) -> Res
          CREATE INDEX IF NOT EXISTS idx_outbox_due ON outbox(stream, next_attempt_at);
          CREATE INDEX IF NOT EXISTS idx_outbox_created ON outbox(stream, created_at);",
     )?;
+
+    // Migrate a device that already has the pre-rename column. CREATE TABLE IF
+    // NOT EXISTS is a no-op on those, so without this the column stays
+    // `action_key` and every INSERT below fails against it — on a queue holding
+    // undelivered records, which is the worst place to get this wrong.
+    //
+    // Checked rather than attempted-and-ignored: swallowing the error would
+    // also swallow a genuinely broken database. SQLite has had RENAME COLUMN
+    // since 3.25 (2018).
+    let has_legacy: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('outbox') WHERE name = 'action_key'")?
+        .exists([])?;
+    if has_legacy {
+        conn.execute_batch("ALTER TABLE outbox RENAME COLUMN action_key TO applet_key;")?;
+        tracing::info!("outbox: migrated action_key → applet_key");
+    }
     let _ = DB_PATH.set(path);
     *DEVICE_ID.lock().unwrap() = device_id.to_string();
     *INGEST_KEY.lock().unwrap() = ingest_key.to_string();
@@ -93,9 +112,18 @@ pub fn init(db_path: impl AsRef<Path>, device_id: &str, ingest_key: &str) -> Res
 /// is one row. Synchronous and cheap — safe to call from a background OS
 /// callback. `record` is the box-shaped record JSON; its `id` (if present) is
 /// used as the dedup key, else one is derived and stamped in.
-pub fn enqueue(stream: &str, mut record: Value) -> Result<()> {
+pub fn enqueue(stream: &str, record: Value) -> Result<()> {
+    enqueue_deferred(stream, record, 0)
+}
+
+/// Like [`enqueue`], but the row only becomes due at the next wall-clock
+/// multiple of `defer_secs` — so all records deferred with the same interval
+/// batch onto ONE dial at the boundary instead of each earning its own at
+/// staggered offsets. Used for low-urgency payloads (silent-chunk metadata)
+/// that shouldn't wake the radio alone. `defer_secs = 0` means due now.
+pub fn enqueue_deferred(stream: &str, mut record: Value, defer_secs: i64) -> Result<()> {
     let device = DEVICE_ID.lock().unwrap().clone();
-    let action_key = {
+    let applet_key = {
         let k = INGEST_KEY.lock().unwrap().clone();
         if k.is_empty() {
             "ios_ingest".to_string()
@@ -115,13 +143,19 @@ pub fn enqueue(stream: &str, mut record: Value) -> Result<()> {
         }
     };
     let payload = serde_json::to_string(&record)?;
+    let due = if defer_secs > 0 {
+        let n = now();
+        n + defer_secs - (n % defer_secs) // align to the wall-clock grid
+    } else {
+        0
+    };
 
     let conn = conn()?;
     conn.execute(
         "INSERT OR IGNORE INTO outbox
-           (source_stream_id, stream, action_key, payload, created_at, attempts, next_attempt_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, 0)",
-        params![id, stream, action_key, payload, now()],
+           (source_stream_id, stream, applet_key, payload, created_at, attempts, next_attempt_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+        params![id, stream, applet_key, payload, now(), due],
     )?;
     Ok(())
 }
@@ -137,12 +171,12 @@ pub fn due_streams() -> Result<Vec<String>> {
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
-/// The `action_key` (ingest binary name) for a stream's queued rows.
-pub fn action_key_for(stream: &str) -> Result<Option<String>> {
+/// The `applet_key` (ingest binary name) for a stream's queued rows.
+pub fn applet_key_for(stream: &str) -> Result<Option<String>> {
     let conn = conn()?;
     let key: Option<String> = conn
         .query_row(
-            "SELECT action_key FROM outbox WHERE stream = ?1 LIMIT 1",
+            "SELECT applet_key FROM outbox WHERE stream = ?1 LIMIT 1",
             params![stream],
             |r| r.get(0),
         )
@@ -245,6 +279,18 @@ pub fn nack(ids: &[String]) -> Result<()> {
     }
     let refs: Vec<&dyn rusqlite::ToSql> = p.iter().map(|b| b.as_ref()).collect();
     conn.execute(&sql, refs.as_slice())?;
+    Ok(())
+}
+
+/// Make every unclaimed row due now — an explicit user "Sync now" bypasses
+/// both retry backoff and deferred (silent-chunk) gates. Safe: the box dedups
+/// on source_stream_id, so an early resend is harmless.
+pub fn clear_backoff() -> Result<()> {
+    let conn = conn()?;
+    conn.execute(
+        "UPDATE outbox SET next_attempt_at = 0 WHERE claimed_at IS NULL",
+        [],
+    )?;
     Ok(())
 }
 

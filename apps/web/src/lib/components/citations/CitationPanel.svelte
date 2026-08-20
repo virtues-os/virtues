@@ -389,7 +389,6 @@
 	.panel-subtitle {
 		font-size: 0.75rem;
 		color: var(--color-foreground-muted);
-		text-transform: uppercase;
 		letter-spacing: 0.025em;
 	}
 
@@ -422,8 +421,6 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--color-foreground-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		margin: 0 0 8px 0;
 	}
 
@@ -453,7 +450,6 @@
 	.detail-label {
 		font-size: 0.6875rem;
 		color: var(--color-foreground-subtle);
-		text-transform: uppercase;
 		letter-spacing: 0.025em;
 	}
 

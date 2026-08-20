@@ -109,9 +109,9 @@ async fn assess_richness(pool: &PgPool) -> Richness {
     let row: (i64, i64, i64) = sqlx::query_as(
         r#"
         SELECT
-            (SELECT count(*) FROM wiki_people WHERE interaction_count >= 3),
-            (SELECT count(*) FROM wiki_places WHERE visit_count >= 2),
-            (SELECT count(*) FROM wiki_days WHERE autobiography IS NOT NULL AND length(trim(autobiography)) > 0)
+            (SELECT count(*) FROM wiki_people WHERE ref_count >= 3),
+            (SELECT count(*) FROM wiki_places WHERE ref_count >= 2),
+            (SELECT count(*) FROM wiki_day_prose WHERE prose IS NOT NULL)
         "#,
     )
     .fetch_one(pool)
@@ -131,9 +131,9 @@ async fn build_prompt(pool: &PgPool, thin: bool) -> String {
 
     // People who recur (by interaction volume).
     let people: Vec<(String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT canonical_name, relationship_category, interaction_count \
-         FROM wiki_people WHERE interaction_count > 0 \
-         ORDER BY interaction_count DESC LIMIT 8",
+        "SELECT name, relationship_category, ref_count \
+         FROM wiki_people WHERE ref_count > 0 \
+         ORDER BY ref_count DESC LIMIT 8",
     )
     .fetch_all(pool)
     .await
@@ -151,9 +151,9 @@ async fn build_prompt(pool: &PgPool, thin: bool) -> String {
 
     // Places they return to (by visit count).
     let places: Vec<(String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT name, category, visit_count \
-         FROM wiki_places WHERE visit_count > 0 \
-         ORDER BY visit_count DESC LIMIT 6",
+        "SELECT name, category, ref_count \
+         FROM wiki_places WHERE ref_count > 0 \
+         ORDER BY ref_count DESC LIMIT 6",
     )
     .fetch_all(pool)
     .await
@@ -171,8 +171,8 @@ async fn build_prompt(pool: &PgPool, thin: bool) -> String {
 
     // Organizations.
     let orgs: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT canonical_name, organization_type \
-         FROM wiki_orgs ORDER BY interaction_count DESC LIMIT 5",
+        "SELECT name, organization_type \
+         FROM wiki_orgs ORDER BY ref_count DESC LIMIT 5",
     )
     .fetch_all(pool)
     .await
@@ -190,9 +190,10 @@ async fn build_prompt(pool: &PgPool, thin: bool) -> String {
 
     // Recent day biographies — already-distilled meaning, the richest signal.
     let days: Vec<(chrono::NaiveDate, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT date, epigraph, autobiography FROM wiki_days \
-         WHERE autobiography IS NOT NULL AND length(trim(autobiography)) > 0 \
-         ORDER BY date DESC LIMIT 5",
+        "SELECT d.date, d.epigraph, dp.prose FROM wiki_days d \
+         JOIN wiki_day_prose dp ON dp.day_id = d.id \
+         WHERE dp.prose IS NOT NULL \
+         ORDER BY d.date DESC LIMIT 5",
     )
     .fetch_all(pool)
     .await
@@ -230,8 +231,14 @@ fn append(prompt: &mut String, heading: &str, body: &str) {
     prompt.push_str(&format!("\n## {}\n{}\n", heading, body));
 }
 
-/// Call virtues-api for the draft — same bearer/System-purpose path as the day
-/// summary (debits the OS reserve, not the user's chat budget).
+/// Call virtues-api for the draft — same bearer path as the day summary.
+///
+/// `Purpose::System` is telemetry only. It used to select an "OS reserve"
+/// separate from the chat wallet, but billing collapsed to a single wallet and
+/// the server now ignores the header (see `virtues_api::client`), so this call
+/// debits exactly what a chat message debits. It also runs on the **Chat**
+/// slot, which means whatever model the owner picked for conversation is the
+/// model that pays for this — worth knowing before adding another one of these.
 async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
     let chat_model = crate::api::assistant_profile::get_chat_model(pool).await?;
 

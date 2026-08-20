@@ -109,6 +109,11 @@
 	--font-mono: 'IBM Plex Mono', monospace;
 	--font-sans: 'Avenir', sans-serif;
 	--font-serif: 'JJannon', Lora, serif;
+	/* The serif for chrome — same face, metrics normalized so a centered line
+	   box centers the letters and not the em square. Use it wherever the serif
+	   shares a row with something that isn't text (an icon, a dot, a control);
+	   use --font-serif for prose. See the @font-face note in app.css. */
+	--font-serif-ui: 'JJannon UI', Lora, serif;
 
 	/* Animation Tokens */
 	--duration-fast: 150ms;
@@ -128,81 +133,115 @@
 	   giving a `nav:` responsive variant. Deliberately NOT redefining --breakpoint-lg
 	   (that would silently move every existing `lg:` utility from 1024px). */
 	--breakpoint-nav: 900px;
+
+	/* Markdown typography — THE definition, cited by both render engines.
+	   `.markdown` (app.css) styles the read path (chat, wiki, asset panes);
+	   `.cm-*` (codemirror/theme.css) styles the editor's live preview. They
+	   had drifted into three competing value sets (editor h1 1.75rem vs read
+	   1.875rem, 600-weight serif table headers vs 400, a blue 4px quote bar vs
+	   a gray 3px one). These tokens hold the VALUES only — spacing stays
+	   engine-side, because the editor needs asymmetric padding on .cm-line
+	   (margins collapse there) while the read path uses ordinary margins.
+	   Change a size here and page and editor move together; that is the whole
+	   WYSIWYG guarantee. Values are the editor's tuned scale. */
+	--md-h1-size: 1.75rem;   --md-h1-lh: 1.3;  --md-h1-weight: 400;
+	--md-h2-size: 1.375rem;  --md-h2-lh: 1.35; --md-h2-weight: 400;
+	--md-h3-size: 1.125rem;  --md-h3-lh: 1.4;  --md-h3-weight: 500;
+	--md-h4-size: 1rem;      --md-h4-lh: 1.5;  --md-h4-weight: 500;
+	--md-h5-size: 0.9375rem; --md-h5-lh: 1.5;  --md-h5-weight: 600;
+	--md-h6-size: 0.875rem;  --md-h6-lh: 1.5;  --md-h6-weight: 600;
+	/* h1–h3 serif, h4–h6 inherit the surrounding sans — the editor's split. */
+	--md-heading-major-family: var(--font-serif);
+	--md-body-lh: 1.5;
+	/* Inline code (block code is Streamdown/Shiki chrome, not typography). */
+	--md-inline-code-size: 0.875em;
+	--md-inline-code-bg: var(--color-surface-elevated);
+	--md-inline-code-radius: 0.25rem;
+	--md-inline-code-border: 1px solid var(--color-border-subtle);
+	/* Blockquote: the hairline, not the accent — blue stays interactive. */
+	--md-quote-border: 3px solid var(--color-border);
+	/* Tables: hairline grid, dense cells, small serif headers. */
+	--md-table-border-color: var(--color-border-subtle);
+	--md-cell-pad: 0.375rem 0.75rem;
+	--md-th-size: 0.8125rem;
+	--md-th-weight: 600;
 }
 
 /* ===================================
    PEMBERLEY (DEFAULT)
-   American heritage — ivory, navy & claret
+   White on white — paper, hairlines, one blue
    Applied to :root so it's the default
    =================================== */
 :root {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 
-	/* Surface Colors - Whiter warm paper, a whisper of cream (de-yellowed).
-	   --surface-elevated is what the sidebar sits on, so it is the largest
-	   field of colour in the window. At #F5F4EF it was 23% saturation on a
-	   50° (yellow) hue — fine on a card, too much across a full-height panel,
-	   where it read as a wash rather than as paper. Held at the same lightness
-	   and taken down to ~12%. */
-	--background: #FDFCF9;
+	/* Surface Colors - One paper, top to bottom.
+	   Every surface is the same pure white, including --surface-elevated, which
+	   is what the sidebar sits on. Previous themes gave the rail a 4% step so it
+	   read as a separate region; here the seam is carried by a single hairline
+	   border and the pane card's shadow instead. With no tint anywhere, spacing
+	   and type do the organising — which is the whole point of the register, and
+	   the hardest one to fake. */
+	--background: #FFFFFF;
 	--surface: #FFFFFF;
-	--surface-elevated: #F4F3F0;
+	--surface-elevated: #FFFFFF;
 	--surface-overlay: #FFFFFF;
 
-	/* Background Treatment - Flat warm ivory */
+	/* Background Treatment - Nothing. No texture, no wash. */
 	--background-image: none;
 	--surface-elevated-image: none;
 	--surface-elevated-size: auto;
 
-	/* Content Colors - Navy-black ink on ivory */
-	--foreground: #1A2030;
-	--foreground-muted: #3E4459;
-	--foreground-subtle: #6C7185;
-	--foreground-disabled: #A8A395;
+	/* Content Colors - Four steps of graphite, never pure black.
+	   #000 on #FFF is a harsher contrast than print ever uses; the ink here is
+	   a near-black with a trace of blue so it sits with the accent. */
+	--foreground: #17171A;
+	--foreground-muted: #3F3F46;
+	--foreground-subtle: #71717A;
+	--foreground-disabled: #A1A1AA;
 
-	/* Interactive Colors - Deep heritage navy */
-	--primary: #1E3159;
-	--primary-hover: #294271;
-	--primary-active: #16243F;
-	--primary-subtle: #E9EDF4;
+	/* Interactive Colors - One blue, spent sparingly (links, focus, selection) */
+	--primary: #0A84FF;
+	--primary-hover: #3395FF;
+	--primary-active: #0060DF;
+	--primary-subtle: #EAF3FF;
 
-	/* Secondary - Claret heritage red (the signature accent) */
-	--secondary: #9A2B2E;
-	--secondary-hover: #B23639;
-	--secondary-active: #7E2225;
+	/* Secondary - Ink. Filled controls are graphite, not colour. */
+	--secondary: #17171A;
+	--secondary-hover: #2A2A2F;
+	--secondary-active: #000000;
 
-	/* Status Colors - Hunter green + goldenrod + claret */
-	--success: #2E6B43;
-	--success-subtle: #E3EDE5;
-	--warning: #B07514;
-	--warning-subtle: #F6ECD6;
-	--error: #9A2B2E;
-	--error-subtle: #F6E3E2;
-	--info: #1E4E8C;
-	--info-subtle: #E5EBF5;
+	/* Status Colors - Semantic only, and muted enough to sit on paper */
+	--success: #1A7F45;
+	--success-subtle: #E6F4EC;
+	--warning: #A56800;
+	--warning-subtle: #FBF0DC;
+	--error: #C4322B;
+	--error-subtle: #FBE9E7;
+	--info: #0A84FF;
+	--info-subtle: #EAF3FF;
 
-	/* Border Colors - Greige, and genuinely de-yellowed this time.
-	   They were ~42° hue at 19–28% saturation, which is gold, not greige — and
-	   a rule is a thin line, so saturation reads far more strongly on it than
-	   it does across a fill. Same lightness, saturation down to ~9%. */
-	--border: #E3E1DD;
-	--border-subtle: #EFEEEB;
-	--border-strong: #D4D1CC;
-	--border-focus: #1E3159;
+	/* Border Colors - Hairlines. On white these are the only structure there
+	   is, so they are neutral and thin rather than tinted: a coloured rule
+	   reads far louder than a coloured fill of the same saturation. */
+	--border: #E7E7E9;
+	--border-subtle: #F1F1F3;
+	--border-strong: #D4D4D8;
+	--border-focus: #0A84FF;
 
-	/* Selection/Highlight - Soft claret wash */
-	--highlight: rgba(154, 43, 46, 0.14);
-	--highlight-foreground: #1A2030;
+	/* Selection/Highlight - A soft wash of the one accent */
+	--highlight: rgba(10, 132, 255, 0.15);
+	--highlight-foreground: #17171A;
 
 	/* Diff Colors */
-	--diff-add: #2E6B43;
-	--diff-add-bg: #E3EDE5;
-	--diff-remove: #9A2B2E;
-	--diff-remove-bg: #F6E3E2;
+	--diff-add: #1A7F45;
+	--diff-add-bg: #E6F4EC;
+	--diff-remove: #C4322B;
+	--diff-remove-bg: #FBE9E7;
 
-	/* Background Inverse - Deep navy, never black */
-	--background-inverse: #14203A;
+	/* Background Inverse - Graphite, never pure black */
+	--background-inverse: #17171A;
 
 	/* Sidebar Component Tokens */
 	--sidebar-interactive-padding: 6px 10px;
@@ -423,67 +462,79 @@
 
 /* ===================================
    OXFORD
-   Academic, studious, paper texture
+   Heritage — ivory, navy & claret
+   (Formerly the Pemberley palette, moved here intact when Pemberley became
+   the white-on-white default. The old Oxford — neutral greys on a paper
+   texture — is gone: it was a near-duplicate of Caladan wearing a background
+   image, and the texture fought every hairline drawn over it.)
    =================================== */
 [data-theme="oxford"] {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 
-	/* Surface Colors - Warm paper sidebar, lighter content page */
-	--background: #FAF9F6;
-	--surface: #FAF9F6;
-	--surface-elevated: #F2F1EE;
+	/* Surface Colors - Warm paper, a whisper of cream (de-yellowed).
+	   --surface-elevated is what the sidebar sits on, so it is the largest
+	   field of colour in the window. At #F5F4EF it was 23% saturation on a
+	   50° (yellow) hue — fine on a card, too much across a full-height panel,
+	   where it read as a wash rather than as paper. Held at the same lightness
+	   and taken down to ~12%. */
+	--background: #FDFCF9;
+	--surface: #FFFFFF;
+	--surface-elevated: #F4F3F0;
 	--surface-overlay: #FFFFFF;
 
-	/* Background Treatment - Paper texture */
-	--background-image: url('/textures/paper.webp');
-	--surface-elevated-image: url('/textures/paper.webp');
+	/* Background Treatment - Flat warm ivory */
+	--background-image: none;
+	--surface-elevated-image: none;
 	--surface-elevated-size: auto;
 
-	/* Content Colors - Neutral grays */
-	--foreground: #171717;
-	--foreground-muted: #404040;
-	--foreground-subtle: #737373;
-	--foreground-disabled: #a3a3a3;
+	/* Content Colors - Navy-black ink on ivory */
+	--foreground: #1A2030;
+	--foreground-muted: #3E4459;
+	--foreground-subtle: #6C7185;
+	--foreground-disabled: #A8A395;
 
-	/* Interactive Colors - Blue accent */
-	--primary: #2883DE;
-	--primary-hover: #4a9ae5;
-	--primary-active: #1d6bb8;
-	--primary-subtle: #EFF6FF;
+	/* Interactive Colors - Deep heritage navy */
+	--primary: #1E3159;
+	--primary-hover: #294271;
+	--primary-active: #16243F;
+	--primary-subtle: #E9EDF4;
 
-	--secondary: #171717;
-	--secondary-hover: #262626;
-	--secondary-active: #0a0a0a;
+	/* Secondary - Claret heritage red (the signature accent) */
+	--secondary: #9A2B2E;
+	--secondary-hover: #B23639;
+	--secondary-active: #7E2225;
 
-	/* Status Colors */
-	--success: #16a34a;
-	--success-subtle: #dcfce7;
-	--warning: #ea580c;
-	--warning-subtle: #ffedd5;
-	--error: #dc2626;
-	--error-subtle: #fee2e2;
-	--info: #0284c7;
-	--info-subtle: #e0f2fe;
+	/* Status Colors - Hunter green + goldenrod + claret */
+	--success: #2E6B43;
+	--success-subtle: #E3EDE5;
+	--warning: #B07514;
+	--warning-subtle: #F6ECD6;
+	--error: #9A2B2E;
+	--error-subtle: #F6E3E2;
+	--info: #1E4E8C;
+	--info-subtle: #E5EBF5;
 
-	/* Border Colors - Neutral grays */
-	--border: #e5e5e5;
-	--border-subtle: #f5f5f5;
-	--border-strong: #d4d4d4;
-	--border-focus: #2883DE;
+	/* Border Colors - Greige, genuinely de-yellowed: they were ~42° hue at
+	   19–28% saturation, which is gold, not greige — and a rule is a thin line,
+	   so saturation reads far more strongly on it than across a fill. */
+	--border: #E3E1DD;
+	--border-subtle: #EFEEEB;
+	--border-strong: #D4D1CC;
+	--border-focus: #1E3159;
 
-	/* Selection/Highlight - Soft light yellow */
-	--highlight: rgba(253, 237, 178, 0.45);
-	--highlight-foreground: #171717;
+	/* Selection/Highlight - Soft claret wash */
+	--highlight: rgba(154, 43, 46, 0.14);
+	--highlight-foreground: #1A2030;
 
 	/* Diff Colors */
-	--diff-add: #16a34a;
-	--diff-add-bg: #dcfce7;
-	--diff-remove: #dc2626;
-	--diff-remove-bg: #fee2e2;
+	--diff-add: #2E6B43;
+	--diff-add-bg: #E3EDE5;
+	--diff-remove: #9A2B2E;
+	--diff-remove-bg: #F6E3E2;
 
-	/* Background Inverse */
-	--background-inverse: #0a0a0a;
+	/* Background Inverse - Deep navy, never black */
+	--background-inverse: #14203A;
 }
 
 /* ===================================
@@ -757,59 +808,88 @@
    Magical lamppost glow, warm enchantment
    =================================== */
 [data-theme="narnia"] {
-	/* Code Syntax Highlighting (Tokyo Night) */
+	/* Blueprint. Narnia's most-remembered image is a snowy wood at night with a
+	   single cold lamp in it — which is process blue, white, and one cyan, i.e.
+	   a drafting sheet. Slate rather than saturated navy: at text density the
+	   chroma is itself noise, so it is pulled roughly half-way to neutral and
+	   the register is carried by the ruled ground instead. */
+
+	/* Code Syntax Highlighting (Tokyo Night — already a navy-ground theme) */
 	--shiki-theme: tokyo-night;
 
 	/* Surface Colors */
-	--background: #0C0E13;
-	--surface: #161820;
-	--surface-elevated: #1e2028;
-	--surface-overlay: #262830;
+	--background: #0F1821;
+	--surface: #131E28;
+	--surface-elevated: #18242F;
+	--surface-overlay: #1D2A36;
 
-	/* Content Colors */
-	--foreground: #FAF9F5;
-	--foreground-muted: #e5e5e5;
-	--foreground-subtle: #a8a29e;
-	--foreground-disabled: #78716c;
+	/* Background Treatment — the sheet is ruled at two pitches.
+	   `repeating-linear-gradient` carries its own pitch, which it must: there is
+	   a --surface-elevated-size token but no --background-size, so anything set
+	   here has to be self-sizing.
+	   The rules are DARKER than the ground, not lighter. `.app-shell` and the
+	   pane both composite this with `background-blend-mode: multiply`, and
+	   multiply can only darken — a light grid would vanish there and show only
+	   on `.app-content`. Darker rules read identically under both.
 
-	/* Interactive Colors */
-	--primary: #FF9D52;
-	--primary-hover: #ffb070;
-	--primary-active: #e68840;
-	--primary-subtle: #2d1f15;
+	   ONE pitch, and faint. Two pitches at working strength read as a drawing
+	   when there is a drawing on them and as interference when there is prose —
+	   and the pane is nearly all prose, so the fine field is dropped and the
+	   coarse one sits barely above the ground. */
+	--background-image:
+		repeating-linear-gradient(to bottom,
+			transparent 0 127px, rgba(0, 0, 0, 0.16) 127px 128px),
+		repeating-linear-gradient(to right,
+			transparent 0 127px, rgba(0, 0, 0, 0.16) 127px 128px);
+	/* The desk stays unruled: the grid belongs to the drawing surface, and
+	   nothing on the sidebar may out-shout the page. */
+	--surface-elevated-image: none;
+	--surface-elevated-size: auto;
 
-	--secondary: #FAF9F5;
+	/* Content Colors — drawing white, cooled a trace toward the ground */
+	--foreground: #EDF1F4;
+	--foreground-muted: #C3CBD3;
+	--foreground-subtle: #9BA7B2;
+	--foreground-disabled: #7C8A97;
+
+	/* Interactive Colors — the one cold lamp */
+	--primary: #7CC3DE;
+	--primary-hover: #98D2E8;
+	--primary-active: #62B2D0;
+	--primary-subtle: #14303D;
+
+	--secondary: #EDF1F4;
 	--secondary-hover: #FFFFFF;
-	--secondary-active: #F3F2E9;
+	--secondary-active: #D6DEE5;
 
-	/* Status Colors */
-	--success: #22c55e;
-	--success-subtle: #14532d;
-	--warning: #fbbf24;
-	--warning-subtle: #422006;
-	--error: #ef4444;
-	--error-subtle: #450a0a;
-	--info: #38bdf8;
-	--info-subtle: #082f49;
+	/* Status Colors — desaturated to sit on slate without shouting */
+	--success: #5FBF8F;
+	--success-subtle: #10281F;
+	--warning: #D9A54C;
+	--warning-subtle: #2A2113;
+	--error: #E0736B;
+	--error-subtle: #2C1917;
+	--info: #7CC3DE;
+	--info-subtle: #14303D;
 
 	/* Diff Colors */
-	--diff-add: #22c55e;
-	--diff-add-bg: #14532d;
-	--diff-remove: #ef4444;
-	--diff-remove-bg: #450a0a;
+	--diff-add: #5FBF8F;
+	--diff-add-bg: #10281F;
+	--diff-remove: #E0736B;
+	--diff-remove-bg: #2C1917;
 
-	/* Border Colors */
-	--border: #2a2c34;
-	--border-subtle: #1e2028;
-	--border-strong: #3a3c44;
-	--border-focus: #FF9D52;
+	/* Border Colors — hairlines, the only structure on a drawing */
+	--border: #2A3A49;
+	--border-subtle: #1D2934;
+	--border-strong: #3A4E60;
+	--border-focus: #7CC3DE;
 
-	/* Selection/Highlight - Warm orange tint */
-	--highlight: #3d2a1a;
-	--highlight-foreground: #FAF9F5;
+	/* Selection/Highlight — a wash of the one accent */
+	--highlight: rgba(124, 195, 222, 0.18);
+	--highlight-foreground: #EDF1F4;
 
 	/* Background Inverse */
-	--background-inverse: #0C0E13;
+	--background-inverse: #0F1821;
 }
 
 /* ===================================
@@ -1002,10 +1082,10 @@
 	--shiki-theme: vitesse-dark;
 
 	/* Surface Colors */
-	--background: #141414;
-	--surface: #181818;
-	--surface-elevated: #1e1e1e;
-	--surface-overlay: #242424;
+	--background: #0f0f0f;
+	--surface: #131313;
+	--surface-elevated: #191919;
+	--surface-overlay: #1f1f1f;
 
 	/* Content Colors */
 	--foreground: #D4D4D4;
@@ -1050,7 +1130,7 @@
 	--highlight-foreground: #D4D4D4;
 
 	/* Background Inverse */
-	--background-inverse: #141414;
+	--background-inverse: #0f0f0f;
 }
 
 /* ===================================
@@ -1287,22 +1367,38 @@
  * message-roles, etc. These are NOT status colors: for success/warning/error/
  * info use the semantic --color-* tokens instead.
  * Theme-adaptive by design: the light values below are the default; the dark
- * override lightens each hue (~one Tailwind step) so categories stay legible
- * on dark surfaces. Retune these values freely — every consumer reads var().
+ * override lifts each hue so categories stay legible on dark surfaces.
+ *
+ * Both sets sit at a UNIFORM lightness in OKLab — 0.58 light, 0.78 dark — with
+ * hue preserved and chroma held near 0.13. They were raw Tailwind 500s, whose
+ * lightness ranged 0.59 to 0.80: yellow was the palest thing in the set and
+ * washed out on paper while indigo sat heavy, so a row of them read as
+ * unevenly weighted rather than as one family. Equal lightness is what makes
+ * nine hues look like a palette instead of nine separate decisions.
+ *
+ * `--cat-indigo` is a true BLUE (hue 258°), not the blue-violet it used to be.
+ * The set had three neighbouring purples — indigo 277°, violet 293°, purple
+ * 304° — and a 57° hole where blue belongs, so the one hue people reach for
+ * first was the one hue missing. The token KEY stays `indigo` because it is
+ * the stored value in app_pins.color and friends; only the hue and the
+ * picker's label moved.
+ *
+ * Retune freely — every consumer reads var() — but keep the set at one
+ * lightness, or the unevenness comes straight back.
  * ────────────────────────────────────────────────────────────────────────── */
 :root {
-	--cat-purple: #a855f7;
-	--cat-purple-light: #c084fc;
-	--cat-indigo: #6366f1;
-	--cat-violet: #8b5cf6;
-	--cat-pink: #ec4899;
-	--cat-rose: #f43f5e;
-	--cat-orange: #f97316;
-	--cat-yellow: #eab308;
-	--cat-cyan: #06b6d4;
-	--cat-cyan-light: #22d3ee;
-	--cat-emerald: #10b981;
-	--cat-emerald-light: #34d399;
+	--cat-purple: #8b64b9;
+	--cat-purple-light: #a97fd6;
+	--cat-indigo: #457ac7;
+	--cat-violet: #7e69c1;
+	--cat-pink: #b4557f;
+	--cat-rose: #bb555f;
+	--cat-orange: #b75e2b;
+	--cat-yellow: #9d7300;
+	--cat-cyan: #008cab;
+	--cat-cyan-light: #22a6c6;
+	--cat-emerald: #009262;
+	--cat-emerald-light: #1cad7c;
 }
 
 [data-theme="lothlorien"],
@@ -1314,18 +1410,24 @@
 [data-theme="asgard"],
 [data-theme="agora"],
 [data-theme="shire"] {
-	--cat-purple: #c084fc;
-	--cat-purple-light: #d8b4fe;
-	--cat-indigo: #818cf8;
-	--cat-violet: #a78bfa;
-	--cat-pink: #f472b6;
-	--cat-rose: #fb7185;
-	--cat-orange: #fb923c;
-	--cat-yellow: #facc15;
-	--cat-cyan: #22d3ee;
-	--cat-cyan-light: #67e8f9;
-	--cat-emerald: #34d399;
-	--cat-emerald-light: #6ee7b7;
+	--cat-purple: #c9a3f9;
+	--cat-purple-light: #dbbdff;
+	--cat-indigo: #84b9ff;
+	--cat-violet: #baa8ff;
+	--cat-pink: #f694bc;
+	--cat-rose: #fd959b;
+	--cat-orange: #f99d6e;
+	--cat-yellow: #dbb14e;
+	--cat-cyan: #37cbea;
+	--cat-cyan-light: #6fe0fb;
+	--cat-emerald: #60d09f;
+	--cat-emerald-light: #8ae5bb;
+
+	/* Dark-mode flag for the JS that adapts a user's CUSTOM hex (pin-colors.ts).
+	   Set here, beside the palette it belongs to, so adding a theme stays one
+	   block in this file rather than a list of theme names in TypeScript that
+	   someone will forget to update. */
+	--identity-dark: 1;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

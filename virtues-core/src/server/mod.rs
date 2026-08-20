@@ -16,7 +16,10 @@ use axum::{
 use std::env;
 use std::sync::Arc;
 
-use self::webhook::AppState;
+// Re-exported: `AppState` is the handler state for the whole crate, and
+// modules outside `server` (api::display, …) legitimately name it. Importing it
+// privately here made `crate::server::AppState` fail to resolve for them.
+pub use self::webhook::AppState;
 use self::yjs::yjs_websocket_handler;
 use crate::error::Result;
 use crate::mcp::{http::add_mcp_routes, VirtuesMcpServer};
@@ -36,7 +39,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Reap runs left in `running` by a crash/restart mid-execution, so a stale
     // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
     // runs at request time; this just keeps the runs table honest on boot.)
-    match crate::scheduler::actions::cleanup_stale_runs(client.database.pool()).await {
+    match crate::scheduler::applets::cleanup_stale_runs(client.database.pool()).await {
         Ok(n) if n > 0 => tracing::info!("Reaped {} stale 'running' action run(s) on startup", n),
         Ok(_) => {}
         Err(e) => tracing::warn!("Failed to reap stale action runs: {}", e),
@@ -96,7 +99,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Reconcile action templates from per-folder manifests — creates/updates
     // system action rows. Safe to call on every startup (user-managed runtime
     // state preserved).
-    if let Err(e) = crate::action_templates::reconcile_templates(client.database.pool()).await {
+    if let Err(e) = crate::applet_templates::reconcile_templates(client.database.pool()).await {
         tracing::warn!("Failed to reconcile action templates: {}", e);
     }
 
@@ -139,10 +142,36 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // ends. See `crate::maintenance::sweeper`.
     crate::maintenance::sweeper::spawn(client.database.pool().clone());
 
+    // Release preparation: on the stable channel, fetch + preflight the next
+    // release ahead of time so installing it is a restart rather than a
+    // download. Never activates anything — see `api::updates`.
+    crate::api::updates::spawn();
+
     // Pair-code rotator: keeps a fresh universal standing pair code alive at all
     // times (with an overlap window) so the panel and `virtues pair` always have
     // a valid code to display. See `crate::maintenance::pair_rotator`.
     crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
+
+    // Setup access point. An appliance arrives with no network and a display
+    // its owner cannot type on, so the box raises its own wifi and the phone
+    // does the typing. Up while unclaimed, down once a device pairs — NOT down
+    // when the box gets wifi, which would drop the network the phone is still
+    // sitting on mid-provision. No-op on a DIY box. See maintenance::setup_ap.
+    crate::maintenance::setup_ap::spawn(client.database.pool().clone());
+
+    // BLE wifi provisioning — the Improv service, and the PRIMARY setup path
+    // (the AP above is the frozen fallback). Advertised while unclaimed, gone
+    // once a device pairs. No-op on a DIY box and on non-Linux dev hosts. See
+    // maintenance::ble_provision for the week of hardware findings that led
+    // here.
+    crate::maintenance::ble_provision::spawn(client.database.pool().clone());
+
+    // The button behind the case. Held for three seconds, it forgets every
+    // paired device — and nothing else: not the network, not the account, not
+    // the data, and not the phrase. Anyone who can open the case can make that
+    // nuisance; only someone holding the four words can then claim the box.
+    // No-op off an appliance. See maintenance::reset_button.
+    crate::maintenance::reset_button::spawn(client.database.pool().clone());
 
     // Persistent review pair code, for App Store review boxes only. No-op
     // unless VIRTUES_REVIEW_PAIR_CODE is set, so customer boxes are untouched.
@@ -215,10 +244,102 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Setup/onboarding state machine (docs/onboarding.md) — public-on-LAN
         // for the same reason as /api/box/health: the wizard + panel render it
         // pre-auth, and it carries only booleans + step copy.
+        // Who is this box — name + claimed, for discovery chips. Public like
+        // its neighbours; the name is already broadcast over the air (AP SSID,
+        // BLE advertisement), so the LAN learns nothing new. See api/identity.
+        .route(
+            "/api/box/identity",
+            get(crate::api::identity::identity_handler),
+        )
         .route(
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),
         )
+        // What the box actually holds, counted — the reveal's first movement.
+        // Read-only and derived entirely from tables the caller could already
+        // read, so it adds no reach, only arithmetic.
+        .route("/api/census", get(crate::api::census::census_handler))
+        // Draft the document from the answers. POST because it spends money and
+        // rewrites the document — not something a refresh should trigger.
+        .route(
+            "/api/narrative/draft",
+            post(crate::api::narrative_draft::draft_handler),
+        )
+        // The rules the assistant must obey. Read to review them, POST to
+        // replace the set with what was confirmed.
+        .route(
+            "/api/narrative/rules",
+            get(crate::api::narrative_draft::rules_handler)
+                .post(crate::api::narrative_draft::save_rules_handler),
+        )
+        .route(
+            "/api/narrative/interview",
+            get(crate::api::narrative_interview::list_handler)
+                .post(crate::api::narrative_interview::save_handler),
+        )
+        .route(
+            "/api/setup/skip-onboarding",
+            post(crate::api::box_status::skip_onboarding_handler),
+        )
+        // What the attached 7" display renders. Registered here because the
+        // kiosk draws before any device is paired, but UNLIKE its neighbours
+        // above it carries the live pair code — so the handler itself refuses
+        // anything that isn't loopback. Proximity is the authority: a stranger
+        // on the wifi who cannot see the screen must not be able to claim the
+        // box. See api/display.rs.
+        .route(
+            "/api/display/state",
+            get(crate::api::display::display_state_handler),
+        )
+        // Lets the panel latch "an upgrade is running" while this server is
+        // still up to say so — after it stops, the kiosk's page is gone with
+        // it. See api/display.rs.
+        .route(
+            "/api/display/updating",
+            get(crate::api::display::display_updating_handler),
+        )
+        // `/api/display/qr` and `/api/display/link-qr` are gone — the panel is
+        // one screen now and renders no QR at all. See api/display.rs.
+        //
+        // Wifi provisioning over the setup AP. The one unauthenticated WRITE
+        // surface on the box, and unauthenticated by necessity: the phone that
+        // just joined the AP has no credential yet, because obtaining one is
+        // what the rest of onboarding is for. Each handler re-checks both gates
+        // itself — caller is on the AP subnet (or loopback), and the box is
+        // still unclaimed — rather than trusting placement in this router.
+        // See api/provision.rs.
+        .route(
+            "/api/provision/networks",
+            get(crate::api::provision::networks_handler),
+        )
+        .route(
+            "/api/provision/join",
+            post(crate::api::provision::join_handler),
+        )
+        .route(
+            "/api/provision/status",
+            get(crate::api::provision::status_handler),
+        )
+        // `/portal` and `/provision` are GONE (2026-08-17), and the deletion is
+        // the point rather than a cleanup.
+        //
+        // They were the browser half of onboarding: a phone joins the setup AP,
+        // a captive sheet opens, the owner hands over their home wifi. Every
+        // part of that is now impossible or unwanted. Pairing needs a held iroh
+        // key, so the browser could provision wifi and then strand the owner one
+        // step from the end — it served a user who cannot exist. The captive
+        // sheet itself was suppressed rather than exploited (iOS renders it in a
+        // stripped WebKit, force-reopens it, and caches it per-SSID across
+        // upgrades). And BLE carries the whole conversation now, on a radio that
+        // survives the switchover the AP path died on.
+        //
+        // What replaced them: `maintenance::ble_provision` (Improv), and
+        // `/api/network/*` for a claimed box that needs to move networks.
+        //
+        // The `/provision` → `/portal` redirect is gone with them. It existed to
+        // un-teach phones that had cached the old SPA URL, and every such phone
+        // met a box during the two weeks that flow was live — none of which are
+        // customer boxes.
         // Auth — pair-only model. Public consume + session probe (returns the
         // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
@@ -244,8 +365,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/face/query",
             post(faces::face_query_handler).options(faces::face_query_preflight),
         )
-        .route("/face/:action_id/", get(faces::face_index_handler))
-        .route("/face/:action_id/*path", get(faces::face_file_handler))
+        .route("/face/:applet_id/", get(faces::face_index_handler))
+        .route("/face/:applet_id/*path", get(faces::face_file_handler))
         // Public page sharing (token-based access, no session needed)
         .route("/api/s/:token", get(api::get_shared_page_handler))
         .route(
@@ -263,24 +384,24 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // handler runs, which historically surfaced as a bogus "no stream
         // selector" action error. See webhook.rs for the rejection handling.
         .route(
-            "/webhook/:action_id",
+            "/webhook/:applet_id",
             post(webhook::webhook).layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
-        // Device re-fetch for stream → action_id map. Used by paired devices
+        // Device re-fetch for stream → applet_id map. Used by paired devices
         // whose Keychain entry predates the webhook unification, or after
         // templates.toml adds a new stream. Same device-token bearer auth as
         // the webhook endpoint.
         .route(
-            "/api/devices/action-ids",
-            get(api::device_action_ids_handler),
+            "/api/devices/applet-ids",
+            get(api::device_applet_ids_handler),
         )
-        // Device-scoped run history for one of the caller's own actions, so the
+        // Device-scoped run history for one of the caller's own applets, so the
         // app can show real server-side outcome per stream. Device-token bearer
         // auth + credential-ownership check (see handler). Distinct from the
-        // session-authed /api/actions/:id/runs.
+        // session-authed /api/applets/:id/runs.
         .route(
-            "/api/devices/actions/:id/runs",
-            get(api::device_action_runs_handler),
+            "/api/devices/applets/:id/runs",
+            get(api::device_applet_runs_handler),
         );
 
     // ============================================================
@@ -324,6 +445,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/settings/byo-key",   get(crate::api::settings_byo::status_handler)
                                           .post(crate::api::settings_byo::save_handler)
                                           .delete(crate::api::settings_byo::delete_handler))
+        // ─── Web bundle (the box IS the update server) ────────────────
+        // What UI build this box serves, and the build itself. A client that
+        // can only run a bundle the box handed it cannot get ahead of the box,
+        // which is the point — see api/web_bundle.rs.
+        .route("/api/web-bundle/version", get(crate::api::web_bundle::version_handler))
+        .route("/api/web-bundle/tarball", get(crate::api::web_bundle::tarball_handler))
         // ─── Billing-state aggregator (local view) ────────────────────
         .route("/api/billing/state",           get(crate::api::billing_state::state_handler))
         .route("/api/billing/auto-topup",      post(crate::api::billing_state::set_auto_topup_handler))
@@ -360,16 +487,32 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Actions API
         .route(
             "/api/applets",
-            get(api::list_actions_handler).post(api::create_action_handler),
+            get(api::list_applets_handler).post(api::create_applet_handler),
         )
         .route(
             "/api/applets/:id",
-            get(api::get_action_handler)
-                .patch(api::patch_action_handler)
-                .delete(api::delete_action_handler),
+            get(api::get_applet_handler)
+                .patch(api::patch_applet_handler)
+                .delete(api::delete_applet_handler),
         )
-        .route("/api/applets/:id/run", post(api::trigger_action_handler))
-        .route("/api/applets/:id/data", get(api::get_action_data_handler))
+        .route("/api/applets/:id/run", post(api::trigger_applet_handler))
+        .route("/api/applets/:id/message", post(api::message_applet_handler))
+        .route("/api/applets/:id/data", get(api::get_applet_data_handler))
+        // Read the applet's own code. Read-only, owner-authed like everything
+        // in this group; see api/applet_source.rs for why it guards harder than
+        // the face server does.
+        .route(
+            "/api/applets/:id/source",
+            get(crate::api::applet_source::list_handler),
+        )
+        .route(
+            "/api/applets/:id/source/*path",
+            get(crate::api::applet_source::file_handler),
+        )
+        .route(
+            "/api/applets/:id/fork",
+            post(crate::api::applet_source::fork_handler),
+        )
         // Chat-export upload (Tier 3 one-time import). Per-route body limit
         // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
         .route(
@@ -377,8 +520,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::chat_import_upload_handler)
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
-        .route("/api/applets/:id/runs", get(api::list_action_runs_handler))
-        .route("/api/applets/runs/:id", get(api::get_action_run_handler))
+        .route("/api/applets/:id/runs", get(api::list_applet_runs_handler))
+        .route("/api/applets/:id/log", get(api::applet_log_handler))
+        .route("/api/applets/runs/:id", get(api::get_applet_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
         // Credentials API
         .route("/api/credentials", get(api::list_credentials_handler))
@@ -401,6 +545,78 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_place_handler)
                 .put(api::update_place_handler)
                 .delete(api::delete_place_handler),
+        )
+        .route(
+            "/api/wiki/notes/:subject_type/:subject_id",
+            axum::routing::get(api::list_notes_handler).post(api::create_note_handler),
+        )
+        .route(
+            "/api/wiki/notes/:id/resolve",
+            axum::routing::put(api::resolve_note_handler),
+        )
+        .route(
+            "/api/wiki/notes-open-count",
+            axum::routing::get(api::open_notes_count_handler),
+        )
+        .route(
+            "/api/wiki/lifeline",
+            axum::routing::get(api::lifeline_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/ground",
+            axum::routing::get(api::lifeline_ground_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/clock",
+            axum::routing::get(api::lifeline_clock_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/feed",
+            axum::routing::get(api::lifeline_feed_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/processed",
+            axum::routing::get(api::lifeline_processed_handler),
+        )
+        .route(
+            "/api/wiki/history",
+            axum::routing::get(api::history_feed_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/history",
+            axum::routing::get(api::article_history_handler),
+        )
+        .route(
+            "/api/wiki/subjects/:subject_type/:subject_id/backlinks",
+            axum::routing::get(api::subject_backlinks_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id",
+            get(api::get_article_handler).post(api::write_article_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/auto-update",
+            axum::routing::put(api::set_article_auto_update_handler),
+        )
+        .route(
+            "/api/entities/people",
+            axum::routing::post(api::create_person_handler),
+        )
+        .route(
+            "/api/entities/people/:id",
+            axum::routing::delete(api::delete_person_handler),
+        )
+        .route(
+            "/api/entities/orgs",
+            axum::routing::post(api::create_org_handler),
+        )
+        .route(
+            "/api/entities/orgs/:id",
+            axum::routing::delete(api::delete_org_handler),
+        )
+        .route(
+            "/api/entities/people/:id/reclassify-as-org",
+            axum::routing::post(api::reclassify_person_handler),
         )
         .route(
             "/api/entities/places/:id/set-home",
@@ -447,6 +663,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Per-stream ingest freshness — surfaces a stalled source instead of
         // letting it rot silently.
         .route("/api/streams/health", get(api::stream_health_handler))
+        .route("/api/streams/days", get(api::stream_days_handler))
         // Subscription & Billing API
         .route("/api/subscription", get(api::get_subscription_handler))
         .route(
@@ -458,7 +675,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/billing/usage", get(api::billing_usage_handler))
         // Box-local AI spend breakdown (app_ai_calls) for the Usage tab.
         .route("/api/usage/summary", get(api::usage_summary_handler))
-        // Recent individual AI calls (app_ai_calls) for the Telemetry tab log.
+        // Paged individual AI calls (app_ai_calls) for the Usage page's log.
         .route("/api/telemetry/ai-calls", get(api::ai_calls_handler))
         // Device-authorization link flow (web "Connect subscription").
         .route(
@@ -470,7 +687,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::billing_link_status_handler),
         )
         // Search API (Exa) — reaches outside the box
-        .route("/api/search/web", post(api::exa_search_handler))
+        .route("/api/search/web", post(api::web_search_handler))
         // Local content search — the ⌘K palette. Never leaves the box.
         .route("/api/search/local", post(api::search_local_handler))
         // Unsplash API (cover image search)
@@ -586,22 +803,22 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .put(api::wiki_update_narrative_identity_handler),
         )
         // Wiki - Telos
-        .route(
-            "/api/wiki/telos/active",
-            get(api::wiki_get_active_telos_handler),
-        )
-        .route("/api/wiki/telos/:id", get(api::wiki_get_telos_handler))
         // Wiki - Act
-        .route("/api/wiki/acts", get(api::wiki_list_acts_handler))
-        .route("/api/wiki/act/:id", get(api::wiki_get_act_handler))
+        .route("/api/wiki/stories", get(api::wiki_list_stories_handler))
+        .route("/api/wiki/story/:id", get(api::wiki_get_story_handler))
         // Wiki - Chapter
-        .route("/api/wiki/chapter/:id", get(api::wiki_get_chapter_handler))
-        .route(
-            "/api/wiki/act/:act_id/chapters",
-            get(api::wiki_list_chapters_handler),
-        )
         // Wiki - Day
         .route("/api/wiki/days", get(api::wiki_list_days_handler))
+        .route("/api/wiki/activity", get(api::wiki_day_activity_handler))
+        .route("/api/wiki/on-this-day", get(api::wiki_on_this_day_handler))
+        .route(
+            "/api/wiki/entity/:id/records",
+            get(api::wiki_entity_records_handler),
+        )
+        .route(
+            "/api/wiki/entity/:id/records/facets",
+            get(api::wiki_entity_record_facets_handler),
+        )
         .route(
             "/api/wiki/day/:date",
             get(api::wiki_get_day_handler).put(api::wiki_update_day_handler),
@@ -635,11 +852,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/day/:date/streams",
             get(api::wiki_get_day_streams_handler),
         )
+        // Wiki - Day heart rate (the Autonomic chart)
+        .route(
+            "/api/wiki/day/:date/heart-rate",
+            get(api::day_heart_rate_handler),
+        )
         // Admin API — LLM-authoring on-ramp for new actions
         .route("/api/admin/reconcile", post(api::admin_reconcile_handler))
         .route(
             "/api/admin/applets/import-git",
-            post(api::import_git_actions_handler),
+            post(api::import_git_applets_handler),
         )
         // System (operator surface — apps + logs)
         // Live host snapshot + persisted history for the System/Telemetry views.
@@ -668,7 +890,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         .route(
             "/api/pages/reflections/:date",
-            get(api::get_reflections_handler).post(api::create_reflection_handler),
+            get(api::get_reflections_handler),
         )
         .route(
             "/api/pages/:id",
@@ -705,6 +927,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pages/versions/:version_id",
             get(api::get_page_version_handler),
         )
+        // Box network management (Settings → Box → Network) — the authed
+        // successors to the setup-phase /api/provision/* surface, which
+        // correctly evaporates at claim time. Born of a box marooned on a
+        // captive guest network with no way to leave (2026-08-11). See
+        // api/network.rs.
+        .route("/api/network/status", get(crate::api::network::status_handler))
+        .route("/api/network/scan",   get(crate::api::network::scan_handler))
+        .route("/api/network/join",   post(crate::api::network::join_handler))
         // Box updates (Settings → Box)
         .route("/api/system/update", get(api::update_status_handler))
         .route(
@@ -714,6 +944,26 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/system/update/apply",
             post(api::apply_update_handler),
+        )
+        // Re-open onboarding: revoke every device, keep the data. Sits beside
+        // the update routes because it is the same kind of thing — a box-wide
+        // action a paired device may take, guarded by being paired.
+        .route(
+            "/api/pair/reopen-onboarding",
+            post(crate::api::pair::reopen_onboarding_handler),
+        )
+        // Bookmarks API (saved web content — the manual capture door)
+        .route(
+            "/api/bookmarks",
+            get(api::list_bookmarks_handler).post(api::save_bookmark_handler),
+        )
+        .route("/api/bookmarks/{id}", get(api::get_bookmark_handler))
+        // The note has its own route rather than a general PATCH: every other
+        // column here belongs to a source or to the enrichment pass, and an
+        // endpoint that could write them would eventually be used to.
+        .route(
+            "/api/bookmarks/{id}/note",
+            axum::routing::patch(api::update_bookmark_note_handler),
         )
         // Sidebar pins API
         .route(
@@ -798,11 +1048,28 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     // Merge public + protected, apply shared state and body limits, then
     // wrap in the security layers (response headers).
+    //
+    // The connectivity-probe interceptor that used to sit outermost here is
+    // gone with `/portal`. It answered iOS/Android/Windows probes with their
+    // vendor's success token so the captive sheet would never open — a real
+    // fix, but for a condition that only arises on the setup AP's own subnet,
+    // and its other half redirected `10.42.0.1/` to a portal that no longer
+    // exists. It also ran a Host-header comparison on every request to every
+    // box forever, to serve a network that a customer box never raises.
     let app = public_routes
         .merge(protected_routes)
         .with_state(state.clone())
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
         .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
+
+    // API namespaces must NEVER fall through to the SPA fallback below: an
+    // unknown /api path answered with a cacheable 200 index.html poisons
+    // clients — the browser caches HTML against the API URL and keeps serving
+    // it after the route ships (same failure class as the /health story in
+    // apps/web/vite.config.ts). Unknown API routes are an honest JSON 404.
+    let app = app
+        .route("/api/*__unmatched", axum::routing::any(api_not_found_handler))
+        .route("/auth/*__unmatched", axum::routing::any(api_not_found_handler));
 
     // Add MCP routes to the same server
     let mcp_server = VirtuesMcpServer::new(client.database.pool().clone());
@@ -829,7 +1096,21 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         };
 
         tracing::info!("Static file serving enabled from: {}", static_dir);
-        app.fallback_service(serve_dir)
+        // HTML DOCUMENTS ARE NEVER CACHED. `ServeDir` sends `last-modified` and
+        // no `cache-control`, which licenses a browser to cache heuristically —
+        // and on 2026-08-10 that made the appliance's panel keep rendering a
+        // three-day-old UI after an upgrade, through a service restart and a
+        // power cycle. The shell names content-hashed JS chunks, so a stale
+        // shell resurrects the entire stale page while the box serves the new
+        // one, and the only symptom is a screen that quietly lies about its own
+        // version.
+        //
+        // Scoped to documents on purpose: `/_app/immutable/*` is content-hashed
+        // and *should* be cached hard. It is the shell that must always be
+        // re-fetched, because it is the thing that names the rest.
+        app.fallback_service(tower::ServiceBuilder::new()
+            .layer(axum::middleware::from_fn(no_store_for_documents))
+            .service(serve_dir))
     } else {
         tracing::info!(
             "No static directory found at: {} - static serving disabled",
@@ -838,14 +1119,43 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         app
     };
 
-    // CORS: the mobile app is a bundled SPA at its own `tauri://` origin that
-    // calls this API cross-origin over the iroh loopback. Auth is the proven
-    // iroh key (not Origin/cookies), so a permissive CORS is safe — it only
-    // relaxes the browser's same-origin policy, never the transport allowlist.
-    // Same-origin (desktop/browser served by the box) is unaffected.
+    // CORS: the app is a bundled SPA at its own `tauri://` origin that calls
+    // this API cross-origin over the iroh loopback, so some cross-origin access
+    // must be allowed. It is an ALLOWLIST, not `Any`.
+    //
+    // `Any` was wrong here, and the reasoning that justified it — "auth is the
+    // proven iroh key, not Origin/cookies, so relaxing same-origin never
+    // relaxes the transport allowlist" — was true of the iroh credential and
+    // missed the second one. There are two ways to be the owner:
+    //
+    //   1. a paired iroh key (what that comment was about), and
+    //   2. being on loopback (`middleware/auth.rs` — a request from 127.0.0.1
+    //      with no forwarding header IS the owner).
+    //
+    // And the desktop app binds `127.0.0.1:7117` and splices whatever connects
+    // to it over its own paired identity. So: the owner runs the app, then
+    // visits any web page — an ad, a forum, a compromised site. That page runs
+    // `fetch('http://127.0.0.1:7117/api/drive/files')`. The box authenticates it
+    // as the owner, and `Access-Control-Allow-Origin: *` let the attacker's page
+    // READ the reply. `allow_methods(Any)` + `allow_headers(Any)` meant
+    // preflighted POSTs succeeded too — including `/api/developer/sql`.
+    //
+    // A remote page's origin is `https://whatever.example`, which matches none
+    // of the arms below, so the browser refuses to hand it the response. The
+    // app, the box's own web UI, and local development all still match.
+    //
+    // `server/faces.rs` keeps its own `*` header deliberately: faces are served
+    // into an opaque-origin iframe under a strict CSP and carry no ambient
+    // authority. `api/terminal.rs` already does an explicit same-origin check
+    // for the same reason this layer now exists.
     let app = app.layer(
         tower_http::cors::CorsLayer::new()
-            .allow_origin(tower_http::cors::Any)
+            .allow_origin(tower_http::cors::AllowOrigin::predicate(
+                |origin: &axum::http::HeaderValue, _req| {
+                    origin.to_str().is_ok_and(origin_is_ours)
+                },
+            ))
+            .allow_credentials(false)
             .allow_methods(tower_http::cors::Any)
             .allow_headers(tower_http::cors::Any),
     );
@@ -891,8 +1201,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     .with_graceful_shutdown(shutdown_signal)
     .await?;
 
-    // Note: No flush needed on shutdown - StreamWriter is in-memory only now.
-    // Records are written directly to filesystem during sync/ingest.
+    // Flush queued page edits before the process goes away.
+    //
+    // The note that used to sit here said no flush was needed — true of the old
+    // StreamWriter, never true of the Yjs save queue, which holds the owner's
+    // most recent typing for up to ~2.5s. Without this, every `systemctl
+    // restart virtues` and every self-update dropped it.
+    yjs_state.flush_pending_saves().await;
     tracing::info!("Server shutting down gracefully");
 
     // Note: scheduler runs in background and will stop when the process exits
@@ -933,6 +1248,53 @@ fn validate_environment() -> Result<()> {
 
     tracing::debug!("Environment validation passed");
     Ok(())
+}
+
+/// Honest 404 for unknown /api and /auth paths — see the comment where this
+/// is routed. `no-store` so a transient miss can never poison an HTTP cache.
+/// Stamp `Cache-Control: no-store` on every HTML document the static server
+/// hands out, leaving hashed assets alone.
+///
+/// See the call site for the incident. Short version: `ServeDir` sends
+/// `last-modified` and no `cache-control`, a browser may then cache
+/// heuristically, and the appliance's kiosk did — pinning the panel to a
+/// three-day-old UI across an upgrade, a service restart, and a power cycle.
+///
+/// Keyed on the response's own content type rather than the request path, so it
+/// covers the SPA fallback (`200.html`, served for arbitrary routes) without
+/// having to enumerate which paths are documents.
+async fn no_store_for_documents(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut res = next.run(req).await;
+    let is_document = res
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("text/html"));
+    if is_document {
+        res.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        );
+        // A validator left beside `no-store` is a mixed message, and some
+        // caches honour the weaker half.
+        res.headers_mut().remove(axum::http::header::LAST_MODIFIED);
+        res.headers_mut().remove(axum::http::header::ETAG);
+    }
+    res
+}
+
+async fn api_not_found_handler(uri: axum::http::Uri) -> impl IntoResponse {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        axum::Json(serde_json::json!({
+            "error": "not_found",
+            "path": uri.path(),
+        })),
+    )
 }
 
 async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> impl IntoResponse {
@@ -983,3 +1345,91 @@ async fn server_info() -> impl IntoResponse {
     }))
 }
 
+/// Is this `Origin` one of ours?
+///
+/// The allowlist behind the CORS layer. Kept as a named function with tests
+/// because it is the thing standing between a random web page and the owner's
+/// record, and a subtle parsing slip here is invisible in review.
+///
+/// Allowed: the app's `tauri://` origin, loopback on any port (the desktop
+/// proxy on 7117, the box's own UI, `pnpm dev` on 5173), and the box's `.virtues`
+/// name. A page served from a remote host has none of these origins.
+fn origin_is_ours(origin: &str) -> bool {
+    // The app's own origin: `tauri://localhost` on macOS/iOS,
+    // `https://tauri.localhost` on Windows.
+    if origin.starts_with("tauri://") || origin == "https://tauri.localhost" {
+        return true;
+    }
+
+    // Everything else must be an http(s) origin; anything else (file://, data:,
+    // a bare "null") is not ours.
+    let rest = match origin.split_once("://") {
+        Some(("http", r)) | Some(("https", r)) => r,
+        _ => return false,
+    };
+
+    // Strip the port. An IPv6 literal is bracketed (`[::1]:8000`), so splitting
+    // on the LAST colon leaves the brackets intact and does not cut inside the
+    // address.
+    let host = match rest.rsplit_once(':') {
+        // Only treat the tail as a port if it looks like one; otherwise the
+        // colon belonged to the host (an unbracketed IPv6, which is invalid in
+        // an origin anyway).
+        Some((h, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => rest,
+    };
+
+    // Exact matches only. `localhost.evil.example` must NOT pass, which is why
+    // this is not a `contains` or a suffix test.
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+        || host == "virtues"
+        || host.ends_with(".virtues")
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use super::origin_is_ours;
+
+    /// A remote page must not be allowed to read the box's responses.
+    ///
+    /// This is the CRITICAL case. The desktop app binds 127.0.0.1:7117 and
+    /// splices to the box over its paired identity, and loopback counts as the
+    /// owner — so with `allow_origin(Any)` any site the owner visited could
+    /// `fetch()` the box and READ the reply.
+    #[test]
+    fn a_remote_page_is_refused() {
+        for o in [
+            "https://evil.example",
+            "http://evil.example:7117",
+            // Near-misses that a substring or suffix test would wave through.
+            "http://localhost.evil.example",
+            "https://tauri.localhost.evil.example",
+            "http://notvirtues",
+            "http://evil.example/localhost",
+            // Non-http schemes and the opaque origin.
+            "null",
+            "file://",
+            "data:text/html,x",
+        ] {
+            assert!(!origin_is_ours(o), "must refuse {o}");
+        }
+    }
+
+    /// ...while everything that is genuinely ours still works, or the app
+    /// breaks and someone reverts the whole fix.
+    #[test]
+    fn our_own_origins_are_allowed() {
+        for o in [
+            "tauri://localhost",
+            "https://tauri.localhost",
+            "http://localhost:5173",
+            "http://127.0.0.1:7117",
+            "http://[::1]:8000",
+            "http://localhost",
+            "http://box.virtues:8000",
+            "http://virtues:8000",
+        ] {
+            assert!(origin_is_ours(o), "must allow {o}");
+        }
+    }
+}

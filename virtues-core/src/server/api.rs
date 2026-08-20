@@ -62,11 +62,11 @@ fn success_message(message: &str) -> Response {
 // ============================================================================
 
 /// Get a single action run by ID (used for polling status)
-pub async fn get_action_run_handler(
+pub async fn get_applet_run_handler(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
 ) -> Response {
-    match crate::scheduler::actions::get_run(state.db.pool(), &run_id).await {
+    match crate::scheduler::applets::get_run(state.db.pool(), &run_id).await {
         Ok(run) => (StatusCode::OK, Json(run)).into_response(),
         Err(e) => (
             StatusCode::NOT_FOUND,
@@ -78,20 +78,20 @@ pub async fn get_action_run_handler(
 
 /// Optional body for manual trigger — forwarded as the action payload.
 #[derive(Debug, Deserialize, Default)]
-pub struct TriggerActionBody {
+pub struct TriggerAppletBody {
     #[serde(default)]
     pub payload: Option<serde_json::Value>,
 }
 
 /// Manually trigger an action run.
-pub async fn trigger_action_handler(
+pub async fn trigger_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
-    body: Option<Json<TriggerActionBody>>,
+    Path(applet_id): Path<String>,
+    body: Option<Json<TriggerAppletBody>>,
 ) -> Response {
     let payload = body.and_then(|Json(b)| b.payload);
 
-    let deps = crate::action_runner::RunnerDeps {
+    let deps = crate::applet_runner::RunnerDeps {
         db: state.db.pool().clone(),
         yjs: state.yjs_state.clone(),
     };
@@ -101,9 +101,9 @@ pub async fn trigger_action_handler(
     // stuck in `running`. The handler returns 202 with the run_id as soon
     // as the row is created; the UI polls `app_applet_runs` for the final
     // status.
-    let result = match crate::action_runner::run_action_detached(
+    let result = match crate::applet_runner::run_applet_detached(
         &deps,
-        &action_id,
+        &applet_id,
         "manual",
         payload.as_ref(),
     )
@@ -119,27 +119,7 @@ pub async fn trigger_action_handler(
         }
     };
 
-    use crate::action_runner::ActionRunStatus;
-    let (status_code, status_label) = match result.status {
-        ActionRunStatus::Running => (StatusCode::ACCEPTED, "running"),
-        ActionRunStatus::Success => (StatusCode::OK, "success"),
-        ActionRunStatus::Skipped => (StatusCode::OK, "skipped"),
-        ActionRunStatus::Failed => (StatusCode::INTERNAL_SERVER_ERROR, "error"),
-        ActionRunStatus::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-        ActionRunStatus::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
-    };
-
-    (
-        status_code,
-        Json(serde_json::json!({
-            "run_id": result.run_id,
-            "action_id": action_id,
-            "status": status_label,
-            "summary": result.summary,
-            "error": result.error,
-        })),
-    )
-        .into_response()
+    run_status_response(result, &applet_id)
 }
 
 /// POST /api/chat-import/upload — multipart upload of a Claude / ChatGPT /
@@ -190,7 +170,7 @@ pub async fn chat_import_upload_handler(
         )));
     }
 
-    let deps = crate::action_runner::RunnerDeps {
+    let deps = crate::applet_runner::RunnerDeps {
         db: state.db.pool().clone(),
         yjs: state.yjs_state.clone(),
     };
@@ -199,7 +179,7 @@ pub async fn chat_import_upload_handler(
         "provider": provider,
     });
 
-    match crate::action_runner::run_action(&deps, "action_chat_import", "manual", Some(&payload))
+    match crate::applet_runner::run_applet(&deps, "applet_chat_import", "manual", Some(&payload))
         .await
     {
         Ok(r) => (
@@ -216,26 +196,45 @@ pub async fn chat_import_upload_handler(
 }
 
 /// List all actions with their latest run status.
-pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
+pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
     let pool = state.db.pool();
 
     let rows = sqlx::query(
         r#"SELECT
-            t.id, t.owner, t.name, t.agent, t.cron_schedule,
+            t.id, t.owner, t.name, t.description, t.agent, t.schedule,
             t.enabled, t.config, t.condition, t.triggers,
-            t.memory, t.credential_id,
+            t.memory, t.credential_id, t.device_id,
             t.command,
             t.until, t.archived_at,
+            t.next_due_at, t.last_slot_at,
             t.created_at, t.updated_at,
             r.status AS last_run_status,
             r.started_at AS last_run_at,
             r.records_processed AS last_run_records,
             r.error AS last_run_error,
-            r.result_summary AS last_run_summary
+            r.result_summary AS last_run_summary,
+            -- The card's pulse and its excerpt, fetched with the row instead
+            -- of by the client afterwards. The list was firing two extra
+            -- requests PER APPLET — around fifty on a page — for two small
+            -- facts that the database can hand over in the same pass.
+            p.pulse,
+            s.summary AS last_success_summary
            FROM app_applets t
+           LEFT JOIN LATERAL (
+               SELECT array_agg(status ORDER BY started_at DESC) AS pulse
+                 FROM (SELECT status, started_at FROM app_applet_runs
+                        WHERE applet_id = t.id
+                        ORDER BY started_at DESC LIMIT 10) recent
+           ) p ON TRUE
+           LEFT JOIN LATERAL (
+               SELECT result_summary AS summary FROM app_applet_runs
+                WHERE applet_id = t.id AND status = 'success'
+                  AND result_summary IS NOT NULL AND btrim(result_summary) <> ''
+                ORDER BY started_at DESC LIMIT 1
+           ) s ON TRUE
            LEFT JOIN app_applet_runs r ON r.id = (
                SELECT id FROM app_applet_runs
-               WHERE action_id = t.id
+               WHERE applet_id = t.id
                ORDER BY created_at DESC LIMIT 1
            )
            ORDER BY t.name"#,
@@ -252,8 +251,9 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let id: String = r.try_get("id").unwrap_or_default();
                     let owner: String = r.try_get("owner").unwrap_or_else(|_| "user".to_string());
                     let name: String = r.try_get("name").unwrap_or_default();
+                    let description: Option<String> = r.try_get("description").unwrap_or(None);
                     let agent: Option<String> = r.try_get("agent").unwrap_or(None);
-                    let cron: Option<String> = r.try_get("cron_schedule").unwrap_or(None);
+                    let cron: Option<String> = r.try_get("schedule").unwrap_or(None);
                     let enabled: bool = r.try_get("enabled").unwrap_or(false);
                     // `config`/`triggers` are JSONB — decode straight to a Value
                     // (decoding to String fails and the `unwrap_or` swallowed it,
@@ -267,6 +267,7 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                         serde_json::from_value(triggers_val).unwrap_or_default();
                     let memory: Option<String> = r.try_get("memory").unwrap_or(None);
                     let credential_id: Option<String> = r.try_get("credential_id").unwrap_or(None);
+                    let device_id: Option<String> = r.try_get("device_id").unwrap_or(None);
                     let command_raw: Option<String> = r.try_get("command").unwrap_or(None);
                     let command: Option<Vec<String>> = command_raw
                         .as_deref()
@@ -274,15 +275,15 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let until: Option<String> = r.try_get("until").unwrap_or(None);
                     let archived_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("archived_at").unwrap_or(None);
+                    let next_due_at: Option<chrono::DateTime<chrono::Utc>> =
+                        r.try_get("next_due_at").unwrap_or(None);
+                    let last_slot_at: Option<chrono::DateTime<chrono::Utc>> =
+                        r.try_get("last_slot_at").unwrap_or(None);
                     let has_face = crate::server::faces::face_dir_for(&id).is_some();
-                    // Derived display shape (the old runtime taxonomy).
-                    let runtime = if command.as_ref().is_none_or(|c| c.is_empty())
-                        && agent.as_deref().is_none_or(|s| s.trim().is_empty())
-                    {
-                        "view"
-                    } else {
-                        "function"
-                    };
+                    let origin = crate::scheduler::applets::origin_of(
+                        &owner,
+                        credential_id.is_some() || device_id.is_some(),
+                    );
                     // TIMESTAMPTZ columns decode to DateTime<Utc>; serde emits
                     // RFC3339 in the JSON. Reading them as String failed (empty).
                     let created: chrono::DateTime<chrono::Utc> =
@@ -290,6 +291,12 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let updated: chrono::DateTime<chrono::Utc> =
                         r.try_get("updated_at").unwrap_or_else(|_| chrono::Utc::now());
 
+                    let pulse: Vec<String> = r
+                        .try_get::<Option<Vec<String>>, _>("pulse")
+                        .unwrap_or(None)
+                        .unwrap_or_default();
+                    let last_success_summary: Option<String> =
+                        r.try_get("last_success_summary").unwrap_or(None);
                     let last_run_status: Option<String> =
                         r.try_get("last_run_status").unwrap_or(None);
                     let last_run = last_run_status.map(|s| {
@@ -311,22 +318,27 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                         "id": id,
                         "owner": owner,
                         "name": name,
+                        "description": description,
                         "agent": agent,
-                        "cron_schedule": cron,
+                        "schedule": cron,
                         "enabled": enabled,
                         "config": config,
                         "condition": condition,
                         "triggers": triggers,
                         "memory": memory,
                         "credential_id": credential_id,
-                        "runtime": runtime,
+                        "device_id": device_id,
+                        "origin": origin,
                         "command": command,
                         "until": until,
                         "archived_at": archived_at,
+                        "next_due_at": next_due_at,
+                        "last_slot_at": last_slot_at,
                         "has_face": has_face,
+                        "pulse": pulse,
+                        "last_success_summary": last_success_summary,
                         "created_at": created,
                         "updated_at": updated,
-                        "is_system": owner == "system",
                         "last_run": last_run,
                     })
                 })
@@ -342,15 +354,118 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
     }
 }
 
-/// GET /api/actions/:id — single action with its last run inlined.
-pub async fn get_action_handler(
+/// One shape for "a run was requested" — shared by the manual-run and the
+/// message handlers so the two can never disagree about what a status means.
+fn run_status_response(
+    result: crate::applet_runner::AppletRunResult,
+    applet_id: &str,
+) -> Response {
+    use crate::applet_runner::AppletRunStatus;
+    let (status_code, status_label) = match result.status {
+        AppletRunStatus::Running => (StatusCode::ACCEPTED, "running"),
+        AppletRunStatus::Success => (StatusCode::OK, "success"),
+        AppletRunStatus::Skipped => (StatusCode::OK, "skipped"),
+        AppletRunStatus::Failed => (StatusCode::INTERNAL_SERVER_ERROR, "error"),
+        // Not an error: a ceiling the owner set was reached. 200 so the UI
+        // renders the run and its explanation rather than a failure toast.
+        AppletRunStatus::BudgetExceeded => (StatusCode::OK, "budget_exceeded"),
+        AppletRunStatus::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        AppletRunStatus::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+    };
+    (
+        status_code,
+        Json(serde_json::json!({
+            "run_id": result.run_id,
+            "applet_id": applet_id,
+            "status": status_label,
+            "summary": result.summary,
+            "error": result.error,
+        })),
+    )
+        .into_response()
+}
+
+/// GET /api/applets/:id/log — the run log with identical outcomes collapsed.
+///
+/// 99% of run history on a real box is "the machine ticked and there was
+/// nothing to do": transcription_resolution alone wrote 1,294 runs in a week,
+/// every one of them a successful no-op. A raw list is unreadable, and worse,
+/// it hides things — 3,449 consecutive errors sat in this box's history behind
+/// a window of recent successes.
+///
+/// So consecutive runs sharing an outcome become one row with a count. The
+/// grouping is mechanical, not semantic: same status, same summary, same
+/// message. Nothing here decides what "did nothing" means, which is good,
+/// because `records_processed = 0` does not reliably mean it. An applet whose
+/// output varies — any agent, every message exchange — never collapses at all.
+pub async fn applet_log_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<RunsQuery>,
+) -> Response {
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    match crate::scheduler::applets::collapsed_log(state.db.pool(), &applet_id, limit).await {
+        Ok(entries) => (StatusCode::OK, Json(entries)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/applets/:id/message — say something to an applet.
+///
+/// The sixth wake. Until this existed every trigger was the box acting on
+/// itself — a clock, a poll, a device, a tool call — and a person could turn an
+/// applet on, off, or run it, but could not tell it anything.
+pub async fn message_applet_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let text = body
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let Some(text) = text else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "message is required" })),
+        )
+            .into_response();
+    };
+
+    let deps = crate::applet_runner::RunnerDeps {
+        db: state.db.pool().clone(),
+        yjs: state.yjs_state.clone(),
+    };
+    // Detached, like the manual-run handler: a long agent turn must not hang on
+    // the client staying connected. The run row exists before this returns, so
+    // the UI can show the exchange immediately.
+    let payload = serde_json::json!({ "message": text });
+    match crate::applet_runner::run_applet_detached(&deps, &applet_id, "message", Some(&payload))
+        .await
+    {
+        Ok(result) => run_status_response(result, &applet_id),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/actions/:id — single action with its last run inlined.
+pub async fn get_applet_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
 ) -> Response {
     let pool = state.db.pool();
-    match crate::scheduler::actions::get_action(pool, &action_id).await {
+    match crate::scheduler::applets::get_applet(pool, &applet_id).await {
         Ok(action) => {
-            let last_run = crate::scheduler::actions::last_run(pool, &action_id)
+            let last_run = crate::scheduler::applets::last_run(pool, &applet_id)
                 .await
                 .ok()
                 .flatten();
@@ -360,8 +475,9 @@ pub async fn get_action_handler(
                     "id": action.id,
                     "owner": action.owner,
                     "name": action.name,
+                    "description": action.description,
                     "agent": action.agent,
-                    "cron_schedule": action.cron_schedule,
+                    "schedule": action.schedule,
                     "enabled": action.enabled,
                     "config": action.config,
                     "condition": action.condition,
@@ -369,13 +485,15 @@ pub async fn get_action_handler(
                     "memory": action.memory,
                     "command": action.command,
                     "credential_id": action.credential_id,
-                    "runtime": crate::scheduler::actions::derived_runtime(&action),
+                    "device_id": action.device_id,
+                    "origin": crate::scheduler::applets::derived_origin(&action),
                     "until": action.until,
                     "archived_at": action.archived_at,
+                    "next_due_at": action.next_due_at,
+                    "last_slot_at": action.last_slot_at,
                     "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
-                    "is_system": action.owner == "system",
                     "last_run": last_run,
                 })),
             )
@@ -391,33 +509,33 @@ pub async fn get_action_handler(
 
 /// POST /api/actions — create a user-owned action.
 #[derive(Debug, Deserialize)]
-pub struct CreateActionBody {
+pub struct CreateAppletBody {
     pub name: String,
     pub agent: Option<String>,
-    pub cron_schedule: Option<String>,
+    pub schedule: Option<String>,
     #[serde(default)]
     pub triggers: Option<Vec<String>>,
     pub config: Option<serde_json::Value>,
 }
 
-pub async fn create_action_handler(
+pub async fn create_applet_handler(
     State(state): State<AppState>,
-    Json(body): Json<CreateActionBody>,
+    Json(body): Json<CreateAppletBody>,
 ) -> Response {
     let triggers = body.triggers.unwrap_or_else(|| {
-        if body.cron_schedule.is_some() {
+        if body.schedule.is_some() {
             vec!["cron".into(), "manual".into(), "tool".into()]
         } else {
             vec!["manual".into(), "tool".into()]
         }
     });
 
-    match crate::scheduler::actions::create_user_action(
+    match crate::scheduler::applets::create_user_applet(
         state.db.pool(),
         None,
         &body.name,
         body.agent.as_deref(),
-        body.cron_schedule.as_deref(),
+        body.schedule.as_deref(),
         &triggers,
         body.config.as_ref(),
     )
@@ -436,12 +554,12 @@ pub async fn create_action_handler(
 }
 
 /// PATCH /api/actions/:id — partial update. Enforces system-owner guard.
-pub async fn patch_action_handler(
+pub async fn patch_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     Json(patch): Json<serde_json::Value>,
 ) -> Response {
-    match crate::scheduler::actions::update_action(state.db.pool(), &action_id, &patch).await {
+    match crate::scheduler::applets::update_applet(state.db.pool(), &applet_id, &patch).await {
         Ok(action) => (StatusCode::OK, Json(action)).into_response(),
         Err(e) => {
             let status = match e.http_status() {
@@ -458,17 +576,17 @@ pub async fn patch_action_handler(
 /// refused. `drop_data=true` also drops the applet's private `applet_<slug>`
 /// schema; the default keeps its data.
 #[derive(Debug, Deserialize)]
-pub struct DeleteActionQuery {
+pub struct DeleteAppletQuery {
     #[serde(default)]
     pub drop_data: bool,
 }
 
-pub async fn delete_action_handler(
+pub async fn delete_applet_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
-    axum::extract::Query(q): axum::extract::Query<DeleteActionQuery>,
+    Path(applet_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<DeleteAppletQuery>,
 ) -> Response {
-    match crate::scheduler::actions::delete_action(state.db.pool(), &action_id, q.drop_data).await {
+    match crate::scheduler::applets::delete_applet(state.db.pool(), &applet_id, q.drop_data).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             let status = match e.http_status() {
@@ -484,13 +602,13 @@ pub async fn delete_action_handler(
 /// GET /api/applets/:id/data — the tables an applet owns in its private
 /// `applet_<slug>` schema, so the delete confirm can show what `drop_data`
 /// would remove. Empty `tables` (and null `schema`) when it owns none.
-pub async fn get_action_data_handler(
+pub async fn get_applet_data_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
 ) -> Response {
-    match crate::scheduler::actions::applet_data_tables(state.db.pool(), &action_id).await {
+    match crate::scheduler::applets::applet_data_tables(state.db.pool(), &applet_id).await {
         Ok(tables) => {
-            let schema = crate::scheduler::actions::applet_schema_name(&action_id);
+            let schema = crate::scheduler::applets::applet_schema_name(&applet_id);
             (
                 StatusCode::OK,
                 Json(serde_json::json!({ "schema": schema, "tables": tables })),
@@ -511,18 +629,18 @@ pub struct RunsQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub status: Option<String>,
-    pub action_id: Option<String>,
+    pub applet_id: Option<String>,
 }
 
-pub async fn list_action_runs_handler(
+pub async fn list_applet_runs_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
 ) -> Response {
     let limit = q.limit.unwrap_or(20).clamp(1, 200);
-    match crate::scheduler::actions::query_runs(
+    match crate::scheduler::applets::query_runs(
         state.db.pool(),
-        Some(&action_id),
+        Some(&applet_id),
         q.status.as_deref(),
         limit,
     )
@@ -537,15 +655,15 @@ pub async fn list_action_runs_handler(
     }
 }
 
-/// GET /api/runs?status=&action_id=&limit=&offset= — global run history.
+/// GET /api/runs?status=&applet_id=&limit=&offset= — global run history.
 pub async fn list_runs_handler(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
 ) -> Response {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    match crate::scheduler::actions::query_runs(
+    match crate::scheduler::applets::query_runs(
         state.db.pool(),
-        q.action_id.as_deref(),
+        q.applet_id.as_deref(),
         q.status.as_deref(),
         limit,
     )
@@ -592,6 +710,22 @@ pub struct SourceCatalogItem {
     pub auth_kind: &'static str,
     /// Number of `active` credentials (passwords) for this source.
     pub credential_count: i64,
+    /// Secret names an `api_key` source expects, in manifest order. Empty for
+    /// every other auth kind. Without it the connect form had to guess, and it
+    /// guessed `["token"]` — so a source declaring two fields could not be
+    /// connected from the UI at all.
+    pub fields: Vec<String>,
+    /// Where this source's code can be read. Provenance only; never an install
+    /// or update path. Null for sources whose code is entirely the box's.
+    pub repo: Option<String>,
+    pub repo_ref: Option<String>,
+    /// Ontologies this source can produce, by display name — "what would
+    /// connecting this give me". The catalog could previously only say what a
+    /// source *is*, never what it would deliver.
+    pub provides: Vec<String>,
+    /// The life-domains those ontologies fall in (`health`, `financial`, …),
+    /// which is the coarser grain worth showing in a table cell.
+    pub domains: Vec<String>,
 }
 
 /// GET /api/sources — catalog tiles for the Sources UI.
@@ -606,7 +740,7 @@ pub struct SourceCatalogItem {
 pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
     let pool = state.db.pool();
 
-    let sources = crate::action_templates::list_sources_sorted();
+    let sources = crate::applet_templates::list_sources_sorted();
     let mut items = Vec::with_capacity(sources.len());
 
     // One COUNT query per source — cheap; the catalog has at most a handful
@@ -620,6 +754,7 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
         .await
         .unwrap_or(0);
 
+        let written = crate::applet_templates::ontologies_written_by(&s.id);
         items.push(SourceCatalogItem {
             id: s.id.clone(),
             name: s.display_name.clone(),
@@ -627,6 +762,31 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
             description: s.description.clone(),
             auth_kind: s.auth.kind_str(),
             credential_count,
+            fields: match &s.auth {
+                crate::applet_templates::SourceAuth::ApiKey { fields } => fields.clone(),
+                _ => Vec::new(),
+            },
+            repo: s.repo.clone(),
+            repo_ref: s.repo_ref.clone(),
+            provides: written
+                .iter()
+                .map(|n| {
+                    virtues_registry::ontologies::registered_ontologies()
+                        .into_iter()
+                        .find(|o| o.name == n)
+                        .map(|o| o.display_name.to_string())
+                        .unwrap_or_else(|| n.clone())
+                })
+                .collect(),
+            domains: {
+                let mut d: Vec<String> = written
+                    .iter()
+                    .filter_map(|n| n.split('_').next().map(str::to_string))
+                    .collect();
+                d.sort();
+                d.dedup();
+                d
+            },
         });
     }
 
@@ -670,7 +830,7 @@ pub async fn patch_credential_handler(
         } else {
             // Re-activating is not supported via PATCH. A revoked device must
             // be re-paired via the QR / manual-link flow so a fresh
-            // device_token and action_ids fan-out are generated.
+            // device_token and applet_ids fan-out are generated.
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -690,7 +850,7 @@ pub async fn patch_credential_handler(
 ///   modal; the row never had a token or fan-out actions, so nothing to
 ///   preserve).
 /// - `active`   → revoke (clear `secret_lookup_hash`, drop fan-out actions,
-///   keep history with `action_id = NULL`).
+///   keep history with `applet_id = NULL`).
 /// - `revoked`  → already revoked, idempotent 204.
 pub async fn delete_credential_handler(
     State(state): State<AppState>,
@@ -757,13 +917,13 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
     // 1. Force a re-read of the on-disk catalog (sources.toml + per-action
     //    manifests). Subsequent lookup_source / list_sources_sorted /
     //    reconcile calls see the new data.
-    crate::action_templates::reload_catalog();
+    crate::applet_templates::reload_catalog();
 
     // 2. Reconcile `app_applets` SQL rows against the fresh catalog. Manifest
     //    fields overwrite for system actions; user-managed runtime state
-    //    (enabled, cron_schedule, config) is preserved per the field-ownership
-    //    rule documented in action_templates/mod.rs.
-    let upserted = match crate::action_templates::reconcile_templates(state.db.pool()).await {
+    //    (enabled, schedule, config) is preserved per the field-ownership
+    //    rule documented in applet_templates/mod.rs.
+    let upserted = match crate::applet_templates::reconcile_templates(state.db.pool()).await {
         Ok(n) => n,
         Err(e) => {
             return (
@@ -788,11 +948,36 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
 /// Clone (or update) a Git repo into `actions/<slug>/` and reconcile so the
 /// new manifests show up as `app_applets` rows. We scope the per-row diff to
 /// the slug prefix and clean up rows for manifests that disappeared upstream.
-pub async fn import_git_actions_handler(
+pub async fn import_git_applets_handler(
     State(state): State<AppState>,
-    Json(body): Json<crate::action_git_import::ImportRequest>,
+    user: crate::middleware::auth::AuthUser,
+    Json(body): Json<crate::applet_git_import::ImportRequest>,
 ) -> Response {
-    let outcome = match crate::action_git_import::import(state.db.pool(), body).await {
+    // Sudo-gated: this fetches and runs somebody else's code.
+    let Some(sudo_id) = body.sudo_request_id.as_deref().filter(|s| !s.is_empty()) else {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "sudo_required" })),
+        )
+            .into_response();
+    };
+    if let Err(resp) = crate::api::sudo::verify_and_consume(
+        state.db.pool(),
+        sudo_id,
+        "import_applet_package",
+        &user.device_id,
+    )
+    .await
+    {
+        tracing::warn!("applet import: sudo verify failed: {resp}");
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "sudo_not_approved" })),
+        )
+            .into_response();
+    }
+
+    let outcome = match crate::applet_git_import::import(state.db.pool(), body).await {
         Ok(o) => o,
         Err(e) => {
             return (
@@ -842,22 +1027,22 @@ pub async fn list_tables_handler(State(state): State<AppState>) -> Response {
 }
 
 
-/// GET /api/devices/action-ids — devices refresh their action_id routing map.
+/// GET /api/devices/applet-ids — devices refresh their applet_id routing map.
 ///
 /// Used by paired devices when their local routing table goes stale (e.g. after
 /// templates.toml adds a new stream, or the device reinstalls). Authenticated by
 /// the proven iroh key (`AuthUser`, a hard extractor) — the map is the device's
 /// own ingest actions, keyed on its `device_id`.
-pub async fn device_action_ids_handler(
+pub async fn device_applet_ids_handler(
     State(state): State<AppState>,
     user: crate::middleware::auth::AuthUser,
 ) -> Response {
-    match virtues_helpers::auth::fanout_action_ids(state.db.pool(), &user.device_id).await {
-        Ok(action_ids) => (
+    match virtues_helpers::auth::fanout_applet_ids(state.db.pool(), &user.device_id).await {
+        Ok(applet_ids) => (
             StatusCode::OK,
             Json(serde_json::json!({
                 "device_id": user.device_id,
-                "action_ids": action_ids,
+                "applet_ids": applet_ids,
             })),
         )
             .into_response(),
@@ -876,10 +1061,10 @@ pub async fn device_action_ids_handler(
 ///
 /// Authenticated by the proven iroh key. The action's `device_id` must match the
 /// caller's device or it's 403 — one device can't read another's run history.
-/// Device-scoped sibling of the session-authed `list_action_runs_handler`.
-pub async fn device_action_runs_handler(
+/// Device-scoped sibling of the session-authed `list_applet_runs_handler`.
+pub async fn device_applet_runs_handler(
     State(state): State<AppState>,
-    Path(action_id): Path<String>,
+    Path(applet_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
     user: crate::middleware::auth::AuthUser,
 ) -> Response {
@@ -888,7 +1073,7 @@ pub async fn device_action_runs_handler(
     let owned: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_applets WHERE id = $1 AND device_id = $2)",
     )
-    .bind(&action_id)
+    .bind(&applet_id)
     .bind(&user.device_id)
     .fetch_one(state.db.pool())
     .await
@@ -897,15 +1082,15 @@ pub async fn device_action_runs_handler(
     if !owned {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "Action not found for this device" })),
+            Json(serde_json::json!({ "error": "Applet not found for this device" })),
         )
             .into_response();
     }
 
     let limit = q.limit.unwrap_or(10).clamp(1, 50);
-    match crate::scheduler::actions::query_runs(
+    match crate::scheduler::applets::query_runs(
         state.db.pool(),
-        Some(&action_id),
+        Some(&applet_id),
         q.status.as_deref(),
         limit,
     )
@@ -1062,6 +1247,21 @@ pub async fn get_activity_metrics_handler(State(state): State<AppState>) -> Resp
 /// messages, the calendar sync, and finance each went dark unnoticed.
 pub async fn stream_health_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::stream_health(&state.db).await)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StreamDaysQuery {
+    /// Window length. Twelve weeks by default — long enough to show a rhythm
+    /// and a stoppage without the cells becoming unreadably thin.
+    #[serde(default)]
+    pub days: Option<i64>,
+}
+
+pub async fn stream_days_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<StreamDaysQuery>,
+) -> Response {
+    api_response(crate::api::stream_health::stream_days(&state.db, q.days.unwrap_or(84)).await)
 }
 
 // Plaid Link handlers were removed in the actions cutover.
@@ -1366,15 +1566,25 @@ pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
         .into_response()
 }
 
-/// GET /api/telemetry/ai-calls — recent individual AI calls for the Telemetry
-/// tab's AI-call log (the window that was missing when the transcription runaway
-/// burned the wallet invisibly). Box-local `app_ai_calls`, newest first.
-pub async fn ai_calls_handler(State(state): State<AppState>) -> Response {
-    match crate::api::ai_calls::recent_calls(state.db.pool(), 100).await {
-        Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
+/// GET /api/telemetry/ai-calls — one page of the AI-call log for the Usage page
+/// (the window that was missing when the transcription runaway burned the
+/// wallet invisibly). Box-local `app_ai_calls`, newest first.
+pub async fn ai_calls_handler(
+    State(state): State<AppState>,
+    Query(query): Query<crate::api::ai_calls::AiCallsQuery>,
+) -> Response {
+    match crate::api::ai_calls::list_calls(state.db.pool(), query).await {
+        Ok(page) => (StatusCode::OK, Json(page)).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "ai_calls query failed");
-            (StatusCode::OK, Json(Vec::<crate::api::ai_calls::AiCallRow>::new())).into_response()
+            (
+                StatusCode::OK,
+                Json(crate::api::ai_calls::AiCallPage {
+                    items: Vec::new(),
+                    total: 0,
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -1425,16 +1635,15 @@ pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Re
 // =============================================================================
 
 // =============================================================================
-// Exa Search API Handlers
+// Web Search API Handler
 // =============================================================================
 
-/// Perform a web search using Exa AI
-pub async fn exa_search_handler(
+/// Perform a web search.
+pub async fn web_search_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::ExaSearchRequest>,
+    Json(request): Json<WebSearchRequest>,
 ) -> Response {
-    // Check usage limit first
-    if let Err(e) = crate::api::check_limit(state.db.pool(), crate::api::Service::Exa).await {
+    if let Err(e) = crate::api::check_limit(state.db.pool(), crate::api::Service::Parallel).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(serde_json::json!({
@@ -1444,21 +1653,27 @@ pub async fn exa_search_handler(
                 "limit": e.limit,
                 "unit": e.unit,
                 "resets_at": e.resets_at,
-                "message": format!("Monthly Exa search limit reached. Resets at {}", e.resets_at)
+                "message": format!("Monthly web search limit reached. Resets at {}", e.resets_at)
             })),
         )
             .into_response();
     }
 
-    // Perform the search
-    match crate::api::exa_search(state.db.pool(), request).await {
+    let search = crate::api::web_search::SearchRequest {
+        objective: request.objective,
+        query: request.query,
+        max_results: request.num_results,
+        max_age_seconds: request.max_age_hours.map(|h: u32| h.saturating_mul(3600)),
+    };
+
+    match crate::api::web_search::search(state.db.pool(), search).await {
         Ok(response) => {
-            // Record usage on success - warn but don't fail if recording fails
             if let Err(e) =
-                crate::api::record_service_usage(state.db.pool(), crate::api::Service::Exa, 1).await
+                crate::api::record_service_usage(state.db.pool(), crate::api::Service::Parallel, 1)
+                    .await
             {
                 tracing::warn!(
-                    service = "exa",
+                    service = "parallel",
                     error = %e,
                     "Usage recording failed - request succeeded but usage may be undercounted"
                 );
@@ -1467,6 +1682,18 @@ pub async fn exa_search_handler(
         }
         Err(e) => error_response(e),
     }
+}
+
+/// Body for `POST /api/search/web`.
+#[derive(Debug, serde::Deserialize)]
+pub struct WebSearchRequest {
+    pub query: String,
+    #[serde(default)]
+    pub objective: Option<String>,
+    #[serde(default)]
+    pub num_results: Option<u8>,
+    #[serde(default)]
+    pub max_age_hours: Option<u32>,
 }
 
 // =============================================================================
@@ -1529,6 +1756,428 @@ pub async fn delete_place_handler(
 ) -> Response {
     match crate::api::delete_place(state.db.pool(), place_id).await {
         Ok(_) => success_message("Place deleted successfully"),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateEntityBody {
+    pub name: String,
+}
+
+/// Create a person by hand.
+pub async fn create_person_handler(
+    State(state): State<AppState>,
+    Json(b): Json<CreateEntityBody>,
+) -> Response {
+    match crate::api::entities::create_person(state.db.pool(), &b.name).await {
+        Ok(id) => api_response(Ok::<_, crate::error::Error>(
+            serde_json::json!({ "id": id, "route": format!("/person/{id}") }),
+        )),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Create an organization by hand.
+pub async fn create_org_handler(
+    State(state): State<AppState>,
+    Json(b): Json<CreateEntityBody>,
+) -> Response {
+    match crate::api::entities::create_organization(state.db.pool(), &b.name).await {
+        Ok(id) => api_response(Ok::<_, crate::error::Error>(
+            serde_json::json!({ "id": id, "route": format!("/org/{id}") }),
+        )),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Delete a person, and everything that pointed at them.
+pub async fn delete_person_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::entities::delete_person(state.db.pool(), id).await {
+        Ok(()) => success_message("Person deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Delete an organization, and everything that pointed at it.
+pub async fn delete_org_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::entities::delete_organization(state.db.pool(), id).await {
+        Ok(()) => success_message("Organization deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct LifelineQuery {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub buckets: Option<i32>,
+    /// Comma-separated lane ids; absent = every lane.
+    pub lanes: Option<String>,
+    /// Comma-separated lane ids to split into their member tables.
+    pub expand: Option<String>,
+    /// Comma-separated `lane:measure_id` pairs — what each lane should plot
+    /// instead of a row count. Unknown pairs fall back to the default.
+    pub measures: Option<String>,
+    /// Feed paging.
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    /// IANA zone the day-clock's hours are read in. One zone for the whole
+    /// raster, so travel shows as a dislocation rather than being normalised
+    /// away. Unknown names fall back to UTC.
+    pub tz: Option<String>,
+}
+
+/// Per-lane density over a window — the lifeline's only data source.
+pub async fn lifeline_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    // No window given = the whole life. Computed from the data, because a
+    // lifeline that defaults to the last 365 days is not a lifeline.
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let to = q
+        .to
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or(span_to);
+    let from = q
+        .from
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or(span_from);
+    let csv = |v: Option<String>| {
+        v.map(|s| {
+            s.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect::<Vec<_>>()
+        })
+    };
+    let lanes = csv(q.lanes);
+    let expand = csv(q.expand);
+    let measures = csv(q.measures);
+
+    api_response(
+        crate::api::lifeline::get_lifeline(
+            state.db.pool(),
+            from,
+            to,
+            q.buckets.unwrap_or(365),
+            lanes,
+            expand,
+            measures,
+        )
+        .await,
+    )
+}
+
+/// Where a window was spent — the location lane's second view.
+pub async fn lifeline_ground_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
+        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(fallback)
+    };
+    api_response(
+        crate::api::lifeline::get_ground(
+            state.db.pool(),
+            parse(q.from, span_from),
+            parse(q.to, span_to),
+        )
+        .await,
+    )
+}
+
+/// Time-of-day against date — the lifeline's primary band.
+pub async fn lifeline_clock_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
+        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(fallback)
+    };
+    api_response(
+        crate::api::lifeline::get_clock(
+            state.db.pool(),
+            parse(q.from, span_from),
+            parse(q.to, span_to),
+            q.buckets.unwrap_or(720),
+            q.tz.as_deref().unwrap_or("UTC"),
+        )
+        .await,
+    )
+}
+
+/// The records inside a window — what a selection actually contains.
+pub async fn lifeline_feed_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
+        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(fallback)
+    };
+    let lanes = q.lanes.map(|s| {
+        s.split(',')
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+            .collect::<Vec<_>>()
+    });
+    api_response(
+        crate::api::lifeline::get_feed(
+            state.db.pool(),
+            parse(q.from, span_from),
+            parse(q.to, span_to),
+            lanes,
+            q.limit.unwrap_or(50),
+            q.offset.unwrap_or(0),
+        )
+        .await,
+    )
+}
+
+/// What Virtues has interpreted inside a window — days and events.
+pub async fn lifeline_processed_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
+        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(fallback)
+    };
+    api_response(
+        crate::api::lifeline::get_processed(
+            state.db.pool(),
+            parse(q.from, span_from),
+            parse(q.to, span_to),
+            q.limit.unwrap_or(80),
+        )
+        .await,
+    )
+}
+
+/// Notes on a subject.
+pub async fn list_notes_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Query(q): Query<NotesQuery>,
+) -> Response {
+    api_response(
+        crate::api::wiki_notes::list_notes(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+            q.include_resolved.unwrap_or(false),
+        )
+        .await,
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct NotesQuery {
+    pub include_resolved: Option<bool>,
+}
+
+/// Open notes across the whole record — the Overview's what-changed count.
+pub async fn open_notes_count_handler(State(state): State<AppState>) -> Response {
+    api_response(
+        crate::api::wiki_notes::count_open_total(state.db.pool())
+            .await
+            .map(|n| serde_json::json!({ "open": n })),
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateNoteBody {
+    pub body: String,
+    pub kind: Option<String>,
+}
+
+/// Leave a note on a subject.
+pub async fn create_note_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(b): Json<CreateNoteBody>,
+) -> Response {
+    api_response(
+        crate::api::wiki_notes::create_note(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+            b.kind.as_deref().unwrap_or("memo"),
+            &b.body,
+        )
+        .await,
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct ResolveNoteBody {
+    pub resolution: String,
+}
+
+/// Accept or dismiss a note.
+pub async fn resolve_note_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(b): Json<ResolveNoteBody>,
+) -> Response {
+    match crate::api::wiki_notes::resolve_note(state.db.pool(), id, &b.resolution).await {
+        Ok(()) => success_message("Note closed"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// One article's edit history, with diffs.
+pub async fn article_history_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    api_response(
+        crate::api::wiki_articles::get_article_history(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+        )
+        .await,
+    )
+}
+
+/// The wiki's History room: every recent edit to any article.
+pub async fn history_feed_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Response {
+    api_response(
+        crate::api::wiki_articles::get_history_feed(state.db.pool(), q.limit.unwrap_or(50)).await,
+    )
+}
+
+/// Everything that mentions this subject.
+pub async fn subject_backlinks_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    api_response(
+        crate::api::wiki_articles::get_subject_backlinks(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+        )
+        .await,
+    )
+}
+
+/// Write a subject's article, now, because someone asked for it.
+///
+/// A plain handler rather than a trip through the applet runner. The applet
+/// path looked available — `entity_article` declares a `manual` trigger — but
+/// it ships `default_enabled = false` and `prepare_run` refuses disabled
+/// applets, so the button would 404 on a fresh box; its singleton concurrency
+/// gate turns a second click into a `skipped` run, which is wrong for
+/// per-subject work; and its entry point takes no target, so there is no way to
+/// say *this one*. The applet stays the cron host; this is the door.
+///
+/// Synchronous on purpose: it is one model call the user is waiting for, and
+/// returning 202 would mean polling `app_applet_runs` to find out whether your
+/// own click worked.
+/// GET one subject's article row — the join, not the prose. The frontend
+/// uses `page_id` to open the article in the page editor.
+pub async fn get_article_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    match crate::api::wiki_articles::get_article(state.db.pool(), &subject_type, &subject_id).await
+    {
+        Ok(Some(a)) => Json(a).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+pub async fn write_article_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    api_response(
+        crate::api::entity_article_gen::write_entity_article_now(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+        )
+        .await,
+    )
+}
+
+/// Turn maintenance on or off for one article.
+pub async fn set_article_auto_update_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let on = body.get("auto_update").and_then(|v| v.as_bool()).unwrap_or(false);
+    match crate::api::wiki_articles::set_auto_update(
+        state.db.pool(),
+        &subject_type,
+        &subject_id,
+        on,
+    )
+    .await
+    {
+        Ok(()) => success_message(if on {
+            "This article will be kept up to date"
+        } else {
+            "This article will no longer be updated automatically"
+        }),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Reclassify a person as an organization.
+///
+/// Returns the new org id so the caller can navigate to it — the person route
+/// it came from stops resolving the moment this succeeds.
+pub async fn reclassify_person_handler(
+    State(state): State<AppState>,
+    Path(person_id): Path<String>,
+) -> Response {
+    match crate::api::entities::reclassify_person_as_organization(state.db.pool(), person_id).await {
+        Ok(org_id) => api_response(Ok::<_, crate::error::Error>(
+            serde_json::json!({ "id": org_id, "route": format!("/org/{org_id}") }),
+        )),
         Err(e) => error_response(e),
     }
 }
@@ -1650,51 +2299,30 @@ pub async fn wiki_update_narrative_identity_handler(
 
 // --- Telos ---
 
-/// Get active telos
-pub async fn wiki_get_active_telos_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_active_telos(state.db.pool()).await)
-}
 
-/// Get a telos by ID
-pub async fn wiki_get_telos_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_telos(state.db.pool(), &id).await)
-}
 
 // --- Act ---
 
-/// Get an act by ID
-pub async fn wiki_get_act_handler(
+
+
+// --- Story ---
+
+/// Get a story by ID
+pub async fn wiki_get_story_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_act(state.db.pool(), id).await)
+    api_response(crate::api::get_story(state.db.pool(), id).await)
 }
 
-/// List all acts
-pub async fn wiki_list_acts_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_acts(state.db.pool()).await)
+/// List all stories
+pub async fn wiki_list_stories_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_stories(state.db.pool()).await)
 }
 
 // --- Chapter ---
 
-/// Get a chapter by ID
-pub async fn wiki_get_chapter_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_chapter(state.db.pool(), id).await)
-}
 
-/// List chapters for an act
-pub async fn wiki_list_chapters_handler(
-    State(state): State<AppState>,
-    Path(act_id): Path<String>,
-) -> Response {
-    api_response(crate::api::list_chapters_for_act(state.db.pool(), act_id).await)
-}
 
 // --- Day ---
 
@@ -1749,6 +2377,81 @@ pub async fn wiki_list_days_handler(
         .unwrap_or(today - chrono::Duration::days(30));
     let end_date = query.end_date.unwrap_or(today);
     api_response(crate::api::list_days(state.db.pool(), start_date, end_date).await)
+}
+
+/// Per-day activity counts for the wiki calendar heatmap
+pub async fn wiki_day_activity_handler(
+    State(state): State<AppState>,
+    Query(query): Query<WikiDayQuery>,
+) -> Response {
+    let today = chrono::Utc::now().date_naive();
+    let start_date = query
+        .start_date
+        .unwrap_or(today - chrono::Duration::days(365));
+    let end_date = query.end_date.unwrap_or(today);
+    api_response(crate::api::day_activity(state.db.pool(), start_date, end_date).await)
+}
+
+#[derive(Deserialize)]
+pub struct OnThisDayQuery {
+    pub date: Option<chrono::NaiveDate>,
+}
+
+/// Past years' entries for the same calendar date
+pub async fn wiki_on_this_day_handler(
+    State(state): State<AppState>,
+    Query(query): Query<OnThisDayQuery>,
+) -> Response {
+    let date = query.date.unwrap_or_else(|| chrono::Utc::now().date_naive());
+    api_response(crate::api::on_this_day(state.db.pool(), date).await)
+}
+
+#[derive(Deserialize)]
+pub struct EntityRecordsQuery {
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+    pub search: Option<String>,
+    /// Comma-separated raw source_types to include (empty/absent = all).
+    pub types: Option<String>,
+    /// "asc" for oldest-first; anything else is newest-first.
+    pub dir: Option<String>,
+}
+
+/// One page of the records linked to an entity (the entity page's evidence feed)
+pub async fn wiki_entity_records_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<EntityRecordsQuery>,
+) -> Response {
+    let types: Vec<String> = q
+        .types
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    api_response(
+        crate::api::get_entity_records_page(
+            state.db.pool(),
+            &id,
+            q.offset.unwrap_or(0),
+            q.limit.unwrap_or(10),
+            q.search.as_deref().unwrap_or(""),
+            &types,
+            q.dir.as_deref() != Some("asc"),
+        )
+        .await,
+    )
+}
+
+/// Facet counts over all of an entity's records, for the chip rail
+pub async fn wiki_entity_record_facets_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_entity_record_facets(state.db.pool(), &id).await)
 }
 
 // =============================================================================
@@ -1843,6 +2546,24 @@ pub struct DaySourcesQuery {
 
 /// Get the three raw record streams (location, calendar, audio) for a day, as
 /// spans — the homepage's "day before synthesis" view.
+/// GET /api/wiki/day/:date/heart-rate — the day's HR samples, for Autonomic.
+pub async fn day_heart_rate_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Query(query): Query<DaySourcesQuery>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(
+            crate::api::wiki::get_day_heart_rate(state.db.pool(), parsed_date, query.tz.as_deref())
+                .await,
+        ),
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
 pub async fn today_streams_handler(
     State(state): State<AppState>,
     Path(date): Path<String>,
@@ -3032,23 +3753,14 @@ pub async fn get_page_backlinks_handler(
     api_response(crate::api::get_page_backlinks(state.db.pool(), &id).await)
 }
 
-/// GET /api/pages/reflections/:date - Get all reflections for a date
+/// GET /api/pages/reflections/:date — legacy reflections for a date, read
+/// only. The POST that minted them is retired: writing about a day belongs
+/// to the day's article or a note on the day.
 pub async fn get_reflections_handler(
     State(state): State<AppState>,
     Path(date): Path<String>,
 ) -> Response {
     api_response(crate::api::get_reflections_for_date(state.db.pool(), &date).await)
-}
-
-/// POST /api/pages/reflections/:date - Create a new reflection for a date
-pub async fn create_reflection_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    match crate::api::create_reflection(state.db.pool(), &date, None).await {
-        Ok(page) => (StatusCode::CREATED, Json(page)).into_response(),
-        Err(e) => error_response(e),
-    }
 }
 
 /// Query params for entity search
@@ -3267,6 +3979,47 @@ pub async fn apply_update_handler() -> Response {
     }
 }
 
+
+// ============================================================================
+// Bookmarks Handlers (saved web content — data_content_bookmark)
+// ============================================================================
+
+/// GET /api/bookmarks — one page of saved bookmarks, newest first.
+/// GET /api/bookmarks/:id — one bookmark, for its detail view.
+pub async fn get_bookmark_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_bookmark(state.db.pool(), &id).await)
+}
+
+/// PATCH /api/bookmarks/:id/note — write the user's marginalia.
+pub async fn update_bookmark_note_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<crate::api::UpdateNoteRequest>,
+) -> Response {
+    api_response(crate::api::update_note(state.db.pool(), &id, req).await)
+}
+
+pub async fn list_bookmarks_handler(
+    State(state): State<AppState>,
+    Query(query): Query<crate::api::ListBookmarksQuery>,
+) -> Response {
+    api_response(crate::api::list_bookmarks(state.db.pool(), query).await)
+}
+
+/// POST /api/bookmarks — save a URL (idempotent on canonical URL). The manual
+/// capture door; enrichment backfills titles/extraction later.
+pub async fn save_bookmark_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::SaveBookmarkRequest>,
+) -> Response {
+    match crate::api::save_bookmark(state.db.pool(), request).await {
+        Ok(saved) => (StatusCode::CREATED, Json(saved)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
 
 // ============================================================================
 // Pins Handlers (sidebar pinned URLs)

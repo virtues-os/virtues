@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { openExternal } from "$lib/tauri/bridge";
+
+	/** Canonical app download page — see docs/deployment.md. */
+	const DOWNLOADS_URL = "https://virtues.com/downloads";
 	/**
 	 * DevicePairModal - Handles device pairing for iOS and Mac.
 	 * iOS: Shows QR code (primary) + manual device ID entry (fallback)
@@ -219,6 +223,16 @@
 	});
 </script>
 
+{#snippet getTheApp(device: string)}
+	<!-- A code is meaningless without the app to type it into, so it leads. -->
+	<p class="text-sm text-foreground-muted mb-4">
+		<span class="step-n">1</span> Install Virtues on your {device} —
+		<button type="button" class="dl" onclick={() => void openExternal(DOWNLOADS_URL)}>
+			virtues.com/downloads
+		</button>
+	</p>
+{/snippet}
+
 <Modal open={open} onClose={handleClose} title="Connect {displayName}" width="md">
 	{#if deviceType === "ios"}
 		<!-- iOS Flow: QR Code Primary + Manual Fallback -->
@@ -240,9 +254,11 @@
 			{:else}
 				<!-- QR Code pairing -->
 				<div class="flex flex-col items-center text-center">
+					{@render getTheApp('iPhone')}
 					<div class="mb-5">
 						<p class="text-sm leading-relaxed text-foreground-muted">
-							Open the Virtues app on your iPhone and tap <strong class="text-foreground">Scan QR Code</strong>
+							<span class="step-n">2</span> Open Virtues on your iPhone and tap
+							<strong class="text-foreground">Scan QR Code</strong>
 						</p>
 					</div>
 
@@ -320,9 +336,10 @@
 				</div>
 			{:else if pairingData}
 				<div class="space-y-6">
+					{@render getTheApp('Mac')}
 					<div>
 						<p class="text-sm text-foreground-muted mb-4">
-							Enter this pairing code in the Virtues Mac app:
+							<span class="step-n">2</span> Enter this code in Virtues on that Mac:
 						</p>
 						<div class="font-mono text-2xl font-medium tracking-[0.3em] text-foreground py-4 break-all">
 							{pairingData.token ?? "…"}
@@ -336,6 +353,15 @@
 						<p class="text-sm text-foreground-muted">Waiting for your device…</p>
 					{/if}
 
+					<!-- The app switches collection on itself as part of pairing
+					     (src-tauri/ui/pair.html). Kept as a quiet fallback rather
+					     than a numbered step: it is what to do if that best-effort
+					     install didn't take, not part of the two-beat flow. -->
+					<p class="text-xs text-foreground-subtle">
+						Collection switches on automatically. If it doesn't, open
+						Sources → This Mac in that app.
+					</p>
+
 					<div class="pt-4">
 						<Button variant="ghost" onclick={handleClose}>Cancel</Button>
 					</div>
@@ -346,6 +372,32 @@
 </Modal>
 
 <style>
+	/* Numbered steps, so the two-beat shape reads before the words do. */
+	.step-n {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.125rem;
+		height: 1.125rem;
+		margin-right: 0.375rem;
+		border-radius: 50%;
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		color: var(--color-foreground, #111827);
+	}
+	.dl {
+		border: none;
+		background: none;
+		padding: 0;
+		font: inherit;
+		color: var(--color-primary);
+		cursor: pointer;
+	}
+	.dl:hover {
+		text-decoration: underline;
+	}
+
 	@reference "../../../app.css";
 
 	/* Scan-target frame: white QR plate with four hairline corner brackets.

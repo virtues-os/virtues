@@ -29,6 +29,17 @@ use tokio::time::{interval, MissedTickBehavior};
 const TICK: Duration = Duration::from_secs(600); // 10 minutes
 const PAIR_TOKEN_GRACE: &str = "1 minute";
 const EVENT_RETENTION_DAYS: i64 = 90;
+/// How long a per-minute telemetry sample is worth keeping.
+///
+/// The sampler writes one row a minute, forever — 525,600 rows a year — while
+/// the System page only ever reads recent windows. Nobody will look at a CPU
+/// reading from three years ago, but the box will carry it, on an SBC, on the
+/// same disk as the owner's record.
+///
+/// 30 days is well past any window the UI offers and still bounds the table at
+/// ~43k rows. This is derived telemetry about the machine, not anything the
+/// owner recorded, so deleting it loses nothing of theirs.
+const TELEMETRY_RETENTION_DAYS: i64 = 30;
 
 /// Spawn the sweeper as a background tokio task. Logs cleanup counts at
 /// info level when work was done; silent on no-op ticks. Errors are logged
@@ -48,13 +59,14 @@ pub fn spawn(pool: PgPool) {
         loop {
             tick.tick().await;
             match run_once(&pool).await {
-                Ok(Counts { pair_tokens: 0, sudo_requests: 0, archived: 0 }) => {
+                Ok(Counts { pair_tokens: 0, sudo_requests: 0, archived: 0, telemetry: 0 }) => {
                     // quiet
                 }
                 Ok(c) => tracing::info!(
                     pair_tokens = c.pair_tokens,
                     sudo_requests = c.sudo_requests,
                     archived = c.archived,
+                    telemetry = c.telemetry,
                     "sweeper: cleaned"
                 ),
                 Err(e) => tracing::warn!("sweeper tick failed: {e:#}"),
@@ -68,6 +80,7 @@ struct Counts {
     pair_tokens: u64,
     sudo_requests: u64,
     archived: u64,
+    telemetry: u64,
 }
 
 async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
@@ -122,9 +135,18 @@ async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
     .execute(pool)
     .await?;
 
+    let telemetry = sqlx::query(&format!(
+        "DELETE FROM app_system_samples \
+         WHERE sampled_at < now() - make_interval(days => {TELEMETRY_RETENTION_DAYS})"
+    ))
+    .execute(pool)
+    .await?
+    .rows_affected();
+
     Ok(Counts {
         pair_tokens,
         sudo_requests,
         archived,
+        telemetry,
     })
 }

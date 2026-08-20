@@ -26,26 +26,44 @@ pub fn client_ip(headers: &HeaderMap) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// A spoof-resistant client IP for *security decisions* (e.g. rate limiting).
+/// A spoof-resistant client IP for *security decisions* (e.g. rate limiting) —
+/// but ONLY when we actually sit behind a trusted reverse proxy.
 ///
-/// Unlike [`client_ip`], this takes the **right-most** `X-Forwarded-For`
-/// entry — the value appended by our OWN trusted reverse proxy (Caddy / the
-/// box's HTTPS sidecar). A remote client can prepend arbitrary entries, but it
-/// cannot stop the proxy from appending the real peer at the end, so the
-/// right-most hop is the one we can trust.
+/// `X-Forwarded-For` is meaningful only if some hop we trust appended it. On a
+/// stock box there is NO proxy (the app answers `:8000` directly — verified), so
+/// any `X-Forwarded-For` present is entirely attacker-supplied, and trusting its
+/// right-most entry let a LAN client mint a fresh rate-limit bucket per request
+/// and brute-force the pair code at full speed. So this reads the header only
+/// when `VIRTUES_TRUSTED_PROXY` is set (the cloud/atlas deployment, which really
+/// does sit behind Caddy); otherwise it returns `None` and the caller keys on
+/// the actual socket peer instead. (Setup-runtime audit, 2026-08-19.)
 ///
-/// Returns `None` when there's no `X-Forwarded-For` at all — meaning the
-/// request did not transit our proxy (direct loopback / dev). Such requests
-/// are only reachable by something already on the box, so callers should treat
-/// `None` as "trusted, do not rate-limit" rather than collapsing every
-/// header-less caller into one shared bucket (which would be a trivial DoS).
+/// When trusted, takes the right-most entry — a remote client can prepend
+/// arbitrary hops but cannot stop the proxy from appending the real peer last.
 pub fn rate_limit_ip(headers: &HeaderMap) -> Option<String> {
+    if !trusted_proxy_configured() {
+        return None;
+    }
+    rightmost_forwarded(headers)
+}
+
+/// The right-most `X-Forwarded-For` entry, or `None`. Pure — the trust decision
+/// lives in `rate_limit_ip`.
+fn rightmost_forwarded(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.rsplit(',').next())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Whether a trusted reverse proxy sits in front of this process, so that
+/// `X-Forwarded-For` can be believed. Off by default — a box has no proxy.
+fn trusted_proxy_configured() -> bool {
+    std::env::var("VIRTUES_TRUSTED_PROXY")
+        .map(|v| matches!(v.trim(), "1" | "true" | "yes"))
+        .unwrap_or(false)
 }
 
 /// True when the deployment is "secure" — meaning we should issue cookies
@@ -74,16 +92,22 @@ mod tests {
     }
 
     #[test]
-    fn rate_limit_ip_takes_rightmost_proxy_appended() {
-        // A spoofed left value is ignored; the proxy-appended right wins.
+    fn rightmost_forwarded_takes_the_proxy_appended_value() {
+        // A spoofed left value is ignored; the proxy-appended right wins — the
+        // parsing that `rate_limit_ip` uses ONLY when a trusted proxy is set.
         assert_eq!(
-            rate_limit_ip(&hm("evil-spoof, 2.2.2.2, 9.9.9.9")).as_deref(),
+            rightmost_forwarded(&hm("evil-spoof, 2.2.2.2, 9.9.9.9")).as_deref(),
             Some("9.9.9.9")
         );
+        assert_eq!(rightmost_forwarded(&HeaderMap::new()), None);
     }
 
     #[test]
-    fn rate_limit_ip_none_without_header() {
+    fn rate_limit_ip_ignores_xff_without_a_trusted_proxy() {
+        // Default (no VIRTUES_TRUSTED_PROXY): a client-supplied XFF must NOT be
+        // trusted, so the caller falls back to the real socket peer. The test
+        // suite never sets the env var, so this is the box's real posture.
+        assert_eq!(rate_limit_ip(&hm("1.2.3.4")), None);
         assert_eq!(rate_limit_ip(&HeaderMap::new()), None);
     }
 }

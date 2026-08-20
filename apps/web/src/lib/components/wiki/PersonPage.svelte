@@ -7,8 +7,13 @@
 
 <script lang="ts">
 	import type { PersonPage as PersonPageType } from "$lib/wiki/types";
-	import WikiRightRail from "./WikiRightRail.svelte";
-	import Icon from "$lib/components/Icon.svelte";
+	import EntityArticleSection from "./EntityArticleSection.svelte";
+	import SubjectBacklinks from "./SubjectBacklinks.svelte";
+	import NotesRail from "./NotesRail.svelte";
+	import EntityRecordsSection from "./EntityRecordsSection.svelte";
+	import Markdown from "$lib/components/Markdown.svelte";
+	import AliasEditor from "./AliasEditor.svelte";
+	import { updatePerson } from "$lib/wiki/api";
 
 	interface Props {
 		page: PersonPageType;
@@ -32,17 +37,27 @@
 		});
 	}
 
-	// Build content string for TOC
-	const fullContent = $derived(`## Contact
+	// Sections render only when they have content — a wiki article never
+	// prints an empty heading (the article stub is the one exception, as an
+	// honest invitation).
+	const hasContact = $derived(
+		Boolean(
+			page.emails?.length ||
+				page.phones?.length ||
+				page.socials?.linkedin ||
+				page.socials?.twitter ||
+				page.socials?.instagram
+		)
+	);
+	const hasAbout = $derived(
+		Boolean(page.location || page.company || page.role || page.birthday)
+	);
 
-## About
+	async function saveAliases(next: string[]) {
+		const saved = await updatePerson(page.id, { aliases: next });
+		if (!saved) throw new Error("Could not save aliases");
+	}
 
-## Connections
-
-## Notes
-
-${page.content || ''}
-`);
 </script>
 
 <div class="person-page-layout">
@@ -63,8 +78,43 @@ ${page.content || ''}
 				</div>
 			</header>
 
+			<!-- Also known as. Sits directly under the name because that is what
+			     it corrects: the record calling someone by a surface the
+			     resolver does not recognise. Writing one here backfills every
+			     past mention of it (migration 0037). -->
+			<div class="person-aliases">
+				<AliasEditor
+					aliases={page.aliases ?? []}
+					canonicalName={page.title}
+					onSave={saveAliases}
+				/>
+			</div>
+
 			<hr class="divider" />
 
+			<!-- The article: machine-written prose about this entity -->
+			<section class="section" id="article">
+				<EntityArticleSection
+					article={page.article}
+					articleUpdatedAt={page.articleUpdatedAt}
+					name={page.title}
+					subjectType="person"
+					subjectId={page.id}
+					autoUpdate={page.articleAutoUpdate}
+					onChanged={() => location.reload()}
+				/>
+			</section>
+
+			<!-- The record: every data point that references this person -->
+			<section class="section" id="the-record">
+				<h2 class="section-title">The record</h2>
+				<EntityRecordsSection entityId={page.id} />
+			</section>
+
+			<SubjectBacklinks subjectType="person" subjectId={page.id} />
+			<NotesRail subjectType="person" subjectId={page.id} />
+
+			{#if hasContact}
 			<!-- Contact -->
 			<section class="section" id="contact">
 				<h2 class="section-title">Contact</h2>
@@ -113,7 +163,9 @@ ${page.content || ''}
 					<p class="empty-placeholder">No contact info</p>
 				{/if}
 			</section>
+			{/if}
 
+			{#if hasAbout}
 			<!-- About -->
 			<section class="section" id="about">
 				<h2 class="section-title">About</h2>
@@ -150,55 +202,33 @@ ${page.content || ''}
 					<p class="empty-placeholder">No info</p>
 				{/if}
 			</section>
+			{/if}
 
+			{#if page.linkedPages && page.linkedPages.length > 0}
 			<!-- Connections -->
 			<section class="section" id="connections">
 				<h2 class="section-title">Connections</h2>
-				{#if page.linkedPages && page.linkedPages.length > 0}
-					<ul class="footer-list">
-						{#each page.linkedPages as linked}
-							<li>
-								<a href="/wiki/{linked.pageId}" class="footer-link">
-									<span class="link-text">{linked.displayName}</span>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				{:else}
-					<p class="empty-placeholder">No connections</p>
-				{/if}
+				<ul class="footer-list">
+					{#each page.linkedPages as linked}
+						<li>
+							<a href="/wiki/{linked.pageId}" class="footer-link">
+								<span class="link-text">{linked.displayName}</span>
+							</a>
+						</li>
+					{/each}
+				</ul>
 			</section>
+			{/if}
 
-			<!-- Notes -->
-			<section class="section" id="notes">
-				<h2 class="section-title">Notes</h2>
-				{#if page.content}
-					<div class="notes-content">{page.content}</div>
-				{:else}
-					<p class="empty-placeholder">No notes</p>
-				{/if}
-			</section>
+			<!-- There used to be a second "Notes" section here, rendering
+			     `wiki_people.content`. Two headings with the same name on one
+			     page, and the column is superseded twice over: prose about a
+			     person is the ARTICLE, and a note about them is a `wiki_notes`
+			     row shown in the rail above. It was empty on every box measured,
+			     so the duplicate was latent rather than visible — which is why
+			     it survived being added. -->
 		</div>
 	</article>
-
-	<WikiRightRail content={fullContent}>
-		{#snippet metadata()}
-			<div class="sidebar-meta">
-				<div class="sidebar-avatar">
-					{#if page.cover}
-						<img src={page.cover} alt={page.title} />
-					{:else}
-						<span class="avatar-letter">{page.title.charAt(0).toUpperCase()}</span>
-					{/if}
-				</div>
-				<div class="meta-name">{page.title}</div>
-				<div class="meta-relationship">{page.relationship}</div>
-				{#if page.location}
-					<div class="meta-location">{page.location}</div>
-				{/if}
-			</div>
-		{/snippet}
-	</WikiRightRail>
 </div>
 
 <style>
@@ -256,6 +286,13 @@ ${page.content || ''}
 		gap: 0.5rem;
 		margin-top: 0.5rem;
 		font-size: 0.875rem;
+	}
+
+	/* Sits between the header and the article's rule, indented to the same
+	   measure as the prose so it reads as part of the record rather than a
+	   form bolted onto it. */
+	.person-aliases {
+		margin-top: 0.625rem;
 	}
 
 	.meta-badge {
@@ -374,54 +411,6 @@ ${page.content || ''}
 		color: var(--color-foreground-subtle);
 		font-style: italic;
 		margin: 0;
-	}
-
-	/* Sidebar metadata */
-	.sidebar-meta {
-		text-align: center;
-	}
-
-	.sidebar-avatar {
-		width: 48px;
-		height: 48px;
-		border-radius: 50%;
-		margin: 0 auto 0.5rem;
-		background: linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 70%, #000));
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		overflow: hidden;
-	}
-
-	.sidebar-avatar img {
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-	}
-
-	.avatar-letter {
-		color: white;
-		font-size: 1.25rem;
-		font-weight: 600;
-	}
-
-	.meta-name {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: var(--color-foreground);
-		margin-bottom: 0.125rem;
-	}
-
-	.meta-relationship {
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.meta-location {
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle);
-		margin-top: 0.25rem;
 	}
 
 	/* Responsive */

@@ -54,6 +54,51 @@ pub fn primary_ip() -> Option<IpAddr> {
     socket.local_addr().ok().map(|a| a.ip())
 }
 
+/// Does the box have REAL internet — not just an IP address?
+///
+/// `primary_ip()` answers "do I have an address", and on a captive guest
+/// network (WeWork's, live, 2026-08-11) that is a lie with a UI: the box got
+/// an IP, declared itself online, showed "Step 2 of 2" — and could not reach
+/// anything, because the network gates traffic behind a portal. Every surface
+/// that means "setup can proceed" must ask THIS question instead.
+///
+/// NetworkManager already runs connectivity checks; `full` is the only answer
+/// that counts. `portal` and `limited` are precisely the lie this exists to
+/// catch. Falls back to `primary_ip()` where nmcli is absent (dev hosts, DIY
+/// boxes without NM) — the old behavior, no worse than before.
+pub fn has_internet() -> bool {
+    verdict_means_online(&connectivity())
+}
+
+/// NetworkManager's connectivity verdict, verbatim: `full` | `portal` |
+/// `limited` | `none`, or `unknown` where nmcli is absent (dev hosts, DIY
+/// boxes without NM). `portal` is the state the display's screen 1 must NAME
+/// — "joined, but that network wants a browser sign-in" — because with honest
+/// online-detection a captive join otherwise reads as still-offline with no
+/// explanation, and that silent wait was the commonest office failure.
+pub fn connectivity() -> String {
+    match std::process::Command::new("nmcli")
+        .args(["-t", "networking", "connectivity", "check"])
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => "unknown".into(),
+    }
+}
+
+/// Interpret a [`connectivity`] verdict. Split out so callers that already
+/// hold the verdict — the display heartbeat both shows it and gates on it —
+/// don't run nmcli twice per tick.
+pub fn verdict_means_online(verdict: &str) -> bool {
+    match verdict {
+        "full" => true,
+        // nmcli absent: fall back to "do I have an address" — the old
+        // behavior, no worse than before.
+        "unknown" => primary_ip().is_some(),
+        _ => false,
+    }
+}
+
 /// The box's mDNS name (`<hostname>.local`). The installer registers the box
 /// with Avahi, so this resolves on the LAN — it's the name we lead with in
 /// every cross-device handoff (onboarding doctrine: `virtues.local`, never
@@ -74,28 +119,36 @@ pub fn mdns_host() -> String {
     format!("{host}.local")
 }
 
-/// Build the URLs `virtues link` / `virtues init` print for the user.
+/// Addresses of this box, for someone to type into the app.
 ///
-/// Order matters — it's a UX statement:
-///   1. `Any device` — the mDNS name. The URL a human should actually use,
-///      from a phone or laptop on the same network.
-///   2. `(if .local fails)` — the raw LAN IP. mDNS is flaky on some clients
-///      (notably Android) and filtered on some networks; the IP is the
-///      universal fallback.
-///   3. `This machine` — loopback, for a browser on the box itself (a W3C
-///      Secure Context without TLS). Last because almost nobody runs a
-///      browser on the box; the kiosk panel is the exception and doesn't
-///      read this output.
-pub fn reachable_pair_urls(token: &str, is_dev: bool, web_port: &str) -> Vec<ReachableUrl> {
+/// **These are ORIGINS, not pair links, and that is the correction.** This
+/// function used to return `http://…/pair#t=<token>` URLs, and `virtues init`
+/// printed them under "No app yet? Open in a browser on your network:". A
+/// browser cannot pair — an allowlisted iroh key is the credential and a tab
+/// holds none, so `/api/pair/consume` rejects `kind: "browser"` and the `/pair`
+/// page exists only to say so. The DIY installer's final screen therefore
+/// offered a dead end as its fallback for the user least able to recover from
+/// one. See `docs/onboarding-paradigm.md` §4 and `(auth)/pair/+page.svelte`.
+///
+/// The app finds the box by itself on a normal network; this list is for when
+/// it cannot — an office LAN that isolates clients, or a box on another
+/// subnet — and it goes in the app's "enter its address" field.
+///
+/// Order matters, as before:
+///   1. the mDNS name, what a human should use from another machine here
+///   2. the raw LAN IP, because mDNS is flaky on some clients and filtered on
+///      some networks
+///   3. loopback, for something running on the box itself
+pub fn reachable_box_origins(is_dev: bool, web_port: &str) -> Vec<ReachableUrl> {
     if is_dev {
         return vec![ReachableUrl {
             label: "Local",
-            url: format!("http://localhost:{web_port}/pair#t={token}"),
+            url: format!("http://localhost:{web_port}"),
         }];
     }
     let mut urls = vec![ReachableUrl {
         label: "Any device",
-        url: format!("http://{}:{INTERNAL_PORT}/pair#t={token}", mdns_host()),
+        url: format!("http://{}:{INTERNAL_PORT}", mdns_host()),
     }];
     if let Some(ip) = primary_ip() {
         let host = match ip {
@@ -104,12 +157,12 @@ pub fn reachable_pair_urls(token: &str, is_dev: bool, web_port: &str) -> Vec<Rea
         };
         urls.push(ReachableUrl {
             label: "(if .local fails)",
-            url: format!("http://{host}:{INTERNAL_PORT}/pair#t={token}"),
+            url: format!("http://{host}:{INTERNAL_PORT}"),
         });
     }
     urls.push(ReachableUrl {
         label: "This machine",
-        url: format!("http://localhost:{INTERNAL_PORT}/pair#t={token}"),
+        url: format!("http://localhost:{INTERNAL_PORT}"),
     });
     urls
 }
@@ -366,19 +419,22 @@ fn forward_target(ctx: &SshContext, host: &str) -> String {
 /// The SSH local-forward recipe printed after the QR in the init/login
 /// handoff. Pure — returns the lines so it's testable; the caller prints
 /// them. Two-space indent matches `print_link_output`'s style.
-pub fn ssh_handoff_block(ctx: &SshContext, host: &str, token: &str) -> Vec<String> {
+pub fn ssh_handoff_block(ctx: &SshContext, host: &str) -> Vec<String> {
     let target = forward_target(ctx, host);
     vec![
         "  On SSH — the app needs to reach your server on the same network.".to_string(),
         "  If your network blocks device traffic (office/hotel), forward the port:".to_string(),
         String::new(),
         format!("    ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {target}"),
-        format!("    then open  http://localhost:{INTERNAL_PORT} in the app or browser"),
+        // "in the app", not "in the app or browser". The forward is a route to
+        // the box, not a way around the credential: whatever arrives at the far
+        // end still has to hold an iroh key, and a browser does not.
+        format!("    then give the app this address:  http://localhost:{INTERNAL_PORT}"),
         String::new(),
         format!(
             "    (if port {INTERNAL_PORT} is busy: ssh -L {FALLBACK_FWD_PORT}:localhost:{INTERNAL_PORT} {target}"
         ),
-        format!("     → http://localhost:{FALLBACK_FWD_PORT}/pair#t={token})"),
+        format!("     → http://localhost:{FALLBACK_FWD_PORT})"),
     ]
 }
 
@@ -646,22 +702,46 @@ mod tests {
     #[test]
     fn handoff_block_with_user() {
         let ctx = SshContext { user: Some("adam".to_string()) };
-        let lines = ssh_handoff_block(&ctx, "10.1.4.22", "tok123");
+        let lines = ssh_handoff_block(&ctx, "10.1.4.22");
         let joined = lines.join("\n");
         assert!(lines[0].contains("On SSH"));
         assert!(joined.contains("ssh -L 8000:localhost:8000 adam@10.1.4.22"));
         assert!(joined.contains("http://localhost:8000"));
         // Fallback recipe: forward from 18000 on the laptop to 8000 on the box.
         assert!(joined.contains("ssh -L 18000:localhost:8000 adam@10.1.4.22"));
-        assert!(joined.contains("http://localhost:18000/pair#t=tok123"));
+        assert!(joined.contains("http://localhost:18000"));
+    }
+
+    #[test]
+    fn handoff_block_offers_no_browser_pair_link() {
+        // The forward is a ROUTE to the box, not a way around the credential.
+        // Printing a `/pair#t=…` URL here told an operator to finish in a
+        // browser, which cannot hold an iroh key and so cannot pair — the same
+        // dead end `print_link_output` used to offer. See `reachable_box_origins`.
+        let ctx = SshContext { user: Some("adam".to_string()) };
+        let joined = ssh_handoff_block(&ctx, "10.1.4.22").join("\n");
+        assert!(!joined.contains("/pair"), "handoff still links to /pair: {joined}");
+        assert!(!joined.contains("#t="), "handoff still carries a token: {joined}");
+        assert!(!joined.contains("browser"), "handoff still says browser: {joined}");
     }
 
     #[test]
     fn handoff_block_without_user_omits_at() {
         let ctx = SshContext { user: None };
-        let joined = ssh_handoff_block(&ctx, "10.1.4.22", "tok123").join("\n");
+        let joined = ssh_handoff_block(&ctx, "10.1.4.22").join("\n");
         assert!(joined.contains("ssh -L 8000:localhost:8000 10.1.4.22"));
-        // The ssh command itself has no @, but the fallback URL still has #t=
         assert!(!joined.split("ssh").nth(1).unwrap_or("").contains('@'));
+    }
+
+    #[test]
+    fn box_origins_are_origins_not_pair_links() {
+        // The regression this pins: these used to be `/pair#t=<token>` URLs
+        // printed under "No app yet? Open in a browser". Every one of them
+        // landed on a page whose only job is to say a browser cannot pair.
+        for u in reachable_box_origins(false, "5173") {
+            assert!(!u.url.contains("/pair"), "{} is a pair link", u.url);
+            assert!(!u.url.contains('#'), "{} carries a fragment", u.url);
+            assert!(u.url.starts_with("http://"), "{} is not an origin", u.url);
+        }
     }
 }

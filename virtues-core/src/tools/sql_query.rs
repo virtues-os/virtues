@@ -28,32 +28,32 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_health_heart_rate", TableMetadata {
         description: "Heart rate BPM measurements from wearables",
         category: "health",
-        key_columns: &["bpm", "timestamp"],
+        key_columns: &["bpm", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_health_hrv", TableMetadata {
         description: "Heart rate variability measurements in milliseconds",
         category: "health",
-        key_columns: &["hrv_ms", "timestamp"],
+        key_columns: &["hrv_ms", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_health_steps", TableMetadata {
         description: "Step count records (may have multiple per day)",
         category: "health",
-        key_columns: &["step_count", "timestamp"],
+        key_columns: &["step_count", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_health_sleep", TableMetadata {
         description: "Sleep sessions with duration and quality metrics",
         category: "health",
-        key_columns: &["start_time", "end_time", "duration_minutes", "sleep_quality_score", "sleep_stages"],
+        key_columns: &["started_at", "ended_at", "duration_minutes", "sleep_quality_score", "sleep_stages"],
         join_hint: None,
     });
     m.insert("data_health_workout", TableMetadata {
         description: "Exercise and workout sessions",
         category: "health",
-        key_columns: &["workout_type", "start_time", "end_time", "duration_minutes", "calories_burned", "distance_km", "avg_heart_rate", "max_heart_rate"],
-        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_health_workout' AND er.source_id = data_health_workout.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
+        key_columns: &["workout_type", "started_at", "ended_at", "duration_minutes", "calories_burned", "distance_km", "avg_heart_rate", "max_heart_rate"],
+        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_health_workout' AND er.source_id = data_health_workout.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
     });
 
     // ============================================================================
@@ -62,14 +62,14 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_location_point", TableMetadata {
         description: "Raw GPS coordinates (high volume, use sparingly)",
         category: "location",
-        key_columns: &["latitude", "longitude", "altitude", "horizontal_accuracy", "timestamp"],
+        key_columns: &["latitude", "longitude", "altitude", "horizontal_accuracy", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_location_visit", TableMetadata {
         description: "Place visits with arrival/departure times",
         category: "location",
-        key_columns: &["place_name", "latitude", "longitude", "arrival_time", "departure_time", "duration_minutes"],
-        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_location_visit' AND er.source_id = data_location_visit.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
+        key_columns: &["place_name", "latitude", "longitude", "started_at", "ended_at", "duration_minutes"],
+        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_location_visit' AND er.source_id = data_location_visit.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
     });
 
     // ============================================================================
@@ -78,18 +78,18 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_communication_email", TableMetadata {
         description: "Email messages from Gmail, etc.",
         category: "communication",
-        key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "timestamp"],
-        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_communication_email' AND er.source_id = data_communication_email.id JOIN wiki_people ON er.entity_id = wiki_people.id AND er.entity_type = 'person'"),
+        key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "occurred_at"],
+        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_email' AND er.source_id = data_communication_email.id JOIN wiki_people ON er.entity_id = wiki_people.id AND er.entity_type = 'person'"),
     });
     m.insert("data_communication_message", TableMetadata {
         description: "Chat messages (iMessage, SMS, etc.)",
         category: "communication",
-        key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "timestamp"],
-        // A message links to the person on the other end via wiki_entity_refs:
+        key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "occurred_at"],
+        // A message links to the person on the other end via wiki_refs:
         // role='sender' for messages you received, role='recipient' for messages you
         // sent. Filter both to get a full thread with someone; the message's own
         // direction is in metadata->>'is_from_me'.
-        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_communication_message' AND er.source_id = data_communication_message.id AND er.entity_type = 'person' AND er.role IN ('sender','recipient') JOIN wiki_people ON er.entity_id = wiki_people.id"),
+        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_message' AND er.source_id = data_communication_message.id AND er.entity_type = 'person' AND er.role IN ('sender','recipient') JOIN wiki_people ON er.entity_id = wiki_people.id"),
     });
 
     // ============================================================================
@@ -98,8 +98,8 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_calendar_event", TableMetadata {
         description: "Calendar events with attendees and location",
         category: "calendar",
-        key_columns: &["title", "description", "calendar_name", "event_type", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "conference_url", "start_time", "end_time", "is_all_day", "timezone"],
-        join_hint: Some("JOIN wiki_entity_refs er ON er.source_table = 'data_calendar_event' AND er.source_id = data_calendar_event.id"),
+        key_columns: &["title", "description", "calendar_name", "event_type", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "conference_url", "started_at", "ended_at", "is_all_day", "timezone"],
+        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_calendar_event' AND er.source_id = data_calendar_event.id"),
     });
 
     // ============================================================================
@@ -114,19 +114,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_financial_transaction", TableMetadata {
         description: "Transactions (amounts in cents, negative=debit)",
         category: "financial",
-        key_columns: &["account_id", "amount", "currency", "merchant_name", "merchant_category", "description", "category", "is_pending", "transaction_type", "payment_channel", "timestamp"],
+        key_columns: &["account_id", "amount", "currency", "merchant_name", "merchant_category", "description", "category", "is_pending", "transaction_type", "payment_channel", "occurred_at"],
         join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
     });
     m.insert("data_financial_asset", TableMetadata {
         description: "Investment holdings (stocks, crypto, etc.)",
         category: "financial",
-        key_columns: &["account_id", "asset_type", "symbol", "name", "quantity", "cost_basis", "current_value", "currency", "timestamp"],
+        key_columns: &["account_id", "asset_type", "symbol", "name", "quantity", "cost_basis", "current_value", "currency", "occurred_at"],
         join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
     });
     m.insert("data_financial_liability", TableMetadata {
         description: "Loans, mortgages, and debt",
         category: "financial",
-        key_columns: &["account_id", "liability_type", "principal", "interest_rate", "minimum_payment", "next_payment_due_date", "currency", "timestamp"],
+        key_columns: &["account_id", "liability_type", "principal", "interest_rate", "minimum_payment", "next_payment_due_date", "currency", "occurred_at"],
         join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
     });
 
@@ -136,13 +136,13 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_activity_app_session", TableMetadata {
         description: "Desktop/mobile app usage sessions",
         category: "activity",
-        key_columns: &["app_name", "app_bundle_id", "app_category", "start_time", "end_time", "window_title", "url"],
+        key_columns: &["app_name", "app_bundle_id", "app_category", "started_at", "ended_at", "window_title", "url"],
         join_hint: None,
     });
     m.insert("data_activity_web_browsing", TableMetadata {
         description: "Web browsing history",
         category: "activity",
-        key_columns: &["url", "domain", "page_title", "visit_duration_seconds", "timestamp"],
+        key_columns: &["url", "domain", "page_title", "visit_duration_seconds", "occurred_at"],
         join_hint: None,
     });
 
@@ -152,19 +152,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_content_document", TableMetadata {
         description: "Saved documents and notes",
         category: "content",
-        key_columns: &["title", "content", "content_summary", "document_type", "tags", "is_authored", "created_time", "last_modified_time"],
+        key_columns: &["title", "content", "content_summary", "document_type", "tags", "is_authored", "occurred_at", "last_modified_time"],
         join_hint: None,
     });
     m.insert("data_content_conversation", TableMetadata {
         description: "Past AI chat conversation history",
         category: "content",
-        key_columns: &["conversation_id", "message_id", "role", "content", "model", "provider", "timestamp"],
+        key_columns: &["conversation_id", "message_id", "role", "content", "model", "provider", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_content_bookmark", TableMetadata {
         description: "Saved/starred content (GitHub stars, browser bookmarks, etc.)",
         category: "content",
-        key_columns: &["url", "title", "description", "source_platform", "bookmark_type", "content_type", "author", "tags", "timestamp"],
+        key_columns: &["url", "title", "description", "source_platform", "bookmark_type", "content_type", "author", "tags", "occurred_at"],
         join_hint: None,
     });
 
@@ -174,7 +174,73 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_communication_transcription", TableMetadata {
         description: "Voice/audio transcriptions",
         category: "communication",
-        key_columns: &["text", "language", "duration_seconds", "start_time", "end_time", "speaker_count"],
+        key_columns: &["text", "language", "duration_seconds", "started_at", "ended_at", "speaker_count"],
+        join_hint: None,
+    });
+
+    // Tables that hold real data and were never described, so the agent could
+    // see them only because the old catalog listed everything matching
+    // `data_%`/`wiki_%`. Now that an undescribed table is a hidden table, the
+    // omission would have silently taken the owner's own recordings, weather and
+    // notes out of reach — so they are described here deliberately.
+    m.insert("data_audio_recording", TableMetadata {
+        description: "Microphone recordings captured by the phone — one row per chunk. Join to transcriptions on source_stream_id for the words.",
+        category: "communication",
+        key_columns: &["started_at", "ended_at", "duration_seconds", "is_silent", "average_db_level"],
+        join_hint: Some("JOIN data_communication_transcription t ON t.source_stream_id = data_audio_recording.source_stream_id"),
+    });
+    m.insert("data_audio_session", TableMetadata {
+        description: "Conversations, derived by grouping adjacent transcription chunks into one sitting",
+        category: "communication",
+        key_columns: &["started_at", "ended_at", "speaker_mode", "chunk_count", "content"],
+        join_hint: None,
+    });
+    m.insert("data_environment_weather", TableMetadata {
+        description: "Weather where the owner was. Holds BOTH observations and forecasts — filter is_forecast = false for what actually happened.",
+        category: "environment",
+        key_columns: &["occurred_at", "is_forecast", "temperature_c", "apparent_c", "latitude", "longitude"],
+        join_hint: None,
+    });
+    m.insert("data_health_active_energy", TableMetadata {
+        description: "Active energy burned, in kilocalories",
+        category: "health",
+        key_columns: &["kcal", "occurred_at"],
+        join_hint: None,
+    });
+    m.insert("data_health_distance", TableMetadata {
+        description: "Distance moved, in meters",
+        category: "health",
+        key_columns: &["meters", "occurred_at"],
+        join_hint: None,
+    });
+    m.insert("wiki_articles", TableMetadata {
+        description: "Links a wiki subject (person/place/organization/day) to the page holding its written article",
+        category: "wiki",
+        key_columns: &["subject_type", "subject_id", "page_id"],
+        join_hint: Some("JOIN app_pages p ON p.id = wiki_articles.page_id"),
+    });
+    m.insert("wiki_notes", TableMetadata {
+        description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",
+        category: "wiki",
+        key_columns: &["subject_type", "subject_id", "kind", "body", "author", "resolved_at"],
+        join_hint: None,
+    });
+    m.insert("wiki_narrative_identity", TableMetadata {
+        description: "The owner's own account of who they are, drafted from the narrative interview",
+        category: "wiki",
+        key_columns: &["content", "active", "drafted_at"],
+        join_hint: None,
+    });
+    m.insert("wiki_rules", TableMetadata {
+        description: "Standing instructions the owner has given about how their record is written — 'avoid' subjects to leave alone, 'defend' ones to state carefully",
+        category: "wiki",
+        key_columns: &["rule", "kind", "active"],
+        join_hint: None,
+    });
+    m.insert("wiki_narrative_interview", TableMetadata {
+        description: "The owner's answers to the narrative interview questions",
+        category: "wiki",
+        key_columns: &["question_id", "answer", "word_count", "completed_at"],
         join_hint: None,
     });
     // ============================================================================
@@ -183,19 +249,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("wiki_people", TableMetadata {
         description: "Resolved people in user's life",
         category: "wiki_entity",
-        key_columns: &["canonical_name", "emails", "phones", "relationship_category", "nickname", "notes", "first_interaction", "last_interaction", "interaction_count", "birthday"],
+        key_columns: &["name", "emails", "phones", "relationship_category", "nickname", "notes", "first_seen", "last_seen", "ref_count", "birthday"],
         join_hint: None,
     });
     m.insert("wiki_places", TableMetadata {
         description: "Resolved places in user's life",
         category: "wiki_entity",
-        key_columns: &["name", "category", "address", "latitude", "longitude", "radius_m", "visit_count", "first_visit", "last_visit"],
+        key_columns: &["name", "category", "address", "latitude", "longitude", "radius_m", "ref_count", "first_seen", "last_seen"],
         join_hint: None,
     });
     m.insert("wiki_orgs", TableMetadata {
         description: "Organizations in user's life",
         category: "wiki_entity",
-        key_columns: &["canonical_name", "organization_type", "relationship_type", "role_title", "start_date", "end_date", "interaction_count", "first_interaction", "last_interaction"],
+        key_columns: &["name", "organization_type", "relationship_type", "role_title", "start_date", "end_date", "ref_count", "first_seen", "last_seen"],
         join_hint: None,
     });
 
@@ -203,54 +269,26 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // WIKI TABLES - Temporal
     // ============================================================================
     m.insert("wiki_days", TableMetadata {
-        description: "Day summaries with autobiography and context",
+        description: "Day records; a day's prose lives in the wiki_day_prose view (day_id, date, prose)",
         category: "wiki_temporal",
-        key_columns: &["date", "start_timezone", "autobiography", "last_edited_by"],
-        join_hint: Some("JOIN wiki_acts ON act_id = wiki_acts.id"),
-    });
-    m.insert("wiki_years", TableMetadata {
-        description: "Year summaries with highlights and themes",
-        category: "wiki_temporal",
-        key_columns: &["year", "summary", "highlights", "themes", "content"],
-        join_hint: None,
+        key_columns: &["date", "start_timezone", "last_edited_by"],
+        join_hint: Some("JOIN wiki_day_prose ON wiki_day_prose.day_id = wiki_days.id"),
     });
     m.insert("wiki_events", TableMetadata {
         description: "Timeline events within a day",
         category: "wiki_temporal",
-        key_columns: &["day_id", "start_time", "end_time", "auto_label", "auto_location", "user_label", "user_location", "user_notes", "is_unknown", "is_transit"],
+        key_columns: &["day_id", "started_at", "ended_at", "auto_label", "auto_location", "user_label", "user_location", "user_notes", "is_unknown", "is_transit"],
         join_hint: Some("JOIN wiki_days ON day_id = wiki_days.id"),
     });
 
     // ============================================================================
     // WIKI TABLES - References
     // ============================================================================
-    m.insert("wiki_entity_refs", TableMetadata {
+    m.insert("wiki_refs", TableMetadata {
         description: "Junction table linking entities (people, places, orgs) to ontology records. Use for 'everything about entity X' queries.",
         category: "wiki_reference",
-        key_columns: &["entity_type", "entity_id", "source_table", "source_id", "role", "confidence", "resolved_by", "timestamp"],
+        key_columns: &["entity_type", "entity_id", "source_table", "source_id", "role", "occurred_at"],
         join_hint: None,
-    });
-
-    // ============================================================================
-    // WIKI TABLES - Narrative (life story structure)
-    // ============================================================================
-    m.insert("wiki_telos", TableMetadata {
-        description: "User's life purpose/direction",
-        category: "wiki_narrative",
-        key_columns: &["title", "description", "is_active", "content"],
-        join_hint: None,
-    });
-    m.insert("wiki_acts", TableMetadata {
-        description: "Major life periods (multi-year)",
-        category: "wiki_narrative",
-        key_columns: &["title", "subtitle", "description", "start_date", "end_date", "sort_order", "themes", "location", "content"],
-        join_hint: Some("JOIN wiki_telos ON telos_id = wiki_telos.id"),
-    });
-    m.insert("wiki_chapters", TableMetadata {
-        description: "Chapters within acts (months/seasons)",
-        category: "wiki_narrative",
-        key_columns: &["act_id", "title", "subtitle", "description", "start_date", "end_date", "sort_order", "themes", "content"],
-        join_hint: Some("JOIN wiki_acts ON act_id = wiki_acts.id"),
     });
 
     m
@@ -345,10 +383,32 @@ impl SqlQueryTool {
 
         let metadata = get_table_metadata();
         let mut tables = Vec::new();
-        
+
         for row in rows {
             let table_name: String = row.get("name");
-            
+
+            // A table the catalog has no description for is NOT advertised.
+            //
+            // This is the fence that 0107 said already existed. It did not.
+            // That migration kept `wiki_stories` and `wiki_years` in the schema
+            // on the promise that they would stay "out of the SQL agent's
+            // catalog" — but the catalog is this query, a `LIKE 'wiki_%'` over
+            // `pg_tables`, so every empty table was advertised anyway, and
+            // `get_schema` would happily describe it.
+            //
+            // The harm is the one 0107 named: an empty answer from a table that
+            // is supposed to hold something is indistinguishable from an empty
+            // life. The agent queries `wiki_stories`, finds nothing, and reports
+            // nothing — as though it had looked and there was nothing there.
+            //
+            // Keying on the description makes the fence self-maintaining. A new
+            // table is invisible until someone writes a line describing it, and
+            // that is exactly the moment to decide whether the agent should see
+            // it at all. No allowlist to forget to update.
+            let Some(meta) = metadata.get(table_name.as_str()) else {
+                continue;
+            };
+
             // Get row count
             let count_query = format!("SELECT COUNT(*) as cnt FROM \"{}\"", table_name);
             let count_row = sqlx::query(&count_query)
@@ -361,11 +421,7 @@ impl SqlQueryTool {
                 .map(|r| r.get::<i64, _>("cnt"))
                 .unwrap_or(0);
 
-            // Get description from metadata
-            let description = metadata
-                .get(table_name.as_str())
-                .map(|m| m.description)
-                .unwrap_or("");
+            let description = meta.description;
 
             tables.push(serde_json::json!({
                 "name": table_name,
@@ -396,6 +452,17 @@ impl SqlQueryTool {
                 return Err(ToolError::InvalidParameters(format!(
                     "Can only get schema for data_* or wiki_* tables. Got: '{}'",
                     table
+                )));
+            }
+
+            // Same fence as `list_tables`. Without this the prefix check above
+            // is the only gate, so a table deliberately withheld from the
+            // catalog could still be described in full — and a described table
+            // is one the agent will then query.
+            if !metadata.contains_key(table.as_str()) {
+                return Err(ToolError::InvalidParameters(format!(
+                    "'{table}' is not in the queryable catalog. Call list_tables \
+                     to see what is available."
                 )));
             }
 
@@ -541,6 +608,39 @@ impl SqlQueryTool {
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 
+        // Drop to the least-privileged role for the rest of this transaction.
+        //
+        // READ ONLY is not the boundary the comment above believed it was. It
+        // bounds WRITES; it says nothing about what a superuser may READ, and
+        // the pool role IS a superuser (`CREATE ROLE virtues WITH LOGIN
+        // SUPERUSER`, installer first-boot). So this passed every guard above —
+        // it begins with `select`, contains no forbidden keyword, is short, and
+        // survives the appended LIMIT:
+        //
+        //     SELECT substr(pg_read_file('/var/lib/virtues/virtues.env'),1,4000)
+        //
+        // That file holds VIRTUES_ENCRYPTION_KEY in plaintext, which decrypts
+        // every credential in the vault and the iroh secret that IS this box's
+        // network identity. Verified against a live database: the read
+        // succeeds, and `box_secrets` and `app_credentials` are equally
+        // reachable. The doc comment above already says this tool "runs
+        // unattended, over content nobody reviewed" — so the query text is
+        // steerable by an email or a saved page, and the model can hand the
+        // result to `web_search`, which is also allowlisted.
+        //
+        // `virtues_face_reader` is the role `server/faces.rs` already drops to
+        // for exactly this reason: default-deny, SELECT on `data_*`/`wiki_*`
+        // only. Under it both halves fail closed — `permission denied for
+        // function pg_read_file`, `permission denied for table box_secrets`.
+        // The mechanism was in the tree; this executor simply never used it.
+        //
+        // SET LOCAL, so it reverts with the transaction and cannot leak onto a
+        // pooled connection.
+        sqlx::query("SET LOCAL ROLE virtues_face_reader")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
         let rows = sqlx::query(&query)
             .fetch_all(&mut *tx)
             .await
@@ -551,7 +651,14 @@ impl SqlQueryTool {
         let _ = tx.rollback().await;
 
         // Convert rows to JSON
-        let json_rows = convert_rows_to_json(&rows);
+        let mut json_rows = convert_rows_to_json(&rows);
+
+        // Make the answer citable. The agent is told to cite a claim by linking
+        // the `ref` a tool returned, and to cite nothing when a result has no
+        // `ref` — so without this, every fact the model learned from SQL was
+        // structurally uncitable, which is most of what it knows about the
+        // owner's own data.
+        attach_record_refs(&query, &mut json_rows);
 
         Ok(ToolResult::success(serde_json::json!({
             "operation": "query",
@@ -559,6 +666,92 @@ impl SqlQueryTool {
             "rows": json_rows,
         })))
     }
+}
+
+/// Attach a citable `/record/{ontology}/{id}` to each row, matching the `ref`
+/// that `semantic_search` already returns — the frontend renders that route as
+/// a click-through to the record itself.
+///
+/// Deliberately conservative: only for a JOIN-free query naming exactly ONE
+/// registered ontology table, on rows that actually carry an `id`. An
+/// aggregate has no record to point at, and in a join the `id` column may
+/// belong to either side — `SELECT d.id FROM wiki_events e JOIN wiki_days d`
+/// would otherwise be labelled a wiki_event. Resolving that needs real alias
+/// analysis, and a confident link to the wrong record is worse than no link:
+/// the agent prompt tells the model to skip results without a `ref`, so
+/// silence degrades to "uncited", never to "miscited".
+fn attach_record_refs(query: &str, rows: &mut [serde_json::Value]) {
+    use virtues_registry::ontologies::registered_ontologies;
+
+    let lowered = query.to_lowercase();
+    if mentions_table(&lowered, "join") {
+        return;
+    }
+    // Ambiguity is about TABLES, not ontologies.
+    //
+    // Two ontologies can share one table — `app_page` and `wiki_article` both
+    // sit on `app_pages`, split by `kind` (migration 0081) so the record's own
+    // prose stays out of the day view. They point at the same rows, so a query
+    // naming that table is not ambiguous about WHICH ROW to cite; only about
+    // which label to hang on it.
+    //
+    // Counting ontologies instead of tables turned the split into a silent
+    // regression: every SQL-tool result touching `app_pages` would lose its
+    // `ref`, and because the agent prompt tells the model to skip uncited
+    // results, they would quietly vanish from answers rather than error.
+    let mut matched_table: Option<&'static str> = None;
+    let mut matched: Option<&'static str> = None;
+    for ont in registered_ontologies() {
+        if !mentions_table(&lowered, ont.table_name) {
+            continue;
+        }
+        match matched_table {
+            // A genuinely different table — that is real ambiguity.
+            Some(t) if t != ont.table_name => return,
+            // Same table, second ontology: keep the first. `get_record`
+            // resolves a bare table name the same way, so the ref still opens.
+            Some(_) => continue,
+            None => {
+                matched_table = Some(ont.table_name);
+                matched = Some(ont.name);
+            }
+        }
+    }
+    let Some(ontology) = matched else { return };
+
+    for row in rows.iter_mut() {
+        let Some(obj) = row.as_object_mut() else { continue };
+        // Never shadow a real column the query happened to select.
+        if obj.contains_key("ref") {
+            continue;
+        }
+        let Some(id) = obj.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let route = format!("/record/{ontology}/{id}");
+        obj.insert("ref".to_string(), serde_json::Value::String(route));
+    }
+}
+
+/// Whole-word search for a table name, so `wiki_days` doesn't match inside a
+/// longer identifier and a name inside a string literal doesn't count either.
+fn mentions_table(lowered_query: &str, table: &str) -> bool {
+    lowered_query
+        .match_indices(table)
+        .any(|(idx, _)| {
+            let before_ok = idx == 0
+                || !lowered_query[..idx]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let after = idx + table.len();
+            let after_ok = after >= lowered_query.len()
+                || !lowered_query[after..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            before_ok && after_ok
+        })
 }
 
 /// Convert Postgres rows to JSON array
@@ -656,6 +849,98 @@ impl std::fmt::Debug for SqlQueryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rows(ids: &[&str]) -> Vec<serde_json::Value> {
+        ids.iter()
+            .map(|id| serde_json::json!({ "id": id, "body": "hi" }))
+            .collect()
+    }
+
+    fn ref_of(row: &serde_json::Value) -> Option<&str> {
+        row.get("ref").and_then(|v| v.as_str())
+    }
+
+    #[test]
+    fn single_table_query_gets_citable_refs() {
+        let mut r = rows(&["msg_1", "msg_2"]);
+        attach_record_refs(
+            "SELECT id, body FROM data_communication_message LIMIT 2",
+            &mut r,
+        );
+        assert_eq!(ref_of(&r[0]), Some("/record/communication_message/msg_1"));
+        assert_eq!(ref_of(&r[1]), Some("/record/communication_message/msg_2"));
+    }
+
+    /// In a join the `id` column may belong to either side, so citing it would
+    /// be a confident link to possibly the wrong record.
+    #[test]
+    fn joined_query_gets_no_refs() {
+        let mut r = rows(&["x_1"]);
+        attach_record_refs(
+            "SELECT d.id FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id",
+            &mut r,
+        );
+        assert_eq!(ref_of(&r[0]), None);
+    }
+
+    /// Two ontologies on two DIFFERENT tables, named without a join (a union, a
+    /// subquery), is just as ambiguous as a join.
+    ///
+    /// Renamed from `two_ontologies_get_no_refs`: since migration 0081 two
+    /// ontologies can describe one table, and that case must still cite. The
+    /// old name now reads as asserting the opposite of what the code does.
+    #[test]
+    fn two_tables_get_no_refs() {
+        let mut r = rows(&["x_1"]);
+        attach_record_refs(
+            "SELECT id FROM data_calendar_event UNION ALL SELECT id FROM data_communication_email",
+            &mut r,
+        );
+        assert_eq!(ref_of(&r[0]), None);
+    }
+
+    /// An aggregate row is not a record.
+    #[test]
+    fn rows_without_an_id_get_no_refs() {
+        let mut r = vec![serde_json::json!({ "count": 12 })];
+        attach_record_refs("SELECT count(*) FROM data_calendar_event", &mut r);
+        assert_eq!(ref_of(&r[0]), None);
+    }
+
+    #[test]
+    fn a_selected_ref_column_is_never_shadowed() {
+        let mut r = vec![serde_json::json!({ "id": "m1", "ref": "mine" })];
+        attach_record_refs("SELECT id, ref FROM data_communication_message", &mut r);
+        assert_eq!(ref_of(&r[0]), Some("mine"));
+    }
+
+    /// Two ontologies over one table must not read as ambiguity.
+    ///
+    /// `app_page` and `wiki_article` both sit on `app_pages` (migration 0081).
+    /// Before this was distinguished from real ambiguity, the split silently
+    /// stripped the `ref` from every SQL-tool row touching that table — and
+    /// since the agent prompt says to skip uncited results, they disappeared
+    /// from answers instead of erroring.
+    #[test]
+    fn two_ontologies_on_one_table_still_cite() {
+        let mut r = rows(&["page_abc"]);
+        attach_record_refs("SELECT id, title FROM app_pages LIMIT 5", &mut r);
+        let got = r[0].get("ref").and_then(|v| v.as_str());
+        assert!(
+            got.is_some_and(|s| s.contains("page_abc")),
+            "a query naming one table should still cite, even when two \
+             ontologies describe it; got {got:?}"
+        );
+    }
+
+    // Was missing its #[test] attribute since it was written — it compiled,
+    // the compiler warned "never used", and it never once ran.
+    #[test]
+    fn table_names_match_on_word_boundaries() {
+        assert!(mentions_table("select * from wiki_events", "wiki_events"));
+        assert!(!mentions_table("select * from wiki_events_backup", "wiki_events"));
+        assert!(!mentions_table("select * from my_wiki_events", "wiki_events"));
+    }
 
     /// The boundary is Postgres, not the keyword blocklist.
     ///

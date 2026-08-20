@@ -54,9 +54,9 @@ NPU stacks plug in behind Manual mode rather than being ported by us.
 - `embedder.rs` boot guard: re-embeds the probes, refuses to serve on
   fingerprint mismatch (exact same request body as setup — see traps).
 - 128-token chunking in `indexer.rs` (+tests) and **drain mode** in the
-  embedding_index action (full-batch loop, pg advisory single-flight, 2h
-  internal ceiling) with a matching per-action subprocess timeout in
-  `action_runner` (keyed on `action.dir`). Onboarding: weeks → hours.
+  embedding_index applet (full-batch loop, pg advisory single-flight, 2h
+  internal ceiling) with a matching per-applet subprocess timeout in
+  `action_runner` (keyed on `applet.dir`). Onboarding: weeks → hours.
 - Jetson machinery deleted (installer download.rs, cli/upgrade.rs).
 
 ## Landed 2026-07-06 (branch `feat/iroh-pivot`)
@@ -221,8 +221,8 @@ separate), flash 10, overnight soak, power-pull test, ship 9, keep 1.
   bytes before sha256 (float-formatting stability). Two copies exist —
   installer `mode.rs` and core `embedder.rs` — with MUST-MATCH comments;
   the installer can't depend on the core crate.
-- The action runner SIGKILLs subprocesses at 300s; the embedding_index
-  override (2h+5min, keyed on `action.dir` because `action.id` gets
+- The applet runner SIGKILLs subprocesses at 300s; the embedding_index
+  override (2h+5min, keyed on `applet.dir` because `applet.id` gets
   collision-suffixed) exists so drains aren't killed mid-run. The drain's
   own 2h ceiling exits cleanly first, by design.
 - The runner's `has_active_run` gate treats runs >600s as stale — the pg

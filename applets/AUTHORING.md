@@ -1,48 +1,48 @@
-# Authoring an Action
+# Authoring an Applet
 
-This is the practical guide for adding a new action to Virtues. For the implementation contract (how the runtime model works under the hood), see [`ARCHITECTURE.md`](../ARCHITECTURE.md). For schema validation, see [`MANIFEST_SCHEMA.json`](./MANIFEST_SCHEMA.json).
+This is the guide for **builtin applets — the ones that ship with the box and run compiled code.** If you are writing an applet from chat, or anything declarative (a prompt, a schedule, a face), [`AGENTS.md`](./AGENTS.md) is the contract you want. For schema validation see [`MANIFEST_SCHEMA.json`](./MANIFEST_SCHEMA.json).
 
-> **The whole story in one sentence.** An action is a folder at `actions/<name>/` with a `manifest.toml` and (optionally) code or a Svelte component. Drop the folder, hit `POST /api/admin/reconcile`, and the action is live.
-
----
-
-## The three runtimes
-
-Pick one based on what your action actually does:
-
-| Runtime | When to use | Example |
-|---|---|---|
-| **`function`** | Cron job, webhook handler, one-shot CLI | Sync data from an API; respond to an iOS webhook; run an LLM agent loop |
-| **`view`** | Pure-frontend dashboard, no backend | Sleep chart over `data_health_*`; status tile on `/today`; widget |
-
-If you're unsure, **start with `function`**. It's the simplest and covers ~80% of cases.
+> **The whole story in one sentence.** An applet is a folder at `applets/<name>/` with a `manifest.toml` and, optionally, code or a face. Drop the folder, hit `POST /api/admin/reconcile`, and the applet is live.
 
 ---
 
-## Quick start by runtime
+## There is no runtime field
 
-### `runtime = "function"` (Rust)
+An applet's shape is **derived from which fields you set**, never declared. There was a `runtime` key once; it is gone, because a manifest could declare one thing and set fields that meant another, and the declaration won — a manifest with a command and `runtime = "view"` passed validation and then never ran.
+
+| You set | What it is |
+|---|---|
+| `command` | a subprocess: forked per trigger, stdin/stdout JSON |
+| `agent` | an LLM agent loop (runs after the subprocess phase, if both are set) |
+| a `face/index.html` and neither of the above | a face-only applet — never invoked server-side, so `triggers = []` |
+
+Reconcile refuses a manifest that runs (has a command or an agent) with an empty `triggers` list, because it could never fire.
+
+---
+
+## Quick start
+
+### A subprocess applet (Rust)
 
 ```
-actions/
-└── my_action/
+applets/
+└── my_applet/
     ├── manifest.toml
     └── main.rs
 ```
 
-`actions/my_action/manifest.toml`:
+`applets/my_applet/manifest.toml`:
 
 ```toml
-name = "My Action"
+name = "My Applet"
 description = "What this does, in one sentence."
 owner = "user"
-runtime = "function"
-command = ["my_action"]           # bare name → Cargo-built binary under target/
+command = ["my_applet"]           # bare name → Cargo-built binary under target/
 triggers = ["cron", "manual"]
-default_cron = "0 */15 * * * *"   # every 15 minutes
+schedule = "0 */15 * * * *"       # every 15 minutes, box-local time
 ```
 
-`actions/my_action/main.rs`:
+`applets/my_applet/main.rs`:
 
 ```rust
 use anyhow::Result;
@@ -54,8 +54,8 @@ async fn main() -> Result<()> {
     let _db = connect_from_env().await?;
 
     // Do work — read/write data_* tables, call APIs, run an agent.
-    // input.config holds the action's manifest config + user overrides.
-    // input.credentials is populated for actions linked to a credential.
+    // input.config holds the applet's manifest config + user overrides.
+    // input.credentials is populated for applets linked to a credential.
     // input.payload is the trigger body (webhook request or manual args).
 
     let summary = "ran ok";
@@ -63,37 +63,36 @@ async fn main() -> Result<()> {
 }
 ```
 
-`actions/Cargo.toml` — add the bin:
+`applets/Cargo.toml` — add the bin:
 
 ```toml
 [[bin]]
-name = "my_action"
-path = "my_action/main.rs"
+name = "my_applet"
+path = "my_applet/main.rs"
 ```
 
 Build + reconcile:
 
 ```bash
-cargo build --bin my_action
+cargo build --bin my_applet
 curl -X POST http://localhost:8000/api/admin/reconcile
 ```
 
-The action appears in `/actions`, fires on its cron schedule.
+The applet appears in `/applets`, fires on its cron schedule.
 
-### `runtime = "function"` (Python / Node / shell)
+### A subprocess applet (Python / Node / shell)
 
 The contract is **stdin JSON in, stdout JSON out, exit 0 on success**. Any language works:
 
 `manifest.toml`:
 
 ```toml
-name = "My Python Action"
+name = "My Python Applet"
 description = "..."
 owner = "user"
-runtime = "function"
-command = ["python3", "actions/my_python_action/main.py"]  # path relative to repo root
+command = ["python3", "applets/my_python_applet/main.py"]  # path relative to repo root
 triggers = ["cron"]
-default_cron = "0 */30 * * * *"
+schedule = "0 */30 * * * *"
 ```
 
 `main.py`:
@@ -113,46 +112,31 @@ print(json.dumps({"result": result, "config": inp["config"]}))
 
 No Cargo entry needed — a multi-element `command` runs the script directly via `PATH`. Reconcile picks it up after the folder lands.
 
-### `runtime = "view"`
+### A face-only applet
+
+A face is `face/index.html`, rendered in a sandboxed iframe. There is no Svelte
+option: an applet folder must not mount components inside the app bundle, which
+is the whole point of the iframe's opaque origin.
 
 ```
-actions/
-└── my_view/
+applets/
+└── my_dashboard/
     ├── manifest.toml
-    └── ui/                   # UI co-located with the action
-        ├── Card.svelte       # optional — overrides TemplateCard
-        └── Detail.svelte     # optional — overrides ActionDetailView
+    └── face/
+        └── index.html
 ```
-
-`actions/my_view/manifest.toml`:
 
 ```toml
-name = "My View"
-description = "A pure-frontend dashboard."
+name = "My Dashboard"
+description = "What this shows you, in one sentence."
 owner = "user"
-runtime = "view"
 triggers = []                  # never invoked server-side
 default_enabled = true
-
-[config.view]
-name = "my_view"               # the view bundle key — folder name under actions/<name>/ui/
 ```
 
-`actions/my_view/ui/Card.svelte`:
-
-```svelte
-<script lang="ts">
-  import type { Action } from '$lib/api/client';
-  let { action }: { action: Action } = $props();
-</script>
-
-<div class="card">
-  <h3>{action.name}</h3>
-  <!-- Read data_* tables via the API, render whatever you want. -->
-</div>
-```
-
-After reconcile, this view replaces the generic `TemplateCard` for this action on the Templates page. If you also drop `Detail.svelte`, it replaces `ActionDetailView` when the user clicks through.
+Inside `index.html`, link `virtues.css` for the box's theme and use
+`await virtues.query(sql)` for read-only access to your data. See
+`applets/hello_world/face/index.html` for a working one.
 
 ---
 
@@ -168,23 +152,23 @@ Returns:
 
 ```json
 {
-  "upserted": 21,        // total app_actions rows refreshed
+  "upserted": 24,        // total app_applets rows refreshed
   "restarted": []        // (v1.1)
 }
 ```
 
-Code changes (editing `main.rs`, etc.) require a `cargo build` first if Rust. For polyglot actions with `command = [...]` and live-reload tooling, no rebuild needed.
+Code changes (editing `main.rs`, etc.) require a `cargo build` first if Rust. For polyglot applets with `command = [...]` and live-reload tooling, no rebuild needed.
 
 ---
 
 ## Field ownership
 
-Manifest is **declarative** — what the action *is*. SQL (`app_actions`) holds **runtime state** — what it's doing right now. They never disagree because they own different fields:
+Manifest is **declarative** — what the applet *is*. SQL (`app_applets`) holds **runtime state** — what it's doing right now. They never disagree because they own different fields:
 
 | Field | Lives in | Wins on conflict |
 |---|---|---|
-| `name`, `description`, `runtime`, `command`, `triggers`, `default_cron`, `default_enabled`, `per_credential`, `source`, `condition`, `agent`, `config` | manifest.toml | manifest (system actions) / first-seed-only (user actions) |
-| current `enabled`, current `cron_schedule`, last_run, runs[], `credential_id` (if fanned out) | SQL | always SQL |
+| `name`, `description`, `command`, `triggers`, `schedule`, `default_enabled`, `per_credential`, `source`, `condition`, `until`, `agent`, `config` | manifest.toml | manifest (system + ai applets) / first-seed-only (user applets) |
+| current `enabled`, current `schedule`, `memory`, `last_slot_at` / `next_due_at`, last_run, runs[], `credential_id` (if fanned out) | SQL | always SQL |
 
 User toggles via the UI (enable/disable, change cron) write SQL only — your manifest is unchanged. User edits to manifest.toml propagate via reconcile but don't blow away user-managed runtime state.
 
@@ -192,14 +176,14 @@ User toggles via the UI (enable/disable, change cron) write SQL only — your ma
 
 ## per_credential fan-out
 
-If your action needs to run **once per connected account** (e.g. one Google Calendar sync per Google credential), declare:
+If your applet needs to run **once per connected account** (e.g. one Google Calendar sync per Google credential), declare:
 
 ```toml
 per_credential = true
 source = { id = "google" }
 ```
 
-Reconcile materializes one `app_actions` row per active credential of that source. Each row gets `credential_id` set; runtime auto-injects the matching credential into `ActionInput.credentials` when the action fires.
+Reconcile materializes one `app_applets` row per active credential of that source. Each row gets `credential_id` set; runtime auto-injects the matching credential into `AppletInput.credentials` when the applet fires.
 
 `webhook` triggers **require** `per_credential = true` so bearer auth resolves to an identity.
 
@@ -207,21 +191,22 @@ Reconcile materializes one `app_actions` row per active credential of that sourc
 
 ## Naming conventions
 
-- Folder name → action's `id_prefix` (`action_<folder>`) by default
-- A bare `command` (e.g. `["my_action"]`) must match a `[[bin]]` in `actions/Cargo.toml` for Rust; a multi-element `command` runs via `PATH`
-- `runtime = "view"` actions must NOT set `command`
-- `id_prefix` override is rarely needed; only set it if migrating an existing action
+- Folder name → applet's `id_prefix` (`applet_<folder>`) by default
+- A bare `command` (e.g. `["my_applet"]`) must match a `[[bin]]` in `applets/Cargo.toml` for Rust; a multi-element `command` runs via `PATH`
+- A face-only applet sets neither `command` nor `agent`
+- `id_prefix` override is rarely needed; only set it if migrating an existing applet
 
 ---
 
 ## What gets invoked when
 
-| Action runtime | Cron tick | Webhook POST `/webhook/:id` | Manual fire | UI render |
+| Applet shape | Cron tick | Webhook POST `/webhook/:id` | Manual fire | Detail page |
 |---|---|---|---|---|
-| `function` | spawns subprocess | spawns subprocess | spawns subprocess | shows generic card |
-| `view` | skipped (never enqueued) | n/a | skipped | renders custom Card.svelte |
+| has `command` | spawns subprocess | spawns subprocess | spawns subprocess | run log |
+| has `agent` | runs the agent loop | same | same | run log |
+| face only | skipped (never enqueued) | n/a | skipped | renders the face |
 
-For `function`, the trigger payload is delivered as JSON on stdin.
+For a subprocess, the trigger payload is delivered as JSON on stdin.
 
 ---
 
@@ -229,19 +214,19 @@ For `function`, the trigger payload is delivered as JSON on stdin.
 
 | You want | Pick | Why |
 |---|---|---|
-| Run every N minutes/hours | `function` + `default_cron` | Lowest overhead; fork-per-trigger is fine |
-| React to a device webhook | `function` + `triggers = ["webhook"]` + `per_credential` | Standard pattern for iOS/Mac streams |
-| Multi-step LLM agent loop | `function` + `agent = "..."` (no `command`) | Built-in agent runner |
-| Dashboard of `data_*` tables | `view` | No backend needed; pure SQL + Svelte |
-| Polyglot script (Python, Node, Bash) | `function` + `command = [...]` | Cargo not involved |
+| Run every N minutes/hours | `command` + `schedule` | Lowest overhead; fork-per-trigger is fine |
+| React to a device webhook | `command` + `triggers = ["webhook"]` + `per_credential` | Standard pattern for iOS/Mac streams |
+| Multi-step LLM agent loop | `agent = "..."`, no `command` | Built-in agent runner |
+| Dashboard of `data_*` tables | `face/index.html` only | No backend needed; the face queries directly |
+| Polyglot script (Python, Node, Bash) | `command = [...]` | Cargo not involved |
 
 ---
 
 ## Common pitfalls
 
-- **Forgot to `cargo build`** — for Rust function actions, the binary must exist before reconcile. Builds happen at the workspace level: `cargo build --bin <bin-name>`.
+- **Forgot to `cargo build`** — for Rust function applets, the binary must exist before reconcile. Builds happen at the workspace level: `cargo build --bin <bin-name>`.
 - **`webhook` trigger without `per_credential`** — reconcile will refuse the manifest. Webhooks need a credential to authenticate.
-- **`view` action with `triggers = ["cron"]`** — won't run (scheduler skips view-runtime). Set `triggers = []`.
+- **Face-only applet with `triggers = ["cron"]`** — the scheduler skips anything with no command and no agent, so it ticks into nothing. Set `triggers = []`.
 - **Live editing `main.rs`** — reconcile doesn't trigger `cargo build`. You still need to rebuild manually for Rust changes.
 
 ---
@@ -249,16 +234,15 @@ For `function`, the trigger payload is delivered as JSON on stdin.
 ## Where things live
 
 ```
-actions/
+applets/
 ├── sources.toml                     # [[source]] catalog (auth providers)
 ├── Cargo.toml                       # [[bin]] entries for Rust functions
 ├── <name>/
 │   ├── manifest.toml                # declarative metadata
 │   ├── main.rs                      # function entry (Rust)
 │   ├── transform.rs                 # ... or whatever helper modules
-│   ├── ui/                          # for runtime = "view"
-│   │   ├── Card.svelte
-│   │   └── Detail.svelte
+│   ├── face/index.html              # optional face (sandboxed iframe)
+│   ├── schema/NNNN_*.sql            # optional owned tables, append-only
 │   └── ...
 └── MANIFEST_SCHEMA.json             # validate your manifest against this
 ```

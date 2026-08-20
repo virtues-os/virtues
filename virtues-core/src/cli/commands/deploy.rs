@@ -45,7 +45,9 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     println!("  subscription:");
     println!("    linked (api key)     {}", yn(s.subscription.linked));
     println!("  devices:");
-    println!("    paired (WG)          {}", s.devices.paired_wg);
+    // The struct field is `paired_wg` for API stability, but WireGuard is long
+    // gone — the operator sees "paired", not our internal name.
+    println!("    paired               {}", s.devices.paired_wg);
 
     // Setup + next-wins checklists — the textual mirror of the panel/wizard
     // (one state machine, three renderers; see docs/onboarding.md).
@@ -86,36 +88,25 @@ fn print_step(step: &crate::api::box_status::SetupStep) {
 /// gates. Identity first (usually already auto-done on boot), then link the
 /// subscription, then pair a device.
 fn next_step(s: &BoxStatus) -> String {
-    let url = access_url();
     if !s.ready {
         return "identity incomplete — run `virtues bringup`".to_string();
     }
     if !s.subscription.linked {
-        return format!("link your Virtues subscription — open {url}");
+        return "link your Virtues subscription — in the app, sign in".to_string();
     }
     if s.devices.paired_wg == 0 {
-        return format!("pair a device — open {url} and scan the QR");
+        // No URL, no QR: a browser cannot pair (it holds no iroh key), and the
+        // desktop app has no camera. The app takes the code by hand; `virtues
+        // pair` on this terminal prints it.
+        return "pair a device — get the app, run `virtues pair`, type the code".to_string();
     }
     "ready — your box is set up and paired".to_string()
 }
 
-/// Best-effort access URL for the on-box web UI. Uses an explicit override if
-/// set, otherwise a generic hint (the DIY operator knows their host since they
-/// ran `compose up`).
-fn access_url() -> String {
-    for var in ["VIRTUES_PUBLIC_URL", "VIRTUES_CORE_URL", "AUTH_URL"] {
-        if let Ok(v) = std::env::var(var) {
-            if !v.is_empty() {
-                return v.trim_end_matches('/').to_string();
-            }
-        }
-    }
-    "http://<this-box-ip>:8000".to_string()
-}
-
-/// `virtues bringup` — non-interactive first-boot: run migrations and ensure the
-/// box's identity exists (WG server keypair). Idempotent, so it's safe to run on
-/// every boot. The appliance runs this headless; DIY runs it too.
+/// `virtues bringup` — non-interactive first-boot: run migrations. Idempotent,
+/// so it's safe to run on every boot. The appliance runs this headless; DIY
+/// runs it too. (It does NOT mint any keypair — WireGuard is gone; the box's
+/// identity is its iroh key, self-minted on first boot.)
 pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
     println!("running migrations…");
     virtues.database.initialize().await?;
@@ -228,7 +219,7 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
             println!("  Sent magic link to {email}. Waiting… (Ctrl-C to cancel)");
         }
         LoginStart::NoAccount => {
-            println!("  No Virtues subscription on {email}. Re-run `virtues init` and pick [2] Create new.");
+            println!("  No Virtues subscription on {email}. Create one in the app's account step, or run `virtues subscribe`.");
             return Ok(());
         }
         LoginStart::RateLimited => {

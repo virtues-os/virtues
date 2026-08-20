@@ -4,15 +4,20 @@
 	import "$lib/icons"; // Pre-load all icons
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
+	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
 	import MobileTabBar from "$lib/components/mobile/MobileTabBar.svelte";
 	import MobileSettingsView from "$lib/components/mobile/MobileSettingsView.svelte";
 	import MobileOnboarding from "$lib/components/mobile/MobileOnboarding.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
+	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
+	import { search } from "$lib/stores/search.svelte";
 	import DialogHost from "$lib/components/DialogHost.svelte";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
-	import Modal from "$lib/components/Modal.svelte";
+	import { FloatingContent } from "$lib/floating";
 	import IconPicker from "$lib/components/IconPicker.svelte";
+	import LinkEditorPopover from "$lib/components/pages/LinkEditorPopover.svelte";
+	import { linkEditor } from "$lib/stores/linkEditor.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -31,6 +36,7 @@
 	import type { Snippet } from "svelte";
 
 	import { installClientHeader } from "$lib/build";
+	import { reportBootOk, otaCheckNow } from "$lib/tauri/bridge";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 
@@ -40,6 +46,12 @@
 	// Stamp X-Virtues-Client on box requests so this browser's build shows up on
 	// the Devices page (update-manifold Phase 1). Idempotent, SSR-safe.
 	installClientHeader();
+
+	// Foreground OTA check — hoisted to component scope so onDestroy can remove
+	// it. `onMount` is async here, so a returned cleanup would never run.
+	function checkForNewUi() {
+		if (!document.hidden) void otaCheckNow();
+	}
 
 	// Get session expiry from page data
 	// Note: children is intentionally not rendered - this app uses a custom tab-based routing system
@@ -63,8 +75,33 @@
 
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
+		// Confirm to the shell that this build actually rendered. An OTA bundle
+		// stays pending until this lands, and a bundle still pending at the next
+		// launch is treated as one that failed to boot and is rolled back — so
+		// removing this call silently reverts every update. It lives in onMount,
+		// not at module scope, because a module that parses is not a page that
+		// renders, and rendering is the thing being proven. See
+		// src-tauri/src/web_bundle.rs.
+		void reportBootOk();
+
+		// Ask the shell to look for newer UI whenever we come back to the
+		// foreground. The shell also checks at launch, but this app is not
+		// relaunched often — the mic session keeps it alive for days — so
+		// without this a phone could sit on a stale bundle indefinitely. The
+		// check is cheap when there is nothing new (one small GET) and never
+		// swaps the bundle underneath the running session; anything it applies
+		// takes effect at the next launch.
+		function checkForNewUi() {
+			if (!document.hidden) void otaCheckNow();
+		}
+		document.addEventListener("visibilitychange", checkForNewUi);
+
 		// Global dragover handler: Allow drops on document by preventing default
-		// This is a fallback to ensure drops are never blocked by missing handlers
+		// This is a fallback to ensure drops are never blocked by missing handlers.
+		// The matching `drop` guard is in the ROOT layout — cancelling dragover
+		// here is what makes the whole document a drop target, and an unclaimed
+		// drop on that target navigates the window to the file. See
+		// `routes/+layout.svelte`; the two belong together.
 		document.addEventListener("dragover", (e) => {
 			e.preventDefault();
 			if (e.dataTransfer) {
@@ -108,24 +145,18 @@
 		// because they're about panes and tabs, and the sidebar isn't mounted on
 		// the phone shell.
 		//
-		// ⌘1/⌘2 address *panes*, not tabs — there are only ever two, so ⌘3-9
-		// stay free. Tab cycling takes ⌘⇧[ / ⌘⇧] instead, which is the browser
-		// convention and collides with nothing.
+		// ⌘1-⌘9 address *tabs*, browser-style: leftmost tab is 1, counting
+		// across both panes left-to-right. Activating a tab focuses its pane,
+		// so pane switching falls out for free. Tab cycling takes ⌘⇧[ / ⌘⇧],
+		// which is the browser convention and collides with nothing.
 		shortcuts.register(
-			{
-				id: "pane.focus-left",
-				keys: "mod+1",
-				label: "Focus the left pane",
+			...Array.from({ length: 9 }, (_, i) => ({
+				id: `tab.focus-${i + 1}`,
+				keys: `mod+${i + 1}`,
+				label: `Go to tab ${i + 1}`,
 				group: "Window",
-				run: () => windowShellStore.focusPane("left"),
-			},
-			{
-				id: "pane.focus-right",
-				keys: "mod+2",
-				label: "Focus the right pane (splits if needed)",
-				group: "Window",
-				run: () => windowShellStore.focusPane("right"),
-			},
+				run: () => windowShellStore.activateTabByOrdinal(i + 1),
+			})),
 			{
 				id: "tab.next",
 				keys: "mod+shift+]",
@@ -142,7 +173,7 @@
 			},
 		);
 
-		// Hold-⌘ reveals the ⌘1/⌘2 pane badges.
+		// Hold-⌘ reveals the per-tab ⌘N badges.
 		modifierHint.start();
 
 		// Start polling for subscription status
@@ -168,7 +199,10 @@
 					action: {
 						label: "Details",
 						onClick: () =>
-							windowShellStore.openTabFromRoute("/virtues/box", {
+							// Software, not the old catch-all Box — this toast is
+							// about a version having changed, and that page is now
+							// the one place that says which versions are in play.
+							windowShellStore.openTabFromRoute("/virtues/software", {
 								label: "Settings",
 								preferEmptyPane: true,
 							}),
@@ -218,6 +252,7 @@
 	});
 
 	onDestroy(() => {
+		document.removeEventListener("visibilitychange", checkForNewUi);
 		if (sessionExpiryTimer) {
 			clearInterval(sessionExpiryTimer);
 		}
@@ -332,6 +367,11 @@
 <!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
 <DialogHost />
 
+<!-- Ask/search palette. Mounted here rather than inside UnifiedSidebar, which
+     is where it used to live: the sidebar doesn't render on the phone shell,
+     so the app's only way to find anything didn't exist there. -->
+<SearchModal open={search.open} onClose={() => search.hide()} />
+
 <div
 	class="app-shell flex h-screen w-full bg-surface-elevated"
 	class:mobile-shell={mobileLayout.isMobile}
@@ -357,8 +397,14 @@
 		style="background-image: {windowShellStore.isSplit ? 'none' : 'var(--background-image)'}; background-blend-mode: multiply;"
 	>
 		{#if initialized}
-			<!-- SplitContainer handles both split and mono modes -->
-			<SplitContainer />
+			{#if mobileLayout.isMobile}
+				<!-- One window, no panes, no tabs — and only the visible view
+				     is mounted. -->
+				<MobileShell />
+			{:else}
+				<!-- SplitContainer handles both split and mono modes -->
+				<SplitContainer />
+			{/if}
 		{/if}
 	</main>
 </div>
@@ -387,16 +433,62 @@
 	<ServerProvisioning initialStatus={data.serverStatus} />
 {/if}
 
-<!-- Global Icon Picker Modal -->
-<Modal open={iconPickerStore.open} onClose={() => iconPickerStore.hide()} title="Change Icon" width="md">
-	{#snippet children()}
-		<IconPicker
-			value={iconPickerStore.currentValue}
-			onSelect={(icon) => iconPickerStore.select(icon)}
-			close={() => iconPickerStore.hide()}
-		/>
-	{/snippet}
-</Modal>
+<!-- Global icon picker.
+     A popover, not a modal: the in-page and toolbar pickers have always been
+     popovers, and the same panel arriving centred and dimming the document —
+     to ask about one 16px glyph — read as a different, heavier feature. It
+     hangs off wherever it was summoned from (a right-click point, a button
+     rect); with no anchor it falls back to the middle of the window. -->
+{#if iconPickerStore.open}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="icon-picker-scrim" onclick={() => iconPickerStore.hide()}></div>
+	<FloatingContent
+		anchor={iconPickerStore.anchor ?? {
+			x: window.innerWidth / 2,
+			y: window.innerHeight / 2,
+			width: 0,
+			height: 0,
+		}}
+		options={{ placement: "bottom-start", offset: 6, flip: true, shift: true }}
+		class="icon-picker-floating"
+	>
+		{#snippet children()}
+			<IconPicker
+				value={iconPickerStore.currentValue}
+				onSelect={(icon) => iconPickerStore.select(icon)}
+				close={() => iconPickerStore.hide()}
+				color={iconPickerStore.currentColor}
+				onColorSelect={iconPickerStore.colorEnabled
+					? (c) => iconPickerStore.selectColor(c)
+					: undefined}
+			/>
+		{/snippet}
+	</FloatingContent>
+{/if}
+
+<!-- Global link editor.
+     Links render as links now, whether or not the caret is on them, so the raw
+     `[label](url)` is never on screen to be corrected in place. This is where a
+     label or a URL gets fixed instead. Anchored to the link it was opened from,
+     same as the icon picker above. -->
+{#if linkEditor.open}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="icon-picker-scrim" onclick={() => linkEditor.hide()}></div>
+	<FloatingContent
+		anchor={linkEditor.anchor ?? {
+			x: window.innerWidth / 2,
+			y: window.innerHeight / 2,
+			width: 0,
+			height: 0,
+		}}
+		options={{ placement: "bottom-start", offset: 6, flip: true, shift: true }}
+		class="icon-picker-floating"
+	>
+		{#snippet children()}
+			<LinkEditorPopover />
+		{/snippet}
+	</FloatingContent>
+{/if}
 
 <!-- Hidden: SvelteKit children are not rendered - using custom tab-based routing instead -->
 {#if false}
@@ -413,9 +505,29 @@
 	   height so scrollable content ends above it (the bar is position:fixed).
 	   The padded zones show the themed shell background instead of the bare
 	   native window. */
+	/* The bottom reservation is whichever is taller: the tab bar (plus the home
+	   indicator), or the keyboard. They are never both owed — the bar hides
+	   while the keyboard is up, and the home indicator is behind the keyboard
+	   anyway — so `max()` is the whole rule. `--keyboard-inset` is 0 until
+	   `stores/keyboard.svelte.ts` measures otherwise, which makes this
+	   identical to what it was on every surface without a keyboard.
+
+	   This is also what lifts the composer: the chat input sits in normal flow
+	   at the bottom of its view, so shrinking main's content box moves it up
+	   with the keyboard. No component needs to know it happened. */
+	/* No reservation for the tab bar here, deliberately. The bar is glass, and
+	   glass with nothing behind it is just a grey rectangle — reserving the
+	   space meant the view stopped exactly where the bar began, so there was
+	   never any content underneath to blur, which is the entire effect. The
+	   view now runs to the bottom of the screen and its own scroller carries
+	   the bottom padding instead (see Page.svelte), so the last row is still
+	   reachable but everything above it passes behind the glass on its way up.
+
+	   The keyboard inset stays: that one is not decoration, it is the
+	   difference between seeing what you are typing and not. */
 	main.is-mobile {
 		padding-top: env(safe-area-inset-top);
-		padding-bottom: calc(50px + env(safe-area-inset-bottom));
+		padding-bottom: var(--keyboard-inset, 0px);
 	}
 
 	/* Pin the whole shell to the viewport on mobile. Without this, iOS lets the
@@ -460,5 +572,27 @@
 		opacity: 1;
 		color: var(--color-foreground);
 		background: var(--hover-bg);
+	}
+
+	/* Invisible, not dim. The picker is a popover — the page behind it stays
+	   readable and in context — but a click outside still has to dismiss it,
+	   and a transparent full-screen catcher is how that works without every
+	   caller wiring up click-outside itself. */
+	.icon-picker-scrim {
+		position: fixed;
+		inset: 0;
+		z-index: var(--z-popover, 1000);
+		background: transparent;
+	}
+
+	/* Chrome only. The picker sizes and scrolls itself (360px, its own
+	   max-height, its own overflow) — a second width and a second scroller out
+	   here would fight it and produce two scrollbars. */
+	:global(.icon-picker-floating) {
+		z-index: calc(var(--z-popover, 1000) + 1);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
 	}
 </style>

@@ -28,6 +28,7 @@ pub struct Config {
     pub version: Option<String>,
     pub dry_run: bool,
     pub no_init: bool,
+    pub appliance: bool,
 }
 
 pub async fn run(cli: Config) -> Result<()> {
@@ -87,11 +88,30 @@ pub async fn run(cli: Config) -> Result<()> {
         ),
     };
 
+    // Decided before anything is written down or moved. Implied on our own
+    // board: a Dragon exists only to be Virtues, so there is nothing to ask.
+    // `--appliance` is for building an image on hardware the detector doesn't
+    // know yet.
+    let appliance = cli.appliance || matches!(inference, InferenceMode::Dragon);
+
     // ─── System packages ────────────────────────────────────────────────
     ui::section("System packages");
     install::ensure_utf8_locale().await?;
     install::install_deps(&target).await?;
     install::configure_mdns().await?;
+
+    // Move the cluster onto the data disk BEFORE it holds anything.
+    //
+    // Ordering is the whole safety argument: right here the cluster is a fresh
+    // `initdb` with no Virtues database in it, so the copy is small and there
+    // is nothing to lose if it goes wrong. Run after `provision_db` and this
+    // would be relocating the owner's record. Everything downstream — the role,
+    // the database, `bringup`'s migrations — then lands on the data disk
+    // naturally, because it is simply where the cluster is by then.
+    if appliance {
+        install::relocate_postgres_to_data_dir(&cfg).await?;
+    }
+
     install::create_user(&cfg).await?;
     install::provision_db().await?;
 
@@ -112,10 +132,19 @@ pub async fn run(cli: Config) -> Result<()> {
     // libpdfium — document text extraction. Mode-independent (CPU parse):
     // every path gets it, Dragon and DIY alike.
     install::install_pdfium(&cfg).await?;
-    install::write_install_manifest(&cfg, &inference)?;
+
+    // The manifest records the appliance decision and the box reads it back —
+    // `setup_ap::is_appliance()` used to re-derive it from whether a unit file
+    // happened to exist, which is a guess about a decision made up in `flow`.
+    install::write_install_manifest(&cfg, &inference, appliance)?;
     install::write_env_file(&cfg, &inference, validation.as_ref()).await?;
     install::run_bringup(&cfg).await?;
-    install::install_systemd_unit(&cfg).await?;
+    install::install_systemd_unit(&cfg, appliance).await?;
+
+    if appliance {
+        ui::section("Appliance");
+        install::apply_appliance_profile(&cfg).await?;
+    }
 
     // Start the service so init's pair-token mint sees a running daemon.
     //

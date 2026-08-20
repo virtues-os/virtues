@@ -16,13 +16,13 @@
 		getDayEvents,
 		getDayTimeline,
 		getDayChats,
-		updateDay,
+		getArticle,
 		type DaySourceApi,
 		type DayChatApi,
 		type TimelineDayLocationChunk,
 	} from "$lib/wiki/api";
 	import { apiToDayEvent } from "$lib/wiki/converters";
-	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
+	import Markdown from "$lib/components/Markdown.svelte";
 	import { getOntologyName } from "$lib/wiki/ontology";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -31,6 +31,7 @@
 	import DayToolbar from "./DayToolbar.svelte";
 	import DataQualityCoverage from "./DataQualityCoverage.svelte";
 	import JournalCard from "./JournalCard.svelte";
+	import NotesRail from "./NotesRail.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import TableOfContents, { type TocHeading } from "$lib/components/TableOfContents.svelte";
 
@@ -275,23 +276,36 @@
 	// person toggles them on, or filters discrete ontologies off, per chip.
 	type SourceTypeChip = {
 		type: string;
+		/** Every raw source_type this chip covers (they share one label). */
+		types: Set<string>;
 		name: string;
 		count: number;
 		continuous: boolean;
 	};
 
+	// Keyed by DISPLAY name, not raw source_type: some ontologies carry a
+	// sub-discriminator in source_type ("message:imessage" + "message:sms",
+	// "email" + "email_sent") that collapses to one label — keying on the raw
+	// type rendered two identical "Messages" chips. Each chip carries the set
+	// of raw types it covers, so toggling toggles the whole group.
 	const sourceTypeChips = $derived.by<SourceTypeChip[]>(() => {
 		const map = new Map<string, SourceTypeChip>();
 		for (const s of dataSources) {
-			const existing = map.get(s.source_type);
-			if (existing) existing.count++;
-			else
-				map.set(s.source_type, {
+			const name = getOntologyName(s.source_type);
+			const existing = map.get(name);
+			if (existing) {
+				existing.count++;
+				existing.types.add(s.source_type);
+				existing.continuous = existing.continuous && s.continuous;
+			} else {
+				map.set(name, {
 					type: s.source_type,
-					name: getOntologyName(s.source_type),
+					types: new Set([s.source_type]),
+					name,
 					count: 1,
 					continuous: s.continuous,
 				});
+			}
 		}
 		return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
 	});
@@ -301,14 +315,18 @@
 	let activeSourceTypes = $state<Set<string>>(new Set());
 	$effect(() => {
 		const next = new Set<string>();
-		for (const chip of sourceTypeChips) if (!chip.continuous) next.add(chip.type);
+		for (const chip of sourceTypeChips)
+			if (!chip.continuous) for (const t of chip.types) next.add(t);
 		activeSourceTypes = next;
 	});
 
-	function toggleSourceType(type: string) {
+	function toggleSourceChip(chip: SourceTypeChip) {
 		const next = new Set(activeSourceTypes);
-		if (next.has(type)) next.delete(type);
-		else next.add(type);
+		const anyOn = [...chip.types].some((t) => next.has(t));
+		for (const t of chip.types) {
+			if (anyOn) next.delete(t);
+			else next.add(t);
+		}
 		activeSourceTypes = next;
 	}
 
@@ -327,6 +345,11 @@
 	// ─────────────────────────────────────────────────────────────────────────
 	let dayEvents = $state<DayEvent[]>([]);
 
+	// The prior day's trailing sleep. The detective cuts every timeline at
+	// midnight, so an 11pm–6:30am night is split across two days' events —
+	// the sleep chart needs the evening half to draw the night whole.
+	let priorSleepEvents = $state<DayEvent[]>([]);
+
 	const loadEvents = makeLoader(
 		(slug) => getDayEvents(slug),
 		(result) => {
@@ -335,7 +358,27 @@
 	);
 
 	$effect(() => {
-		if (browser && page?.date) loadEvents(currentDateSlug);
+		if (browser && page?.date) {
+			loadEvents(currentDateSlug);
+			const prev = new Date(`${currentDateSlug}T12:00:00`);
+			prev.setDate(prev.getDate() - 1);
+			// Only sleep that touches this day's midnight — the evening half of
+			// tonight's split night. The prior day's own overnight block would
+			// otherwise stretch the sleep chart across thirty hours.
+			const midnight = new Date(`${currentDateSlug}T00:00:00`).getTime();
+			getDayEvents(getLocalDateSlug(prev))
+				.then((evs) => {
+					priorSleepEvents = (evs ?? [])
+						.map(apiToDayEvent)
+						.filter(
+							(e) =>
+								e.isSleep &&
+								!e.userHidden &&
+								e.endTime.getTime() >= midnight - 10 * 60_000
+						);
+				})
+				.catch(() => (priorSleepEvents = []));
+		}
 	});
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -379,42 +422,35 @@
 	// ─────────────────────────────────────────────────────────────────────────
 	// Autobiography (read-only display + inline edit)
 	// ─────────────────────────────────────────────────────────────────────────
+	// READ-ONLY here. The day's prose lives on its article page, and `Edit`
+	// (openDayArticle, below) opens that page in the real editor.
+	//
+	// There used to be an inline contenteditable that saved through
+	// `updateDay({ autobiography })` — into the LEGACY column. Since 0083 moved
+	// day prose onto article pages and `wiki_day_prose` began preferring the
+	// page, that write went somewhere nothing reads: the article shadowed it, so
+	// a user's edit vanished the instant they saved it, while
+	// `last_edited_by: "user"` still claimed the day and stopped narration. The
+	// worst of both.
+	//
+	// Porting the inline editor to write the page instead was the obvious fix
+	// and is wrong: an article page may carry a live Yjs document, and a plain
+	// content write under one is silently clobbered — the hazard
+	// `save_day_article` already guards against by refusing when
+	// `yjs_state IS NOT NULL`. The page editor is CRDT-aware; this was never
+	// going to be. One editor, and it is that one.
 	let summaryText = $state(page.autobiography || "");
-	let editingAutobiography = $state(false);
 
 	$effect(() => {
 		summaryText = page.autobiography || "";
-		editingAutobiography = false;
 	});
 
-	async function saveAutobiography(newText: string) {
-		const trimmed = newText.trim();
-		if (trimmed === summaryText) {
-			editingAutobiography = false;
-			return;
-		}
-		try {
-			await updateDay(currentDateSlug, {
-				autobiography: trimmed,
-				last_edited_by: "user",
-			});
-			summaryText = trimmed;
-		} catch (e) {
-			console.error("Failed to save autobiography:", e);
-		} finally {
-			editingAutobiography = false;
-		}
-	}
-
-	function handleAutobiographyBlur(e: FocusEvent) {
-		const target = e.currentTarget as HTMLElement;
-		saveAutobiography(target.textContent || "");
-	}
-
-	function handleAutobiographyKeydown(e: KeyboardEvent) {
-		if (e.key === "Escape") {
-			editingAutobiography = false;
-		}
+	// The day article IS a page — Edit opens the page editor. The first real
+	// edit claims it (the server flips auto_update off) and the nightly
+	// narration stops rewriting that day.
+	async function openDayArticle() {
+		const a = await getArticle("day", page.id);
+		if (a?.page_id) windowShellStore.openTabFromRoute(`/page/${a.page_id}`);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -452,7 +488,6 @@
 		if (showAutobiography) h.push({ id: "summary", text: "The Day", level: 2 });
 		h.push({ id: "dayline", text: "The Dayline", level: 2 });
 		if (showTimeline) h.push({ id: "timeline", text: "Event Timeline", level: 2 });
-		if (hasAnyContent) h.push({ id: "writing", text: "Your Writing", level: 2 });
 		if (showChats) h.push({ id: "chats", text: "AI Chats", level: 2 });
 		if (showEntities) h.push({ id: "entities", text: "Entities", level: 2 });
 		if (hasAnyContent) h.push({ id: "ontologies", text: "Data Ontologies", level: 2 });
@@ -489,37 +524,63 @@
 					{#if page.epigraph}
 						<p class="day-epigraph">{page.epigraph}</p>
 					{/if}
+					<!-- The record's colophon, where a title page would carry one:
+					     when this was last written, by whose hand, and how much of
+					     the day the record actually saw. The audit trail below
+					     keeps the rest. -->
+					{#if page.updatedAt || page.dataQuality}
+						<p class="day-byline">
+							{#if page.updatedAt}
+								<span>
+									Updated {new Date(page.updatedAt).toLocaleDateString("en-US", {
+										month: "short",
+										day: "numeric",
+										year: "numeric",
+									})}{page.lastEditedBy
+										? ` · by ${page.lastEditedBy === "ai" ? "the record" : "you"}`
+										: ""}
+								</span>
+							{/if}
+							{#if page.updatedAt && page.dataQuality}
+								<span class="byline-sep">·</span>
+							{/if}
+							{#if page.dataQuality}
+								<span title={page.dataQuality.note}>
+									Coverage {page.dataQuality.overall}/5
+								</span>
+							{/if}
+						</p>
+					{/if}
 					<div class="day-title-rule" aria-hidden="true"></div>
 				</header>
 
 				<!-- Narrative first: the day told in words (unfolds from the epigraph) -->
 				{#if showAutobiography}
 					<section class="section lead-section" id="summary">
-						<h2 class="section-title">The Day</h2>
-						{#if editingAutobiography}
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<div
-								class="lead-text lead-editable"
-								contenteditable="true"
-								onblur={handleAutobiographyBlur}
-								onkeydown={handleAutobiographyKeydown}
-								role="textbox"
-								aria-label="Edit autobiography"
+						<h2 class="section-title">
+							The Day
+							<!-- One pen at a time: the day article is kept by the
+							     nightly narration until you edit it, at which point
+							     it becomes yours and the record files notes instead. -->
+							<button
+								type="button"
+								class="day-edit"
+								title="Editing makes this day's article yours — the nightly narration stops rewriting it. Prefer a note for a line you want to attach to the day."
+								onclick={openDayArticle}
 							>
-								{summaryText}
-							</div>
-						{:else}
-							<div class="lead-content">
-								<CitedMarkdown content={summaryText} refVariant="quiet" />
-							</div>
-						{/if}
+								Edit
+							</button>
+						</h2>
+						<div class="lead-content">
+							<Markdown content={summaryText} refVariant="quiet" />
+						</div>
 					</section>
 				{/if}
 
 				<!-- Dayline chart: visual bridge between narrative and timeline -->
 				<section class="section" id="dayline">
 					<h2 class="section-title">The Dayline</h2>
-					<DaylineChart events={dayEvents} timezone={page.startTimezone} pageDate={page.date} readinessScore={page.readinessScore} sleepCycles={page.sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
+					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.startTimezone} pageDate={page.date} readinessScore={page.readinessScore} sleepCycles={page.sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
 				</section>
 
 				{#if hasAnyContent}
@@ -538,11 +599,14 @@
 						</section>
 					{/if}
 
-					<!-- Your Writing: journal entries for this day -->
-					<section class="section" id="writing">
-						<h2 class="section-title">Your Writing</h2>
-						<JournalCard date={currentDateSlug} />
-					</section>
+					<!-- Notes: the day's margin — where the examen line lands, and
+					     where a machine note about this day would wait. -->
+					<NotesRail subjectType="day" subjectId={page.id} />
+
+					<!-- Legacy reflections, read-only; renders nothing when the
+					     day has none. The primitive is retired — writing about a
+					     day belongs to the day's article or a note on it. -->
+					<JournalCard date={currentDateSlug} />
 
 					<!-- Movement is now in the Dayline chart's "Location" pill -->
 
@@ -612,13 +676,13 @@
 						<h2 class="section-title">Data Ontologies</h2>
 						{#if sourceTypeChips.length > 0}
 							<div class="source-filters" role="group" aria-label="Filter data points by ontology">
-								{#each sourceTypeChips as chip (chip.type)}
+								{#each sourceTypeChips as chip (chip.name)}
 									<button
 										type="button"
 										class="source-chip"
 										class:active={activeSourceTypes.has(chip.type)}
 										aria-pressed={activeSourceTypes.has(chip.type)}
-										onclick={() => toggleSourceType(chip.type)}
+										onclick={() => toggleSourceChip(chip)}
 									>
 										{chip.name}
 										<span class="source-chip-count">{chip.count}</span>
@@ -653,15 +717,9 @@
 								<dt>Created</dt>
 								<dd>{new Date(page.createdAt).toLocaleString()}</dd>
 							{/if}
-							{#if page.updatedAt}
-								<dt>Last updated</dt>
-								<dd>
-									{new Date(page.updatedAt).toLocaleString()}
-									{#if page.lastEditedBy}
-										<span class="metadata-dim">· by {page.lastEditedBy}</span>
-									{/if}
-								</dd>
-							{/if}
+							<!-- "Last updated" moved to the byline under the title —
+							     it is the one line a reader wants before the prose,
+							     not after the sources table. -->
 							<dt>Events</dt>
 							<dd>{dayEvents.length}</dd>
 							<dt>Sources</dt>
@@ -768,6 +826,20 @@
 		margin-top: 0.25rem;
 	}
 
+	/* Small-caps register under the title: present but quiet, like a printed
+	   colophon. The tooltip on Coverage carries the quality note. */
+	.day-byline {
+		margin: 0;
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-size: 0.6875rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.byline-sep {
+		margin: 0 0.375rem;
+		opacity: 0.5;
+	}
+
 	.day-epigraph {
 		font-family: var(--font-sans, system-ui, sans-serif);
 		font-style: italic;
@@ -824,26 +896,6 @@
 		margin: 0;
 	}
 
-	.lead-editable {
-		outline: none;
-		border-radius: 4px;
-		padding: 0.375rem 0.5rem;
-		margin: -0.375rem -0.5rem;
-		background: color-mix(
-			in srgb,
-			var(--color-foreground) 3%,
-			transparent
-		);
-		cursor: text;
-	}
-	.lead-editable:focus {
-		background: color-mix(
-			in srgb,
-			var(--color-foreground) 5%,
-			transparent
-		);
-	}
-
 	:global(.spin-icon) {
 		animation: spin 1s linear infinite;
 	}
@@ -870,6 +922,24 @@
 		line-height: 1.35;
 		color: var(--color-foreground);
 		margin: 0 0 0.75rem;
+	}
+
+	/* Quiet until wanted — a small-caps verb beside the heading, not a button
+	   competing with the prose. */
+	.day-edit {
+		margin-left: 0.625rem;
+		background: none;
+		border: none;
+		padding: 0;
+		font-family: var(--font-sans, sans-serif);
+		font-size: 0.6875rem;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+		vertical-align: middle;
+	}
+
+	.day-edit:hover {
+		color: var(--color-primary);
 	}
 
 	.section-header-row {
@@ -1033,8 +1103,19 @@
 	}
 
 	/* Sources table */
+	/* Full-bleed: the records table breaks out of the reading column by the
+	   width of the desktop gutter. A phone's gutter is narrower than 2rem, so
+	   the same bleed hung the table off both edges of the screen — where the
+	   page can't scroll to it and the datagrid's own controls sat outside the
+	   viewport. The bleed starts at the shell's breakpoint, with the gutter. */
 	.sources-table-wrapper {
-		margin: 0 -2rem;
+		margin: 0;
+	}
+
+	@media (min-width: 768px) {
+		.sources-table-wrapper {
+			margin: 0 -2rem;
+		}
 	}
 
 	/* Ontology filter chips */

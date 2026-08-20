@@ -143,9 +143,10 @@ rollback target the cloud lacks today.
   one-line deploy script.
 - **Mac** — keep the Tauri updater; add an **edge feed** so the test channel updates;
   reconcile bundled sidecars by **version**, not byte-diff.
-- **Mobile SPA** — build the parked OTA plan (`mobile-spa-ota-plan.md`): two-layer
-  resolver, `minShellVersion` gate, rollback beacon, over iroh loopback. This is the
-  mobile fast-path; native shell rides the App Store.
+- **SPA delivery** — build `spa-delivery-plan.md`: two-layer resolver,
+  `minShellVersion` gate, rollback beacon, over iroh loopback. No longer mobile-only —
+  the Mac drops `WebviewUrl::External` and adopts the same resolver, which is what
+  unlocks the offline editing Yjs already supports. Native shells ride their stores.
 - **iOS** — **decide the one codebase** (native `apps/ios` vs Tauri mobile) and add CI
   (fastlane → TestFlight). Manual Archive is the current single point of failure.
 - **Models** — reference the model tag from the fleet manifest so a release declares

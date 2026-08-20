@@ -1,0 +1,15 @@
+name = "Daily Readings"
+description = "Keeps the coming fortnight of daily readings on the box, so the morning does not wait on a website."
+owner = "user"
+triggers = ["cron", "manual"]
+
+# Early, and only once a day. The cache runs a fortnight ahead, so this is
+# topping up rather than fetching what is needed now — nothing downstream is
+# waiting on it, and a failed morning costs nothing.
+schedule = "0 30 4 * * *"
+
+# Ships OFF. It reaches a third-party site on a schedule, which is a thing to
+# opt into rather than discover.
+default_enabled = false
+
+command = ["daily_readings"]

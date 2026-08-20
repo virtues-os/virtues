@@ -52,6 +52,20 @@
 		authorized: boolean;
 		recording: boolean;
 		notify: boolean;
+		/** Chunks shipped metadata-only because they measured silent. */
+		silentDropped?: number;
+	}
+
+	/** Radio-hygiene counters — the battery A/B harness (reach plugin). */
+	interface RadioStats {
+		drains: number;
+		dials: number;
+		records: number;
+		bytes: number;
+		parks: number;
+		last_drain_at: number | null;
+		/** No warm endpoint right now — the radio is free to idle. */
+		parked: boolean;
 	}
 
 	/** A collapsed run of consecutive near-identical fixes. */
@@ -77,6 +91,7 @@
 	let financeSync = $state<OutboxStats | null>(null);
 	let audio = $state<AudioStatus | null>(null);
 	let audioSync = $state<OutboxStats | null>(null);
+	let radio = $state<RadioStats | null>(null);
 	let togglingAudio = $state(false);
 	let forgetting = $state(false);
 	let probeOpen = $state(false);
@@ -162,6 +177,7 @@
 				financeSyncResp,
 				audioResp,
 				audioSyncResp,
+				radioResp,
 				ver,
 			] = await Promise.all([
 					invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
@@ -179,6 +195,7 @@
 					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "financekit" }).catch(() => null),
 					invoke<AudioStatus>("plugin:audio|status").catch(() => null),
 					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "microphone" }).catch(() => null),
+					invoke<RadioStats>("plugin:reach|radio_stats").catch(() => null),
 					getVersion().catch(() => ""),
 				]);
 			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
@@ -194,6 +211,7 @@
 			financeSync = financeSyncResp;
 			audio = audioResp;
 			audioSync = audioSyncResp;
+			radio = radioResp;
 			version = ver;
 		} catch (e) {
 			error = String(e);
@@ -316,7 +334,21 @@
 		error = null;
 		try {
 			await invoke("plugin:reach|forget");
-			window.location.reload();
+			// Drop the just-paired marker too — it exists to bridge the launch
+			// that paired, and surviving an unpair would resurrect the pairing
+			// in the eyes of mobileLayout.
+			try {
+				localStorage.removeItem("virtues-just-paired");
+			} catch {
+				/* best effort */
+			}
+			// Go to the connect shell, don't reload. `reload()` re-requests the
+			// URL we are already on — the SPA root — so the app came back up
+			// unpaired, with no way to pair, and the only escape was force
+			// quitting. The shell confirms pairing with the plugin before it
+			// redirects, so landing here after a forget stays here.
+			// (connect.html absorbed mobile-pair.html on 2026-08-11.)
+			window.location.replace("/connect.html");
 		} catch (e) {
 			error = String(e);
 			forgetting = false;
@@ -340,6 +372,13 @@
 		} finally {
 			syncingNow = false;
 		}
+	}
+
+	function fmtBytes(n: number): string {
+		if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+		if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+		if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
+		return `${n} B`;
 	}
 
 	function rel(ts: string): string {
@@ -525,6 +564,20 @@
 				{syncingNow ? "Syncing…" : "Sync now"}
 			</button>
 		</div>
+		{#if radio}
+			<div class="stream">
+				<div class="s-icon" class:on={radio.parked}>
+					<Icon icon="ri:battery-charge-line" width={18} />
+				</div>
+				<div class="s-body">
+					<div class="s-title">{radio.parked ? "Radio resting" : "Link active"}</div>
+					<div class="s-sub">
+						{radio.drains} uploads · {radio.dials} dials · {fmtBytes(radio.bytes)} sent{#if audio?.silentDropped}
+							· {audio.silentDropped} silent chunks kept local{/if}
+					</div>
+				</div>
+			</div>
+		{/if}
 	</div>
 
 	<div class="group-label">
@@ -595,8 +648,6 @@
 		align-items: center;
 		justify-content: space-between;
 		font-size: 11px;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		color: var(--color-foreground-muted);
 		margin: 18px 4px 8px;
 	}
@@ -748,7 +799,6 @@
 	}
 	.l-badge {
 		font-size: 10px;
-		text-transform: uppercase;
 		letter-spacing: 0.03em;
 		padding: 1px 6px;
 		border-radius: 5px;

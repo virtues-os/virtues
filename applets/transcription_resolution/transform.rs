@@ -42,14 +42,26 @@ const RETRY_BACKOFF_BASE_SECS: i64 = 120;
 
 /// Post-transcription hallucination guard. Gemini's failure mode on near-silent
 /// audio is fluent narration of nothing — a "morning routine" invented over a
-/// quiet room. We catch it by proportion: a transcript should be roughly as long
-/// as there was speech to justify it. Allowed length ≈ measured speech-seconds ×
-/// MAX_CHARS_PER_SPEECH_SEC + SLACK; a transcript longer than that, over a chunk
-/// the VAD actually measured, is suppressed to a silent row. 40 chars/sec is ~2×
-/// real fast speech (~20/sec), so dense legitimate speech clears it comfortably;
-/// only text with no acoustic basis trips it. Fires only when the VAD produced a
-/// measurement — a missing measurement never suppresses (fail-open).
-const MAX_CHARS_PER_SPEECH_SEC: f32 = 40.0;
+/// quiet room. We catch it by proportion: a transcript can only be as long as
+/// the RECORDING could physically carry speech.
+///
+/// This budget is anchored to the recording's duration, NOT to the VAD's
+/// measured speech-seconds. That distinction was learned the hard way. The VAD
+/// is an excellent speech *presence* detector and a poor speech *duration*
+/// estimator: on 17 chunks of confirmed conversation (300s each, 81-91% of
+/// energy in the 300-3400Hz voice band) it measured only 5.6-31.5 speech-secs
+/// against 50-86s of actual voice activity — undermeasuring by 1.5-14×, because
+/// MarbleNet fires on onsets and its longest contiguous run was ~3-6s even at
+/// p=0.5. Budgeting against that number deleted ~66 chunks/day of real
+/// conversation for 16 days: every transcript was suppressed to an empty row,
+/// and `drain`'s `t.id IS NULL` made the loss permanent.
+///
+/// 30 chars/sec is ~360 wpm — well past any real speaker, and it sits in the
+/// empirical valley of this box's own 1,243 transcripts, whose genuine-speech
+/// mode tapers out at 24.5 chars/sec while the runaway/looping mode starts
+/// around 45 and runs to 137. Fires only when a duration is known — an unknown
+/// duration never suppresses (fail-open).
+const MAX_CHARS_PER_AUDIO_SEC: f32 = 30.0;
 const HALLUCINATION_SLACK_CHARS: f32 = 80.0;
 
 const SYSTEM_PROMPT: &str = r#"You transcribe short audio clips from a personal wearable mic. Your output is the SOLE source of truth for an automated event timeline and daily summary a person reads about their own life — they never hear the audio; they read what you write as fact. One invented detail — an event that didn't happen, a word no one said, a name no one spoke — is accepted as true and quietly destroys trust in the whole system. Omissions are safe and recoverable: the audio is kept and can be re-processed. Fabrications are not. So report only what you actually hear, and when unsure, leave it out.
@@ -109,7 +121,8 @@ struct PendingRecording {
     started_at: DateTime<Utc>,
     ended_at: Option<DateTime<Utc>>,
     duration_seconds: Option<f64>,
-    audio_url: String,
+    /// `None` for metadata-only rows — silent chunks ship no audio bytes.
+    audio_url: Option<String>,
     audio_format: String,
     is_silent: bool,
 }
@@ -269,13 +282,26 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
         }
         let client = virtues_api.as_ref().unwrap();
 
+        // Metadata-only rows can't normally reach here (is_silent short-circuits
+        // above), but a non-silent row with no audio is unrecoverable — mark the
+        // attempt and move on rather than aborting the drain.
+        let Some(audio_url) = rec.audio_url.as_deref() else {
+            tracing::warn!(
+                stream_id = %rec.source_stream_id,
+                "non-silent recording with no audio_url, skipping"
+            );
+            record_attempt_failure(db, &rec.source_stream_id).await;
+            failed += 1;
+            continue;
+        };
+
         // Read the audio file from disk.
-        let audio_bytes = match read_audio(&rec.audio_url) {
+        let audio_bytes = match read_audio(audio_url) {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!(
                     stream_id = %rec.source_stream_id,
-                    audio_url = %rec.audio_url,
+                    audio_url = %audio_url,
                     error = %e,
                     "audio file missing or unreadable, skipping"
                 );
@@ -358,23 +384,70 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
             // Cost is captured at the BearerClient chokepoint (post_json records
             // the gateway usage.cost into app_ai_calls, tagged "transcription").
             Ok(t) => {
-                // Hallucination guard: a transcript far longer than the measured
-                // speech could justify is fluent narration of near-silence — the
-                // exact failure that wrote a fake morning routine over a quiet
-                // room. Suppress to a silent row rather than trust it. Fires only
-                // when the VAD gave a measurement (Some); None never suppresses.
+                // Hallucination guard: a transcript longer than the recording
+                // could physically carry is fluent narration of near-silence —
+                // the exact failure that wrote a fake morning routine over a
+                // quiet room. Suppress to a silent row rather than trust it.
+                //
+                // Anchored to the recording's duration, never to the VAD's
+                // speech-seconds — see MAX_CHARS_PER_AUDIO_SEC for why that
+                // distinction cost 16 days of conversation. The near-silence
+                // case this guard exists for is already handled upstream: the
+                // VAD gate refuses to call Gemini at all below MIN_SPEECH_SECS,
+                // and it separates cleanly there (17/17 speech vs 0/21 silence
+                // on the same corpus). What's left for this guard is the
+                // runaway transcript, which duration alone catches.
                 let text_len = t.text.trim().chars().count() as f32;
+                let audio_secs: Option<f32> = rec
+                    .duration_seconds
+                    .map(|d| d as f32)
+                    .or_else(|| {
+                        rec.ended_at
+                            .map(|e| (e - rec.started_at).num_milliseconds() as f32 / 1000.0)
+                    })
+                    .filter(|d| *d > 0.0);
                 let over_budget = matches!(
-                    speech_secs,
-                    Some(s) if text_len > s * MAX_CHARS_PER_SPEECH_SEC + HALLUCINATION_SLACK_CHARS
+                    audio_secs,
+                    Some(d) if text_len > d * MAX_CHARS_PER_AUDIO_SEC + HALLUCINATION_SLACK_CHARS
                 );
+                // Degeneracy guard: a transcript that repeats itself is a model
+                // stuck in a loop, not speech.
+                //
+                // The budget check above only fires when the VAD returned a
+                // measurement — `speech_secs: None` fails open, and that is how
+                // loops still landed after the budget guard shipped. This one
+                // needs no VAD at all: it reads the text itself.
+                //
+                // Real examples from a box: "I don't know." ×280, "no, no, no,"
+                // ×240, "[singing] Da da da da…" to the token cap — 21,714
+                // characters for a 300-second clip. Speech does not do this.
+                let degenerate = is_degenerate(&t.text);
+                if degenerate {
+                    tracing::warn!(
+                        stream_id = %rec.source_stream_id,
+                        text_len = t.text.trim().chars().count(),
+                        "suppressing degenerate transcript: repeats itself past any plausible speech"
+                    );
+                    match insert_silent_transcript(db, rec).await {
+                        Ok(_) => skipped += 1,
+                        Err(e) => {
+                            tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
+                                "failed to insert silent transcript (degeneracy guard)");
+                            record_attempt_failure(db, &rec.source_stream_id).await;
+                            failed += 1;
+                        }
+                    }
+                    continue;
+                }
+
                 if over_budget {
                     tracing::warn!(
                         stream_id = %rec.source_stream_id,
+                        audio_secs = ?audio_secs,
                         speech_secs = ?speech_secs,
                         text_len = text_len as usize,
                         title = %t.title.as_deref().unwrap_or("(none)"),
-                        "suppressing likely hallucination: transcript far exceeds measured speech"
+                        "suppressing likely hallucination: transcript exceeds what the recording could carry"
                     );
                     match insert_silent_transcript(db, rec).await {
                         Ok(_) => skipped += 1,
@@ -464,7 +537,7 @@ async fn insert_silent_transcript(db: &PgPool, rec: &PendingRecording) -> Result
     sqlx::query(
         r#"INSERT INTO data_communication_transcription (
             id, audio_url, text, title, summary, language,
-            duration_seconds, start_time, end_time,
+            duration_seconds, started_at, ended_at,
             speaker_count, confidence, tags, entities,
             source_stream_id, source_table, source_provider, metadata
         ) VALUES (
@@ -518,7 +591,7 @@ async fn insert_transcription(
     sqlx::query(
         r#"INSERT INTO data_communication_transcription (
             id, audio_url, text, title, summary, language,
-            duration_seconds, start_time, end_time,
+            duration_seconds, started_at, ended_at,
             speaker_count, confidence, tags, entities,
             source_stream_id, source_table, source_provider, metadata
         ) VALUES (
@@ -801,5 +874,75 @@ fn audio_mime_type(format: &str) -> &'static str {
         "ogg" => "audio/ogg",
         "flac" => "audio/flac",
         _ => "audio/mp4",
+    }
+}
+
+/// Below this, a long transcript is a loop rather than speech.
+///
+/// Set DELIBERATELY LOW. The two errors are not symmetric: letting a loop
+/// through now costs a little index space (chunk-level dedupe collapses it
+/// downstream), while suppressing real speech destroys a record of something
+/// that was actually said — and it is invisible, because a suppressed
+/// transcript is indistinguishable from a quiet room.
+///
+/// Real loops sit around 0.002–0.03 ("da" repeated 500 times is 1/500). Real
+/// speech, even circular speech, stays far above 0.10. 0.08 leaves a wide
+/// margin on the side that matters.
+const MIN_DISTINCT_WORD_RATIO: f32 = 0.08;
+
+/// Only applied past this length. Short utterances are legitimately repetitive
+/// — "no, no, no" is a thing people say, and "[inaudible]" repeated is a
+/// correct output for muffled audio.
+const DEGENERACY_MIN_WORDS: usize = 120;
+
+/// Does this transcript repeat itself past any plausible speech?
+///
+/// Deliberately a ratio rather than a length cap: a genuinely long conversation
+/// is exactly what this table exists to hold, and a 6,000-second recording
+/// should never be suppressed for being long. What is suspicious is a large
+/// amount of text carrying almost no distinct words.
+fn is_degenerate(text: &str) -> bool {
+    let words: Vec<String> = text
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    if words.len() < DEGENERACY_MIN_WORDS {
+        return false;
+    }
+    let distinct: std::collections::HashSet<&String> = words.iter().collect();
+    (distinct.len() as f32 / words.len() as f32) < MIN_DISTINCT_WORD_RATIO
+}
+
+#[cfg(test)]
+mod degeneracy_tests {
+    use super::*;
+
+    #[test]
+    fn a_looping_transcript_is_caught() {
+        assert!(is_degenerate(&"da ".repeat(500)));
+        assert!(is_degenerate(&"I don't know. ".repeat(280)));
+        assert!(is_degenerate(&"no, no, no, ".repeat(240)));
+    }
+
+    /// The guard must never eat a real conversation. This is the failure that
+    /// would be invisible: a suppressed transcript looks exactly like silence.
+    #[test]
+    fn ordinary_conversation_survives() {
+        let talk = "So I was thinking about the trip next month and whether we \
+                    should drive or take the train, because the tickets are cheaper \
+                    midweek but the car means we can stop at your mother's on the \
+                    way back, which she would like, and it saves us a night in a \
+                    hotel either way. ";
+        let long = talk.repeat(6); // ~350 words of varied speech
+        assert!(!is_degenerate(&long));
+    }
+
+    /// Short repetitive utterances are real. "[inaudible]" is a correct output.
+    #[test]
+    fn short_repetition_is_left_alone() {
+        assert!(!is_degenerate("no, no, no"));
+        assert!(!is_degenerate(&"[inaudible] ".repeat(10)));
     }
 }

@@ -48,6 +48,22 @@ struct Cli {
     dry_run: bool,
     #[arg(long)]
     no_init: bool,
+
+    /// Provision this machine as a Virtues appliance rather than someone's
+    /// general-purpose Linux server.
+    ///
+    /// The DIY installer is a guest on a machine the owner uses for other
+    /// things, so it changes as little as possible. An appliance is the
+    /// opposite: the box exists only to be Virtues, its only interface is the
+    /// attached display, and anything else competing for the screen or the
+    /// boot is a defect. So this turns off the desktop session, stops the boot
+    /// blocking on a network the box does not have yet, and installs the
+    /// display kiosk.
+    ///
+    /// Implied on our own hardware; the flag exists for building an appliance
+    /// image on a board we haven't taught the detector about yet.
+    #[arg(long)]
+    appliance: bool,
 }
 
 #[tokio::main]
@@ -73,6 +89,7 @@ async fn main() -> Result<()> {
         version: cli.version,
         dry_run: cli.dry_run,
         no_init: cli.no_init,
+        appliance: cli.appliance,
     })
     .await;
 

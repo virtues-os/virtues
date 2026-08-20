@@ -6,6 +6,8 @@ pub mod backup_volume;
 pub mod volumes;
 pub mod commands;
 pub mod configure_inference;
+pub mod deprovision;
+pub mod image_check;
 pub mod diag;
 pub mod doctor;
 pub mod lake_adopt;
@@ -43,6 +45,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         Commands::Sudo { .. } => {
             // Same — handled in main.rs against a bare DB pool.
             unreachable!("Sudo command should be handled in main.rs");
+        }
+
+        Commands::ImageCheck => {
+            // Handled in main.rs: it runs on a DEPROVISIONED box, which by
+            // definition has no database for the app stack to open.
+            unreachable!("ImageCheck command should be handled in main.rs");
         }
 
         Commands::Device { .. } => {
@@ -83,6 +91,19 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Rollback command should be handled in main.rs");
         }
 
+        Commands::Prepare { .. } => {
+            // Same — fetches and stages a release without touching the DB or
+            // the running install. Must work on a box whose database is down,
+            // which is a common reason to want the next release ready.
+            unreachable!("Prepare command should be handled in main.rs");
+        }
+
+        Commands::Activate => {
+            // Same — the staged half of an upgrade; the new binary's `migrate`
+            // touches the DB after the flip, not this process.
+            unreachable!("Activate command should be handled in main.rs");
+        }
+
         Commands::Channel { .. } => {
             // Same — reads/writes one file in the state root and must work on a
             // box whose database is down, which is a common reason to be
@@ -100,6 +121,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — destructive schema management against a bare pool,
             // like Restore/Uninstall.
             unreachable!("Reset command should be handled in main.rs");
+        }
+
+        Commands::Deprovision { .. } => {
+            // Same — it wraps Reset and then edits files under /etc, so it
+            // must not need a healthy app stack.
+            unreachable!("Deprovision command should be handled in main.rs");
         }
 
         Commands::ConfigureInference { .. } => {
@@ -368,7 +395,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 vec![d.parse().map_err(|e| format!("bad date: {e}"))?]
             } else {
                 sqlx::query_scalar(
-                    "SELECT DISTINCT start_time::date FROM data_communication_transcription ORDER BY 1",
+                    "SELECT DISTINCT started_at::date FROM data_communication_transcription ORDER BY 1",
                 )
                 .fetch_all(pool)
                 .await?
@@ -535,16 +562,19 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             };
 
             println!();
-            println!("✅ Day summary written to wiki_days id={}", day.id);
+            println!("✅ Day narrated — id={}", day.id);
             if let Some(epigraph) = &day.epigraph {
                 println!();
                 println!("Epigraph:");
                 println!("  {epigraph}");
             }
-            if let Some(autobio) = &day.autobiography {
+            // The prose lives on the day's article page, and only there — the
+            // legacy `autobiography` column and the view's fallback arm were
+            // dropped in 0106.
+            if let Some(prose) = day.article.as_ref() {
                 println!();
-                println!("Autobiography:");
-                for line in autobio.lines() {
+                println!("Article:");
+                for line in prose.lines() {
                     println!("  {line}");
                 }
             }

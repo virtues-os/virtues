@@ -13,7 +13,8 @@ Kotlin/native collector halves can land later without rework.
 - **The mobile app is already built and works on iOS.**
   `apps/web/src-tauri/src/lib.rs` is the `#[tauri::mobile_entry_point]`: it runs
   the `reach` plugin in-process (`:7117` loopback over iroh), loads the bundled
-  SvelteKit SPA via `ui/mobile-pair.html`, and injects
+  SvelteKit SPA via `ui/connect.html` (formerly `connect.html`; merged with
+  `pair.html` into one airlock 2026-08-11), and injects
   `__VIRTUES_BACKEND_ORIGIN__` / `__VIRTUES_MOBILE__`. The collector plugins are
   wired here too, but that is the deferred part.
 - **The desktop app (macOS) still uses the OLD sidecar model.**
@@ -128,7 +129,7 @@ fork. macOS just goes through Phase 0 first; Windows/Linux inherit the same path
    `plugin:reach|{pair, discover, reach_status, forget, drain_now}` — because
    `status`/`ensure_serving` collapse what the sidecar split across
    diagnose/recheck/install. Two options: (a) point Windows/Linux at a
-   **desktop-chrome variant of `mobile-pair.html`** (which already speaks reach
+   **desktop-chrome variant of `connect.html`** (which already speaks reach
    commands — cheapest), or (b) keep `pair.html` and add thin `#[cfg(not(macos))]`
    wrapper commands in `main.rs` that forward the old names to `app.reach()`.
    Recommend (a). Note the reach `discover` uses a **subnet scan, not mDNS**
@@ -247,7 +248,7 @@ later follow-up (parallels the iOS Keychain).
 - **Manifest:** `INTERNET` only (no collector permissions for views).
 - **Capabilities:** done in C1b — `android.json` carries the reach commands.
 - **`tauri.android.conf.json`:** mirror `tauri.ios.conf.json` — same
-  `beforeBuildCommand` (`pnpm build` + the `200.html` / `mobile-pair.html`
+  `beforeBuildCommand` (`pnpm build` + the `200.html` / `connect.html`
   copies), `frontendDist: "../build"`, `externalBin: []`, mobile CSP. Identifier
   stays `com.virtues.app`.
 - **Icons:** `tauri icon` already emits the Android `mipmap` set — reuse.
@@ -256,7 +257,7 @@ later follow-up (parallels the iOS Keychain).
 ### C4 — Build + run (needs toolchain)
 
 - `tauri android dev --target aarch64` (device) → confirm it boots reach-only,
-  loads `mobile-pair.html`, pairs by code, and loads the box UI over the
+  loads `connect.html`, pairs by code, and loads the box UI over the
   loopback. Then a background/foreground cycle.
 - `tauri android build --apk --target aarch64` → sideloadable APK.
 
@@ -379,7 +380,7 @@ against the same `virtues_enqueue` outbox that already exists.
 2. **Self-update now or later?** Per-platform updaters (Windows NSIS + latest.json
    + Authenticode; Linux AppImage-only) are real work. Recommend **deferring to
    manual/download for v1**, keeping the macOS updater as-is.
-3. **Pairing shell approach** — (a) desktop-chrome variant of `mobile-pair.html`
+3. **Pairing shell approach** — (a) desktop-chrome variant of `connect.html`
    on reach commands (recommended, cheapest) vs (b) sidecar-name wrapper commands
    in `main.rs`. See Workstream A.3.
 4. **Phase 0 timing / risk appetite** — retiring the macOS proxy sidecar is the

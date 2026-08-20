@@ -1,7 +1,6 @@
 name = "Document Extraction"
-description = "Extract native text from drive files (PDF, DOCX, text, HTML) into searchable chunks."
+description = "Reads the text out of your PDFs and documents so you can search inside them."
 owner = "system"
-runtime = "function"
 command = ["document_extraction"]
 triggers = ["cron"]
 schedule = "30 */5 * * * *"

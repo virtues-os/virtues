@@ -20,6 +20,7 @@
  */
 import { pinsStore } from '$lib/stores/pins.svelte';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
+import { iconPickerStore } from '$lib/stores/iconPicker.svelte';
 
 export interface PinTarget {
 	/** Route or absolute URL. External `http(s)` urls are allowed and open out. */
@@ -54,6 +55,44 @@ export async function togglePin(target: PinTarget): Promise<boolean> {
 }
 
 /**
+ * "Change icon" for a pinned url — opens the shared picker, which carries the
+ * color swatches with it, so a pin's glyph and its color are chosen in one
+ * place like every other icon in the app.
+ *
+ * A pin's rows were dots on purpose ("a pinned thing has no natural glyph").
+ * That holds right up until the user wants to pick one; the dot stays as the
+ * default for pins that never do.
+ */
+export function pinIconMenuItem(
+	url: string,
+	anchor?: { x: number; y: number; width: number; height: number },
+): ContextMenuItem | null {
+	const pin = pinsStore.getByUrl(url);
+	if (!pin) return null;
+
+	return {
+		id: 'pin-icon',
+		label: 'Change icon',
+		icon: 'ri:emotion-line',
+		action: () => {
+			iconPickerStore.show(
+				pin.icon ?? null,
+				(icon) => {
+					void pinsStore.setIcon(pin.id, icon);
+				},
+				{
+					color: pin.color ?? null,
+					onColorSelect: (color) => {
+						void pinsStore.setColor(pin.id, color);
+					},
+					anchor,
+				},
+			);
+		},
+	};
+}
+
+/**
  * The shared context-menu entry. Drop it into any menu builder:
  *
  *   contextMenu.show(pos, [...myItems, pinMenuItem({ url, label, icon })]);
@@ -70,8 +109,10 @@ export function pinMenuItem(
 		id: 'pin-sidebar',
 		// Says what happens, and names where it goes — "Pin" alone doesn't
 		// answer "pin it to what?" when three different things in this app
-		// could plausibly be the destination.
-		label: pinned ? 'Unpin from sidebar' : 'Pin to sidebar',
+		// could plausibly be the destination. The destination has a name now,
+		// so the verb uses it: the Desk is where things you're working on go,
+		// and "add to desk" is the same sentence the zone header speaks.
+		label: pinned ? 'Take off the desk' : 'Add to desk',
 		icon: pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line',
 		dividerBefore: opts.dividerBefore ?? true,
 		action: async () => {

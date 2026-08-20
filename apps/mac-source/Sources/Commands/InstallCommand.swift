@@ -35,7 +35,7 @@ struct InstallCommand: ParsableCommand {
             let config = Config(
                 deviceId: pair.deviceId,
                 apiEndpoint: pair.endpoint,
-                actionIds: pair.actionIds,
+                appletIds: pair.appletIds,
                 boxNodeId: pair.boxNodeId,
                 relayUrl: pair.relayUrl,
                 createdAt: Date(),

@@ -3,42 +3,32 @@
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import { apiGet } from "$lib/api/client";
-	import { formatDate } from "$lib/utils/dateUtils";
 	import { onMount, onDestroy } from "svelte";
-	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { getBackupStatus } from "$lib/api/client";
-
-	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
-	const BUILD_COMMIT: string = __BUILD_COMMIT__;
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// A toggle, not an event — `active` renders it held down, so the toolbar can
-	// show what mode the view is in rather than just what you can do to it.
-	$effect(() =>
-		paneActions.set(tab.id, [
-			{
-				id: "system.detail",
-				label: "Detail",
-				icon: "ri:terminal-line",
-				active: detail,
-				run: () => {
-					detail = !detail;
-					loadTelemetry();
-				},
-			},
-		]),
-	);
+	// The three version lines — box, UI bundle, native shell — used to be read
+	// here, in the About chapter. They are Settings → Software's now: this page
+	// measures the machine, and a version number is not a measurement.
+
+	// Detail lives ON the page, not in the pane toolbar. The toolbar is shared
+	// chrome — the same strip whatever tab you are in — so a control that only
+	// means something on this one screen reads there as an app-wide mode. It
+	// also sat far from the thing it changes: the extra rows appear inside the
+	// sections below, and the switch for them was in a different region of the
+	// window entirely (2026-08-13).
+	function toggleDetail() {
+		detail = !detail;
+		loadTelemetry();
+	}
 
 	let loading = $state(true);
 	let detail = $state(false); // dev-mode "Detail" layer
 	let live = $state(false); // a successful poll happened recently
 
-	// ─── /health (static version + db) ──────────────────────────────────────
+	// ─── /health (service liveness) ─────────────────────────────────────────
 	let serverStatus = $state("unknown");
-	let version = $state("");
-	let commit = $state("");
-	let builtAt = $state("");
 	let database = $state("unknown");
 
 	// ─── /api/system/telemetry (live) ───────────────────────────────────────
@@ -59,16 +49,6 @@
 		const next = arr.length >= HIST ? arr.slice(1) : arr.slice();
 		next.push(v);
 		return next;
-	}
-
-	function formatBuildTime(iso: string): string {
-		return formatDate(iso, {
-			year: "numeric",
-			month: "long",
-			day: "numeric",
-			hour: "numeric",
-			minute: "2-digit",
-		});
 	}
 
 	// ─── Unit typesetting ───────────────────────────────────────────────────
@@ -164,9 +144,6 @@
 			if (r.ok) {
 				const d = await r.json();
 				serverStatus = d.status || "unknown";
-				version = d.version || "";
-				commit = d.commit || BUILD_COMMIT;
-				builtAt = d.built_at || "";
 				database = d.database || "unknown";
 			}
 		} catch (e) {
@@ -240,13 +217,22 @@
 {/snippet}
 
 <Page title="System" description="The machine, examined." maxWidth="wide">
-	<!-- The Detail toggle moved to the pane toolbar; the live pill stayed. It
-	     reports state rather than doing anything, and the action slot is for
-	     things you can press. Putting a status light in a row of buttons would
-	     invite people to click it. -->
+	<!-- Two different kinds of thing, kept visibly different. The pill REPORTS
+	     (no border, no hover, nothing to press); Detail ACTS. A status light
+	     styled like a button invites clicks that do nothing, which is why the
+	     pill keeps its own shape rather than joining the row. -->
 	{#snippet actions()}
 		<div class="head-actions">
 			<span class="live" class:on={live}><span class="dot"></span>{live ? "live" : "—"}</span>
+			<button
+				class="detail-btn"
+				class:on={detail}
+				onclick={toggleDetail}
+				aria-pressed={detail}
+			>
+				<Icon icon="ri:terminal-line" width="14" />
+				<span>Detail</span>
+			</button>
 		</div>
 	{/snippet}
 
@@ -427,19 +413,23 @@
 			</section>
 		{/if}
 
-		<!-- ─── NETWORK & DEVICES ──────────────────────────────────────── -->
+		<!-- ─── HOST ───────────────────────────────────────────────────── -->
+		<!-- Was "Network & Devices", which claimed two subjects this page no
+		     longer owns: which Wi-Fi the box is on is Settings → Network, and
+		     how many devices are paired is Settings → Devices, where you can
+		     also do something about it. What is left is the machine's own
+		     identity and the traffic crossing it — measurements, not settings. -->
 		<section class="chapter">
-			<h2 class="chapter-title">Network &amp; Devices</h2>
+			<h2 class="chapter-title">Host</h2>
 			<div class="cols">
 				<div class="col">
-					{@render ledger("Paired devices", t?.devices?.paired_wg != null ? `${t.devices.paired_wg}` : "—")}
+					{@render ledger("Hostname", t?.host?.hostname ?? "—", true)}
+					{@render ledger("Uptime", t?.host ? uptimeStr(t.host.uptime_secs) : "—", true)}
 					{@render ledger("Throughput", t?.network ? `↓ ${rateStr(t.network.rx_per_sec)}  ↑ ${rateStr(t.network.tx_per_sec)}` : "—", true)}
 				</div>
 				<div class="col">
-					{@render ledger("Hostname", t?.host?.hostname ?? "—", true)}
 					{@render ledger("OS", t?.host?.os ?? "—")}
 					{@render ledger("Kernel", t?.host?.kernel ?? "—", true)}
-					{@render ledger("Uptime", t?.host ? uptimeStr(t.host.uptime_secs) : "—", true)}
 				</div>
 			</div>
 
@@ -504,19 +494,27 @@
 			</section>
 		{/if}
 
-		<!-- ─── ABOUT (static, demoted) ────────────────────────────────── -->
+		<!-- ─── SERVICE ────────────────────────────────────────────────── -->
+		<!-- Was "About", and it carried the three version lines. Those moved to
+		     Settings → Software, which is now the one place that answers "what
+		     am I running" — they were being told here *and* by the update
+		     panel that used to sit at the top of this same scroll. What stays
+		     is live: is the service healthy, is the database there, how much
+		     of the pool is in use. `Package` goes too — Software says it, with
+		     the channel and the build counter beside it, which is the version
+		     sentence that is actually true. -->
 		<section class="chapter">
-			<h2 class="chapter-title">About</h2>
+			<h2 class="chapter-title">Service</h2>
+			<!-- Three facts, so ONE column rather than the two-column grid the
+			     other chapters use: three splits 2/1 whichever way you cut it,
+			     and a lone ledger row across from a pair reads as something
+			     failed to load. The half-width measure is unchanged, so the
+			     chapter still lines up with its neighbours. -->
 			<div class="cols">
 				<div class="col">
 					{@render ledger("Status", serverStatus, false, serverStatus === "healthy" ? "ok" : "crit")}
 					{@render ledger("Database", database, false, database === "connected" ? "ok" : "crit")}
 					{@render ledger("Pool", t?.pool ? `${t.pool.idle} idle / ${t.pool.size} total` : "—", true)}
-				</div>
-				<div class="col">
-					{@render ledger("Package", version || "—")}
-					{@render ledger("Built", formatBuildTime(builtAt) || "—")}
-					{@render ledger("Commit", commit ? commit.slice(0, 12) : "—", true)}
 				</div>
 			</div>
 
@@ -540,15 +538,38 @@
 		align-items: center;
 		gap: 14px;
 	}
+	.detail-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		padding: 3px 9px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: none;
+		cursor: pointer;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+	}
+
+	.detail-btn:hover {
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		color: var(--color-foreground);
+	}
+
+	/* Held down, not merely hovered — this is a mode you are in. */
+	.detail-btn.on {
+		border-color: var(--color-primary);
+		background: var(--primary-subtle);
+		color: var(--color-foreground);
+	}
+
 	.live {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
 		font-family: var(--font-mono);
 		font-size: 11px;
-		letter-spacing: 0.04em;
 		color: var(--foreground-subtle);
-		text-transform: uppercase;
 	}
 	.live .dot {
 		width: 6px;
@@ -617,8 +638,6 @@
 	.vital-head { display: flex; align-items: baseline; justify-content: space-between; }
 	.vital-name {
 		font-size: 11px;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
 		color: var(--foreground-subtle);
 	}
 	.vital-pct { font-size: 12px; }
@@ -694,7 +713,14 @@
 	.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 48px; }
 	@media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
 	.col { display: flex; flex-direction: column; gap: 11px; }
-	.ledger-row { display: flex; align-items: baseline; gap: 4px; }
+	/* Wraps rather than overflows. Label and value both refuse to shrink (a
+	   truncated reading is a wrong reading), so a long pair — "Accelerator"
+	   against "llama-server (GPU or CPU per sidecar build)" — needs 397px and
+	   had been scrolling the whole page sideways on a phone. Wrapped, the
+	   leader runs out to the end of the first line and the value takes the
+	   second, right-aligned by the auto margin; on a wide window nothing
+	   changes, because nothing wraps. */
+	.ledger-row { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
 	.ledger-label { font-size: 13px; color: var(--foreground); flex-shrink: 0; }
 	.leader {
 		flex: 1;
@@ -702,7 +728,7 @@
 		transform: translateY(-3px);
 		min-width: 12px;
 	}
-	.ledger-value { font-size: 13px; color: var(--foreground-muted); flex-shrink: 0; user-select: text; }
+	.ledger-value { font-size: 13px; color: var(--foreground-muted); flex-shrink: 0; user-select: text; margin-left: auto; }
 	.ledger-value.mono { font-family: var(--font-mono); font-size: 12px; }
 	.ledger-value.ok { color: var(--success); }
 	.ledger-value.warn { color: var(--warning); }
@@ -737,9 +763,7 @@
 		text-align: left;
 		font-weight: 400;
 		color: var(--foreground-subtle);
-		text-transform: uppercase;
 		font-size: 10px;
-		letter-spacing: 0.06em;
 		padding: 4px 8px;
 		border-bottom: 1px solid var(--border);
 	}

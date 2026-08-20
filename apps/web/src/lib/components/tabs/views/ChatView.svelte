@@ -10,7 +10,7 @@
 		initializeSelectedModel,
 		getInitializationPromise,
 	} from "$lib/stores/models.svelte";
-	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
+	import Markdown from "$lib/components/Markdown.svelte";
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import SelectionPopover from "$lib/components/SelectionPopover.svelte";
@@ -31,7 +31,6 @@
 	import { animateChatEdit } from "$lib/ai/aiPresence";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
 	import { notebookStore } from "$lib/stores/notebook.svelte";
-	import ChatNotebookBreadcrumb from "$lib/components/chat/ChatNotebookBreadcrumb.svelte";
 	import {
 		updateChat,
 		deleteChat,
@@ -41,7 +40,6 @@
 		getProfile,
 		setChatTitle,
 		cancelChat,
-		createPage,
 	} from "$lib/api/client";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
@@ -51,6 +49,7 @@
 	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
 	import EditDiffCard from "$lib/components/chat/EditDiffCard.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
+	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
 	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
 	import { ChatError } from "$lib/components/chat";
@@ -78,6 +77,7 @@
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
 
 	// Extract conversationId from tab route (format: /chat/chat_abc123 or / for new chat)
 	// Returns the full chat ID including 'chat_' prefix, or undefined for new chat
@@ -436,9 +436,11 @@
 	let citationPanelOpen = $state(false);
 	let selectedCitation = $state<Citation | null>(null);
 
-	// The Notebook (room) this chat lives in — at most one. Its id is sent with each
-	// message (drives the agent's active-space context + server-side binding), and
-	// the breadcrumb at the top lets the user enter / file / create a room.
+	// The Notebook (room) this chat lives in — at most one. Its id is sent with
+	// each message (drives the agent's active-space context + server-side
+	// binding). Read-only here now: the picker that used to set it from this
+	// view is gone, so the binding is seeded from the session row and changed
+	// where the filing happens — in the notebook.
 	let chatNotebookId = $state<string | null>(null);
 	// Which conversation chatNotebookId was seeded for. Seeding happens ONCE per
 	// conversation (when its session row is available, or once the session list
@@ -461,17 +463,6 @@
 			seededNotebookFor = id;
 		}
 	});
-
-	async function setChatNotebook(notebookId: string | null) {
-		chatNotebookId = notebookId; // locally authoritative
-		seededNotebookFor = conversationId; // don't let a later seed override this pick
-		// Persist only if the chat already exists server-side; a brand-new chat
-		// has no row yet and is bound by the create path from getNotebookId().
-		const persisted = chatSessions.sessions.some((s) => s.conversation_id === conversationId);
-		if (persisted) {
-			await notebookStore.setChatNotebook(conversationId, notebookId);
-		}
-	}
 
 	// Open citation panel with selected citation
 	function openCitationPanel(citation: Citation) {
@@ -588,32 +579,6 @@
 
 		// Open the page BESIDE the chat (Category A) — never navigate the chat in place.
 		windowShellStore.openRouteBeside(`/page/${pageId}`);
-	}
-
-	// ---- Save an answer into a Page (researcher-plan D4.2) ------------------
-	// The synthesis bridge's cheap half: a grounded, cited answer is already the
-	// draft — this just captures it as a page instead of a copy-paste. Ref links
-	// in the markdown survive, so citations stay clickable.
-	let savingAnswer = $state(false);
-	async function saveAnswerToPage(text: string) {
-		if (savingAnswer || !text.trim()) return;
-		savingAnswer = true;
-		try {
-			// Title from the first heading or sentence, trimmed to something sane.
-			const firstLine =
-				text
-					.split("\n")
-					.map((l) => l.replace(/^#+\s*/, "").trim())
-					.find((l) => l.length > 0) ?? "Untitled";
-			const title = firstLine.slice(0, 60);
-			const page = await createPage(title, text);
-			editAllowListStore.addPage(page.id, title);
-			windowShellStore.openRouteBeside(`/page/${page.id}`);
-		} catch (e) {
-			console.error("[ChatView] save answer to page failed:", e);
-		} finally {
-			savingAnswer = false;
-		}
 	}
 
 	// Effect to handle create_page side effects (auto-open new pages)
@@ -986,8 +951,9 @@
 
 	// Load conversation data on mount
 	onMount(() => {
-		// Load Notebooks so the room breadcrumb can resolve name/accent immediately.
-		notebookStore.load();
+		// (The notebook list used to be fetched here for the breadcrumb's name
+		// and accent. The app layout already loads it, and nothing in this view
+		// renders a notebook's name any more.)
 
 		// Claim any prompt handed off from Home / ⌘K / "Ask this notebook"
 		// (consume-once, synchronously — so only this freshly-opened chat sends it).
@@ -1188,18 +1154,13 @@
 	let selectedAgentMode = $state<AgentModeId>('chat');
 	let selectedPersona = $state<string>('default');
 
-	// Retrieval scope for notebook chats: 'open' (whole graph, notebook items
-	// up-weighted) or 'scoped' (grounded — items only). Persisted per chat;
-	// meaningless (and hidden) outside a notebook.
-	let chatMode = $state<'open' | 'scoped'>('open');
-	$effect(() => {
-		const id = conversationId;
-		chatMode = localStorage.getItem(`chat-scope:${id}`) === 'scoped' ? 'scoped' : 'open';
-	});
-	function toggleChatMode() {
-		chatMode = chatMode === 'scoped' ? 'open' : 'scoped';
-		localStorage.setItem(`chat-scope:${conversationId}`, chatMode);
-	}
+	// Retrieval scope. 'scoped' (grounded in a notebook's items only) still
+	// exists on the wire and in the retriever — what's gone is the pill above
+	// the composer that switched it, which was a permanent piece of chrome for
+	// a setting almost nobody moved. Every chat is 'open': the whole graph,
+	// with the notebook up-weighted when there is one. If scoped comes back it
+	// belongs somewhere it can be explained, not as a two-state word.
+	const chatMode = 'open' as const;
 
 	// Sync selected model with store (only on initial load)
 	$effect(() => {
@@ -1242,24 +1203,32 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
-	// Chat title (header breadcrumb tail). Sourced from the persisted session so it
-	// stays in sync with the sidebar; only shown once the chat has earned a title.
-	let editingTitle = $state(false);
-	let titleDraft = $state("");
-	let titleInputEl = $state<HTMLInputElement | null>(null);
+	// The chat's title, from the persisted session so it stays in step with the
+	// sidebar. It is no longer DRAWN here: a title fixed to the top-left of the
+	// pane restated what the tab above it already said, and doubled as a rename
+	// affordance nobody looked for. Renaming lives where the name is shown —
+	// right-click the tab, or the sidebar row.
 	const chatTitle = $derived(
 		chatSessions.sessions.find((s) => s.conversation_id === conversationId)?.title ?? "",
 	);
-	const showTitle = $derived((!!chatTitle || editingTitle) && !isEmpty && !isGhost);
 
-	function startRename() {
-		titleDraft = chatTitle;
-		editingTitle = true;
-		tick().then(() => {
-			titleInputEl?.focus();
-			titleInputEl?.select();
-		});
-	}
+	// Adopt the stored title into the tab label.
+	//
+	// The route registry stamps a new chat tab "Chat" because at parse time the
+	// title isn't known — it lives in the session list, which may not have
+	// loaded yet. Openers that HAVE a title (the Desk, Home, chat history) pass
+	// it along, so this only bites on the paths that don't: a deep link, a
+	// restored tab, "open beside". The label then stayed "Chat" forever, which
+	// was survivable while the pane also printed the title and is not now.
+	//
+	// Placeholders only — a label the user has renamed by hand must not be
+	// overwritten by the server's copy.
+	const PLACEHOLDER_LABELS = new Set(["Chat", "New Chat", "Temporary Chat"]);
+	$effect(() => {
+		if (!chatTitle || !tab) return;
+		if (!PLACEHOLDER_LABELS.has(tab.label)) return;
+		windowShellStore.updateTab(tab.id, { label: chatTitle });
+	});
 
 	// A real, saved chat the user can act on (not the empty new-chat state, not a ghost).
 	const canManageChat = $derived(!isEmpty && !isGhost);
@@ -1279,7 +1248,6 @@
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		const pinned = !!windowShellStore.findTab((t) => t.id === tab.id)?.tab.pinned;
 		const items: ContextMenuItem[] = [
-			{ id: "rename", label: "Rename", icon: "ri:edit-line", action: startRename },
 			{
 				id: "pin",
 				label: pinned ? "Unpin tab" : "Pin tab",
@@ -1304,32 +1272,6 @@
 			},
 		);
 	}
-
-	async function saveTitle() {
-		const next = titleDraft.trim();
-		editingTitle = false;
-		if (!next || next === chatTitle) return;
-		// Optimistic across all store-bound surfaces (header + sidebar), then persist.
-		chatSessions.applyTitle(conversationId, next);
-		windowShellStore.updateTab(tab.id, { label: next });
-		try {
-			await updateChat(conversationId, { title: next });
-		} catch (e) {
-			console.error("[ChatView] Failed to rename chat:", e);
-			await chatSessions.refresh(); // roll back to server truth on failure
-		}
-	}
-
-	function titleKeydown(e: KeyboardEvent) {
-		if (e.key === "Enter") {
-			e.preventDefault();
-			saveTitle();
-		} else if (e.key === "Escape") {
-			e.preventDefault();
-			editingTitle = false;
-		}
-	}
-
 
 	// Generate title after first assistant response
 	async function generateTitle() {
@@ -1604,30 +1546,6 @@
 		<div class="chat-container">
 			<!-- Main chat area -->
 			<div class="chat-area" class:ghost={isGhost}>
-				<!-- Breadcrumb — the Space this chat lives in, then its title (top chrome) -->
-				<div class="chat-topbar">
-					<ChatNotebookBreadcrumb notebookId={chatNotebookId} onChange={setChatNotebook} />
-					{#if showTitle}
-						{#if chatNotebookId}
-							<Icon icon="ri:arrow-right-s-line" width="15" class="crumb-sep" />
-						{/if}
-						{#if editingTitle}
-							<!-- svelte-ignore a11y_autofocus -->
-							<input
-								bind:this={titleInputEl}
-								class="title-input"
-								bind:value={titleDraft}
-								onblur={saveTitle}
-								onkeydown={titleKeydown}
-								aria-label="Rename chat"
-							/>
-						{:else}
-							<button class="chat-title" onclick={startRename} title="Rename chat">
-								{chatTitle}
-							</button>
-						{/if}
-					{/if}
-				</div>
 				<!-- Top-right chrome: temporary-chat toggle + live context ring -->
 				<div class="chat-topbar-right">
 					{#if !isGhost && contextUsage && extractConversationId(tab.route)}
@@ -1782,24 +1700,12 @@
 													<div
 														class="text-base text-foreground assistant-response"
 													>
-														<CitedMarkdown
+														<Markdown
 															content={part.text}
 															{isStreaming}
 															citations={citationContext}
 															onCitationClick={openCitationPanel}
 														/>
-														{#if !isStreaming && message.role === "assistant" && part.text.trim().length > 80}
-															<div class="answer-actions">
-																<button
-																	class="answer-action"
-																	title="Save this answer as a page"
-																	disabled={savingAnswer}
-																	onclick={() => saveAnswerToPage(part.text)}
-																>
-																	<Icon icon="ri:file-add-line" width="13" /> Save to page
-																</button>
-															</div>
-														{/if}
 													</div>
 											{:else if part.type === "file"}
 												{@render renderFilePart(part as any)}
@@ -1851,6 +1757,25 @@
 														} : undefined}
 													/>
 												{/if}
+											{:else if part.type === "tool-setup_applet" && (part as any).state === "output-available"}
+											{@const out = (part as any).output}
+											{#if out?.applet_id && out?.status !== "check_failed"}
+												<!-- The gate, in the conversation. An applet that crosses a
+												     boundary is created disabled and the model cannot enable
+												     it; that invariant stands. What changes is that approving
+												     no longer means walking to another page to find a toggle. -->
+												<AppletProposalCard
+													appletId={out.applet_id}
+													name={out.name}
+													description={out.description}
+													schedule={out.schedule}
+													capabilities={out.capabilities ?? []}
+													estimatedCostPerDay={out.estimated_cost_per_day}
+													gated={out.gated}
+													lifecycle={out.lifecycle}
+													updated={out.status === "updated"}
+												/>
+											{/if}
 											{:else if part.type === "tool-code_interpreter"}
 												{@const toolPart = part as any}
 												{@const isRunning = toolPart.state === "pending" || toolPart.state === "input-available"}
@@ -2068,27 +1993,6 @@
 								{/each}
 							</div>
 						{/if}
-						{#if chatNotebookId}
-							<!-- Open vs Scoped: how this notebook shapes retrieval.
-							     Open = whole graph with the notebook up-weighted;
-							     Scoped = grounded in the notebook's items only. -->
-							<div class="scope-toggle-row max-w-3xl">
-								<button
-									class="scope-toggle"
-									class:scoped={chatMode === 'scoped'}
-									onclick={toggleChatMode}
-									title={chatMode === 'scoped'
-										? 'Grounded: answers only from this notebook\'s items. Click for Open.'
-										: 'Open: searches everything, this notebook weighted first. Click for Scoped.'}
-								>
-									<Icon
-										icon={chatMode === 'scoped' ? 'ri:focus-3-line' : 'ri:global-line'}
-										width="12"
-									/>
-									{chatMode === 'scoped' ? 'Scoped' : 'Open'}
-								</button>
-							</div>
-						{/if}
 						<ChatInput
 							allowEmptySubmit={stagedRefs.length > 0 || attachments.length > 0}
 							onAttach={addFiles}
@@ -2132,33 +2036,6 @@
 		border-top-color: var(--color-primary);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
-	}
-
-	/* Open/Scoped retrieval toggle (notebook chats only) */
-	.scope-toggle-row {
-		display: flex;
-		justify-content: flex-end;
-		margin: 0 auto 4px;
-		width: 100%;
-	}
-	.scope-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		padding: 2px 8px;
-		font-size: 0.6875rem;
-		border-radius: 999px;
-		border: 1px solid var(--color-border);
-		background: transparent;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-	}
-	.scope-toggle:hover {
-		color: var(--color-foreground);
-	}
-	.scope-toggle.scoped {
-		border-color: var(--color-primary);
-		color: var(--color-primary);
 	}
 
 	@keyframes spin {
@@ -2235,64 +2112,10 @@
 		overflow: hidden;
 	}
 
-	.chat-topbar {
-		position: absolute;
-		top: 8px;
-		left: 12px;
-		z-index: 5;
-		display: flex;
-		align-items: center;
-		gap: 1px;
-		max-width: min(60%, 34rem);
-		padding: 2px;
-		border-radius: 9px;
-		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
-	}
-
-	.chat-topbar :global(.crumb-sep) {
-		flex-shrink: 0;
-		color: var(--color-foreground-subtle);
-		opacity: 0.7;
-	}
-
-	.chat-title {
-		min-width: 0;
-		max-width: 22rem;
-		height: 24px;
-		padding: 0 6px;
-		border: 1px solid transparent;
-		border-radius: 7px;
-		background: transparent;
-		color: var(--color-foreground);
-		font-family: var(--font-sans);
-		font-size: 12px;
-		font-weight: 500;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		cursor: text;
-		transition: background 0.12s ease;
-	}
-
-	.chat-title:hover {
-		background: var(--hover-bg);
-	}
-
-	.title-input {
-		max-width: 22rem;
-		height: 24px;
-		padding: 0 6px;
-		border: 1px solid color-mix(in srgb, var(--color-primary) 50%, transparent);
-		border-radius: 7px;
-		background: var(--color-surface);
-		color: var(--color-foreground);
-		font-family: var(--font-sans);
-		font-size: 12px;
-		font-weight: 500;
-		outline: none;
-	}
+	/* `.chat-topbar` and its title/input rules lived here. The pane no longer
+	   prints the chat's name at all — the tab above it does, and one name per
+	   thing is the rule. `.chat-topbar-right` (context ring, ghost toggle, ⋮)
+	   stays; it holds controls, not a label. */
 
 	.chat-topbar-right {
 		position: absolute;
@@ -2319,6 +2142,25 @@
 			color 0.15s ease,
 			background-color 0.15s ease;
 		cursor: pointer;
+	}
+
+	/* 28px of visible chip, 44pt of reachable square — the chip is deliberately
+	   small and floats over the transcript, so the target grows around it
+	   rather than under it. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.ghost-toggle {
+			position: relative;
+		}
+
+		.ghost-toggle::after {
+			content: "";
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			width: 44px;
+			height: 44px;
+			transform: translate(-50%, -50%);
+		}
 	}
 
 	.ghost-toggle:hover:not(:disabled) {
@@ -2502,6 +2344,11 @@
 		width: 100%;
 		max-width: 48rem;
 		padding: 0 2rem 2rem 2rem;
+		/* The composer is the one piece of bottom chrome that must stay ABOVE
+		   the floating bar rather than pass behind it — glass over the field you
+		   are typing into is not a nice effect, it is a covered input. The
+		   messages behind it still scroll under the bar. */
+		padding-bottom: calc(1rem + var(--tabbar-reserve) + env(safe-area-inset-bottom));
 		background-color: var(--color-surface);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
@@ -2852,39 +2699,6 @@
 	/* Assistant response text - spacing after thinking block */
 	.assistant-response {
 		padding-top: 4px;
-	}
-
-	/* Answer → page (D4.2): quiet until the answer is hovered. */
-	.answer-actions {
-		display: flex;
-		gap: 4px;
-		margin-top: 6px;
-		opacity: 0;
-		transition: opacity 120ms;
-	}
-	.assistant-response:hover .answer-actions,
-	.answer-actions:focus-within {
-		opacity: 1;
-	}
-	.answer-action {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		padding: 3px 8px;
-		font-size: 0.6875rem;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: transparent;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-	}
-	.answer-action:hover {
-		background: var(--ref-pill-bg);
-		color: var(--color-primary);
-	}
-	.answer-action:disabled {
-		opacity: 0.4;
-		cursor: default;
 	}
 
 	.shiny-title {

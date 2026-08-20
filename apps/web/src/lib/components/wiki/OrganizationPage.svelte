@@ -7,8 +7,13 @@
 
 <script lang="ts">
 	import type { OrganizationPage as OrganizationPageType } from "$lib/wiki/types";
-	import WikiRightRail from "./WikiRightRail.svelte";
-	import Icon from "$lib/components/Icon.svelte";
+	import EntityArticleSection from "./EntityArticleSection.svelte";
+	import SubjectBacklinks from "./SubjectBacklinks.svelte";
+	import NotesRail from "./NotesRail.svelte";
+	import EntityRecordsSection from "./EntityRecordsSection.svelte";
+	import AliasEditor from "./AliasEditor.svelte";
+	import Markdown from "$lib/components/Markdown.svelte";
+	import { updateOrganization } from "$lib/wiki/api";
 
 	interface Props {
 		page: OrganizationPageType;
@@ -40,17 +45,11 @@
 		return `${start} — ${end}`;
 	}
 
-	// Build content string for TOC
-	const fullContent = $derived(`${page.content || ''}
+	async function saveAliases(next: string[]) {
+		const saved = await updateOrganization(page.id, { aliases: next });
+		if (!saved) throw new Error("Could not save aliases");
+	}
 
-## Your Role
-
-## Key Contacts
-
-## Locations
-
-## Narrative Context
-`);
 </script>
 
 <div class="page-layout">
@@ -76,12 +75,48 @@
 				</div>
 			</header>
 
+			<!-- Also known as. Same placement as the person page: it corrects
+			     the record calling this org by a surface the resolver does not
+			     recognise — Gusto the sender vs Gusto the company. Writing one
+			     here backfills every past mention of it (migration 0037). -->
+			<div class="org-aliases">
+				<AliasEditor
+					aliases={page.aliases ?? []}
+					canonicalName={page.title}
+					onSave={saveAliases}
+				/>
+			</div>
+
 			<hr class="divider" />
 
-			<!-- Notes (main narrative content) -->
+			<!-- The article: machine-written prose about this entity -->
+			<section class="section" id="article">
+				<EntityArticleSection
+					article={page.article}
+					articleUpdatedAt={page.articleUpdatedAt}
+					name={page.title}
+									subjectType="organization"
+					subjectId={page.id}
+					autoUpdate={page.articleAutoUpdate}
+					onChanged={() => location.reload()}
+				/>
+			</section>
+
+			<!-- The record: every data point that references this organization -->
+			<section class="section" id="the-record">
+				<h2 class="section-title">The record</h2>
+				<EntityRecordsSection entityId={page.id} />
+			</section>
+
+			<SubjectBacklinks subjectType="organization" subjectId={page.id} />
+			<NotesRail subjectType="organization" subjectId={page.id} />
+
+			<!-- Notes: the user's own writing -->
 			{#if page.content}
 				<section class="section" id="notes">
-					<div class="notes-content">{page.content}</div>
+					<div class="notes-content">
+						<Markdown content={page.content} refVariant="quiet" />
+					</div>
 				</section>
 			{/if}
 
@@ -173,22 +208,6 @@
 			{/if}
 		</div>
 	</article>
-
-	<WikiRightRail content={fullContent}>
-		{#snippet metadata()}
-			<div class="sidebar-meta">
-				<div class="meta-title">{formatOrgType(page.orgType)}</div>
-				{#if page.role}
-					<div class="meta-role">{page.role}</div>
-				{/if}
-				<div class="meta-stats">
-					<span class="stat">{page.keyContacts?.length || 0} contacts</span>
-					<span class="stat-sep">·</span>
-					<span class="stat">{page.citations?.length || 0} sources</span>
-				</div>
-			</div>
-		{/snippet}
-	</WikiRightRail>
 </div>
 
 <style>
@@ -261,6 +280,11 @@
 		margin-top: 0.5rem;
 		font-size: 0.875rem;
 		color: var(--color-foreground-subtle);
+	}
+
+	/* Between the header and the article's rule, matching the person page. */
+	.org-aliases {
+		margin-top: 0.625rem;
 	}
 
 	.org-badge {
@@ -386,37 +410,6 @@
 		font-size: 0.875rem;
 		color: var(--color-foreground);
 		flex: 1;
-	}
-
-	/* Sidebar metadata */
-	.sidebar-meta {
-		text-align: center;
-	}
-
-	.meta-title {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: var(--color-foreground);
-		margin-bottom: 0.125rem;
-	}
-
-	.meta-role {
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		margin-bottom: 0.5rem;
-	}
-
-	.meta-stats {
-		display: flex;
-		justify-content: center;
-		gap: 0.375rem;
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.stat-sep {
-		color: var(--color-border-strong);
 	}
 
 	/* Responsive */

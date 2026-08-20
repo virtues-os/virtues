@@ -1,6 +1,10 @@
 <script lang="ts">
-	import Icon from "$lib/components/Icon.svelte";
+	import AtlasIcon from "./AtlasIcon.svelte";
 	import { isAppleKeyboard } from "$lib/utils/platform";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { HOME_ROUTE } from "$lib/sidebar/sections";
+	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 
 	interface Props {
 		collapsed?: boolean;
@@ -11,31 +15,70 @@
 
 	let { collapsed = false, animationDelay = 0, onSearch }: Props = $props();
 
-	// The mark, then the search. Identity above utility.
+	// The masthead is a PATH, and the path is the way home.
 	//
-	// Two wrong versions preceded this one, and they were wrong the same way.
-	// First the ∴ was a button that went Home — a wordmark behaving like a
-	// control, which is a pattern used nowhere else in software, so nobody read
-	// it as the way home. Then it was replaced with a bordered, input-shaped
-	// search field, which was worse: a border is a hard edge and nothing else
-	// in the sidebar has one, so a utility you touch twenty times a day became
-	// the highest-contrast object in the panel, outranking the user's entire
-	// life beneath it.
+	// The earlier wordmark-as-home was reverted for a good reason: a bare mark
+	// behaving like a button is a pattern read nowhere as navigation. This is
+	// the answer to that objection rather than a repeat of the mistake — the
+	// mast reads `∴ Virtues / galilee`, a breadcrumb, and breadcrumb roots are
+	// clickable everywhere in software. The root gained a job the moment it
+	// gained a tail.
 	//
-	// Both mistakes were the same mistake: the top of the sidebar is the most
-	// valuable space in the app, and putting a *control* there spends it.
+	// The tail appears only for things that carry a bookcloth color (today:
+	// notebooks). Routes without a cloth get no tail: a path that narrated
+	// every room would be a status bar.
 	//
-	// So: one row. The mark on the left, inert — no hover, no cursor, no tab
-	// stop — and search as a small icon button flexed to the right of it. The
-	// mark is the one place the serif appears in the chrome, which concentrates
-	// the typographic identity in a single deliberate spot instead of spreading
-	// it thin.
-	//
-	// `virtues` is set at the SAME size as the nav labels below. A wordmark that
-	// is bigger than everything around it is a logo demanding attention, and
-	// this one has no job to do beyond saying whose desk this is. The serif and
-	// the ∴ carry the identity; scale would just make it loud.
+	// The tail carries no dot. The dot's job is to identify a thing in a LIST —
+	// on its Desk spine, among other spines, and on its tab among other tabs.
+	// A breadcrumb has no siblings to be distinguished from, so the dot there
+	// was decoration, and it was stealing width from the one element that
+	// actually needs it: the name, which was truncating to "Dog &…".
 	const hint = $derived(isAppleKeyboard ? "⌘K" : "Ctrl K");
+
+	const activeTab = $derived.by(() => {
+		const pane = windowShellStore.activePane;
+		if (!pane) return null;
+		return pane.tabs.find((t) => t.id === pane.activeTabId) ?? null;
+	});
+
+	// The tail is whatever the rail is currently showing you the inside of.
+	//
+	// Two sources, one grammar. A sub-navigation mode (Settings, Developer)
+	// wins, because when a mode is open the rail IS that mode — its rows are
+	// the only rows on screen. Otherwise the tail names the pinned thing you
+	// are in, keyed on the pin list rather than on a route shape, so it
+	// follows the Desk wherever the Desk goes: a pinned PDF or applet gets a
+	// segment exactly like a notebook does.
+	//
+	// This is why the mode panel no longer carries its own back row. A mode
+	// used to be the one place in the app you left by a bespoke control; now
+	// every "you are inside something" state is left the same way — by
+	// clicking the root of the path. One way in, one way out, and any future
+	// mode gets both for free.
+	const modeTitle = $derived(sidebarMode.active?.title ?? null);
+
+	const pinnedTail = $derived.by(() => {
+		const route = activeTab?.route;
+		if (!route) return null;
+		const pin = pinsStore.getByUrl(route);
+		if (!pin) return null;
+		return pin.label?.trim() || activeTab?.label || null;
+	});
+
+	const tailLabel = $derived(modeTitle ?? pinnedTail);
+
+	function goHome() {
+		// Inside a mode, the root is the way out of the mode — not a navigation.
+		// Leaving Settings should not also move the pane you were reading.
+		if (sidebarMode.activeId) {
+			sidebarMode.exit();
+			return;
+		}
+		windowShellStore.openTabFromRoute(HOME_ROUTE, {
+			label: "Home",
+			focusExisting: true,
+		});
+	}
 </script>
 
 <div class="masthead" class:collapsed>
@@ -43,22 +86,48 @@
 		class="masthead-row animate-row"
 		style="animation-delay: {animationDelay}ms"
 	>
-		<!-- Inert. aria-hidden because "∴ virtues" read aloud between the window
-		     title and the first destination is noise, not information. -->
-		<div class="mark" aria-hidden="true">
-			<span class="mark-glyph">∴</span><span class="mark-word">virtues</span>
+		<div class="path">
+			<!-- The mark, drawn: the JJannon ∴ glyph is text-weight; the mast
+			     needs logo weight. Same optical grid as the Atlas icons —
+			     16px box, ~12px of ink. -->
+			<span class="mark-glyph" aria-hidden="true">
+				<svg viewBox="0 0 12 10.5" width="12" height="10.5" fill="currentColor">
+					<circle cx="6" cy="2.4" r="1.5" />
+					<circle cx="2.6" cy="8.1" r="1.5" />
+					<circle cx="9.4" cy="8.1" r="1.5" />
+				</svg>
+			</span>
+			<button
+				type="button"
+				class="mark-word"
+				onclick={goHome}
+				title={modeTitle ? `Leave ${modeTitle}` : "Home"}
+			>
+				Virtues
+			</button>
+			{#if tailLabel}
+				<span class="path-sep" aria-hidden="true">/</span>
+				<span class="path-tail">{tailLabel}</span>
+			{/if}
 		</div>
-
-		<button
-			type="button"
-			class="search-btn"
-			onclick={() => onSearch?.()}
-			aria-label="Search"
-			title="Search ({hint})"
-		>
-			<Icon icon="ri:search-line" width="16" />
-		</button>
 	</div>
+
+	<!-- Search gets its own full-width row rather than an icon crowding the
+	     path. It is the most-used control in the panel and it was rendered as
+	     the smallest target in it, squeezed against a breadcrumb that needs
+	     every pixel of width it can get. A row can also say what it is and
+	     what key opens it, which an unlabelled magnifier cannot. -->
+	<button
+		type="button"
+		class="search-row animate-row"
+		style="animation-delay: {animationDelay + 20}ms"
+		onclick={() => onSearch?.()}
+		title="Search ({hint})"
+	>
+		<AtlasIcon name="search" />
+		<span class="search-label">Search</span>
+		<span class="search-hint" aria-hidden="true">{hint}</span>
+	</button>
 </div>
 
 <style>
@@ -90,26 +159,73 @@
 		padding-left: var(--sidebar-padding-left-base);
 	}
 
-	.mark {
+	/* Gap and gutter are the row tokens, not hand-picked numbers, so the
+	   wordmark lands on exactly the same text edge as every label below it. */
+	.path {
 		display: flex;
-		align-items: baseline;
-		gap: 6px;
+		align-items: center;
+		gap: var(--sidebar-interactive-gap);
+		min-width: 0;
 		user-select: none;
 		color: var(--color-foreground);
 	}
 
 	.mark-glyph {
-		font-family: var(--font-serif, serif);
-		font-size: 15px;
-		line-height: 1;
+		width: 16px;
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
-	/* Same size as the nav labels. See the note in the script block. */
+	/* The root: one size up from the labels below — the mast ranks, quietly. */
 	.mark-word {
 		font-family: var(--font-serif, serif);
-		font-size: var(--sidebar-interactive-font-size);
+		font-size: 15px;
+		font-weight: 400;
+		letter-spacing: 0.025em;
+		-webkit-text-stroke: 0.2px currentColor;
 		line-height: 1;
-		letter-spacing: 0.01em;
+		color: var(--color-foreground);
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.mark-word:hover {
+		opacity: 0.65;
+	}
+
+	.mark-word:focus-visible {
+		outline: 2px solid var(--color-border-focus);
+		outline-offset: 2px;
+		border-radius: 2px;
+	}
+
+	.path-sep {
+		font-family: var(--font-serif, serif);
+		font-size: 15px;
+		color: var(--color-foreground-subtle);
+		flex-shrink: 0;
+	}
+
+	/* Identical to the root in every respect, ink included: it is one path,
+	   set once. The root is distinguished by being hoverable, not by being a
+	   different colour — a breadcrumb whose halves are styled differently
+	   reads as a title with a caption. */
+	.path-tail {
+		font-family: var(--font-serif, serif);
+		font-size: 15px;
+		font-weight: 400;
+		letter-spacing: 0.025em;
+		-webkit-text-stroke: 0.2px currentColor;
+		color: var(--color-foreground);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
 	}
 
 	.masthead.collapsed {
@@ -125,38 +241,64 @@
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
 	}
 
-	.search-btn {
+	/* A destination-shaped row: same height, radius, gutter and text edge as
+	   every Library row, so it belongs to the column rather than hovering
+	   above it. Quieter than a destination, because it is a utility. */
+	.search-row {
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		flex-shrink: 0;
+		gap: var(--sidebar-interactive-gap);
+		width: 100%;
+		height: var(--sidebar-interactive-height);
+		padding: 0 10px 0 var(--sidebar-padding-left-base);
+		margin-top: 2px;
 		border: none;
 		border-radius: var(--sidebar-interactive-radius);
 		background: transparent;
 		color: var(--color-foreground-muted);
-		opacity: var(--sidebar-icon-opacity);
+		font-size: var(--sidebar-interactive-font-size);
+		text-align: left;
 		cursor: pointer;
-		transition: background 150ms ease, opacity 150ms ease;
+		transition: background 150ms var(--ease-premium), color 150ms var(--ease-premium);
 	}
 
-	.search-btn:hover {
+	.search-row :global(.atlas-icon) {
+		opacity: var(--sidebar-icon-opacity);
+	}
+
+	.search-row:hover {
 		background: var(--sidebar-hover-bg);
+		color: var(--color-foreground);
+	}
+
+	.search-row:hover :global(.atlas-icon) {
 		opacity: 1;
 	}
 
-	.search-btn:focus-visible {
-		opacity: 1;
+	.search-row:focus-visible {
 		outline: 2px solid var(--color-border-focus);
-		outline-offset: 1px;
+		outline-offset: -2px;
+	}
+
+	.search-label {
+		flex: 1;
+	}
+
+	/* The chord, in the console's voice — mono, tabular, the quietest ink in
+	   the panel. It teaches the shortcut without competing with the label. */
+	.search-hint {
+		font-family: var(--font-mono);
+		font-size: 10px;
+		letter-spacing: 0.04em;
+		color: var(--color-foreground-disabled);
+		flex-shrink: 0;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.animate-row {
 			animation: none;
 		}
-		.search-btn {
+		.search-row {
 			transition: none;
 		}
 	}
