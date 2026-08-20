@@ -1452,6 +1452,8 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     seat.args(["enable", "--now", "seatd"]);
     let _ = seat.output().await;
 
+    enable_unattended_security_upgrades().await?;
+
     // Let the service user drive NetworkManager.
     //
     // virtues.service runs as `User=virtues`, and polkit refuses networking
@@ -1561,6 +1563,64 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     en.args(["enable", "virtues-display"]);
     run_step("Install display kiosk", en).await
 }
+
+/// Automatic OS security patching.
+///
+/// The system layer (kernel, WebKit, OpenSSL, everything from apt) is NOT
+/// carried in a Virtues release slot, so `virtues upgrade` cannot patch it —
+/// which would leave a fielded box unable to close a third-party CVE without an
+/// operator SSHing in per box. Ubuntu's own `unattended-upgrades` closes that:
+/// the box pulls the SECURITY pocket on a timer and applies it itself.
+///
+/// Scoped to the security origins only — never feature updates — because a box
+/// nobody watches must not silently move a package to a new feature version
+/// under itself. Security backports within a release are ABI-stable, so this
+/// patches WebKit/Postgres/etc in place without breaking the appliance, which
+/// is exactly why nothing is blacklisted: the CVE fix is the point.
+///
+/// `Automatic-Reboot false` on purpose: a personal appliance must never yank
+/// itself offline mid-use. Userspace patches apply at once; a kernel fix waits
+/// for the next natural reboot. A scheduled-maintenance-window reboot, gated on
+/// "is it safe right now", is a deliberate later feature, not this.
+async fn enable_unattended_security_upgrades() -> Result<()> {
+    apt_install("Automatic security updates", &["unattended-upgrades"]).await?;
+
+    fs::create_dir_all("/etc/apt/apt.conf.d").context("mkdir apt.conf.d")?;
+    fs::write(
+        "/etc/apt/apt.conf.d/20auto-upgrades",
+        "APT::Periodic::Update-Package-Lists \"1\";\n\
+         APT::Periodic::Unattended-Upgrade \"1\";\n",
+    )
+    .context("writing 20auto-upgrades")?;
+    fs::write(
+        "/etc/apt/apt.conf.d/52virtues-unattended",
+        UNATTENDED_CONF,
+    )
+    .context("writing 52virtues-unattended")?;
+
+    // The timers ship disabled on a server image; enable them explicitly.
+    for timer in ["apt-daily.timer", "apt-daily-upgrade.timer"] {
+        let mut t = Command::new("systemctl");
+        t.args(["enable", "--now", timer]);
+        let _ = t.output().await;
+    }
+    ui::ok("Automatic OS security updates enabled (security pocket only, no auto-reboot)");
+    Ok(())
+}
+
+const UNATTENDED_CONF: &str = r#"// Installed by virtues-installer (appliance profile).
+// Security-pocket only — never feature updates on an unwatched box.
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+// Never reboot a personal appliance out from under its owner. Userspace
+// patches apply immediately; a kernel fix waits for the next natural reboot.
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+"#;
 
 /// Tear down the captive-portal artifacts an older appliance install left.
 ///
