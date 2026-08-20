@@ -2599,17 +2599,30 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
             fi
         fi
         if [ -n "$DATA_PART" ] && [ -b "$DATA_PART" ]; then
-            mkdir -p /run/virtues-seed
+            mkdir -p /run/virtues-seed /run/virtues-cardseed
             if mount "$DATA_PART" /run/virtues-seed 2>/dev/null; then
-                cp -a "$DATA_DIR/." /run/virtues-seed/ 2>/dev/null || \
+                # Read the seed through a bind of the PARENT, not $DATA_DIR
+                # directly: the image ships an fstab `LABEL=virtues-data` line,
+                # so systemd auto-mounts this partition over $DATA_DIR the moment
+                # mkfs labels it — shadowing the root-side seed mid-copy. That is
+                # exactly what left env + marker off p4 on the 2026-08-20 bench
+                # boot (models copied, virtues.env lost when the source vanished
+                # under the copy). A plain (non-recursive) bind of /var/lib
+                # exposes the UNDERLYING virtues dir even while the partition is
+                # mounted over it.
+                SEEDSRC="$DATA_DIR"
+                mount --bind "$(dirname "$DATA_DIR")" /run/virtues-cardseed 2>/dev/null \
+                    && SEEDSRC="/run/virtues-cardseed/$(basename "$DATA_DIR")"
+                cp -a "$SEEDSRC/." /run/virtues-seed/ 2>/dev/null || \
                     logger -t virtues-firstboot "seed copy reported errors - the sentinel gate below decides"
+                umount /run/virtues-cardseed 2>/dev/null || true
                 rm -rf /run/virtues-seed/postgresql /run/virtues-seed/secrets /run/virtues-seed/backups
                 mkdir -p /run/virtues-seed/journal /run/virtues-seed/lake
                 chown root:systemd-journal /run/virtues-seed/journal 2>/dev/null || true
                 chmod 2755 /run/virtues-seed/journal 2>/dev/null || true
                 umount /run/virtues-seed
             fi
-            rmdir /run/virtues-seed 2>/dev/null || true
+            rmdir /run/virtues-seed /run/virtues-cardseed 2>/dev/null || true
             mkdir -p "$DATA_DIR"
             grep -q '^LABEL=virtues-data' /etc/fstab 2>/dev/null || \
                 echo "LABEL=virtues-data $DATA_DIR ext4 defaults,nofail,x-systemd.device-timeout=300s 0 2" >> /etc/fstab
