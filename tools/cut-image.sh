@@ -1,10 +1,16 @@
 #!/bin/sh
-# Cut a distributable master image from the card `build-dragon.sh` produced.
+# Cut a distributable master image from the medium `build-dragon.sh` produced.
 #
-# Runs on the HOST (Mac or Linux) with the master's microSD in a reader, after
-# the board has been deprovisioned, image-checked and powered off.
+# Runs on the HOST (Mac or Linux) with the master's boot medium attached — the
+# microSD in a reader, or the NVMe in a USB adapter — after the board has been
+# deprovisioned, image-checked and powered off.
 #
 #     sudo sh tools/cut-image.sh /dev/disk4 v0.3.1
+#
+# NVMe-both masters (root on the NVMe, data partition alongside) are detected
+# from the GPT: the read is bounded to the OS partitions and the per-unit
+# virtues-data partition is dropped from the image — each unit carves its own
+# on first boot. See docs/appliance-image.md.
 #
 # Produces, in ./masters/:
 #     virtues-master-<tag>-<date>.img.zst   the product
@@ -143,18 +149,105 @@ if [ -n "${SIZE:-}" ]; then
     [ $((AVAIL_KB * 1024)) -gt $((SIZE + 2147483648)) ] || \
         die "not enough free space here to stage the raw image ($SIZE bytes + margin needed)"
 fi
+# ── NVMe-both: bound the read to the OS partitions ──────────────────────────
+# An NVMe-both master carries `p1 config + p2 ESP + p3 root + pN virtues-data`,
+# and the data partition is PER-UNIT state that must not ship — every unit
+# carves its own on first boot (firstboot §1-NVMe). Reading a 238 GB disk whole
+# to then throw 96% of it away is also minutes of dd for nothing. So: parse the
+# primary GPT off the device, and when the LAST partition is named
+# virtues-data, read only through the end of the partition before it; the
+# stale GPT entry is deleted from the staged image right after the dd.
+# Best-effort by design — no python3, a 4Kn-formatted disk (header not at byte
+# 512), or any parse doubt falls back to the whole-device read, which is
+# always correct, merely slower. Parsed from the BUFFERED node ($DEV): macOS
+# raw devices reject unaligned reads.
+LAYOUT="whole-device"
+DD_COUNT=""
+DATA_PART_NUM=""
+if command -v python3 >/dev/null 2>&1; then
+    GPT_INFO=$(python3 - "$DEV" <<'PYEOF' 2>/dev/null
+import struct, sys
+with open(sys.argv[1], 'rb') as f:
+    f.seek(512)                       # LBA 1: primary GPT header (512e only)
+    hdr = f.read(92)
+    if hdr[0:8] != b'EFI PART':
+        sys.exit(1)
+    entries_lba = struct.unpack_from('<Q', hdr, 72)[0]
+    n, esz = struct.unpack_from('<II', hdr, 80)
+    if not (0 < n <= 512 and 128 <= esz <= 4096):
+        sys.exit(1)
+    f.seek(entries_lba * 512)
+    data = f.read(n * esz)
+parts = []
+for i in range(n):
+    e = data[i * esz:(i + 1) * esz]
+    if e[0:16] == bytes(16):
+        continue                      # unused entry
+    first, last = struct.unpack_from('<QQ', e, 32)
+    name = e[56:56 + 72].decode('utf-16le', 'ignore').rstrip('\x00')
+    parts.append((first, last, name, i + 1))
+if len(parts) < 2:
+    sys.exit(1)
+parts.sort()
+if parts[-1][2] != 'virtues-data':
+    sys.exit(1)
+# byte end of the last OS partition, and the GPT entry number to delete
+print((parts[-2][1] + 1) * 512, parts[-1][3])
+PYEOF
+) || true
+    if [ -n "${GPT_INFO:-}" ]; then
+        OS_END_BYTES=${GPT_INFO% *}
+        DATA_PART_NUM=${GPT_INFO#* }
+        DD_COUNT=$(( (OS_END_BYTES + 4194303) / 4194304 ))
+        LAYOUT="nvme-both (OS partitions only; data partition dropped — each unit carves its own on first boot)"
+        say "NVMe-both layout detected — reading the OS partitions only ($((DD_COUNT * 4)) MiB), dropping partition $DATA_PART_NUM"
+    fi
+fi
+
 say "Reading → $RAW"
-warn "This takes a while. A 64 GB card is ~15-25 minutes on a fast reader."
+[ -n "$DD_COUNT" ] || warn "This takes a while. A 64 GB card is ~15-25 minutes on a fast reader."
 # bs=4M (uppercase) works on BOTH GNU and BSD dd; lowercase 'm' is a BSD-ism
 # that GNU dd rejects with "invalid number", which under set -eu killed this
 # script silently on the advertised Linux path (2026-08-19). No 2>/dev/null —
 # a read failure of the master card must be loud.
-dd if="$READ_DEV" of="$RAW" bs=4M
+dd if="$READ_DEV" of="$RAW" bs=4M ${DD_COUNT:+count=$DD_COUNT}
+
+# The truncated stage still lists the data partition and has no backup GPT at
+# its end. Fix both before anything else touches it: sgdisk on the FILE — not
+# sfdisk, which stops recognizing a truncated GPT (see shrink-image.sh) — and
+# refuse to continue on any doubt, because a master that ships a phantom
+# virtues-data entry would break every unit's first-boot carve.
+if [ -n "$DATA_PART_NUM" ]; then
+    command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || \
+        die "docker is required to finish an NVMe-both cut (the staged image still lists the dropped data partition) — the raw image is intact at $RAW"
+    docker run --rm -v "$(cd masters && pwd)":/work -e RAWNAME="$(basename "$RAW")" -e PNUM="$DATA_PART_NUM" ubuntu:24.04 sh -eu -c '
+        command -v sgdisk >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1; apt-get install -yqq gdisk >/dev/null 2>&1; }
+        sgdisk -e "/work/$RAWNAME" >/dev/null 2>&1 || true
+        sgdisk -d "$PNUM" "/work/$RAWNAME" >/dev/null
+        sgdisk -e "/work/$RAWNAME" >/dev/null 2>&1 || true
+        sgdisk -v "/work/$RAWNAME" | grep -q "No problems found"
+    ' || die "GPT patch failed — the staged image at $RAW still lists the data partition; do not ship it"
+    say "Data partition dropped; GPT verified clean"
+fi
 
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    sh "$(dirname "$0")/shrink-image.sh" "$RAW" || \
-        die "shrink failed — the raw image is intact at $RAW; inspect, re-run
+    # Under sudo, hand the shrink to the invoking user. Docker Desktop's
+    # privileged-loop plumbing belongs to the login session: a root-run shrink
+    # container hit EPERM opening the image's loop partitions (2026-08-20,
+    # both masters), while the same shrink run as the user worked first try.
+    # The user also needs to own the staged file and the sentinel's directory
+    # (.shrink-ok lives next to the image), or the run "fails" after doing all
+    # the work. -H so docker resolves the USER'S context, not root's.
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        chown "$SUDO_USER" "$RAW" masters 2>/dev/null || true
+        sudo -H -u "$SUDO_USER" sh "$(dirname "$0")/shrink-image.sh" "$RAW" || \
+            die "shrink failed — the raw image is intact at $RAW; inspect, re-run
+       tools/shrink-image.sh (as your normal user, not root), then compress by hand (zstd -19 -T0 --rm)"
+    else
+        sh "$(dirname "$0")/shrink-image.sh" "$RAW" || \
+            die "shrink failed — the raw image is intact at $RAW; inspect, re-run
        tools/shrink-image.sh, then compress by hand (zstd -19 -T0 --rm)"
+    fi
 else
     warn "docker unavailable — shipping FULL SIZE; restoring will need a card >= the source card (${SIZE:-unknown} bytes)"
 fi
@@ -180,12 +273,19 @@ cat > "$OUT.json" <<EOF
   "card_bytes": "${SIZE:-unknown}",
   "image_bytes": "$IMAGE_BYTES",
   "restore_min_card_bytes": "$IMAGE_BYTES",
+  "layout": "$LAYOUT",
   "source_device": "$DEV",
   "image_check": "asserted PASS by operator on the board before poweroff",
   "artifact": "$(basename "$OUT").img.zst",
   "sha256_file": "$(basename "$OUT").sha256"
 }
 EOF
+
+# The script ran under sudo; the artifacts should belong to the human who will
+# upload and manage them, not to root.
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    chown "$SUDO_USER" "$OUT.img.zst" "$OUT.sha256" "$OUT.json" 2>/dev/null || true
+fi
 
 say "Done"
 ls -la "$OUT".*
