@@ -113,15 +113,16 @@
 
 		<div class="body">
 			<!-- THE CLOSE. The asks end on product; the letter must end on the
-			     person. Henley kept in his own order — master of your fate,
-			     captain of your soul — an allusion, not a remix. The us/you
-			     shift in the last sentence is deliberate: the founder joins
-			     the reader for the final clause. -->
+			     person. The pivot is know / be known: the mirror, then the
+			     agent — self-knowledge, and an intelligence in your corner
+			     that carries the drudgery so the attention it frees goes back
+			     into the life itself. The us/you shift in the last sentence is
+			     deliberate: the founder joins the reader for the final clause. -->
 			<p>
-				The goal is to be the master of your fate and the captain of your soul. To know
-				yourself more intimately than any company or any model ever will. And to use
-				technology the only way it should ever be used — to make us more human, and more
-				virtuous.
+				The goal is to know yourself more intimately than any company or any model ever
+				will. And to be known — by an intelligence that answers to you alone, taking up the
+				thousand small burdens of a day so your attention returns to living it. That is the
+				only way technology should ever be used: to make us more human, and more virtuous.
 			</p>
 		</div>
 
