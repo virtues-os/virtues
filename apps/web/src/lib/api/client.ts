@@ -1189,6 +1189,8 @@ export async function listPendingPairings(): Promise<{ pairings: PendingPairing[
 // Profile
 export interface Profile {
 	preferred_name?: string | null;
+	/** `"YYYY-MM-DD"` — serde's NaiveDate wire form, same as an HTML date input. */
+	birth_date?: string | null;
 	occupation?: string | null;
 	employer?: string | null;
 	theme?: string | null;
