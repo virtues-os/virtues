@@ -67,8 +67,8 @@
 			<p>
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
 				idea that a thing belongs at the most local level able to hold it. Nothing is more
-				local than your own life. So ask it plainly. Who would you rather have holding the
-				whole account of yours: a government, a political party, big tech, an advertising
+				local than your own life. So ask plainly: who would you rather have holding the
+				whole account of yours — a government, a political party, big tech, an advertising
 				company, disordered men? Or you.
 			</p>
 
@@ -91,7 +91,7 @@
 			<p>
 				Every day, a page will be waiting for you: yesterday, written down — where you went,
 				who you spoke with, what you were working on. Thin at first, having only just met
-				you. But give it a week, and it becomes Jarvis. You can ask it things like:
+				you. But a record compounds. Give it a week, and you can ask it things like:
 			</p>
 		</div>
 
