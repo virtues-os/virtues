@@ -33,15 +33,25 @@ export type ConnectIntent =
  *    call `window.location.assign` (that unmounts the whole app — the bug this
  *    fixes). Open the system browser instead and leave the SPA mounted.
  */
-export async function startOAuth(sourceId: string): Promise<{ external: boolean }> {
+export async function startOAuth(
+	sourceId: string,
+	opts?: { next?: string },
+): Promise<{ external: boolean }> {
 	const origin = getBackendOrigin() || window.location.origin;
 	// Tauri hands OAuth to the system browser, so the callback's usual 302 into
 	// `/sources` would strand the user on a second copy of the app in a browser
 	// tab. `shell=native` tells the box to render a terminal "return to Virtues"
 	// page instead; the query param round-trips through the proxy untouched.
+	//
+	// `next` rides the same way: the browser leg's 302 goes there instead of
+	// the hardcoded `/sources`, so a connect started from onboarding lands back
+	// on the onboarding screen it left (2026-08-21 — the redirect used to dump
+	// the person into the app mid-flow). Local paths only; the box validates.
 	const returnUrl = isTauri
 		? `${origin}/oauth/callback?shell=native`
-		: `${origin}/oauth/callback`;
+		: opts?.next
+			? `${origin}/oauth/callback?next=${encodeURIComponent(opts.next)}`
+			: `${origin}/oauth/callback`;
 	const { redirect_url } = await oauthStart(sourceId, { return_url: returnUrl });
 	if (isTauri) {
 		await openExternal(redirect_url);
@@ -65,7 +75,10 @@ export function reloadOnReturn(reload: () => void): void {
 	window.addEventListener('focus', handler);
 }
 
-export async function connectIntent(source: SourceCatalogItem): Promise<ConnectIntent> {
+export async function connectIntent(
+	source: SourceCatalogItem,
+	opts?: { next?: string },
+): Promise<ConnectIntent> {
 	// One narrative for every device app: get the app, then enter the code. The
 	// Mac briefly had its own flow because pairing the Mac app pairs a *viewer*
 	// and the collector is a separate daemon — but that split is ours to solve,
@@ -88,7 +101,7 @@ export async function connectIntent(source: SourceCatalogItem): Promise<ConnectI
 
 	if (source.auth_kind === 'via_proxy') {
 		try {
-			const { external } = await startOAuth(source.id);
+			const { external } = await startOAuth(source.id, opts);
 			return { kind: 'oauth', external };
 		} catch (e) {
 			return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
