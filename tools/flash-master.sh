@@ -25,8 +25,12 @@ die()  { printf '\n\033[1;31m✖  %s\033[0m\n\n' "$*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || die "run me as root: sudo sh tools/flash-master.sh [device] [image]"
 command -v zstd >/dev/null 2>&1 || die "zstd not found (brew install zstd / apt install zstd)"
 
-DEV="${1:-}"
-IMG="${2:-}"
+# Positional args for direct use; DEV=/MASTER= env vars for `make flash`.
+# The Makefile passes ONLY env vars — positional make expansion collapsed an
+# empty $(DEV) and slid the image path into the device slot, where dd would
+# have overwritten the master artifact itself (2026-08-21 review finding).
+DEV="${1:-${DEV:-}}"
+IMG="${2:-${MASTER:-}}"
 
 # ── Pick the image: newest master unless told otherwise ─────────────────────
 if [ -z "$IMG" ]; then
@@ -66,6 +70,11 @@ case "$DEV" in
         die "$DEV is very likely this machine's own disk. Refusing." ;;
 esac
 [ -e "$DEV" ] || die "$DEV does not exist"
+# A regular file passes -e and matches none of the guards above; dd would then
+# happily overwrite it (the classic victim being a master image passed in the
+# wrong slot). Disks are block or character specials — accept nothing else.
+[ -b "$DEV" ] || [ -c "$DEV" ] || \
+    die "$DEV is not a disk device — pass /dev/diskN (macOS) or /dev/sdX (Linux)"
 
 if [ "$OS" = "Darwin" ]; then
     diskutil info "$DEV" 2>/dev/null | grep -qi "Removable Media:.*Removable" \
@@ -93,8 +102,18 @@ read -r confirm
 [ "$OS" = "Darwin" ] && diskutil unmountDisk "$DEV" >/dev/null 2>&1 || true
 
 say "Flashing"
-zstd -dc "$IMG" | dd of="$WRITE_DEV" bs=4M
+# In POSIX sh the pipeline's status is dd's alone: a zstd failure mid-stream
+# just looks like EOF to dd, which exits 0 — and the script would then announce
+# success over a half-written disk. No pipefail in sh, so zstd reports through
+# a sentinel file instead.
+ZERR="/tmp/virtues-flash-zerr.$$"
+rm -f "$ZERR"
+( zstd -dc "$IMG" || : > "$ZERR" ) | dd of="$WRITE_DEV" bs=4M
 sync
+if [ -e "$ZERR" ]; then
+    rm -f "$ZERR"
+    die "zstd FAILED mid-stream — the medium is partially written and NOT usable; check the image file and re-run"
+fi
 
 if [ "$OS" = "Darwin" ]; then
     diskutil eject "$DEV" >/dev/null 2>&1 || true

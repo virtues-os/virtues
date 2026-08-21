@@ -524,5 +524,9 @@ _ecr-push:
 # gets a target: it verifies the checksum before writing, auto-detects the ONE
 # external disk (or takes DEV=), and refuses media too small for the image.
 
+# Env vars, NOT positional args: with positionals, `make flash MASTER=x` and
+# an empty $(DEV) collapse so the image path arrives as the DEVICE argument —
+# and dd would overwrite the master artifact itself. The script reads DEV= and
+# MASTER= from the environment.
 flash: ## Flash the newest master onto the NVMe in the USB adapter (DEV=/dev/diskN MASTER=path to override)
-	@sudo sh tools/flash-master.sh $(DEV) $(MASTER)
+	@sudo DEV="$(DEV)" MASTER="$(MASTER)" sh tools/flash-master.sh
