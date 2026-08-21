@@ -96,13 +96,15 @@
 		</div>
 
 		<!-- THE ONLY PLACE THE PRODUCT SPEAKS FOR ITSELF.
-		     Three questions, three time horizons — today, yesterday, years —
-		     each needing a different stream of the record (the body, the
-		     ambient moment, the message history). Every ask must be
-		     unanswerable without the record: a question any bare model handles
-		     ("how do I become a better writer?") is a question this list
-		     cannot afford. The last one is the emotional deep cut, and it is
-		     what the reveal's "oldest thing it found" line later pays off.
+		     Four questions, four time horizons — today, yesterday, the
+		     standing ledger, years — each needing a different stream of the
+		     record (the body, the ambient moment, the transactions, the
+		     message history). Every ask must be unanswerable without the
+		     record: a question any bare model handles ("how do I become a
+		     better writer?") is a question this list cannot afford. Third is
+		     the practical one so the list still ends on the emotional deep
+		     cut, which the reveal's "oldest thing it found" line later pays
+		     off.
 
 		     Set as a block rather than bullets — these are things you would say
 		     out loud, and a bulleted list turns speech into a feature grid. Full
@@ -110,6 +112,7 @@
 		<ul class="asks">
 			<li>Why do I have a migraine today?</li>
 			<li>What was the name of the woman I met at the dog park yesterday?</li>
+			<li>What am I still paying for that I never use?</li>
 			<li>Who have I lost touch with that I used to talk to every day?</li>
 		</ul>
 
