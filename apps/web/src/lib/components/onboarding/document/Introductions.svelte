@@ -91,22 +91,16 @@
 						placeholder="Whatever your friends call you"
 						autocomplete="given-name"
 					/>
-					<span class="note">The name it will use when it writes to you, and about you.</span>
 				</label>
 
 				<label>
 					<span class="label">And what will you call it?</span>
 					<input class="ob-input" type="text" bind:value={assistant} placeholder={assistantDefault} />
-					<span class="note">
-						It answers to <strong>{assistantDefault}</strong> unless you'd rather it
-						didn't. This is yours to change whenever.
-					</span>
 				</label>
 
 				<label>
 					<span class="label">When were you born?</span>
 					<input class="ob-input" type="date" bind:value={born} />
-					<span class="note">For the arithmetic of a life — ages, anniversaries, which chapter you're in.</span>
 				</label>
 			</div>
 
@@ -143,17 +137,6 @@
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 1.15rem;
 		color: var(--color-foreground);
-	}
-
-	.note {
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-subtle);
-	}
-
-	.note strong {
-		color: var(--color-foreground-muted);
-		font-weight: 600;
 	}
 
 	.quiet {
