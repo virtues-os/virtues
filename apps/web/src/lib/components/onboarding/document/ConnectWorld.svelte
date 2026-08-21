@@ -148,8 +148,6 @@
 	{#if isWindows || isLinux}
 		<p class="aside">Desktop collection for {thisComputerLabel} is coming — your phone, email, and chat history cover you for now.</p>
 	{/if}
-
-	<p class="receipt">read-only · everything stays on your box · nothing is sent to Virtues</p>
 </div>
 
 <DevicePairModal
@@ -184,18 +182,6 @@
 
 <style>
 	@reference "../../../../app.css";
-
-	/* The honest line about what connecting costs, sitting under the list it
-	   describes rather than out in a gutter this screen no longer has. */
-	.receipt {
-		margin-top: 1.25rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--color-border-subtle);
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		letter-spacing: -0.01em;
-		color: var(--color-foreground-subtle);
-	}
 
 	.device-block {
 		position: relative;

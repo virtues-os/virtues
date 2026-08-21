@@ -346,11 +346,7 @@
 							}}
 						/>
 					{:else if view === "sources"}
-						<h1 class="ob-h1">Where the record comes from</h1>
-						<p class="ob-lede">
-							Connect what already holds your life. Each source is read onto the box and
-							stays there — nothing is sent to us. Start with one; add the rest whenever.
-						</p>
+						<h1 class="ob-h1">Your data</h1>
 
 						<div class="work">
 							<ConnectWorld
@@ -363,10 +359,6 @@
 							{worldEnough ? "Continue" : "Skip for now"}
 							<Icon icon="ri:arrow-right-line" width="16" />
 						</button>
-						<p class="ob-note">
-							Connecting is optional, and never finished — finances, notes, fitness and the
-							rest are waiting in the app.
-						</p>
 					{:else if view === "your-words"}
 						{#if !accountSatisfied}
 							<!-- THE TOLL BOOTH, not a step. From here the box writes, and

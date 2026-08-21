@@ -29,7 +29,7 @@ export interface Step {
 export const STEPS: Step[] = [
 	{ id: "letter", label: "Founder's letter", icon: "ri:quill-pen-line" },
 	{ id: "names", label: "Introductions", icon: "ri:user-3-line" },
-	{ id: "sources", label: "Your world", icon: "ri:links-line" },
+	{ id: "sources", label: "Your data", icon: "ri:links-line" },
 	{ id: "words", label: "In your own words", icon: "ri:chat-quote-line" },
 	{ id: "you", label: "You", icon: "ri:sparkling-2-line" },
 ];
