@@ -75,7 +75,7 @@
 
 <div>
 	<div>
-		<h1 class="ob-h1">Introductions.</h1>
+		<h1 class="ob-h1">Introductions</h1>
 		<p class="ob-lede">The few things it cannot learn by reading.</p>
 
 		{#if loading}
