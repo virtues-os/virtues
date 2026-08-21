@@ -68,8 +68,8 @@
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
 				idea that a thing belongs at the most local level able to hold it. Nothing is more
 				local than your own life. So ask plainly: who would you rather have holding the
-				whole account of yours — a government, a political party, big tech, an advertising
-				company, disordered men? Or you.
+				whole account of your life — a government, a political party, big tech, a data
+				broker, disordered men? Or you.
 			</p>
 
 			<!-- The turn from the question to the product, and the only place the
@@ -78,7 +78,7 @@
 			     way it is without accusing anyone of malice, and it makes the name
 			     an argument rather than a mood. -->
 			<p>
-				That is why I built Virtues: to put your digital life somewhere it cannot be turned
+				That is why I built Virtues: to put your life somewhere it cannot be turned
 				into advertising, or a feed, or a habit you did not choose. Vice is repetitive and
 				profitable, which is why so much is arranged to produce it. Virtue asks for harder
 				things — attention, memory, honesty, intimacy.
@@ -91,15 +91,15 @@
 			<p>
 				Every day, a page will be waiting for you: yesterday, written down — where you went,
 				who you spoke with, what you were working on. Thin at first, having only just met
-				you. But a record compounds. Give it a week, and you can ask it things like:
+				you. But a record compounds. Give it a week, and you can ask:
 			</p>
 		</div>
 
 		<!-- THE ONLY PLACE THE PRODUCT SPEAKS FOR ITSELF.
-		     Five questions carry more than five paragraphs of capability claims,
+		     Four questions carry more than four paragraphs of capability claims,
 		     and the RANGE is the argument: a symptom, a stranger's name, a craft,
-		     a song, a fast. No single app holds all five today, and nothing but
-		     your own record could.
+		     a song. No single app holds all four today, and nothing but your own
+		     record could.
 
 		     Set as a block rather than bullets — these are things you would say
 		     out loud, and a bulleted list turns speech into a feature grid. Full
@@ -120,9 +120,9 @@
 			     deliberate: the founder joins the reader for the final clause. -->
 			<p>
 				The goal is to know yourself more intimately than any company or any model ever
-				will. And to be known — by an intelligence that answers to you alone, taking up the
-				thousand small burdens of a day so your attention returns to living it. That is the
-				only way technology should ever be used: to make us more human, and more virtuous.
+				will. And to be known — by an intelligence that answers to you alone and takes up
+				the small burdens of the day, so your attention returns to living it. That is the
+				only way technology should be used: to make us more human, and more virtuous.
 			</p>
 		</div>
 
