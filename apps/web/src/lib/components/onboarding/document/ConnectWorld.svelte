@@ -75,7 +75,9 @@
 
 	async function connect(source: SourceCatalogItem) {
 		err = null;
-		const intent = await connectIntent(source);
+		// A connect started here must land back here — the callback's default
+		// 302 into /sources dumps the person into the app mid-onboarding.
+		const intent = await connectIntent(source, { next: "/onboarding/sources" });
 		switch (intent.kind) {
 			case "pair":
 				pairDeviceType = intent.deviceType;

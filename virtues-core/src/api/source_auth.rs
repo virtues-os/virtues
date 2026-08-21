@@ -149,6 +149,22 @@ pub struct OauthCallbackQuery {
     /// terminal "return to Virtues" page instead. Absent for browser connects.
     #[serde(default)]
     pub shell: Option<String>,
+    /// Where the browser leg's 302 should land instead of the default
+    /// `/sources` — a connect started from onboarding must return to the
+    /// onboarding screen it left, not dump the person into the app. Set by the
+    /// SPA on the return_url; round-trips through the proxy like `shell`.
+    /// Local paths only — anything else falls back to `/sources`.
+    #[serde(default)]
+    pub next: Option<String>,
+}
+
+/// Accept only a same-origin absolute path: starts with exactly one `/`
+/// (`//host` is scheme-relative and escapes the origin), no scheme, no
+/// backslashes. Anything else gets the default.
+fn safe_next(next: Option<&str>) -> Option<&str> {
+    next.filter(|n| {
+        n.starts_with('/') && !n.starts_with("//") && !n.contains('\\') && !n.contains("://")
+    })
 }
 
 pub async fn oauth_callback_handler(
@@ -175,7 +191,12 @@ pub async fn oauth_callback_handler(
                 reason = %code,
                 "oauth callback returned without an exchange token"
             );
-            return oauth_incomplete_response(&claims.source_id, code, q.shell.as_deref());
+            return oauth_incomplete_response(
+                &claims.source_id,
+                code,
+                q.shell.as_deref(),
+                q.next.as_deref(),
+            );
         }
     };
 
@@ -244,7 +265,9 @@ pub async fn oauth_callback_handler(
     if claims_shell_is_native(q.shell.as_deref()) {
         return oauth_return_page(&claims.source_id).into_response();
     }
-    let location = format!("/sources?connected={}", claims.source_id);
+    let base = safe_next(q.next.as_deref()).unwrap_or("/sources");
+    let sep = if base.contains('?') { '&' } else { '?' };
+    let location = format!("{base}{sep}connected={}", claims.source_id);
     let mut headers = HeaderMap::new();
     headers.insert(
         axum::http::header::LOCATION,
@@ -261,7 +284,12 @@ fn claims_shell_is_native(shell: Option<&str>) -> bool {
 /// shells: a terminal page for native (the system browser has nowhere to go),
 /// a 302 back into the app for browser connects. Never an HTTP error — the
 /// user didn't do anything wrong, and most of the time they simply cancelled.
-fn oauth_incomplete_response(source_id: &str, reason: &str, shell: Option<&str>) -> Response {
+fn oauth_incomplete_response(
+    source_id: &str,
+    reason: &str,
+    shell: Option<&str>,
+    next: Option<&str>,
+) -> Response {
     if claims_shell_is_native(shell) {
         let source = source_display_name(source_id);
         let (heading, detail) = if reason == "connect_cancelled" {
@@ -277,8 +305,10 @@ fn oauth_incomplete_response(source_id: &str, reason: &str, shell: Option<&str>)
         };
         return terminal_page("Not connected — Virtues", "—", &heading, detail);
     }
+    let base = safe_next(next).unwrap_or("/sources");
+    let sep = if base.contains('?') { '&' } else { '?' };
     let location = format!(
-        "/sources?source={}&error={}",
+        "{base}{sep}source={}&error={}",
         urlencoding::encode(source_id),
         urlencoding::encode(reason)
     );
