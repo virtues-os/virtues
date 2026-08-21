@@ -113,17 +113,10 @@
 </script>
 
 <div class="connect-world">
-	<!-- THE LEDE AND THE SIDENOTE BOTH LEFT WITH THE DOCUMENT.
-
-	     The lede said what the screen's own lede now says, a paragraph above it,
-	     in nearly the same words. And Marginalia hangs itself at `left: calc(100%
-	     + 2.5rem)` on wide screens, which worked only inside the old three-column
-	     grid that reserved a gutter for it — on a centered screen it flew off the
-	     right edge of the viewport.
-
-	     The receipt it carried is worth keeping, so it moved inline, under the
-	     rows it describes, where it reads as a footer on the list rather than a
-	     note about the page. -->
+	<!-- NO PROSE. The lede, the sidenote/Marginalia, the mono receipt line and
+	     the per-row second sentences all left in successive cuts (last:
+	     2026-08-21). The list is the screen: icon, name, one line of concrete
+	     nouns, a quiet Connect. Whatever needs arguing was the letter's job. -->
 	{#if err}
 		<div class="err">{err}</div>
 	{/if}
