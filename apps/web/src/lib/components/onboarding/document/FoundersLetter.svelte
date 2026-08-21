@@ -45,7 +45,7 @@
 
 <div class="letter">
 	<div>
-		<h1 class="ob-h1 hero">A small correction to technology.</h1>
+		<h1 class="ob-h1 hero">A small correction to technology</h1>
 
 		<!-- A face carries an argument about trust in a way a paragraph cannot,
 		     which is exactly the job of this screen. -->

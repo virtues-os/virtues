@@ -18,7 +18,7 @@ export interface Step {
 }
 
 export const STEPS: Step[] = [
-	{ id: "letter", label: "The letter", icon: "ri:quill-pen-line" },
+	{ id: "letter", label: "Founder's letter", icon: "ri:quill-pen-line" },
 	{ id: "names", label: "Introductions", icon: "ri:user-3-line" },
 	{ id: "account", label: "Account", icon: "ri:shield-keyhole-line" },
 	{ id: "sources", label: "Your world", icon: "ri:links-line" },
