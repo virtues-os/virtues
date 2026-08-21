@@ -6,24 +6,22 @@
   figure, and six body sizes; every piece was individually defensible and the
   whole was a brochure. What survived is what does that one job.
 
-  THE FOUR FEELINGS, one beat each:
+  TWO FEELINGS, one beat each:
 
     understood     a person wrote this, and names the thing you actually fear
     excited        tomorrow morning, one concrete object at a concrete time
-    knowledgeable  the figure — where the record is, where the models are
-    safe           the same figure, read the other way
 
-  THE FIGURE REPLACED AN ARGUMENT. The old page drew "as it is" against "as it
-  ought to be", then admitted four paragraphs later that the box borrows hosted
-  models — which read as a claim followed by its own retraction. The two-rail
-  figure has no such seam: it says where each half of the system lives TODAY,
-  which makes the subscription a legible consequence rather than a compromise
-  to defend, and makes its ending a plotted point rather than a promise.
+  The architecture argument (where the record lives, what is borrowed, why
+  there is a subscription) does NOT live here anymore — the two-marker figure
+  and its bridge paragraph were cut 2026-08-21. The letter states the belief
+  and the promise; the case is the manifesto's to make, and the film's when it
+  exists. A letter that pauses to draw a diagram stops being a letter.
 
-  THREE SIZES, TWO FAMILIES. Serif for the headline and the whole body, mono
-  for labels and states, one small size for captions. Nothing else. The old
-  page ran six body sizes and the mixture was the reason it felt unresolved
-  before anyone could say why.
+  TWO SIZES, ONE FAMILY. Serif for the headline and the whole body, one small
+  size for the sign-off chrome. Nothing else. The old page ran six body sizes
+  and the mixture was the reason it felt unresolved before anyone could say
+  why. (The mono label register left with the figure; the strip above the
+  letter still carries it.)
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
@@ -71,7 +69,7 @@
 				idea that a thing belongs at the most local level able to hold it. Nothing is more
 				local than your own life. So ask it plainly. Who would you rather have holding the
 				whole account of yours: a government, a political party, big tech, an advertising
-				company, disordered men preying on the vulnerable? Or you.
+				company, disordered men? Or you.
 			</p>
 
 			<!-- The turn from the question to the product, and the only place the
@@ -111,76 +109,17 @@
 			<li>What was the name of the woman I met at the dog park yesterday?</li>
 			<li>How do I become a better writer?</li>
 			<li>What song was playing at the bar yesterday that made me nostalgic?</li>
-			<li>How's my fast going?</li>
 		</ul>
 
-		<div class="body">
-			<!-- THE BRIDGE. The questions above are only askable of something that
-			     already knows the ordinary, unflattering texture of a life — which
-			     is precisely what nobody sane hands to a company. So the intimacy
-			     the list promises is what FORCES the architecture the figure below
-			     describes; sovereignty is not a feature bolted alongside it. -->
-			<p>
-				Such intimacy requires sovereignty. Nothing will tell a machine the truth about its
-				marriage, its body, or its worst week while that machine belongs to someone else —
-				and a record that can be sold, subpoenaed, or quietly read is someone else's. So the
-				first question about Virtues is not what it can do. It is where it lives.
-			</p>
-		</div>
-
-		<!-- ── where it lives ────────────────────────────────────────────────
-		     ONE AXIS, TWO MARKERS. There are exactly two things in this system
-		     worth locating, and the whole argument is that they are at different
-		     points — so they belong on the SAME line, where the distance between
-		     them can be seen rather than described.
-
-		     An earlier attempt gave each its own rail, which put a filled track
-		     and a round handle side by side twice and read unmistakably as two
-		     range sliders: a control, inviting a drag, saying nothing. One line
-		     with marks on it is a scale, and nobody tries to drag a scale. -->
-		<figure class="where">
-			<figcaption class="where-head">What is yours, and what is borrowed</figcaption>
-
-			<div class="axis-fig">
-				<!-- Ordered far marker first so the near one's label paints over it
-				     rather than under, on the narrow widths where they meet. -->
-				<div class="mark here" style="--at: 100%; --h: 5.9rem">
-					<p class="mark-label">The record of your life</p>
-					<p class="mark-state">arrived</p>
-					<span class="tick"></span>
-					<span class="dot"></span>
-				</div>
-
-				<div class="mark transit" style="--at: 34%; --h: 2.2rem">
-					<p class="mark-label">The intelligence that reads it</p>
-					<p class="mark-state">still on the way</p>
-					<span class="tick"></span>
-					<span class="dot"></span>
-				</div>
-
-				<div class="line"></div>
-				<div class="ends">
-					<span>elsewhere</span>
-					<span>your house</span>
-				</div>
-			</div>
-
-			<p class="note">
-				Your record sits on the box in your home and does not leave it. The models are still
-				borrowed, because no intelligence you can run in your own house is yet good enough
-				to be trusted with your life. They are shown only what a question requires, under
-				terms that keep nothing: not stored, not trained on, not logged. That borrowing is
-				the one thing the subscription buys, and it ends when the hardware in your home is
-				equal to the work.
-			</p>
-
-			<p class="further">
-				<a href={MANIFESTO_URL} target="_blank" rel="noreferrer">
-					Our case for subsidiarity in technology
-					<Icon icon="ri:external-link-line" width="13" />
-				</a>
-			</p>
-		</figure>
+		<!-- The long-form case (subsidiarity, where the record lives, what is
+		     borrowed) moved out of the letter entirely — it is the manifesto's
+		     to make. One quiet pointer for whoever wants it now. -->
+		<p class="further">
+			<a href={MANIFESTO_URL} target="_blank" rel="noreferrer">
+				Our case for subsidiarity in technology
+				<Icon icon="ri:external-link-line" width="13" />
+			</a>
+		</p>
 
 		<div class="sign">
 			<!-- MASKED, NOT INVERTED. An earlier version inverted black ink assuming
@@ -228,20 +167,6 @@
 	.letter {
 		--t-body: 1.0625rem;
 		--t-small: 13px;
-		--t-label: 11px;
-	}
-
-	/* Mono, uppercase, --t-label: the one treatment every label on the page
-	   shares — the axis ends, the marker states, the figure's head. (The eyebrow
-	   moved into OnboardingHeader, which carries the same treatment.) */
-	.ends,
-	.mark-state,
-	.where-head {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: var(--t-label);
-		letter-spacing: 0.16em;
-		text-transform: uppercase;
-		color: var(--color-foreground-subtle);
 	}
 
 	/* The one screen allowed to be louder than the others: it is the cover, and
@@ -318,169 +243,14 @@
 		margin-top: 1.5rem;
 	}
 
-	/* ── where it lives ────────────────────────────────────────────────── */
-
-	.where {
-		margin: 3rem 0 0;
-		padding-top: 1.75rem;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.where-head {
-		margin: 0 0 1rem;
-	}
-
-	/* One line, measured from `elsewhere` to `your house`, with both markers on
-	   it. Marker labels stack at different heights (--h) so they never collide,
-	   and the taller stalk lands on the marker that has arrived. */
-	.axis-fig {
-		position: relative;
-		height: 9.5rem;
-	}
-
-	.line {
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 1.75rem;
-		height: 1px;
-		background: var(--color-border);
-	}
-
-	.ends {
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		display: flex;
-		justify-content: space-between;
-		letter-spacing: 0.14em;
-	}
-
-	.mark {
-		position: absolute;
-		bottom: 1.75rem;
-		left: var(--at);
-	}
-
-	.dot {
-		position: absolute;
-		bottom: -4.5px;
-		left: -4.5px;
-		width: 9px;
-		height: 9px;
-		border-radius: 50%;
-		background: currentColor;
-	}
-
-	/* The stalk, not a ruler: it exists only to tie a label to a position, so it
-	   stays fainter than either. */
-	.tick {
-		position: absolute;
-		bottom: 0;
-		left: -0.5px;
-		width: 1px;
-		height: var(--h);
-		background: currentColor;
-		opacity: 0.3;
-	}
-
-	.mark-label,
-	.mark-state {
-		position: absolute;
-		bottom: var(--h);
-		margin: 0;
-		white-space: nowrap;
-		line-height: 1.35;
-	}
-
-	.mark-label {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: var(--t-body);
-		color: var(--color-foreground);
-		padding-bottom: 1.35rem;
-	}
-
-	.mark-state {
-		padding-bottom: 0.5rem;
-		letter-spacing: 0.14em;
-	}
-
-	/* Arrived: the accent, and its label hangs back from the right edge so the
-	   line's end is not crowded. */
-	.here {
-		color: var(--color-primary);
-	}
-
-	.here .mark-label,
-	.here .mark-state {
-		right: 0;
-		text-align: right;
-	}
-
-	.here .mark-state {
-		color: var(--color-primary);
-	}
-
-	/* Hollow, because it has not got there. */
-	.transit {
-		color: var(--color-foreground-subtle);
-	}
-
-	.transit .dot {
-		background: var(--color-background);
-		border: 1.5px solid currentColor;
-	}
-
-	.transit .mark-label,
-	.transit .mark-state {
-		left: 0;
-	}
-
-	/* One movement on load: both markers rise into place along their own stalks,
-	   which is the only motion on the page and says the thing the figure says. */
-	.mark {
-		animation: place 0.8s 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-	}
-
-	@keyframes place {
-		from {
-			opacity: 0;
-			transform: translateY(6px);
-		}
-		to {
-			opacity: 1;
-			transform: none;
-		}
-	}
-
-	:global(.ob-still) .mark {
-		animation: none;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.mark {
-			animation: none;
-		}
-	}
-
-	/* SAME TYPE AS THE LETTER. These sat in the UI sans at 13px, which made the
-	   most important admission on the page read as a footnote in a different
-	   document. Muted rather than smaller is how a caption stays a caption. */
-	.note,
+	/* SAME TYPE AS THE LETTER, muted rather than smaller — a caption's way of
+	   staying a caption. */
 	.further {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: var(--t-body);
 		line-height: 1.7;
 		color: var(--color-foreground-muted);
-	}
-
-	.note {
-		margin: 2rem 0 0;
-	}
-
-	.further {
-		margin: 1.15rem 0 0;
+		margin: 2.25rem 0 0;
 	}
 
 	.further a {
@@ -496,25 +266,6 @@
 	.further a:hover {
 		color: var(--color-foreground);
 		border-bottom-color: var(--color-foreground-subtle);
-	}
-
-	/* Narrow: the labels are wider than the gap between the markers, so they
-	   wrap out of `nowrap` and the figure grows a little taller to hold them. */
-	@media (max-width: 620px) {
-		.axis-fig {
-			height: 11rem;
-		}
-
-		.mark-label,
-		.mark-state {
-			white-space: normal;
-			max-width: 11rem;
-		}
-
-		.here .mark-label,
-		.here .mark-state {
-			right: 0;
-		}
 	}
 
 	/* ── sign-off ──────────────────────────────────────────────────────── */
