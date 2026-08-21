@@ -1,22 +1,19 @@
 <!--
-  Introductions — two names, and nothing else.
+  Introductions — the few things the record cannot supply.
 
   BETWEEN THE LETTER AND THE WORK. Sync latency is the only irreversible cost in
   onboarding, so the sources want to start as early as possible — but this page
-  is thirty seconds and the hour that matters is the interview, which already
-  comes after them. Thirty seconds of idle box buys an on-ramp that is not a
-  permission prompt: asking for Full Disk Access as the very first act after a
-  letter about trust is a jolt, and being asked your own name is not.
+  is thirty seconds, and being asked your own name right after a letter about
+  trust is a gentler on-ramp than a Full Disk Access prompt.
 
-  TWO FIELDS. The profile can hold a dozen things — birth date, occupation,
-  employer, height, ethnicity — and asking for them here would make the screen
-  after the privacy letter a form. The timezone is already known (captured
-  silently at setup, and it is the one fact a machine can get right without
-  asking). Everything else the interview covers properly, in the person's own
-  words, where it belongs.
+  THREE FIELDS, ONE CRITERION: the record cannot reliably supply them. What you
+  like to be called, what you'll call it, and when you were born — everything
+  else the profile could hold (occupation, employer, home city) the box infers
+  from the record itself, and asking for it here would make the screen after
+  the privacy letter a form. The timezone is already captured silently.
 
-  Neither field is required. A box that will not proceed until you have named it
-  has misunderstood which of you is in charge.
+  No field is required. A box that will not proceed until you have named it has
+  misunderstood which of you is in charge.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
@@ -28,6 +25,8 @@
 
 	let you = $state("");
 	let assistant = $state("");
+	/** "YYYY-MM-DD" — the date input's native value, and the wire form. */
+	let born = $state("");
 	/** What it is already called, so the field can suggest rather than demand. */
 	let assistantDefault = $state("Ari");
 	let loading = $state(true);
@@ -44,6 +43,7 @@
 			// table also holds full_name, but it is not on the wire, and reaching
 			// past the API for it would be borrowing trouble for a placeholder.
 			you = p?.preferred_name || "";
+			born = p?.birth_date || "";
 			if (a?.assistant_name) assistantDefault = a.assistant_name;
 			assistant = a?.assistant_name ?? "";
 		} catch {
@@ -57,7 +57,10 @@
 		error = null;
 		try {
 			const jobs: Promise<unknown>[] = [];
-			if (you.trim()) jobs.push(updateProfile({ preferred_name: you.trim() }));
+			const profile: Record<string, string> = {};
+			if (you.trim()) profile.preferred_name = you.trim();
+			if (born) profile.birth_date = born;
+			if (Object.keys(profile).length) jobs.push(updateProfile(profile));
 			if (assistant.trim()) jobs.push(updateAssistantProfile({ assistant_name: assistant.trim() }));
 			await Promise.all(jobs);
 		} catch (e) {
@@ -72,11 +75,8 @@
 
 <div>
 	<div>
-		<h1 class="ob-h1">Two names.</h1>
-		<p class="ob-lede">
-			Before the box starts reading anything, the two things it needs from you directly.
-			Everything after this is the machine working; this part is thirty seconds.
-		</p>
+		<h1 class="ob-h1">Introductions.</h1>
+		<p class="ob-lede">The few things it cannot learn by reading.</p>
 
 		{#if loading}
 			<p class="quiet">One moment…</p>
@@ -102,6 +102,12 @@
 						didn't. This is yours to change whenever.
 					</span>
 				</label>
+
+				<label>
+					<span class="label">When were you born?</span>
+					<input class="ob-input" type="date" bind:value={born} />
+					<span class="note">For the arithmetic of a life — ages, anniversaries, which chapter you're in.</span>
+				</label>
 			</div>
 
 			{#if error}
@@ -109,7 +115,7 @@
 			{/if}
 
 			<button class="ob-btn" onclick={save} disabled={saving}>
-				{saving ? "Saving…" : you.trim() || assistant.trim() ? "Continue" : "Skip for now"}
+				{saving ? "Saving…" : you.trim() || assistant.trim() || born ? "Continue" : "Skip for now"}
 				<Icon icon="ri:arrow-right-line" width="15" />
 			</button>
 		{/if}
