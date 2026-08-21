@@ -111,6 +111,20 @@
 			<li>What song was playing at the bar yesterday that made me nostalgic?</li>
 		</ul>
 
+		<div class="body">
+			<!-- THE CLOSE. The asks end on product; the letter must end on the
+			     person. Bookended against the opening: it began with an old idea
+			     (subsidiarity), it ends with an old goal (Henley, inverted to
+			     "you"). The us/you shift in the last sentence is deliberate —
+			     the founder joins the reader for the final clause. -->
+			<p>
+				The goal, in the end, is old: to be the captain of your own life and the master of
+				your own soul. To know yourself more intimately than any company or any model ever
+				will. And to use technology the only way it should ever be used — to make us more
+				human, and more virtuous.
+			</p>
+		</div>
+
 		<!-- The long-form case (subsidiarity, where the record lives, what is
 		     borrowed) moved out of the letter entirely — it is the manifesto's
 		     to make. One quiet pointer for whoever wants it now. -->
