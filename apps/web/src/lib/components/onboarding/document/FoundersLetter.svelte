@@ -72,26 +72,34 @@
 				broker, disordered men? Or you.
 			</p>
 
-			<!-- The turn from the question to the product, and the only place the
-			     name gets explained. "Vice is repetitive and profitable" is the
-			     load-bearing line: it says why an entire industry is arranged the
-			     way it is without accusing anyone of malice, and it makes the name
-			     an argument rather than a mood. -->
+			<!-- The turn from the question to the product. The load-bearing move is
+			     MODAL: "cannot", not "will not" — extraction is ruled out by
+			     construction, not by promise, which is the one claim no cloud
+			     company can copy. "We are bringing the cloud home" is the whole
+			     structural program in five words. Then the name's argument:
+			     "vice is repetitive and profitable" says why an entire industry
+			     is arranged the way it is without accusing anyone of malice. -->
 			<p>
-				That is why I built Virtues: to put your life somewhere it cannot be turned
-				into advertising, or a feed, or a habit you did not choose. Vice is repetitive and
-				profitable, which is why so much is arranged to produce it. Virtue asks for harder
-				things — attention, memory, honesty, intimacy.
+				That is why I built Virtues: a machine that cannot extract from you — cannot turn
+				your life into advertising, a feed, or a habit you did not choose, because it is
+				physically yours and answers to no one else. We are bringing the cloud home. Vice
+				is repetitive and profitable, which is why so much is arranged to produce it.
+				Virtue asks for harder things — attention, memory, honesty, intimacy.
 			</p>
 
-			<!-- SHOWN, NOT ASSERTED. Everything above is an argument, and a page of
-			     pure argument is cold. A concrete object at a concrete time is a
-			     thing you can picture, and "every day" is a promise you can check
-			     rather than an IOU. -->
+			<!-- WHAT VIRTUES IS — named by its artifacts, never its features. The
+			     record, the page, the wiki, the intelligence that has read it: the
+			     things a person would point at, not the modules we would. (Chat is
+			     implied by the asks below; the portrait introduces itself later in
+			     the flow, which is better theater than announcing it here.) The
+			     daily page stays the anchor image — a concrete object at a
+			     concrete time, a promise you can check rather than an IOU. -->
 			<p>
-				Every day, a page will be waiting for you: yesterday, written down — where you went,
-				who you spoke with, what you were working on. Thin at first, having only just met
-				you. But a record compounds. Give it a week, and you can ask:
+				Virtues is the complete record of a life: yours. Every day it writes a page —
+				yesterday, written down: where you went, who you spoke with, what you were working
+				on. Around the pages grows a wiki of your world, the people and places and work
+				your days are made of, and an intelligence that has read all of it. Thin at first,
+				having only just met you. But a record compounds. Give it a week, and you can ask:
 			</p>
 		</div>
 
@@ -118,16 +126,19 @@
 
 		<div class="body">
 			<!-- THE CLOSE. The asks end on product; the letter must end on the
-			     person. The pivot is know / be known: the mirror, then the
-			     agent — self-knowledge, and an intelligence in your corner
-			     that carries the drudgery so the attention it frees goes back
-			     into the life itself. The us/you shift in the last sentence is
-			     deliberate: the founder joins the reader for the final clause. -->
+			     person. The frame is REMEMBERING, not being-known — the system as
+			     a mirror and a way to search your own life (anamnesis: growing up
+			     is less discovery than recall). The last sentence inverts the
+			     manifesto's diagnosis — technology strips away the part of life
+			     that has nothing to do with it — into technology's one proper
+			     use. The us/you shift is deliberate: the founder joins the
+			     reader for the final clause. -->
 			<p>
 				The goal is to know yourself more intimately than any company or any model ever
-				will. And to be known — by an intelligence that answers to you alone and takes up
-				the small burdens of the day, so your attention returns to living it. That is the
-				only way technology should be used: to make us more human, and more virtuous.
+				will — a mirror for everything you had let slip, a way to search your own life.
+				Growing up is less about discovering the new than remembering what you already
+				knew. That is the only way technology should be used: to give back the part of
+				life that has nothing to do with it — to make us more human, and more virtuous.
 			</p>
 		</div>
 
