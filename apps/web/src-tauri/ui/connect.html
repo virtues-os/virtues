@@ -350,14 +350,8 @@
       // it did to the first person who followed this button. Ship the URL that
       // answers; swap it the day the pretty one exists.
       //
-      // A URL and not a deep link on purpose: CHECKOUT belongs in a real
-      // browser — Apple Pay, card autofill, and the URL-bar trust chrome all
-      // die in an embedded webview, and the box completes the link over its
-      // own outbound connection regardless of which browser it was. Sign-in
-      // no longer goes here at all: atlas auth is email OTP with no password
-      // (linking-plan.md), which is exactly the shape a webview can host
-      // safely, so the existing-account door is inline — see INLINE SIGN-IN.
-      const LINK_URL = 'https://atlas.virtues.com/init';
+      // Checkout URLs come from atlas (/account/checkout) at click time now;
+      // the old LINK_URL constant died with the link step.
 
       // ── ROUTER:BEGIN ──────────────────────────────────────────────────────
       //
@@ -1021,12 +1015,13 @@ its devices apart — type its address.",
           discoverBle(4).then((r) => r.boxes, () => []),
         ]);
         state.bleBoxes = ble;
-        // The breakglass: a box hosting its own setup network. Asked of every
-        // discovered box rather than only the 10.42.0.x one — the subnet is a
-        // hint about where we are standing; the box is the authority.
-        const setupBox = await findSetupBox(lan.servers);
+        // The AP breakglass is DEMOTED out of the hot path (one-wire Phase 4):
+        // it probed provision_open against every discovered server on every
+        // start, for a path that only exists when someone resurrected the
+        // setup AP on a dead-radio box. That case reaches loadNetworks via
+        // the watchForBox recovery loop; nothing here pays for it any more.
         const next = Router.afterDiscovery({
-          bleBoxes: ble, lanServers: lan.servers, provisionOpenServer: setupBox,
+          bleBoxes: ble, lanServers: lan.servers, provisionOpenServer: null,
         });
         switch (next.screen) {
           case 'lan-provision':
@@ -1178,7 +1173,10 @@ its devices apart — type its address.",
       // online still has to come through here: the link code is session-gated
       // too, and it has no wifi step to be claimed by.
       async function blePhrase(box, errorText, next) {
-        const proceed = next || ((b) => bleWifiPicker(b));
+        // Default order (one-wire): phrase → save → SIGN IN → wifi. Sign-in
+        // is Mac↔atlas only, so it costs nothing that the box is offline —
+        // and doing it first means the grant is ready the moment wifi lands.
+        const proceed = next || ((b) => renderSignin(b));
         state.bleBox = box;
         setServer(box.name);
         // ASK THE BOX FIRST. Firmware older than the gate has no phrase — its
@@ -1513,235 +1511,35 @@ its devices apart — type its address.",
         // make the LAN origin unreachable, and pairing then rides Bluetooth
         // (RPC 0x83) instead — same code, different wire.
         const origin = (res.url || '').replace(/\/$/, '');
-        renderLinkStep({ name: state.bleBox.name, origin, bleId: state.bleBox.id }, ssid);
+        renderGrantStep({ name: state.bleBox.name, origin, bleId: state.bleBox.id }, ssid);
       }
 
-      // ── LINK ──────────────────────────────────────────────────────────────
+      // ── ACCOUNT: sign in → (checkout) → grant ─────────────────────────────
       //
-      // The step whose absence was discovered as a wall on 2026-08-11: a box
-      // onboarded and paired at an office was unreachable by the app in the
-      // same minute, because reach rides the relay and the relay rides the
-      // account. It comes BEFORE pairing on purpose — linking needs only the
-      // box's outbound internet plus a browser on any network, so it is immune
-      // to hostile LANs by construction, and once it is done nothing later
-      // depends on the local network's goodwill.
+      // Sign-in comes BEFORE wifi (one-wire-plan Phase 2). It is a
+      // conversation between THIS computer and atlas — the box is not
+      // involved, so nothing about it depends on radios or waits on the box.
+      // Once the wifi credentials go over BLE, the app writes a pre-approved
+      // GRANT over the same session (0x82); the box redeems it outbound the
+      // moment it is online, and the pair step's box-side wait sequences the
+      // rest. The link screen, its code polling, and the approve round-trip
+      // — ~250 lines of rotation scar tissue — are gone with the 0x84/0x85
+      // opcodes they orbited.
       //
-      // The box drives the link itself (device authorization, RFC-8628 shape);
-      // this screen's job is to say why, hand the owner one of two doors
-      // (inline sign-in, or browser checkout), and notice when the link lands
-      // — by whichever door, since the box's own poll is what completes it.
-      // PRESCRIBE, NEVER
-      // ENFORCE: "Skip for now" is always there. An owner who refuses the
-      // subscription owns slower, LAN-only hardware — not a brick.
-      async function renderLinkStep(server, ssid) {
-        state.linkServer = server;
-        // The code carried INTO a sign-in, captured at the click (below).
-        // Cleared on every entry so it can never leak across boxes or across
-        // separate link attempts — the bounded version of the global-cache
-        // staleness the review killed.
-        state.signinCode = null;
-        setServer(server.name);
-        const draw = (statusHtml) => {
-          app.innerHTML = `
-            <p class="kicker">Setting up</p>
-            <h1>Link your server to an account</h1>
-            <p class="sub">${ssid ? `It's on ${esc(ssid)}. ` : ''}Your data stays on the server —
-              the subscription pays for what connects it: reaching it from anywhere,
-              the AI wallet, integrations.</p>
-            <button class="primary" id="openlink">I already have an account</button>
-            <button class="secondary" id="newacct">Create an account</button>
-            <p class="hint" id="codehint">${statusHtml}</p>
-            <p class="escape"><button id="skip">Skip linking for now</button></p>`;
-          // The choice belongs HERE, not on a web page the app opens: asking
-          // "new or existing?" in the browser meant the app sent you somewhere
-          // to answer a question it could have asked itself. The two doors now
-          // go different places on purpose — sign-in is inline (email OTP,
-          // nothing a webview can't hold), checkout opens the real browser
-          // (payment autofill and Apple Pay live there, not here).
-          // Re-ask at the moment of the click too: the poll refreshes every few
-          // seconds, but the click is what puts the code in a URL, and that is
-          // the value that has to be live.
-          const go = async (path) => {
-            await fetchLinkCode();
-            paintCode();
-            if (!state.linkCode) return;
-            openUrl(`${LINK_URL}${path}?code=${encodeURIComponent(state.linkCode)}`);
-          };
-          // Sign-in navigates AWAY from this screen, so the watcher must stop
-          // FIRST — bumping searchGen before anything async, or the still-live
-          // loop can fire goToPairing during the handler and paint pairing
-          // under the sign-in form. No code fetch here: sign-in is email/OTP,
-          // and approve re-reads the user_code over BLE at the only moment it
-          // matters. (Checkout, below, deliberately does NOT stop the watcher —
-          // it opens a browser and stays here so the landing is noticed.)
-          document.getElementById('openlink').addEventListener('click', () => {
-            searchGen++;
-            // CAPTURE THE CODE NOW, while it is provably live — the watcher
-            // refreshed it within the last 3s and this button only enables
-            // with one in hand. Sign-in takes minutes of human time, and the
-            // BLE setup session routinely dies in that window (idle drop; or
-            // the box leaves setup entirely), so approve must NOT depend on
-            // reading the radio again afterward. Atlas validates the code
-            // server-side, and the OTP minutes sit well inside the 15-minute
-            // code TTL; if it does expire, atlas names it and the retry falls
-            // back to a BLE re-read. This is what stranded a real setup on
-            // 2026-08-24: a code in hand, discarded, then demanded back from
-            // a radio that could no longer answer.
-            state.signinCode = state.linkCode;
-            // Already signed in this setup? Go straight back to approving —
-            // the session outlives any screen bounce, so email + OTP happen
-            // at most once.
-            if (state.linkToken) return renderInlineApprove(server, ssid, state.linkToken);
-            renderInlineSignin(server, ssid);
-          });
-          document.getElementById('newacct').addEventListener('click', () => go('/checkout'));
-          document.getElementById('skip').addEventListener('click', () => goToPairing(server, ssid));
-        };
-        draw('<span id="linkstate"></span>');
-
-        // ASK THE BOX FOR ITS CODE, over the setup session we already hold.
-        //
-        // It used to be printed on the box's panel for the owner to retype. The
-        // session is a better carrier in both directions: it already proved
-        // LINE OF SIGHT via the phrase, where the glass proves only that you are
-        // in the room — and the code lands in the URL, so nobody types anything.
-        // The panel keeps it off the screen entirely, which also preserves the
-        // one-code-at-a-time rule the whole redesign came from.
-        // The code does not exist the instant Wi-Fi lands. The box has to reach
-        // atlas and start the device authorization first, so a single ask right
-        // after the join reliably comes back empty — which used to leave the
-        // button opening a bare /init and demanding the very code we had just
-        // taken off the glass (2026-08-13). Keep asking until it arrives.
-        // A refusal and "not minted yet" both come back empty, so a box that
-        // was REFUSING looked exactly like one still thinking — which is how a
-        // missing setup session hid behind a spinner. Keep the reason.
-        let codeErr = '';
-        // ALWAYS re-ask. The box rotates this code — atlas expires a link 15
-        // minutes after it starts — and caching the first one seen meant a
-        // screen left open a few minutes opened a URL atlas had already killed:
-        // "Link expired. Start again from your box." (2026-08-13). A blip must
-        // not wipe a good code, so only a non-empty answer overwrites.
-        // Reports which of three things happened, because they mean different
-        // things and used to be one silent shrug: a code, a deliberate EMPTY
-        // answer, or a failure.
-        const fetchLinkCode = async () => {
-          if (!server.bleId) return 'error';
-          try {
-            const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
-            if (r && r.ok && r.code) { state.linkCode = r.code; codeErr = ''; return 'code'; }
-            if (r && r.ok === false && r.error) { codeErr = String(r.error); return 'error'; }
-            // ok, no code. The box sends this when nothing is in flight —
-            // which, once it HAS handed us one, means the link landed.
-            return 'none';
-          } catch (e) { codeErr = String(e); return 'error'; }
-        };
-        // Until we have it there is nowhere useful to send the browser, so the
-        // button says so instead of opening a page that can only fail.
-        const paintCode = () => {
-          const hint = document.getElementById('codehint');
-          const signin = document.getElementById('openlink');
-          const fresh = document.getElementById('newacct');
-          if (signin) {
-            signin.disabled = !state.linkCode;
-            signin.textContent = state.linkCode
-              ? 'I already have an account'
-              : 'Getting your server\'s code…';
-          }
-          if (fresh) fresh.disabled = !state.linkCode;
-          if (!hint) return;
-          hint.innerHTML = state.linkCode
-            ? `We'll fill in your server's code (<b>${esc(state.linkCode)}</b>) automatically.
-               <span id="linkstate"></span>`
-            : codeErr
-              ? `Your server turned the request down: ${esc(codeErr)}
-                 <span id="linkstate"></span>`
-              : `Your server is asking for one — it needs a moment on the network first.
-                 <span id="linkstate"></span>`;
-        };
-        await fetchLinkCode();
-        paintCode();
-
-        // Watch the box, if this device can reach it. When it can't (an office
-        // LAN that isolates clients — the case this whole flow exists for) the
-        // screen still works; it just can't congratulate you, and the box's
-        // own display advances to the pair code either way.
-        const gen = ++searchGen;
-        let noneStreak = 0;
-        const el = () => document.getElementById('linkstate');
-        while (gen === searchGen) {
-          const had = state.linkCode;
-          const hadErr = codeErr;
-          const got = await fetchLinkCode();
-          if (gen !== searchGen) return;
-          // REPAINT ON A CHANGED ERROR TOO, not only a changed code. Painting
-          // only when the code changed meant a link step that started failing
-          // kept showing "we'll fill in your box's code" forever while the
-          // reason sat in a variable nobody rendered — the same invisible
-          // failure this screen was rebuilt to remove, reintroduced hours later
-          // by an optimisation that repainted less (2026-08-13).
-          if (codeErr !== hadErr) paintCode();
-          // LINKED, heard over Bluetooth. The watcher below asks the box over
-          // the LAN, but `origin` is undefined on the Bluetooth path — so on
-          // the very flow this screen exists for it could never see the answer,
-          // and an owner who had just paid sat on a finished step with no way
-          // on but "Skip" (2026-08-13). A box that gave us a code and now
-          // reports nothing in flight has linked.
-          // `had` catches the link landing while we watch. The streak catches
-          // the other entry: an app opened fresh against a box that linked
-          // earlier, where there is no transition to see — it has simply never
-          // had a code. Either way a box with nothing in flight has no link
-          // step left to do, and pairing (0x83) rides Bluetooth regardless of
-          // whether the box ever reached the internet.
-          if (got === 'none') noneStreak++; else noneStreak = 0;
-          if (had ? got === 'none' : noneStreak >= 3) {
-            if (el()) el().textContent = 'Nothing left to link — opening the last step…';
-            await new Promise((r) => setTimeout(r, 900));
-            if (gen !== searchGen) return;
-            return goToPairing(server, ssid);
-          }
-          if (state.linkCode !== had) paintCode();
-          const id = await boxIdentity(server.origin);
-          if (gen !== searchGen) return;
-          if (id && id.linked) {
-            if (el()) el().textContent = 'Linked — opening the last step…';
-            await new Promise((r) => setTimeout(r, 900));
-            if (gen !== searchGen) return;
-            return goToPairing(server, ssid);
-          }
-          if (id && el()) el().textContent = 'Waiting for the link to land…';
-          await new Promise((r) => setTimeout(r, 3000));
-        }
-      }
-
-      // ── INLINE SIGN-IN ────────────────────────────────────────────────────
+      // SKIP STAYS EVERYWHERE (prescribe, never enforce): a skipped sign-in
+      // just means no grant is written — the box works LAN-only, linkable
+      // later from Settings or `virtues link` on its console.
       //
-      // The existing-account door, without leaving the app. Atlas auth is
-      // email OTP by design — no password ceremony (linking-plan.md) — which
-      // is exactly the shape a webview can host safely: nothing here wants a
-      // password manager, and no payment ever renders in-app. Checkout stays
-      // in the real browser, where Apple Pay and card autofill live.
-      //
-      // Contract (atlas, routes/account.rs + routes/link.rs — documented in
-      // linking-plan.md "Inline sign-in contract"):
-      //   POST /account/login        {email}          → {sent:true}
-      //   POST /account/login/verify {email, code}    → {token, email, entitled}
-      //   POST /init/approve         {user_code} + Bearer → {approved:true}
-      // Errors arrive as HTTP 4xx/5xx with {error:{code,message}} bodies;
-      // atlasPost flattens them to {ok:false, code, error}. The codes that
-      // matter here: `no_subscription` (routes to browser checkout — the one
-      // deliberate hand-off), `link_not_found`/`link_expired` (re-fetch the
-      // user_code and retry; the session token stays good, so neither costs a
-      // second email round-trip).
-      //
-      // CORS is part of that contract: the airlock's origin is
-      // `tauri://localhost` (macOS/Linux), `http://tauri.localhost` (Windows),
-      // or the `virtues://` scheme (iOS) — atlas allows them with a wildcard
-      // (`app_cors` in routes/mod.rs; the token is a bearer, never a cookie).
-      // The CSPs in tauri.conf.json and tauri.ios.conf.json allow the
-      // connect-src.
-      //
-      // EVERY failure keeps the browser door open — inline is an upgrade,
-      // never a wall.
+      // Atlas contract (routes/account.rs, routes/link.rs):
+      //   POST /account/login          {email}       → {sent}
+      //   POST /account/login/verify   {email, code} → {token, entitled}
+      //   POST /account/session        (Bearer)      → {email, entitled}
+      //   POST /account/checkout       (Bearer)      → {url} | {entitled:true}
+      //   POST /init/grant             (Bearer)      → {grant, expires_in}
+      // Errors are HTTP 4xx/5xx with {error:{code,message}}; atlasPost
+      // flattens them to {ok:false, code, error}. CORS: app_cors() — the
+      // webview's origin is tauri://localhost / http://tauri.localhost /
+      // virtues://; bearer, never a cookie.
       const ATLAS = 'https://atlas.virtues.com';
       async function atlasPost(path, body, token) {
         const ctl = new AbortController();
@@ -1753,14 +1551,11 @@ its devices apart — type its address.",
               'Content-Type': 'application/json',
               ...(token ? { Authorization: 'Bearer ' + token } : {}),
             },
-            body: JSON.stringify(body),
+            body: JSON.stringify(body || {}),
             signal: ctl.signal,
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
-            // Atlas's error shape is {error:{code,message}}. Anything else on
-            // a non-2xx (a proxy error page, an old atlas) gets the status
-            // named rather than shrugged at.
             const e = data && data.error;
             return {
               ok: false,
@@ -1779,15 +1574,37 @@ its devices apart — type its address.",
         }
       }
 
-      function renderInlineSignin(server, ssid, errorText) {
-        searchGen++; // stop the link watcher
-        setServer(server.name);
+      /** Sign in, then hand control to `next` (default: the wifi picker).
+       *  A held session short-circuits: signed in once is signed in for the
+       *  whole setup, screen bounces included. */
+      function renderSignin(box, next, errorText) {
+        searchGen++;
+        const proceed = next || (() => bleWifiPicker(box));
+        setServer(box.name);
+        // Already signed in this setup? Ask atlas who we are and move on.
+        if (state.linkToken && !errorText) {
+          app.innerHTML = `
+            <p class="kicker">Your account</p>
+            <h1>Checking your sign-in</h1>
+            <div class="wait"><span class="pip"></span><span>One moment</span></div>`;
+          (async () => {
+            const res = await atlasPost('/account/session', {}, state.linkToken);
+            if (res && res.ok) {
+              if (res.entitled) { state.entitled = true; return proceed(); }
+              return renderCheckout(box, proceed);
+            }
+            state.linkToken = null;
+            state.entitled = false;
+            renderSignin(box, next, res && res.transport ? res.error : null);
+          })();
+          return;
+        }
         app.innerHTML = `
-          <button class="backnav" id="back" aria-label="Back">←</button>
-          <p class="kicker">Setting up</p>
+          <p class="kicker">Your account</p>
           <h1>Sign in</h1>
           <p class="sub">The email on your Virtues account — we'll email you a
-            six-digit code. There's no password.</p>
+            six-digit code. There's no password, and your server doesn't need to
+            be online yet.</p>
           ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
           <form id="form">
             <label for="email">Email</label>
@@ -1797,33 +1614,16 @@ its devices apart — type its address.",
             <button class="primary" id="go" type="submit" disabled>Email me a code</button>
           </form>
           <div class="msg" id="msg"></div>
-          <p class="escape"><button id="browser">Sign in with the browser instead</button></p>`;
+          <p class="escape"><button id="skip">Skip — run it without an account</button></p>`;
         const email = document.getElementById('email');
         const go = document.getElementById('go');
         const say = (t, cls) => {
           const m = document.getElementById('msg');
           if (m) { m.className = 'msg ' + (cls || ''); m.textContent = t; }
         };
-        // Deliverability is the server's problem; this only refuses the typos
-        // that can't be an address at all.
         const plausible = () => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim());
         email.addEventListener('input', () => (go.disabled = !plausible()));
-        document.getElementById('back').addEventListener('click', () =>
-          renderLinkStep(server, ssid));
-        // Fresh code at click time, not the cached state.linkCode: the owner
-        // may have sat on this screen while atlas's 15-minute link lapsed, and
-        // opening /signin with a stale (or empty) code is the dead-URL failure
-        // the browser flow was rebuilt to avoid. Re-read over BLE first.
-        document.getElementById('browser').addEventListener('click', async () => {
-          let code = state.linkCode || '';
-          if (server.bleId) {
-            try {
-              const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
-              if (r && r.ok && r.code) code = r.code;
-            } catch { /* keep whatever we had */ }
-          }
-          openUrl(`${LINK_URL}/signin?code=${encodeURIComponent(code)}`);
-        });
+        document.getElementById('skip').addEventListener('click', () => proceed());
         document.getElementById('form').addEventListener('submit', async (e) => {
           e.preventDefault();
           if (!plausible()) return;
@@ -1831,19 +1631,18 @@ its devices apart — type its address.",
           go.disabled = true;
           say('Sending…');
           const res = await atlasPost('/account/login', { email: addr });
-          if (res && res.ok) return renderInlineCode(server, ssid, addr);
-          renderInlineSignin(server, ssid,
-            (res && res.error) || "Couldn't send the code.");
+          if (res && res.ok) return renderSigninCode(box, proceed, addr);
+          renderSignin(box, next, (res && res.error) || "Couldn't send the code.");
         });
         email.focus();
       }
 
-      function renderInlineCode(server, ssid, email, errorText) {
+      function renderSigninCode(box, proceed, email, errorText) {
         searchGen++;
-        setServer(server.name);
+        setServer(box.name);
         app.innerHTML = `
           <button class="backnav" id="back" aria-label="Back">←</button>
-          <p class="kicker">Setting up</p>
+          <p class="kicker">Your account</p>
           <h1>Enter the code we emailed</h1>
           <p class="sub">Sent to <b>${esc(email)}</b>. Six digits; it only lasts a
             few minutes.</p>
@@ -1860,12 +1659,9 @@ its devices apart — type its address.",
           if (m) { m.className = 'msg ' + (cls || ''); m.textContent = t; }
         };
         document.getElementById('back').addEventListener('click', () =>
-          renderInlineSignin(server, ssid));
+          renderSignin(box, proceed, null));
         const resend = document.getElementById('resend');
         resend.addEventListener('click', async () => {
-          // Disable in flight: a double-tap fires two /account/login POSTs,
-          // each sending another OTP email (and, with rotation, invalidating
-          // the one the owner is about to type).
           if (resend.disabled) return;
           resend.disabled = true;
           say('Sending…');
@@ -1883,218 +1679,112 @@ its devices apart — type its address.",
           say('Checking…');
           const res = await atlasPost('/account/login/verify', { email, code });
           if (res && res.ok && res.token) {
-            // KEEP the session for the whole setup. It is a long-lived
-            // revocable bearer, and losing it to a screen bounce (approve
-            // fails → Back → link step) forced a second email + OTP for a
-            // sign-in that had already succeeded. The link step's
-            // already-have-an-account door checks this first.
+            // Signed in for the whole setup — a screen bounce never re-OTPs.
             state.linkToken = res.token;
-            // `entitled` rides back with the session, so an account with no
-            // subscription learns it NOW — before an approve that could only
-            // answer no_subscription anyway.
-            if (res.entitled === false) return renderInlineNoSub(server, ssid);
-            return renderInlineApprove(server, ssid, res.token);
+            if (res.entitled) { state.entitled = true; return proceed(); }
+            return renderCheckout(box, proceed);
           }
-          renderInlineCode(server, ssid, email,
+          renderSigninCode(box, proceed, email,
             (res && res.error) || "That code didn't match.");
         });
         document.getElementById('code').focus();
       }
 
-      // Signed in; now approve the box's own in-flight link. The user_code is
-      // re-fetched over BLE at THIS moment, not carried from earlier — atlas
-      // rotates the code, and approving a stale one is the same
-      // opened-a-dead-URL failure the browser flow already fixed (2026-08-13).
-      async function renderInlineApprove(server, ssid, token) {
+      /** Signed in, no subscription: the one deliberate browser hand-off.
+       *  Payment lives where Apple Pay and card autofill live; this screen
+       *  waits for atlas to see it land and then simply continues. */
+      function renderCheckout(box, proceed) {
         const gen = ++searchGen;
-        setServer(server.name);
-        const draw = (line) => {
-          app.innerHTML = `
-            <p class="kicker">Setting up</p>
-            <h1>Linking ${esc(prettyBoxName(server.name))}</h1>
-            <div class="wait"><span class="pip"></span><span id="stage">${esc(line)}</span></div>
-            <button class="back" id="approveback" style="margin-top:20px">Taking too long? Go back</button>`;
-          // A WAY OUT, always. This screen only awaits — a BLE read that hangs
-          // or a slow atlas would otherwise strand the owner on a pip with no
-          // button (live, 2026-08-24). Retiring the generation stops whatever
-          // is in flight; the link step it lands on renders its controls before
-          // it fetches, so it is never itself a dead end.
-          const back = document.getElementById('approveback');
-          if (back) back.addEventListener('click', () => { searchGen++; renderLinkStep(server, ssid); });
+        setServer(box.name);
+        app.innerHTML = `
+          <p class="kicker">Your account</p>
+          <h1>Start your subscription</h1>
+          <p class="sub">Checkout opens in your browser — cards and Apple Pay live
+            there, not in this app. Come back here after; this screen notices on
+            its own.</p>
+          <button class="primary" id="open">Open checkout</button>
+          <div class="wait hidden" id="waiting"><span class="pip"></span><span>Waiting for the payment to land…</span></div>
+          <div class="msg" id="msg"></div>
+          <p class="escape"><button id="skip">Skip — run it without a subscription</button></p>`;
+        const say = (t, cls) => {
+          const m = document.getElementById('msg');
+          if (m) { m.className = 'msg ' + (cls || ''); m.textContent = t; }
         };
-        draw('Approving on your account…');
-        // The user_code MUST come fresh from THIS server over BLE — atlas
-        // rotates it, and `state.linkCode` is a global cached from the link
-        // screen that can be stale or belong to a different box. Approving a
-        // stale/cross-box code attaches the wrong link. So there is no cache
-        // fallback: no fresh read → fail honestly and let Try again re-read.
-        // Timeboxed: a dead/absent peripheral makes this invoke hang forever
-        // (the exact stuck "Approving…" seen 2026-08-24 with no live box).
-        // TWENTY seconds, matching renderCodeEntry's proven number for the
-        // same call shape — the OTP round-trip leaves the BLE link idle for a
-        // minute-plus, and a cold CoreBluetooth re-dial + discover + subscribe
-        // overran a 12s deadline on the bench (2026-08-24): the first tap
-        // "failed" and the retry succeeded only because the abandoned dial had
-        // finished in the background.
-        // THE CARRIED CODE FIRST. Captured at the sign-in click while the BLE
-        // link was provably alive; using it here removes the radio from the
-        // common path entirely — atlas is the validator either way. The BLE
-        // re-read below is the FALLBACK, for a retry after atlas reported the
-        // code expired (the failed screen clears the carried code first).
-        let code = state.signinCode || null;
-        // A REFUSAL is not a timeout: the box answers ok:false when 0x84 is
-        // asked without a live setup session — which happens when the BLE link
-        // dropped during the sign-in minutes and the session died with it.
-        // Lumping it into "couldn't read" hid the one detail that names the
-        // fix (re-type the phrase), and made retry-forever look reasonable.
-        let refusal = '';
-        if (!code && server.bleId) {
-          try {
-            const r = await withDeadline(
-              invoke('plugin:reach|improv_link_code', { id: server.bleId }), 20000);
-            if (r && r.ok === false) refusal = String(r.error || 'it refused the request');
-            if (r && r.ok && r.code) {
-              code = r.code;
-            } else if (r && r.ok) {
-              // ok-and-empty is AMBIGUOUS (reach/commands.rs): it can mean the
-              // link already landed, OR the box hasn't minted one yet (no
-              // internet, or the prior link expired and its replacement isn't
-              // up). Only "landed" if the box itself says linked — otherwise
-              // it's "not ready", and skipping to pairing would leave the owner
-              // who signed in specifically to link with an unlinked server.
-              const id = await boxIdentity(server.origin);
-              if (gen !== searchGen) return;
-              if (id && id.linked) return goToPairing(server, ssid);
-              return renderInlineFailed(server, ssid, token,
-                "Your server hasn't finished asking to be linked yet — give it a moment, then try again.");
-            }
-          } catch { /* couldn't read — handled by the !code guard below */ }
-        }
-        if (gen !== searchGen) return;
-        if (!code) {
-          return renderInlineFailed(server, ssid, token,
-            refusal
-              ? `Your server turned the request down (${refusal}). Its setup session may
-                 have lapsed — typing the four words again reopens it.`
-              : server.bleId
-                ? "Couldn't read your server's link code just now. Try again — it takes a second."
-                : "This server can't be linked from here. Finish linking on the device that set it up.");
-        }
-        const res = await atlasPost('/init/approve', { user_code: code }, token);
-        if (gen !== searchGen) return;
-        if (res && res.ok) {
-          // Approved on the account; the box's own poll collects it. Watch
-          // briefly so the advance is earned, then move on regardless —
-          // pairing never required the link (PRESCRIBE, NEVER ENFORCE).
-          const stage = () => document.getElementById('stage');
-          if (stage()) stage().textContent = 'Waiting for your server to collect it…';
-          const deadline = Date.now() + 45000;
-          while (gen === searchGen && Date.now() < deadline) {
-            if (server.bleId) {
-              try {
-                const r = await withDeadline(
-                  invoke('plugin:reach|improv_link_code', { id: server.bleId }), 8000);
-                if (r && r.ok && !r.code) break; // nothing in flight → landed
-              } catch { /* keep watching */ }
-            }
-            const id = await boxIdentity(server.origin);
-            if (gen !== searchGen) return;
-            if (id && id.linked) break;
-            await new Promise((r) => setTimeout(r, 2500));
-          }
+        document.getElementById('skip').addEventListener('click', () => { searchGen++; proceed(); });
+        document.getElementById('open').addEventListener('click', async () => {
+          const res = await atlasPost('/account/checkout', {}, state.linkToken);
           if (gen !== searchGen) return;
+          if (res && res.ok && res.entitled) { state.entitled = true; searchGen++; return proceed(); }
+          if (!(res && res.ok && res.url)) {
+            return say((res && res.error) || "Couldn't open checkout — try again.", 'err');
+          }
+          openUrl(res.url);
+          document.getElementById('waiting').classList.remove('hidden');
+          // Poll until the webhook-and-done-page flip `entitled`. Gen-guarded;
+          // skip and back navigation retire it.
+          while (gen === searchGen) {
+            await new Promise((r) => setTimeout(r, 3000));
+            if (gen !== searchGen) return;
+            const s2 = await atlasPost('/account/session', {}, state.linkToken);
+            if (gen !== searchGen) return;
+            if (s2 && s2.ok && s2.entitled) {
+              state.entitled = true;
+              searchGen++;
+              return proceed();
+            }
+          }
+        });
+      }
+
+      // ── THE GRANT, written after the join ─────────────────────────────────
+      //
+      // The box just got wifi credentials over this same session. If the
+      // owner signed in, atlas mints a pre-approved device_code and the app
+      // writes it over BLE (0x82); the box ACKs the STORE immediately and
+      // redeems outbound once online — nothing here polls for the redemption.
+      // The codeless pair that follows waits box-side for the redeem + relay
+      // bind, so the ticket it answers with is complete. Skipped sign-in
+      // writes nothing and goes straight to pairing: LAN-only by choice.
+      async function renderGrantStep(server, ssid) {
+        if (!state.linkToken || !state.entitled || !server.bleId) {
           return goToPairing(server, ssid);
         }
-        if (res && res.code === 'no_subscription') {
-          return renderInlineNoSub(server, ssid);
+        const gen = ++searchGen;
+        setServer(server.name);
+        app.innerHTML = `
+          <p class="kicker">Setting up</p>
+          <h1>Attaching to your account</h1>
+          <div class="wait"><span class="pip"></span><span>One moment</span></div>`;
+        const res = await atlasPost('/init/grant', {}, state.linkToken);
+        if (gen !== searchGen) return;
+        if (!(res && res.ok && res.grant)) {
+          return renderGrantFailed(server, ssid,
+            (res && res.error) || "Atlas couldn't mint the grant.");
         }
-        if (res && (res.code === 'link_not_found' || res.code === 'link_expired')) {
-          // The session is still good; only the code moved. Drop the carried
-          // copy so the retry re-reads over BLE — one tap, not a second email.
-          state.signinCode = null;
-          return renderInlineFailed(server, ssid, token,
-            "Your server's code changed while we were signing in. Try again — it takes a second.");
+        let wrote;
+        try {
+          wrote = await withDeadline(
+            invoke('plugin:reach|improv_grant', { id: server.bleId, grant: res.grant }), 20000);
+        } catch (e) {
+          wrote = { ok: false, error: String(e) };
         }
-        if (res && res.code === 'unauthorized') {
-          state.linkToken = null;
-          return renderInlineSignin(server, ssid, 'That session expired — sign in again.');
-        }
-        renderInlineFailed(server, ssid, token,
-          (res && res.error) || "Atlas couldn't approve the link.");
+        if (gen !== searchGen) return;
+        if (wrote && wrote.ok) return goToPairing(server, ssid);
+        renderGrantFailed(server, ssid,
+          (wrote && wrote.error) || "Couldn't hand the grant to your server over Bluetooth.");
       }
 
-      // An approve that failed, with the session still in hand: retrying costs
-      // one tap and re-fetches a fresh user_code, so an expired code never
-      // sends anyone back through email + OTP.
-      function renderInlineFailed(server, ssid, token, why) {
+      function renderGrantFailed(server, ssid, why) {
         searchGen++;
         setServer(server.name);
         app.innerHTML = `
           <p class="kicker">Setting up</p>
-          <h1>The link didn't land</h1>
+          <h1>The account hand-off didn't land</h1>
           <p class="sub">${esc(why)}</p>
           <button class="primary" id="retry">Try again</button>
-          <button class="secondary" id="back">Back</button>
-          ${server.bleId ? '<button class="back" id="rephrase" style="margin-top:16px">Session lapsed? Type the four words again</button>' : ''}
-          <p class="escape"><button id="skip">Skip linking for now</button></p>`;
+          <p class="escape"><button id="skip">Skip — link it later from Settings</button></p>`;
         document.getElementById('retry').addEventListener('click', () =>
-          renderInlineApprove(server, ssid, token));
-        document.getElementById('back').addEventListener('click', () =>
-          renderLinkStep(server, ssid));
-        // The recovery for a dead setup session: the box only answers 0x84
-        // inside a session, and a session that died with a dropped BLE link
-        // can only be reopened by the phrase. The words left the glass when
-        // they were first accepted — this asks for the SAVED copy, which the
-        // save ceremony exists to guarantee. `next` routes the reopened
-        // session straight back here, sign-in intact.
-        const rephrase = document.getElementById('rephrase');
-        if (rephrase) rephrase.addEventListener('click', () =>
-          blePhrase({ id: server.bleId, name: server.name }, null,
-            () => renderInlineApprove(server, ssid, token)));
-        document.getElementById('skip').addEventListener('click', () =>
-          goToPairing(server, ssid));
-      }
-
-      // Signed in, but the account holds no subscription. The one seam where
-      // inline hands off to the browser on purpose: what comes next is
-      // payment, and payment does not belong in an app-shaped webview.
-      //
-      // No `checkout_url` parameter: atlas's no_subscription answer is a plain
-      // {error:{code,message}} and atlasPost strips every non-2xx body field
-      // but ok/code/error — so a server-supplied URL never actually arrived.
-      // The URL is built here, and the code is re-read fresh at click time.
-      function renderInlineNoSub(server, ssid) {
-        searchGen++;
-        setServer(server.name);
-        app.innerHTML = `
-          <p class="kicker">Setting up</p>
-          <h1>That account has no subscription yet</h1>
-          <p class="sub">You're signed in, but nothing on the account covers a
-            server. Checkout opens in your browser — cards and Apple Pay live
-            there, not in this app. Come back here after; this screen notices
-            on its own.</p>
-          <button class="primary" id="checkout">Open checkout</button>
-          <button class="secondary" id="back">Back</button>
-          <p class="escape"><button id="skip">Skip linking for now</button></p>`;
-        document.getElementById('checkout').addEventListener('click', async () => {
-          // Best code available at the click: the one carried through sign-in
-          // (captured live), else the link screen's cache; a BLE re-read
-          // freshens either when the radio still answers. Atlas re-validates
-          // regardless — /init/checkout refuses a stale code with its own page.
-          let code = state.signinCode || state.linkCode || '';
-          if (server.bleId) {
-            try {
-              const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
-              if (r && r.ok && r.code) code = r.code;
-            } catch { /* keep whatever we had */ }
-          }
-          openUrl(`${LINK_URL}/checkout?code=${encodeURIComponent(code)}`);
-          // The browser has it now; the link-step watcher is the thing that
-          // notices the checkout completing, so stand back on it.
-          renderLinkStep(server, ssid);
-        });
-        document.getElementById('back').addEventListener('click', () =>
-          renderLinkStep(server, ssid));
+          renderGrantStep(server, ssid));
         document.getElementById('skip').addEventListener('click', () =>
           goToPairing(server, ssid));
       }
@@ -2110,20 +1800,25 @@ its devices apart — type its address.",
           case 'pair': return goToPairing(server, ssid);
           case 'phrase-then-link':
             // CLAIM BEFORE ASKING — the `-` probe inside blePhrase makes this
-            // free on firmware with no gate. See `Router.boxStep`.
-            return blePhrase({ name: server.name, id: server.bleId }, null, () =>
-              renderLinkStep(server, ssid));
-          default: return renderLinkStep(server, ssid);
+            // free on firmware with no gate. An already-online box skips the
+            // wifi step: phrase → sign in → grant → pair, all on this session.
+            return blePhrase({ name: server.name, id: server.bleId }, null, (b) =>
+              renderSignin(b, () => renderGrantStep({ ...server, name: b.name }, ssid)));
+          default:
+            // No BLE session to carry a grant over. An unlinked LAN-only box
+            // links from its own console (`virtues link`) or Settings later —
+            // pairing never required the link (prescribe, never enforce).
+            return goToPairing(server, ssid);
         }
       }
 
       function goToPairing(server, ssid) {
         searchGen++; // stop the link watcher
-        // The Bluetooth path pairs ITSELF. The session already proved line of
-        // sight (the phrase), and 0x85 hands over the code — so a chip list
-        // with one chip that must be clicked was a step with no decision in
-        // it. Go straight to renderCodeEntry, which runs the automatic pair
-        // and falls back to the code form only when Bluetooth lets it down.
+        // The Bluetooth path pairs ITSELF: codeless 0x83 under the session —
+        // a chip list with one chip that must be clicked was a step with no
+        // decision in it. Go straight to renderCodeEntry, which runs the
+        // automatic pair and falls back to the LAN code form only when
+        // Bluetooth lets it down.
         if (server.bleId) return renderCodeEntry(server);
         renderPair(
           [server],
@@ -2408,53 +2103,29 @@ its devices apart — type its address.",
       async function renderCodeEntry(server) {
         let autoErr = '';
         setServer(server.name);
-        // NOBODY TYPES THIS ON THE BLUETOOTH PATH. The six digits prove the
-        // person can read the box's screen — a proof already made here, since
-        // 0x83 requires a session and a session is opened only by the four
-        // words printed on that same screen. Asking again was the last thing
-        // in the whole flow anyone had to transcribe (2026-08-13).
+        // NOBODY TYPES ANYTHING ON THE BLUETOOTH PATH. Pairing is codeless
+        // under the session (0x83, 2026-08-24): the session was opened by the
+        // four words on the glass, which is the exact proof the six digits
+        // used to re-demand — and the box completes its reach ticket before
+        // answering, so this one call carries everything.
         //
-        // The form below stays for every other route: a LAN chip, a box older
-        // than 0x85, and the case that pays for keeping it — an advertisement
-        // claiming "already online" that is stale, where the panel is the only
-        // honest source left.
+        // The form below stays for the LAN route: a claimed box found on the
+        // network, where the panel's rotating 6-digit code is the only proof
+        // channel a codeless radio can't replace.
         if (server.bleId) {
           app.innerHTML = `
             <p class="kicker">Almost there</p>
             <h1>Pairing</h1>
             <div class="wait"><span class="pip"></span><span>Asking your server to let this ${esc(THIS_DEVICE.replace(/^this /, ''))} in</span></div>
             <div class="msg" id="msg"></div>
-            <button class="back" id="autocancel" style="margin-top:18px">Stuck? Type the code from its display instead</button>`;
-          // A WAY OUT, always. This screen waits on the box and had no escape:
-          // a Bluetooth call that hangs left an owner staring at a pip with no
-          // button on the page (live, 2026-08-13).
-          let cancelled = false;
-          document.getElementById('autocancel').addEventListener('click', () => {
-            cancelled = true;
-          });
-          // AND A DEADLINE, because a cancel button only helps someone who is
-          // still watching. ensure_connected wraps `connect` in a timeout but
-          // not `discover_services` or `subscribe`, so a stale peripheral can
-          // hang past every timeout the Rust side has. 20s is longer than a
-          // healthy fetch and shorter than anyone's patience.
-          const withDeadline = (p, ms) =>
-            Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
-          let auto = null;
-          try {
-            const r = await withDeadline(
-              invoke('plugin:reach|improv_pair_code', { id: server.bleId }),
-              20000,
-            );
-            if (r && r.ok && r.code) auto = r.code;
-          } catch { /* fall through to the form */ }
-          if (cancelled) auto = null;
-          if (auto && !cancelled) {
-            const done = await submitPairAnyWire(server, auto);
-            if (done.ok) return;
-            // Fell through on BOTH wires. Carry the reason onto the form:
-            // silence here reads as the app having ignored the tap.
-            autoErr = done.error;
-          }
+            <p class="hint">It may take up to a minute — the server finishes
+              attaching to your account before it answers.</p>`;
+          const done = await submitPairBle(server);
+          if (done.ok) return;
+          // Bluetooth failed. Carry the reason onto the LAN form: silence
+          // here reads as the app having ignored the tap, and the panel is
+          // showing the code the form asks for.
+          autoErr = done.error;
         }
         app.innerHTML = `
           <button class="backnav" id="back" aria-label="Back to servers">←</button>
@@ -2478,11 +2149,9 @@ its devices apart — type its address.",
           bleWifiPicker({ id: server.bleId, name: server.name }));
         document.getElementById('form').addEventListener('submit', (e) => {
           e.preventDefault();
-          // A chip carrying a BLE id pairs over Bluetooth first — immune to
-          // LANs that isolate clients; the box relays the code to itself
-          // (0x83) — and falls over to the LAN with the same code when the
-          // radio is stuck, since the wires are equivalent by design.
-          if (server.bleId) submitPairAnyWire(server); else submitPair(server.origin);
+          // The typed code always goes over the LAN — it exists precisely for
+          // the routes that have no session-bearing radio.
+          submitPair(server.origin);
         });
         document.getElementById('code').focus();
       }
@@ -2543,37 +2212,30 @@ its devices apart — type its address.",
         }
       }
 
-      // Pair over the box's Bluetooth (RPC 0x83). The Rust side mints the
-      // device identity, the box redeems the code against its own consume
-      // endpoint, and the pairing persists exactly as the LAN path's would —
-      // so from here on the app can't tell which wire it paired over.
-      /// `preset` is the code fetched over 0x85; without one this reads the
-      /// form. Returns `{ ok, error }` rather than nothing, because the
-      /// automatic path has no form to leave a message on and a failure there
-      /// must survive long enough to be shown on the one that follows.
-      async function submitPairBle(server, preset) {
+      // Pair over the box's Bluetooth (RPC 0x83): session-authorized and
+      // CODELESS — the box supplies its own standing code internally,
+      // completes its reach ticket first (waiting out a grant redeem and the
+      // relay bind), and streams the consume response back; the pairing then
+      // persists exactly as the LAN path's would, so from here on the app
+      // can't tell which wire it paired over. Returns `{ ok, error }` because
+      // the automatic path has no form to leave a message on and a failure
+      // must survive long enough to be shown on the one that follows.
+      async function submitPairBle(server) {
         const msg = document.getElementById('msg');
-        const go = document.getElementById('go');
         const say = (t, cls) => {
           if (!msg) return;
           msg.className = 'msg ' + (cls || '');
           msg.textContent = t;
         };
-        const typed = document.getElementById('code');
-        const code = (preset || (typed ? typed.value : '')).replace(/\s+/g, '');
-        if (code.length < 6) {
-          say('Enter the 6-digit code from the server\'s display.', 'err');
-          return { ok: false, error: '' };
-        }
-        if (go) go.disabled = true;
         say('Pairing over Bluetooth…');
         try {
-          // Timeboxed like every other BLE call now: the 0x83 write hung a
-          // real pairing indefinitely on a dying link (bench, 2026-08-24) —
-          // while the box sat reachable on the LAN the whole time. On timeout
-          // or failure, the caller falls over to the network path.
+          // Timeboxed like every other BLE call (a 0x83 hang stranded a real
+          // pairing, bench 2026-08-24) — but GENEROUSLY: the box may spend up
+          // to ~45s completing its ticket (grant redeem + relay bind) before
+          // it answers, and cutting it off mid-wait would re-create the very
+          // incomplete-ticket problem the wait exists to solve.
           const res = await withDeadline(
-            invoke('plugin:reach|improv_pair', { id: server.bleId, code }), 25000);
+            invoke('plugin:reach|improv_pair', { id: server.bleId }), 70000);
           if (res && res.ok) {
             say('Paired — opening your server…', 'ok');
             invoke('plugin:reach|improv_disconnect').catch(() => {});
@@ -2582,28 +2244,13 @@ its devices apart — type its address.",
           }
           const why = res === null
             ? 'Bluetooth timed out.'
-            : (res && res.error) || 'Pairing did not complete. Check the code and try again.';
+            : (res && res.error) || 'Pairing did not complete over Bluetooth.';
           say(why, 'err');
-          if (go) go.disabled = false;
-          return { ok: false, error: why, code };
+          return { ok: false, error: why };
         } catch (err) {
           say(String(err), 'err');
-          if (go) go.disabled = false;
-          return { ok: false, error: String(err), code };
+          return { ok: false, error: String(err) };
         }
-      }
-
-      // BLE pair with a LAN net under it. The wires are equivalent by design
-      // ("from here on the app can't tell which wire it paired over"), so a
-      // Bluetooth failure with the box visible on the network is never worth
-      // reporting to a human — try the other wire with the same code first.
-      async function submitPairAnyWire(server, preset) {
-        const r = await submitPairBle(server, preset);
-        if (r.ok || !server.origin || !r.code) return r;
-        const msg = document.getElementById('msg');
-        if (msg) { msg.className = 'msg'; msg.textContent = 'Bluetooth is stuck — pairing over your network instead…'; }
-        const lanOk = await submitPair(server.origin, r.code);
-        return lanOk ? { ok: true } : r;
       }
 
       // ── launch ────────────────────────────────────────────────────────────
