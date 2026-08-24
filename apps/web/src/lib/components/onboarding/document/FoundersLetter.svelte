@@ -84,12 +84,45 @@
 				memory, honesty, intimacy.
 			</p>
 
+			<!-- THE TWO FATES. Same data, two destinations — the against/for
+			     pivot that was cut from the prose, returned as an image (the
+			     "for" side shown, never listed). Vocabulary is the letter's own:
+			     the left payload is ¶2's triple verbatim; the right column ends
+			     on "you", echoing ¶1's "Or you." Mono + hairlines: the
+			     honest-machine register, an ASCII diagram grown up. -->
+			<figure
+				class="fates"
+				role="img"
+				aria-label="Two fates for the same data. Extractive tech: your life's data flows to their cloud and becomes ads, algorithms, and addictions — used against you. Sovereign tech, Virtues: the same data stays on the box in your home and becomes pages, a wiki, you — used for you."
+			>
+				<div class="fate">
+					<p class="fate-head">Extractive tech</p>
+					<div class="cell">your life's data</div>
+					<div class="drop" aria-hidden="true">↓</div>
+					<div class="cell stack">
+						<span>their cloud</span>
+						<span>ads · algorithms · addictions</span>
+					</div>
+					<p class="fate-cap">(used against you)</p>
+				</div>
+				<div class="fate">
+					<p class="fate-head">Sovereign tech (Virtues)</p>
+					<div class="cell">your life's data</div>
+					<div class="drop" aria-hidden="true">↓</div>
+					<div class="cell stack">
+						<span>the box in your home</span>
+						<span>pages · a wiki · you</span>
+					</div>
+					<p class="fate-cap">(used for you)</p>
+				</div>
+			</figure>
+
 			<!-- THE THESIS. The one large claim, introduced by the mark itself —
 			     ∴ is the therefore-sign, so the logo arrives doing its job as
-			     LOGIC: everything above it is premises, this line is the
-			     conclusion. It is also the only sentence in the letter allowed
-			     to command. Same ink as the prose — the mark is salient by
-			     being a symbol, not by being colored. -->
+			     LOGIC: everything above it, the figure included, is premises,
+			     and this line is the conclusion. It is also the only sentence
+			     in the letter allowed to command. Same ink as the prose — the
+			     mark is salient by being a symbol, not by being colored. -->
 			<p class="thesis">
 				<span class="therefore" aria-hidden="true">∴</span> You must protect your life's
 				data to protect your soul.
@@ -254,6 +287,79 @@
 
 	.body p {
 		margin: 0;
+	}
+
+	/* ── the two fates ─────────────────────────────────────────────────── */
+
+	/* The one figure in the letter. Mono and hairlines only — it should read
+	   as a diagram someone drew in a terminal, not a marketing graphic. Square
+	   corners on purpose: this is the ASCII register, grown up. */
+	.fates {
+		margin: 1.25rem 0 0.5rem;
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 2rem;
+	}
+
+	.fate-head,
+	.fate-cap,
+	.cell,
+	.drop {
+		font-family: var(--font-mono, ui-monospace, monospace);
+	}
+
+	.fate-head {
+		margin: 0 0 0.8rem;
+		font-size: 11px;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		text-align: center;
+		color: var(--color-foreground-subtle);
+	}
+
+	.cell {
+		border: 1px solid var(--color-border);
+		padding: 0.55rem 0.75rem;
+		font-size: 13px;
+		text-align: center;
+		color: var(--color-foreground);
+	}
+
+	.cell.stack {
+		display: flex;
+		flex-direction: column;
+		padding: 0;
+	}
+
+	.cell.stack span {
+		padding: 0.55rem 0.75rem;
+	}
+
+	.cell.stack span + span {
+		border-top: 1px solid var(--color-border);
+		color: var(--color-foreground-muted);
+	}
+
+	.drop {
+		margin: 0.3rem 0;
+		text-align: center;
+		font-size: 13px;
+		color: var(--color-foreground-subtle);
+	}
+
+	.fate-cap {
+		margin: 0.7rem 0 0;
+		font-size: 12px;
+		text-align: center;
+		color: var(--color-foreground-subtle);
+	}
+
+	/* Narrow: the two fates stack, reading order preserved (against, then for). */
+	@media (max-width: 560px) {
+		.fates {
+			grid-template-columns: 1fr;
+			gap: 2.25rem;
+		}
 	}
 
 	/* The thesis line: same serif, same size, same ink — salience comes from
