@@ -198,40 +198,57 @@ Still owed for grant + BLE-pair to fire end-to-end (P2, app + atlas):
   so the page can show "✓ your box received it" — closing the loop on both
   surfaces.
 
-## Inline sign-in contract (app side BUILT 2026-08-24; atlas side owed)
+## Inline sign-in contract (BUILT both sides, 2026-08-24)
 
 The existing-account door no longer opens a browser. The airlock hosts the
 whole sign-in itself — email → six-digit OTP → approve the box's in-flight
 `user_code` — because atlas auth is OTP with **no password ceremony**, which
 removes the one thing a webview couldn't safely host. Checkout remains
 browser-only on purpose (Apple Pay, card autofill, URL-bar trust chrome), and
-every inline failure keeps a "sign in with the browser instead" escape, so
-until these endpoints ship the flow degrades to exactly what it was.
+every inline failure keeps a "sign in with the browser instead" escape.
+
+The sign-in half was already built: `/account/login` + `/account/login/verify`
+(routes/account.rs, migration 0013) exist for exactly this pre-link window and
+deliberately answer identically whether or not the address has an account (no
+customer oracle). The airlock calls them as-is. What 2026-08-24 added is the
+last leg — `POST /init/approve` (routes/link.rs): a session-authed approve of
+the box's in-flight link, keyed on the short `user_code`. It is `login_verify`
+with a different proof of identity — the attach itself is the shared
+`attach_link_to_customer`, so the magic-link click and the app session can
+never drift into different attach rules. (It is NOT the absent `/init/grant`:
+nothing new is minted, and the single-key rotation caveat is inherited from
+the magic link, not extended — see the note in routes/account.rs.)
 
 What the airlock calls (`connect.html`, INLINE SIGN-IN region):
 
 | Endpoint | Body | Answer |
 |---|---|---|
-| `POST /init/otp/request` | `{email}` | `{ok}` — creates the account implicitly, per persona 2 |
-| `POST /init/otp/verify` | `{email, code}` | `{ok, token}` — short-lived link-scoped bearer |
-| `POST /init/approve` | `{user_code}` + `Authorization: Bearer` | `{ok}`, or `{ok:false, error:"no-subscription", checkout_url}` |
+| `POST /account/login` | `{email}` | `{sent:true}`; sends regardless of account existence |
+| `POST /account/login/verify` | `{email, code}` | `{token, email, entitled}` — 180-day revocable bearer |
+| `POST /init/approve` | `{user_code}` + `Authorization: Bearer` | `{approved:true}` |
 
-Contract notes the implementation depends on:
-- **The token may approve more than once.** The airlock's retry re-fetches a
-  fresh `user_code` over BLE (0x84) and reuses the token, so an expired code
-  never costs a second email round-trip.
-- **`no-subscription` is a distinguished error**, not prose: it routes to the
-  one deliberate browser hand-off (checkout), carrying `checkout_url` when
-  atlas has a better destination than `/init/checkout?code=…`.
-- **CORS**: the airlock's origin is `tauri://localhost` (macOS/Linux),
-  `http://tauri.localhost` (Windows), or the `virtues://` scheme (iOS). The
-  token is a bearer, never a cookie, so `Access-Control-Allow-Origin: *` is
-  acceptable. Errors ride in JSON bodies — a bare 4xx status page reads as
-  "Atlas answered NNN." in the app.
-- **Completion is still the box's.** Approve only flips the device
-  authorization; the box's own poll redeems it, and the airlock watches
-  (BLE 0x84 going empty, or `/api/box/identity.linked`) for up to 45s before
-  moving on to pairing regardless — prescribe, never enforce.
+Errors are HTTP 4xx/5xx with `{error:{code,message}}` bodies. The codes the
+airlock acts on:
+- **`no_subscription`** (402) → the one deliberate browser hand-off, checkout.
+  The airlock also short-circuits on `entitled:false` at verify, so most
+  unpaid accounts never hit approve at all; the 402 re-check exists because a
+  session can be minted before checkout completes.
+- **`link_not_found`** (404) / **`link_expired`** (410) → the code moved; the
+  airlock re-fetches it over BLE (0x84) and retries with the same token, so an
+  expired code never costs a second email round-trip.
+- **`unauthorized`** (401) → back to the email screen.
+
+Operational notes:
+- **CORS**: `app_cors()` (routes/mod.rs) — wildcard origin, `POST`, explicit
+  `Content-Type` + `Authorization` headers (the CORS spec exempts
+  `Authorization` from header wildcards). Scoped to `/account/*` and
+  `/init/approve` only; the airlock's origin is `tauri://localhost`
+  (macOS/Linux), `http://tauri.localhost` (Windows), or `virtues://` (iOS),
+  and nothing rides on cookies.
+- **Completion is still the box's.** Approve only flips the device link; the
+  box's own poll redeems it, and the airlock watches (BLE 0x84 going empty, or
+  `/api/box/identity.linked`) for up to 45s before moving on to pairing
+  regardless — prescribe, never enforce.
 
 **P3 — lifecycle:**
 - `virtues unlink`, account-page release, resale story documented atop

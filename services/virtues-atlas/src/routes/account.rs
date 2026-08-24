@@ -51,6 +51,9 @@ pub fn router() -> Router<AppState> {
         .route("/account/login", post(login))
         .route("/account/login/verify", post(verify))
         .route("/account/session", post(session_info))
+        // The airlock's inline sign-in calls these from the app's webview
+        // origin — see `app_cors` for why the policy is a wildcard.
+        .layer(super::app_cors())
 }
 
 // ─── POST /account/login ────────────────────────────────────────────────────
@@ -257,16 +260,22 @@ async fn session_info(State(state): State<AppState>, headers: HeaderMap) -> impl
 // change with its own migration. See docs/onboarding-plan.md, "Billing
 // correctness".
 //
+// `POST /init/approve` (link.rs) is NOT this endpoint, though it looks
+// adjacent: it approves the box's own in-flight link — the same attach
+// `login_verify` already performs on a magic-link click, with a session
+// bearer as the proof instead of a clicked email. It inherits the
+// single-key rotation exactly as the magic link does; it does not extend it.
+//
 // ─── shared ─────────────────────────────────────────────────────────────────
 
-struct Session {
-    email: String,
-    customer_id: Option<String>,
+pub(super) struct Session {
+    pub(super) email: String,
+    pub(super) customer_id: Option<String>,
 }
 
 /// Resolve a `Authorization: Bearer <token>` into a live session, refreshing
 /// `last_seen_at` so the account page can show honest device activity.
-async fn authed(state: &AppState, headers: &HeaderMap) -> Option<Session> {
+pub(super) async fn authed(state: &AppState, headers: &HeaderMap) -> Option<Session> {
     let raw = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())?
@@ -290,7 +299,7 @@ async fn authed(state: &AppState, headers: &HeaderMap) -> Option<Session> {
 }
 
 /// Does this customer have an active subscription right now?
-async fn is_entitled(state: &AppState, customer_id: Option<&str>) -> bool {
+pub(super) async fn is_entitled(state: &AppState, customer_id: Option<&str>) -> bool {
     let Some(cid) = customer_id else { return false };
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM subscriptions

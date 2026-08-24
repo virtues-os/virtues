@@ -58,6 +58,12 @@ pub fn router() -> Router<AppState> {
         // "new or existing?" itself now, so sending an owner who already
         // answered to a page that asks again is a wasted step.
         .route("/init/signin", get(signin))
+        // The app's inline sign-in: a session-authed approve of the box's
+        // in-flight link, keyed on the USER code. Same attach as a clicked
+        // magic link; only the proof of identity differs. Called from the
+        // airlock webview, hence the CORS layer — the browser pages above
+        // need none.
+        .route("/init/approve", post(approve).layer(crate::routes::app_cors()))
 }
 
 // ─── POST /init/start ───────────────────────────────────────────────────────
@@ -616,6 +622,86 @@ async fn login_web(
     }
 }
 
+// ─── POST /init/approve (the app's inline sign-in) ──────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ApproveBody {
+    user_code: String,
+}
+
+/// Session-authed approve of an in-flight link, keyed on the short user code.
+///
+/// The airlock signs in with the existing `/account/login` + `/verify` (email
+/// OTP), then calls this with the code it read off the box over BLE (0x84).
+/// From atlas's side it is `login_verify` with a different proof: an OTP
+/// session instead of a clicked magic link — the attach itself is the shared
+/// `attach_link_to_customer`, so the two doors cannot drift.
+///
+/// Error codes are part of the airlock contract (linking-plan.md):
+/// `no_subscription` routes the app to browser checkout; `link_not_found` /
+/// `link_expired` tell it to re-fetch the code and retry — the session stays
+/// good, so neither costs a second email round-trip.
+async fn approve(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ApproveBody>,
+) -> axum::response::Response {
+    let Some(sess) = super::account::authed(&state, &headers).await else {
+        return err(StatusCode::UNAUTHORIZED, "unauthorized", "sign in again");
+    };
+    // Entitlement is checked here, not only at sign-in: the airlock may hold
+    // a session minted before checkout completed, and approving a link for an
+    // unpaid account would hand out an api_key nothing funds.
+    let Some(customer_id) = sess.customer_id.as_deref() else {
+        return err(
+            StatusCode::PAYMENT_REQUIRED,
+            "no_subscription",
+            "no subscription on this account yet",
+        );
+    };
+    if !super::account::is_entitled(&state, Some(customer_id)).await {
+        return err(
+            StatusCode::PAYMENT_REQUIRED,
+            "no_subscription",
+            "no active subscription on this account",
+        );
+    }
+
+    let code = body.user_code.trim().to_uppercase();
+    if code.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "bad_code", "missing user_code");
+    }
+    let row: Option<(Vec<u8>,)> = sqlx::query_as(
+        "SELECT device_code_hash FROM device_link \
+         WHERE user_code = $1 AND status = 'pending' AND expires_at > now()",
+    )
+    .bind(&code)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    let Some((device_code_hash,)) = row else {
+        return err(
+            StatusCode::NOT_FOUND,
+            "link_not_found",
+            "that code is invalid, used, or replaced — fetch a fresh one and retry",
+        );
+    };
+
+    match attach_link_to_customer(&state, &device_code_hash, customer_id).await {
+        AttachOutcome::Attached => {
+            (StatusCode::OK, Json(json!({ "approved": true }))).into_response()
+        }
+        AttachOutcome::LinkGone => err(
+            StatusCode::GONE,
+            "link_expired",
+            "your server has moved on to a fresh code — fetch it and retry",
+        ),
+        AttachOutcome::Failed => {
+            err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't attach the box")
+        }
+    }
+}
+
 /// What `begin_login` decided — shared by the box-callable and web doors so the
 /// two can never drift into different rules about accounts or rate limits.
 enum LoginOutcome {
@@ -815,35 +901,68 @@ async fn login_verify(
         );
     };
 
-    // Re-link recovery: mint a fresh api_key and re-point the device to the
-    // existing customer. We trust our own customers table (looked up by email +
-    // verified via the magic link), so no Stripe call. We re-point to the SAME
-    // `account_id` and do NOT re-credit — the wallet is preserved (the recovery
-    // win).
-    //
-    // Ordering matters: register the new key with virtues-api FIRST, and only
-    // rotate `customers.api_key_hash` once that succeeds. If register fails, the
-    // customers row keeps the OLD hash — which still matches what virtues-api
-    // holds — so the box's old key stays consistent across the proxy AND atlas
-    // billing-auth, and the user can just retry. (The opposite order would
-    // leave a split-brain: atlas on the new hash, virtues-api on the old.)
+    match attach_link_to_customer(&state, &device_code_hash, &customer_id).await {
+        AttachOutcome::Attached => page(
+            "✓ Box attached",
+            "Your Virtues box is now attached to your subscription. Go back to the Virtues app — it continues on its own within a few seconds.",
+        ),
+        AttachOutcome::LinkGone => page(
+            "Link expired",
+            "This link took too long, and your box has already moved on to a fresh code. \
+             Nothing is wrong with it. Open the Virtues app and start the link again.",
+        ),
+        AttachOutcome::Failed => page(
+            "Something went wrong",
+            "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
+        ),
+    }
+}
+
+/// What `attach_link_to_customer` decided — shared by the magic-link click and
+/// the app's `/init/approve`, so the two proofs of identity can never drift
+/// into different attach rules.
+enum AttachOutcome {
+    Attached,
+    /// The device_link lapsed or was already taken; the box has moved on to a
+    /// fresh code. Retrying with a re-fetched code is the fix.
+    LinkGone,
+    Failed,
+}
+
+/// Attach an in-flight device_link to an existing customer: mint a fresh
+/// api_key, register it with virtues-api, rotate the stored hash, flip the
+/// link to ready for the box's poll.
+///
+/// Re-link recovery semantics: we trust our own customers table (the caller
+/// has already verified control of the email — magic-link click or OTP
+/// session), so no Stripe call. We re-point to the SAME `account_id` and do
+/// NOT re-credit — the wallet is preserved (the recovery win).
+///
+/// Ordering matters: register the new key with virtues-api FIRST, and only
+/// rotate `customers.api_key_hash` once that succeeds. If register fails, the
+/// customers row keeps the OLD hash — which still matches what virtues-api
+/// holds — so the box's old key stays consistent across the proxy AND atlas
+/// billing-auth, and the user can just retry. (The opposite order would
+/// leave a split-brain: atlas on the new hash, virtues-api on the old.)
+async fn attach_link_to_customer(
+    state: &AppState,
+    device_code_hash: &[u8],
+    customer_id: &str,
+) -> AttachOutcome {
     let api_key = super::claim::random_token();
     let api_key_hash = sha256(api_key.as_bytes());
 
     let lookup: Result<(String,), _> = sqlx::query_as(
         "SELECT account_id FROM customers WHERE stripe_customer_id = $1",
     )
-    .bind(&customer_id)
+    .bind(customer_id)
     .fetch_one(&state.pool)
     .await;
     let (account_id,) = match lookup {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("customers lookup failed: {e:#}");
-            return page(
-                "Something went wrong",
-                "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
-            );
+            return AttachOutcome::Failed;
         }
     };
 
@@ -862,24 +981,18 @@ async fn login_verify(
         .await
     {
         tracing::warn!("re-link register_device failed: {e:#}");
-        return page(
-            "Something went wrong",
-            "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
-        );
+        return AttachOutcome::Failed;
     }
 
     // Device registered — now rotate the stored hash to match.
     if let Err(e) = sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
-        .bind(&customer_id)
+        .bind(customer_id)
         .bind(&api_key_hash[..])
         .execute(&state.pool)
         .await
     {
         tracing::warn!("customers api_key_hash update failed: {e:#}");
-        return page(
-            "Something went wrong",
-            "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
-        );
+        return AttachOutcome::Failed;
     }
 
     // Flip the bound device_link to ready with the api_key so the box's
@@ -895,26 +1008,16 @@ async fn login_verify(
         "UPDATE device_link SET status = 'ready', api_key = $2 \
          WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now()",
     )
-    .bind(&device_code_hash[..])
+    .bind(device_code_hash)
     .bind(&api_key)
     .execute(&state.pool)
     .await;
     match flip {
-        Ok(r) if r.rows_affected() == 1 => page(
-            "✓ Box attached",
-            "Your Virtues box is now attached to your subscription. Go back to the Virtues app — it continues on its own within a few seconds.",
-        ),
-        Ok(_) => page(
-            "Link expired",
-            "This link took too long, and your box has already moved on to a fresh code. \
-             Nothing is wrong with it. Open the Virtues app and start the link again.",
-        ),
+        Ok(r) if r.rows_affected() == 1 => AttachOutcome::Attached,
+        Ok(_) => AttachOutcome::LinkGone,
         Err(e) => {
             tracing::warn!("device_link flip failed: {e:#}");
-            page(
-                "Something went wrong",
-                "We verified your link but couldn't attach the box. Try again, or reach out to support@virtues.com.",
-            )
+            AttachOutcome::Failed
         }
     }
 }
