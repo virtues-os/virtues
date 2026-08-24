@@ -89,6 +89,26 @@ pub struct AppState {
     pub allow_promotion_codes: bool,
 }
 
+/// CORS for the JSON endpoints the APP calls from inside its webview — the
+/// airlock's inline sign-in (`connect.html`). Its origin is the app shell's,
+/// not a website: `tauri://localhost` on macOS/Linux, `http://tauri.localhost`
+/// on Windows, the `virtues://` scheme on iOS. Those can't be enumerated
+/// stably across platforms, and nothing here rides on cookies — every call is
+/// bearer-authed or public — so a wildcard origin is the honest policy.
+/// `AUTHORIZATION` must be listed explicitly: the CORS spec exempts it from
+/// header wildcards, and a `*` here would fail exactly the authed call that
+/// matters. Scoped to the app-called routes only; pages, webhooks, and
+/// box-called endpoints keep no CORS at all (no browser ever needs them).
+pub(crate) fn app_cors() -> tower_http::cors::CorsLayer {
+    tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods([axum::http::Method::POST])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+        ])
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(account::router())

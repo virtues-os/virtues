@@ -1615,23 +1615,27 @@ its devices apart — type its address.",
       // password manager, and no payment ever renders in-app. Checkout stays
       // in the real browser, where Apple Pay and card autofill live.
       //
-      // Contract (atlas, P2 — "Inline sign-in contract" in linking-plan.md):
-      //   POST /init/otp/request {email}                → {ok}
-      //   POST /init/otp/verify  {email, code}          → {ok, token}
-      //   POST /init/approve     {user_code}  + Bearer  → {ok}
-      //     or {ok:false, error:"no-subscription", checkout_url}
-      // The token is a short-lived link-scoped session; it may approve more
-      // than once (a retry after an expired user_code reuses it).
+      // Contract (atlas, routes/account.rs + routes/link.rs — documented in
+      // linking-plan.md "Inline sign-in contract"):
+      //   POST /account/login        {email}          → {sent:true}
+      //   POST /account/login/verify {email, code}    → {token, email, entitled}
+      //   POST /init/approve         {user_code} + Bearer → {approved:true}
+      // Errors arrive as HTTP 4xx/5xx with {error:{code,message}} bodies;
+      // atlasPost flattens them to {ok:false, code, error}. The codes that
+      // matter here: `no_subscription` (routes to browser checkout — the one
+      // deliberate hand-off), `link_not_found`/`link_expired` (re-fetch the
+      // user_code and retry; the session token stays good, so neither costs a
+      // second email round-trip).
       //
       // CORS is part of that contract: the airlock's origin is
       // `tauri://localhost` (macOS/Linux), `http://tauri.localhost` (Windows),
-      // or the `virtues://` scheme (iOS) — atlas must allow them. The token is
-      // a bearer, never a cookie, so a wildcard is acceptable. The CSPs in
-      // tauri.conf.json and tauri.ios.conf.json allow the connect-src.
+      // or the `virtues://` scheme (iOS) — atlas allows them with a wildcard
+      // (`app_cors` in routes/mod.rs; the token is a bearer, never a cookie).
+      // The CSPs in tauri.conf.json and tauri.ios.conf.json allow the
+      // connect-src.
       //
-      // EVERY failure keeps the browser door open. Until the atlas endpoints
-      // ship (they are P2), that door is what this flow degrades to — inline
-      // is an upgrade, never a wall.
+      // EVERY failure keeps the browser door open — inline is an upgrade,
+      // never a wall.
       const ATLAS = 'https://atlas.virtues.com';
       async function atlasPost(path, body, token) {
         const ctl = new AbortController();
@@ -1647,16 +1651,21 @@ its devices apart — type its address.",
             signal: ctl.signal,
           });
           const data = await res.json().catch(() => ({}));
-          // A non-2xx with no error field in the body is atlas not speaking
-          // this contract yet (404 while P2 is unshipped, a proxy error page).
-          // Name the status rather than shrugging.
-          if (!res.ok && data.error === undefined) {
-            return { ok: false, error: `Atlas answered ${res.status}.` };
+          if (!res.ok) {
+            // Atlas's error shape is {error:{code,message}}. Anything else on
+            // a non-2xx (a proxy error page, an old atlas) gets the status
+            // named rather than shrugged at.
+            const e = data && data.error;
+            return {
+              ok: false,
+              code: (e && e.code) || '',
+              error: (e && (e.message || e.code)) || `Atlas answered ${res.status}.`,
+            };
           }
-          return data;
+          return { ok: true, ...data };
         } catch {
           return {
-            ok: false, transport: true,
+            ok: false, transport: true, code: 'transport',
             error: `Couldn't reach atlas from ${THIS_DEVICE} — check its internet connection.`,
           };
         } finally {
@@ -1703,7 +1712,7 @@ its devices apart — type its address.",
           const addr = email.value.trim();
           go.disabled = true;
           say('Sending…');
-          const res = await atlasPost('/init/otp/request', { email: addr });
+          const res = await atlasPost('/account/login', { email: addr });
           if (res && res.ok) return renderInlineCode(server, ssid, addr);
           renderInlineSignin(server, ssid,
             (res && res.error) || "Couldn't send the code.");
@@ -1736,7 +1745,7 @@ its devices apart — type its address.",
           renderInlineSignin(server, ssid));
         document.getElementById('resend').addEventListener('click', async () => {
           say('Sending…');
-          const res = await atlasPost('/init/otp/request', { email });
+          const res = await atlasPost('/account/login', { email });
           say(res && res.ok ? 'Sent. Check your email again.'
                             : (res && res.error) || "Couldn't send a new code.",
               res && res.ok ? 'ok' : 'err');
@@ -1747,8 +1756,12 @@ its devices apart — type its address.",
           if (code.length < 6) return say('Enter the six digits from the email.', 'err');
           document.getElementById('go').disabled = true;
           say('Checking…');
-          const res = await atlasPost('/init/otp/verify', { email, code });
+          const res = await atlasPost('/account/login/verify', { email, code });
           if (res && res.ok && res.token) {
+            // `entitled` rides back with the session, so an account with no
+            // subscription learns it NOW — before an approve that could only
+            // answer no_subscription anyway.
+            if (res.entitled === false) return renderInlineNoSub(server, ssid);
             return renderInlineApprove(server, ssid, res.token);
           }
           renderInlineCode(server, ssid, email,
@@ -1812,8 +1825,17 @@ its devices apart — type its address.",
           if (gen !== searchGen) return;
           return goToPairing(server, ssid);
         }
-        if (res && (res.error === 'no-subscription' || res.checkout_url)) {
+        if (res && res.code === 'no_subscription') {
           return renderInlineNoSub(server, ssid, res.checkout_url);
+        }
+        if (res && (res.code === 'link_not_found' || res.code === 'link_expired')) {
+          // The session is still good; only the code moved. Retry re-fetches
+          // it over BLE, so this costs one tap, not a second email.
+          return renderInlineFailed(server, ssid, token,
+            "Your server's code changed while we were signing in. Try again — it takes a second.");
+        }
+        if (res && res.code === 'unauthorized') {
+          return renderInlineSignin(server, ssid, 'That session expired — sign in again.');
         }
         renderInlineFailed(server, ssid, token,
           (res && res.error) || "Atlas couldn't approve the link.");
