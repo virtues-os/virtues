@@ -84,6 +84,17 @@
 				things — attention, memory, honesty, intimacy.
 			</p>
 
+			<!-- THE THESIS. The one large claim, introduced by the mark itself —
+			     ∴ is the therefore-sign, so the logo arrives doing its job as
+			     LOGIC: everything above it is premises, this line is the
+			     conclusion. It is also the only sentence in the letter allowed
+			     to command. Same ink as the prose — the mark is salient by
+			     being a symbol, not by being colored. -->
+			<p class="thesis">
+				<span class="therefore" aria-hidden="true">∴</span> You must protect your life's
+				data to protect your soul.
+			</p>
+
 			<!-- WHAT VIRTUES IS — named by its artifacts, never its features. The
 			     record, the page, the wiki, the intelligence that has read it: the
 			     things a person would point at, not the modules we would. (Chat is
@@ -244,6 +255,16 @@
 
 	.body p {
 		margin: 0;
+	}
+
+	/* The thesis line: same serif, same size, same ink — salience comes from
+	   the mark and the surrounding air, never from shouting or color. */
+	.thesis {
+		margin-top: 0.35rem;
+	}
+
+	.therefore {
+		margin-right: 0.15rem;
 	}
 
 	/* Questions someone would say out loud, so they are set as speech: no
