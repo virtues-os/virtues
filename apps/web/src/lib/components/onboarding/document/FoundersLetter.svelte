@@ -57,38 +57,34 @@
 		</div>
 
 		<div class="body">
-			<!-- A BELIEF, A QUESTION, A JAB. The list is three CATEGORIES, no
-			     names — a category cannot be argued with. The litany that follows
-			     is the evidence for the question: three offenses every reader has
-			     personally suffered (the unending feed, the exit made harder than
-			     the entrance, the deletion that deletes nothing), escalating from
-			     attention to agency to memory. Concrete beats accusatory: each is
-			     checkable tonight on the reader's own phone. -->
+			<!-- A BELIEF, THEN A QUESTION, in one breath. The list is three
+			     CATEGORIES, no names — a category cannot be argued with, and a
+			     name invites an argument about that name, which this paragraph
+			     cannot afford. -->
 			<p>
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
 				idea that a thing belongs at the most local level able to hold it. Nothing is more
 				local than your own life. So ask plainly: who would you rather have holding the
-				whole account of your life — a government, a political party, big tech? Or you. If
-				you think they care about your wellbeing, ask why the feed never ends, why leaving
-				is harder than joining, and why nothing you delete is ever really gone.
+				whole account of your life — a government, a political party, big tech? Or you.
 			</p>
 
-			<!-- THE PREMISE, THEN THE MACHINE. The premise sentence replaces "That
-			     is why I built Virtues" — the letter said started/built twice in
-			     two paragraphs. The load-bearing move stays MODAL: "cannot", not
-			     "will not" — extraction ruled out by construction, the one claim
-			     no cloud company can copy. "Habit you did not choose" now chains
-			     straight into "vice is repetitive and profitable" again — the
-			     couplet explains the habit, so nothing may sit between them.
-			     ("We are bringing the cloud home" was cut: the letter's only
-			     corporate "we", banked for the website.) -->
+			<!-- THE PREMISE, THEN THE PIVOT. Two claims in the premise: capability
+			     (you can hold this yourself) and title (it is your property —
+			     "yours by right", the private-property register without the
+			     legalism of "entitled"). Then the same substance cut both ways:
+			     against you it becomes ads, algorithms, addictions; for you,
+			     recall, recognition, repair — two alliterating triples, and
+			     "Or for you" deliberately echoes ¶1's "Or you." The against-
+			     triple absorbs what the old cannot-extract sentence enumerated
+			     (advertising / feed / habit), so the couplet still chains
+			     cleanly into vice-is-repetitive. -->
 			<p>
-				Virtues rests on a simple premise: the record of your life belongs in your hands,
-				on hardware you own. So it is a machine that cannot extract from you — it cannot
-				turn your days into advertising, a feed, or a habit you did not choose, because it
-				is physically yours and answers to no one else. Vice is repetitive and profitable,
-				which is why so much is arranged to produce it. Virtue asks for harder things —
-				attention, memory, honesty, intimacy.
+				Virtues rests on a simple premise: you are capable of holding the data of your
+				life, and it is yours by right. It is the most intimate thing you have, and it can
+				be used against you — in ads, algorithms, and addictions. Or for you — in recall,
+				recognition, and repair. Vice is repetitive and profitable, which is why so much is
+				arranged to produce it. Virtue asks for harder things — attention, memory, honesty,
+				intimacy.
 			</p>
 
 			<!-- WHAT VIRTUES IS — named by its artifacts, never its features. The
@@ -131,17 +127,6 @@
 		</ul>
 
 		<div class="body">
-			<!-- THE TURN — the sentence the whole letter was missing. Everything
-			     above defends the record or uses it; this is the one line that
-			     LOVES it. It resolves why the asks matter and hands the close its
-			     subject. No villain in it on purpose: the loss it names has no
-			     malice, which is what makes it the letter's saddest and truest
-			     claim. -->
-			<p>
-				Most of a life is lost not to anyone's malice, but to nobody writing it down —
-				and the ordinary days, it turns out, were the beautiful ones.
-			</p>
-
 			<!-- THE CLOSE. The asks end on product; the letter must end on the
 			     person. The frame is REMEMBERING, not being-known — the system as
 			     a mirror and a way to search your own life (anamnesis). "Growing
