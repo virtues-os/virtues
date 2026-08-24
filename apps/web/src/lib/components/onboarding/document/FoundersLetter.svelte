@@ -77,11 +77,11 @@
 			     than listed. The triple chains into vice-is-repetitive, which
 			     explains it. -->
 			<p>
-				Virtues rests on a simple premise: you are capable of holding the data of your
-				life, and it is yours by right. It is the most intimate thing you have, and it can
-				be used against you — in ads, algorithms, and addictions. Vice is repetitive and
-				profitable, which is why so much is arranged to produce it. Virtue asks for harder
-				things — attention, memory, honesty, intimacy.
+				Virtues rests on a simple premise: the data of your life is yours by right, and
+				yours to hold. It is the most intimate thing you have, and it is used against you —
+				as ads, algorithms, and addictions. Vice is repetitive and profitable, which is why
+				so much is arranged to produce it. Virtue asks for harder things — attention,
+				memory, honesty, intimacy.
 			</p>
 
 			<!-- THE THESIS. The one large claim, introduced by the mark itself —
@@ -105,11 +105,10 @@
 			<p>
 				Virtues is the complete record of a life: yours. Every day it writes a page —
 				yesterday, written down: where you went, who you spoke with, what you were working
-				on. Around the pages grows a wiki of your world, the people and places and work
-				your days are made of; an intelligence reads all of it. Thin at first, having only
-				just met you. But a record compounds: give it time and it forms an honest opinion
-				of how you actually live — your habits, your rhythms, the story you are in — and
-				you can ask:
+				on. Around the pages grows a wiki of your world: its people, its places, its work.
+				An intelligence reads all of it and forms an honest opinion of how you actually
+				live — thin at first, having only just met you. But a record compounds. Give it
+				time, then ask:
 			</p>
 		</div>
 
@@ -146,7 +145,7 @@
 			     one proper use. The us/you shift is deliberate: the founder
 			     joins the reader for the final clause. -->
 			<p>
-				The goal is to know yourself more intimately than any company or any model ever
+				The goal is to know yourself more intimately than any company or model ever
 				will — a mirror for everything you had let slip, a way to search your own life.
 				Growing older is less about discovering the new than remembering what you already
 				knew. That is the only way technology should be used: to give back the part of
