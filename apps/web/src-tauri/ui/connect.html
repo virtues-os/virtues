@@ -708,12 +708,20 @@
       // today was in this flow — so the build that set the box up is the build
       // least likely to be current.
       //
-      // ASKED, NOT AUTOMATIC, and that is not timidity. `api::updates` argues
-      // that a vendor may auto-ship only because it watches its fleet and can
-      // halt a bad rollout; virtues has no telemetry and therefore no halt, so
-      // the human pressing the button IS the halt mechanism. This screen keeps
-      // that intact while removing its cost: it arrives at the one moment the
-      // owner is already here, already waiting, with nothing yet to lose.
+      // AUTOMATIC HERE, ASKED EVERYWHERE ELSE (revised 2026-08-24; it was a
+      // choice with a "Not now"). `api::updates` argues a vendor may auto-ship
+      // only because it watches its fleet and can halt a bad rollout; with no
+      // telemetry, a human watching IS the halt mechanism. That argument
+      // forbids UNATTENDED auto-update — Settings and cron stay asked — but
+      // onboarding is the one supervised moment: the owner is standing here
+      // watching this exact screen, failure is surfaced to a face, and there
+      // is nothing on the box yet to lose. Meanwhile the security cost of
+      // asking is real: a shelf-aged box carries months of already-fixed
+      // vulnerabilities, and "Not now" put it on the network, linked to an
+      // account, holding a life — on the oldest build it will ever run. So no
+      // choice is offered; a progress screen narrates. NEVER STRAND still
+      // holds: a failed start or a timeout falls to screens with a way
+      // forward, because setup has already succeeded either way.
       //
       // It is also the moment with the most slack. The box has usually already
       // FETCHED the release (a scheduled prefetch), so installing is a restart
@@ -726,7 +734,7 @@
           const res = await fetch(BOX_URL + '/api/system/update', { cache: 'no-store' });
           if (res.ok) st = await res.json();
         } catch { /* offline or old box — setup is done either way */ }
-        // Nothing to offer, or the box couldn't check: say nothing. A screen
+        // Nothing to install, or the box couldn't check: say nothing. A screen
         // that appears only to report "you're current" is a screen that taught
         // the owner this flow has one more step than it does.
         if (!st || !st.update_available || st.check_error) return;
@@ -736,33 +744,33 @@
         return new Promise((resolve) => {
           app.innerHTML = `
             <p class="kicker">One last thing</p>
-            <h1>Your server can update itself</h1>
-            <p class="sub">It's running <b>${esc(st.running_version || st.current || 'an older build')}</b>,
-              and <b>${esc(target)}</b> is ${staged ? 'already downloaded and ready' : 'available'}.
-              Servers ship months before they're opened, so this is normal.</p>
-            <button class="primary" id="up">${staged ? 'Install now — about a minute' : 'Download and install'}</button>
-            <button class="secondary" id="later">Not now</button>
-            <p class="hint">You can always do this later in Settings. Installing
-              restarts the server, so it drops off for a minute.</p>
-            <div class="msg" id="msg"></div>`;
-          const say = (t, cls) => {
-            const m = document.getElementById('msg');
-            if (m) { m.className = 'msg ' + (cls || ''); m.textContent = t; }
-          };
-          document.getElementById('later').addEventListener('click', () => resolve());
-          document.getElementById('up').addEventListener('click', async () => {
-            document.getElementById('up').disabled = true;
-            document.getElementById('later').disabled = true;
-            say('Installing. Your server restarts and will be back in a minute…');
+            <h1>Updating your server</h1>
+            <p class="sub">It shipped running <b>${esc(st.running_version || st.current || 'an older build')}</b>;
+              installing <b>${esc(target)}</b> before you meet it. Servers sit boxed
+              for months, so this is normal.</p>
+            <div class="wait"><span class="pip"></span><span id="upstage">${staged
+              ? 'Installing — about a minute'
+              : 'Downloading and installing — a few minutes'}</span></div>
+            <p class="hint">Your server restarts on its own — don't unplug it. This
+              screen continues by itself when it's back.</p>`;
+          (async () => {
             try {
               const res = await fetch(BOX_URL + '/api/system/update/apply', { method: 'POST' });
               if (!res.ok) throw new Error(await res.text());
             } catch (e) {
               // Never strand anyone here: setup SUCCEEDED, and the box is
-              // usable on the build it has. Report and carry on.
-              say('Couldn\'t start the update — you can do it later from Settings. ' + e, 'err');
-              await new Promise((r) => setTimeout(r, 2500));
-              return resolve();
+              // usable on the build it has. The one place the owner gets a
+              // button is the one place the automatic path already failed.
+              app.innerHTML = `
+                <p class="kicker">One last thing</p>
+                <h1>The update couldn't start</h1>
+                <p class="sub">Your server is set up and works on the build it has —
+                  it just couldn't begin updating right now. You can run the update
+                  any time from Settings.</p>
+                <p class="msg err">${esc(String(e))}</p>
+                <button class="primary" id="carryon">Continue</button>`;
+              document.getElementById('carryon').addEventListener('click', () => resolve());
+              return;
             }
             // TEN MINUTES, not three.
             //
@@ -774,7 +782,6 @@
             // straight through to `window.location.href = BOX_URL` against a box
             // that was still restarting, so the owner's first sight of the
             // product was a browser error page.
-            say('Installing. Your server restarts and will be back in a minute…');
             const back = await waitForBoxUrl(600000);
             if (!back) {
               // Do NOT navigate. Say where it is and let them go when it is
@@ -783,7 +790,7 @@
               return renderStillRestarting(resolve);
             }
             resolve();
-          });
+          })();
         });
       }
 
