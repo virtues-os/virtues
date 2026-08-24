@@ -94,11 +94,11 @@
 			     you to sell; you study yourself for yourself), algorithms↔
 			     memory (their machine processes your past to shape you; yours,
 			     to remind you), addictions↔virtue (the couplet above, drawn).
-			     The extractive column is muted; the eye lands home. -->
+			     One ink for both columns — the words carry the judgment. -->
 			<figure
 				class="ledger"
 				role="img"
-				aria-label="The account of your life, as a table. In their cloud, muted: ads, algorithms, addictions. On the box in your home, in full ink: self-knowledge, memory, virtue."
+				aria-label="The account of your life, as a table. In their cloud: ads, algorithms, addictions. On the box in your home: self-knowledge, memory, virtue."
 			>
 				<p class="origin">your life's data</p>
 				<div class="table">
@@ -107,16 +107,16 @@
 						<p class="where">on the box in your home</p>
 					</div>
 					<div class="row">
-						<p class="entry away">ads</p>
-						<p class="entry home">self-knowledge</p>
+						<p class="entry">ads</p>
+						<p class="entry">self-knowledge</p>
 					</div>
 					<div class="row">
-						<p class="entry away">algorithms</p>
-						<p class="entry home">memory</p>
+						<p class="entry">algorithms</p>
+						<p class="entry">memory</p>
 					</div>
 					<div class="row">
-						<p class="entry away">addictions</p>
-						<p class="entry home">virtue</p>
+						<p class="entry">addictions</p>
+						<p class="entry">virtue</p>
 					</div>
 				</div>
 			</figure>
@@ -314,7 +314,7 @@
 	}
 
 	.table {
-		max-width: 27rem;
+		max-width: 25rem;
 		margin: 0 auto;
 		border-top: 1px solid var(--color-border);
 		border-bottom: 1px solid var(--color-border);
@@ -322,8 +322,8 @@
 
 	.row {
 		display: grid;
-		grid-template-columns: 1fr 1.35fr;
-		gap: 2.5rem;
+		grid-template-columns: 1fr 1.4fr;
+		gap: 2rem;
 	}
 
 	.row p {
@@ -340,25 +340,22 @@
 		padding-bottom: 0.65rem;
 	}
 
+	/* Lowercase mono, gentle tracking: an annotation's whisper, not a column
+	   header's shout. */
 	.where {
 		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 11px;
-		letter-spacing: 0.14em;
-		text-transform: uppercase;
+		font-size: 11.5px;
+		letter-spacing: 0.06em;
 		color: var(--color-foreground-subtle);
 	}
 
+	/* One ink for both columns — in print, the judgment is carried by the
+	   words (addictions vs virtue), never by graying a side out. The earlier
+	   muted-left read as a disabled state, not an opinion. */
 	.entry {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: var(--t-body);
 		line-height: 1.85;
-	}
-
-	.entry.away {
-		color: var(--color-foreground-subtle);
-	}
-
-	.entry.home {
 		color: var(--color-foreground);
 	}
 
