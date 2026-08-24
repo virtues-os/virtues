@@ -132,19 +132,20 @@
 				data to protect your soul.
 			</p>
 
-			<!-- WHAT VIRTUES IS — named by its artifacts, never its features. The
-			     record, the page, the wiki, the intelligence that has read it: the
-			     things a person would point at, not the modules we would. (Chat is
-			     implied by the asks below; the portrait introduces itself later in
-			     the flow, which is better theater than announcing it here.) The
-			     daily page stays the anchor image — a concrete object at a
-			     concrete time, a promise you can check rather than an IOU. -->
+			<!-- WHAT VIRTUES IS — what it does for you, then the asks as proof.
+			     The daily page is the anchor image (a concrete object at a
+			     concrete time, a promise you can check rather than an IOU); the
+			     honest opinion is the payoff. The wiki sentence was cut
+			     2026-08-24: it was inventory, the asks demonstrate it (the
+			     dog-park name IS the wiki working), and it meets the reader in
+			     the app soon enough. One colon-construction only — the beloved
+			     "yesterday, written down" line keeps it; every other sentence
+			     runs uninterrupted, which is what ¶3 lacked. -->
 			<p>
-				Virtues is the complete record of a life: yours. Every day it writes a page —
+				Virtues is the record of your life, kept in your home. Every day it writes a page —
 				yesterday, written down: where you went, who you spoke with, what you were working
-				on. Around the pages grows a wiki of your world: its people, its places, its work.
-				An intelligence reads all of it and forms an honest opinion of how you actually
-				live — thin at first, having only just met you. But a record compounds. Give it
+				on. It reads everything it keeps and forms an honest opinion of how you actually
+				live. Thin at first, having only just met you — but a record compounds. Give it
 				time, then ask:
 			</p>
 		</div>
