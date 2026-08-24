@@ -139,9 +139,10 @@ fn normalize_upstream_error(resp: ApiResponse) -> ApiResponse {
 /// Re-address a request body for the user's endpoint.
 ///
 /// **A model id is an address on one gateway, not a portable name.** Callers
-/// build bodies with ours — `xai/grok-4.5` is where *Vercel* keeps the chat
-/// model — and every caller names one explicitly. OpenRouter spells that same
-/// model `x-ai/grok-4.5` and does not carry `google/gemini-3-flash` at all. So
+/// build bodies with ours — `spacexai/grok-4.5` is where *Vercel* keeps the
+/// chat model — and every caller names one explicitly. OpenRouter spells that
+/// same model `x-ai/grok-4.5` and does not carry `google/gemini-3-flash` at
+/// all. So
 /// sending our string to their endpoint is not a near miss; it is the wrong
 /// kind of thing.
 ///

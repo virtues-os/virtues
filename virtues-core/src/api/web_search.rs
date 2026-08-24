@@ -31,7 +31,7 @@ use sqlx::PgPool;
 
 use crate::error::{Error, Result};
 use crate::virtues_api::client::BearerClient;
-use virtues_registry::models::{default_model_for_slot, ModelSlot};
+use virtues_registry::models::ModelSlot;
 
 /// The gateway tool that performs the search.
 const SEARCH_TOOL_ID: &str = "gateway.parallel_search";
@@ -164,7 +164,7 @@ pub async fn search(pool: &PgPool, request: SearchRequest) -> Result<SearchRespo
         // rates for it is waste: measured, the model side is $0.0006 on Lite
         // against $0.018 on Chat, which is the difference between a search
         // costing half a cent and costing two.
-        "model": default_model_for_slot(ModelSlot::Lite),
+        "model": crate::api::model_catalog::model_for_slot(ModelSlot::Lite),
         "prompt": [{
             "role": "user",
             "content": [{ "type": "text", "text": prompt_text }]

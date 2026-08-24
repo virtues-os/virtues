@@ -361,7 +361,7 @@
 					<span class="pip"></span>{session ? `with ${session}` : "with a nearby device"}
 				</div>
 			{:else}
-				<p class="doing">Get Virtues for Mac</p>
+				<p class="doing">Get Virtues for your computer</p>
 				{#if state_.phrase_frozen}
 					<!-- RESET, NOT VIRGIN. This box still holds a life, so its
 					     phrase stays frozen and off the screen. Rendering the

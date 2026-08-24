@@ -769,7 +769,7 @@
 			<p class="text-xs text-foreground-muted mb-3">
 				Optional. A model id is an address on one gateway, not a portable
 				name — the same model we call <code class="bg-surface-alt px-1 rounded"
-					>xai/grok-4.5</code
+					>spacexai/grok-4.5</code
 				>
 				is <code class="bg-surface-alt px-1 rounded">x-ai/grok-4.5</code> on
 				OpenRouter. Leave a row blank if your endpoint uses the same ids we do,

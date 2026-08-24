@@ -3,7 +3,7 @@
 //! Two different scoring approaches:
 //!
 //! **Topics** — embedding-based centroid distance (semantic novelty).
-//! Each topic string is embedded via nomic-embed and cached in `search_topic_cache`.
+//! Each topic string is embedded via the local embedding sidecar and cached in `search_topic_cache`.
 //! Novelty = cosine distance from the 12-week baseline topic centroid, z-scored.
 //! "house-hunting" is semantically far from her typical topic cloud → high novelty.
 //! "design" is close to the centroid → low novelty.

@@ -89,6 +89,36 @@ pub struct AppState {
     pub allow_promotion_codes: bool,
 }
 
+/// CORS for the JSON endpoints the APP calls from inside its webview — the
+/// airlock's inline sign-in (`connect.html`). Its origin is the app shell's,
+/// not a website: `tauri://localhost` on macOS/Linux, `http://tauri.localhost`
+/// on Windows, the `virtues://` scheme on iOS. Those can't be enumerated
+/// stably across platforms, and nothing here rides on cookies — every call is
+/// bearer-authed or public — so a wildcard origin is the honest policy.
+/// `AUTHORIZATION` must be listed explicitly: the CORS spec exempts it from
+/// header wildcards, and a `*` here would fail exactly the authed call that
+/// matters. Scoped to the app-called routes only; pages, webhooks, and
+/// box-called endpoints keep no CORS at all (no browser ever needs them).
+///
+/// KNOWN RESIDUAL: this makes `/account/login` cross-origin callable, so a
+/// hostile web page can make visitors' browsers POST it and fire an OTP email
+/// at an address the page chooses. The per-email send cap (account.rs,
+/// MAX_SENDS_PER_HOUR, now fail-closed) bounds each victim, but a distributed
+/// spray across many addresses is not bounded here. The proportionate control
+/// is edge-level (per-IP / global throttle at the WAF), which is where
+/// account.rs already says IP rate-limiting belongs — not a per-request check
+/// in this process. Tracked for the WAF pass; the wildcard itself is required
+/// (the app's origin is genuinely non-enumerable and the flow needs the call).
+pub(crate) fn app_cors() -> tower_http::cors::CorsLayer {
+    tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods([axum::http::Method::POST])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+        ])
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(account::router())

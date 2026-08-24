@@ -1,0 +1,15 @@
+-- The 0x82 grant, atlas side (docs/one-wire-plan.md, Phase 2).
+--
+-- A signed-in, entitled app asks POST /init/grant for a pre-approved
+-- device_code and writes it to the box over the BLE setup session; the box
+-- redeems it through its ordinary /init/poll the moment it gets online. The
+-- attach (per-box key mint + register) happens AT REDEMPTION, when the box
+-- can say which endpoint it is — which is also why grant-time not knowing
+-- the box is fine.
+--
+-- Rides on device_link with a new status value 'granted' (status is a free
+-- text column; poll's default arm already reads unknown statuses as
+-- pending). This column binds the grant to the customer whose session
+-- minted it, so redemption re-checks THAT account's entitlement — a 24h
+-- grant must not outlive a refund.
+ALTER TABLE device_link ADD COLUMN IF NOT EXISTS stripe_customer_id text;

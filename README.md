@@ -366,87 +366,37 @@ virtues/
 | `narrative_*` | Life narrative | `narrative_telos`, `narrative_acts`, `narrative_chapters` |
 
 <a id="daily-context--scoring-system"></a>
-## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-daily-context-scoring-system-dark.svg"><img alt="Daily Context & Scoring System" src=".github/images/headings/h2-daily-context-scoring-system-light.svg" height="28"></picture>
+<a id="the-day-pipeline"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-the-day-pipeline-dark.svg"><img alt="The Day Pipeline" src=".github/images/headings/h2-the-day-pipeline-light.svg" height="28"></picture>
 
-The daily context system transforms raw ontology data into two measurable signals: **how completely a day is observed** (7-dimension coverage) and **how unusual a day is** (chaos/order score). Think of the chaos score as a **VIX for your persona** — a single number that captures the volatility of your daily experience relative to your recent baseline.
+After a day ends, the box reconstructs it — nightly, on the completed day. Two LLM passes build the record; three scoring passes measure how unusual it was, each against the owner's own history rather than any population norm. Every embedding involved is computed **on the box** by the local embedding sidecar (`virtues-embed.service`, a llama-server speaking OpenAI-compatible `/v1/embeddings` on localhost — currently EmbeddingGemma-300M). Nothing is sent anywhere to be embedded. The full design doc is [docs/the-day.md](docs/the-day.md).
 
-<a id="7-dimension-context-model"></a>
-### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-7-dimension-context-model-dark.svg"><img alt="7-Dimension Context Model" src=".github/images/headings/h3-7-dimension-context-model-light.svg" height="22"></picture>
+<a id="segmentation--narration"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-segmentation-narration-dark.svg"><img alt="Segmentation & Narration" src=".github/images/headings/h3-segmentation-narration-light.svg" height="22"></picture>
 
-Evolved from journalism's W5H framework, expanded to 7 dimensions by splitting "who" into self-awareness and relational resolution:
+**Segment** — the detective. A best-model pass reads a compact dossier of the day's evidence — location visits, movement, device presence, audio sessions, messages, purchases, sleep, health — and adjudicates it into a gapless timeline of events (`wiki_events`). Its central doctrine: **plans are not evidence.** A calendar entry or a message arranging something never names a stretch of the day on its own; it needs a physical trace — a visit, movement toward it, a purchase there, matching audio — to corroborate it. An uncorroborated plan yields an honest "Unknown", not a confident memory of a day that didn't happen.
 
-| Dim | Key | Meaning |
-|-----|-----|---------|
-| **Who** | `who` | Self-awareness — is the person's physical/digital state tracked? (health, location, device) |
-| **Whom** | `whom` | Relational resolution — who else was involved? (messages, emails, calendar attendees) |
-| **What** | `what` | Events & content — what happened? (transcriptions, calendar, documents) |
-| **When** | `when` | Temporal coverage — how much of the 24h window is observed by continuous streams? |
-| **Where** | `where` | Spatial awareness — do we know locations? (GPS points, named place visits) |
-| **Why** | `why` | Intent & motivation — the rarest dimension, requires rich transcription or content data |
-| **How** | `how` | Physical state — body metrics (sleep, workout, heart rate, HRV, steps) |
+**Narrate** — a second pass writes the day's first-person diary and epigraph, and rates the day's data quality (`{coverage, overall, note}`) as it goes. All of it lands on `wiki_days`.
 
-<a id="ontology-weight-matrix"></a>
-### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-ontology-weight-matrix-dark.svg"><img alt="Ontology Weight Matrix" src=".github/images/headings/h3-ontology-weight-matrix-light.svg" height="22"></picture>
+<a id="event-novelty"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-event-novelty-dark.svg"><img alt="Event Novelty" src=".github/images/headings/h3-event-novelty-light.svg" height="22"></picture>
 
-Each of the 17 ontologies carries a 7-dimensional weight vector indicating how much it contributes to each context dimension. Weights follow a strict assignment principle: **0.0 unless the ontology genuinely informs that dimension**.
+Each event's summary is embedded locally and scored against a baseline of the owner's own recent events — two orthogonal z-scores, deliberately never blended into one number:
 
-For example, `health_heart_rate` weights `[0.8, 0.0, 0.0, 0.8, 0.0, 0.0, 0.8]` — it tells you about self-awareness (who), temporal coverage (when), and physical state (how), but nothing about relationships, content, space, or intent. Meanwhile `communication_message` weights `[0.0, 1.0, 0.4, 0.0, 0.0, 0.0, 0.0]` — it's the strongest signal for relational resolution (whom) with modest content (what).
+- **Global novelty** (`novelty_z`) — cosine distance from a kernel-weighted centroid of the baseline. Each baseline event contributes by exponential recency decay (42-day half-life) × von Mises kernels on hour-of-day and weekday, so "unusual for a Tuesday morning" is a continuous notion, not a hard window. This answers *rare in your life at all*.
+- **Local novelty** (`local_novelty_z`) — a density-relative Local Outlier Factor over the same baseline, log-transformed onto the same σ axis. This answers *off-pattern for its kind*: the first cardio session when you always lift, which global novelty misses because both are "just a workout".
 
-<a id="coverage-formula"></a>
-### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-coverage-formula-dark.svg"><img alt="Coverage Formula" src=".github/images/headings/h3-coverage-formula-light.svg" height="22"></picture>
+With fewer than three distinct baseline days, nothing is scored — the box is calibrating, and NULL is more honest than noise.
 
-For each of the 7 dimensions:
+<a id="topic--entity-novelty"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-topic-entity-novelty-dark.svg"><img alt="Topic & Entity Novelty" src=".github/images/headings/h3-topic-entity-novelty-light.svg" height="22"></picture>
 
-```
-coverage[dim] = sum(weights[dim] for present ontologies) / sum(weights[dim] for ALL ontologies)
-```
+The same question asked of two different structures. **Topics** are semantic: each topic string is embedded (and cached), and novelty is z-scored cosine distance from the trailing 12-week topic centroid. **Entities** are structural, with no embedding at all: a binomial z-score on how many baseline days the entity appeared — the person you see daily is routine; the one who has appeared three times in twelve weeks is news.
 
-This produces a 0.0–1.0 score per dimension — the **ContextVector** displayed on each DayPage. A day with health data, location, and messages but no speech or knowledge will show high coverage in who/whom/when/where/how but low coverage in what/why.
+<a id="live-rhythm"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-live-rhythm-dark.svg"><img alt="Live Rhythm" src=".github/images/headings/h3-live-rhythm-light.svg" height="22"></picture>
 
-<a id="daily-summary-generation"></a>
-### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-daily-summary-generation-dark.svg"><img alt="Daily Summary Generation" src=".github/images/headings/h3-daily-summary-generation-light.svg" height="22"></picture>
-
-When "Generate Summary" is triggered on a DayPage, the system:
-
-1. Gathers structured day sources (calendar, locations, transactions, messages, etc.)
-2. Adds supplemental data: full transcription text, app usage, web browsing, knowledge documents, AI conversations
-3. Builds a text prompt with all sections, truncated to fit token limits
-4. Calls an LLM via virtues-api to generate a first-person daily narrative
-5. Computes the 7-dim context vector from ontology data presence
-6. Generates per-domain embeddings and computes the chaos/order score
-7. Saves everything (autobiography, context vector, chaos score) to the wiki_days record
-
-<a id="chaosorder-scoring"></a>
-### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-chaos-order-scoring-dark.svg"><img alt="Chaos/Order Scoring" src=".github/images/headings/h3-chaos-order-scoring-light.svg" height="22"></picture>
-
-The chaos score measures how **novel** or **routine** a day is compared to your recent 30-day baseline.
-
-**Algorithm:**
-
-1. The day's data is grouped into 7 embedding domains: communication, calendar, health, location, financial, activity, content
-2. Each domain's text content is embedded via virtues-api `/v1/embeddings` (text-embedding-3-small)
-3. Each domain's embedding is compared to its **30-day exponentially-decayed centroid** via cosine similarity (decay rate: `exp(-0.1 * days_ago)`)
-4. Per-domain chaos: `domain_chaos = 1 - similarity`
-5. Domain chaos is **distributed across 7 dimensions** via the domain's ontology context weights
-6. Final score: `chaos = sum(chaos[dim] * coverage[dim]) / sum(coverage[dim])`
-
-The final normalization by coverage is the key insight: **sparse days don't appear artificially chaotic**. A day with only health data can't swing the chaos score wildly because its coverage is concentrated in just a few dimensions. The formula requires the chaos to be proportional to what was actually observed.
-
-- **0.0** = Perfectly ordered/routine — every domain looks like your recent average
-- **1.0** = Maximally chaotic/novel — every domain diverges from its centroid
-
-<a id="domain-groupings"></a>
-### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-domain-groupings-dark.svg"><img alt="Domain Groupings" src=".github/images/headings/h3-domain-groupings-light.svg" height="22"></picture>
-
-| Domain | Ontologies |
-|--------|-----------|
-| communication | communication_email, communication_message, communication_transcription |
-| calendar | calendar_event |
-| health | health_heart_rate, health_steps, health_sleep, health_workout, health_hrv |
-| location | location_point, location_visit |
-| financial | financial_transaction, financial_account |
-| activity | activity_app_usage, activity_web_browsing |
-| content | content_document, content_conversation, content_bookmark |
+The scores above are written by the end-of-day pass, so they cannot answer for the day in progress. The home page computes a live measure client-side, with no model at all: today's hour-by-hour activation raster is normalized into a shape and compared — total-variation distance — against the median shape of the trailing twelve weeks, using only the hours today has actually lived. Too little history, or a history where every day looks alike, and it renders nothing rather than scoring noise.
 
 <a id="features"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-features-dark.svg"><img alt="Features" src=".github/images/headings/h2-features-light.svg" height="28"></picture>
@@ -459,7 +409,7 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 
 **AI Agent Modes** — Three distinct modes: **Agent** (full tool access — SQL, search, code, page editing), **Chat** (conversation only, no tools), and **Research** (read-only tools). Customizable personas let you shape the AI's behavior. Multi-model support across Claude, GPT, Gemini, and more.
 
-**Semantic Search** — Two-stage retrieval pipeline: bi-encoder (nomic-embed, 768-dim) generates embeddings, then a cross-encoder reranker (BGE-reranker-v2-m3) re-scores results for precision. Per-ontology text extraction ensures every data type is searchable. Cmd+K modal for quick actions and cross-entity search.
+**Semantic Search** — Two-stage retrieval pipeline, entirely on-box: a bi-encoder (currently EmbeddingGemma-300M) generates embeddings, then a reranker (currently gte-reranker-modernbert) re-scores results for precision, both served by local llama.cpp sidecars. Per-ontology text extraction ensures every data type is searchable. Cmd+K modal for quick actions and cross-entity search.
 
 **Entity Resolution** — Automatic extraction of people, places, and organizations from your raw data. The "Sarah" in your calendar, the "Sarah" in your contacts, and the "Sarah" in your messages all resolve to one person. Dedicated wiki pages for each entity type with specialized views.
 
@@ -467,9 +417,7 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 
 **Automated Autobiography** — Daily summaries generated from your data — calendar, messages, health, location, transactions, transcriptions. Temporal navigation by day and year. Narrative structure: Telos (life purpose) → Acts (multi-year arcs) → Chapters → Days. Hit "Generate Summary" and the system writes your day for you.
 
-**W7H Context Score** — Every day is scored across 7 dimensions evolved from journalism's W5H framework: Who (self-awareness), Whom (relational resolution), What (events/content), When (temporal coverage), Where (spatial awareness), Why (intent/motivation), How (physical state). Each ontology carries a weight vector; coverage shows how completely a day is observed.
-
-**Entropy Calculation** — A chaos/order score that measures how novel or routine your day is. Per-domain embeddings are compared against a 30-day exponentially-decayed centroid. The result is a single number — think VIX for your persona — normalized by coverage so sparse days don't appear artificially chaotic.
+**Novelty Scoring** — Every reconstructed event is scored against your own recent life, with embeddings computed on the box: global novelty (distance from a recency- and time-of-day-weighted centroid of your past events) and local novelty (off-pattern for its kind, via Local Outlier Factor). Topics and entities get their own novelty signals, and the home page shows a live rhythm measure for the day in progress. See [The Day Pipeline](#the-day-pipeline).
 
 **Activity Heatmap** — GitHub-style contribution heatmap showing your data density over time. Visual at-a-glance view of which days have rich context and which are sparse.
 

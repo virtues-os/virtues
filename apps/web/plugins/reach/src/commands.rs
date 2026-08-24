@@ -289,79 +289,11 @@ pub(crate) async fn improv_claim<R: Runtime>(
   }
 }
 
-/// Ask the box for its account-link code (Improv RPC 0x84).
-///
-/// Replaces printing that code on the box's own panel. The app has already
-/// proved line of sight with the phrase and holds the setup session, so handing
-/// it over that session is both tighter — the glass proves only that you are in
-/// the room — and better: the app opens the link page with the code already in
-/// the URL, so the owner types nothing.
-///
-/// `{ ok: true, code: null }` when the box has no link in flight: already
-/// linked, or no internet yet to start one.
-#[command]
-pub(crate) async fn improv_link_code<R: Runtime>(
-  app: AppHandle<R>,
-  id: String,
-) -> Result<serde_json::Value> {
-  #[cfg(target_os = "ios")]
-  {
-    use tauri::Manager;
-    let handle = app.state::<crate::IosPluginHandle<R>>();
-    return handle
-      .0
-      .run_mobile_plugin("improv_link_code", serde_json::json!({ "id": id }))
-      .map_err(|e| crate::Error::Reach(e.to_string()));
-  }
-  #[cfg(not(any(target_os = "ios", target_os = "android")))]
-  {
-    let _ = &app;
-    return Ok(match desktop::client().link_code(&id).await {
-      Ok(Some((code, url))) => serde_json::json!({ "ok": true, "code": code, "url": url }),
-      Ok(None) => serde_json::json!({ "ok": true, "code": null }),
-      Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
-    });
-  }
-  #[cfg(target_os = "android")]
-  {
-    let _ = (app, id);
-    Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()))
-  }
-}
+// improv_link_code (0x84) and improv_pair_code (0x85) were deleted
+// 2026-08-24 with their opcodes — the grant (0x82) and the codeless 0x83
+// made both hand-offs pointless. See virtues-improv/src/protocol.rs.
 
-/// Ask the box for its standing pair code, over BLE (Improv RPC 0x85).
-///
-/// `code: null` = the box has none to give, or predates the RPC. Both mean the
-/// same thing to the caller: fall back to the six digits on the panel.
-#[command]
-pub(crate) async fn improv_pair_code<R: Runtime>(
-  app: AppHandle<R>,
-  id: String,
-) -> Result<serde_json::Value> {
-  #[cfg(target_os = "ios")]
-  {
-    use tauri::Manager;
-    let handle = app.state::<crate::IosPluginHandle<R>>();
-    return handle
-      .0
-      .run_mobile_plugin("improv_pair_code", serde_json::json!({ "id": id }))
-      .map_err(|e| crate::Error::Reach(e.to_string()));
-  }
-  #[cfg(not(any(target_os = "ios", target_os = "android")))]
-  {
-    let _ = &app;
-    return Ok(match desktop::client().pair_code(&id).await {
-      Ok(Some(code)) => serde_json::json!({ "ok": true, "code": code }),
-      Ok(None) => serde_json::json!({ "ok": true, "code": null }),
-      Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
-    });
-  }
-  #[cfg(target_os = "android")]
-  {
-    let _ = (app, id);
-    Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()))
-  }
-}
+
 
 /// Ask THAT BOX what wifi it can see, over BLE (Improv RPC 0x04).
 #[command]
@@ -448,17 +380,52 @@ pub(crate) async fn improv_provision<R: Runtime>(
   }
 }
 
-/// Pair THROUGH the box's Bluetooth (our Improv RPC 0x83): the box redeems
-/// the pair code against its own consume endpoint and streams the response
-/// back; this command then persists the pairing exactly as the LAN path
-/// does. Exists because the LAN leg dies on client-isolated networks (an
-/// office blocked phone→box HTTP on the same wifi, live, 2026-08-11).
+/// Hand the box a pre-approved account grant (our Improv RPC 0x82). The box
+/// stores it and redeems it OUTBOUND through its ordinary link poll the
+/// moment it is online — nothing here waits on the redemption; the pair
+/// step's complete-ticket wait (box-side) is what sequences it.
+/// Returns `{ok: true}` or `{ok: false, error}`.
+#[command]
+pub(crate) async fn improv_grant<R: Runtime>(
+  app: AppHandle<R>,
+  id: String,
+  grant: String,
+) -> Result<serde_json::Value> {
+  #[cfg(target_os = "ios")]
+  {
+    use tauri::Manager;
+    let handle = app.state::<crate::IosPluginHandle<R>>();
+    return handle
+      .0
+      .run_mobile_plugin("improv_grant", serde_json::json!({ "id": id, "grant": grant }))
+      .map_err(|e| crate::Error::Reach(e.to_string()));
+  }
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let _ = &app;
+    return Ok(match desktop::client().claim_grant(&id, &grant).await {
+      Ok(()) => serde_json::json!({ "ok": true }),
+      Err(e) => serde_json::json!({ "ok": false, "error": format!("{e:#}") }),
+    });
+  }
+  #[cfg(target_os = "android")]
+  {
+    let _ = (app, id, grant);
+    Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()))
+  }
+}
+
+/// Pair THROUGH the box's Bluetooth (our Improv RPC 0x83): session-authorized
+/// and CODELESS since 2026-08-24 — the box supplies its own standing code
+/// internally and streams the consume response back; this command then
+/// persists the pairing exactly as the LAN path does. Exists because the LAN
+/// leg dies on client-isolated networks (an office blocked phone→box HTTP on
+/// the same wifi, live, 2026-08-11).
 /// Returns `{ok: true, status}` (a `ReachStatus`) or `{ok: false, error}`.
 #[command]
 pub(crate) async fn improv_pair<R: Runtime>(
   app: AppHandle<R>,
   id: String,
-  code: String,
 ) -> Result<serde_json::Value> {
   // Key custody stays in Rust on BOTH platforms: mint here, hand only the
   // public EndpointId to the radio layer, persist the box's relayed consume
@@ -480,7 +447,6 @@ pub(crate) async fn improv_pair<R: Runtime>(
         "improv_pair",
         serde_json::json!({
           "id": id,
-          "code": code,
           "label": label,
           "endpointId": identity.node_id,
         }),
@@ -497,7 +463,7 @@ pub(crate) async fn improv_pair<R: Runtime>(
   let body: String = {
     // `source` distinguishes a collector from a plain device on the box: a
     // Mac collects, so it declares "mac" and earns its ingest fan-out.
-    match desktop::client().pair(&id, &code, kind, "mac", label, &identity.node_id).await {
+    match desktop::client().pair(&id, kind, "mac", label, &identity.node_id).await {
       Ok(b) => b,
       Err(e) => return Ok(serde_json::json!({ "ok": false, "error": format!("{e:#}") })),
     }
@@ -505,7 +471,7 @@ pub(crate) async fn improv_pair<R: Runtime>(
 
   #[cfg(target_os = "android")]
   {
-    let _ = (&app, &id, &code, kind, label, &identity);
+    let _ = (&app, &id, kind, label, &identity);
     return Err(crate::Error::Reach("Bluetooth setup isn't available on Android yet".into()));
   }
 
