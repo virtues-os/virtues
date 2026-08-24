@@ -132,21 +132,18 @@
 				data to protect your soul.
 			</p>
 
-			<!-- WHAT VIRTUES IS — what it does for you, then the asks as proof.
-			     The daily page is the anchor image (a concrete object at a
-			     concrete time, a promise you can check rather than an IOU); the
-			     honest opinion is the payoff. The wiki sentence was cut
-			     2026-08-24: it was inventory, the asks demonstrate it (the
-			     dog-park name IS the wiki working), and it meets the reader in
-			     the app soon enough. One colon-construction only — the beloved
-			     "yesterday, written down" line keeps it; every other sentence
-			     runs uninterrupted, which is what ¶3 lacked. -->
+			<!-- THE GIFT. A page WAITING FOR YOU — future tense, addressed to the
+			     reader — never "it writes / it reads / it keeps": every revision
+			     that made the box the subject turned the gift into a mechanism,
+			     and each one was reverted (last: 2026-08-24). No definitional
+			     opener either — ¶2 and the ledger just did that work. This
+			     paragraph's whole job is what protecting the record BUYS,
+			     arriving right after the thesis commands you to protect it:
+			     command, then gift. The asks below are its proof. -->
 			<p>
-				Virtues is the record of your life, kept in your home. Every day it writes a page —
-				yesterday, written down: where you went, who you spoke with, what you were working
-				on. It reads everything it keeps and forms an honest opinion of how you actually
-				live. Thin at first, having only just met you — but a record compounds. Give it
-				time, then ask:
+				Every day, a page will be waiting for you: yesterday, written down — where you
+				went, who you spoke with, what you were working on. Thin at first, having only
+				just met you. But a record compounds. Give it time, then ask:
 			</p>
 		</div>
 
