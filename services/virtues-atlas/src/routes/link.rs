@@ -64,6 +64,12 @@ pub fn router() -> Router<AppState> {
         // airlock webview, hence the CORS layer — the browser pages above
         // need none.
         .route("/init/approve", post(approve).layer(crate::routes::app_cors()))
+        // THE KEYSTONE (one-wire-plan Phase 2): a signed-in, entitled app
+        // asks for a pre-approved device_code and writes it to the box over
+        // BLE (0x82); the box redeems it through its ordinary /init/poll the
+        // moment it is online. Attach happens AT REDEMPTION, when the box can
+        // say which endpoint it is. Airlock-called, hence CORS.
+        .route("/init/grant", post(grant).layer(crate::routes::app_cors()))
 }
 
 // ─── POST /init/start ───────────────────────────────────────────────────────
@@ -135,6 +141,11 @@ async fn start(
 #[derive(Debug, Deserialize)]
 struct PollBody {
     device_code: String,
+    /// The box's self-reported iroh EndpointId — a rotation-scoping label for
+    /// the per-box key minted at grant redemption, never an authorization
+    /// input. Absent from older boxes' polls.
+    #[serde(default)]
+    endpoint_id: Option<String>,
 }
 
 async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum::response::Response {
@@ -157,8 +168,15 @@ async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum
     let Some((status, api_key, expires_at)) = row else {
         return Json(json!({ "status": "expired" })).into_response();
     };
-    if Utc::now() > expires_at && status == "pending" {
+    if Utc::now() > expires_at && (status == "pending" || status == "granted") {
         return Json(json!({ "status": "expired" })).into_response();
+    }
+
+    // A granted link redeems ON THIS POLL: entitlement re-check, per-box key
+    // mint, register — the attach deferred to the moment the box can say who
+    // it is. Everything else is the classic RFC-8628 read.
+    if status == "granted" {
+        return redeem_granted_link(&state, &hash[..], body.endpoint_id.as_deref()).await;
     }
 
     match status.as_str() {
@@ -395,7 +413,7 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn page(title: &str, body: &str) -> axum::response::Response {
+pub(super) fn page(title: &str, body: &str) -> axum::response::Response {
     Html(format!(
         "<!doctype html><html><head><meta charset=utf-8>\
          <meta name=viewport content='width=device-width,initial-scale=1'>\
@@ -789,6 +807,214 @@ async fn approve(
             err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't attach the box")
         }
     }
+}
+
+// ─── POST /init/grant (the 0x82 keystone) ───────────────────────────────────
+
+/// How long a grant stays redeemable. Generous on purpose: the box may sit
+/// offline while the owner finishes setup, and the grant is pre-authorized to
+/// one account and delivered over a proven line-of-sight channel — the real
+/// guards are the entitlement RE-CHECK at redemption and single-use claiming,
+/// not this clock.
+const GRANT_TTL_HOURS: i64 = 24;
+
+async fn grant(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let Some(sess) = super::account::authed(&state, &headers).await else {
+        return err(StatusCode::UNAUTHORIZED, "unauthorized", "sign in again");
+    };
+    let Some(customer_id) = sess.customer_id.as_deref() else {
+        return err(StatusCode::PAYMENT_REQUIRED, "no_subscription", "no subscription on this account yet");
+    };
+    match super::account::is_entitled(&state, Some(customer_id)).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return err(StatusCode::PAYMENT_REQUIRED, "no_subscription", "no active subscription on this account");
+        }
+        Err(e) => {
+            tracing::warn!("grant entitlement check failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't verify the subscription");
+        }
+    }
+    // Same attempt budget as approve — one shared table, one shared story
+    // about how fast a session may mint box-shaped things. Fail closed.
+    let recent: i64 = match sqlx::query_scalar(
+        "SELECT count(*) FROM approve_attempt WHERE email = $1 AND created_at > now() - interval '1 hour'",
+    )
+    .bind(&sess.email)
+    .fetch_one(&state.pool)
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("grant rate-limit read failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't verify the request");
+        }
+    };
+    if recent >= MAX_APPROVE_ATTEMPTS_PER_HOUR {
+        tracing::warn!(email = %sess.email, "grant rate limit hit");
+        return err(StatusCode::TOO_MANY_REQUESTS, "rate_limited", "too many link attempts — wait a few minutes and try again");
+    }
+    let _ = sqlx::query("INSERT INTO approve_attempt (email) VALUES ($1)")
+        .bind(&sess.email)
+        .execute(&state.pool)
+        .await;
+
+    let device_code = random_hex(32);
+    let user_code = gen_user_code();
+    let device_code_hash = sha256(device_code.as_bytes());
+    let expires_at = Utc::now() + Duration::hours(GRANT_TTL_HOURS);
+    if let Err(e) = sqlx::query(
+        r#"
+        INSERT INTO device_link (device_code_hash, user_code, status, expires_at, stripe_customer_id)
+        VALUES ($1, $2, 'granted', $3, $4)
+        "#,
+    )
+    .bind(&device_code_hash[..])
+    .bind(&user_code)
+    .bind(expires_at)
+    .bind(customer_id)
+    .execute(&state.pool)
+    .await
+    {
+        tracing::warn!("grant insert failed: {e:#}");
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not mint a grant");
+    }
+    (
+        StatusCode::OK,
+        Json(json!({ "grant": device_code, "expires_in": GRANT_TTL_HOURS * 3600 })),
+    )
+        .into_response()
+}
+
+/// Redeem a granted link: the attach, deferred to the moment the box shows up
+/// with its endpoint. Returns the poll response to send.
+///
+/// Ordering inside mirrors `attach_link_to_customer`: claim the row first
+/// (granted → linking, so a double poll can't double-mint), re-check
+/// entitlement (a 24 h grant must not outlive a refund), register with
+/// virtues-api, record the key, answer ready. Failures after the claim revert
+/// to 'granted' and answer pending — the box's poll loop IS the retry.
+async fn redeem_granted_link(
+    state: &AppState,
+    device_code_hash: &[u8],
+    poll_endpoint_id: Option<&str>,
+) -> axum::response::Response {
+    let claim: Result<Option<(Option<String>, Option<String>)>, _> = sqlx::query_as(
+        "UPDATE device_link SET status = 'linking' \
+         WHERE device_code_hash = $1 AND status = 'granted' AND expires_at > now() \
+         RETURNING stripe_customer_id, endpoint_id",
+    )
+    .bind(device_code_hash)
+    .fetch_optional(&state.pool)
+    .await;
+    let (customer_id, row_endpoint) = match claim {
+        Ok(Some((Some(cid), ep))) => (cid, ep),
+        // A granted row with no customer is a bug, not a state; deny rather
+        // than mint something unowned.
+        Ok(Some((None, _))) => {
+            tracing::warn!("granted link with no customer — denying");
+            return Json(json!({ "status": "denied" })).into_response();
+        }
+        // Lost the race to a concurrent poll (it is doing the work), or the
+        // grant lapsed. The generic poll flow already answered the caller
+        // correctly for both on the next round.
+        Ok(None) => return Json(json!({ "status": "pending" })).into_response(),
+        Err(e) => {
+            tracing::warn!("granted link claim failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "poll failed");
+        }
+    };
+    let release = || async {
+        let _ = sqlx::query(
+            "UPDATE device_link SET status = 'granted' \
+             WHERE device_code_hash = $1 AND status = 'linking'",
+        )
+        .bind(device_code_hash)
+        .execute(&state.pool)
+        .await;
+    };
+
+    // Entitlement re-check AT REDEMPTION — the grant's TTL is generous, and a
+    // refund in the gap must win. Errors deny nothing and grant nothing: the
+    // row goes back to granted and the box retries.
+    match super::account::is_entitled(&state, Some(&customer_id)).await {
+        Ok(true) => {}
+        Ok(false) => {
+            release().await;
+            return Json(json!({ "status": "denied" })).into_response();
+        }
+        Err(e) => {
+            tracing::warn!("redemption entitlement check failed: {e:#}");
+            release().await;
+            return Json(json!({ "status": "pending" })).into_response();
+        }
+    }
+
+    // The box self-reports its endpoint at redemption (the poll body); the
+    // grant-time row has none (the app minted it before the box was even
+    // online). Label, never an authorization input.
+    let endpoint_id = poll_endpoint_id
+        .map(str::to_string)
+        .or(row_endpoint)
+        .filter(|s| !s.is_empty());
+
+    let account_id: String = match sqlx::query_scalar(
+        "SELECT account_id FROM customers WHERE stripe_customer_id = $1",
+    )
+    .bind(&customer_id)
+    .fetch_one(&state.pool)
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("redemption account lookup failed: {e:#}");
+            release().await;
+            return Json(json!({ "status": "pending" })).into_response();
+        }
+    };
+
+    let api_key = super::claim::random_token();
+    let api_key_hash = sha256(api_key.as_bytes());
+    if let Err(e) = state
+        .virtues_api
+        .register_device(&crate::virtues_api_client::RegisterDevice {
+            box_id: endpoint_id.clone(),
+            api_key_hash: hex::encode(&api_key_hash),
+            account_id,
+        })
+        .await
+    {
+        tracing::warn!("redemption register_device failed: {e:#}");
+        release().await;
+        return Json(json!({ "status": "pending" })).into_response();
+    }
+    if let Err(e) = super::claim::mint_box_key(
+        &state.pool,
+        &customer_id,
+        endpoint_id.as_deref(),
+        &api_key_hash[..],
+    )
+    .await
+    {
+        // Key registered upstream; do NOT release (a retry would re-register
+        // destructively). Park at linking; the next poll answers pending and
+        // an operator sees the warn.
+        tracing::warn!("redemption mint_box_key failed: {e:#}");
+        return Json(json!({ "status": "pending" })).into_response();
+    }
+    // One-shot delivery, same as the ready path: mark claimed and hand the
+    // key over in this response.
+    let _ = sqlx::query(
+        "UPDATE device_link SET status = 'claimed' WHERE device_code_hash = $1",
+    )
+    .bind(device_code_hash)
+    .execute(&state.pool)
+    .await;
+    tracing::info!("granted link redeemed — box attached at redemption");
+    Json(json!({ "status": "ready", "api_key": api_key })).into_response()
 }
 
 /// What `begin_login` decided — shared by the box-callable and web doors so the
