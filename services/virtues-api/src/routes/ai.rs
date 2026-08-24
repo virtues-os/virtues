@@ -3,8 +3,11 @@
 //! Migrated paths for Vercel AI Gateway upstream:
 //! - POST /v1/ai/chat/completions   (streaming + non-streaming)
 //! - POST /v1/ai/completions         (text completion)
-//! - POST /v1/ai/embeddings          (embeddings)
 //! - GET  /v1/ai/models              (model catalog)
+//!
+//! There is no embeddings route. Boxes embed locally (the embedding sidecar);
+//! the old `/v1/ai/embeddings` proxy sat here with zero callers after that
+//! pivot and was removed 2026-08-24.
 //!
 //! Streaming chat (`stream: true`) hands off to `routes/streaming.rs` with
 //! an `entitlement::charge()` callback fired once the upstream emits
@@ -38,7 +41,7 @@ use std::sync::Arc;
 
 use crate::bearer_auth::BearerAuth;
 use crate::entitlement::{self, Account};
-use crate::providers::{calculate_cost, get_embeddings_config, get_provider_config};
+use crate::providers::{calculate_cost, get_provider_config};
 use crate::AppState;
 
 /// Pre-flight budget gate. AI cost is only known after the response, so we
@@ -59,7 +62,6 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/ai/chat/completions", post(chat_completions))
         .route("/v1/ai/completions", post(completions))
-        .route("/v1/ai/embeddings", post(embeddings))
         .route("/v1/ai/models", get(list_models))
 }
 
@@ -226,91 +228,6 @@ async fn completions(
         .await;
 
     forward_then_charge(pool, &state.catalog, &ent.account_id, &model, upstream).await
-}
-
-async fn embeddings(
-    State(state): State<Arc<AppState>>,
-    BearerAuth(ent): BearerAuth,
-    headers: HeaderMap,
-    Json(request): Json<Value>,
-) -> Response {
-    let pool = &state.db;
-
-    if let Some(resp) = budget_gate(&ent) {
-        return resp;
-    }
-
-    let provider = get_embeddings_config(&state.config);
-    let _ = &headers;
-
-    let upstream = state
-        .http_client
-        .post(&provider.endpoint)
-        .header("Authorization", format!("Bearer {}", provider.api_key))
-        .header("Content-Type", "application/json")
-        .json(&request)
-        .send()
-        .await;
-
-    let resp = match upstream {
-        Ok(r) => r,
-        Err(e) => return err(StatusCode::BAD_GATEWAY, "upstream_error", &e.to_string()),
-    };
-
-    let status = resp.status();
-    let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
-
-    if status.is_success() {
-        // Gateway-reported cost first, exactly as on the chat path.
-        let cost_micros = if let Some(cost) = body
-            .get("usage")
-            .and_then(|u| u.get("cost"))
-            .and_then(|c| c.as_f64())
-        {
-            entitlement::usd_to_micros(cost)
-        } else {
-            // Fall back to the live catalog price for THIS embedding model.
-            // (This was a flat $0.0001/1K for every model — wrong in both
-            // directions; the catalog carries real per-model embedding rates.)
-            let total_tokens = body
-                .get("usage")
-                .and_then(|u| u.get("total_tokens"))
-                .and_then(|t| t.as_u64())
-                .unwrap_or(0);
-            let model = request
-                .get("model")
-                .and_then(|m| m.as_str())
-                .unwrap_or_default();
-            // No catalog price = unknown rate. Serve unbilled rather than
-            // invent one; see providers::calculate_cost for why.
-            match state.catalog.pricing(model) {
-                Some((input_per_1k, _)) => {
-                    let cost_usd = (total_tokens as f64 / 1000.0) * input_per_1k;
-                    entitlement::usd_to_micros(cost_usd)
-                }
-                None => {
-                    tracing::error!(
-                        model,
-                        total_tokens,
-                        "no gateway cost and no catalog price for embeddings — \
-                         serving UNBILLED rather than inventing a rate"
-                    );
-                    0
-                }
-            }
-        };
-        if cost_micros > 0 {
-            if let Err(e) = entitlement::settle(pool, &ent.account_id, cost_micros).await {
-                tracing::warn!("ai embeddings settle failed: {e}");
-            }
-        }
-    }
-
-    (
-        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-        Json(body),
-    )
-        .into_response()
 }
 
 /// The models a box should offer, and which one fills each slot.

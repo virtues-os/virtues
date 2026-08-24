@@ -1,7 +1,9 @@
 //! narrative_identity_draft: generate the onboarding narrative-identity draft.
 //!
-//! Thin glue over `virtues-core` (same shape as `day_summary_eod`): connect,
-//! run the generator, report the outcome. Triggered manually from the
+//! Thin glue over `virtues-core` (same plumbing shape as `day_summary_eod` —
+//! "shape" means the connect/run/report skeleton, NOT the model slot): connect,
+//! run the generator, report the outcome. The generator runs on the **Chat**
+//! slot (see `narrative_identity_gen`). Triggered manually from the
 //! onboarding reveal (and, later, on a cron for the recurring examined-self).
 
 use anyhow::{Context, Result};
