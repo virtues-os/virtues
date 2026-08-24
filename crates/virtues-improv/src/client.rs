@@ -311,6 +311,52 @@ impl ImprovClient {
     // opcodes — the codeless 0x83 and the 0x82 grant made both round-trips
     // pointless. See protocol.rs.
 
+    /// RPC 0x82: hand the box a pre-approved account grant.
+    ///
+    /// The box ACKs `"accepted"` as soon as the grant is stored — the redeem
+    /// happens OUTBOUND later, when the box is online, and nothing here waits
+    /// for it (a `"linked"` notify may follow on the same stream for whoever
+    /// is still listening; the pair step's box-side complete-ticket wait is
+    /// what actually sequences setup). Session-gated: only the phrase-proven
+    /// peer may bind this box to an account.
+    pub async fn claim_grant(&self, id: &str, grant: &str) -> Result<()> {
+        let mut inner = self.inner.lock().await;
+        let session = Self::ensure_connected(&mut inner, id).await?;
+        let mut notifications =
+            session.peripheral.notifications().await.context("notifications")?;
+        session
+            .peripheral
+            .write(
+                &session.rpc,
+                &protocol::build_rpc(&Command::ClaimGrant { grant: grant.into() }),
+                WriteType::WithResponse,
+            )
+            .await
+            .context("send grant")?;
+
+        let error_uuid = uuid(protocol::CHAR_ERROR_STATE);
+        let watch = async {
+            while let Some(n) = notifications.next().await {
+                if n.uuid == error_uuid {
+                    match n.value.first().copied() {
+                        None | Some(0) => continue,
+                        Some(c) => return Err(anyhow!("{}", ImprovError::describe(c))),
+                    }
+                }
+                if let Some(strings) = protocol::parse_result(&n.value, 0x82) {
+                    if strings.first().map(|s| s == "accepted").unwrap_or(false) {
+                        return Ok(());
+                    }
+                    return Err(anyhow!("the box refused the grant"));
+                }
+            }
+            Err(anyhow!("the box stopped answering"))
+        };
+        tokio::time::timeout(REPLY_TIMEOUT, watch)
+            .await
+            .map_err(|_| anyhow!("the box didn't answer — try again"))?
+    }
+
     /// RPC 0x04: ask the BOX what networks it can see. Streams one packet per
     /// network; an empty packet ends the list.
     pub async fn wifi_scan(&self, id: &str) -> Result<Vec<Network>> {
