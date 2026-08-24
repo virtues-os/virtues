@@ -65,7 +65,7 @@
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
 				idea that a thing belongs at the most local level that can hold it. Nothing is more
 				local than your own life. So ask plainly: who should hold the whole account of your
-				life — a government, a political party, big tech? Or you.
+				life? A government, a political party, big tech? Or you.
 			</p>
 
 			<!-- THE PREMISE. Two claims: capability (you can hold this yourself)
@@ -141,7 +141,7 @@
 			     arriving right after the thesis commands you to protect it:
 			     command, then gift. The asks below are its proof. -->
 			<p>
-				Every day, a page will be waiting for you: yesterday, written down — where you
+				Every day, a page will be waiting for you: yesterday, written down. Where you
 				went, who you spoke with, what you were working on. Thin at first, having only
 				just met you. But a record compounds. Give it time, then ask:
 			</p>
@@ -181,7 +181,7 @@
 			     joins the reader for the final clause. -->
 			<p>
 				The goal is to know yourself more intimately than any company or model ever
-				will — a mirror for everything you had let slip, a way to search your own life.
+				will: a mirror for everything you had let slip, a way to search your own life.
 				Because growing older is less about discovering new things than remembering what
 				you already knew. And technology has one good use: to give back the part of life
 				that has nothing to do with technology — to make us more human, and more virtuous.
