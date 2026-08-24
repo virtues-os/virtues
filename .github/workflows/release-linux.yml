@@ -64,10 +64,10 @@ jobs:
         include:
           - arch: x86_64
             target: x86_64-unknown-linux-gnu
-            runner: blacksmith-8vcpu-ubuntu-2204
+            runner: blacksmith-16vcpu-ubuntu-2204
           - arch: aarch64
             target: aarch64-unknown-linux-gnu
-            runner: blacksmith-8vcpu-ubuntu-2204-arm
+            runner: blacksmith-16vcpu-ubuntu-2204-arm
 
     steps:
       - uses: actions/checkout@v4
@@ -126,7 +126,7 @@ jobs:
       # build graph it is given, but two invocations cannot overlap: the first
       # one's link phase — where parallelism collapses to roughly one core —
       # runs while the second waits its turn. Split across four steps this left
-      # an 8-vCPU runner idle through every tail.
+      # the whole runner idle through every tail.
       #
       # Measured on the aarch64 leg (2026-08-13): virtues 515s + applets 391s +
       # installer 29s = 935s, 65% of a 24-minute build, on a machine that was
