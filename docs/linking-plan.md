@@ -198,6 +198,41 @@ Still owed for grant + BLE-pair to fire end-to-end (P2, app + atlas):
   so the page can show "✓ your box received it" — closing the loop on both
   surfaces.
 
+## Inline sign-in contract (app side BUILT 2026-08-24; atlas side owed)
+
+The existing-account door no longer opens a browser. The airlock hosts the
+whole sign-in itself — email → six-digit OTP → approve the box's in-flight
+`user_code` — because atlas auth is OTP with **no password ceremony**, which
+removes the one thing a webview couldn't safely host. Checkout remains
+browser-only on purpose (Apple Pay, card autofill, URL-bar trust chrome), and
+every inline failure keeps a "sign in with the browser instead" escape, so
+until these endpoints ship the flow degrades to exactly what it was.
+
+What the airlock calls (`connect.html`, INLINE SIGN-IN region):
+
+| Endpoint | Body | Answer |
+|---|---|---|
+| `POST /init/otp/request` | `{email}` | `{ok}` — creates the account implicitly, per persona 2 |
+| `POST /init/otp/verify` | `{email, code}` | `{ok, token}` — short-lived link-scoped bearer |
+| `POST /init/approve` | `{user_code}` + `Authorization: Bearer` | `{ok}`, or `{ok:false, error:"no-subscription", checkout_url}` |
+
+Contract notes the implementation depends on:
+- **The token may approve more than once.** The airlock's retry re-fetches a
+  fresh `user_code` over BLE (0x84) and reuses the token, so an expired code
+  never costs a second email round-trip.
+- **`no-subscription` is a distinguished error**, not prose: it routes to the
+  one deliberate browser hand-off (checkout), carrying `checkout_url` when
+  atlas has a better destination than `/init/checkout?code=…`.
+- **CORS**: the airlock's origin is `tauri://localhost` (macOS/Linux),
+  `http://tauri.localhost` (Windows), or the `virtues://` scheme (iOS). The
+  token is a bearer, never a cookie, so `Access-Control-Allow-Origin: *` is
+  acceptable. Errors ride in JSON bodies — a bare 4xx status page reads as
+  "Atlas answered NNN." in the app.
+- **Completion is still the box's.** Approve only flips the device
+  authorization; the box's own poll redeems it, and the airlock watches
+  (BLE 0x84 going empty, or `/api/box/identity.linked`) for up to 45s before
+  moving on to pairing regardless — prescribe, never enforce.
+
 **P3 — lifecycle:**
 - `virtues unlink`, account-page release, resale story documented atop
   deprovision.

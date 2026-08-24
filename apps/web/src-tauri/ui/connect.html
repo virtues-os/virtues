@@ -336,9 +336,13 @@
       // it did to the first person who followed this button. Ship the URL that
       // answers; swap it the day the pretty one exists.
       //
-      // A URL and not a deep link on purpose: checkout belongs in a real
-      // browser with a real password manager, and the box completes the link
-      // over its own outbound connection regardless of which browser it was.
+      // A URL and not a deep link on purpose: CHECKOUT belongs in a real
+      // browser — Apple Pay, card autofill, and the URL-bar trust chrome all
+      // die in an embedded webview, and the box completes the link over its
+      // own outbound connection regardless of which browser it was. Sign-in
+      // no longer goes here at all: atlas auth is email OTP with no password
+      // (linking-plan.md), which is exactly the shape a webview can host
+      // safely, so the existing-account door is inline — see INLINE SIGN-IN.
       const LINK_URL = 'https://atlas.virtues.com/init';
 
       // ── ROUTER:BEGIN ──────────────────────────────────────────────────────
@@ -1442,9 +1446,11 @@ its devices apart — type its address.",
       // to hostile LANs by construction, and once it is done nothing later
       // depends on the local network's goodwill.
       //
-      // The box drives the link itself (device authorization, RFC-8628 shape)
-      // and shows the code on its own screen; this screen's whole job is to
-      // say why, open the page, and notice when it lands. PRESCRIBE, NEVER
+      // The box drives the link itself (device authorization, RFC-8628 shape);
+      // this screen's job is to say why, hand the owner one of two doors
+      // (inline sign-in, or browser checkout), and notice when the link lands
+      // — by whichever door, since the box's own poll is what completes it.
+      // PRESCRIBE, NEVER
       // ENFORCE: "Skip for now" is always there. An owner who refuses the
       // subscription owns slower, LAN-only hardware — not a brick.
       async function renderLinkStep(server, ssid) {
@@ -1463,8 +1469,10 @@ its devices apart — type its address.",
             <p class="escape"><button id="skip">Skip linking for now</button></p>`;
           // The choice belongs HERE, not on a web page the app opens: asking
           // "new or existing?" in the browser meant the app sent you somewhere
-          // to answer a question it could have asked itself. Each door now has
-          // its own destination and the code rides in the URL either way.
+          // to answer a question it could have asked itself. The two doors now
+          // go different places on purpose — sign-in is inline (email OTP,
+          // nothing a webview can't hold), checkout opens the real browser
+          // (payment autofill and Apple Pay live there, not here).
           // Re-ask at the moment of the click too: the poll refreshes every few
           // seconds, but the click is what puts the code in a URL, and that is
           // the value that has to be live.
@@ -1474,7 +1482,12 @@ its devices apart — type its address.",
             if (!state.linkCode) return;
             openUrl(`${LINK_URL}${path}?code=${encodeURIComponent(state.linkCode)}`);
           };
-          document.getElementById('openlink').addEventListener('click', () => go('/signin'));
+          document.getElementById('openlink').addEventListener('click', async () => {
+            await fetchLinkCode();
+            paintCode();
+            if (!state.linkCode) return;
+            renderInlineSignin(server, ssid);
+          });
           document.getElementById('newacct').addEventListener('click', () => go('/checkout'));
           document.getElementById('skip').addEventListener('click', () => goToPairing(server, ssid));
         };
@@ -1592,6 +1605,269 @@ its devices apart — type its address.",
           if (id && el()) el().textContent = 'Waiting for the link to land…';
           await new Promise((r) => setTimeout(r, 3000));
         }
+      }
+
+      // ── INLINE SIGN-IN ────────────────────────────────────────────────────
+      //
+      // The existing-account door, without leaving the app. Atlas auth is
+      // email OTP by design — no password ceremony (linking-plan.md) — which
+      // is exactly the shape a webview can host safely: nothing here wants a
+      // password manager, and no payment ever renders in-app. Checkout stays
+      // in the real browser, where Apple Pay and card autofill live.
+      //
+      // Contract (atlas, P2 — "Inline sign-in contract" in linking-plan.md):
+      //   POST /init/otp/request {email}                → {ok}
+      //   POST /init/otp/verify  {email, code}          → {ok, token}
+      //   POST /init/approve     {user_code}  + Bearer  → {ok}
+      //     or {ok:false, error:"no-subscription", checkout_url}
+      // The token is a short-lived link-scoped session; it may approve more
+      // than once (a retry after an expired user_code reuses it).
+      //
+      // CORS is part of that contract: the airlock's origin is
+      // `tauri://localhost` (macOS/Linux), `http://tauri.localhost` (Windows),
+      // or the `virtues://` scheme (iOS) — atlas must allow them. The token is
+      // a bearer, never a cookie, so a wildcard is acceptable. The CSPs in
+      // tauri.conf.json and tauri.ios.conf.json allow the connect-src.
+      //
+      // EVERY failure keeps the browser door open. Until the atlas endpoints
+      // ship (they are P2), that door is what this flow degrades to — inline
+      // is an upgrade, never a wall.
+      const ATLAS = 'https://atlas.virtues.com';
+      async function atlasPost(path, body, token) {
+        const ctl = new AbortController();
+        const t = setTimeout(() => ctl.abort(), 15000);
+        try {
+          const res = await fetch(ATLAS + path, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: 'Bearer ' + token } : {}),
+            },
+            body: JSON.stringify(body),
+            signal: ctl.signal,
+          });
+          const data = await res.json().catch(() => ({}));
+          // A non-2xx with no error field in the body is atlas not speaking
+          // this contract yet (404 while P2 is unshipped, a proxy error page).
+          // Name the status rather than shrugging.
+          if (!res.ok && data.error === undefined) {
+            return { ok: false, error: `Atlas answered ${res.status}.` };
+          }
+          return data;
+        } catch {
+          return {
+            ok: false, transport: true,
+            error: `Couldn't reach atlas from ${THIS_DEVICE} — check its internet connection.`,
+          };
+        } finally {
+          clearTimeout(t);
+        }
+      }
+
+      function renderInlineSignin(server, ssid, errorText) {
+        searchGen++; // stop the link watcher
+        setServer(server.name);
+        app.innerHTML = `
+          <button class="backnav" id="back" aria-label="Back">←</button>
+          <p class="kicker">Setting up</p>
+          <h1>Sign in</h1>
+          <p class="sub">The email on your Virtues account — we'll email you a
+            six-digit code. There's no password.</p>
+          ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
+          <form id="form">
+            <label for="email">Email</label>
+            <input id="email" type="email" inputmode="email" autocomplete="email"
+                   autocapitalize="off" autocorrect="off" spellcheck="false"
+                   placeholder="you@example.com" />
+            <button class="primary" id="go" type="submit" disabled>Email me a code</button>
+          </form>
+          <div class="msg" id="msg"></div>
+          <p class="escape"><button id="browser">Sign in with the browser instead</button></p>`;
+        const email = document.getElementById('email');
+        const go = document.getElementById('go');
+        const say = (t, cls) => {
+          const m = document.getElementById('msg');
+          if (m) { m.className = 'msg ' + (cls || ''); m.textContent = t; }
+        };
+        // Deliverability is the server's problem; this only refuses the typos
+        // that can't be an address at all.
+        const plausible = () => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim());
+        email.addEventListener('input', () => (go.disabled = !plausible()));
+        document.getElementById('back').addEventListener('click', () =>
+          renderLinkStep(server, ssid));
+        document.getElementById('browser').addEventListener('click', () =>
+          openUrl(`${LINK_URL}/signin?code=${encodeURIComponent(state.linkCode || '')}`));
+        document.getElementById('form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          if (!plausible()) return;
+          const addr = email.value.trim();
+          go.disabled = true;
+          say('Sending…');
+          const res = await atlasPost('/init/otp/request', { email: addr });
+          if (res && res.ok) return renderInlineCode(server, ssid, addr);
+          renderInlineSignin(server, ssid,
+            (res && res.error) || "Couldn't send the code.");
+        });
+        email.focus();
+      }
+
+      function renderInlineCode(server, ssid, email, errorText) {
+        searchGen++;
+        setServer(server.name);
+        app.innerHTML = `
+          <button class="backnav" id="back" aria-label="Back">←</button>
+          <p class="kicker">Setting up</p>
+          <h1>Enter the code we emailed</h1>
+          <p class="sub">Sent to <b>${esc(email)}</b>. Six digits; it only lasts a
+            few minutes.</p>
+          ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
+          <form id="form">
+            <input id="code" inputmode="numeric" autocomplete="one-time-code"
+                   maxlength="7" placeholder="123 456" />
+            <button class="primary" id="go" type="submit">Sign in</button>
+          </form>
+          <div class="msg" id="msg"></div>
+          <p class="escape"><button id="resend">Email me a new code</button></p>`;
+        const say = (t, cls) => {
+          const m = document.getElementById('msg');
+          if (m) { m.className = 'msg ' + (cls || ''); m.textContent = t; }
+        };
+        document.getElementById('back').addEventListener('click', () =>
+          renderInlineSignin(server, ssid));
+        document.getElementById('resend').addEventListener('click', async () => {
+          say('Sending…');
+          const res = await atlasPost('/init/otp/request', { email });
+          say(res && res.ok ? 'Sent. Check your email again.'
+                            : (res && res.error) || "Couldn't send a new code.",
+              res && res.ok ? 'ok' : 'err');
+        });
+        document.getElementById('form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const code = document.getElementById('code').value.replace(/\s+/g, '');
+          if (code.length < 6) return say('Enter the six digits from the email.', 'err');
+          document.getElementById('go').disabled = true;
+          say('Checking…');
+          const res = await atlasPost('/init/otp/verify', { email, code });
+          if (res && res.ok && res.token) {
+            return renderInlineApprove(server, ssid, res.token);
+          }
+          renderInlineCode(server, ssid, email,
+            (res && res.error) || "That code didn't match.");
+        });
+        document.getElementById('code').focus();
+      }
+
+      // Signed in; now approve the box's own in-flight link. The user_code is
+      // re-fetched over BLE at THIS moment, not carried from earlier — atlas
+      // rotates the code, and approving a stale one is the same
+      // opened-a-dead-URL failure the browser flow already fixed (2026-08-13).
+      async function renderInlineApprove(server, ssid, token) {
+        const gen = ++searchGen;
+        setServer(server.name);
+        const draw = (line) => {
+          app.innerHTML = `
+            <p class="kicker">Setting up</p>
+            <h1>Linking ${esc(server.name)}</h1>
+            <div class="wait"><span class="pip"></span><span id="stage">${esc(line)}</span></div>`;
+        };
+        draw('Approving on your account…');
+        let code = null;
+        if (server.bleId) {
+          try {
+            const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
+            if (r && r.ok && r.code) code = r.code;
+            // ok-and-empty: nothing in flight — the link already landed
+            // (another device, an earlier attempt). There is nothing left to
+            // approve, and that is success, not an error.
+            else if (r && r.ok) return goToPairing(server, ssid);
+          } catch { /* fall through to the cached code */ }
+        }
+        if (gen !== searchGen) return;
+        code = code || state.linkCode;
+        if (!code) {
+          return renderInlineFailed(server, ssid, token,
+            "Your server hasn't asked for a link code yet — give it a moment on the network.");
+        }
+        const res = await atlasPost('/init/approve', { user_code: code }, token);
+        if (gen !== searchGen) return;
+        if (res && res.ok) {
+          // Approved on the account; the box's own poll collects it. Watch
+          // briefly so the advance is earned, then move on regardless —
+          // pairing never required the link (PRESCRIBE, NEVER ENFORCE).
+          const stage = () => document.getElementById('stage');
+          if (stage()) stage().textContent = 'Waiting for your server to collect it…';
+          const deadline = Date.now() + 45000;
+          while (gen === searchGen && Date.now() < deadline) {
+            if (server.bleId) {
+              try {
+                const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
+                if (r && r.ok && !r.code) break; // nothing in flight → landed
+              } catch { /* keep watching */ }
+            }
+            const id = await boxIdentity(server.origin);
+            if (gen !== searchGen) return;
+            if (id && id.linked) break;
+            await new Promise((r) => setTimeout(r, 2500));
+          }
+          if (gen !== searchGen) return;
+          return goToPairing(server, ssid);
+        }
+        if (res && (res.error === 'no-subscription' || res.checkout_url)) {
+          return renderInlineNoSub(server, ssid, res.checkout_url);
+        }
+        renderInlineFailed(server, ssid, token,
+          (res && res.error) || "Atlas couldn't approve the link.");
+      }
+
+      // An approve that failed, with the session still in hand: retrying costs
+      // one tap and re-fetches a fresh user_code, so an expired code never
+      // sends anyone back through email + OTP.
+      function renderInlineFailed(server, ssid, token, why) {
+        searchGen++;
+        setServer(server.name);
+        app.innerHTML = `
+          <p class="kicker">Setting up</p>
+          <h1>The link didn't land</h1>
+          <p class="sub">${esc(why)}</p>
+          <button class="primary" id="retry">Try again</button>
+          <button class="secondary" id="back">Back</button>
+          <p class="escape"><button id="skip">Skip linking for now</button></p>`;
+        document.getElementById('retry').addEventListener('click', () =>
+          renderInlineApprove(server, ssid, token));
+        document.getElementById('back').addEventListener('click', () =>
+          renderLinkStep(server, ssid));
+        document.getElementById('skip').addEventListener('click', () =>
+          goToPairing(server, ssid));
+      }
+
+      // Signed in, but the account holds no subscription. The one seam where
+      // inline hands off to the browser on purpose: what comes next is
+      // payment, and payment does not belong in an app-shaped webview.
+      function renderInlineNoSub(server, ssid, checkoutUrl) {
+        searchGen++;
+        setServer(server.name);
+        const url = checkoutUrl
+          || `${LINK_URL}/checkout?code=${encodeURIComponent(state.linkCode || '')}`;
+        app.innerHTML = `
+          <p class="kicker">Setting up</p>
+          <h1>That account has no subscription yet</h1>
+          <p class="sub">You're signed in, but nothing on the account covers a
+            server. Checkout opens in your browser — cards and Apple Pay live
+            there, not in this app. Come back here after; this screen notices
+            on its own.</p>
+          <button class="primary" id="checkout">Open checkout</button>
+          <button class="secondary" id="back">Back</button>
+          <p class="escape"><button id="skip">Skip linking for now</button></p>`;
+        document.getElementById('checkout').addEventListener('click', () => {
+          openUrl(url);
+          // The browser has it now; the link-step watcher is the thing that
+          // notices the checkout completing, so stand back on it.
+          renderLinkStep(server, ssid);
+        });
+        document.getElementById('back').addEventListener('click', () =>
+          renderLinkStep(server, ssid));
+        document.getElementById('skip').addEventListener('click', () =>
+          goToPairing(server, ssid));
       }
 
       // Which step is THIS box on? The box is the authority, so ask it. When
