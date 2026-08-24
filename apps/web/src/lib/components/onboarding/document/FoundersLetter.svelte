@@ -84,36 +84,37 @@
 				memory, honesty, intimacy.
 			</p>
 
-			<!-- THE TWO FATES. Same data, two destinations — the against/for
-			     pivot that was cut from the prose, returned as an image (the
-			     "for" side shown, never listed). Vocabulary is the letter's own:
-			     the left payload is ¶2's triple verbatim; the right column ends
-			     on "you", echoing ¶1's "Or you." Mono + hairlines: the
-			     honest-machine register, an ASCII diagram grown up. -->
+			<!-- THE TWO FATES. One origin, a fork, two destinations — the
+			     against/for pivot cut from the prose, returned as geometry. The
+			     origin is stated ONCE (it is the same data; the figure's shape
+			     must say so), there are no boxes (boxes-and-arrows is the house
+			     style of generated diagrams; hairlines and type carry this),
+			     and the figure takes a side: the extractive path is muted, the
+			     sovereign path full ink. Serif for the substantive nouns —
+			     matching the prose this interrupts — mono only for annotation.
+			     Left payload is ¶2's triple verbatim; the right path ends on
+			     "you", echoing ¶1's "Or you." -->
 			<figure
 				class="fates"
 				role="img"
-				aria-label="Two fates for the same data. Extractive tech: your life's data flows to their cloud and becomes ads, algorithms, and addictions — used against you. Sovereign tech, Virtues: the same data stays on the box in your home and becomes pages, a wiki, you — used for you."
+				aria-label="One fork for your life's data. Left, muted: it flows to their cloud and becomes ads, algorithms, and addictions — used against you. Right, in full ink: it stays on the box in your home and becomes pages, a wiki, you — used for you."
 			>
-				<div class="fate">
-					<p class="fate-head">Extractive tech</p>
-					<div class="cell">your life's data</div>
-					<div class="drop" aria-hidden="true">↓</div>
-					<div class="cell stack">
-						<span>their cloud</span>
-						<span>ads · algorithms · addictions</span>
-					</div>
-					<p class="fate-cap">(used against you)</p>
+				<p class="origin">your life's data</p>
+				<div class="fork" aria-hidden="true">
+					<span class="stub left"></span>
+					<span class="stub right"></span>
 				</div>
-				<div class="fate">
-					<p class="fate-head">Sovereign tech (Virtues)</p>
-					<div class="cell">your life's data</div>
-					<div class="drop" aria-hidden="true">↓</div>
-					<div class="cell stack">
-						<span>the box in your home</span>
-						<span>pages · a wiki · you</span>
+				<div class="paths">
+					<div class="path away">
+						<p class="dest">their cloud</p>
+						<p class="yield">ads · algorithms · addictions</p>
+						<p class="verdict">(used against you)</p>
 					</div>
-					<p class="fate-cap">(used for you)</p>
+					<div class="path home">
+						<p class="dest">the box in your home</p>
+						<p class="yield">pages · a wiki · you</p>
+						<p class="verdict">(used for you)</p>
+					</div>
 				</div>
 			</figure>
 
@@ -291,75 +292,111 @@
 
 	/* ── the two fates ─────────────────────────────────────────────────── */
 
-	/* The one figure in the letter. Mono and hairlines only — it should read
-	   as a diagram someone drew in a terminal, not a marketing graphic. Square
-	   corners on purpose: this is the ASCII register, grown up. */
+	/* The one figure in the letter. No boxes: hairlines and type carry it.
+	   Serif for the nouns (the prose's own face), mono for annotation, and an
+	   opinion in the ink — the extractive path muted, the sovereign path full. */
 	.fates {
-		margin: 1.25rem 0 0.5rem;
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 2rem;
+		margin: 1.5rem 0 0.5rem;
 	}
 
-	.fate-head,
-	.fate-cap,
-	.cell,
-	.drop {
-		font-family: var(--font-mono, ui-monospace, monospace);
-	}
-
-	.fate-head {
-		margin: 0 0 0.8rem;
-		font-size: 11px;
-		letter-spacing: 0.16em;
-		text-transform: uppercase;
+	.origin {
+		margin: 0;
 		text-align: center;
-		color: var(--color-foreground-subtle);
-	}
-
-	.cell {
-		border: 1px solid var(--color-border);
-		padding: 0.55rem 0.75rem;
-		font-size: 13px;
-		text-align: center;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
 		color: var(--color-foreground);
 	}
 
-	.cell.stack {
-		display: flex;
-		flex-direction: column;
-		padding: 0;
+	/* The fork: one stem down, one crossbar, two stems down — five hairlines
+	   total, drawn with borders, nothing else. */
+	.fork {
+		position: relative;
+		height: 2.4rem;
+		margin: 0.5rem 0 0.9rem;
 	}
 
-	.cell.stack span {
-		padding: 0.55rem 0.75rem;
+	.fork::before {
+		content: "";
+		position: absolute;
+		left: 50%;
+		top: 0;
+		height: 50%;
+		width: 1px;
+		background: var(--color-border);
 	}
 
-	.cell.stack span + span {
-		border-top: 1px solid var(--color-border);
+	.fork::after {
+		content: "";
+		position: absolute;
+		left: 25%;
+		right: 25%;
+		top: 50%;
+		height: 1px;
+		background: var(--color-border);
+	}
+
+	.stub {
+		position: absolute;
+		top: 50%;
+		height: 50%;
+		width: 1px;
+		background: var(--color-border);
+	}
+
+	.stub.left {
+		left: 25%;
+	}
+
+	.stub.right {
+		right: 25%;
+	}
+
+	.paths {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1.5rem;
+	}
+
+	.path {
+		text-align: center;
+	}
+
+	.path p {
+		margin: 0;
+	}
+
+	.dest {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+	}
+
+	.yield {
+		margin-top: 0.4rem !important;
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 12.5px;
+		line-height: 1.5;
+	}
+
+	.verdict {
+		margin-top: 0.55rem !important;
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 11px;
+		letter-spacing: 0.06em;
+		color: var(--color-foreground-subtle);
+	}
+
+	/* The opinion: the eye lands home. */
+	.away .dest,
+	.away .yield {
+		color: var(--color-foreground-subtle);
+	}
+
+	.home .dest {
+		color: var(--color-foreground);
+	}
+
+	.home .yield {
 		color: var(--color-foreground-muted);
-	}
-
-	.drop {
-		margin: 0.3rem 0;
-		text-align: center;
-		font-size: 13px;
-		color: var(--color-foreground-subtle);
-	}
-
-	.fate-cap {
-		margin: 0.7rem 0 0;
-		font-size: 12px;
-		text-align: center;
-		color: var(--color-foreground-subtle);
-	}
-
-	/* Narrow: the two fates stack, reading order preserved (against, then for). */
-	@media (max-width: 560px) {
-		.fates {
-			grid-template-columns: 1fr;
-			gap: 2.25rem;
-		}
 	}
 
 	/* The thesis line: same serif, same size, same ink — salience comes from
