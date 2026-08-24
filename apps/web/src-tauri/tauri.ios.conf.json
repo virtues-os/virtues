@@ -14,7 +14,7 @@
   },
   "app": {
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:7117; font-src 'self' data:; media-src 'self' blob: http://127.0.0.1:7117; connect-src 'self' http://127.0.0.1:7117 ws://127.0.0.1:7117"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:7117; font-src 'self' data:; media-src 'self' blob: http://127.0.0.1:7117; connect-src 'self' http://127.0.0.1:7117 ws://127.0.0.1:7117 https://atlas.virtues.com"
     }
   }
 }
