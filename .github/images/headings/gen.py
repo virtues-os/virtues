@@ -47,13 +47,12 @@ H2 = [
     "What It Does", "Architecture", "Data Sources", "Overview",
     "Install (Linux home server)", "Connect from another machine (v0.2 preview)",
     "Development", "Cloud sidecar", "iOS App", "Project Structure",
-    "Database Schema", "Daily Context & Scoring System", "Features", "License",
+    "Database Schema", "The Day Pipeline", "Features", "License",
 ]
 H3 = [
     "Requirements", "Install in one command", "Prerequisites", "Setup", "Run",
-    "virtues-api (required for AI features)", "7-Dimension Context Model",
-    "Ontology Weight Matrix", "Coverage Formula", "Daily Summary Generation",
-    "Chaos/Order Scoring", "Domain Groupings",
+    "virtues-api (required for AI features)", "Segmentation & Narration",
+    "Event Novelty", "Topic & Entity Novelty", "Live Rhythm",
 ]
 for h in H2:
     HEADINGS.append((h, 24, 400, "h2-" + slug(h)))
