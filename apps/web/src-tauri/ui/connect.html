@@ -185,6 +185,17 @@
               font-size: 14px; padding: 0; margin: 0 0 16px;
               transition: color .15s var(--ease); }
       .back:hover { color: var(--ink); }
+      /* Top-of-screen back NAVIGATION is a bare arrow, not a worded link: a
+         "← Back" row above the kicker added a third text register to a screen
+         that already has kicker + headline, and read as part of the copy.
+         Worded .back links stay for bottom-of-screen actions, where they are
+         choices, not chrome. aria-label carries the words the glyph dropped. */
+      .backnav { appearance: none; background: none; border: 0; display: inline-flex;
+                 align-items: center; justify-content: center; width: 32px; height: 32px;
+                 padding: 0; margin: 0 0 14px -7px; border-radius: 50%;
+                 color: var(--ink-faint); font-size: 19px; line-height: 1;
+                 transition: color .15s var(--ease), background .15s var(--ease); }
+      .backnav:hover { color: var(--ink); background: var(--line-subtle); }
       .kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
                 color: var(--ink-faint); margin: 0 0 12px; }
       .wait { display: flex; align-items: center; gap: 10px; color: var(--ink-subtle);
@@ -944,7 +955,7 @@ its devices apart — type its address.",
         const gen = ++searchGen;
         setServer('');
         app.innerHTML = `
-          <button class="back" id="back">← Back</button>
+          <button class="backnav" id="back" aria-label="Back">←</button>
           <h1>Set up your server</h1>
           <p class="sub">${note ? esc(note) + ' ' : ''}Plug it in and stand nearby — it appears
             here by itself.</p>
@@ -1058,7 +1069,7 @@ its devices apart — type its address.",
           </button>`).join('');
         setServer('');
         app.innerHTML = `
-          <button class="back" id="back">← Back</button>
+          <button class="backnav" id="back" aria-label="Back">←</button>
           <p class="kicker">Setting up a new server</p>
           <h1>Which server?</h1>
           <p class="sub">More than one unclaimed server is nearby. The closest one is
@@ -1110,7 +1121,7 @@ its devices apart — type its address.",
           } catch { /* fall through to the phrase screen and let it report */ }
         }
         app.innerHTML = `
-          <button class="back" id="back">← Back</button>
+          <button class="backnav" id="back" aria-label="Back">←</button>
           <p class="kicker">Setting up</p>
           <h1>Type the four words from your server's display</h1>
           <p class="sub">They prove you're standing in front of it — and they're how
@@ -1313,7 +1324,7 @@ its devices apart — type its address.",
       // the box probes for the name directly.
       function bleManualNetwork() {
         app.innerHTML = `
-          <button class="back" id="back">← Networks</button>
+          <button class="backnav" id="back" aria-label="Back to networks">←</button>
           <h1>Join by name</h1>
           <p class="sub">Type the network's name exactly as it appears on other devices —
             including spaces and capitals.</p>
@@ -1343,7 +1354,7 @@ its devices apart — type its address.",
         // the same BLE channel. See ble_provision's EnterpriseSettings.
         const ent = !!net.enterprise;
         app.innerHTML = `
-          <button class="back" id="back">← Networks</button>
+          <button class="backnav" id="back" aria-label="Back to networks">←</button>
           <h2>${esc(net.ssid)}</h2>
           ${ent ? `
           <p class="sub">This network uses per-person sign-in. Enter the account its
@@ -1720,7 +1731,7 @@ its devices apart — type its address.",
         // account, not anything Virtues issued.
         const ent = !!n.enterprise;
         app.innerHTML = `
-          <button class="back" id="back">← Networks</button>
+          <button class="backnav" id="back" aria-label="Back to networks">←</button>
           <h2>${esc(n.ssid)}</h2>
           ${ent ? `
           <p class="sub">This network uses per-person sign-in. Enter the account its
@@ -1934,7 +1945,7 @@ its devices apart — type its address.",
           }
         }
         app.innerHTML = `
-          <button class="back" id="back">← Servers</button>
+          <button class="backnav" id="back" aria-label="Back to servers">←</button>
           <p class="kicker">${esc(server.name)}${server.claimed === false ? ' · ready to set up' : ''}</p>
           <h1>Enter its code</h1>
           <p class="sub">The 6 digits on ${esc(server.name)}'s display right now.</p>
@@ -1967,7 +1978,7 @@ its devices apart — type its address.",
       function renderManualPair(note) {
         setServer('');
         app.innerHTML = `
-          <button class="back" id="back">← Servers</button>
+          <button class="backnav" id="back" aria-label="Back to servers">←</button>
           <h1>Connect by address</h1>
           ${note ? `<p class="sub">${esc(note)}</p>` : ''}
           <form id="form">
