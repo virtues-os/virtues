@@ -263,24 +263,20 @@ async fn session_info(State(state): State<AppState>, headers: HeaderMap) -> impl
     (StatusCode::OK, Json(json!({ "email": sess.email, "entitled": entitled }))).into_response()
 }
 
-// ─── POST /init/grant — NOT YET, and the reason matters ────────────────────
+// ─── POST /init/grant — NOT YET, but no longer blocked ─────────────────────
 //
 // The endpoint that would remove the browser from onboarding: a signed-in app
 // asks for a pre-approved `device_code` and carries it to the box over
-// Bluetooth. It is deliberately absent, because minting a device credential
-// today does:
+// Bluetooth (RPC 0x82, already built box-side). It was deliberately absent
+// while atlas held ONE api key per customer — a second box linking rotated
+// the first box's credential and silently killed it, and building the grant
+// on that would have baked the single-box limit into the very feature meant
+// to remove it.
 //
-//     INSERT INTO customers … ON CONFLICT DO UPDATE SET api_key_hash = $3
-//
-// — one api key per CUSTOMER (claim.rs). So linking a second box rotates the
-// first box's credential and silently kills it. Building the grant on that
-// would bake the single-box limit into the very feature meant to remove it,
-// and would do it invisibly, at the moment a household adds their second box.
-//
-// The fix is per-box keys — a `device_keys`-shaped table keyed by the box's
-// EndpointId, with `customers.api_key_hash` retired — and it wants its own
-// change with its own migration. See docs/onboarding-plan.md, "Billing
-// correctness".
+// That blocker fell 2026-08-24: migration 0015 introduced per-box keys
+// (`box_key`, scoped by the box's self-reported endpoint_id;
+// claim.rs::mint_box_key / customer_id_by_key_hash). What remains is the
+// grant itself — see docs/one-wire-plan.md, Phase 2.
 //
 // `POST /init/approve` (link.rs) is NOT this endpoint, though it looks
 // adjacent: it approves the box's own in-flight link — the same attach

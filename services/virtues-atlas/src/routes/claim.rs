@@ -256,6 +256,25 @@ pub(crate) async fn finalize_paid_session(
         internal("subscription upsert failed")
     })?;
 
+    // Which box is this checkout for? The link row carries the endpoint_id
+    // the box self-reported at /init/start (migration 0015); the checkout
+    // session was stamped onto that row before the Stripe redirect. Absent
+    // for older boxes and for checkouts with no device link (store
+    // pre-orders) — those keep the whole-account rotation. Error → None is
+    // deliberate here, with a log: the attach must not fail because a LABEL
+    // lookup hiccuped, and None degrades to the legacy behavior.
+    let endpoint_id: Option<String> = sqlx::query_scalar(
+        "SELECT endpoint_id FROM device_link WHERE stripe_session_id = $1",
+    )
+    .bind(session_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!("device_link endpoint lookup failed (degrading to whole-account): {e:#}");
+        None
+    })
+    .flatten();
+
     // Register the device key with virtues-api and fund this period's wallet.
     // A fresh paid checkout funds the monthly allotment immediately ($20);
     // invoice.paid keeps it fresh monthly.
@@ -265,22 +284,29 @@ pub(crate) async fn finalize_paid_session(
     // (transient virtues-api blip) we must RELEASE the claim — otherwise the
     // box gets a 500, never received the api_key, and its retry would hit
     // `session_already_claimed` forever (bricked checkout). Both calls are
-    // idempotent (register replaces the account's key; credit `set` overwrites),
-    // so re-running the whole finalize on the box's retry is safe.
+    // idempotent (register replaces the box's — or, unlabeled, the account's —
+    // key; credit `set` overwrites), so re-running the whole finalize on the
+    // box's retry is safe.
     let provision = async {
         state
             .virtues_api
             .register_device(&RegisterDevice {
-                // TODO(per-box keys): atlas learns the box's EndpointId through
-                // `/iroh/register`, a separate call, so it is not in hand here.
-                // None keeps the historical whole-account rotation; the
-                // virtues-api side already scopes per box when told which one.
-                box_id: None,
+                box_id: endpoint_id.clone(),
                 api_key_hash: hex::encode(&api_key_hash),
                 account_id: account_id.clone(),
             })
             .await
             .context("register_device")?;
+        // virtues-api holds the key; now record it atlas-side, scoped to the
+        // box (register-before-record, same ordering doctrine as link.rs).
+        mint_box_key(
+            &state.pool,
+            &stripe_customer_id,
+            endpoint_id.as_deref(),
+            &api_key_hash[..],
+        )
+        .await
+        .context("mint_box_key")?;
         state
             .virtues_api
             .credit(&Credit {
@@ -315,6 +341,84 @@ pub(crate) async fn finalize_paid_session(
         session_id: session_id.to_string(),
         metadata_user_code,
     })
+}
+
+/// Resolve an api_key hash → owning `stripe_customer_id`, per-box keys first.
+///
+/// THE one lookup behind every key-authenticated atlas endpoint (credits,
+/// billing portal, settings) — it used to live as four hand-copied
+/// `WHERE api_key_hash = $1` queries, which is exactly how a schema change
+/// misses a door. `box_key` (authoritative, one row per live box) wins over
+/// the legacy `customers.api_key_hash` mirror; the `pri` ordering makes that
+/// preference explicit rather than an accident of UNION order.
+pub(crate) async fn customer_id_by_key_hash(
+    pool: &sqlx::PgPool,
+    key_hash: &[u8],
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT stripe_customer_id FROM (
+            SELECT stripe_customer_id, 0 AS pri FROM box_key   WHERE api_key_hash = $1
+            UNION ALL
+            SELECT stripe_customer_id, 1 AS pri FROM customers WHERE api_key_hash = $1
+        ) t
+        ORDER BY pri
+        LIMIT 1
+        "#,
+    )
+    .bind(key_hash)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Record a freshly minted box key, scoped to the box that earned it.
+///
+/// Known `endpoint_id` → replace only THAT box's key (a second box linking no
+/// longer kills the first box's credential — the whole point of per-box
+/// keys). Unknown (older box that never identified itself) → the historical
+/// whole-account rotation, matching what virtues-api's `register_device`
+/// does for a `box_id: None` on its side, so the two systems never disagree
+/// about which keys are alive.
+///
+/// Also mirrors the hash into `customers.api_key_hash` (most-recent-key
+/// semantics) so a rolled-back atlas binary keeps authenticating.
+pub(crate) async fn mint_box_key(
+    pool: &sqlx::PgPool,
+    stripe_customer_id: &str,
+    endpoint_id: Option<&str>,
+    api_key_hash: &[u8],
+) -> Result<(), sqlx::Error> {
+    match endpoint_id {
+        Some(ep) => {
+            sqlx::query(
+                "DELETE FROM box_key WHERE stripe_customer_id = $1 AND endpoint_id = $2",
+            )
+            .bind(stripe_customer_id)
+            .bind(ep)
+            .execute(pool)
+            .await?;
+        }
+        None => {
+            sqlx::query("DELETE FROM box_key WHERE stripe_customer_id = $1")
+                .bind(stripe_customer_id)
+                .execute(pool)
+                .await?;
+        }
+    }
+    sqlx::query(
+        "INSERT INTO box_key (api_key_hash, stripe_customer_id, endpoint_id) VALUES ($1, $2, $3)",
+    )
+    .bind(api_key_hash)
+    .bind(stripe_customer_id)
+    .bind(endpoint_id)
+    .execute(pool)
+    .await?;
+    sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
+        .bind(stripe_customer_id)
+        .bind(api_key_hash)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// A random 32-byte hex token (api_key / device_code shape).

@@ -68,7 +68,31 @@ pub fn router() -> Router<AppState> {
 
 // ─── POST /init/start ───────────────────────────────────────────────────────
 
-async fn start(State(state): State<AppState>) -> axum::response::Response {
+/// The identity blob the box has been sending all along ("every field is
+/// advisory: atlas tolerates its absence — older boxes send no body",
+/// virtues-core/src/virtues_api/link.rs). Until migration 0015 atlas never
+/// read it; now `endpoint_id` scopes the eventual per-box key. It remains a
+/// LABEL, never an authorization input — this call is unauthenticated.
+#[derive(Debug, Default, Deserialize)]
+struct StartBody {
+    #[serde(default)]
+    r#box: StartBoxIdentity,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StartBoxIdentity {
+    #[serde(default)]
+    endpoint_id: Option<String>,
+}
+
+async fn start(
+    State(state): State<AppState>,
+    // Option<Json<…>>: an older box POSTs no body at all, and a bare Json
+    // extractor would answer it 415 — breaking every deployed box in one
+    // deploy. Missing/invalid body simply reads as "no identity".
+    body: Option<Json<StartBody>>,
+) -> axum::response::Response {
+    let endpoint_id = body.and_then(|Json(b)| b.r#box.endpoint_id).filter(|s| !s.is_empty());
     let device_code = random_hex(32);
     let user_code = gen_user_code();
     let device_code_hash = sha256(device_code.as_bytes());
@@ -76,13 +100,14 @@ async fn start(State(state): State<AppState>) -> axum::response::Response {
 
     let res = sqlx::query(
         r#"
-        INSERT INTO device_link (device_code_hash, user_code, status, expires_at)
-        VALUES ($1, $2, 'pending', $3)
+        INSERT INTO device_link (device_code_hash, user_code, status, expires_at, endpoint_id)
+        VALUES ($1, $2, 'pending', $3, $4)
         "#,
     )
     .bind(&device_code_hash[..])
     .bind(&user_code)
     .bind(expires_at)
+    .bind(&endpoint_id)
     .execute(&state.pool)
     .await;
     if let Err(e) = res {
@@ -1038,21 +1063,25 @@ async fn attach_link_to_customer(
     // render "attached" at someone whose box is polling a different code
     // entirely (2026-08-13). 0 rows → the link is gone or already taken, and
     // crucially NOTHING has been rotated yet, so an existing box is untouched.
-    let claim = sqlx::query(
+    // RETURNING endpoint_id: the box that started this link identified itself
+    // at /init/start (0015), and that label is what scopes the key we mint —
+    // a second box linking must not rotate the first box's credential.
+    let claim: Result<Option<Option<String>>, _> = sqlx::query_scalar(
         "UPDATE device_link SET status = 'linking' \
-         WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now()",
+         WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now() \
+         RETURNING endpoint_id",
     )
     .bind(device_code_hash)
-    .execute(&state.pool)
+    .fetch_optional(&state.pool)
     .await;
-    match claim {
-        Ok(r) if r.rows_affected() == 1 => {}
-        Ok(_) => return AttachOutcome::LinkGone,
+    let endpoint_id: Option<String> = match claim {
+        Ok(Some(ep)) => ep,
+        Ok(None) => return AttachOutcome::LinkGone,
         Err(e) => {
             tracing::warn!("device_link claim failed: {e:#}");
             return AttachOutcome::Failed;
         }
-    }
+    };
     // From here the row is 'linking' and ours. Any early return that is not a
     // completed attach must release it back to 'pending' so the box (and a
     // retry) can use it again — EXCEPT after register has already dropped the
@@ -1085,12 +1114,11 @@ async fn attach_link_to_customer(
     if let Err(e) = state
         .virtues_api
         .register_device(&crate::virtues_api_client::RegisterDevice {
-            // TODO(per-box keys): atlas does not yet know which box is
-            // registering here — the box's EndpointId reaches atlas via
-            // `/iroh/register`, which is a separate call. Until they are
-            // joined up this stays None and rotation keeps its historical
-            // whole-account behavior. The virtues-api side is ready.
-            box_id: None,
+            // The endpoint_id the box self-reported at /init/start, carried on
+            // the device_link row (0015). Some → virtues-api replaces only
+            // THIS box's key; None (older box) → the historical whole-account
+            // rotation. Label, never an authorization input.
+            box_id: endpoint_id.clone(),
             api_key_hash: hex::encode(&api_key_hash),
             account_id,
         })
@@ -1103,18 +1131,22 @@ async fn attach_link_to_customer(
         return AttachOutcome::Failed;
     }
 
-    // Device registered (old key now dropped in virtues-api) — rotate atlas's
-    // own stored hash to match. Do NOT release the claim past this point: the
-    // old key is already gone upstream, so the row must reach 'ready' with the
-    // new key, and a retry resumes from 'linking' (finalize below is
-    // idempotent on it) rather than re-registering.
-    if let Err(e) = sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
-        .bind(customer_id)
-        .bind(&api_key_hash[..])
-        .execute(&state.pool)
-        .await
+    // Device registered (old key now dropped in virtues-api) — record the key
+    // atlas-side with the same scoping (box_key + the legacy customers
+    // mirror), via the shared mint_box_key so the two systems can never
+    // disagree about rotation scope. Do NOT release the claim past this
+    // point: the old key is already gone upstream, so the row must reach
+    // 'ready' with the new key, and a retry resumes from 'linking' (finalize
+    // below is idempotent on it) rather than re-registering.
+    if let Err(e) = super::claim::mint_box_key(
+        &state.pool,
+        customer_id,
+        endpoint_id.as_deref(),
+        &api_key_hash[..],
+    )
+    .await
     {
-        tracing::warn!("customers api_key_hash update failed: {e:#}");
+        tracing::warn!("mint_box_key failed: {e:#}");
         return AttachOutcome::Failed;
     }
 
