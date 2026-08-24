@@ -74,14 +74,26 @@ pub(crate) struct FinalizeErr {
     pub message: String,
 }
 
-/// Verify a paid Stripe Checkout session, mint a fresh api_key, and
-/// upsert the customer + subscription. Shared by `POST /claim` (success-URL
-/// post-back) and the device-link completion handler — one place that turns a
-/// paid session into an api_key, so the two paths can't drift.
-pub(crate) async fn finalize_paid_session(
+/// A Stripe checkout session that passed every guard: paid, complete,
+/// subscription-mode, our price, with a customer. What both finalizers (the
+/// device-link claim and the account checkout) build on — extracted so the
+/// two can never drift on what "paid" means.
+pub(crate) struct PaidSession {
+    pub stripe_customer_id: String,
+    pub stripe_subscription_id: String,
+    pub email: String,
+    pub period_end: chrono::DateTime<Utc>,
+    pub metadata_user_code: Option<String>,
+}
+
+/// Anti-replay-claim the session id, retrieve it from Stripe, and run every
+/// C1 guard. On Err the claim is NOT released — callers that want a retry to
+/// be possible call [`release_session_claim`] themselves, because only they
+/// know whether the failure happened before or after anything irreversible.
+pub(crate) async fn verify_and_claim_session(
     state: &AppState,
     session_id: &str,
-) -> Result<Finalized, FinalizeErr> {
+) -> Result<PaidSession, FinalizeErr> {
     if !state.stripe.is_configured() {
         return Err(FinalizeErr {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -203,6 +215,42 @@ pub(crate) async fn finalize_paid_session(
         .and_then(|ts| Utc.timestamp_opt(ts, 0).single())
         .unwrap_or_else(|| Utc::now() + chrono::Duration::days(30));
 
+    let metadata_user_code = session
+        .metadata
+        .get("user_code")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    Ok(PaidSession {
+        stripe_customer_id,
+        stripe_subscription_id,
+        email,
+        period_end,
+        metadata_user_code,
+    })
+}
+
+/// Release the anti-replay claim so the caller's retry can re-run finalize.
+pub(crate) async fn release_session_claim(state: &AppState, session_id: &str) {
+    let _ = sqlx::query("DELETE FROM claimed_sessions WHERE stripe_session_id = $1")
+        .bind(session_id)
+        .execute(&state.pool)
+        .await;
+}
+
+pub(crate) async fn finalize_paid_session(
+    state: &AppState,
+    session_id: &str,
+) -> Result<Finalized, FinalizeErr> {
+    let PaidSession {
+        stripe_customer_id,
+        stripe_subscription_id,
+        email,
+        period_end,
+        metadata_user_code,
+    } = verify_and_claim_session(state, session_id).await?;
+
     // Mint a fresh device api_key (the box's single credential).
     let api_key = random_token();
     let api_key_hash = sha256(api_key.as_bytes());
@@ -276,10 +324,7 @@ pub(crate) async fn finalize_paid_session(
         Ok(row) => row.flatten(),
         Err(e) => {
             tracing::warn!("device_link endpoint lookup failed, releasing claim for retry: {e:#}");
-            let _ = sqlx::query("DELETE FROM claimed_sessions WHERE stripe_session_id = $1")
-                .bind(session_id)
-                .execute(&state.pool)
-                .await;
+            release_session_claim(state, session_id).await;
             return Err(internal("endpoint lookup failed — please retry"));
         }
     };
@@ -331,18 +376,9 @@ pub(crate) async fn finalize_paid_session(
     .await;
     if let Err(e) = provision {
         tracing::warn!("provisioning failed, releasing claim for retry: {e:#}");
-        let _ = sqlx::query("DELETE FROM claimed_sessions WHERE stripe_session_id = $1")
-            .bind(session_id)
-            .execute(&state.pool)
-            .await;
+        release_session_claim(state, session_id).await;
         return Err(internal("provisioning failed — please retry"));
     }
-
-    let metadata_user_code = session
-        .metadata
-        .get("user_code")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
 
     Ok(Finalized {
         api_key,
