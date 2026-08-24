@@ -99,6 +99,16 @@ pub struct AppState {
 /// header wildcards, and a `*` here would fail exactly the authed call that
 /// matters. Scoped to the app-called routes only; pages, webhooks, and
 /// box-called endpoints keep no CORS at all (no browser ever needs them).
+///
+/// KNOWN RESIDUAL: this makes `/account/login` cross-origin callable, so a
+/// hostile web page can make visitors' browsers POST it and fire an OTP email
+/// at an address the page chooses. The per-email send cap (account.rs,
+/// MAX_SENDS_PER_HOUR, now fail-closed) bounds each victim, but a distributed
+/// spray across many addresses is not bounded here. The proportionate control
+/// is edge-level (per-IP / global throttle at the WAF), which is where
+/// account.rs already says IP rate-limiting belongs — not a per-request check
+/// in this process. Tracked for the WAF pass; the wildcard itself is required
+/// (the app's origin is genuinely non-enumerable and the flow needs the call).
 pub(crate) fn app_cors() -> tower_http::cors::CorsLayer {
     tower_http::cors::CorsLayer::new()
         .allow_origin(tower_http::cors::Any)

@@ -75,13 +75,23 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> im
         return err(StatusCode::BAD_REQUEST, "bad_email", "invalid email");
     }
 
-    let recent: i64 = sqlx::query_scalar(
+    // Do NOT swallow this with `.unwrap_or(0)`: a read error would make the
+    // count zero and lift the send cap entirely — a broken query becoming an
+    // open relay for OTP email (CLAUDE.md, "Do not swallow a query error").
+    // Fail CLOSED: a rate-limit read we can't trust refuses the send.
+    let recent: i64 = match sqlx::query_scalar(
         "SELECT count(*) FROM login_code WHERE email = $1 AND created_at > now() - interval '1 hour'",
     )
     .bind(&email)
     .fetch_one(&state.pool)
     .await
-    .unwrap_or(0);
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("login rate-limit read failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not send a code");
+        }
+    };
     if recent >= MAX_SENDS_PER_HOUR {
         return err(
             StatusCode::TOO_MANY_REQUESTS,
@@ -221,7 +231,14 @@ async fn verify(
         return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not sign in");
     }
 
-    let entitled = is_entitled(&state, customer_id.as_deref()).await;
+    // Advisory here — the app re-checks entitlement server-side at /init/approve
+    // before anything is granted, so a read error at sign-in defaulting to
+    // `false` costs at most a needless "you have no subscription" glance, never
+    // a wrong grant. Named explicitly rather than swallowed silently.
+    let entitled = is_entitled(&state, customer_id.as_deref()).await.unwrap_or_else(|e| {
+        tracing::warn!("entitlement check at sign-in failed (defaulting to not-entitled): {e:#}");
+        false
+    });
     (
         StatusCode::OK,
         Json(json!({ "token": token, "email": email, "entitled": entitled })),
@@ -237,7 +254,12 @@ async fn session_info(State(state): State<AppState>, headers: HeaderMap) -> impl
     let Some(sess) = authed(&state, &headers).await else {
         return err(StatusCode::UNAUTHORIZED, "unauthorized", "sign in again");
     };
-    let entitled = is_entitled(&state, sess.customer_id.as_deref()).await;
+    // Advisory (same as at sign-in): the grant path re-checks. A read error
+    // defaults to not-entitled with a log, never a wrong grant.
+    let entitled = is_entitled(&state, sess.customer_id.as_deref()).await.unwrap_or_else(|e| {
+        tracing::warn!("entitlement check at session_info failed (defaulting to not-entitled): {e:#}");
+        false
+    });
     (StatusCode::OK, Json(json!({ "email": sess.email, "entitled": entitled }))).into_response()
 }
 
@@ -299,8 +321,18 @@ pub(super) async fn authed(state: &AppState, headers: &HeaderMap) -> Option<Sess
 }
 
 /// Does this customer have an active subscription right now?
-pub(super) async fn is_entitled(state: &AppState, customer_id: Option<&str>) -> bool {
-    let Some(cid) = customer_id else { return false };
+///
+/// Returns `Result` rather than a bare bool BECAUSE the answer gates money:
+/// `/init/approve` routes a `false` to browser checkout, so a swallowed query
+/// error (`.unwrap_or(false)`) would send a paying customer to pay again — the
+/// exact "turn a broken query into a plausible value" failure CLAUDE.md bans.
+/// A `None` customer_id is a real, non-error `false`: no Stripe customer means
+/// nothing is subscribed.
+pub(super) async fn is_entitled(
+    state: &AppState,
+    customer_id: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let Some(cid) = customer_id else { return Ok(false) };
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM subscriptions
          WHERE stripe_customer_id = $1 AND status = 'active')",
@@ -308,7 +340,6 @@ pub(super) async fn is_entitled(state: &AppState, customer_id: Option<&str>) -> 
     .bind(cid)
     .fetch_one(&state.pool)
     .await
-    .unwrap_or(false)
 }
 
 /// Six digits. Uniform over 000000..=999999 — no modulo bias, and leading zeros

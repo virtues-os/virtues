@@ -83,9 +83,9 @@
                 display: flex; align-items: baseline; justify-content: space-between;
                 padding: max(20px, env(safe-area-inset-top)) 24px 14px;
                 background: var(--paper); }
-      /* Inline-flex with centred items, not baseline text: the ∴ glyph is
+      /* Inline-flex with centered items, not baseline text: the ∴ glyph is
          bottom-heavy and at 24px its baseline placement sank it below the
-         wordmark. Optically centring the two boxes is what looks aligned. */
+         wordmark. Optically centering the two boxes is what looks aligned. */
       #chrome .brand { display: inline-flex; align-items: center; gap: 8px;
                        font-family: var(--serif); font-size: 16px; font-weight: 400;
                        letter-spacing: .01em; color: var(--ink); }
@@ -208,7 +208,7 @@
       .steps li { font-size: 13px; color: var(--ink-subtle); line-height: 1.6;
                   padding-left: 18px; position: relative; margin-bottom: 6px; }
       .steps li::before { content: "·"; position: absolute; left: 6px; color: var(--ink-faint); }
-      /* The phrase, set like a line of verse: serif, centred, held between two
+      /* The phrase, set like a line of verse: serif, centered, held between two
          ink hairlines — the same construction the printed sheet uses, so the
          screen and the paper read as one artifact. */
       .code.phrase { font-family: var(--serif); font-size: 1.35rem; line-height: 1.4;
@@ -1482,10 +1482,15 @@ its devices apart — type its address.",
             if (!state.linkCode) return;
             openUrl(`${LINK_URL}${path}?code=${encodeURIComponent(state.linkCode)}`);
           };
-          document.getElementById('openlink').addEventListener('click', async () => {
-            await fetchLinkCode();
-            paintCode();
-            if (!state.linkCode) return;
+          // Sign-in navigates AWAY from this screen, so the watcher must stop
+          // FIRST — bumping searchGen before anything async, or the still-live
+          // loop can fire goToPairing during the handler and paint pairing
+          // under the sign-in form. No code fetch here: sign-in is email/OTP,
+          // and approve re-reads the user_code over BLE at the only moment it
+          // matters. (Checkout, below, deliberately does NOT stop the watcher —
+          // it opens a browser and stays here so the landing is noticed.)
+          document.getElementById('openlink').addEventListener('click', () => {
+            searchGen++;
             renderInlineSignin(server, ssid);
           });
           document.getElementById('newacct').addEventListener('click', () => go('/checkout'));
@@ -1704,8 +1709,20 @@ its devices apart — type its address.",
         email.addEventListener('input', () => (go.disabled = !plausible()));
         document.getElementById('back').addEventListener('click', () =>
           renderLinkStep(server, ssid));
-        document.getElementById('browser').addEventListener('click', () =>
-          openUrl(`${LINK_URL}/signin?code=${encodeURIComponent(state.linkCode || '')}`));
+        // Fresh code at click time, not the cached state.linkCode: the owner
+        // may have sat on this screen while atlas's 15-minute link lapsed, and
+        // opening /signin with a stale (or empty) code is the dead-URL failure
+        // the browser flow was rebuilt to avoid. Re-read over BLE first.
+        document.getElementById('browser').addEventListener('click', async () => {
+          let code = state.linkCode || '';
+          if (server.bleId) {
+            try {
+              const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
+              if (r && r.ok && r.code) code = r.code;
+            } catch { /* keep whatever we had */ }
+          }
+          openUrl(`${LINK_URL}/signin?code=${encodeURIComponent(code)}`);
+        });
         document.getElementById('form').addEventListener('submit', async (e) => {
           e.preventDefault();
           if (!plausible()) return;
@@ -1743,12 +1760,19 @@ its devices apart — type its address.",
         };
         document.getElementById('back').addEventListener('click', () =>
           renderInlineSignin(server, ssid));
-        document.getElementById('resend').addEventListener('click', async () => {
+        const resend = document.getElementById('resend');
+        resend.addEventListener('click', async () => {
+          // Disable in flight: a double-tap fires two /account/login POSTs,
+          // each sending another OTP email (and, with rotation, invalidating
+          // the one the owner is about to type).
+          if (resend.disabled) return;
+          resend.disabled = true;
           say('Sending…');
           const res = await atlasPost('/account/login', { email });
           say(res && res.ok ? 'Sent. Check your email again.'
                             : (res && res.error) || "Couldn't send a new code.",
               res && res.ok ? 'ok' : 'err');
+          resend.disabled = false;
         });
         document.getElementById('form').addEventListener('submit', async (e) => {
           e.preventDefault();
@@ -1784,22 +1808,38 @@ its devices apart — type its address.",
             <div class="wait"><span class="pip"></span><span id="stage">${esc(line)}</span></div>`;
         };
         draw('Approving on your account…');
+        // The user_code MUST come fresh from THIS server over BLE — atlas
+        // rotates it, and `state.linkCode` is a global cached from the link
+        // screen that can be stale or belong to a different box. Approving a
+        // stale/cross-box code attaches the wrong link. So there is no cache
+        // fallback: no fresh read → fail honestly and let Try again re-read.
         let code = null;
         if (server.bleId) {
           try {
             const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
-            if (r && r.ok && r.code) code = r.code;
-            // ok-and-empty: nothing in flight — the link already landed
-            // (another device, an earlier attempt). There is nothing left to
-            // approve, and that is success, not an error.
-            else if (r && r.ok) return goToPairing(server, ssid);
-          } catch { /* fall through to the cached code */ }
+            if (r && r.ok && r.code) {
+              code = r.code;
+            } else if (r && r.ok) {
+              // ok-and-empty is AMBIGUOUS (reach/commands.rs): it can mean the
+              // link already landed, OR the box hasn't minted one yet (no
+              // internet, or the prior link expired and its replacement isn't
+              // up). Only "landed" if the box itself says linked — otherwise
+              // it's "not ready", and skipping to pairing would leave the owner
+              // who signed in specifically to link with an unlinked server.
+              const id = await boxIdentity(server.origin);
+              if (gen !== searchGen) return;
+              if (id && id.linked) return goToPairing(server, ssid);
+              return renderInlineFailed(server, ssid, token,
+                "Your server hasn't finished asking to be linked yet — give it a moment, then try again.");
+            }
+          } catch { /* couldn't read — handled by the !code guard below */ }
         }
         if (gen !== searchGen) return;
-        code = code || state.linkCode;
         if (!code) {
           return renderInlineFailed(server, ssid, token,
-            "Your server hasn't asked for a link code yet — give it a moment on the network.");
+            server.bleId
+              ? "Couldn't read your server's link code just now. Try again — it takes a second."
+              : "This server can't be linked from here. Finish linking on the device that set it up.");
         }
         const res = await atlasPost('/init/approve', { user_code: code }, token);
         if (gen !== searchGen) return;
@@ -1826,7 +1866,7 @@ its devices apart — type its address.",
           return goToPairing(server, ssid);
         }
         if (res && res.code === 'no_subscription') {
-          return renderInlineNoSub(server, ssid, res.checkout_url);
+          return renderInlineNoSub(server, ssid);
         }
         if (res && (res.code === 'link_not_found' || res.code === 'link_expired')) {
           // The session is still good; only the code moved. Retry re-fetches
@@ -1865,11 +1905,14 @@ its devices apart — type its address.",
       // Signed in, but the account holds no subscription. The one seam where
       // inline hands off to the browser on purpose: what comes next is
       // payment, and payment does not belong in an app-shaped webview.
-      function renderInlineNoSub(server, ssid, checkoutUrl) {
+      //
+      // No `checkout_url` parameter: atlas's no_subscription answer is a plain
+      // {error:{code,message}} and atlasPost strips every non-2xx body field
+      // but ok/code/error — so a server-supplied URL never actually arrived.
+      // The URL is built here, and the code is re-read fresh at click time.
+      function renderInlineNoSub(server, ssid) {
         searchGen++;
         setServer(server.name);
-        const url = checkoutUrl
-          || `${LINK_URL}/checkout?code=${encodeURIComponent(state.linkCode || '')}`;
         app.innerHTML = `
           <p class="kicker">Setting up</p>
           <h1>That account has no subscription yet</h1>
@@ -1880,8 +1923,18 @@ its devices apart — type its address.",
           <button class="primary" id="checkout">Open checkout</button>
           <button class="secondary" id="back">Back</button>
           <p class="escape"><button id="skip">Skip linking for now</button></p>`;
-        document.getElementById('checkout').addEventListener('click', () => {
-          openUrl(url);
+        document.getElementById('checkout').addEventListener('click', async () => {
+          // Fresh code at the click, not the cached state.linkCode: atlas
+          // rotates codes, and /init/checkout refuses a stale one ("Link
+          // expired") — a dead end at the worst moment. Re-read over BLE.
+          let code = state.linkCode || '';
+          if (server.bleId) {
+            try {
+              const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
+              if (r && r.ok && r.code) code = r.code;
+            } catch { /* keep whatever we had */ }
+          }
+          openUrl(`${LINK_URL}/checkout?code=${encodeURIComponent(code)}`);
           // The browser has it now; the link-step watcher is the thing that
           // notices the checkout completing, so stand back on it.
           renderLinkStep(server, ssid);
@@ -1925,14 +1978,23 @@ its devices apart — type its address.",
         );
       }
 
-      /** The box's public identity + setup state, or null if unreachable. */
+      /** The box's public identity + setup state, or null if unreachable.
+       *  Timeboxed: on a client-isolating LAN (the case this whole flow exists
+       *  for) `origin` is set but unreachable, and a bare fetch hangs for the
+       *  OS connect timeout — inside a poll loop that stretches a 45s watch to
+       *  minutes. 4s is longer than a healthy loopback answer, shorter than any
+       *  wait a caller budgets around it. */
       async function boxIdentity(origin) {
         if (!origin) return null;
+        const ctl = new AbortController();
+        const t = setTimeout(() => ctl.abort(), 4000);
         try {
-          const res = await fetch(origin + '/api/box/identity', { cache: 'no-store' });
+          const res = await fetch(origin + '/api/box/identity', { cache: 'no-store', signal: ctl.signal });
           return res.ok ? await res.json() : null;
         } catch {
           return null;
+        } finally {
+          clearTimeout(t);
         }
       }
 
