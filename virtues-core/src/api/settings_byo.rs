@@ -486,8 +486,8 @@ pub struct ByoCredential {
     /// Slot name → the model id **on the user's endpoint**.
     ///
     /// A model id is an address on one gateway, not a portable name. Ours are
-    /// Vercel's (`xai/grok-4.5`, `google/gemini-3-flash`); OpenRouter spells
-    /// the first `x-ai/grok-4.5` and does not carry the second at all. So the
+    /// Vercel's (`spacexai/grok-4.5`, `google/gemini-3-flash`); OpenRouter
+    /// spells the first `x-ai/grok-4.5` and does not carry the second at all. So the
     /// address has to belong to the route, and the slot keeps only the role.
     ///
     /// Empty is fine and means "your endpoint uses the same ids we do", which
