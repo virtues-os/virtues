@@ -933,9 +933,41 @@ its devices apart — type its address.",
         );
       }
 
+      // ── THE ONE SEARCH SCREEN ─────────────────────────────────────────────
+      //
+      // Both radios, one page. Setup used to read as a sequence — a "Looking
+      // for it on this network" beat, then a differently-worded Bluetooth page
+      // — because start()'s one-shot and the persistent loop each drew their
+      // own screen. The search was already concurrent underneath (start() runs
+      // LAN + BLE in parallel; the loop re-checks the LAN every round); only
+      // the presentation was linear. One idempotent renderer fixes that: it
+      // paints only when the screen is not already up, so the hand-off from
+      // the one-shot into the loop is invisible — no flash, no second page.
+      //
+      // No "search this network" link any more: the network IS being searched,
+      // continuously, on this same screen. The only escape left is the one
+      // the search cannot cover — a server somewhere else, by address.
+      function drawSearchScreen(note) {
+        if (document.getElementById('searchstate')) return; // already up
+        setServer('');
+        app.innerHTML = `
+          <button class="backnav" id="back" aria-label="Back">←</button>
+          <h1>Looking for your server</h1>
+          <p class="sub">${note ? esc(note) + ' ' : ''}Plug it in and stand nearby — it appears
+            here on its own.</p>
+          <div class="wait"><span class="pip"></span><span id="searchstate">Searching over Bluetooth and this network</span></div>
+          <p class="hint err" id="bterr"></p>
+          <p class="hint" style="margin-top:18px">Server somewhere else?
+            <a href="#" id="manual">Connect by address</a>.</p>`;
+        document.getElementById('back').addEventListener('click', () => renderEntry());
+        document.getElementById('manual').addEventListener('click', (e) => {
+          e.preventDefault(); searchGen++; renderManualPair();
+        });
+      }
+
       async function start() {
         searchGen++; // retire any live search loop before re-entering
-        renderSearching();
+        drawSearchScreen();
         // LAN and BLE discovery in parallel. BLE is the PRIMARY setup path —
         // an unclaimed box advertises the Improv service (state 0x02 = needs
         // wifi, 0x04 = online but unclaimed) — while LAN discovery covers
@@ -976,27 +1008,11 @@ its devices apart — type its address.",
       const ROUND_MS = 4000;
       async function bleSearchLoop(note) {
         const gen = ++searchGen;
-        setServer('');
-        app.innerHTML = `
-          <button class="backnav" id="back" aria-label="Back">←</button>
-          <h1>Set up your server</h1>
-          <p class="sub">${note ? esc(note) + ' ' : ''}Plug it in and stand nearby — it appears
-            here by itself.</p>
-          <div class="wait"><span class="pip"></span><span id="searchstate">Looking over Bluetooth</span></div>
-          <p class="hint err" id="bterr"></p>
-          <p class="hint" style="margin-top:18px">Already running somewhere?
-            <a href="#" id="rescan">Search this network</a> or
-            <a href="#" id="manual">connect by address</a>.</p>`;
-        document.getElementById('back').addEventListener('click', () => renderEntry());
-        // "Search this network" used to re-enter start(), which searches over
-        // Bluetooth too — so the escape from a Bluetooth wait was another
-        // Bluetooth wait. Send it to the LAN-only half instead.
-        document.getElementById('rescan').addEventListener('click', (e) => {
-          e.preventDefault(); startExisting();
-        });
-        document.getElementById('manual').addEventListener('click', (e) => {
-          e.preventDefault(); searchGen++; renderManualPair();
-        });
+        // Idempotent: when start()'s one-shot already drew the search screen,
+        // this re-entry changes nothing on screen — the loop just takes over
+        // the scanning. (The old version drew its own, differently-worded
+        // page here, which is what made the search read as wifi → bluetooth.)
+        drawSearchScreen(note);
         while (gen === searchGen) {
           // FLOOR THE ROUND. The only thing pacing this loop is `discoverBle`
           // taking its four seconds — and it does not, when it fails: the
