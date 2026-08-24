@@ -98,21 +98,25 @@
 			<figure
 				class="ledger"
 				role="img"
-				aria-label="The account of your life, as a ledger. In their cloud, muted: ads, algorithms, addictions. On the box in your home, in full ink: self-knowledge, memory, virtue."
+				aria-label="The account of your life, as a table. In their cloud, muted: ads, algorithms, addictions. On the box in your home, in full ink: self-knowledge, memory, virtue."
 			>
 				<p class="origin">your life's data</p>
-				<div class="cols">
-					<div class="col away">
+				<div class="table">
+					<div class="row heads">
 						<p class="where">in their cloud</p>
-						<p class="entry">ads</p>
-						<p class="entry">algorithms</p>
-						<p class="entry">addictions</p>
-					</div>
-					<div class="col home">
 						<p class="where">on the box in your home</p>
-						<p class="entry">self-knowledge</p>
-						<p class="entry">memory</p>
-						<p class="entry">virtue</p>
+					</div>
+					<div class="row">
+						<p class="entry away">ads</p>
+						<p class="entry home">self-knowledge</p>
+					</div>
+					<div class="row">
+						<p class="entry away">algorithms</p>
+						<p class="entry home">memory</p>
+					</div>
+					<div class="row">
+						<p class="entry away">addictions</p>
+						<p class="entry home">virtue</p>
 					</div>
 				</div>
 			</figure>
@@ -291,48 +295,52 @@
 
 	/* ── the ledger ────────────────────────────────────────────────────── */
 
-	/* The one figure in the letter, set as a page from a book of accounts:
-	   a title, one rule across, one rule down, two columns of entries facing
-	   each other at the center rule. Serif entries (the prose's own face),
-	   mono only for the two column heads. The debit side is muted. */
+	/* The one figure in the letter, set as a booktabs table: an inset exhibit
+	   at well under the measure, three horizontal rules (above the heads,
+	   below the heads, under the last row), and NO vertical rules — columns
+	   are separated by whitespace, which is the whole discipline of the form.
+	   Serif entries in the prose's own face; mono only for the heads. The
+	   debit column is muted; each pair reads across its row as an opposition. */
 	.ledger {
 		margin: 1.5rem 0 0.5rem;
 	}
 
 	.origin {
-		margin: 0 0 0.75rem;
+		margin: 0 0 0.85rem;
 		text-align: center;
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: var(--t-body);
 		color: var(--color-foreground);
 	}
 
-	.cols {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
+	.table {
+		max-width: 27rem;
+		margin: 0 auto;
 		border-top: 1px solid var(--color-border);
-		padding-top: 1rem;
+		border-bottom: 1px solid var(--color-border);
 	}
 
-	/* Entries face the center rule: debit right-aligned, credit left-aligned,
-	   so each pair reads straight across it as an opposition. */
-	.col.away {
-		text-align: right;
-		padding-right: 1.75rem;
-		border-right: 1px solid var(--color-border);
+	.row {
+		display: grid;
+		grid-template-columns: 1fr 1.35fr;
+		gap: 2.5rem;
 	}
 
-	.col.home {
-		text-align: left;
-		padding-left: 1.75rem;
-	}
-
-	.col p {
+	.row p {
 		margin: 0;
 	}
 
+	.row.heads {
+		padding: 0.6rem 0 0.55rem;
+		border-bottom: 1px solid var(--color-border);
+		margin-bottom: 0.55rem;
+	}
+
+	.row:last-child {
+		padding-bottom: 0.65rem;
+	}
+
 	.where {
-		margin-bottom: 0.7rem !important;
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 11px;
 		letter-spacing: 0.14em;
@@ -343,14 +351,14 @@
 	.entry {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: var(--t-body);
-		line-height: 1.9;
+		line-height: 1.85;
 	}
 
-	.away .entry {
+	.entry.away {
 		color: var(--color-foreground-subtle);
 	}
 
-	.home .entry {
+	.entry.home {
 		color: var(--color-foreground);
 	}
 
