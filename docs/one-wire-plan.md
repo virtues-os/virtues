@@ -38,9 +38,15 @@ today; the grant just makes it the default path. virtues-api's half is
 replacement per-box). Missing is atlas-side only:
 
 - **Migration 0015**: `box_key (api_key_hash bytea PK, stripe_customer_id
-  text, endpoint_id text, created_at)`. Billing auth
-  (`resolve_active_customer`, credits.rs) checks `box_key` first, falls back
-  to `customers.api_key_hash` (legacy rows keep working).
+  text, endpoint_id text, created_at)`. ALL FOUR auth-by-hash read sites
+  (`billing_portal.rs:87`, `credits.rs:216`, `settings.rs:66`, `:117`) check
+  `box_key` first, falling back to `customers.api_key_hash` (legacy rows
+  keep working); both write sites (claim insert, link rotation) move to
+  `box_key`.
+- **`endpoint_id` is a rotation-scoping LABEL, never an authorization
+  input** — it is self-reported on an unauthenticated call. A forged one can
+  mislabel a key; nothing may ever be granted or denied because of it. State
+  this in the code where the column is written.
 - **Box identity at attach**: `/init/start` body gains the box's iroh
   `endpoint_id` (the box knows it pre-relay — relay.rs publishes it before
   bind); `device_link` stores it; `attach_link_to_customer` and
@@ -54,7 +60,26 @@ replacement per-box). Missing is atlas-side only:
 
 Do this now, while prod has effectively one customer and migration is free.
 
-## Phase 1 — BLE reach-ticket refresh · stops the field trap · ~1.5 days
+## Verified facts the plan bends around (2026-08-24 code check)
+
+- **BLE dies 0–15 s after claim.** The Improv service tears down on the next
+  15 s reconcile tick once a device pairs (`ble_provision.rs:204-238`;
+  doctrine at :24). A post-pair RPC has only a race window — so nothing may
+  be designed to run over BLE *after* pairing. The consequence: **pair goes
+  last in the session, and its answer must be complete.**
+- **0x82 is already fully built box-side** — parser + tests
+  (`protocol.rs:188,240-245`), session-gated handler that stores the grant,
+  redeems when online, and notifies `"linked"` back over BLE
+  (`ble_provision.rs:593-622,860+`). Phase 2's box work is ~zero.
+- **Unknown opcodes fail fast and clean** (`UnknownCommand` on the error
+  characteristic, connection stays up — `protocol.rs:281`,
+  `ble_provision.rs:472-477`), so capability fallback on old firmware is an
+  immediate error, not a timeout.
+- **Atlas auth-by-key has four read sites** to sweep in Phase 0:
+  `billing_portal.rs:87`, `credits.rs:216`, `settings.rs:66` and `:117`
+  (plus the two write sites, `claim.rs:222-231` and `link.rs` rotation).
+
+## Phase 1 — complete-ticket-at-pair · stops the field trap · ~1.5 days
 
 Root cause of the bench hang (see memory `reach-ticket-freeze`): the pair
 consume ticket freezes `relay_url: null` when the box isn't relay-homed yet,
@@ -62,22 +87,33 @@ and the app has no channel to learn a later one on an isolating LAN — it
 dials a dead direct IP forever, and `:7117` drops each connection with zero
 bytes and zero messaging. Independent of everything else; ship first.
 
-- **Box**: new Improv RPC **0x87 ReachTicket** — returns
-  `box_reach_fields()` JSON via loopback `GET /api/devices/self/reach`
-  (same pattern as 0x83's loopback consume in `ble_provision.rs`). Also:
-  the 0x83 answer waits up to ~5 s for `ENDPOINT_UP` when the box is linked
-  but mid-rebind, instead of answering with an absent ticket.
+Because BLE dies 0–15 s after claim (verified above), the fix is NOT a
+post-pair refresh RPC — it is making the pair answer itself complete, and
+never pairing before the ticket can be:
+
+- **Box**: the 0x83 answer waits (up to ~10 s) for `ENDPOINT_UP` when the
+  box is linked but mid-rebind, instead of answering with an absent or
+  relay-less ticket. New RPC **0x87 ReachTicket** (loopback
+  `GET /api/devices/self/reach`, 0x83's pattern) exists for *pre-pair* use —
+  the app confirming the ticket is complete before it commits the pair —
+  and is session-gated like 0x84.
+- **Box teardown grace**: gate the claimed-teardown on "no live setup
+  session" with a ~10-minute cap, so a session that paired seconds ago isn't
+  cut mid-conversation by the 15 s tick. (Belt; pair-last is the braces.)
 - **Box bugfix** (found in audit): `reconcile`'s late `ensure_relay_config`
   success never calls `request_rebind()` — a box that missed relay config at
   link stays `RelayMode::Disabled` until restart. One line.
 - **Plugin**: `improv_reach_ticket` command; reach-client gains
   `update_reach(ticket)` — persist relay_url/addrs into the stored pairing
-  and rebuild the warm client.
-- **App**: on the post-pair "Opening your server" screen, when the stored
-  ticket has no relay_url, poll 0x87 (bounded, alongside health) with honest
-  stage copy; `reach_status` gains a reason string so "unreachable — ticket
-  has no relay" can ever be *said*. proxy.rs stops silently accept-dropping:
-  log + backoff.
+  and rebuild the warm client. Used before pair, and by the today's-flow
+  retrofit below.
+- **App (retrofit for today's flow)**: before auto-pair fires, if the box
+  reports linked but the pending ticket lacks a relay, poll 0x87 briefly and
+  only then pair. `reach_status` gains a reason string so "unreachable —
+  ticket has no relay" can ever be *said*; proxy.rs stops silently
+  accept-dropping (log + backoff).
+- Skipped-link boxes get no relay by definition (LAN-only is their story);
+  nothing here waits on one for them.
 
 ## Phase 2 — the 0x82 grant · sign-in first · ~2–3 days
 
@@ -90,9 +126,21 @@ bytes and zero messaging. Independent of everything else; ship first.
   fine). Grant TTL generous (~24 h): it is pre-authorized to a specific
   account and delivered over a proven line-of-sight channel; a box slow to
   get online must not strand anyone.
-- **Box**: verify the 2026-08-11 box-side 0x82 ClaimGrant state
-  (`ble_provision.rs`); wire stored grant → outbound redemption on first
-  connectivity.
+- **Box**: nothing — 0x82 is verified complete (stores the grant, redeems
+  outbound via the standard `/init/poll` when online, notifies `"linked"`
+  over BLE). The session ordering writes itself: wifi + grant → watch the
+  join → watch the `"linked"` notify → **pair last**, whose answer now
+  carries a complete reach ticket (Phase 1's ENDPOINT_UP wait).
+- **Entitlement re-checked at redemption**, not only at grant: a 24 h grant
+  can outlive a refund. The poll-side flip runs the same entitled guard the
+  approve endpoint uses.
+- **Checkout-without-code** (new atlas work the flow needs for first-time
+  buyers): today's checkout binds to a box link code that no longer exists
+  at sign-in time. Add a session-authed checkout that just creates the
+  subscription; the webhook flips `entitled`, the app notices via
+  `/account/session`, then proceeds to grant. Until store pre-provisioning
+  lands, new buyers still make one browser trip — earlier and cleaner, but
+  present.
 - **Plugin**: `improv_grant` command (already listed as owed in
   linking-plan).
 - **Airlock**: sign-in screens (email → OTP, unchanged visuals) move to
