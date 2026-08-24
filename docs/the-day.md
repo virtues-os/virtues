@@ -13,7 +13,7 @@ The day page answers four questions about a single day. Each question has a diff
 | # | Question | Scope | Data Needed | Status |
 |---|----------|-------|-------------|--------|
 | Q1 | **Coverage** — How complete is today's data? | Today, static | LLM-assessed data quality rating | Planned (replaces W6H weights) |
-| Q2 | **Entropy** — How ordered or chaotic was this day? | Today vs 12-week history | Cross-day: `chaos_score` on `wiki_days`. Intra-day: per-event novelty (not yet built). | Cross-day: built. Intra-day: designed below. |
+| Q2 | **Entropy** — How ordered or chaotic was this day? | Today vs 12-week history | Per-event novelty (`novelty_z` + `local_novelty_z` on `wiki_events`, local embeddings) plus a live rhythm strip for the day in progress. | Built (per-event + live rhythm). The old cross-day `chaos_score` was cut. |
 | Q3 | **Narrative Shape** — What happened throughout the day? | Today, temporal (event-time) | LLM-identified events with labels, times, locations | Built. Timeline bar + table. |
 | Q4 | **Alignment** — Is this day's shape conducive to who I want to become? | Today vs aspiration | Narrative identity document + comparison mechanism | Not built. See "Why Alignment Is Hard" below. |
 
@@ -77,7 +77,7 @@ The autobiography is the **meaning layer** — synthesis, not chronology. Event 
 - No pronouncement of meaning ("the splurge was really about something else")
 - No fake neutrality (the narrator openly draws on baseline data; selection is the interpretation, owned)
 
-**Length**: 120-180 words. Long enough to synthesize a real day, short enough to read over morning coffee. Also the sweet spot for nomic-embed-text; longer dilutes the semantic signal. System prompt should target this explicitly: no preamble, no sign-off, just prose.
+**Length**: 120-180 words. Long enough to synthesize a real day, short enough to read over morning coffee. Also the sweet spot for the local embedding model; longer dilutes the semantic signal. System prompt should target this explicitly: no preamble, no sign-off, just prose.
 
 **Format**: Plain text. No markdown, no formatting. The autobiography is a paragraph, not a document.
 
@@ -201,22 +201,24 @@ Aggregate data_quality ratings + ontology record counts across 30-90 days for a 
 
 ## Q2: Entropy / Novelty
 
-### Cross-Day (built)
+### Cross-Day (cut)
 
-**What it measures**: How semantically different today was from your 12-week baseline.
+An earlier design embedded the whole day's text per-domain and stored
+`chaos_score = 1 - cosine_sim(today_embedding, centroid_embedding)` on
+`wiki_days`. It was deleted with the scoring rewrite — the column no longer
+exists. Cross-day entropy is now answered two ways: per-event novelty
+aggregated over the day (below), and the home page's live rhythm strip
+(`DayNovelty.svelte`: total-variation distance of today's activity shape from
+the trailing 12-week median, embedding-free).
 
-**How it works** (`day_scoring.rs`):
+### Intra-Day Novelty (built)
 
-1. Collect text from all ontologies for the day
-2. Embed via nomic-embed (768-dim)
-3. Compare to 12-week centroid with day-of-week weighted average
-4. `chaos_score = 1 - cosine_sim(today_embedding, centroid_embedding)`
-
-Implementation: `chaos_score` on `wiki_days`. Needs ~3+ summarized days for meaningful calibration.
-
-### Intra-Day Novelty (designed, not built)
-
-Per-event novelty scored as cosine distance from a 12-week centroid with day-of-week weighting. This is the same paradigm as cross-day, scoped to events: "Is this event unusual IN MY LIFE?"
+Per-event novelty, embedded on-box via the local embedding sidecar
+(`dayline/novelty.rs`). Two orthogonal z-scores against a recency- and
+phase-weighted baseline of recent events, never blended: `novelty_z` (cosine
+distance from a kernel-weighted centroid — exponential recency decay ×
+von Mises kernels on hour-of-day and weekday) and `local_novelty_z` (a Local
+Outlier Factor, "off-pattern for its kind"). NULL below 3 baseline days.
 
 See the **Dayline Scoring** section below for the full novelty signal specification.
 
@@ -296,7 +298,7 @@ Q1 and Q2 are the two scored signals (+/-3 sigma). Q0 is contextual data (sleep 
 
 | Property | Value |
 |----------|-------|
-| **Input** | Event summary embedding (768-dim, nomic-embed) |
+| **Input** | Event summary embedding (local embedding sidecar) |
 | **Method** | Cosine distance from 12-week centroid with DoW weighted average |
 | **Comparison** | Global — all baseline events form one centroid |
 | **Question** | "Is this event unusual IN MY LIFE?" |
@@ -610,10 +612,9 @@ virtues-api LLM call (generate_day_summary)
     |-- Structured events JSON (Layer 2)
     |     \-- For each event:
     |           |-- store in wiki_events (auto_label, start/end time)
-    |           |-- embed event summary -> 768-dim vector
+    |           |-- embed event summary (local embedding sidecar)
     |           \-- annotate avg_hr from HR data in event window
-    |-- Data quality rating (LLM-assessed)
-    \-- Chaos score (cross-day novelty vs 12-week DoW-weighted centroid)
+    \-- Data quality rating (LLM-assessed)
 ```
 
 ---
