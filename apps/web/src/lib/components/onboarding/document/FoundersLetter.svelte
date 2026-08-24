@@ -98,13 +98,13 @@
 			<figure
 				class="ledger"
 				role="img"
-				aria-label="The account of your life, as a table. In their cloud: ads, algorithms, addictions. On the box in your home: self-knowledge, memory, virtue."
+				aria-label="The account of your life, as a table. In their cloud: ads, algorithms, addictions. In your home: self-knowledge, memory, virtue."
 			>
 				<p class="origin">your life's data</p>
 				<div class="table">
 					<div class="row heads">
 						<p class="where">in their cloud</p>
-						<p class="where">on the box in your home</p>
+						<p class="where">in your home</p>
 					</div>
 					<div class="row">
 						<p class="entry">ads</p>
@@ -320,9 +320,11 @@
 		border-bottom: 1px solid var(--color-border);
 	}
 
+	/* Equal halves — the heads are a true parallel now (in their cloud / in
+	   your home), so the geometry gets to be one too. */
 	.row {
 		display: grid;
-		grid-template-columns: 1fr 1.4fr;
+		grid-template-columns: 1fr 1fr;
 		gap: 2rem;
 	}
 
