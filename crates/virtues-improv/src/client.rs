@@ -307,85 +307,9 @@ impl ImprovClient {
         Err(anyhow!("the box didn't answer — try again"))
     }
 
-    /// RPC 0x84: ask the box for its account-link code.
-    ///
-    /// `Ok(None)` when nothing is in flight — the box is already linked, or has
-    /// no internet yet to start a link. Requires the setup session: whoever
-    /// holds this code can attach the box to their own account.
-    /// RPC 0x85: ask the box for its standing pair code.
-    ///
-    /// `Ok(None)` means the box has no code to give OR predates this RPC —
-    /// both land the caller on the same fallback (read the six digits off the
-    /// panel), so they need not be told apart.
-    pub async fn pair_code(&self, id: &str) -> Result<Option<String>> {
-        let mut inner = self.inner.lock().await;
-        let session = Self::ensure_connected(&mut inner, id).await?;
-        let mut notifications = session.peripheral.notifications().await.context("notifications")?;
-        session
-            .peripheral
-            .write(&session.rpc, &protocol::build_rpc(&Command::PairCode), WriteType::WithResponse)
-            .await
-            .context("ask for the pair code")?;
-
-        let error_uuid = uuid(protocol::CHAR_ERROR_STATE);
-        let watch = async {
-            while let Some(n) = notifications.next().await {
-                if n.uuid == error_uuid {
-                    match n.value.first().copied() {
-                        None | Some(0) => continue,
-                        Some(c) if c == ImprovError::UnknownCommand as u8 => return Ok(None),
-                        Some(c) => return Err(anyhow!("{}", ImprovError::describe(c))),
-                    }
-                }
-                if let Some(strings) = protocol::parse_result(&n.value, 0x85) {
-                    return Ok(strings.into_iter().next().filter(|c| !c.is_empty()));
-                }
-            }
-            Err(anyhow!("the box stopped answering"))
-        };
-        tokio::time::timeout(REPLY_TIMEOUT, watch)
-            .await
-            .map_err(|_| anyhow!("the box didn't answer — try again"))?
-    }
-
-    pub async fn link_code(&self, id: &str) -> Result<Option<(String, String)>> {
-        let mut inner = self.inner.lock().await;
-        let session = Self::ensure_connected(&mut inner, id).await?;
-        let mut notifications = session.peripheral.notifications().await.context("notifications")?;
-        session
-            .peripheral
-            .write(&session.rpc, &protocol::build_rpc(&Command::LinkCode), WriteType::WithResponse)
-            .await
-            .context("ask for the link code")?;
-
-        let error_uuid = uuid(protocol::CHAR_ERROR_STATE);
-        let watch = async {
-            while let Some(n) = notifications.next().await {
-                if n.uuid == error_uuid {
-                    match n.value.first().copied() {
-                        None | Some(0) => continue,
-                        // A box older than this RPC simply has no code to give;
-                        // the caller falls back to reading it off the panel.
-                        Some(c) if c == ImprovError::UnknownCommand as u8 => return Ok(None),
-                        Some(c) => return Err(anyhow!("{}", ImprovError::describe(c))),
-                    }
-                }
-                if let Some(strings) = protocol::parse_result(&n.value, 0x84) {
-                    return Ok(match strings.first() {
-                        Some(code) if !code.is_empty() => Some((
-                            code.clone(),
-                            strings.get(1).cloned().unwrap_or_default(),
-                        )),
-                        _ => None,
-                    });
-                }
-            }
-            Err(anyhow!("the box stopped answering"))
-        };
-        tokio::time::timeout(REPLY_TIMEOUT, watch)
-            .await
-            .map_err(|_| anyhow!("the box didn't answer — try again"))?
-    }
+    // pair_code (0x85) and link_code (0x84) were deleted 2026-08-24 with their
+    // opcodes — the codeless 0x83 and the 0x82 grant made both round-trips
+    // pointless. See protocol.rs.
 
     /// RPC 0x04: ask the BOX what networks it can see. Streams one packet per
     /// network; an empty packet ends the list.
@@ -503,7 +427,6 @@ impl ImprovClient {
     pub async fn pair(
         &self,
         id: &str,
-        code: &str,
         kind: &str,
         source: &str,
         label: &str,
@@ -513,8 +436,9 @@ impl ImprovClient {
         let session = Self::ensure_connected(&mut inner, id).await?;
         let mut notifications = session.peripheral.notifications().await.context("notifications")?;
 
+        // Codeless (2026-08-24): the setup session is the proof of presence;
+        // the box fetches and redeems its own standing code internally.
         let cmd = Command::PairConsume {
-            code: code.into(),
             kind: kind.into(),
             source: source.into(),
             label: label.into(),
@@ -524,7 +448,7 @@ impl ImprovClient {
             .peripheral
             .write(&session.rpc, &protocol::build_rpc(&cmd), WriteType::WithResponse)
             .await
-            .context("send pair code")?;
+            .context("send pair request")?;
 
         let mut body = String::new();
         let collect = async {

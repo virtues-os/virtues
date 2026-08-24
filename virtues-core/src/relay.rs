@@ -368,7 +368,15 @@ async fn ensure_relay_config(db: &PgPool) {
     let http = crate::http_client::virtues_api_client();
     let atlas = crate::virtues_api::atlas_url();
     match crate::virtues_api::relay::fetch_and_store(db, &http, &atlas, &api_key).await {
-        Ok(()) => tracing::info!("iroh: fetched relay config from atlas"),
+        Ok(()) => {
+            tracing::info!("iroh: fetched relay config from atlas");
+            // REBIND NOW, not at the next restart. A freshly-fetched relay
+            // only takes effect on the next endpoint bind, and without this
+            // a box that missed relay config at link time (atlas 503, boot
+            // race) stayed RelayMode::Disabled — LAN-only — until someone
+            // power-cycled it, invisibly (audit finding, 2026-08-24).
+            request_rebind();
+        }
         Err(e) => tracing::debug!(error = %format!("{e:#}"), "iroh: relay-config fetch skipped (LAN-only for now)"),
     }
 }
