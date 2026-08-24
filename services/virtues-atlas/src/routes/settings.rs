@@ -59,14 +59,21 @@ async fn get_settings(
     let token_hash = sha256(body.api_key.as_bytes());
 
     // Per-box keys first, legacy fallback — via the shared lookup (claim.rs).
-    let Ok(Some(cid)) =
-        super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..]).await
-    else {
-        return err(
-            StatusCode::UNAUTHORIZED,
-            "invalid_api_key",
-            "unknown api key",
-        );
+    // A DB error is 500, never 401: telling a box its key is dead because a
+    // query blipped is the wrong lie (review finding, 2026-08-24).
+    let cid = match super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..]).await {
+        Ok(Some(cid)) => cid,
+        Ok(None) => {
+            return err(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "unknown api key",
+            );
+        }
+        Err(e) => {
+            tracing::warn!("key lookup failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "customer lookup failed");
+        }
     };
 
     let row: Option<(i64, bool, i64, i64)> = sqlx::query_as(
@@ -120,14 +127,21 @@ async fn put_settings(
     let token_hash = sha256(body.api_key.as_bytes());
 
     // Per-box keys first, legacy fallback — via the shared lookup (claim.rs).
-    let Ok(Some(cid)) =
-        super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..]).await
-    else {
-        return err(
-            StatusCode::UNAUTHORIZED,
-            "invalid_api_key",
-            "unknown api key",
-        );
+    // A DB error is 500, never 401: telling a box its key is dead because a
+    // query blipped is the wrong lie (review finding, 2026-08-24).
+    let cid = match super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..]).await {
+        Ok(Some(cid)) => cid,
+        Ok(None) => {
+            return err(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "unknown api key",
+            );
+        }
+        Err(e) => {
+            tracing::warn!("key lookup failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "customer lookup failed");
+        }
     };
 
     // Partial update: only touch fields the client sent.

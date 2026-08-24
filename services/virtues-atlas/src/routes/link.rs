@@ -1174,3 +1174,32 @@ async fn attach_link_to_customer(
         }
     }
 }
+
+#[cfg(test)]
+mod start_body_tests {
+    use super::StartBody;
+
+    /// The EXACT shape virtues-core sends (virtues_api/link.rs `start`) —
+    /// extra advisory fields and all. A silent deserialization failure here
+    /// would not error anywhere: `Option<Json<StartBody>>` reads a failed
+    /// parse as "no body", and every box's key would quietly lose its
+    /// endpoint label. This test is what makes that failure loud.
+    #[test]
+    fn parses_the_real_box_identity_payload() {
+        let real = r#"{"box":{"name":"Virtues-Honest-Kestrel","label":"Honest Kestrel",
+            "model":"Dragon Q6A","endpoint_id":"ep_abc123","version":"0.1.2"}}"#;
+        let b: StartBody = serde_json::from_str(real).expect("real payload must parse");
+        assert_eq!(b.r#box.endpoint_id.as_deref(), Some("ep_abc123"));
+    }
+
+    #[test]
+    fn tolerates_null_endpoint_and_missing_box() {
+        // The pre-bind race sends endpoint_id: null; hypothetical callers may
+        // send an empty object. Both must parse to None, not error.
+        let null_ep = r#"{"box":{"name":"x","endpoint_id":null}}"#;
+        let b: StartBody = serde_json::from_str(null_ep).unwrap();
+        assert_eq!(b.r#box.endpoint_id, None);
+        let empty: StartBody = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.r#box.endpoint_id, None);
+    }
+}

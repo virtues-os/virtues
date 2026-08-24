@@ -258,22 +258,31 @@ pub(crate) async fn finalize_paid_session(
 
     // Which box is this checkout for? The link row carries the endpoint_id
     // the box self-reported at /init/start (migration 0015); the checkout
-    // session was stamped onto that row before the Stripe redirect. Absent
-    // for older boxes and for checkouts with no device link (store
-    // pre-orders) — those keep the whole-account rotation. Error → None is
-    // deliberate here, with a log: the attach must not fail because a LABEL
-    // lookup hiccuped, and None degrades to the legacy behavior.
-    let endpoint_id: Option<String> = sqlx::query_scalar(
+    // session was stamped onto that row before the Stripe redirect. A missing
+    // ROW is a real, benign None (older boxes; checkouts with no device link,
+    // e.g. store pre-orders) and keeps the whole-account rotation. A QUERY
+    // ERROR is not: degrading it to None would turn a transient DB blip into
+    // a whole-account rotation that kills every sibling box's key — silently
+    // un-fixing the bug per-box keys exist to fix (review finding,
+    // 2026-08-24). Fail the finalize instead; the claim is released below and
+    // the box's retry is safe.
+    let endpoint_id: Option<String> = match sqlx::query_scalar(
         "SELECT endpoint_id FROM device_link WHERE stripe_session_id = $1",
     )
     .bind(session_id)
     .fetch_optional(&state.pool)
     .await
-    .unwrap_or_else(|e| {
-        tracing::warn!("device_link endpoint lookup failed (degrading to whole-account): {e:#}");
-        None
-    })
-    .flatten();
+    {
+        Ok(row) => row.flatten(),
+        Err(e) => {
+            tracing::warn!("device_link endpoint lookup failed, releasing claim for retry: {e:#}");
+            let _ = sqlx::query("DELETE FROM claimed_sessions WHERE stripe_session_id = $1")
+                .bind(session_id)
+                .execute(&state.pool)
+                .await;
+            return Err(internal("endpoint lookup failed — please retry"));
+        }
+    };
 
     // Register the device key with virtues-api and fund this period's wallet.
     // A fresh paid checkout funds the monthly allotment immediately ($20);
@@ -390,8 +399,15 @@ pub(crate) async fn mint_box_key(
 ) -> Result<(), sqlx::Error> {
     match endpoint_id {
         Some(ep) => {
+            // `OR endpoint_id IS NULL` is load-bearing: SQL `=` never matches
+            // NULL, so without it every backfilled/legacy unlabeled key would
+            // survive its box's re-link FOREVER — an immortal live credential
+            // (review finding, 2026-08-24). The NULL row is the account's old
+            // shared single key; the first labeled attach retires it, exactly
+            // as the legacy whole-account rotation would have.
             sqlx::query(
-                "DELETE FROM box_key WHERE stripe_customer_id = $1 AND endpoint_id = $2",
+                "DELETE FROM box_key WHERE stripe_customer_id = $1 \
+                 AND (endpoint_id = $2 OR endpoint_id IS NULL)",
             )
             .bind(stripe_customer_id)
             .bind(ep)
