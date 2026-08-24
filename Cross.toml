@@ -3,3 +3,13 @@
 # offline mode; pass the flag through into the build container.
 [build.env]
 passthrough = ["SQLX_OFFLINE"]
+
+# bluer (ble_provision) pulls libdbus-sys, which needs libdbus headers at
+# build time. CI's native arm64 runners apt-install them (release-linux.yml);
+# the cross container needs the same, for the target arch.
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture arm64",
+    "apt-get update -qq",
+    "apt-get install -y -qq libdbus-1-dev:arm64 pkg-config",
+]
