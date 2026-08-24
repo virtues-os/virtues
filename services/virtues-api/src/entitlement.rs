@@ -322,12 +322,21 @@ pub async fn register_device(
     // know which box it is, otherwise the whole account (the legacy path).
     match box_id {
         Some(id) => {
-            sqlx::query("DELETE FROM device_keys WHERE account_id = $1 AND box_id = $2")
-                .bind(account_id)
-                .bind(id)
-                .execute(&mut *tx)
-                .await
-                .context("clear this box's prior key")?;
+            // `OR box_id IS NULL` is load-bearing: `=` never matches NULL, so
+            // a key registered before the account went per-box (box_id NULL)
+            // would otherwise survive its box's re-link forever — an immortal
+            // credential that still proxies AI calls and spends the wallet
+            // (review finding, 2026-08-24). The NULL row is the account's old
+            // shared key; the first labeled registration retires it.
+            sqlx::query(
+                "DELETE FROM device_keys WHERE account_id = $1 \
+                 AND (box_id = $2 OR box_id IS NULL)",
+            )
+            .bind(account_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("clear this box's prior key")?;
         }
         None => {
             sqlx::query("DELETE FROM device_keys WHERE account_id = $1")
