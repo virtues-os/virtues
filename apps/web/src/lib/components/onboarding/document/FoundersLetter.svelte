@@ -302,7 +302,7 @@
 	   Serif entries in the prose's own face; mono only for the heads. The
 	   debit column is muted; each pair reads across its row as an opposition. */
 	.ledger {
-		margin: 1.5rem 0 0.5rem;
+		margin: 1.5rem 0 1rem;
 	}
 
 	.origin {
