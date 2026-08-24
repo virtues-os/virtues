@@ -285,10 +285,24 @@
       // one-house case, so the codename must match that glass exactly.
       const setServer = (name) => {
         const el = document.getElementById('serverid');
-        const n = name ? String(name).trim() : '';
-        if (n) { el.innerHTML = `Server ID&nbsp;·&nbsp;<b>${esc(n)}</b>`; el.hidden = false; }
+        // Normalize DEFENSIVELY here too — the chrome is the one label every
+        // screen shows, and a raw `[Virtues …` reaching it (a server object
+        // built outside the discover boundary) is exactly the leak this line
+        // catches. prettyBoxName is idempotent, so a clean name passes through.
+        const n = name ? prettyBoxName(name) : '';
+        if (n && n !== 'Your server') { el.innerHTML = `Server ID&nbsp;·&nbsp;<b>${esc(n)}</b>`; el.hidden = false; }
         else { el.hidden = true; }
       };
+
+      // Race a promise against a deadline, resolving null if it doesn't beat
+      // the clock. BLE invokes have no timeout of their own — a stale or
+      // absent peripheral can hang `improv_*` past every timeout the Rust side
+      // has (ensure_connected wraps `connect` but not discover/subscribe). A
+      // screen that only awaits such a call sits forever with no way out; this
+      // is the floor under every one of them. (renderCodeEntry grew its own
+      // copy first; this is the shared one.)
+      const withDeadline = (p, ms) =>
+        Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
 
       // The box's own AP hands out 10.42.0.x (NetworkManager shared mode). Used
       // ONLY to tell "the box is still on its setup network" from "the box is on
@@ -840,7 +854,14 @@
       async function discoverBoxes() {
         try {
           const resp = await invoke('plugin:reach|discover');
-          return { servers: resp.servers || [], debug: resp.debug || '' };
+          // Normalize LAN names at the SAME boundary discoverBle does. Without
+          // this, an mDNS server advertises its SSID form — `Virtues-Mighty-
+          // Merganser`, or the macOS-wrapped `[Virtues Mighty Merganser` — and
+          // that raw string rode straight to the chip, the pair screen, and the
+          // link h1 while the BLE path beside it showed the clean name. One
+          // product, two spellings of the same box.
+          const servers = (resp.servers || []).map((s) => ({ ...s, name: prettyBoxName(s.name) }));
+          return { servers, debug: resp.debug || '' };
         } catch (e) {
           return { servers: [], debug: String(e) };
         }
@@ -1804,8 +1825,16 @@ its devices apart — type its address.",
         const draw = (line) => {
           app.innerHTML = `
             <p class="kicker">Setting up</p>
-            <h1>Linking ${esc(server.name)}</h1>
-            <div class="wait"><span class="pip"></span><span id="stage">${esc(line)}</span></div>`;
+            <h1>Linking ${esc(prettyBoxName(server.name))}</h1>
+            <div class="wait"><span class="pip"></span><span id="stage">${esc(line)}</span></div>
+            <button class="back" id="approveback" style="margin-top:20px">Taking too long? Go back</button>`;
+          // A WAY OUT, always. This screen only awaits — a BLE read that hangs
+          // or a slow atlas would otherwise strand the owner on a pip with no
+          // button (live, 2026-08-24). Retiring the generation stops whatever
+          // is in flight; the link step it lands on renders its controls before
+          // it fetches, so it is never itself a dead end.
+          const back = document.getElementById('approveback');
+          if (back) back.addEventListener('click', () => { searchGen++; renderLinkStep(server, ssid); });
         };
         draw('Approving on your account…');
         // The user_code MUST come fresh from THIS server over BLE — atlas
@@ -1813,10 +1842,13 @@ its devices apart — type its address.",
         // screen that can be stale or belong to a different box. Approving a
         // stale/cross-box code attaches the wrong link. So there is no cache
         // fallback: no fresh read → fail honestly and let Try again re-read.
+        // Timeboxed: a dead/absent peripheral makes this invoke hang forever
+        // (the exact stuck "Approving…" seen 2026-08-24 with no live box).
         let code = null;
         if (server.bleId) {
           try {
-            const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
+            const r = await withDeadline(
+              invoke('plugin:reach|improv_link_code', { id: server.bleId }), 12000);
             if (r && r.ok && r.code) {
               code = r.code;
             } else if (r && r.ok) {
@@ -1853,7 +1885,8 @@ its devices apart — type its address.",
           while (gen === searchGen && Date.now() < deadline) {
             if (server.bleId) {
               try {
-                const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
+                const r = await withDeadline(
+                  invoke('plugin:reach|improv_link_code', { id: server.bleId }), 8000);
                 if (r && r.ok && !r.code) break; // nothing in flight → landed
               } catch { /* keep watching */ }
             }
