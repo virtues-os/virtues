@@ -84,36 +84,35 @@
 				memory, honesty, intimacy.
 			</p>
 
-			<!-- THE TWO FATES. One origin, a fork, two destinations — the
-			     against/for pivot cut from the prose, returned as geometry. The
-			     origin is stated ONCE (it is the same data; the figure's shape
-			     must say so), there are no boxes (boxes-and-arrows is the house
-			     style of generated diagrams; hairlines and type carry this),
-			     and the figure takes a side: the extractive path is muted, the
-			     sovereign path full ink. Serif for the substantive nouns —
-			     matching the prose this interrupts — mono only for annotation.
-			     Left payload is ¶2's triple verbatim; the right path ends on
-			     "you", echoing ¶1's "Or you." -->
+			<!-- THE LEDGER. ¶1 called it "the whole account of your life", so the
+			     figure is drawn as an account: one rule across, one rule down,
+			     a debit column and a credit column. Not a diagram — a page from
+			     a book of accounts, which is a form with five centuries of
+			     editorial standing and no AI-slop associations. The entries
+			     pair one-to-one ACROSS the rule, each pair the same raw
+			     material bent opposite ways: ads↔self-knowledge (they study
+			     you to sell; you study yourself for yourself), algorithms↔
+			     memory (their machine processes your past to shape you; yours,
+			     to remind you), addictions↔virtue (the couplet above, drawn).
+			     The extractive column is muted; the eye lands home. -->
 			<figure
-				class="fates"
+				class="ledger"
 				role="img"
-				aria-label="One fork for your life's data. Left, muted: it flows to their cloud and becomes ads, algorithms, and addictions — used against you. Right, in full ink: it stays on the box in your home and becomes pages, a wiki, you — used for you."
+				aria-label="The account of your life, as a ledger. In their cloud, muted: ads, algorithms, addictions. On the box in your home, in full ink: self-knowledge, memory, virtue."
 			>
 				<p class="origin">your life's data</p>
-				<div class="fork" aria-hidden="true">
-					<span class="stub left"></span>
-					<span class="stub right"></span>
-				</div>
-				<div class="paths">
-					<div class="path away">
-						<p class="dest">their cloud</p>
-						<p class="yield">ads · algorithms · addictions</p>
-						<p class="verdict">(used against you)</p>
+				<div class="cols">
+					<div class="col away">
+						<p class="where">in their cloud</p>
+						<p class="entry">ads</p>
+						<p class="entry">algorithms</p>
+						<p class="entry">addictions</p>
 					</div>
-					<div class="path home">
-						<p class="dest">the box in your home</p>
-						<p class="yield">pages · a wiki · you</p>
-						<p class="verdict">(used for you)</p>
+					<div class="col home">
+						<p class="where">on the box in your home</p>
+						<p class="entry">self-knowledge</p>
+						<p class="entry">memory</p>
+						<p class="entry">virtue</p>
 					</div>
 				</div>
 			</figure>
@@ -290,113 +289,69 @@
 		margin: 0;
 	}
 
-	/* ── the two fates ─────────────────────────────────────────────────── */
+	/* ── the ledger ────────────────────────────────────────────────────── */
 
-	/* The one figure in the letter. No boxes: hairlines and type carry it.
-	   Serif for the nouns (the prose's own face), mono for annotation, and an
-	   opinion in the ink — the extractive path muted, the sovereign path full. */
-	.fates {
+	/* The one figure in the letter, set as a page from a book of accounts:
+	   a title, one rule across, one rule down, two columns of entries facing
+	   each other at the center rule. Serif entries (the prose's own face),
+	   mono only for the two column heads. The debit side is muted. */
+	.ledger {
 		margin: 1.5rem 0 0.5rem;
 	}
 
 	.origin {
-		margin: 0;
+		margin: 0 0 0.75rem;
 		text-align: center;
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: var(--t-body);
 		color: var(--color-foreground);
 	}
 
-	/* The fork: one stem down, one crossbar, two stems down — five hairlines
-	   total, drawn with borders, nothing else. */
-	.fork {
-		position: relative;
-		height: 2.4rem;
-		margin: 0.5rem 0 0.9rem;
-	}
-
-	.fork::before {
-		content: "";
-		position: absolute;
-		left: 50%;
-		top: 0;
-		height: 50%;
-		width: 1px;
-		background: var(--color-border);
-	}
-
-	.fork::after {
-		content: "";
-		position: absolute;
-		left: 25%;
-		right: 25%;
-		top: 50%;
-		height: 1px;
-		background: var(--color-border);
-	}
-
-	.stub {
-		position: absolute;
-		top: 50%;
-		height: 50%;
-		width: 1px;
-		background: var(--color-border);
-	}
-
-	.stub.left {
-		left: 25%;
-	}
-
-	.stub.right {
-		right: 25%;
-	}
-
-	.paths {
+	.cols {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 1.5rem;
+		border-top: 1px solid var(--color-border);
+		padding-top: 1rem;
 	}
 
-	.path {
-		text-align: center;
+	/* Entries face the center rule: debit right-aligned, credit left-aligned,
+	   so each pair reads straight across it as an opposition. */
+	.col.away {
+		text-align: right;
+		padding-right: 1.75rem;
+		border-right: 1px solid var(--color-border);
 	}
 
-	.path p {
+	.col.home {
+		text-align: left;
+		padding-left: 1.75rem;
+	}
+
+	.col p {
 		margin: 0;
 	}
 
-	.dest {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: var(--t-body);
-	}
-
-	.yield {
-		margin-top: 0.4rem !important;
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 12.5px;
-		line-height: 1.5;
-	}
-
-	.verdict {
-		margin-top: 0.55rem !important;
+	.where {
+		margin-bottom: 0.7rem !important;
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 11px;
-		letter-spacing: 0.06em;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
 		color: var(--color-foreground-subtle);
 	}
 
-	/* The opinion: the eye lands home. */
-	.away .dest,
-	.away .yield {
+	.entry {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+		line-height: 1.9;
+	}
+
+	.away .entry {
 		color: var(--color-foreground-subtle);
 	}
 
-	.home .dest {
+	.home .entry {
 		color: var(--color-foreground);
-	}
-
-	.home .yield {
-		color: var(--color-foreground-muted);
 	}
 
 	/* The thesis line: same serif, same size, same ink — salience comes from
