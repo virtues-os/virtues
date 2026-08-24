@@ -68,23 +68,20 @@
 				whole account of your life — a government, a political party, big tech? Or you.
 			</p>
 
-			<!-- THE PREMISE, THEN THE PIVOT. Two claims in the premise: capability
-			     (you can hold this yourself) and title (it is your property —
-			     "yours by right", the private-property register without the
-			     legalism of "entitled"). Then the same substance cut both ways:
-			     against you it becomes ads, algorithms, addictions; for you,
-			     recall, recognition, repair — two alliterating triples, and
-			     "Or for you" deliberately echoes ¶1's "Or you." The against-
-			     triple absorbs what the old cannot-extract sentence enumerated
-			     (advertising / feed / habit), so the couplet still chains
-			     cleanly into vice-is-repetitive. -->
+			<!-- THE PREMISE. Two claims: capability (you can hold this yourself)
+			     and title (it is your property — "yours by right", the
+			     private-property register without the legalism of "entitled").
+			     The against-triple names what extraction becomes; the FOR side is
+			     deliberately not stated here — the rest of the letter (the page,
+			     the wiki, the asks, the mirror) IS the for side, shown rather
+			     than listed. The triple chains into vice-is-repetitive, which
+			     explains it. -->
 			<p>
 				Virtues rests on a simple premise: you are capable of holding the data of your
 				life, and it is yours by right. It is the most intimate thing you have, and it can
-				be used against you — in ads, algorithms, and addictions. Or for you — in recall,
-				recognition, and repair. Vice is repetitive and profitable, which is why so much is
-				arranged to produce it. Virtue asks for harder things — attention, memory, honesty,
-				intimacy.
+				be used against you — in ads, algorithms, and addictions. Vice is repetitive and
+				profitable, which is why so much is arranged to produce it. Virtue asks for harder
+				things — attention, memory, honesty, intimacy.
 			</p>
 
 			<!-- WHAT VIRTUES IS — named by its artifacts, never its features. The
