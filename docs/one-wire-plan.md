@@ -1,6 +1,15 @@
 # One wire — finishing the setup flow's keystone
 
-> **STATUS 2026-08-24: BUILT, all phases, build-and-break** (wave `9e67467c`
+> **STATUS 2026-08-24: SHIPPED AND HARDWARE-VERIFIED.** The full rehearsal
+> passed on a bench box running `v0.1.3-staging.63` (the first PR-#57 build):
+> deprovision, power-cycle, then phrase → save → sign-in → Wi-Fi → grant →
+> codeless pair → open → auto-update, end to end with zero typed codes, on
+> the same client-isolating SSID that produced the original freeze. Note the
+> tag series moved to `v0.1.3-staging.N` — a prerelease prefix must track the
+> next unreleased stable (stable is 0.1.2) or boxes correctly refuse it as a
+> downgrade.
+>
+> Earlier build status: **BUILT, all phases, build-and-break** (wave `9e67467c`
 > `470e758d` `47dec59b` `4104a31a` `899cbf08` + review fixes). Atlas deployed
 > to prod with /init/grant + /account/checkout live. Deviations from the plan
 > below, decided mid-build: NO compatibility layer anywhere (0x84/0x85 opcodes
@@ -13,8 +22,7 @@
 > type a pair code — for claimed boxes found over the network, where it is
 > the only proof channel. REMAINING: the iOS Swift ImprovClient still speaks
 > the old shapes (setup is a desktop job; update it before phone-first
-> setup), and the box firmware ships via the release pipeline — bench boxes
-> need a wave build to speak codeless 0x83.
+> setup).
 
 > Written 2026-08-24 after a full bench day and a four-agent audit of the
 > atlas ↔ app ↔ box coordination. The verdict that produced this plan: the
