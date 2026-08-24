@@ -104,37 +104,31 @@ pub enum Command {
     /// argument (you were standing at the box). The display's QR/code flow
     /// remains the fallback for no-client and fresh-account paths.
     ClaimGrant { grant: String },
-    /// `0x83` — OUR extension: pair over BLE. `[code, kind, source, label,
+    /// `0x83` — OUR extension: pair over BLE. `[kind, source, label,
     /// endpoint_id]` (`source`/`label`/`endpoint_id` may be empty).
     ///
-    /// Exists because pairing's LAN leg dies on hostile networks: client
-    /// isolation at an office blocked `POST /api/pair/consume` between phone
-    /// and box on the same wifi (WeWork, live, 2026-08-11) while BLE sat
-    /// there working. The box redeems the code against its OWN consume
-    /// endpoint over loopback — the same transaction, rate-limit story aside
-    /// (see the handler), and device row as every other pairing — and streams
-    /// the consume response back as chunked results. Security is unchanged:
-    /// the code still proves the person can read the box's screen; BLE is
-    /// just the wire. Cleartext like the LAN leg it replaces (and like the
-    /// wifi passphrase in 0x01) — same accepted setup-window risk.
+    /// SESSION-AUTHORIZED AND CODELESS (2026-08-24, one-wire-plan Phase 3;
+    /// it used to carry a 6-digit code as its first field). The code existed
+    /// to prove the person can read the box's screen — but on this wire that
+    /// proof has ALREADY been made: this command sits behind `needs_session`,
+    /// and a session is only opened by the four-word phrase printed on that
+    /// same screen. The box fetches its OWN standing code and redeems it
+    /// against its own consume endpoint over loopback — the same transaction,
+    /// rate-limit story, and device row as every other pairing — and streams
+    /// the consume response back as chunked results. The 6-digit code remains
+    /// load-bearing everywhere it is a device's only channel: second devices,
+    /// the CLI, and LAN pairs, none of which have a phrase session.
+    ///
+    /// Exists at all because pairing's LAN leg dies on hostile networks:
+    /// client isolation at an office blocked `POST /api/pair/consume` between
+    /// phone and box on the same wifi (WeWork, live, 2026-08-11) while BLE
+    /// sat there working. Cleartext like the wifi passphrase in 0x01 — same
+    /// accepted setup-window risk.
     ///
     /// Only the FIRST device can use this: a successful pair claims the box
     /// and the reconciler stops the whole BLE service. Later devices pair
     /// over LAN or relay, which exist by then.
-    PairConsume { code: String, kind: String, source: String, label: String, endpoint_id: String },
-    /// `0x85` — OUR extension: the box hands over its standing pair code.
-    ///
-    /// The six digits exist to prove the person can read the box's screen. On
-    /// this wire that proof has ALREADY been made: `PairConsume` sits behind
-    /// `needs_session`, and a session is only opened by the four-word phrase
-    /// printed on that same screen. Making the owner transcribe a second
-    /// secret proving the same fact is ceremony, and it was the last thing in
-    /// the flow anyone had to type (2026-08-13).
-    ///
-    /// FIRST DEVICE ONLY, for the same reason as `PairConsume`: a successful
-    /// pair claims the box and the reconciler stops the whole Improv service.
-    /// Later devices have no BLE to ask over and still read the panel.
-    PairCode,
+    PairConsume { kind: String, source: String, label: String, endpoint_id: String },
     /// `0x86` — OUR extension: claim the setup session. `[phrase, label]`.
     ///
     /// The gate in front of everything else. A box advertises Improv while
@@ -155,26 +149,16 @@ pub enum Command {
     /// and a race they did not start reads as a name they do not recognise.
     /// May be empty; the panel then says only that a device is setting up.
     ClaimSetup { phrase: String, label: String },
-    /// `0x84` — OUR extension: ask the box for its account-link code.
-    /// No arguments; replies `[user_code, verification_uri]`.
-    ///
-    /// The box drives its own account link (RFC 8628 shape) and holds the
-    /// short code a human types into a browser. That code used to be printed
-    /// on the panel, which meant anyone in the room could read it and the
-    /// owner had to retype it by eye. Handing it to the app over the setup
-    /// session instead is both better UX — the app opens the page with the
-    /// code already in the URL — and tighter: this session already proved
-    /// line of sight with the phrase, where the glass proves only that you
-    /// are in the room.
-    ///
-    /// Session-gated like every other configuring command. It reveals a
-    /// capability (anyone holding it can attach this box to THEIR account),
-    /// so it must never be answerable to an unproven peer.
-    ///
-    /// Empty reply when the box has no link in flight — it is already linked,
-    /// or it has no internet yet and could not start one.
-    LinkCode,
 }
+
+// 0x84 (LinkCode) and 0x85 (PairCode) were DELETED 2026-08-24 (one-wire-plan).
+// 0x84 handed the app the box's account-link user_code so the app could carry
+// it to atlas — the grant (0x82) inverts that whole round-trip, so nothing
+// reads a code off the box any more. 0x85 handed the app the standing pair
+// code just so the app could hand it straight back in 0x83 — the codeless,
+// session-authorized 0x83 does that hand-off box-internally. Do not reuse the
+// opcodes: a stale client sending them gets UnknownCommand, which is the
+// honest answer.
 
 impl Command {
     /// The command byte this variant travels as.
@@ -188,8 +172,6 @@ impl Command {
             Command::ClaimGrant { .. } => 0x82,
             Command::PairConsume { .. } => 0x83,
             Command::ClaimSetup { .. } => 0x86,
-            Command::LinkCode => 0x84,
-            Command::PairCode => 0x85,
         }
     }
 }
@@ -245,27 +227,14 @@ pub fn parse_rpc(packet: &[u8]) -> Result<Command, ImprovError> {
             Ok(Command::ClaimGrant { grant })
         }
         0x83 => {
-            let (code, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
-            let (kind, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
+            let (kind, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
             let (source, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
             let (label, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
             let (endpoint_id, rest) = take_string(rest).ok_or(ImprovError::InvalidPacket)?;
-            if code.is_empty() || kind.is_empty() || !rest.is_empty() {
+            if kind.is_empty() || !rest.is_empty() {
                 return Err(ImprovError::InvalidPacket);
             }
-            Ok(Command::PairConsume { code, kind, source, label, endpoint_id })
-        }
-        0x84 => {
-            if !data.is_empty() {
-                return Err(ImprovError::InvalidPacket);
-            }
-            Ok(Command::LinkCode)
-        }
-        0x85 => {
-            if !data.is_empty() {
-                return Err(ImprovError::InvalidPacket);
-            }
-            Ok(Command::PairCode)
+            Ok(Command::PairConsume { kind, source, label, endpoint_id })
         }
         0x86 => {
             let (phrase, rest) = take_string(data).ok_or(ImprovError::InvalidPacket)?;
@@ -331,15 +300,13 @@ pub fn build_rpc(cmd: &Command) -> Vec<u8> {
             pack_strings(&[ssid, identity, password])
         }
         Command::ClaimGrant { grant } => pack_strings(&[grant]),
-        Command::PairConsume { code, kind, source, label, endpoint_id } => {
-            pack_strings(&[code, kind, source, label, endpoint_id])
+        Command::PairConsume { kind, source, label, endpoint_id } => {
+            pack_strings(&[kind, source, label, endpoint_id])
         }
         // An EMPTY label sends one string, not two. A box built before the
         // label existed parses 0x86 strictly — trailing bytes are a malformed
         // packet — so the one-string form is the shape every version accepts,
         // and it is what the client falls back to.
-        Command::LinkCode => Vec::new(),
-        Command::PairCode => Vec::new(),
         Command::ClaimSetup { phrase, label } if label.is_empty() => pack_strings(&[phrase]),
         Command::ClaimSetup { phrase, label } => pack_strings(&[phrase, label]),
     };
@@ -503,9 +470,9 @@ mod tests {
 
     #[test]
     fn pair_consume_round_trip() {
-        let mut data = vec![6u8];
-        data.extend_from_slice(b"123456");
-        data.push(10);
+        // Codeless since 2026-08-24: the session IS the proof, so the wire
+        // carries only [kind, source, label, endpoint_id].
+        let mut data = vec![10u8];
         data.extend_from_slice(b"mobile_app");
         data.push(3);
         data.extend_from_slice(b"ios");
@@ -516,7 +483,6 @@ mod tests {
         assert_eq!(
             cmd,
             Command::PairConsume {
-                code: "123456".into(),
                 kind: "mobile_app".into(),
                 source: "ios".into(),
                 label: "".into(),
@@ -526,10 +492,24 @@ mod tests {
     }
 
     #[test]
-    fn pair_consume_refuses_empty_code_or_kind() {
-        let mut data = vec![0u8, 10];
+    fn pair_consume_refuses_empty_kind() {
+        let data = vec![0u8, 0, 0, 0];
+        assert_eq!(parse_rpc(&raw(0x83, &data)), Err(ImprovError::InvalidPacket));
+    }
+
+    #[test]
+    fn the_old_coded_pair_shape_no_longer_parses() {
+        // The pre-2026-08-24 five-string form ([code, kind, ...]) must be a
+        // malformed packet, not a silently misparsed one: its trailing fifth
+        // string fails the rest-is-empty check rather than shifting fields.
+        let mut data = vec![6u8];
+        data.extend_from_slice(b"123456");
+        data.push(10);
         data.extend_from_slice(b"mobile_app");
-        data.extend_from_slice(&[0, 0, 0]);
+        data.extend_from_slice(&[3]);
+        data.extend_from_slice(b"ios");
+        data.extend_from_slice(&[0, 4]);
+        data.extend_from_slice(b"beef");
         assert_eq!(parse_rpc(&raw(0x83, &data)), Err(ImprovError::InvalidPacket));
     }
 
@@ -599,7 +579,6 @@ mod tests {
             },
             Command::ClaimGrant { grant: "dc_x".into() },
             Command::PairConsume {
-                code: "123456".into(),
                 kind: "desktop_app".into(),
                 source: "mac".into(),
                 label: "Adam's Mac".into(),
@@ -609,8 +588,6 @@ mod tests {
                 phrase: "mango-burly-skull-dough".into(),
                 label: "Adam's Mac".into(),
             },
-            Command::LinkCode,
-            Command::PairCode,
         ] {
             let wire = build_rpc(&cmd);
             assert_eq!(parse_rpc(&wire), Ok(cmd.clone()), "round trip failed for {cmd:?}");
@@ -618,12 +595,12 @@ mod tests {
     }
 
     #[test]
-    fn pair_code_carries_no_data() {
-        // The ask is the whole message. A box that accepted trailing bytes here
-        // would be accepting a malformed packet, and 0x84 already sets the
-        // precedent — keep the two asks identical on the wire.
-        assert_eq!(parse_rpc(&frame(0x85, Vec::new())), Ok(Command::PairCode));
-        assert_eq!(parse_rpc(&frame(0x85, vec![1])), Err(ImprovError::InvalidPacket));
+    fn deleted_opcodes_answer_unknown_command() {
+        // 0x84 (LinkCode) and 0x85 (PairCode) were removed 2026-08-24; a
+        // stale client sending them must get the honest "don't retry" answer,
+        // and the opcodes must never be silently reused.
+        assert_eq!(parse_rpc(&frame(0x84, Vec::new())), Err(ImprovError::UnknownCommand));
+        assert_eq!(parse_rpc(&frame(0x85, Vec::new())), Err(ImprovError::UnknownCommand));
     }
 
     #[test]

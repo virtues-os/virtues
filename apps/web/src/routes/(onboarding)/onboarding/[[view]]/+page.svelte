@@ -21,24 +21,24 @@
   which could only ever appear on the one surface long enough to scroll.
 
     ① letter    the founder's letter                     (in-memory, once a session)
-    ② names     two names, thirty seconds
-    ③ account   the one required gate
-    ④ sources   connect what already holds your life     (skippable)
-    ⑤ words     the interview — its own surface, and the draft after it
-    ⑥ you       the reveal
+    ② names     introductions, thirty seconds
+    ③ sources   connect what already holds your life     (skippable)
+    ④ words     the interview — its own surface, and the draft after it
+    ⑤ you       the reveal
 
   THE URL IS THE FLOW. Each view is `/onboarding/<slug>`, so Back and Forward
   work, a refresh keeps your place, and a screen can be linked to. Five local
   booleans used to encode this between them; they made Back leave the app
   entirely and a refresh start the step over.
 
-  Server state still decides what is REACHABLE — everything past `account`
-  needs the account — so a hand-typed `/onboarding/you` on an unlinked box is
-  bounced rather than honored. With one exemption, mirrored from the backend:
-  a DIY box reports `setup_complete` without an account (`compute_setup_state`
-  requires the account only on appliances — prescribe, never enforce), and this
-  page must honor that, or the CLI user who declined a subscription is wedged
-  at a screen whose only exit is paying.
+  THE ACCOUNT IS NOT A STEP. It is a setup fact (the airlock's BLE link step,
+  skippable there), and nothing before the box WRITES needs it — sources
+  connect without one. So the gate renders as an interstitial inside the two
+  AI-needing leaves (`your-words`, `you`) only while it is unsatisfied, for
+  exactly the people who skipped linking. The DIY exemption is mirrored from
+  the backend: a DIY box reports `setup_complete` without an account
+  (`compute_setup_state` requires it only on appliances), so DIY never sees
+  the gate at all.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
@@ -158,34 +158,23 @@
 			// them reachable again from the strip after a refresh.
 			VIEW_ORDER.indexOf(view) > VIEW_ORDER.indexOf("letter") && "letter",
 			VIEW_ORDER.indexOf(view) > VIEW_ORDER.indexOf("introductions") && "names",
-			accountDone && "account",
 			worldEnough && "sources",
 			interviewStarted && "words",
 		].filter(Boolean) as StepId[],
 	);
 
 	/**
-	 * Where an unresolved or unreachable URL should land.
+	 * Where a bare or unresolvable URL should land: the first thing left to do.
 	 *
-	 * Everything past `account` needs the account, so a hand-typed
-	 * `/onboarding/you` on an unlinked box must not open the reveal — the strip
-	 * already refuses to offer it, and the address bar has to refuse too.
+	 * No reachability gating remains — the account stopped being a step, and the
+	 * two leaves that need it render the gate themselves. A hand-typed
+	 * `/onboarding/you` on an unlinked box now opens the gate, not the reveal,
+	 * which is a better answer than a bounce.
 	 */
-	const reachable = $derived((v: ViewId) =>
-		VIEW_ORDER.indexOf(v) <= VIEW_ORDER.indexOf("account") ? true : accountSatisfied,
-	);
-	const resolved = $derived<ViewId>(
-		!accountSatisfied ? "letter" : !worldEnough ? "sources" : "your-words",
-	);
+	const resolved = $derived<ViewId>(!worldEnough ? "sources" : "your-words");
 
-	/**
-	 * What the strip may offer, from the SAME predicate that guards the URL.
-	 *
-	 * Derived rather than hand-listed for one reason: when these two drifted, the
-	 * strip disabled Introductions while happily offering Account two places
-	 * further along, and typing the URL worked where clicking did not.
-	 */
-	const open = $derived(STEPS.map((s) => s.id).filter((id) => reachable(STEP_VIEW[id])));
+	/** Every step is offerable — the AI-needing leaves guard themselves. */
+	const open = $derived(STEPS.map((s) => s.id));
 
 	async function refreshState() {
 		try {
@@ -198,22 +187,18 @@
 	}
 
 	/**
-	 * Keep the address bar honest.
+	 * Keep the address bar honest: make a bare or unrecognized `/onboarding`
+	 * URL name the view it is showing, so Back from step two returns to the
+	 * letter rather than out of the app. After the first state read, so it
+	 * never fights a box that has not answered yet.
 	 *
-	 * Two jobs, both after the first state read so they never fight a box that
-	 * has not answered yet: make a bare `/onboarding` name the view it is showing
-	 * (so Back from step two returns to the letter rather than out of the app),
-	 * and bounce a URL the person is not entitled to.
-	 *
-	 * `replaceState` in both cases — a correction is not somewhere they navigated
-	 * to, and leaving it in history would make Back bounce off it forever.
+	 * `replaceState` — a correction is not somewhere they navigated to, and
+	 * leaving it in history would make Back bounce off it forever.
 	 */
 	$effect(() => {
 		if (loading || !state_) return;
 		if (!isViewId(page.params.view)) {
 			void goto(`/onboarding/${view}`, { replaceState: true });
-		} else if (!reachable(view)) {
-			void goto(`/onboarding/${resolved}`, { replaceState: true });
 		}
 	});
 
@@ -360,45 +345,8 @@
 								go("you");
 							}}
 						/>
-					{:else if view === "account"}
-						<!-- The one gate — on an appliance. Everything else in onboarding
-						     can be skipped, put off, or half-done; this is the only screen
-						     that has to end in a yes. A DIY box is the exemption: the
-						     backend doesn't require the account there, so the quiet door
-						     below appears only when `setup_complete` already holds
-						     without one. -->
-
-						<h1 class="ob-h1">Sign in to Virtues</h1>
-						<p class="ob-lede">
-							Your subscription is the only part of Virtues that touches our servers — it
-							handles sign-in and pays for the models your box calls on. It is built in two
-							halves: one knows you pay us, the other runs your requests. They share no
-							identifier, so joining them returns an empty table. Everything else stays on
-							the box.
-						</p>
-
-						<div class="work">
-							<AccountGate done={accountDone} onLinked={refreshState} />
-						</div>
-
-						{#if accountDone}
-							<div in:fade>
-								<button class="ob-btn" onclick={() => go("sources")}>
-									Continue
-									<Icon icon="ri:arrow-right-line" width="16" />
-								</button>
-							</div>
-						{:else if accountSatisfied}
-							<button class="ob-ghost quiet-go" onclick={() => go("sources")}>
-								Continue without an account →
-							</button>
-						{/if}
 					{:else if view === "sources"}
-						<h1 class="ob-h1">Where the record comes from</h1>
-						<p class="ob-lede">
-							Connect what already holds your life. Each source is read onto the box and
-							stays there — nothing is sent to us. Start with one; add the rest whenever.
-						</p>
+						<h1 class="ob-h1">Your data</h1>
 
 						<div class="work">
 							<ConnectWorld
@@ -411,28 +359,53 @@
 							{worldEnough ? "Continue" : "Skip for now"}
 							<Icon icon="ri:arrow-right-line" width="16" />
 						</button>
-						<p class="ob-note">
-							Connecting is optional, and never finished — finances, notes, fitness and the
-							rest are waiting in the app.
-						</p>
 					{:else if view === "your-words"}
-						<!-- The doorway to the interview, which is its own view. -->
-						<h1 class="ob-h1">The part it can't observe</h1>
+						{#if !accountSatisfied}
+							<!-- THE TOLL BOOTH, not a step. From here the box writes, and
+							     writing runs on models the subscription pays for — the
+							     first moment an account is genuinely needed. Renders only
+							     for the appliance owner who skipped linking during setup;
+							     DIY is exempt via `accountSatisfied`. -->
+							<h1 class="ob-h1">Sign in to Virtues</h1>
+							<p class="ob-lede">
+								From here your box starts writing, and the models it writes with are what
+								the subscription pays for. Signing in is the only part of Virtues that
+								touches our servers — everything written stays on the box.
+							</p>
+							<div class="work">
+								<AccountGate done={accountDone} onLinked={refreshState} />
+							</div>
+						{:else}
+							<!-- The doorway to the interview, which is its own view. -->
+							<h1 class="ob-h1">The part it can't observe</h1>
+							<p class="ob-lede">
+								Everything else here your box works out by watching. This is the half it
+								cannot: where you have been, what you are up against, who you mean to become.
+								Five questions, and nothing writes them but you.
+							</p>
+
+							<button class="ob-btn" onclick={() => go("interview")}>
+								{interviewStarted ? "Keep writing" : "Start writing"}
+								<Icon icon="ri:arrow-right-line" width="16" />
+							</button>
+							<p class="ob-note">
+								It takes a while, and it saves as you go — stop anywhere and come back.
+							</p>
+
+							<button class="ob-ghost quiet-go" onclick={() => go("you")}>Not now →</button>
+						{/if}
+					{:else if !accountSatisfied}
+						<!-- Same toll booth on the reveal, for whoever arrived here by URL
+						     or the "Not now →" door without ever passing the doorway. -->
+						<h1 class="ob-h1">Sign in to Virtues</h1>
 						<p class="ob-lede">
-							Everything else here your box works out by watching. This is the half it
-							cannot: where you have been, what you are up against, who you mean to become.
-							Five questions, and nothing writes them but you.
+							From here your box starts writing, and the models it writes with are what
+							the subscription pays for. Signing in is the only part of Virtues that
+							touches our servers — everything written stays on the box.
 						</p>
-
-						<button class="ob-btn" onclick={() => go("interview")}>
-							{interviewStarted ? "Keep writing" : "Start writing"}
-							<Icon icon="ri:arrow-right-line" width="16" />
-						</button>
-						<p class="ob-note">
-							It takes a while, and it saves as you go — stop anywhere and come back.
-						</p>
-
-						<button class="ob-ghost quiet-go" onclick={() => go("you")}>Not now →</button>
+						<div class="work">
+							<AccountGate done={accountDone} onLinked={refreshState} />
+						</div>
 					{:else}
 						<h1 class="ob-h1">Meet yourself</h1>
 						<div class="work">

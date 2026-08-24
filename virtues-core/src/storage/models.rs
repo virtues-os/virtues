@@ -42,7 +42,10 @@ pub struct UserProfile {
     // Identity
     pub full_name: Option<String>,
     pub preferred_name: Option<String>,
-    pub birth_date: Option<String>,
+    /// `NaiveDate`, not `String` — the column is a Postgres `date`, and sqlx
+    /// refuses TEXT↔DATE. As a String this decoded fine only while every row
+    /// was NULL; the first saved birthday 500'd every `GET /profile` on the box.
+    pub birth_date: Option<NaiveDate>,
     // Physical/Biometric (f64 / double precision)
     pub height_cm: Option<f64>,
     pub weight_kg: Option<f64>,

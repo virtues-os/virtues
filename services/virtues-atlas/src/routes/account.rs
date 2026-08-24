@@ -31,6 +31,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::claim::sha256;
+use super::link::page;
 use crate::routes::AppState;
 
 /// How long an emailed code is good for. Short: it is typed immediately, from
@@ -51,6 +52,17 @@ pub fn router() -> Router<AppState> {
         .route("/account/login", post(login))
         .route("/account/login/verify", post(verify))
         .route("/account/session", post(session_info))
+        // Checkout WITHOUT a device-link code (one-wire-plan Phase 2): the
+        // signed-in-but-unentitled app asks for a Stripe checkout URL, the
+        // browser pays, the done page attaches the subscription to the
+        // ACCOUNT (no box, no key minted), and the app notices `entitled`
+        // flip via /account/session. The box enters the story later, through
+        // the grant.
+        .route("/account/checkout", post(account_checkout))
+        .route("/account/checkout/done", axum::routing::get(account_checkout_done))
+        // The airlock's inline sign-in calls these from the app's webview
+        // origin — see `app_cors` for why the policy is a wildcard.
+        .layer(super::app_cors())
 }
 
 // ─── POST /account/login ────────────────────────────────────────────────────
@@ -72,13 +84,23 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> im
         return err(StatusCode::BAD_REQUEST, "bad_email", "invalid email");
     }
 
-    let recent: i64 = sqlx::query_scalar(
+    // Do NOT swallow this with `.unwrap_or(0)`: a read error would make the
+    // count zero and lift the send cap entirely — a broken query becoming an
+    // open relay for OTP email (CLAUDE.md, "Do not swallow a query error").
+    // Fail CLOSED: a rate-limit read we can't trust refuses the send.
+    let recent: i64 = match sqlx::query_scalar(
         "SELECT count(*) FROM login_code WHERE email = $1 AND created_at > now() - interval '1 hour'",
     )
     .bind(&email)
     .fetch_one(&state.pool)
     .await
-    .unwrap_or(0);
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("login rate-limit read failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not send a code");
+        }
+    };
     if recent >= MAX_SENDS_PER_HOUR {
         return err(
             StatusCode::TOO_MANY_REQUESTS,
@@ -218,12 +240,176 @@ async fn verify(
         return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not sign in");
     }
 
-    let entitled = is_entitled(&state, customer_id.as_deref()).await;
+    // Advisory here — the app re-checks entitlement server-side at /init/approve
+    // before anything is granted, so a read error at sign-in defaulting to
+    // `false` costs at most a needless "you have no subscription" glance, never
+    // a wrong grant. Named explicitly rather than swallowed silently.
+    let entitled = is_entitled(&state, customer_id.as_deref()).await.unwrap_or_else(|e| {
+        tracing::warn!("entitlement check at sign-in failed (defaulting to not-entitled): {e:#}");
+        false
+    });
     (
         StatusCode::OK,
         Json(json!({ "token": token, "email": email, "entitled": entitled })),
     )
         .into_response()
+}
+
+// ─── POST /account/checkout + GET /account/checkout/done ────────────────────
+
+/// Hand the signed-in app a Stripe Checkout URL for a plain account
+/// subscription — no device-link code anywhere in it. Payment stays in the
+/// real browser (Apple Pay, autofill, the URL bar); this endpoint only mints
+/// the destination.
+async fn account_checkout(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    let Some(sess) = authed(&state, &headers).await else {
+        return err(StatusCode::UNAUTHORIZED, "unauthorized", "sign in again");
+    };
+    // Already entitled → nothing to buy; say so instead of double-charging.
+    let entitled = is_entitled(&state, sess.customer_id.as_deref()).await.unwrap_or_else(|e| {
+        tracing::warn!("checkout entitlement check failed (treating as not entitled): {e:#}");
+        false
+    });
+    if entitled {
+        return (StatusCode::OK, Json(json!({ "entitled": true }))).into_response();
+    }
+    if !state.stripe.is_configured() || state.stripe_price_id.is_empty() {
+        return err(StatusCode::SERVICE_UNAVAILABLE, "stripe_not_configured", "billing isn't configured");
+    }
+    let base = state.public_url.trim_end_matches('/');
+    let success_url = format!("{base}/account/checkout/done?session_id={{CHECKOUT_SESSION_ID}}");
+    let cancel_url = format!("{base}/account/checkout/done?session_id=cancelled");
+    match state
+        .stripe
+        .create_checkout_session(
+            &state.stripe_price_id,
+            &success_url,
+            &cancel_url,
+            // No user_code: this checkout belongs to an ACCOUNT, not a link.
+            "",
+            state.allow_promotion_codes,
+        )
+        .await
+    {
+        Ok(session) => (StatusCode::OK, Json(json!({ "url": session.url }))).into_response(),
+        Err(e) => {
+            tracing::warn!("account checkout create failed: {e:#}");
+            err(StatusCode::BAD_GATEWAY, "stripe_error", "couldn't open checkout — try again")
+        }
+    }
+}
+
+/// The browser lands here after paying. Attach the subscription to the
+/// account: upsert the customer (NO key minted — `api_key_hash` stays NULL
+/// until a box links), upsert the subscription, re-point every keyless
+/// session for this email at the new customer (that is what flips `entitled`
+/// for the app's poll), and fund the first month's wallet.
+async fn account_checkout_done(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    let session_id = q.get("session_id").cloned().unwrap_or_default();
+    if session_id.is_empty() || session_id == "cancelled" {
+        return page(
+            "Checkout cancelled",
+            "Nothing was charged. Go back to the Virtues app — you can try again there, \
+             or skip and run your server LAN-only.",
+        );
+    }
+    let paid = match super::claim::verify_and_claim_session(&state, &session_id).await {
+        Ok(p) => p,
+        Err(e) if e.code == "session_already_claimed" => {
+            // A refresh of the success page. The work is done; say so.
+            return page(
+                "Subscription active",
+                "This payment was already processed. Go back to the Virtues app — it \
+                 continues on its own.",
+            );
+        }
+        Err(e) => {
+            tracing::warn!("account checkout finalize failed: {} {}", e.code, e.message);
+            super::claim::release_session_claim(&state, &session_id).await;
+            return page(
+                "Payment not confirmed",
+                "We couldn't confirm the payment yet. If you completed checkout, wait a \
+                 moment and refresh this page; nothing is lost.",
+            );
+        }
+    };
+
+    let candidate_account_id = super::claim::new_account_id();
+    let account_id: Result<(String,), _> = sqlx::query_as(
+        r#"
+        INSERT INTO customers (stripe_customer_id, email, account_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (stripe_customer_id) DO UPDATE SET email = $2
+        RETURNING account_id
+        "#,
+    )
+    .bind(&paid.stripe_customer_id)
+    .bind(&paid.email)
+    .bind(&candidate_account_id)
+    .fetch_one(&state.pool)
+    .await;
+    let (account_id,) = match account_id {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("account checkout customer upsert failed: {e:#}");
+            super::claim::release_session_claim(&state, &session_id).await;
+            return page("Something went wrong", "Payment went through but we couldn't finish. Refresh this page to retry.");
+        }
+    };
+    if let Err(e) = sqlx::query(
+        r#"
+        INSERT INTO subscriptions (stripe_subscription_id, stripe_customer_id, status, current_period_end)
+        VALUES ($1, $2, 'active', $3)
+        ON CONFLICT (stripe_subscription_id)
+        DO UPDATE SET status = 'active', current_period_end = $3
+        "#,
+    )
+    .bind(&paid.stripe_subscription_id)
+    .bind(&paid.stripe_customer_id)
+    .bind(paid.period_end)
+    .execute(&state.pool)
+    .await
+    {
+        tracing::warn!("account checkout subscription upsert failed: {e:#}");
+        super::claim::release_session_claim(&state, &session_id).await;
+        return page("Something went wrong", "Payment went through but we couldn't finish. Refresh this page to retry.");
+    }
+    // The sessions minted before payment carry no customer — this is the write
+    // that flips `entitled` for the app's /account/session poll. Scoped to
+    // keyless sessions so a session already on another customer is untouched.
+    if let Err(e) = sqlx::query(
+        "UPDATE account_session SET stripe_customer_id = $1 \
+         WHERE email = $2 AND stripe_customer_id IS NULL",
+    )
+    .bind(&paid.stripe_customer_id)
+    .bind(&paid.email)
+    .execute(&state.pool)
+    .await
+    {
+        tracing::warn!("account checkout session repoint failed: {e:#}");
+    }
+    // First month's wallet. Best-effort: `invoice.paid` re-sets it monthly,
+    // and virtues-api's credit upserts the account row itself.
+    if let Err(e) = state
+        .virtues_api
+        .credit(&crate::virtues_api_client::Credit {
+            account_id,
+            amount_micros: state.credit.renewal_micros,
+            mode: "set",
+            reference: Some(format!("account-checkout:{session_id}")),
+        })
+        .await
+    {
+        tracing::warn!("account checkout initial credit failed (invoice.paid will cover it): {e:#}");
+    }
+    page(
+        "Subscription active ✓",
+        "Go back to the Virtues app — it notices on its own and carries on with your \
+         server's setup.",
+    )
 }
 
 // ─── POST /account/session ──────────────────────────────────────────────────
@@ -234,39 +420,46 @@ async fn session_info(State(state): State<AppState>, headers: HeaderMap) -> impl
     let Some(sess) = authed(&state, &headers).await else {
         return err(StatusCode::UNAUTHORIZED, "unauthorized", "sign in again");
     };
-    let entitled = is_entitled(&state, sess.customer_id.as_deref()).await;
+    // Advisory (same as at sign-in): the grant path re-checks. A read error
+    // defaults to not-entitled with a log, never a wrong grant.
+    let entitled = is_entitled(&state, sess.customer_id.as_deref()).await.unwrap_or_else(|e| {
+        tracing::warn!("entitlement check at session_info failed (defaulting to not-entitled): {e:#}");
+        false
+    });
     (StatusCode::OK, Json(json!({ "email": sess.email, "entitled": entitled }))).into_response()
 }
 
-// ─── POST /init/grant — NOT YET, and the reason matters ────────────────────
+// ─── POST /init/grant — NOT YET, but no longer blocked ─────────────────────
 //
 // The endpoint that would remove the browser from onboarding: a signed-in app
 // asks for a pre-approved `device_code` and carries it to the box over
-// Bluetooth. It is deliberately absent, because minting a device credential
-// today does:
+// Bluetooth (RPC 0x82, already built box-side). It was deliberately absent
+// while atlas held ONE api key per customer — a second box linking rotated
+// the first box's credential and silently killed it, and building the grant
+// on that would have baked the single-box limit into the very feature meant
+// to remove it.
 //
-//     INSERT INTO customers … ON CONFLICT DO UPDATE SET api_key_hash = $3
+// That blocker fell 2026-08-24: migration 0015 introduced per-box keys
+// (`box_key`, scoped by the box's self-reported endpoint_id;
+// claim.rs::mint_box_key / customer_id_by_key_hash). What remains is the
+// grant itself — see docs/one-wire-plan.md, Phase 2.
 //
-// — one api key per CUSTOMER (claim.rs). So linking a second box rotates the
-// first box's credential and silently kills it. Building the grant on that
-// would bake the single-box limit into the very feature meant to remove it,
-// and would do it invisibly, at the moment a household adds their second box.
-//
-// The fix is per-box keys — a `device_keys`-shaped table keyed by the box's
-// EndpointId, with `customers.api_key_hash` retired — and it wants its own
-// change with its own migration. See docs/onboarding-plan.md, "Billing
-// correctness".
+// `POST /init/approve` (link.rs) is NOT this endpoint, though it looks
+// adjacent: it approves the box's own in-flight link — the same attach
+// `login_verify` already performs on a magic-link click, with a session
+// bearer as the proof instead of a clicked email. It inherits the
+// single-key rotation exactly as the magic link does; it does not extend it.
 //
 // ─── shared ─────────────────────────────────────────────────────────────────
 
-struct Session {
-    email: String,
-    customer_id: Option<String>,
+pub(super) struct Session {
+    pub(super) email: String,
+    pub(super) customer_id: Option<String>,
 }
 
 /// Resolve a `Authorization: Bearer <token>` into a live session, refreshing
 /// `last_seen_at` so the account page can show honest device activity.
-async fn authed(state: &AppState, headers: &HeaderMap) -> Option<Session> {
+pub(super) async fn authed(state: &AppState, headers: &HeaderMap) -> Option<Session> {
     let raw = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())?
@@ -290,8 +483,18 @@ async fn authed(state: &AppState, headers: &HeaderMap) -> Option<Session> {
 }
 
 /// Does this customer have an active subscription right now?
-async fn is_entitled(state: &AppState, customer_id: Option<&str>) -> bool {
-    let Some(cid) = customer_id else { return false };
+///
+/// Returns `Result` rather than a bare bool BECAUSE the answer gates money:
+/// `/init/approve` routes a `false` to browser checkout, so a swallowed query
+/// error (`.unwrap_or(false)`) would send a paying customer to pay again — the
+/// exact "turn a broken query into a plausible value" failure CLAUDE.md bans.
+/// A `None` customer_id is a real, non-error `false`: no Stripe customer means
+/// nothing is subscribed.
+pub(super) async fn is_entitled(
+    state: &AppState,
+    customer_id: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let Some(cid) = customer_id else { return Ok(false) };
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM subscriptions
          WHERE stripe_customer_id = $1 AND status = 'active')",
@@ -299,7 +502,6 @@ async fn is_entitled(state: &AppState, customer_id: Option<&str>) -> bool {
     .bind(cid)
     .fetch_one(&state.pool)
     .await
-    .unwrap_or(false)
 }
 
 /// Six digits. Uniform over 000000..=999999 — no modulo bias, and leading zeros

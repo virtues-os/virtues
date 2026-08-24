@@ -199,7 +199,7 @@ pub fn model_for_slot(slot: virtues_registry::models::ModelSlot) -> String {
 /// [`model_for_slot`].
 ///
 /// Exists for the BYO fork. A model id is an *address on a specific gateway*,
-/// not a name: `xai/grok-4.5` is where our gateway keeps the chat model, and
+/// not a name: `spacexai/grok-4.5` is where our gateway keeps the chat model, and
 /// means nothing on someone else's. Callers build bodies with our address, so
 /// the fork has to turn it back into the role it stands for before it can look
 /// up the user's address for that role.

@@ -193,8 +193,15 @@ pub async fn poll(
     };
 
     let resp = send_with_retry(|| {
+        // `endpoint_id` labels the per-box key atlas mints when this poll
+        // redeems a GRANTED link (attach-at-redemption; one-wire-plan). A
+        // label, never authorization — atlas treats it accordingly. None in
+        // the rare pre-bind race, which degrades to an unlabeled key.
         http.post(format!("{}/init/poll", atlas_url.trim_end_matches('/')))
-            .json(&serde_json::json!({ "device_code": device_code }))
+            .json(&serde_json::json!({
+                "device_code": device_code,
+                "endpoint_id": crate::relay::box_endpoint_id(),
+            }))
     })
     .await
     .context("POST /init/poll")?;

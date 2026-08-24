@@ -36,7 +36,7 @@ use sqlx::PgPool;
 use crate::error::{Error, Result};
 use crate::fetch;
 use crate::virtues_api::client::{BearerClient, Purpose};
-use virtues_registry::models::{default_model_for_slot, ModelSlot};
+use virtues_registry::models::ModelSlot;
 
 /// Bookmarks enriched in one run. Small on purpose: the applet is on a cron, so
 /// a modest batch every few minutes drains a backlog without one run holding a
@@ -337,7 +337,7 @@ async fn enrich_one(db: &PgPool, client: &BearerClient, item: &Claimed) -> Resul
     }
 
     let record = compose_record(client, &page).await?;
-    let model = default_model_for_slot(ModelSlot::Lite);
+    let model = crate::api::model_catalog::model_for_slot(ModelSlot::Lite);
 
     // COALESCE on the way in: a sync source that supplied a title owns it, and
     // enrichment must not overwrite what a source asserted. It fills gaps only.
@@ -421,7 +421,7 @@ async fn compose_record(client: &BearerClient, page: &fetch::FetchedPage) -> Res
     );
 
     let body = serde_json::json!({
-        "model": default_model_for_slot(ModelSlot::Lite),
+        "model": crate::api::model_catalog::model_for_slot(ModelSlot::Lite),
         "messages": [
             { "role": "system", "content": SYSTEM_PROMPT },
             { "role": "user", "content": user_content },

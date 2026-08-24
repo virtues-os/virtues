@@ -74,14 +74,26 @@ pub(crate) struct FinalizeErr {
     pub message: String,
 }
 
-/// Verify a paid Stripe Checkout session, mint a fresh api_key, and
-/// upsert the customer + subscription. Shared by `POST /claim` (success-URL
-/// post-back) and the device-link completion handler — one place that turns a
-/// paid session into an api_key, so the two paths can't drift.
-pub(crate) async fn finalize_paid_session(
+/// A Stripe checkout session that passed every guard: paid, complete,
+/// subscription-mode, our price, with a customer. What both finalizers (the
+/// device-link claim and the account checkout) build on — extracted so the
+/// two can never drift on what "paid" means.
+pub(crate) struct PaidSession {
+    pub stripe_customer_id: String,
+    pub stripe_subscription_id: String,
+    pub email: String,
+    pub period_end: chrono::DateTime<Utc>,
+    pub metadata_user_code: Option<String>,
+}
+
+/// Anti-replay-claim the session id, retrieve it from Stripe, and run every
+/// C1 guard. On Err the claim is NOT released — callers that want a retry to
+/// be possible call [`release_session_claim`] themselves, because only they
+/// know whether the failure happened before or after anything irreversible.
+pub(crate) async fn verify_and_claim_session(
     state: &AppState,
     session_id: &str,
-) -> Result<Finalized, FinalizeErr> {
+) -> Result<PaidSession, FinalizeErr> {
     if !state.stripe.is_configured() {
         return Err(FinalizeErr {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -203,6 +215,42 @@ pub(crate) async fn finalize_paid_session(
         .and_then(|ts| Utc.timestamp_opt(ts, 0).single())
         .unwrap_or_else(|| Utc::now() + chrono::Duration::days(30));
 
+    let metadata_user_code = session
+        .metadata
+        .get("user_code")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    Ok(PaidSession {
+        stripe_customer_id,
+        stripe_subscription_id,
+        email,
+        period_end,
+        metadata_user_code,
+    })
+}
+
+/// Release the anti-replay claim so the caller's retry can re-run finalize.
+pub(crate) async fn release_session_claim(state: &AppState, session_id: &str) {
+    let _ = sqlx::query("DELETE FROM claimed_sessions WHERE stripe_session_id = $1")
+        .bind(session_id)
+        .execute(&state.pool)
+        .await;
+}
+
+pub(crate) async fn finalize_paid_session(
+    state: &AppState,
+    session_id: &str,
+) -> Result<Finalized, FinalizeErr> {
+    let PaidSession {
+        stripe_customer_id,
+        stripe_subscription_id,
+        email,
+        period_end,
+        metadata_user_code,
+    } = verify_and_claim_session(state, session_id).await?;
+
     // Mint a fresh device api_key (the box's single credential).
     let api_key = random_token();
     let api_key_hash = sha256(api_key.as_bytes());
@@ -256,6 +304,31 @@ pub(crate) async fn finalize_paid_session(
         internal("subscription upsert failed")
     })?;
 
+    // Which box is this checkout for? The link row carries the endpoint_id
+    // the box self-reported at /init/start (migration 0015); the checkout
+    // session was stamped onto that row before the Stripe redirect. A missing
+    // ROW is a real, benign None (older boxes; checkouts with no device link,
+    // e.g. store pre-orders) and keeps the whole-account rotation. A QUERY
+    // ERROR is not: degrading it to None would turn a transient DB blip into
+    // a whole-account rotation that kills every sibling box's key — silently
+    // un-fixing the bug per-box keys exist to fix (review finding,
+    // 2026-08-24). Fail the finalize instead; the claim is released below and
+    // the box's retry is safe.
+    let endpoint_id: Option<String> = match sqlx::query_scalar(
+        "SELECT endpoint_id FROM device_link WHERE stripe_session_id = $1",
+    )
+    .bind(session_id)
+    .fetch_optional(&state.pool)
+    .await
+    {
+        Ok(row) => row.flatten(),
+        Err(e) => {
+            tracing::warn!("device_link endpoint lookup failed, releasing claim for retry: {e:#}");
+            release_session_claim(state, session_id).await;
+            return Err(internal("endpoint lookup failed — please retry"));
+        }
+    };
+
     // Register the device key with virtues-api and fund this period's wallet.
     // A fresh paid checkout funds the monthly allotment immediately ($20);
     // invoice.paid keeps it fresh monthly.
@@ -265,22 +338,29 @@ pub(crate) async fn finalize_paid_session(
     // (transient virtues-api blip) we must RELEASE the claim — otherwise the
     // box gets a 500, never received the api_key, and its retry would hit
     // `session_already_claimed` forever (bricked checkout). Both calls are
-    // idempotent (register replaces the account's key; credit `set` overwrites),
-    // so re-running the whole finalize on the box's retry is safe.
+    // idempotent (register replaces the box's — or, unlabeled, the account's —
+    // key; credit `set` overwrites), so re-running the whole finalize on the
+    // box's retry is safe.
     let provision = async {
         state
             .virtues_api
             .register_device(&RegisterDevice {
-                // TODO(per-box keys): atlas learns the box's EndpointId through
-                // `/iroh/register`, a separate call, so it is not in hand here.
-                // None keeps the historical whole-account rotation; the
-                // virtues-api side already scopes per box when told which one.
-                box_id: None,
+                box_id: endpoint_id.clone(),
                 api_key_hash: hex::encode(&api_key_hash),
                 account_id: account_id.clone(),
             })
             .await
             .context("register_device")?;
+        // virtues-api holds the key; now record it atlas-side, scoped to the
+        // box (register-before-record, same ordering doctrine as link.rs).
+        mint_box_key(
+            &state.pool,
+            &stripe_customer_id,
+            endpoint_id.as_deref(),
+            &api_key_hash[..],
+        )
+        .await
+        .context("mint_box_key")?;
         state
             .virtues_api
             .credit(&Credit {
@@ -296,18 +376,9 @@ pub(crate) async fn finalize_paid_session(
     .await;
     if let Err(e) = provision {
         tracing::warn!("provisioning failed, releasing claim for retry: {e:#}");
-        let _ = sqlx::query("DELETE FROM claimed_sessions WHERE stripe_session_id = $1")
-            .bind(session_id)
-            .execute(&state.pool)
-            .await;
+        release_session_claim(state, session_id).await;
         return Err(internal("provisioning failed — please retry"));
     }
-
-    let metadata_user_code = session
-        .metadata
-        .get("user_code")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
 
     Ok(Finalized {
         api_key,
@@ -315,6 +386,91 @@ pub(crate) async fn finalize_paid_session(
         session_id: session_id.to_string(),
         metadata_user_code,
     })
+}
+
+/// Resolve an api_key hash → owning `stripe_customer_id`, per-box keys first.
+///
+/// THE one lookup behind every key-authenticated atlas endpoint (credits,
+/// billing portal, settings) — it used to live as four hand-copied
+/// `WHERE api_key_hash = $1` queries, which is exactly how a schema change
+/// misses a door. `box_key` (authoritative, one row per live box) wins over
+/// the legacy `customers.api_key_hash` mirror; the `pri` ordering makes that
+/// preference explicit rather than an accident of UNION order.
+pub(crate) async fn customer_id_by_key_hash(
+    pool: &sqlx::PgPool,
+    key_hash: &[u8],
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT stripe_customer_id FROM (
+            SELECT stripe_customer_id, 0 AS pri FROM box_key   WHERE api_key_hash = $1
+            UNION ALL
+            SELECT stripe_customer_id, 1 AS pri FROM customers WHERE api_key_hash = $1
+        ) t
+        ORDER BY pri
+        LIMIT 1
+        "#,
+    )
+    .bind(key_hash)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Record a freshly minted box key, scoped to the box that earned it.
+///
+/// Known `endpoint_id` → replace only THAT box's key (a second box linking no
+/// longer kills the first box's credential — the whole point of per-box
+/// keys). Unknown (older box that never identified itself) → the historical
+/// whole-account rotation, matching what virtues-api's `register_device`
+/// does for a `box_id: None` on its side, so the two systems never disagree
+/// about which keys are alive.
+///
+/// Also mirrors the hash into `customers.api_key_hash` (most-recent-key
+/// semantics) so a rolled-back atlas binary keeps authenticating.
+pub(crate) async fn mint_box_key(
+    pool: &sqlx::PgPool,
+    stripe_customer_id: &str,
+    endpoint_id: Option<&str>,
+    api_key_hash: &[u8],
+) -> Result<(), sqlx::Error> {
+    match endpoint_id {
+        Some(ep) => {
+            // `OR endpoint_id IS NULL` is load-bearing: SQL `=` never matches
+            // NULL, so without it every backfilled/legacy unlabeled key would
+            // survive its box's re-link FOREVER — an immortal live credential
+            // (review finding, 2026-08-24). The NULL row is the account's old
+            // shared single key; the first labeled attach retires it, exactly
+            // as the legacy whole-account rotation would have.
+            sqlx::query(
+                "DELETE FROM box_key WHERE stripe_customer_id = $1 \
+                 AND (endpoint_id = $2 OR endpoint_id IS NULL)",
+            )
+            .bind(stripe_customer_id)
+            .bind(ep)
+            .execute(pool)
+            .await?;
+        }
+        None => {
+            sqlx::query("DELETE FROM box_key WHERE stripe_customer_id = $1")
+                .bind(stripe_customer_id)
+                .execute(pool)
+                .await?;
+        }
+    }
+    sqlx::query(
+        "INSERT INTO box_key (api_key_hash, stripe_customer_id, endpoint_id) VALUES ($1, $2, $3)",
+    )
+    .bind(api_key_hash)
+    .bind(stripe_customer_id)
+    .bind(endpoint_id)
+    .execute(pool)
+    .await?;
+    sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
+        .bind(stripe_customer_id)
+        .bind(api_key_hash)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// A random 32-byte hex token (api_key / device_code shape).

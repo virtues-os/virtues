@@ -76,6 +76,25 @@ async fn resolve_active_customer(
 ) -> Result<String, axum::response::Response> {
     let token_hash = sha256(api_key.as_bytes());
 
+    // Per-box keys first, legacy column fallback — via the shared lookup.
+    let cid = super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..])
+        .await
+        .map_err(|e| {
+            tracing::warn!("key lookup failed: {e:#}");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "customer lookup failed",
+            )
+        })?;
+    let Some(cid) = cid else {
+        return Err(err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_api_key",
+            "unknown api key",
+        ));
+    };
+
     let row: Option<(String, Option<String>)> = sqlx::query_as(
         r#"
         SELECT c.stripe_customer_id,
@@ -84,10 +103,10 @@ async fn resolve_active_customer(
                 ORDER BY s.current_period_end DESC NULLS LAST
                 LIMIT 1) AS sub_status
         FROM customers c
-        WHERE c.api_key_hash = $1
+        WHERE c.stripe_customer_id = $1
         "#,
     )
-    .bind(&token_hash[..])
+    .bind(&cid)
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| {
