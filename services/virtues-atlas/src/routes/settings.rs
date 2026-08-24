@@ -58,15 +58,26 @@ async fn get_settings(
 ) -> axum::response::Response {
     let token_hash = sha256(body.api_key.as_bytes());
 
+    // Per-box keys first, legacy fallback — via the shared lookup (claim.rs).
+    let Ok(Some(cid)) =
+        super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..]).await
+    else {
+        return err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_api_key",
+            "unknown api key",
+        );
+    };
+
     let row: Option<(i64, bool, i64, i64)> = sqlx::query_as(
         r#"
         SELECT monthly_cap_micros, auto_topup_enabled,
                monthly_charges_micros, COALESCE(EXTRACT(EPOCH FROM month_reset_at)::bigint, 0)
         FROM customers
-        WHERE api_key_hash = $1
+        WHERE stripe_customer_id = $1
         "#,
     )
-    .bind(&token_hash[..])
+    .bind(&cid)
     .fetch_optional(&state.pool)
     .await
     .ok()
@@ -108,16 +119,27 @@ async fn put_settings(
     }
     let token_hash = sha256(body.api_key.as_bytes());
 
+    // Per-box keys first, legacy fallback — via the shared lookup (claim.rs).
+    let Ok(Some(cid)) =
+        super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..]).await
+    else {
+        return err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_api_key",
+            "unknown api key",
+        );
+    };
+
     // Partial update: only touch fields the client sent.
     let result = sqlx::query(
         r#"
         UPDATE customers
         SET monthly_cap_micros   = COALESCE($2, monthly_cap_micros),
             auto_topup_enabled   = COALESCE($3, auto_topup_enabled)
-        WHERE api_key_hash = $1
+        WHERE stripe_customer_id = $1
         "#,
     )
-    .bind(&token_hash[..])
+    .bind(&cid)
     .bind(body.monthly_cap_micros)
     .bind(body.auto_topup_enabled)
     .execute(&state.pool)
