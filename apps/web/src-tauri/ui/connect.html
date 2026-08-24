@@ -2449,10 +2449,10 @@ its devices apart — type its address.",
           } catch { /* fall through to the form */ }
           if (cancelled) auto = null;
           if (auto && !cancelled) {
-            const done = await submitPairBle(server, auto);
+            const done = await submitPairAnyWire(server, auto);
             if (done.ok) return;
-            // Fell through. Carry the reason onto the form: silence here reads
-            // as the app having ignored the tap.
+            // Fell through on BOTH wires. Carry the reason onto the form:
+            // silence here reads as the app having ignored the tap.
             autoErr = done.error;
           }
         }
@@ -2478,9 +2478,11 @@ its devices apart — type its address.",
           bleWifiPicker({ id: server.bleId, name: server.name }));
         document.getElementById('form').addEventListener('submit', (e) => {
           e.preventDefault();
-          // A chip carrying a BLE id pairs over Bluetooth — immune to LANs
-          // that isolate clients; the box relays the code to itself (0x83).
-          if (server.bleId) submitPairBle(server); else submitPair(server.origin);
+          // A chip carrying a BLE id pairs over Bluetooth first — immune to
+          // LANs that isolate clients; the box relays the code to itself
+          // (0x83) — and falls over to the LAN with the same code when the
+          // radio is stuck, since the wires are equivalent by design.
+          if (server.bleId) submitPairAnyWire(server); else submitPair(server.origin);
         });
         document.getElementById('code').focus();
       }
@@ -2511,28 +2513,33 @@ its devices apart — type its address.",
 
       // `server` is the chosen box's origin (chip flow) or whatever the manual
       // form holds — the caller decides, this just pairs against it.
-      async function submitPair(server) {
+      // `preset` lets the BLE→LAN fallback reuse the code it already holds
+      // when the form may be gone.
+      async function submitPair(server, preset) {
         const msg = document.getElementById('msg');
         const go = document.getElementById('go');
-        const say = (t, cls) => { msg.className = 'msg ' + (cls || ''); msg.textContent = t; };
-        const code = document.getElementById('code').value.replace(/\s+/g, '');
+        const say = (t, cls) => { if (msg) { msg.className = 'msg ' + (cls || ''); msg.textContent = t; } };
+        const typed = document.getElementById('code');
+        const code = (preset || (typed ? typed.value : '')).replace(/\s+/g, '');
         if (!server || code.length < 6) {
           return say('Enter the 6-digit code from the server\'s display.', 'err');
         }
-        go.disabled = true;
+        if (go) go.disabled = true;
         say('Pairing…');
         try {
           const status = await invoke('plugin:reach|pair', { payload: { server, code } });
           if (status.paired) {
             say('Paired — opening your server…', 'ok');
             await finishPairing(say);
-          } else {
-            say('Pairing did not complete. Check the code and try again.', 'err');
-            go.disabled = false;
+            return true;
           }
+          say('Pairing did not complete. Check the code and try again.', 'err');
+          if (go) go.disabled = false;
+          return false;
         } catch (err) {
           say(String(err), 'err');
-          go.disabled = false;
+          if (go) go.disabled = false;
+          return false;
         }
       }
 
@@ -2561,22 +2568,42 @@ its devices apart — type its address.",
         if (go) go.disabled = true;
         say('Pairing over Bluetooth…');
         try {
-          const res = await invoke('plugin:reach|improv_pair', { id: server.bleId, code });
+          // Timeboxed like every other BLE call now: the 0x83 write hung a
+          // real pairing indefinitely on a dying link (bench, 2026-08-24) —
+          // while the box sat reachable on the LAN the whole time. On timeout
+          // or failure, the caller falls over to the network path.
+          const res = await withDeadline(
+            invoke('plugin:reach|improv_pair', { id: server.bleId, code }), 25000);
           if (res && res.ok) {
             say('Paired — opening your server…', 'ok');
             invoke('plugin:reach|improv_disconnect').catch(() => {});
             await finishPairing(say);
             return { ok: true };
           }
-          const why = (res && res.error) || 'Pairing did not complete. Check the code and try again.';
+          const why = res === null
+            ? 'Bluetooth timed out.'
+            : (res && res.error) || 'Pairing did not complete. Check the code and try again.';
           say(why, 'err');
           if (go) go.disabled = false;
-          return { ok: false, error: why };
+          return { ok: false, error: why, code };
         } catch (err) {
           say(String(err), 'err');
           if (go) go.disabled = false;
-          return { ok: false, error: String(err) };
+          return { ok: false, error: String(err), code };
         }
+      }
+
+      // BLE pair with a LAN net under it. The wires are equivalent by design
+      // ("from here on the app can't tell which wire it paired over"), so a
+      // Bluetooth failure with the box visible on the network is never worth
+      // reporting to a human — try the other wire with the same code first.
+      async function submitPairAnyWire(server, preset) {
+        const r = await submitPairBle(server, preset);
+        if (r.ok || !server.origin || !r.code) return r;
+        const msg = document.getElementById('msg');
+        if (msg) { msg.className = 'msg'; msg.textContent = 'Bluetooth is stuck — pairing over your network instead…'; }
+        const lanOk = await submitPair(server.origin, r.code);
+        return lanOk ? { ok: true } : r;
       }
 
       // ── launch ────────────────────────────────────────────────────────────
