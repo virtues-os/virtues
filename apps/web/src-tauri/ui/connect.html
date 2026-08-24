@@ -682,7 +682,28 @@
           if (say) say('Connected, but starting the local link failed: ' + e, 'err');
           return;
         }
-        const ready = await waitForBoxUrl(20000);
+        // OWN SCREEN from here — pairing succeeded, so the pairing screen's
+        // leftovers (its "enter the code myself" escape especially) must not
+        // linger under a wait that can take a while. This also replaces the
+        // old silent behavior at the timeout: `window.location.href` against a
+        // loopback that isn't answering keeps the CURRENT page on screen while
+        // WebKit waits on the navigation — a freeze with no message, seen live
+        // 2026-08-24 right after a fresh box's first pairing, when iroh is
+        // still finding its path (10-15s is normal, longer on a fresh join;
+        // every failed probe logs "network connection lost" to the console).
+        setServer(state.bleBox ? state.bleBox.name : '');
+        app.innerHTML = `
+          <p class="kicker">Paired</p>
+          <h1>Opening your server</h1>
+          <div class="wait"><span class="pip"></span><span id="openstage">Connecting to it from this computer…</span></div>
+          <p class="hint">The pairing is saved — this is just the two of them finding
+            each other on the network, and it can take a minute the first time.</p>`;
+        let ready = await waitForBoxUrl(20000);
+        if (!ready) {
+          const st = document.getElementById('openstage');
+          if (st) st.textContent = 'Still connecting — a fresh network can take a minute…';
+          ready = await waitForBoxUrl(75000);
+        }
         if (ready) {
           try {
             const res = await fetch(BOX_URL + '/api/pair/mint-collector', { method: 'POST' });
@@ -693,11 +714,26 @@
           } catch (e) {
             console.warn('[connect] collector not installed; use Sources → This Mac', e);
           }
-        } else if (say) {
-          say('Connected — the local link is taking a moment to start…', '');
+          await offerUpgrade();
+          window.location.href = BOX_URL;
+          return;
         }
-        if (ready) await offerUpgrade();
-        window.location.href = BOX_URL;
+        // Paired but unreachable from here after ~95s. Say so honestly with
+        // ways forward — never a blind navigation that freezes the page.
+        app.innerHTML = `
+          <p class="kicker">Paired</p>
+          <h1>Paired, but can't reach it yet</h1>
+          <p class="sub">The pairing worked and is saved — this computer just can't
+            open a connection to your server right now. Its network may still be
+            settling after setup.</p>
+          <button class="primary" id="retry">Keep trying</button>
+          <button class="secondary" id="anyway">Open anyway</button>
+          <p class="hint">Quitting and reopening the app later works too — it
+            reconnects on its own.</p>`;
+        document.getElementById('retry').addEventListener('click', () => finishPairing());
+        document.getElementById('anyway').addEventListener('click', () => {
+          window.location.href = BOX_URL;
+        });
       }
 
       // ── THE BOX MAY HAVE SHIPPED MONTHS AGO ───────────────────────────────
@@ -2332,7 +2368,7 @@ its devices apart — type its address.",
             <h1>Pairing</h1>
             <div class="wait"><span class="pip"></span><span>Asking your server to let this ${esc(THIS_DEVICE.replace(/^this /, ''))} in</span></div>
             <div class="msg" id="msg"></div>
-            <button class="back" id="autocancel" style="margin-top:18px">Enter the code myself →</button>`;
+            <button class="back" id="autocancel" style="margin-top:18px">Stuck? Type the code from its display instead</button>`;
           // A WAY OUT, always. This screen waits on the box and had no escape:
           // a Bluetooth call that hangs left an owner staring at a pip with no
           // button on the page (live, 2026-08-13).
