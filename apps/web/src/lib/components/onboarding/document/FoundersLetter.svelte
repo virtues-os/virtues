@@ -63,9 +63,9 @@
 			     cannot afford. -->
 			<p>
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
-				idea that a thing belongs at the most local level able to hold it. Nothing is more
-				local than your own life. So ask plainly: who would you rather have holding the
-				whole account of your life — a government, a political party, big tech? Or you.
+				idea that a thing belongs at the most local level that can hold it. Nothing is more
+				local than your own life. So ask plainly: who should hold the whole account of your
+				life — a government, a political party, big tech? Or you.
 			</p>
 
 			<!-- THE PREMISE. Two claims: capability (you can hold this yourself)
@@ -78,10 +78,10 @@
 			     explains it. -->
 			<p>
 				Virtues rests on a simple premise: the data of your life is yours by right, and
-				yours to hold. It is the most intimate thing you have, and it is used against you —
-				as ads, algorithms, and addictions. Vice is repetitive and profitable, which is why
-				so much is arranged to produce it. Virtue asks for harder things — attention,
-				memory, honesty, intimacy.
+				yours to hold. It is the most intimate thing you have, and today it is turned
+				against you — into ads, algorithms, and addictions. Vice is repetitive and
+				profitable, which is why so much is arranged to produce it. Virtue asks for harder
+				things — attention, memory, honesty, intimacy.
 			</p>
 
 			<!-- THE LEDGER. ¶1 called it "the whole account of your life", so the
@@ -182,9 +182,9 @@
 			<p>
 				The goal is to know yourself more intimately than any company or model ever
 				will — a mirror for everything you had let slip, a way to search your own life.
-				Growing older is less about discovering the new than remembering what you already
-				knew. That is the only way technology should be used: to give back the part of
-				life that has nothing to do with it — to make us more human, and more virtuous.
+				Because growing older is less about discovering new things than remembering what
+				you already knew. And technology has one good use: to give back the part of life
+				that has nothing to do with technology — to make us more human, and more virtuous.
 			</p>
 		</div>
 
