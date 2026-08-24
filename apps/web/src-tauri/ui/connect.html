@@ -1535,6 +1535,11 @@ its devices apart — type its address.",
       // subscription owns slower, LAN-only hardware — not a brick.
       async function renderLinkStep(server, ssid) {
         state.linkServer = server;
+        // The code carried INTO a sign-in, captured at the click (below).
+        // Cleared on every entry so it can never leak across boxes or across
+        // separate link attempts — the bounded version of the global-cache
+        // staleness the review killed.
+        state.signinCode = null;
         setServer(server.name);
         const draw = (statusHtml) => {
           app.innerHTML = `
@@ -1571,6 +1576,22 @@ its devices apart — type its address.",
           // it opens a browser and stays here so the landing is noticed.)
           document.getElementById('openlink').addEventListener('click', () => {
             searchGen++;
+            // CAPTURE THE CODE NOW, while it is provably live — the watcher
+            // refreshed it within the last 3s and this button only enables
+            // with one in hand. Sign-in takes minutes of human time, and the
+            // BLE setup session routinely dies in that window (idle drop; or
+            // the box leaves setup entirely), so approve must NOT depend on
+            // reading the radio again afterward. Atlas validates the code
+            // server-side, and the OTP minutes sit well inside the 15-minute
+            // code TTL; if it does expire, atlas names it and the retry falls
+            // back to a BLE re-read. This is what stranded a real setup on
+            // 2026-08-24: a code in hand, discarded, then demanded back from
+            // a radio that could no longer answer.
+            state.signinCode = state.linkCode;
+            // Already signed in this setup? Go straight back to approving —
+            // the session outlives any screen bounce, so email + OTP happen
+            // at most once.
+            if (state.linkToken) return renderInlineApprove(server, ssid, state.linkToken);
             renderInlineSignin(server, ssid);
           });
           document.getElementById('newacct').addEventListener('click', () => go('/checkout'));
@@ -1862,6 +1883,12 @@ its devices apart — type its address.",
           say('Checking…');
           const res = await atlasPost('/account/login/verify', { email, code });
           if (res && res.ok && res.token) {
+            // KEEP the session for the whole setup. It is a long-lived
+            // revocable bearer, and losing it to a screen bounce (approve
+            // fails → Back → link step) forced a second email + OTP for a
+            // sign-in that had already succeeded. The link step's
+            // already-have-an-account door checks this first.
+            state.linkToken = res.token;
             // `entitled` rides back with the session, so an account with no
             // subscription learns it NOW — before an approve that could only
             // answer no_subscription anyway.
@@ -1909,11 +1936,23 @@ its devices apart — type its address.",
         // overran a 12s deadline on the bench (2026-08-24): the first tap
         // "failed" and the retry succeeded only because the abandoned dial had
         // finished in the background.
-        let code = null;
-        if (server.bleId) {
+        // THE CARRIED CODE FIRST. Captured at the sign-in click while the BLE
+        // link was provably alive; using it here removes the radio from the
+        // common path entirely — atlas is the validator either way. The BLE
+        // re-read below is the FALLBACK, for a retry after atlas reported the
+        // code expired (the failed screen clears the carried code first).
+        let code = state.signinCode || null;
+        // A REFUSAL is not a timeout: the box answers ok:false when 0x84 is
+        // asked without a live setup session — which happens when the BLE link
+        // dropped during the sign-in minutes and the session died with it.
+        // Lumping it into "couldn't read" hid the one detail that names the
+        // fix (re-type the phrase), and made retry-forever look reasonable.
+        let refusal = '';
+        if (!code && server.bleId) {
           try {
             const r = await withDeadline(
               invoke('plugin:reach|improv_link_code', { id: server.bleId }), 20000);
+            if (r && r.ok === false) refusal = String(r.error || 'it refused the request');
             if (r && r.ok && r.code) {
               code = r.code;
             } else if (r && r.ok) {
@@ -1934,9 +1973,12 @@ its devices apart — type its address.",
         if (gen !== searchGen) return;
         if (!code) {
           return renderInlineFailed(server, ssid, token,
-            server.bleId
-              ? "Couldn't read your server's link code just now. Try again — it takes a second."
-              : "This server can't be linked from here. Finish linking on the device that set it up.");
+            refusal
+              ? `Your server turned the request down (${refusal}). Its setup session may
+                 have lapsed — typing the four words again reopens it.`
+              : server.bleId
+                ? "Couldn't read your server's link code just now. Try again — it takes a second."
+                : "This server can't be linked from here. Finish linking on the device that set it up.");
         }
         const res = await atlasPost('/init/approve', { user_code: code }, token);
         if (gen !== searchGen) return;
@@ -1967,12 +2009,14 @@ its devices apart — type its address.",
           return renderInlineNoSub(server, ssid);
         }
         if (res && (res.code === 'link_not_found' || res.code === 'link_expired')) {
-          // The session is still good; only the code moved. Retry re-fetches
-          // it over BLE, so this costs one tap, not a second email.
+          // The session is still good; only the code moved. Drop the carried
+          // copy so the retry re-reads over BLE — one tap, not a second email.
+          state.signinCode = null;
           return renderInlineFailed(server, ssid, token,
             "Your server's code changed while we were signing in. Try again — it takes a second.");
         }
         if (res && res.code === 'unauthorized') {
+          state.linkToken = null;
           return renderInlineSignin(server, ssid, 'That session expired — sign in again.');
         }
         renderInlineFailed(server, ssid, token,
@@ -1991,11 +2035,22 @@ its devices apart — type its address.",
           <p class="sub">${esc(why)}</p>
           <button class="primary" id="retry">Try again</button>
           <button class="secondary" id="back">Back</button>
+          ${server.bleId ? '<button class="back" id="rephrase" style="margin-top:16px">Session lapsed? Type the four words again</button>' : ''}
           <p class="escape"><button id="skip">Skip linking for now</button></p>`;
         document.getElementById('retry').addEventListener('click', () =>
           renderInlineApprove(server, ssid, token));
         document.getElementById('back').addEventListener('click', () =>
           renderLinkStep(server, ssid));
+        // The recovery for a dead setup session: the box only answers 0x84
+        // inside a session, and a session that died with a dropped BLE link
+        // can only be reopened by the phrase. The words left the glass when
+        // they were first accepted — this asks for the SAVED copy, which the
+        // save ceremony exists to guarantee. `next` routes the reopened
+        // session straight back here, sign-in intact.
+        const rephrase = document.getElementById('rephrase');
+        if (rephrase) rephrase.addEventListener('click', () =>
+          blePhrase({ id: server.bleId, name: server.name }, null,
+            () => renderInlineApprove(server, ssid, token)));
         document.getElementById('skip').addEventListener('click', () =>
           goToPairing(server, ssid));
       }
@@ -2022,10 +2077,11 @@ its devices apart — type its address.",
           <button class="secondary" id="back">Back</button>
           <p class="escape"><button id="skip">Skip linking for now</button></p>`;
         document.getElementById('checkout').addEventListener('click', async () => {
-          // Fresh code at the click, not the cached state.linkCode: atlas
-          // rotates codes, and /init/checkout refuses a stale one ("Link
-          // expired") — a dead end at the worst moment. Re-read over BLE.
-          let code = state.linkCode || '';
+          // Best code available at the click: the one carried through sign-in
+          // (captured live), else the link screen's cache; a BLE re-read
+          // freshens either when the radio still answers. Atlas re-validates
+          // regardless — /init/checkout refuses a stale code with its own page.
+          let code = state.signinCode || state.linkCode || '';
           if (server.bleId) {
             try {
               const r = await invoke('plugin:reach|improv_link_code', { id: server.bleId });
