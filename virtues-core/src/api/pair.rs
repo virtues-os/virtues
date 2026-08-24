@@ -806,12 +806,14 @@ pub(crate) struct BoxReach {
 }
 
 pub(crate) fn box_reach() -> Option<BoxReach> {
-    // Requires the iroh endpoint to be bound (node id known). Relay is optional
-    // — an unclaimed box has no relay but is still reachable LAN-direct via its
-    // direct addresses, so we return those even when `relay_url` is None.
-    if !crate::relay::is_relay_registered() {
-        return None;
-    }
+    // The node id is the one hard requirement — it is published before the
+    // endpoint binds, so a ticket exists even mid-rebind. The old code gated
+    // everything on `is_relay_registered()` (the bind flag), which
+    // contradicted this comment's own promise and handed out an ENTIRELY
+    // ABSENT ticket during the post-link rebind window — the app then paired
+    // against nothing and could never reach the box (audit, 2026-08-24).
+    // Relay and direct addrs are each optional; the caller gets whatever
+    // exists right now.
     let node_id = crate::relay::box_endpoint_id()?;
     Some(BoxReach {
         node_id,

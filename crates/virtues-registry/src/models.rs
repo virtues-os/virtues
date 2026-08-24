@@ -135,8 +135,12 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
         // than Opus. GLM-5.1 is the counterexample and why it is never a slot
         // default: ~300-460 reasoning tokens per turn, equally uncontrollable,
         // which stacks across an agent's tool rounds into 20s+ stalls in chat.
-        ModelSlot::Chat => "xai/grok-4.5",
-        ModelSlot::Coding => "xai/grok-4.5",
+        //
+        // Same model, new address since 2026-08-24: the gateway renamed the
+        // provider slug `xai/` -> `spacexai/`, and the old id vanished from
+        // the catalog rather than aliasing — requests to it 404.
+        ModelSlot::Chat => "spacexai/grok-4.5",
+        ModelSlot::Coding => "spacexai/grok-4.5",
         // Titles, summaries, background jobs. Measured 0 reasoning tokens at
         // every effort level — no thinking tax on the high-volume slot.
         ModelSlot::Lite => "zai/glm-4.7-flash",

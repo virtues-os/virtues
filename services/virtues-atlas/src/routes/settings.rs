@@ -58,15 +58,33 @@ async fn get_settings(
 ) -> axum::response::Response {
     let token_hash = sha256(body.api_key.as_bytes());
 
+    // Per-box keys first, legacy fallback — via the shared lookup (claim.rs).
+    // A DB error is 500, never 401: telling a box its key is dead because a
+    // query blipped is the wrong lie (review finding, 2026-08-24).
+    let cid = match super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..]).await {
+        Ok(Some(cid)) => cid,
+        Ok(None) => {
+            return err(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "unknown api key",
+            );
+        }
+        Err(e) => {
+            tracing::warn!("key lookup failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "customer lookup failed");
+        }
+    };
+
     let row: Option<(i64, bool, i64, i64)> = sqlx::query_as(
         r#"
         SELECT monthly_cap_micros, auto_topup_enabled,
                monthly_charges_micros, COALESCE(EXTRACT(EPOCH FROM month_reset_at)::bigint, 0)
         FROM customers
-        WHERE api_key_hash = $1
+        WHERE stripe_customer_id = $1
         "#,
     )
-    .bind(&token_hash[..])
+    .bind(&cid)
     .fetch_optional(&state.pool)
     .await
     .ok()
@@ -108,16 +126,34 @@ async fn put_settings(
     }
     let token_hash = sha256(body.api_key.as_bytes());
 
+    // Per-box keys first, legacy fallback — via the shared lookup (claim.rs).
+    // A DB error is 500, never 401: telling a box its key is dead because a
+    // query blipped is the wrong lie (review finding, 2026-08-24).
+    let cid = match super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..]).await {
+        Ok(Some(cid)) => cid,
+        Ok(None) => {
+            return err(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "unknown api key",
+            );
+        }
+        Err(e) => {
+            tracing::warn!("key lookup failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "customer lookup failed");
+        }
+    };
+
     // Partial update: only touch fields the client sent.
     let result = sqlx::query(
         r#"
         UPDATE customers
         SET monthly_cap_micros   = COALESCE($2, monthly_cap_micros),
             auto_topup_enabled   = COALESCE($3, auto_topup_enabled)
-        WHERE api_key_hash = $1
+        WHERE stripe_customer_id = $1
         "#,
     )
-    .bind(&token_hash[..])
+    .bind(&cid)
     .bind(body.monthly_cap_micros)
     .bind(body.auto_topup_enabled)
     .execute(&state.pool)

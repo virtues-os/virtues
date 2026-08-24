@@ -75,7 +75,9 @@
 
 	async function connect(source: SourceCatalogItem) {
 		err = null;
-		const intent = await connectIntent(source);
+		// A connect started here must land back here — the callback's default
+		// 302 into /sources dumps the person into the app mid-onboarding.
+		const intent = await connectIntent(source, { next: "/onboarding/sources" });
 		switch (intent.kind) {
 			case "pair":
 				pairDeviceType = intent.deviceType;
@@ -111,17 +113,10 @@
 </script>
 
 <div class="connect-world">
-	<!-- THE LEDE AND THE SIDENOTE BOTH LEFT WITH THE DOCUMENT.
-
-	     The lede said what the screen's own lede now says, a paragraph above it,
-	     in nearly the same words. And Marginalia hangs itself at `left: calc(100%
-	     + 2.5rem)` on wide screens, which worked only inside the old three-column
-	     grid that reserved a gutter for it — on a centered screen it flew off the
-	     right edge of the viewport.
-
-	     The receipt it carried is worth keeping, so it moved inline, under the
-	     rows it describes, where it reads as a footer on the list rather than a
-	     note about the page. -->
+	<!-- NO PROSE. The lede, the sidenote/Marginalia, the mono receipt line and
+	     the per-row second sentences all left in successive cuts (last:
+	     2026-08-21). The list is the screen: icon, name, one line of concrete
+	     nouns, a quiet Connect. Whatever needs arguing was the letter's job. -->
 	{#if err}
 		<div class="err">{err}</div>
 	{/if}
@@ -146,8 +141,6 @@
 	{#if isWindows || isLinux}
 		<p class="aside">Desktop collection for {thisComputerLabel} is coming — your phone, email, and chat history cover you for now.</p>
 	{/if}
-
-	<p class="receipt">read-only · everything stays on your box · nothing is sent to Virtues</p>
 </div>
 
 <DevicePairModal
@@ -182,18 +175,6 @@
 
 <style>
 	@reference "../../../../app.css";
-
-	/* The honest line about what connecting costs, sitting under the list it
-	   describes rather than out in a gutter this screen no longer has. */
-	.receipt {
-		margin-top: 1.25rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--color-border-subtle);
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		letter-spacing: -0.01em;
-		color: var(--color-foreground-subtle);
-	}
 
 	.device-block {
 		position: relative;

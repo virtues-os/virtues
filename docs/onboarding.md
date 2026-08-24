@@ -184,6 +184,39 @@ runs — so for one full day every dev build on the phone served a four-day-old
 connect screen and no change reached the device. An airlock must not depend on
 packaging, and must not be *overridable* by it either.
 
+## As built — the Pemberley pass (2026-08-24)
+
+The airlock got the product's own face and vocabulary; nothing about the wire
+changed.
+
+- **Light, serif, ink.** The dark-and-blue stylesheet was replaced with the
+  Pemberley register, transcribed by hand from `themes.css` `:root` (the SPA's
+  theme system does not exist when this page draws). One paper, graphite ink,
+  hairline borders, regular-weight serif headings (`ui-serif` → New York on
+  Apple WebKit, Georgia on Windows), the one blue spent only on links, focus,
+  and the live pip.
+- **Persistent chrome.** `∴ Virtues` top-left on every screen; once a specific
+  machine is in play, `Server ID · Crafty Gannet` top-right (`setServer`) —
+  the same identity check the panel offers for the two-servers-in-one-house
+  case, so the codename must match that glass exactly.
+- **"Server", not "box",** in every user-facing string (code identifiers and
+  comments still say box). The panel's waiting line is now platform-neutral:
+  "Get Virtues for your computer".
+- **The Bluetooth path pairs itself.** `goToPairing` used to render a chip
+  list with exactly one chip that had to be clicked; with a BLE session in
+  hand there is no decision on that screen, so it goes straight to
+  `renderCodeEntry`, which runs the automatic 0x85 pair and falls back to the
+  code form only when Bluetooth fails.
+- **Windows is a first-device platform.** The Rust side always was
+  (`btleplug` → WinRT; the collector commands fail soft and the airlock treats
+  them as best-effort). What was missing was the bundle:
+  `tauri.windows.conf.json` overlays the macOS-shaped base config (RFC 7396 —
+  arrays replace) with `nsis` targets, an `.ico`, no collector sidecar, and
+  `createUpdaterArtifacts: false` (Windows has no self-update; updates come
+  from the server, and the flag would demand a signing key for artifacts
+  nothing consumes). Windows still has no collector, no tray — a viewer that
+  can also be the setup instrument.
+
 ## Doctrine
 
 Four rules everything else follows from:

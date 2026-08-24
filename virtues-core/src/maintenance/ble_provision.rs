@@ -498,16 +498,11 @@ mod server {
             Command::WifiSettings { .. }
                 | Command::EnterpriseSettings { .. }
                 | Command::ClaimGrant { .. }
+                // Session-authorized AND codeless: the session is the whole
+                // proof of presence, and the box hands its own standing code
+                // to itself (see the handler). 0x84/0x85 — the RPCs that used
+                // to hand codes to the app — were deleted 2026-08-24.
                 | Command::PairConsume { .. }
-                // Not configuring, but it hands out a capability: whoever holds
-                // the link code can attach this box to their own account.
-                | Command::LinkCode
-                // Same shape, and the stronger capability of the two: the pair
-                // code lets a device INTO this box. Safe to hand over only
-                // because reaching here already required the phrase off the
-                // panel — which is the exact proof the six digits were asking
-                // for a second time.
-                | Command::PairCode
         );
         if needs_session && !improv.lock().await.session_is(&peer) {
             let held = improv.lock().await.session_held_elsewhere(&peer);
@@ -631,10 +626,10 @@ mod server {
                     }
                 });
             }
-            Command::PairConsume { code, kind, source, label, endpoint_id } => {
+            Command::PairConsume { kind, source, label, endpoint_id } => {
                 let improv = improv.clone();
                 tokio::spawn(async move {
-                    let body = pair_over_ble(code, kind, source, label, endpoint_id).await;
+                    let body = pair_over_ble(pool, kind, source, label, endpoint_id).await;
                     let mut g = improv.lock().await;
                     for chunk in chunk_for_results(&body) {
                         g.send_result(build_result(0x83, &[&chunk])).await;
@@ -665,70 +660,10 @@ mod server {
                     }
                 });
             }
-            Command::PairCode => {
-                let improv = improv.clone();
-                let pool = pool.clone();
-                tokio::spawn(async move {
-                    // The SAME standing code the panel would print, not a
-                    // fresh one — `ensure_standing` mints only when none is
-                    // live. Two codes valid at once is how someone ends up
-                    // typing the one that just stopped working.
-                    let code = crate::api::pair::ensure_standing(&pool)
-                        .await
-                        .map(|m| m.token)
-                        .map_err(|e| {
-                            tracing::warn!(error = %format!("{e:#}"), "ble_provision: no standing pair code");
-                        })
-                        .ok();
-                    let mut g = improv.lock().await;
-                    match code {
-                        // Empty rather than an error: the caller's fallback is
-                        // the panel, which is where the code was all along.
-                        None => g.send_result(build_result(0x85, &[])).await,
-                        Some(code) => g.send_result(build_result(0x85, &[&code])).await,
-                    }
-                });
-            }
-            Command::LinkCode => {
-                let improv = improv.clone();
-                tokio::spawn(async move {
-                    // ALREADY LINKED → nothing in flight, and say so.
-                    //
-                    // `code_and_poll` STARTS a device authorization when none is
-                    // live. The display guards it with `!linked` (display.rs);
-                    // this handler did not — so a linked box answered every ask
-                    // by opening a NEW link and returning a fresh code. The app
-                    // waits for the empty answer to know linking landed, so it
-                    // waited forever on a finished step, while the box minted a
-                    // throwaway atlas session every three seconds (2026-08-13).
-                    let linked = crate::virtues_api::renew::read_api_key(&pool)
-                        .await
-                        .ok()
-                        .flatten()
-                        .is_some();
-                    if linked {
-                        let mut g = improv.lock().await;
-                        g.send_result(build_result(0x84, &[])).await;
-                        return;
-                    }
-                    // Starts the device-authorization session if none is live,
-                    // and re-polls it — the same call the panel's heartbeat
-                    // makes, so the app and the box can never be looking at two
-                    // different codes.
-                    let code = crate::api::link_session::code_and_poll(&pool).await;
-                    let url = crate::api::link_session::verification_url(&pool)
-                        .await
-                        .unwrap_or_default();
-                    let mut g = improv.lock().await;
-                    match code {
-                        // Empty reply = nothing in flight: already linked, or no
-                        // internet yet to start one. The app reads the absence
-                        // and says so rather than showing a blank code.
-                        None => g.send_result(build_result(0x84, &[])).await,
-                        Some(code) => g.send_result(build_result(0x84, &[&code, &url])).await,
-                    }
-                });
-            }
+            // 0x84 (LinkCode) and 0x85 (PairCode) handlers were deleted
+            // 2026-08-24 with their opcodes — the grant (0x82) and the codeless
+            // 0x83 made both code hand-offs pointless. parse_rpc answers the
+            // dead opcodes with UnknownCommand before dispatch reaches here.
             Command::Identify => {
                 // No LED, no sound. Acknowledged silently; the display is the
                 // box's face and belongs to its own subsystem.
@@ -783,7 +718,7 @@ mod server {
     /// range — so BLE brings its own: same 10-per-30-minutes the LAN leg
     /// enforces, process-wide.
     async fn pair_over_ble(
-        code: String,
+        pool: PgPool,
         kind: String,
         source: String,
         label: String,
@@ -800,6 +735,64 @@ mod server {
             }
             a.push(Instant::now());
         }
+
+        // ── COMPLETE THE TICKET BEFORE ANSWERING ──
+        //
+        // Pair is the LAST word this radio ever says: a successful pair claims
+        // the box and the reconciler tears the BLE service down within one
+        // tick, so there is no "refresh it later" — whatever reach ticket
+        // rides in this answer is the only one the device will ever hold. A
+        // ticket frozen without the relay stranded a real setup on an
+        // isolating LAN (2026-08-24): direct addrs unroutable, relay unknown,
+        // no repair channel. So, bounded, in order:
+        //   1. a grant redeem in flight → wait for it to land (the link is
+        //      what buys the relay at all);
+        //   2. linked → wait for the post-link rebind to bring the relay up.
+        // A box with no link and none in flight waits for neither — LAN-only
+        // is the skip path's honest story, and nothing here blocks it.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+        loop {
+            let linked = crate::virtues_api::renew::read_api_key(&pool)
+                .await
+                .ok()
+                .flatten()
+                .is_some();
+            if linked {
+                // Wait for the rebind to home on the relay; give up quietly at
+                // the deadline — a late relay is degraded, not fatal, and
+                // `refresh_reach` over LAN can still repair it on sane networks.
+                if crate::relay::box_relay_url().is_some() && crate::relay::is_relay_registered() {
+                    break;
+                }
+            } else {
+                let inflight = crate::virtues_api::link::inflight(&pool)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if !inflight {
+                    break; // skip-link path: nothing to wait for
+                }
+                // Grant redeem in flight — keep waiting for it to land.
+            }
+            if tokio::time::Instant::now() >= deadline {
+                tracing::warn!("ble_provision: pairing with an incomplete reach ticket (relay/link still settling)");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        // The session already proved line of sight, so the box supplies its
+        // OWN standing code — the same one the panel would print — and hands
+        // it to itself. Same transaction, rate-limit story, and device row as
+        // every other pairing; the transcription ceremony is what died.
+        let code = match crate::api::pair::ensure_standing(&pool).await {
+            Ok(m) => m.token,
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "ble_provision: no standing pair code");
+                return "error:internal".into();
+            }
+        };
 
         let opt = |s: String| (!s.is_empty()).then_some(s);
         let body = serde_json::json!({

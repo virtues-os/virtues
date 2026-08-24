@@ -58,11 +58,47 @@ pub fn router() -> Router<AppState> {
         // "new or existing?" itself now, so sending an owner who already
         // answered to a page that asks again is a wasted step.
         .route("/init/signin", get(signin))
+        // The app's inline sign-in: a session-authed approve of the box's
+        // in-flight link, keyed on the USER code. Same attach as a clicked
+        // magic link; only the proof of identity differs. Called from the
+        // airlock webview, hence the CORS layer — the browser pages above
+        // need none.
+        .route("/init/approve", post(approve).layer(crate::routes::app_cors()))
+        // THE KEYSTONE (one-wire-plan Phase 2): a signed-in, entitled app
+        // asks for a pre-approved device_code and writes it to the box over
+        // BLE (0x82); the box redeems it through its ordinary /init/poll the
+        // moment it is online. Attach happens AT REDEMPTION, when the box can
+        // say which endpoint it is. Airlock-called, hence CORS.
+        .route("/init/grant", post(grant).layer(crate::routes::app_cors()))
 }
 
 // ─── POST /init/start ───────────────────────────────────────────────────────
 
-async fn start(State(state): State<AppState>) -> axum::response::Response {
+/// The identity blob the box has been sending all along ("every field is
+/// advisory: atlas tolerates its absence — older boxes send no body",
+/// virtues-core/src/virtues_api/link.rs). Until migration 0015 atlas never
+/// read it; now `endpoint_id` scopes the eventual per-box key. It remains a
+/// LABEL, never an authorization input — this call is unauthenticated.
+#[derive(Debug, Default, Deserialize)]
+struct StartBody {
+    #[serde(default)]
+    r#box: StartBoxIdentity,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StartBoxIdentity {
+    #[serde(default)]
+    endpoint_id: Option<String>,
+}
+
+async fn start(
+    State(state): State<AppState>,
+    // Option<Json<…>>: an older box POSTs no body at all, and a bare Json
+    // extractor would answer it 415 — breaking every deployed box in one
+    // deploy. Missing/invalid body simply reads as "no identity".
+    body: Option<Json<StartBody>>,
+) -> axum::response::Response {
+    let endpoint_id = body.and_then(|Json(b)| b.r#box.endpoint_id).filter(|s| !s.is_empty());
     let device_code = random_hex(32);
     let user_code = gen_user_code();
     let device_code_hash = sha256(device_code.as_bytes());
@@ -70,13 +106,14 @@ async fn start(State(state): State<AppState>) -> axum::response::Response {
 
     let res = sqlx::query(
         r#"
-        INSERT INTO device_link (device_code_hash, user_code, status, expires_at)
-        VALUES ($1, $2, 'pending', $3)
+        INSERT INTO device_link (device_code_hash, user_code, status, expires_at, endpoint_id)
+        VALUES ($1, $2, 'pending', $3, $4)
         "#,
     )
     .bind(&device_code_hash[..])
     .bind(&user_code)
     .bind(expires_at)
+    .bind(&endpoint_id)
     .execute(&state.pool)
     .await;
     if let Err(e) = res {
@@ -104,6 +141,11 @@ async fn start(State(state): State<AppState>) -> axum::response::Response {
 #[derive(Debug, Deserialize)]
 struct PollBody {
     device_code: String,
+    /// The box's self-reported iroh EndpointId — a rotation-scoping label for
+    /// the per-box key minted at grant redemption, never an authorization
+    /// input. Absent from older boxes' polls.
+    #[serde(default)]
+    endpoint_id: Option<String>,
 }
 
 async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum::response::Response {
@@ -126,8 +168,15 @@ async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum
     let Some((status, api_key, expires_at)) = row else {
         return Json(json!({ "status": "expired" })).into_response();
     };
-    if Utc::now() > expires_at && status == "pending" {
+    if Utc::now() > expires_at && (status == "pending" || status == "granted") {
         return Json(json!({ "status": "expired" })).into_response();
+    }
+
+    // A granted link redeems ON THIS POLL: entitlement re-check, per-box key
+    // mint, register — the attach deferred to the moment the box can say who
+    // it is. Everything else is the classic RFC-8628 read.
+    if status == "granted" {
+        return redeem_granted_link(&state, &hash[..], body.endpoint_id.as_deref()).await;
     }
 
     match status.as_str() {
@@ -364,7 +413,7 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn page(title: &str, body: &str) -> axum::response::Response {
+pub(super) fn page(title: &str, body: &str) -> axum::response::Response {
     Html(format!(
         "<!doctype html><html><head><meta charset=utf-8>\
          <meta name=viewport content='width=device-width,initial-scale=1'>\
@@ -616,6 +665,358 @@ async fn login_web(
     }
 }
 
+// ─── POST /init/approve (the app's inline sign-in) ──────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ApproveBody {
+    user_code: String,
+}
+
+/// Session-authed approve of an in-flight link, keyed on the short user code.
+///
+/// The airlock signs in with the existing `/account/login` + `/verify` (email
+/// OTP), then calls this with the code it read off the box over BLE (0x84).
+/// From atlas's side it is `login_verify` with a different proof: an OTP
+/// session instead of a clicked magic link — the attach itself is the shared
+/// `attach_link_to_customer`, so the two doors cannot drift.
+///
+/// Error codes are part of the airlock contract (linking-plan.md):
+/// `no_subscription` routes the app to browser checkout; `link_not_found` /
+/// `link_expired` tell it to re-fetch the code and retry — the session stays
+/// good, so neither costs a second email round-trip.
+/// Approve calls per account per hour. Generous for a legitimate owner (one
+/// approve, maybe a couple of retries after a code rotation); tight enough that
+/// the endpoint cannot be ground as an enumeration oracle.
+const MAX_APPROVE_ATTEMPTS_PER_HOUR: i64 = 10;
+
+async fn approve(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ApproveBody>,
+) -> axum::response::Response {
+    let Some(sess) = super::account::authed(&state, &headers).await else {
+        return err(StatusCode::UNAUTHORIZED, "unauthorized", "sign in again");
+    };
+    // Entitlement is checked here, not only at sign-in: the airlock may hold
+    // a session minted before checkout completed, and approving a link for an
+    // unpaid account would hand out an api_key nothing funds.
+    let Some(customer_id) = sess.customer_id.as_deref() else {
+        return err(
+            StatusCode::PAYMENT_REQUIRED,
+            "no_subscription",
+            "no subscription on this account yet",
+        );
+    };
+    match super::account::is_entitled(&state, Some(customer_id)).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return err(
+                StatusCode::PAYMENT_REQUIRED,
+                "no_subscription",
+                "no active subscription on this account",
+            );
+        }
+        // A broken entitlement query must NOT read as "unpaid" — that routes a
+        // paying customer to checkout. Surface it as an internal error and let
+        // the airlock retry (the session stays good).
+        Err(e) => {
+            tracing::warn!("approve entitlement check failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't verify the subscription");
+        }
+    }
+
+    // Attempt budget, keyed on the authenticated account's email — bounds an
+    // entitled session's guess rate regardless of which codes it tries, and
+    // makes a guessing campaign both capped and (via the miss log below)
+    // visible. A DB error here is fail-CLOSED (deny), the opposite of the
+    // login-send counter's fail-open bug: refusing a legitimate retry is
+    // recoverable; silently lifting the guard on the attach door is not.
+    let recent: i64 = match sqlx::query_scalar(
+        "SELECT count(*) FROM approve_attempt WHERE email = $1 AND created_at > now() - interval '1 hour'",
+    )
+    .bind(&sess.email)
+    .fetch_one(&state.pool)
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("approve rate-limit read failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't verify the request");
+        }
+    };
+    if recent >= MAX_APPROVE_ATTEMPTS_PER_HOUR {
+        tracing::warn!(email = %sess.email, "approve rate limit hit — possible code guessing");
+        return err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many link attempts — wait a few minutes and try again",
+        );
+    }
+    // Record this attempt before doing the work, so a burst in flight still
+    // counts against the cap. Best-effort: a failed insert must not block a
+    // legitimate approve, and the count query above is the real guard.
+    let _ = sqlx::query("INSERT INTO approve_attempt (email) VALUES ($1)")
+        .bind(&sess.email)
+        .execute(&state.pool)
+        .await;
+
+    let code = body.user_code.trim().to_uppercase();
+    if code.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "bad_code", "missing user_code");
+    }
+    // Do NOT swallow this query error (CLAUDE.md): a broken query answered as
+    // link_not_found tells the airlock the code rotated, so it re-fetches and
+    // retries a DB outage forever with nothing in the logs. Absent row → the
+    // code really is gone (invalid/used/replaced); Err → surface it.
+    let row: Option<(Vec<u8>,)> = match sqlx::query_as(
+        "SELECT device_code_hash FROM device_link \
+         WHERE user_code = $1 AND status = 'pending' AND expires_at > now()",
+    )
+    .bind(&code)
+    .fetch_optional(&state.pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("approve device_link lookup failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't look up the link");
+        }
+    };
+    let Some((device_code_hash,)) = row else {
+        // A genuine miss. Logged at info (not warn) so the rate-limit warn
+        // above is the signal that stands out; a lone miss is ordinary (a
+        // rotated code the app hasn't re-fetched yet).
+        tracing::info!(email = %sess.email, "approve: no pending link for code");
+        return err(
+            StatusCode::NOT_FOUND,
+            "link_not_found",
+            "that code is invalid, used, or replaced — fetch a fresh one and retry",
+        );
+    };
+
+    match attach_link_to_customer(&state, &device_code_hash, customer_id).await {
+        AttachOutcome::Attached => {
+            (StatusCode::OK, Json(json!({ "approved": true }))).into_response()
+        }
+        AttachOutcome::LinkGone => err(
+            StatusCode::GONE,
+            "link_expired",
+            "your server has moved on to a fresh code — fetch it and retry",
+        ),
+        AttachOutcome::Failed => {
+            err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't attach the box")
+        }
+    }
+}
+
+// ─── POST /init/grant (the 0x82 keystone) ───────────────────────────────────
+
+/// How long a grant stays redeemable. Generous on purpose: the box may sit
+/// offline while the owner finishes setup, and the grant is pre-authorized to
+/// one account and delivered over a proven line-of-sight channel — the real
+/// guards are the entitlement RE-CHECK at redemption and single-use claiming,
+/// not this clock.
+const GRANT_TTL_HOURS: i64 = 24;
+
+async fn grant(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let Some(sess) = super::account::authed(&state, &headers).await else {
+        return err(StatusCode::UNAUTHORIZED, "unauthorized", "sign in again");
+    };
+    let Some(customer_id) = sess.customer_id.as_deref() else {
+        return err(StatusCode::PAYMENT_REQUIRED, "no_subscription", "no subscription on this account yet");
+    };
+    match super::account::is_entitled(&state, Some(customer_id)).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return err(StatusCode::PAYMENT_REQUIRED, "no_subscription", "no active subscription on this account");
+        }
+        Err(e) => {
+            tracing::warn!("grant entitlement check failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't verify the subscription");
+        }
+    }
+    // Same attempt budget as approve — one shared table, one shared story
+    // about how fast a session may mint box-shaped things. Fail closed.
+    let recent: i64 = match sqlx::query_scalar(
+        "SELECT count(*) FROM approve_attempt WHERE email = $1 AND created_at > now() - interval '1 hour'",
+    )
+    .bind(&sess.email)
+    .fetch_one(&state.pool)
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("grant rate-limit read failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't verify the request");
+        }
+    };
+    if recent >= MAX_APPROVE_ATTEMPTS_PER_HOUR {
+        tracing::warn!(email = %sess.email, "grant rate limit hit");
+        return err(StatusCode::TOO_MANY_REQUESTS, "rate_limited", "too many link attempts — wait a few minutes and try again");
+    }
+    let _ = sqlx::query("INSERT INTO approve_attempt (email) VALUES ($1)")
+        .bind(&sess.email)
+        .execute(&state.pool)
+        .await;
+
+    let device_code = random_hex(32);
+    let user_code = gen_user_code();
+    let device_code_hash = sha256(device_code.as_bytes());
+    let expires_at = Utc::now() + Duration::hours(GRANT_TTL_HOURS);
+    if let Err(e) = sqlx::query(
+        r#"
+        INSERT INTO device_link (device_code_hash, user_code, status, expires_at, stripe_customer_id)
+        VALUES ($1, $2, 'granted', $3, $4)
+        "#,
+    )
+    .bind(&device_code_hash[..])
+    .bind(&user_code)
+    .bind(expires_at)
+    .bind(customer_id)
+    .execute(&state.pool)
+    .await
+    {
+        tracing::warn!("grant insert failed: {e:#}");
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not mint a grant");
+    }
+    (
+        StatusCode::OK,
+        Json(json!({ "grant": device_code, "expires_in": GRANT_TTL_HOURS * 3600 })),
+    )
+        .into_response()
+}
+
+/// Redeem a granted link: the attach, deferred to the moment the box shows up
+/// with its endpoint. Returns the poll response to send.
+///
+/// Ordering inside mirrors `attach_link_to_customer`: claim the row first
+/// (granted → linking, so a double poll can't double-mint), re-check
+/// entitlement (a 24 h grant must not outlive a refund), register with
+/// virtues-api, record the key, answer ready. Failures after the claim revert
+/// to 'granted' and answer pending — the box's poll loop IS the retry.
+async fn redeem_granted_link(
+    state: &AppState,
+    device_code_hash: &[u8],
+    poll_endpoint_id: Option<&str>,
+) -> axum::response::Response {
+    let claim: Result<Option<(Option<String>, Option<String>)>, _> = sqlx::query_as(
+        "UPDATE device_link SET status = 'linking' \
+         WHERE device_code_hash = $1 AND status = 'granted' AND expires_at > now() \
+         RETURNING stripe_customer_id, endpoint_id",
+    )
+    .bind(device_code_hash)
+    .fetch_optional(&state.pool)
+    .await;
+    let (customer_id, row_endpoint) = match claim {
+        Ok(Some((Some(cid), ep))) => (cid, ep),
+        // A granted row with no customer is a bug, not a state; deny rather
+        // than mint something unowned.
+        Ok(Some((None, _))) => {
+            tracing::warn!("granted link with no customer — denying");
+            return Json(json!({ "status": "denied" })).into_response();
+        }
+        // Lost the race to a concurrent poll (it is doing the work), or the
+        // grant lapsed. The generic poll flow already answered the caller
+        // correctly for both on the next round.
+        Ok(None) => return Json(json!({ "status": "pending" })).into_response(),
+        Err(e) => {
+            tracing::warn!("granted link claim failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "poll failed");
+        }
+    };
+    let release = || async {
+        let _ = sqlx::query(
+            "UPDATE device_link SET status = 'granted' \
+             WHERE device_code_hash = $1 AND status = 'linking'",
+        )
+        .bind(device_code_hash)
+        .execute(&state.pool)
+        .await;
+    };
+
+    // Entitlement re-check AT REDEMPTION — the grant's TTL is generous, and a
+    // refund in the gap must win. Errors deny nothing and grant nothing: the
+    // row goes back to granted and the box retries.
+    match super::account::is_entitled(&state, Some(&customer_id)).await {
+        Ok(true) => {}
+        Ok(false) => {
+            release().await;
+            return Json(json!({ "status": "denied" })).into_response();
+        }
+        Err(e) => {
+            tracing::warn!("redemption entitlement check failed: {e:#}");
+            release().await;
+            return Json(json!({ "status": "pending" })).into_response();
+        }
+    }
+
+    // The box self-reports its endpoint at redemption (the poll body); the
+    // grant-time row has none (the app minted it before the box was even
+    // online). Label, never an authorization input.
+    let endpoint_id = poll_endpoint_id
+        .map(str::to_string)
+        .or(row_endpoint)
+        .filter(|s| !s.is_empty());
+
+    let account_id: String = match sqlx::query_scalar(
+        "SELECT account_id FROM customers WHERE stripe_customer_id = $1",
+    )
+    .bind(&customer_id)
+    .fetch_one(&state.pool)
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("redemption account lookup failed: {e:#}");
+            release().await;
+            return Json(json!({ "status": "pending" })).into_response();
+        }
+    };
+
+    let api_key = super::claim::random_token();
+    let api_key_hash = sha256(api_key.as_bytes());
+    if let Err(e) = state
+        .virtues_api
+        .register_device(&crate::virtues_api_client::RegisterDevice {
+            box_id: endpoint_id.clone(),
+            api_key_hash: hex::encode(&api_key_hash),
+            account_id,
+        })
+        .await
+    {
+        tracing::warn!("redemption register_device failed: {e:#}");
+        release().await;
+        return Json(json!({ "status": "pending" })).into_response();
+    }
+    if let Err(e) = super::claim::mint_box_key(
+        &state.pool,
+        &customer_id,
+        endpoint_id.as_deref(),
+        &api_key_hash[..],
+    )
+    .await
+    {
+        // Key registered upstream; do NOT release (a retry would re-register
+        // destructively). Park at linking; the next poll answers pending and
+        // an operator sees the warn.
+        tracing::warn!("redemption mint_box_key failed: {e:#}");
+        return Json(json!({ "status": "pending" })).into_response();
+    }
+    // One-shot delivery, same as the ready path: mark claimed and hand the
+    // key over in this response.
+    let _ = sqlx::query(
+        "UPDATE device_link SET status = 'claimed' WHERE device_code_hash = $1",
+    )
+    .bind(device_code_hash)
+    .execute(&state.pool)
+    .await;
+    tracing::info!("granted link redeemed — box attached at redemption");
+    Json(json!({ "status": "ready", "api_key": api_key })).into_response()
+}
+
 /// What `begin_login` decided — shared by the box-callable and web doors so the
 /// two can never drift into different rules about accounts or rate limits.
 enum LoginOutcome {
@@ -815,106 +1216,216 @@ async fn login_verify(
         );
     };
 
-    // Re-link recovery: mint a fresh api_key and re-point the device to the
-    // existing customer. We trust our own customers table (looked up by email +
-    // verified via the magic link), so no Stripe call. We re-point to the SAME
-    // `account_id` and do NOT re-credit — the wallet is preserved (the recovery
-    // win).
-    //
-    // Ordering matters: register the new key with virtues-api FIRST, and only
-    // rotate `customers.api_key_hash` once that succeeds. If register fails, the
-    // customers row keeps the OLD hash — which still matches what virtues-api
-    // holds — so the box's old key stays consistent across the proxy AND atlas
-    // billing-auth, and the user can just retry. (The opposite order would
-    // leave a split-brain: atlas on the new hash, virtues-api on the old.)
+    match attach_link_to_customer(&state, &device_code_hash, &customer_id).await {
+        AttachOutcome::Attached => page(
+            "✓ Box attached",
+            "Your Virtues box is now attached to your subscription. Go back to the Virtues app — it continues on its own within a few seconds.",
+        ),
+        AttachOutcome::LinkGone => page(
+            "Link expired",
+            "This link took too long, and your box has already moved on to a fresh code. \
+             Nothing is wrong with it. Open the Virtues app and start the link again.",
+        ),
+        AttachOutcome::Failed => page(
+            "Something went wrong",
+            "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
+        ),
+    }
+}
+
+/// What `attach_link_to_customer` decided — shared by the magic-link click and
+/// the app's `/init/approve`, so the two proofs of identity can never drift
+/// into different attach rules.
+enum AttachOutcome {
+    Attached,
+    /// The device_link lapsed or was already taken; the box has moved on to a
+    /// fresh code. Retrying with a re-fetched code is the fix.
+    LinkGone,
+    Failed,
+}
+
+/// Attach an in-flight device_link to an existing customer: mint a fresh
+/// api_key, register it with virtues-api, rotate the stored hash, flip the
+/// link to ready for the box's poll.
+///
+/// Re-link recovery semantics: we trust our own customers table (the caller
+/// has already verified control of the email — magic-link click or OTP
+/// session), so no Stripe call. We re-point to the SAME `account_id` and do
+/// NOT re-credit — the wallet is preserved (the recovery win).
+///
+/// ## Why the link is CLAIMED before anything is rotated
+///
+/// `register_device` (box_id=None) DELETEs the account's whole key set and
+/// inserts the new one, and rotating `customers.api_key_hash` retires the old
+/// hash for atlas's own billing-auth. Both are destructive to any box already
+/// on the account. The link flip used to be LAST — so a lost race (the code
+/// rotated, or the magic-link door and this one both fired) rotated the
+/// account key and then flipped ZERO rows, leaving an existing box holding a
+/// key neither virtues-api nor atlas would accept any more. Permanent, silent.
+/// Codes rotate every 15 minutes and the app offers one-tap retry, so that
+/// race is ordinary, not exotic.
+///
+/// So we CLAIM the row first — an atomic `pending → linking` guarded on
+/// expiry — and only touch virtues-api and `customers` once the claim is ours.
+/// A lost race now costs nothing. `linking` reads as "keep polling" to the box
+/// (its poll handler maps every unknown status to pending), and no other door
+/// can re-claim it (both flip `WHERE status = 'pending'`).
+///
+/// Register-before-rotate still holds inside the claim: register the new key
+/// with virtues-api FIRST, then rotate `customers.api_key_hash`. If register
+/// fails, nothing in virtues-api changed and we release the claim back to
+/// pending so a retry (or the other door) can proceed cleanly.
+async fn attach_link_to_customer(
+    state: &AppState,
+    device_code_hash: &[u8],
+    customer_id: &str,
+) -> AttachOutcome {
     let api_key = super::claim::random_token();
     let api_key_hash = sha256(api_key.as_bytes());
+
+    // CLAIM the link before any destructive write. `expires_at > now()` is
+    // load-bearing: once its own link lapses the box STARTS A NEW ONE with a
+    // new device_code, abandoning this row — claiming an abandoned row would
+    // render "attached" at someone whose box is polling a different code
+    // entirely (2026-08-13). 0 rows → the link is gone or already taken, and
+    // crucially NOTHING has been rotated yet, so an existing box is untouched.
+    // RETURNING endpoint_id: the box that started this link identified itself
+    // at /init/start (0015), and that label is what scopes the key we mint —
+    // a second box linking must not rotate the first box's credential.
+    let claim: Result<Option<Option<String>>, _> = sqlx::query_scalar(
+        "UPDATE device_link SET status = 'linking' \
+         WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now() \
+         RETURNING endpoint_id",
+    )
+    .bind(device_code_hash)
+    .fetch_optional(&state.pool)
+    .await;
+    let endpoint_id: Option<String> = match claim {
+        Ok(Some(ep)) => ep,
+        Ok(None) => return AttachOutcome::LinkGone,
+        Err(e) => {
+            tracing::warn!("device_link claim failed: {e:#}");
+            return AttachOutcome::Failed;
+        }
+    };
+    // From here the row is 'linking' and ours. Any early return that is not a
+    // completed attach must release it back to 'pending' so the box (and a
+    // retry) can use it again — EXCEPT after register has already dropped the
+    // old key, where releasing would invite a second destructive register.
+    let release = || async {
+        let _ = sqlx::query(
+            "UPDATE device_link SET status = 'pending' \
+             WHERE device_code_hash = $1 AND status = 'linking'",
+        )
+        .bind(device_code_hash)
+        .execute(&state.pool)
+        .await;
+    };
 
     let lookup: Result<(String,), _> = sqlx::query_as(
         "SELECT account_id FROM customers WHERE stripe_customer_id = $1",
     )
-    .bind(&customer_id)
+    .bind(customer_id)
     .fetch_one(&state.pool)
     .await;
     let (account_id,) = match lookup {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("customers lookup failed: {e:#}");
-            return page(
-                "Something went wrong",
-                "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
-            );
+            release().await;
+            return AttachOutcome::Failed;
         }
     };
 
     if let Err(e) = state
         .virtues_api
         .register_device(&crate::virtues_api_client::RegisterDevice {
-            // TODO(per-box keys): atlas does not yet know which box is
-            // registering here — the box's EndpointId reaches atlas via
-            // `/iroh/register`, which is a separate call. Until they are
-            // joined up this stays None and rotation keeps its historical
-            // whole-account behaviour. The virtues-api side is ready.
-            box_id: None,
+            // The endpoint_id the box self-reported at /init/start, carried on
+            // the device_link row (0015). Some → virtues-api replaces only
+            // THIS box's key; None (older box) → the historical whole-account
+            // rotation. Label, never an authorization input.
+            box_id: endpoint_id.clone(),
             api_key_hash: hex::encode(&api_key_hash),
             account_id,
         })
         .await
     {
+        // register_device runs in a transaction, so a failure changed nothing
+        // in virtues-api — safe to release the claim and let the user retry.
         tracing::warn!("re-link register_device failed: {e:#}");
-        return page(
-            "Something went wrong",
-            "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
-        );
+        release().await;
+        return AttachOutcome::Failed;
     }
 
-    // Device registered — now rotate the stored hash to match.
-    if let Err(e) = sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
-        .bind(&customer_id)
-        .bind(&api_key_hash[..])
-        .execute(&state.pool)
-        .await
-    {
-        tracing::warn!("customers api_key_hash update failed: {e:#}");
-        return page(
-            "Something went wrong",
-            "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
-        );
-    }
-
-    // Flip the bound device_link to ready with the api_key so the box's
-    // existing poll handler picks it up on the next /init/poll.
-    // `expires_at > now()` is load-bearing, not belt-and-braces. Once its own
-    // link lapses the box STARTS A NEW ONE with a new device_code, abandoning
-    // this row while it sits pending forever. Without the check, a magic link
-    // clicked an hour later flipped the abandoned row and rendered "Box
-    // attached" at someone whose box would never hear a thing — the box is
-    // polling a different device_code entirely. An honest failure beats a
-    // false success (2026-08-13).
-    let flip = sqlx::query(
-        "UPDATE device_link SET status = 'ready', api_key = $2 \
-         WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now()",
+    // Device registered (old key now dropped in virtues-api) — record the key
+    // atlas-side with the same scoping (box_key + the legacy customers
+    // mirror), via the shared mint_box_key so the two systems can never
+    // disagree about rotation scope. Do NOT release the claim past this
+    // point: the old key is already gone upstream, so the row must reach
+    // 'ready' with the new key, and a retry resumes from 'linking' (finalize
+    // below is idempotent on it) rather than re-registering.
+    if let Err(e) = super::claim::mint_box_key(
+        &state.pool,
+        customer_id,
+        endpoint_id.as_deref(),
+        &api_key_hash[..],
     )
-    .bind(&device_code_hash[..])
+    .await
+    {
+        tracing::warn!("mint_box_key failed: {e:#}");
+        return AttachOutcome::Failed;
+    }
+
+    // Finalize: publish the api_key on the claimed row so the box's poll
+    // collects it. Guarded on our own 'linking' claim, so this is a no-op if a
+    // retry already finalized.
+    let finalize = sqlx::query(
+        "UPDATE device_link SET status = 'ready', api_key = $2 \
+         WHERE device_code_hash = $1 AND status = 'linking'",
+    )
+    .bind(device_code_hash)
     .bind(&api_key)
     .execute(&state.pool)
     .await;
-    match flip {
-        Ok(r) if r.rows_affected() == 1 => page(
-            "✓ Box attached",
-            "Your Virtues box is now attached to your subscription. Go back to the Virtues app — it continues on its own within a few seconds.",
-        ),
-        Ok(_) => page(
-            "Link expired",
-            "This link took too long, and your box has already moved on to a fresh code. \
-             Nothing is wrong with it. Open the Virtues app and start the link again.",
-        ),
+    match finalize {
+        Ok(r) if r.rows_affected() == 1 => AttachOutcome::Attached,
+        // 0 rows: the claim vanished under us (a concurrent finalize, or an
+        // admin reset). The key is registered and rotated, so the account is
+        // consistent; report Attached rather than sending the user to retry a
+        // link that is effectively done.
+        Ok(_) => AttachOutcome::Attached,
         Err(e) => {
-            tracing::warn!("device_link flip failed: {e:#}");
-            page(
-                "Something went wrong",
-                "We verified your link but couldn't attach the box. Try again, or reach out to support@virtues.com.",
-            )
+            tracing::warn!("device_link finalize failed: {e:#}");
+            AttachOutcome::Failed
         }
+    }
+}
+
+#[cfg(test)]
+mod start_body_tests {
+    use super::StartBody;
+
+    /// The EXACT shape virtues-core sends (virtues_api/link.rs `start`) —
+    /// extra advisory fields and all. A silent deserialization failure here
+    /// would not error anywhere: `Option<Json<StartBody>>` reads a failed
+    /// parse as "no body", and every box's key would quietly lose its
+    /// endpoint label. This test is what makes that failure loud.
+    #[test]
+    fn parses_the_real_box_identity_payload() {
+        let real = r#"{"box":{"name":"Virtues-Honest-Kestrel","label":"Honest Kestrel",
+            "model":"Dragon Q6A","endpoint_id":"ep_abc123","version":"0.1.2"}}"#;
+        let b: StartBody = serde_json::from_str(real).expect("real payload must parse");
+        assert_eq!(b.r#box.endpoint_id.as_deref(), Some("ep_abc123"));
+    }
+
+    #[test]
+    fn tolerates_null_endpoint_and_missing_box() {
+        // The pre-bind race sends endpoint_id: null; hypothetical callers may
+        // send an empty object. Both must parse to None, not error.
+        let null_ep = r#"{"box":{"name":"x","endpoint_id":null}}"#;
+        let b: StartBody = serde_json::from_str(null_ep).unwrap();
+        assert_eq!(b.r#box.endpoint_id, None);
+        let empty: StartBody = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.r#box.endpoint_id, None);
     }
 }

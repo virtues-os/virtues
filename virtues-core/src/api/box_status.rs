@@ -278,21 +278,37 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             .await
             .unwrap_or(0);
 
-    // First source = an active cloud-source credential (OAuth etc.) — not a
-    // paired device's self-credential, not the BYO-key pseudo-source, and not
-    // the `virtues_api` billing credential (which is always present once the
-    // box is subscribed and is NOT a user-connected data source).
+    // First source = an active user-connected credential (OAuth, api-key
+    // import) — not a device's, not the BYO-key pseudo-source, and not the
+    // `virtues_api` billing credential (always present once the box is
+    // subscribed, NOT a user-connected data source). Device sources
+    // (self-issued bearer: iOS/Mac/sensor) stopped minting `credentials`
+    // rows when the iroh key became the device credential, but pre-iroh
+    // boxes still carry theirs and `'__device__'` is that era's sentinel —
+    // both are excluded by the computed list rather than a hardcoded one.
+    //
+    // This used to also filter on `credentials.device_id`, a column the
+    // table HAS NEVER HAD — same wrong idea about the schema as `paired_wg`
+    // and `revoke_all_devices` — and the error was swallowed by
+    // `.unwrap_or(0)`, so `first_source` read 0 forever and
+    // `onboarding_complete` could never be true. Hence `?` now: a broken
+    // query must be a loud error, not a plausible zero.
+    let mut non_source_ids: Vec<String> = crate::applet_templates::list_sources_sorted()
+        .into_iter()
+        .filter(|s| s.auth == crate::applet_templates::SourceAuth::SelfIssuedBearer)
+        .map(|s| s.id)
+        .collect();
+    non_source_ids.push("__device__".to_string());
+    non_source_ids.push(crate::api::settings_byo::BYO_SOURCE_ID.to_string());
+    non_source_ids.push(crate::virtues_api::renew::SOURCE_ID.to_string());
+
     let first_source: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM credentials \
-         WHERE status = 'active' AND device_id IS NULL \
-           AND source_id NOT IN ($1, $2, $3)",
+         WHERE status = 'active' AND source_id <> ALL($1)",
     )
-    .bind("__device__")
-    .bind(crate::api::settings_byo::BYO_SOURCE_ID)
-    .bind(crate::virtues_api::renew::SOURCE_ID)
+    .bind(&non_source_ids)
     .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    .await?;
 
     // First device = a paired collector (phone/Mac). Same correction as
     // `paired_wg` above: it asked `credentials` for a `device_id` it has never
@@ -354,20 +370,19 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // Tier 2: a living (cloud/OAuth) source that has actually synced — i.e. a
     // non-device, non-BYO credential with at least one successful run. Stronger
     // than `first_source` (which only means "connected"): this means data flows.
+    // Same exclusion list and same phantom-`device_id` fix as `first_source`
+    // above (the join on `app_applets.credential_id` already can't reach
+    // device-anchored applets — their `credential_id` is NULL).
     let living_source: bool = sqlx::query_scalar(
         "SELECT EXISTS( \
            SELECT 1 FROM credentials c \
            JOIN app_applets a ON a.credential_id = c.id \
            JOIN app_applet_runs r ON r.applet_id = a.id AND r.status = 'success' \
-           WHERE c.status = 'active' AND c.device_id IS NULL \
-             AND c.source_id NOT IN ($1, $2, $3))",
+           WHERE c.status = 'active' AND c.source_id <> ALL($1))",
     )
-    .bind("__device__")
-    .bind(crate::api::settings_byo::BYO_SOURCE_ID)
-    .bind(crate::virtues_api::renew::SOURCE_ID)
+    .bind(&non_source_ids)
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
 
     // Tier -1: the owner deliberately named at least one device (doorplate),
     // distinct from the auto-generated label.
@@ -763,5 +778,62 @@ mod tests {
         assert_eq!(narrative_identity_kind(false, true), Some("generating"));
         // Not started → no qualifier.
         assert_eq!(narrative_identity_kind(false, false), None);
+    }
+
+    #[sqlx::test]
+    async fn first_source_flips_on_cloud_credential_only(pool: sqlx::PgPool) {
+        let done = |s: &SetupState, id: &str| {
+            s.onboarding
+                .iter()
+                .find(|x| x.id == id)
+                .unwrap_or_else(|| panic!("step {id} missing"))
+                .done
+        };
+
+        // Empty box: the derivation must RUN. `first_source` spent its whole
+        // life filtering on `credentials.device_id` — a column the table has
+        // never had — behind `.unwrap_or(0)`, so it read 0 forever and
+        // `onboarding_complete` could never be true. With `?` a phantom
+        // column is a loud error here instead of a plausible zero.
+        let s = compute_setup_state(&pool).await.expect("state on an empty box");
+        assert!(!done(&s, "first_source"));
+        assert!(!s.onboarding_complete);
+
+        // Credentials that are not user-connected data sources never count:
+        // the legacy device sentinel, the BYO-key pseudo-source, the billing
+        // credential, and a device source (ios, self-issued bearer).
+        for (id, source) in [
+            ("cred_dev", "__device__"),
+            ("cred_byo", crate::api::settings_byo::BYO_SOURCE_ID),
+            ("cred_bill", crate::virtues_api::renew::SOURCE_ID),
+            ("cred_ios", "ios"),
+        ] {
+            sqlx::query(
+                "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+                 VALUES ($1, $2, $2, 'active', 'x')",
+            )
+            .bind(id)
+            .bind(source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let s = compute_setup_state(&pool).await.unwrap();
+        assert!(
+            !done(&s, "first_source"),
+            "device/pseudo credentials must not satisfy first_source"
+        );
+
+        // One real cloud credential flips it — and with it onboarding_complete.
+        sqlx::query(
+            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+             VALUES ('cred_g', 'google', 'Google', 'active', 'x')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let s = compute_setup_state(&pool).await.unwrap();
+        assert!(done(&s, "first_source"));
+        assert!(s.onboarding_complete);
     }
 }
