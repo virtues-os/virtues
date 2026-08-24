@@ -83,10 +83,14 @@
                 display: flex; align-items: baseline; justify-content: space-between;
                 padding: max(20px, env(safe-area-inset-top)) 24px 14px;
                 background: var(--paper); }
-      #chrome .brand { font-family: var(--serif); font-size: 16px; font-weight: 400;
+      /* Inline-flex with centred items, not baseline text: the ∴ glyph is
+         bottom-heavy and at 24px its baseline placement sank it below the
+         wordmark. Optically centring the two boxes is what looks aligned. */
+      #chrome .brand { display: inline-flex; align-items: center; gap: 8px;
+                       font-family: var(--serif); font-size: 16px; font-weight: 400;
                        letter-spacing: .01em; color: var(--ink); }
-      #chrome .brand .mk { margin-right: 8px; font-family: var(--sans); font-size: 24px;
-                           line-height: 0; vertical-align: -0.12em; }
+      #chrome .brand .mk { font-family: var(--sans); font-size: 24px; line-height: 1;
+                           transform: translateY(-0.1em); }
       #chrome .server { font-size: 12px; color: var(--ink-subtle);
                         font-variant-numeric: tabular-nums; letter-spacing: .01em;
                         transition: opacity .4s var(--ease); }
