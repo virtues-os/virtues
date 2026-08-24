@@ -239,16 +239,41 @@ airlock acts on:
 - **`unauthorized`** (401) → back to the email screen.
 
 Operational notes:
+- **Rate limit.** `/init/approve` is capped at 10 attempts/account/hour
+  (migration 0014 `approve_attempt`), and logs the cap-hit at warn + a lone
+  miss at info. The user_code space is large and the live-pending set tiny, so
+  blind guessing is impractical on the numbers, but the budget matches the
+  binding the other doors have (/init/done ↔ Stripe session, /account/login ↔
+  send cap) and makes any grind bounded and visible. The read fails **closed**
+  (a rate-limit query error denies), the opposite of `/account/login`'s send
+  counter, which fails closed too now — refusing a legit retry is recoverable;
+  lifting the guard on the attach door or the OTP relay is not.
+- **Attach claims before it rotates.** `attach_link_to_customer` moves the
+  device_link `pending → linking` atomically *before* touching virtues-api or
+  `customers.api_key_hash`. A lost race (rotated code, or two doors firing)
+  now costs nothing instead of rotating the account key onto a link that never
+  flips — which used to leave an existing box holding a key neither
+  virtues-api nor atlas would accept. `linking` reads as "keep polling" to the
+  box; register-before-rotate still holds inside the claim.
 - **CORS**: `app_cors()` (routes/mod.rs) — wildcard origin, `POST`, explicit
   `Content-Type` + `Authorization` headers (the CORS spec exempts
   `Authorization` from header wildcards). Scoped to `/account/*` and
   `/init/approve` only; the airlock's origin is `tauri://localhost`
   (macOS/Linux), `http://tauri.localhost` (Windows), or `virtues://` (iOS),
-  and nothing rides on cookies.
+  and nothing rides on cookies. Known residual: this exposes `/account/login`
+  to cross-origin OTP-email spray, bounded per-email but not globally — the
+  edge/WAF throttle is the right home for that (see the `app_cors` note).
+- **The user_code is always read fresh.** Approve and both browser escapes
+  (inline sign-in and no-subscription checkout) re-read the code over BLE at
+  the click/approve moment — never the cached `state.linkCode`, which atlas
+  may have rotated. The airlock never approves or opens a checkout URL with a
+  stale code.
 - **Completion is still the box's.** Approve only flips the device link; the
-  box's own poll redeems it, and the airlock watches (BLE 0x84 going empty, or
-  `/api/box/identity.linked`) for up to 45s before moving on to pairing
-  regardless — prescribe, never enforce.
+  box's own poll redeems it, and the airlock watches (BLE 0x84 going empty
+  *and the box reporting linked*, or `/api/box/identity.linked`) for up to 45s
+  before moving on to pairing regardless — prescribe, never enforce. An
+  ok-and-empty BLE answer alone is not treated as "landed" (it also means "not
+  minted yet"); the box must confirm.
 
 **P3 — lifecycle:**
 - `virtues unlink`, account-page release, resale story documented atop

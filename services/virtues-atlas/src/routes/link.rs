@@ -641,6 +641,11 @@ struct ApproveBody {
 /// `no_subscription` routes the app to browser checkout; `link_not_found` /
 /// `link_expired` tell it to re-fetch the code and retry — the session stays
 /// good, so neither costs a second email round-trip.
+/// Approve calls per account per hour. Generous for a legitimate owner (one
+/// approve, maybe a couple of retries after a code rotation); tight enough that
+/// the endpoint cannot be ground as an enumeration oracle.
+const MAX_APPROVE_ATTEMPTS_PER_HOUR: i64 = 10;
+
 async fn approve(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -659,27 +664,86 @@ async fn approve(
             "no subscription on this account yet",
         );
     };
-    if !super::account::is_entitled(&state, Some(customer_id)).await {
+    match super::account::is_entitled(&state, Some(customer_id)).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return err(
+                StatusCode::PAYMENT_REQUIRED,
+                "no_subscription",
+                "no active subscription on this account",
+            );
+        }
+        // A broken entitlement query must NOT read as "unpaid" — that routes a
+        // paying customer to checkout. Surface it as an internal error and let
+        // the airlock retry (the session stays good).
+        Err(e) => {
+            tracing::warn!("approve entitlement check failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't verify the subscription");
+        }
+    }
+
+    // Attempt budget, keyed on the authenticated account's email — bounds an
+    // entitled session's guess rate regardless of which codes it tries, and
+    // makes a guessing campaign both capped and (via the miss log below)
+    // visible. A DB error here is fail-CLOSED (deny), the opposite of the
+    // login-send counter's fail-open bug: refusing a legitimate retry is
+    // recoverable; silently lifting the guard on the attach door is not.
+    let recent: i64 = match sqlx::query_scalar(
+        "SELECT count(*) FROM approve_attempt WHERE email = $1 AND created_at > now() - interval '1 hour'",
+    )
+    .bind(&sess.email)
+    .fetch_one(&state.pool)
+    .await
+    {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("approve rate-limit read failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't verify the request");
+        }
+    };
+    if recent >= MAX_APPROVE_ATTEMPTS_PER_HOUR {
+        tracing::warn!(email = %sess.email, "approve rate limit hit — possible code guessing");
         return err(
-            StatusCode::PAYMENT_REQUIRED,
-            "no_subscription",
-            "no active subscription on this account",
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many link attempts — wait a few minutes and try again",
         );
     }
+    // Record this attempt before doing the work, so a burst in flight still
+    // counts against the cap. Best-effort: a failed insert must not block a
+    // legitimate approve, and the count query above is the real guard.
+    let _ = sqlx::query("INSERT INTO approve_attempt (email) VALUES ($1)")
+        .bind(&sess.email)
+        .execute(&state.pool)
+        .await;
 
     let code = body.user_code.trim().to_uppercase();
     if code.is_empty() {
         return err(StatusCode::BAD_REQUEST, "bad_code", "missing user_code");
     }
-    let row: Option<(Vec<u8>,)> = sqlx::query_as(
+    // Do NOT swallow this query error (CLAUDE.md): a broken query answered as
+    // link_not_found tells the airlock the code rotated, so it re-fetches and
+    // retries a DB outage forever with nothing in the logs. Absent row → the
+    // code really is gone (invalid/used/replaced); Err → surface it.
+    let row: Option<(Vec<u8>,)> = match sqlx::query_as(
         "SELECT device_code_hash FROM device_link \
          WHERE user_code = $1 AND status = 'pending' AND expires_at > now()",
     )
     .bind(&code)
     .fetch_optional(&state.pool)
     .await
-    .unwrap_or(None);
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("approve device_link lookup failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't look up the link");
+        }
+    };
     let Some((device_code_hash,)) = row else {
+        // A genuine miss. Logged at info (not warn) so the rate-limit warn
+        // above is the signal that stands out; a lone miss is ordinary (a
+        // rotated code the app hasn't re-fetched yet).
+        tracing::info!(email = %sess.email, "approve: no pending link for code");
         return err(
             StatusCode::NOT_FOUND,
             "link_not_found",
@@ -938,12 +1002,28 @@ enum AttachOutcome {
 /// session), so no Stripe call. We re-point to the SAME `account_id` and do
 /// NOT re-credit — the wallet is preserved (the recovery win).
 ///
-/// Ordering matters: register the new key with virtues-api FIRST, and only
-/// rotate `customers.api_key_hash` once that succeeds. If register fails, the
-/// customers row keeps the OLD hash — which still matches what virtues-api
-/// holds — so the box's old key stays consistent across the proxy AND atlas
-/// billing-auth, and the user can just retry. (The opposite order would
-/// leave a split-brain: atlas on the new hash, virtues-api on the old.)
+/// ## Why the link is CLAIMED before anything is rotated
+///
+/// `register_device` (box_id=None) DELETEs the account's whole key set and
+/// inserts the new one, and rotating `customers.api_key_hash` retires the old
+/// hash for atlas's own billing-auth. Both are destructive to any box already
+/// on the account. The link flip used to be LAST — so a lost race (the code
+/// rotated, or the magic-link door and this one both fired) rotated the
+/// account key and then flipped ZERO rows, leaving an existing box holding a
+/// key neither virtues-api nor atlas would accept any more. Permanent, silent.
+/// Codes rotate every 15 minutes and the app offers one-tap retry, so that
+/// race is ordinary, not exotic.
+///
+/// So we CLAIM the row first — an atomic `pending → linking` guarded on
+/// expiry — and only touch virtues-api and `customers` once the claim is ours.
+/// A lost race now costs nothing. `linking` reads as "keep polling" to the box
+/// (its poll handler maps every unknown status to pending), and no other door
+/// can re-claim it (both flip `WHERE status = 'pending'`).
+///
+/// Register-before-rotate still holds inside the claim: register the new key
+/// with virtues-api FIRST, then rotate `customers.api_key_hash`. If register
+/// fails, nothing in virtues-api changed and we release the claim back to
+/// pending so a retry (or the other door) can proceed cleanly.
 async fn attach_link_to_customer(
     state: &AppState,
     device_code_hash: &[u8],
@@ -951,6 +1031,41 @@ async fn attach_link_to_customer(
 ) -> AttachOutcome {
     let api_key = super::claim::random_token();
     let api_key_hash = sha256(api_key.as_bytes());
+
+    // CLAIM the link before any destructive write. `expires_at > now()` is
+    // load-bearing: once its own link lapses the box STARTS A NEW ONE with a
+    // new device_code, abandoning this row — claiming an abandoned row would
+    // render "attached" at someone whose box is polling a different code
+    // entirely (2026-08-13). 0 rows → the link is gone or already taken, and
+    // crucially NOTHING has been rotated yet, so an existing box is untouched.
+    let claim = sqlx::query(
+        "UPDATE device_link SET status = 'linking' \
+         WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now()",
+    )
+    .bind(device_code_hash)
+    .execute(&state.pool)
+    .await;
+    match claim {
+        Ok(r) if r.rows_affected() == 1 => {}
+        Ok(_) => return AttachOutcome::LinkGone,
+        Err(e) => {
+            tracing::warn!("device_link claim failed: {e:#}");
+            return AttachOutcome::Failed;
+        }
+    }
+    // From here the row is 'linking' and ours. Any early return that is not a
+    // completed attach must release it back to 'pending' so the box (and a
+    // retry) can use it again — EXCEPT after register has already dropped the
+    // old key, where releasing would invite a second destructive register.
+    let release = || async {
+        let _ = sqlx::query(
+            "UPDATE device_link SET status = 'pending' \
+             WHERE device_code_hash = $1 AND status = 'linking'",
+        )
+        .bind(device_code_hash)
+        .execute(&state.pool)
+        .await;
+    };
 
     let lookup: Result<(String,), _> = sqlx::query_as(
         "SELECT account_id FROM customers WHERE stripe_customer_id = $1",
@@ -962,6 +1077,7 @@ async fn attach_link_to_customer(
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("customers lookup failed: {e:#}");
+            release().await;
             return AttachOutcome::Failed;
         }
     };
@@ -973,18 +1089,25 @@ async fn attach_link_to_customer(
             // registering here — the box's EndpointId reaches atlas via
             // `/iroh/register`, which is a separate call. Until they are
             // joined up this stays None and rotation keeps its historical
-            // whole-account behaviour. The virtues-api side is ready.
+            // whole-account behavior. The virtues-api side is ready.
             box_id: None,
             api_key_hash: hex::encode(&api_key_hash),
             account_id,
         })
         .await
     {
+        // register_device runs in a transaction, so a failure changed nothing
+        // in virtues-api — safe to release the claim and let the user retry.
         tracing::warn!("re-link register_device failed: {e:#}");
+        release().await;
         return AttachOutcome::Failed;
     }
 
-    // Device registered — now rotate the stored hash to match.
+    // Device registered (old key now dropped in virtues-api) — rotate atlas's
+    // own stored hash to match. Do NOT release the claim past this point: the
+    // old key is already gone upstream, so the row must reach 'ready' with the
+    // new key, and a retry resumes from 'linking' (finalize below is
+    // idempotent on it) rather than re-registering.
     if let Err(e) = sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
         .bind(customer_id)
         .bind(&api_key_hash[..])
@@ -995,28 +1118,26 @@ async fn attach_link_to_customer(
         return AttachOutcome::Failed;
     }
 
-    // Flip the bound device_link to ready with the api_key so the box's
-    // existing poll handler picks it up on the next /init/poll.
-    // `expires_at > now()` is load-bearing, not belt-and-braces. Once its own
-    // link lapses the box STARTS A NEW ONE with a new device_code, abandoning
-    // this row while it sits pending forever. Without the check, a magic link
-    // clicked an hour later flipped the abandoned row and rendered "Box
-    // attached" at someone whose box would never hear a thing — the box is
-    // polling a different device_code entirely. An honest failure beats a
-    // false success (2026-08-13).
-    let flip = sqlx::query(
+    // Finalize: publish the api_key on the claimed row so the box's poll
+    // collects it. Guarded on our own 'linking' claim, so this is a no-op if a
+    // retry already finalized.
+    let finalize = sqlx::query(
         "UPDATE device_link SET status = 'ready', api_key = $2 \
-         WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now()",
+         WHERE device_code_hash = $1 AND status = 'linking'",
     )
     .bind(device_code_hash)
     .bind(&api_key)
     .execute(&state.pool)
     .await;
-    match flip {
+    match finalize {
         Ok(r) if r.rows_affected() == 1 => AttachOutcome::Attached,
-        Ok(_) => AttachOutcome::LinkGone,
+        // 0 rows: the claim vanished under us (a concurrent finalize, or an
+        // admin reset). The key is registered and rotated, so the account is
+        // consistent; report Attached rather than sending the user to retry a
+        // link that is effectively done.
+        Ok(_) => AttachOutcome::Attached,
         Err(e) => {
-            tracing::warn!("device_link flip failed: {e:#}");
+            tracing::warn!("device_link finalize failed: {e:#}");
             AttachOutcome::Failed
         }
     }
