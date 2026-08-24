@@ -1867,11 +1867,17 @@ its devices apart — type its address.",
         // fallback: no fresh read → fail honestly and let Try again re-read.
         // Timeboxed: a dead/absent peripheral makes this invoke hang forever
         // (the exact stuck "Approving…" seen 2026-08-24 with no live box).
+        // TWENTY seconds, matching renderCodeEntry's proven number for the
+        // same call shape — the OTP round-trip leaves the BLE link idle for a
+        // minute-plus, and a cold CoreBluetooth re-dial + discover + subscribe
+        // overran a 12s deadline on the bench (2026-08-24): the first tap
+        // "failed" and the retry succeeded only because the abandoned dial had
+        // finished in the background.
         let code = null;
         if (server.bleId) {
           try {
             const r = await withDeadline(
-              invoke('plugin:reach|improv_link_code', { id: server.bleId }), 12000);
+              invoke('plugin:reach|improv_link_code', { id: server.bleId }), 20000);
             if (r && r.ok && r.code) {
               code = r.code;
             } else if (r && r.ok) {
