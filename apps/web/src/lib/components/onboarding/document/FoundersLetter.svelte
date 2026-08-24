@@ -57,34 +57,38 @@
 		</div>
 
 		<div class="body">
-			<!-- A BELIEF, THEN A QUESTION, in one breath. The list is CATEGORIES
-			     rather than names: a category cannot be argued with, and a name
-			     invites an argument about that name — which is the one thing this
-			     paragraph cannot afford. The last item is the exception that
-			     proves it: it describes rather than names, so the reader supplies
-			     the face themselves, which lands harder and will still read the
-			     same in ten years. -->
+			<!-- A BELIEF, A QUESTION, A JAB. The list is three CATEGORIES, no
+			     names — a category cannot be argued with. The litany that follows
+			     is the evidence for the question: three offenses every reader has
+			     personally suffered (the unending feed, the exit made harder than
+			     the entrance, the deletion that deletes nothing), escalating from
+			     attention to agency to memory. Concrete beats accusatory: each is
+			     checkable tonight on the reader's own phone. -->
 			<p>
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
 				idea that a thing belongs at the most local level able to hold it. Nothing is more
 				local than your own life. So ask plainly: who would you rather have holding the
-				whole account of your life — a government, a political party, big tech, a data
-				broker, disordered men? Or you.
+				whole account of your life — a government, a political party, big tech? Or you. If
+				you think they care about your wellbeing, ask why the feed never ends, why leaving
+				is harder than joining, and why nothing you delete is ever really gone.
 			</p>
 
-			<!-- The turn from the question to the product. The load-bearing move is
-			     MODAL: "cannot", not "will not" — extraction is ruled out by
-			     construction, not by promise, which is the one claim no cloud
-			     company can copy. "We are bringing the cloud home" is the whole
-			     structural program in five words. Then the name's argument:
-			     "vice is repetitive and profitable" says why an entire industry
-			     is arranged the way it is without accusing anyone of malice. -->
+			<!-- THE PREMISE, THEN THE MACHINE. The premise sentence replaces "That
+			     is why I built Virtues" — the letter said started/built twice in
+			     two paragraphs. The load-bearing move stays MODAL: "cannot", not
+			     "will not" — extraction ruled out by construction, the one claim
+			     no cloud company can copy. "Habit you did not choose" now chains
+			     straight into "vice is repetitive and profitable" again — the
+			     couplet explains the habit, so nothing may sit between them.
+			     ("We are bringing the cloud home" was cut: the letter's only
+			     corporate "we", banked for the website.) -->
 			<p>
-				That is why I built Virtues: a machine that cannot extract from you — cannot turn
-				your life into advertising, a feed, or a habit you did not choose, because it is
-				physically yours and answers to no one else. We are bringing the cloud home. Vice
-				is repetitive and profitable, which is why so much is arranged to produce it.
-				Virtue asks for harder things — attention, memory, honesty, intimacy.
+				Virtues rests on a simple premise: the record of your life belongs in your hands,
+				on hardware you own. So it is a machine that cannot extract from you — it cannot
+				turn your days into advertising, a feed, or a habit you did not choose, because it
+				is physically yours and answers to no one else. Vice is repetitive and profitable,
+				which is why so much is arranged to produce it. Virtue asks for harder things —
+				attention, memory, honesty, intimacy.
 			</p>
 
 			<!-- WHAT VIRTUES IS — named by its artifacts, never its features. The
@@ -98,8 +102,10 @@
 				Virtues is the complete record of a life: yours. Every day it writes a page —
 				yesterday, written down: where you went, who you spoke with, what you were working
 				on. Around the pages grows a wiki of your world, the people and places and work
-				your days are made of, and an intelligence that has read all of it. Thin at first,
-				having only just met you. But a record compounds. Give it a week, and you can ask:
+				your days are made of; an intelligence reads all of it. Thin at first, having only
+				just met you. But a record compounds: give it time and it forms an honest opinion
+				of how you actually live — your habits, your rhythms, the story you are in — and
+				you can ask:
 			</p>
 		</div>
 
@@ -125,18 +131,31 @@
 		</ul>
 
 		<div class="body">
+			<!-- THE TURN — the sentence the whole letter was missing. Everything
+			     above defends the record or uses it; this is the one line that
+			     LOVES it. It resolves why the asks matter and hands the close its
+			     subject. No villain in it on purpose: the loss it names has no
+			     malice, which is what makes it the letter's saddest and truest
+			     claim. -->
+			<p>
+				Most of a life is lost not to anyone's malice, but to nobody writing it down —
+				and the ordinary days, it turns out, were the beautiful ones.
+			</p>
+
 			<!-- THE CLOSE. The asks end on product; the letter must end on the
 			     person. The frame is REMEMBERING, not being-known — the system as
-			     a mirror and a way to search your own life (anamnesis: growing up
-			     is less discovery than recall). The last sentence inverts the
-			     manifesto's diagnosis — technology strips away the part of life
-			     that has nothing to do with it — into technology's one proper
-			     use. The us/you shift is deliberate: the founder joins the
-			     reader for the final clause. -->
+			     a mirror and a way to search your own life (anamnesis). "Growing
+			     older", not "growing up": the aphorism is about the accumulating
+			     life, and "growing up" pointed at childhood — the one season
+			     when discovery genuinely outweighs memory. The last sentence
+			     inverts the manifesto's diagnosis — technology strips away the
+			     part of life that has nothing to do with it — into technology's
+			     one proper use. The us/you shift is deliberate: the founder
+			     joins the reader for the final clause. -->
 			<p>
 				The goal is to know yourself more intimately than any company or any model ever
 				will — a mirror for everything you had let slip, a way to search your own life.
-				Growing up is less about discovering the new than remembering what you already
+				Growing older is less about discovering the new than remembering what you already
 				knew. That is the only way technology should be used: to give back the part of
 				life that has nothing to do with it — to make us more human, and more virtuous.
 			</p>
