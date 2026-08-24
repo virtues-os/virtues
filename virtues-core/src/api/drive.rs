@@ -286,7 +286,10 @@ fn validate_filename(filename: &str) -> Result<()> {
 /// store), not a stored quota — the `app_drive_usage.quota_bytes` column is a
 /// legacy of the tier system and is no longer read.
 pub async fn get_drive_usage(pool: &PgPool, config: &DriveConfig) -> Result<DriveUsage> {
-    // Get drive usage from app_drive_usage table
+    // Get drive usage from app_drive_usage table. Absent is fine: no migration
+    // or seed creates the singleton row — the first file operation upserts it
+    // (see update_usage_add) — so a box whose drive has never been written to
+    // legitimately has no row, and its usage is zero.
     let row = sqlx::query_as::<_, (i64, i64, i64)>(
         r#"
         SELECT drive_bytes, file_count, folder_count
@@ -295,11 +298,11 @@ pub async fn get_drive_usage(pool: &PgPool, config: &DriveConfig) -> Result<Driv
         "#,
     )
     .bind(USAGE_SINGLETON_ID)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get drive usage: {e}")))?;
 
-    let (drive_bytes, file_count, folder_count) = row;
+    let (drive_bytes, file_count, folder_count) = row.unwrap_or((0, 0, 0));
 
     let (disk_total, disk_available) = config
         .storage
