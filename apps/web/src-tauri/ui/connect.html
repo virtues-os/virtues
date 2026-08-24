@@ -889,9 +889,7 @@
           <p class="sub">${note ? esc(note) + ' ' : ''}Is this a server you're setting up for the
             first time, or one that's already running?</p>
           <button class="primary" id="fresh">Set up a new server</button>
-          <button class="secondary" id="existing">Connect to a server that's running</button>
-          <p class="hint" style="margin-top:22px">A brand-new server is found over Bluetooth;
-            one that's already running is found on your network.</p>`;
+          <button class="secondary" id="existing">Connect to a server that's running</button>`;
         document.getElementById('fresh').addEventListener('click', () => start());
         document.getElementById('existing').addEventListener('click', () => startExisting());
       }
