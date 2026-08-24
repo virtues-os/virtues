@@ -6,24 +6,22 @@
   figure, and six body sizes; every piece was individually defensible and the
   whole was a brochure. What survived is what does that one job.
 
-  THE FOUR FEELINGS, one beat each:
+  TWO FEELINGS, one beat each:
 
     understood     a person wrote this, and names the thing you actually fear
     excited        tomorrow morning, one concrete object at a concrete time
-    knowledgeable  the figure — where the record is, where the models are
-    safe           the same figure, read the other way
 
-  THE FIGURE REPLACED AN ARGUMENT. The old page drew "as it is" against "as it
-  ought to be", then admitted four paragraphs later that the box borrows hosted
-  models — which read as a claim followed by its own retraction. The two-rail
-  figure has no such seam: it says where each half of the system lives TODAY,
-  which makes the subscription a legible consequence rather than a compromise
-  to defend, and makes its ending a plotted point rather than a promise.
+  The architecture argument (where the record lives, what is borrowed, why
+  there is a subscription) does NOT live here anymore — the two-marker figure
+  and its bridge paragraph were cut 2026-08-21. The letter states the belief
+  and the promise; the case is the manifesto's to make, and the film's when it
+  exists. A letter that pauses to draw a diagram stops being a letter.
 
-  THREE SIZES, TWO FAMILIES. Serif for the headline and the whole body, mono
-  for labels and states, one small size for captions. Nothing else. The old
-  page ran six body sizes and the mixture was the reason it felt unresolved
-  before anyone could say why.
+  TWO SIZES, ONE FAMILY. Serif for the headline and the whole body, one small
+  size for the sign-off chrome. Nothing else. The old page ran six body sizes
+  and the mixture was the reason it felt unresolved before anyone could say
+  why. (The mono label register left with the figure; the strip above the
+  letter still carries it.)
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
@@ -47,7 +45,7 @@
 
 <div class="letter">
 	<div>
-		<h1 class="ob-h1 hero">A small correction to technology.</h1>
+		<h1 class="ob-h1 hero">A small correction to technology</h1>
 
 		<!-- A face carries an argument about trust in a way a paragraph cannot,
 		     which is exactly the job of this screen. -->
@@ -59,49 +57,106 @@
 		</div>
 
 		<div class="body">
-			<!-- A BELIEF, THEN A QUESTION, in one breath. The list is CATEGORIES
-			     rather than names: a category cannot be argued with, and a name
-			     invites an argument about that name — which is the one thing this
-			     paragraph cannot afford. The last item is the exception that
-			     proves it: it describes rather than names, so the reader supplies
-			     the face themselves, which lands harder and will still read the
-			     same in ten years. -->
+			<!-- A BELIEF, THEN A QUESTION, in one breath. The list is three
+			     CATEGORIES, no names — a category cannot be argued with, and a
+			     name invites an argument about that name, which this paragraph
+			     cannot afford. -->
 			<p>
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
-				idea that a thing belongs at the most local level able to hold it. Nothing is more
-				local than your own life. So ask it plainly. Who would you rather have holding the
-				whole account of yours: a government, a political party, big tech, an advertising
-				company, disordered men preying on the vulnerable? Or you.
+				idea that a thing belongs at the most local level that can hold it. Nothing is more
+				local than your own life. So ask plainly: who should hold the whole account of your
+				life? A government, a political party, big tech? Or you.
 			</p>
 
-			<!-- The turn from the question to the product, and the only place the
-			     name gets explained. "Vice is repetitive and profitable" is the
-			     load-bearing line: it says why an entire industry is arranged the
-			     way it is without accusing anyone of malice, and it makes the name
-			     an argument rather than a mood. -->
+			<!-- THE PREMISE. Two claims: capability (you can hold this yourself)
+			     and title (it is your property — "yours by right", the
+			     private-property register without the legalism of "entitled").
+			     The against-triple names what extraction becomes; the FOR side is
+			     deliberately not stated here — the rest of the letter (the page,
+			     the wiki, the asks, the mirror) IS the for side, shown rather
+			     than listed. The triple chains into vice-is-repetitive, which
+			     explains it. -->
 			<p>
-				That is why I built Virtues: to put your digital life somewhere it cannot be turned
-				into advertising, or a feed, or a habit you did not choose. Vice is repetitive and
+				Virtues rests on a simple premise: the data of your life is yours by right, and
+				yours to hold. It is the most intimate thing you have, and today it is turned
+				against you — into ads, algorithms, and addictions. Vice is repetitive and
 				profitable, which is why so much is arranged to produce it. Virtue asks for harder
 				things — attention, memory, honesty, intimacy.
 			</p>
 
-			<!-- SHOWN, NOT ASSERTED. Everything above is an argument, and a page of
-			     pure argument is cold. A concrete object at a concrete time is a
-			     thing you can picture, and "every day" is a promise you can check
-			     rather than an IOU. -->
+			<!-- THE LEDGER. ¶1 called it "the whole account of your life", so the
+			     figure is drawn as an account: one rule across, one rule down,
+			     a debit column and a credit column. Not a diagram — a page from
+			     a book of accounts, which is a form with five centuries of
+			     editorial standing and no AI-slop associations. The entries
+			     pair one-to-one ACROSS the rule, each pair the same raw
+			     material bent opposite ways: ads↔self-knowledge (they study
+			     you to sell; you study yourself for yourself), algorithms↔
+			     memory (their machine processes your past to shape you; yours,
+			     to remind you), addictions↔virtue (the couplet above, drawn).
+			     One ink for both columns — the words carry the judgment. -->
+			<figure
+				class="ledger"
+				role="img"
+				aria-label="The account of your life, as a table. In their cloud: ads, algorithms, addictions. In your home: self-knowledge, memory, virtue."
+			>
+				<p class="origin">your life's data</p>
+				<div class="table">
+					<div class="row heads">
+						<p class="where">in their cloud</p>
+						<p class="where">in your home</p>
+					</div>
+					<div class="row">
+						<p class="entry">ads</p>
+						<p class="entry">self-knowledge</p>
+					</div>
+					<div class="row">
+						<p class="entry">algorithms</p>
+						<p class="entry">memory</p>
+					</div>
+					<div class="row">
+						<p class="entry">addictions</p>
+						<p class="entry">virtue</p>
+					</div>
+				</div>
+			</figure>
+
+			<!-- THE THESIS. The one large claim, introduced by the mark itself —
+			     ∴ is the therefore-sign, so the logo arrives doing its job as
+			     LOGIC: everything above it, the figure included, is premises,
+			     and this line is the conclusion. It is also the only sentence
+			     in the letter allowed to command. Same ink as the prose — the
+			     mark is salient by being a symbol, not by being colored. -->
+			<p class="thesis">
+				<span class="therefore" aria-hidden="true">∴</span> You must protect your life's
+				data to protect your soul.
+			</p>
+
+			<!-- THE GIFT. A page WAITING FOR YOU — future tense, addressed to the
+			     reader — never "it writes / it reads / it keeps": every revision
+			     that made the box the subject turned the gift into a mechanism,
+			     and each one was reverted (last: 2026-08-24). No definitional
+			     opener either — ¶2 and the ledger just did that work. This
+			     paragraph's whole job is what protecting the record BUYS,
+			     arriving right after the thesis commands you to protect it:
+			     command, then gift. The asks below are its proof. -->
 			<p>
-				Every day, a page will be waiting for you: yesterday, written down — where you went,
-				who you spoke with, what you were working on. Thin at first, having only just met
-				you. But give it a week, and it becomes Jarvis. You can ask it things like:
+				Every day, a page will be waiting for you: yesterday, written down. Where you
+				went, who you spoke with, what you were working on. Thin at first, having only
+				just met you. But a record compounds. Give it time, then ask:
 			</p>
 		</div>
 
 		<!-- THE ONLY PLACE THE PRODUCT SPEAKS FOR ITSELF.
-		     Five questions carry more than five paragraphs of capability claims,
-		     and the RANGE is the argument: a symptom, a stranger's name, a craft,
-		     a song, a fast. No single app holds all five today, and nothing but
-		     your own record could.
+		     Four questions, four time horizons — today, yesterday, the
+		     standing ledger, years — each needing a different stream of the
+		     record (the body, the ambient moment, the transactions, the
+		     message history). Every ask must be unanswerable without the
+		     record: a question any bare model handles ("how do I become a
+		     better writer?") is a question this list cannot afford. Third is
+		     the practical one so the list still ends on the emotional deep
+		     cut, which the reveal's "oldest thing it found" line later pays
+		     off.
 
 		     Set as a block rather than bullets — these are things you would say
 		     out loud, and a bulleted list turns speech into a feature grid. Full
@@ -109,78 +164,39 @@
 		<ul class="asks">
 			<li>Why do I have a migraine today?</li>
 			<li>What was the name of the woman I met at the dog park yesterday?</li>
-			<li>How do I become a better writer?</li>
-			<li>What song was playing at the bar yesterday that made me nostalgic?</li>
-			<li>How's my fast going?</li>
+			<li>What am I still paying for that I never use?</li>
+			<li>Who have I lost touch with that I used to talk to every day?</li>
 		</ul>
 
 		<div class="body">
-			<!-- THE BRIDGE. The questions above are only askable of something that
-			     already knows the ordinary, unflattering texture of a life — which
-			     is precisely what nobody sane hands to a company. So the intimacy
-			     the list promises is what FORCES the architecture the figure below
-			     describes; sovereignty is not a feature bolted alongside it. -->
+			<!-- THE CLOSE. The asks end on product; the letter must end on the
+			     person. The frame is REMEMBERING, not being-known — the system as
+			     a mirror and a way to search your own life (anamnesis). "Growing
+			     older", not "growing up": the aphorism is about the accumulating
+			     life, and "growing up" pointed at childhood — the one season
+			     when discovery genuinely outweighs memory. The last sentence
+			     inverts the manifesto's diagnosis — technology strips away the
+			     part of life that has nothing to do with it — into technology's
+			     one proper use. The us/you shift is deliberate: the founder
+			     joins the reader for the final clause. -->
 			<p>
-				Such intimacy requires sovereignty. Nothing will tell a machine the truth about its
-				marriage, its body, or its worst week while that machine belongs to someone else —
-				and a record that can be sold, subpoenaed, or quietly read is someone else's. So the
-				first question about Virtues is not what it can do. It is where it lives.
+				The goal is to know yourself more intimately than any company or model ever
+				will: a mirror for everything you had let slip, a way to search your own life.
+				Because growing older is less about discovering new things than remembering what
+				you already knew. And technology has one good use: to give back the part of life
+				that has nothing to do with technology — to make us more human, and more virtuous.
 			</p>
 		</div>
 
-		<!-- ── where it lives ────────────────────────────────────────────────
-		     ONE AXIS, TWO MARKERS. There are exactly two things in this system
-		     worth locating, and the whole argument is that they are at different
-		     points — so they belong on the SAME line, where the distance between
-		     them can be seen rather than described.
-
-		     An earlier attempt gave each its own rail, which put a filled track
-		     and a round handle side by side twice and read unmistakably as two
-		     range sliders: a control, inviting a drag, saying nothing. One line
-		     with marks on it is a scale, and nobody tries to drag a scale. -->
-		<figure class="where">
-			<figcaption class="where-head">What is yours, and what is borrowed</figcaption>
-
-			<div class="axis-fig">
-				<!-- Ordered far marker first so the near one's label paints over it
-				     rather than under, on the narrow widths where they meet. -->
-				<div class="mark here" style="--at: 100%; --h: 5.9rem">
-					<p class="mark-label">The record of your life</p>
-					<p class="mark-state">arrived</p>
-					<span class="tick"></span>
-					<span class="dot"></span>
-				</div>
-
-				<div class="mark transit" style="--at: 34%; --h: 2.2rem">
-					<p class="mark-label">The intelligence that reads it</p>
-					<p class="mark-state">still on the way</p>
-					<span class="tick"></span>
-					<span class="dot"></span>
-				</div>
-
-				<div class="line"></div>
-				<div class="ends">
-					<span>elsewhere</span>
-					<span>your house</span>
-				</div>
-			</div>
-
-			<p class="note">
-				Your record sits on the box in your home and does not leave it. The models are still
-				borrowed, because no intelligence you can run in your own house is yet good enough
-				to be trusted with your life. They are shown only what a question requires, under
-				terms that keep nothing: not stored, not trained on, not logged. That borrowing is
-				the one thing the subscription buys, and it ends when the hardware in your home is
-				equal to the work.
-			</p>
-
-			<p class="further">
-				<a href={MANIFESTO_URL} target="_blank" rel="noreferrer">
-					Our case for subsidiarity in technology
-					<Icon icon="ri:external-link-line" width="13" />
-				</a>
-			</p>
-		</figure>
+		<!-- The long-form case (subsidiarity, where the record lives, what is
+		     borrowed) moved out of the letter entirely — it is the manifesto's
+		     to make. One quiet pointer for whoever wants it now. -->
+		<p class="further">
+			<a href={MANIFESTO_URL} target="_blank" rel="noreferrer">
+				Our case for subsidiarity in technology
+				<Icon icon="ri:external-link-line" width="13" />
+			</a>
+		</p>
 
 		<div class="sign">
 			<!-- MASKED, NOT INVERTED. An earlier version inverted black ink assuming
@@ -228,20 +244,6 @@
 	.letter {
 		--t-body: 1.0625rem;
 		--t-small: 13px;
-		--t-label: 11px;
-	}
-
-	/* Mono, uppercase, --t-label: the one treatment every label on the page
-	   shares — the axis ends, the marker states, the figure's head. (The eyebrow
-	   moved into OnboardingHeader, which carries the same treatment.) */
-	.ends,
-	.mark-state,
-	.where-head {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: var(--t-label);
-		letter-spacing: 0.16em;
-		text-transform: uppercase;
-		color: var(--color-foreground-subtle);
 	}
 
 	/* The one screen allowed to be louder than the others: it is the cover, and
@@ -289,6 +291,84 @@
 		margin: 0;
 	}
 
+	/* ── the ledger ────────────────────────────────────────────────────── */
+
+	/* The one figure in the letter, set as a booktabs table: an inset exhibit
+	   at well under the measure, three horizontal rules (above the heads,
+	   below the heads, under the last row), and NO vertical rules — columns
+	   are separated by whitespace, which is the whole discipline of the form.
+	   Serif entries in the prose's own face; mono only for the heads. The
+	   debit column is muted; each pair reads across its row as an opposition. */
+	.ledger {
+		margin: 1.5rem 0 1rem;
+	}
+
+	.origin {
+		margin: 0 0 0.85rem;
+		text-align: center;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+		color: var(--color-foreground);
+	}
+
+	.table {
+		max-width: 25rem;
+		margin: 0 auto;
+		border-top: 1px solid var(--color-border);
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	/* Equal halves — the heads are a true parallel now (in their cloud / in
+	   your home), so the geometry gets to be one too. */
+	.row {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 2rem;
+	}
+
+	.row p {
+		margin: 0;
+	}
+
+	.row.heads {
+		padding: 0.6rem 0 0.55rem;
+		border-bottom: 1px solid var(--color-border);
+		margin-bottom: 0.55rem;
+	}
+
+	.row:last-child {
+		padding-bottom: 0.65rem;
+	}
+
+	/* Lowercase mono, gentle tracking: an annotation's whisper, not a column
+	   header's shout. */
+	.where {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 11.5px;
+		letter-spacing: 0.06em;
+		color: var(--color-foreground-subtle);
+	}
+
+	/* One ink for both columns — in print, the judgment is carried by the
+	   words (addictions vs virtue), never by graying a side out. The earlier
+	   muted-left read as a disabled state, not an opinion. */
+	.entry {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: var(--t-body);
+		line-height: 1.85;
+		color: var(--color-foreground);
+	}
+
+	/* The thesis line: same serif, same size, same ink — salience comes from
+	   the mark and the surrounding air, never from shouting or color. */
+	.thesis {
+		margin-top: 0.35rem;
+	}
+
+	.therefore {
+		margin-right: 0.15rem;
+	}
+
 	/* Questions someone would say out loud, so they are set as speech: no
 	   markers, a hairline to hold them together as one utterance, and the same
 	   serif at the same size as the prose they interrupt. Bullets would have
@@ -318,169 +398,14 @@
 		margin-top: 1.5rem;
 	}
 
-	/* ── where it lives ────────────────────────────────────────────────── */
-
-	.where {
-		margin: 3rem 0 0;
-		padding-top: 1.75rem;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.where-head {
-		margin: 0 0 1rem;
-	}
-
-	/* One line, measured from `elsewhere` to `your house`, with both markers on
-	   it. Marker labels stack at different heights (--h) so they never collide,
-	   and the taller stalk lands on the marker that has arrived. */
-	.axis-fig {
-		position: relative;
-		height: 9.5rem;
-	}
-
-	.line {
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 1.75rem;
-		height: 1px;
-		background: var(--color-border);
-	}
-
-	.ends {
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		display: flex;
-		justify-content: space-between;
-		letter-spacing: 0.14em;
-	}
-
-	.mark {
-		position: absolute;
-		bottom: 1.75rem;
-		left: var(--at);
-	}
-
-	.dot {
-		position: absolute;
-		bottom: -4.5px;
-		left: -4.5px;
-		width: 9px;
-		height: 9px;
-		border-radius: 50%;
-		background: currentColor;
-	}
-
-	/* The stalk, not a ruler: it exists only to tie a label to a position, so it
-	   stays fainter than either. */
-	.tick {
-		position: absolute;
-		bottom: 0;
-		left: -0.5px;
-		width: 1px;
-		height: var(--h);
-		background: currentColor;
-		opacity: 0.3;
-	}
-
-	.mark-label,
-	.mark-state {
-		position: absolute;
-		bottom: var(--h);
-		margin: 0;
-		white-space: nowrap;
-		line-height: 1.35;
-	}
-
-	.mark-label {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: var(--t-body);
-		color: var(--color-foreground);
-		padding-bottom: 1.35rem;
-	}
-
-	.mark-state {
-		padding-bottom: 0.5rem;
-		letter-spacing: 0.14em;
-	}
-
-	/* Arrived: the accent, and its label hangs back from the right edge so the
-	   line's end is not crowded. */
-	.here {
-		color: var(--color-primary);
-	}
-
-	.here .mark-label,
-	.here .mark-state {
-		right: 0;
-		text-align: right;
-	}
-
-	.here .mark-state {
-		color: var(--color-primary);
-	}
-
-	/* Hollow, because it has not got there. */
-	.transit {
-		color: var(--color-foreground-subtle);
-	}
-
-	.transit .dot {
-		background: var(--color-background);
-		border: 1.5px solid currentColor;
-	}
-
-	.transit .mark-label,
-	.transit .mark-state {
-		left: 0;
-	}
-
-	/* One movement on load: both markers rise into place along their own stalks,
-	   which is the only motion on the page and says the thing the figure says. */
-	.mark {
-		animation: place 0.8s 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-	}
-
-	@keyframes place {
-		from {
-			opacity: 0;
-			transform: translateY(6px);
-		}
-		to {
-			opacity: 1;
-			transform: none;
-		}
-	}
-
-	:global(.ob-still) .mark {
-		animation: none;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.mark {
-			animation: none;
-		}
-	}
-
-	/* SAME TYPE AS THE LETTER. These sat in the UI sans at 13px, which made the
-	   most important admission on the page read as a footnote in a different
-	   document. Muted rather than smaller is how a caption stays a caption. */
-	.note,
+	/* SAME TYPE AS THE LETTER, muted rather than smaller — a caption's way of
+	   staying a caption. */
 	.further {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: var(--t-body);
 		line-height: 1.7;
 		color: var(--color-foreground-muted);
-	}
-
-	.note {
-		margin: 2rem 0 0;
-	}
-
-	.further {
-		margin: 1.15rem 0 0;
+		margin: 2.25rem 0 0;
 	}
 
 	.further a {
@@ -496,25 +421,6 @@
 	.further a:hover {
 		color: var(--color-foreground);
 		border-bottom-color: var(--color-foreground-subtle);
-	}
-
-	/* Narrow: the labels are wider than the gap between the markers, so they
-	   wrap out of `nowrap` and the figure grows a little taller to hold them. */
-	@media (max-width: 620px) {
-		.axis-fig {
-			height: 11rem;
-		}
-
-		.mark-label,
-		.mark-state {
-			white-space: normal;
-			max-width: 11rem;
-		}
-
-		.here .mark-label,
-		.here .mark-state {
-			right: 0;
-		}
 	}
 
 	/* ── sign-off ──────────────────────────────────────────────────────── */

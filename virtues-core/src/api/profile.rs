@@ -14,7 +14,9 @@ pub struct UpdateProfileRequest {
     // Identity
     pub full_name: Option<String>,
     pub preferred_name: Option<String>,
-    pub birth_date: Option<String>,
+    /// Parsed by serde from `"YYYY-MM-DD"` (what an HTML date input submits);
+    /// bound as a real DATE — a String bind fails Postgres's type check.
+    pub birth_date: Option<chrono::NaiveDate>,
     // Physical/Biometric
     pub height_cm: Option<f64>,
     pub weight_kg: Option<f64>,
@@ -219,4 +221,28 @@ pub async fn ensure_home_timezone(db: &PgPool) -> Result<()> {
         .await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[sqlx::test]
+    async fn birth_date_round_trips_as_a_real_date(pool: PgPool) {
+        // The column is a Postgres `date`. As Option<String> this round-trip
+        // failed on BOTH legs — the bind was rejected at prepare (text vs date)
+        // and, had a value ever landed, `SELECT *` failed to decode it, 500ing
+        // every GET /profile on the box. NaiveDate is the type the column is.
+        let d = chrono::NaiveDate::from_ymd_opt(1990, 1, 15).unwrap();
+        let updated = update_profile(
+            &pool,
+            UpdateProfileRequest { birth_date: Some(d), ..Default::default() },
+        )
+        .await
+        .expect("update with a birth date");
+        assert_eq!(updated.birth_date, Some(d));
+
+        let fetched = get_profile(&pool).await.expect("get after set");
+        assert_eq!(fetched.birth_date, Some(d));
+    }
 }

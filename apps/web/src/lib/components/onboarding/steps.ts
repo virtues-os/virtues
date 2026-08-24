@@ -1,5 +1,5 @@
 /**
- * The six steps of onboarding, in order.
+ * The five steps of onboarding, in order.
  *
  * Here rather than inside OnboardingHeader.svelte because the page needs the
  * type to seed and advance `screen`, and a type exported from a component's
@@ -7,9 +7,18 @@
  * module>` block, which is a lot of ceremony for a list.
  *
  * Labels are what the person would call them, not what the API calls them.
+ *
+ * THERE IS NO ACCOUNT STEP. The account is a SETUP fact — the airlock's BLE
+ * link step handles it, before pairing, and it is skippable there. Sources
+ * need no account on either side (the OAuth proxy's exchange leg is
+ * deliberately unauthenticated; chat import and the collector are local), so
+ * the only thing on the box that needs it is an AI call. The gate therefore
+ * renders as a conditional interstitial at the first AI-needing moment (the
+ * words doorway and the reveal), for exactly the people who skipped linking —
+ * a toll booth, not a story beat (2026-08-21).
  */
 
-export type StepId = "letter" | "names" | "account" | "sources" | "words" | "you";
+export type StepId = "letter" | "names" | "sources" | "words" | "you";
 
 export interface Step {
 	id: StepId;
@@ -18,10 +27,9 @@ export interface Step {
 }
 
 export const STEPS: Step[] = [
-	{ id: "letter", label: "The letter", icon: "ri:quill-pen-line" },
+	{ id: "letter", label: "Founder's letter", icon: "ri:quill-pen-line" },
 	{ id: "names", label: "Introductions", icon: "ri:user-3-line" },
-	{ id: "account", label: "Account", icon: "ri:shield-keyhole-line" },
-	{ id: "sources", label: "Your world", icon: "ri:links-line" },
+	{ id: "sources", label: "Your data", icon: "ri:links-line" },
 	{ id: "words", label: "In your own words", icon: "ri:chat-quote-line" },
 	{ id: "you", label: "You", icon: "ri:sparkling-2-line" },
 ];
@@ -42,7 +50,6 @@ export const STEPS: Step[] = [
 export type ViewId =
 	| "letter"
 	| "introductions"
-	| "account"
 	| "sources"
 	| "your-words"
 	| "interview"
@@ -53,7 +60,6 @@ export type ViewId =
 export const VIEW_ORDER: ViewId[] = [
 	"letter",
 	"introductions",
-	"account",
 	"sources",
 	"your-words",
 	"interview",
@@ -64,7 +70,6 @@ export const VIEW_ORDER: ViewId[] = [
 export const VIEW_STEP: Record<ViewId, StepId> = {
 	letter: "letter",
 	introductions: "names",
-	account: "account",
 	sources: "sources",
 	"your-words": "words",
 	interview: "words",
@@ -76,7 +81,6 @@ export const VIEW_STEP: Record<ViewId, StepId> = {
 export const STEP_VIEW: Record<StepId, ViewId> = {
 	letter: "letter",
 	names: "introductions",
-	account: "account",
 	sources: "sources",
 	words: "your-words",
 	you: "you",

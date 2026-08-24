@@ -1,10 +1,12 @@
 <!--
-  SourceRow — one connectable source inside "Connect your world".
+  SourceRow — one connectable source inside "Your data".
 
-  Icon + name + the WHY (why it's worth connecting), a Connect button or a
-  connected checkmark, and the privacy receipt hung in the margin. Prominence
-  ('anchor' | 'prominent' | 'quiet') tunes the emphasis so the richest sources
-  lead and the long tail stays quiet.
+  Icon + name + the WHY (why it's worth connecting), and a Connect button or a
+  connected checkmark. Prominence ('anchor' | 'prominent' | 'quiet') tunes the
+  emphasis through the icon tint and name size ONLY — every Connect button is
+  the same quiet secondary, because the screen has exactly one primary action
+  (Continue) and a column of mixed button weights read as a bug, not a
+  hierarchy (2026-08-21).
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
@@ -38,7 +40,7 @@
 		{#if connected}
 			<button class="add-more" onclick={onConnect} disabled={busy}>Add another</button>
 		{:else}
-			<Button variant={copy.prominence === "anchor" ? "primary" : "secondary"} size="sm" onclick={onConnect} disabled={busy}>
+			<Button variant="secondary" size="sm" onclick={onConnect} disabled={busy}>
 				{busy ? "…" : "Connect"}
 			</Button>
 		{/if}
