@@ -16,8 +16,7 @@ Default permissions for the reach plugin
 - `allow-improv-wifi-scan`
 - `allow-improv-provision`
 - `allow-improv-pair`
-- `allow-improv-link-code`
-- `allow-improv-pair-code`
+- `allow-improv-grant`
 - `allow-improv-disconnect`
 - `allow-outbox-stats`
 - `allow-drain-now`
@@ -191,12 +190,12 @@ Denies the improv_discover command without any pre-configured scope.
 <tr>
 <td>
 
-`reach:allow-improv-link-code`
+`reach:allow-improv-grant`
 
 </td>
 <td>
 
-Enables the improv_link_code command without any pre-configured scope.
+Enables the improv_grant command without any pre-configured scope.
 
 </td>
 </tr>
@@ -204,12 +203,12 @@ Enables the improv_link_code command without any pre-configured scope.
 <tr>
 <td>
 
-`reach:deny-improv-link-code`
+`reach:deny-improv-grant`
 
 </td>
 <td>
 
-Denies the improv_link_code command without any pre-configured scope.
+Denies the improv_grant command without any pre-configured scope.
 
 </td>
 </tr>
@@ -236,32 +235,6 @@ Enables the improv_pair command without any pre-configured scope.
 <td>
 
 Denies the improv_pair command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:allow-improv-pair-code`
-
-</td>
-<td>
-
-Enables the improv_pair_code command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`reach:deny-improv-pair-code`
-
-</td>
-<td>
-
-Denies the improv_pair_code command without any pre-configured scope.
 
 </td>
 </tr>
