@@ -57,15 +57,19 @@
 		</div>
 
 		<div class="body">
-			<!-- A BELIEF, THEN A QUESTION, in one breath. The list is three
-			     CATEGORIES, no names — a category cannot be argued with, and a
-			     name invites an argument about that name, which this paragraph
-			     cannot afford. -->
+			<!-- A BELIEF, THEN A QUESTION, in one breath. One continuous motion —
+			     belief, principle, question — no stage directions ("So ask
+			     plainly:" was a command to ask a question the letter asks
+			     anyway) and no fragment drumroll: the question's last word is
+			     "you?", and ¶2's "yours by right" is its answer. The list is
+			     three CATEGORIES, no names — a category cannot be argued with,
+			     and a name invites an argument about that name, which this
+			     paragraph cannot afford. -->
 			<p>
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
 				idea that a thing belongs at the most local level that can hold it. Nothing is more
-				local than your own life. So ask plainly: who should hold the whole account of your
-				life? A government, a political party, big tech? Or you.
+				local than your own life. So who should hold the whole account of it: a government,
+				a political party, big tech, or you?
 			</p>
 
 			<!-- THE PREMISE. Two claims: capability (you can hold this yourself)
