@@ -55,6 +55,11 @@ The letter runs: *∴ You must protect your life's data to protect your soul.*
 | ∴ Whoever holds the record of your life holds a hand on your soul. | custody warning | film script |
 | We are bringing the cloud home. | the structural program | website hero (the honest home of the corporate "we") |
 | Most of a life is lost not to anyone's malice, but to nobody writing it down — and the ordinary days, it turns out, were the beautiful ones. | the beauty of the record | reveal, Examen, film |
+| The goal is to know yourself more intimately than any company or model ever will. | the competitive claim | website hero |
+| A mirror for everything you had let slip; a way to search your own life. | mirror / search | product pages |
+| Growing older is less about discovering new things than remembering what you already knew. | anamnesis | the Examen essay's opening line |
+| Technology has one good use: to give back the part of life that has nothing to do with technology — to make us more human, and more virtuous. | the peroration | film script, about page |
+| Every day, a page will be waiting for you: yesterday, written down. | the daily gift | ASSIGNED: the reveal's door (the tomorrow-beat), where "tomorrow" is real |
 
 Banked film-script material (spoken-to-camera register, too hot for print):
 "evil dwells in men pretending to be good" · the extraction litany (taxes,
