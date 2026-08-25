@@ -2883,10 +2883,10 @@
           "markdownDescription": "Denies the reveal_item_in_dir command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-link-code`\n- `allow-improv-pair-code`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`",
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-grant`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`",
           "type": "string",
           "const": "reach:default",
-          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-wifi-join`\n- `allow-wifi-forget`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-link-code`\n- `allow-improv-pair-code`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`"
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-grant`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`"
         },
         {
           "description": "Enables the discover command without any pre-configured scope.",
@@ -2925,22 +2925,16 @@
           "markdownDescription": "Enables the improv_discover command without any pre-configured scope."
         },
         {
-          "description": "Enables the improv_link_code command without any pre-configured scope.",
+          "description": "Enables the improv_grant command without any pre-configured scope.",
           "type": "string",
-          "const": "reach:allow-improv-link-code",
-          "markdownDescription": "Enables the improv_link_code command without any pre-configured scope."
+          "const": "reach:allow-improv-grant",
+          "markdownDescription": "Enables the improv_grant command without any pre-configured scope."
         },
         {
           "description": "Enables the improv_pair command without any pre-configured scope.",
           "type": "string",
           "const": "reach:allow-improv-pair",
           "markdownDescription": "Enables the improv_pair command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_pair_code command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-improv-pair-code",
-          "markdownDescription": "Enables the improv_pair_code command without any pre-configured scope."
         },
         {
           "description": "Enables the improv_provision command without any pre-configured scope.",
@@ -2997,18 +2991,6 @@
           "markdownDescription": "Enables the reach_status command without any pre-configured scope."
         },
         {
-          "description": "Enables the wifi_forget command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-wifi-forget",
-          "markdownDescription": "Enables the wifi_forget command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the wifi_join command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:allow-wifi-join",
-          "markdownDescription": "Enables the wifi_join command without any pre-configured scope."
-        },
-        {
           "description": "Denies the discover command without any pre-configured scope.",
           "type": "string",
           "const": "reach:deny-discover",
@@ -3045,22 +3027,16 @@
           "markdownDescription": "Denies the improv_discover command without any pre-configured scope."
         },
         {
-          "description": "Denies the improv_link_code command without any pre-configured scope.",
+          "description": "Denies the improv_grant command without any pre-configured scope.",
           "type": "string",
-          "const": "reach:deny-improv-link-code",
-          "markdownDescription": "Denies the improv_link_code command without any pre-configured scope."
+          "const": "reach:deny-improv-grant",
+          "markdownDescription": "Denies the improv_grant command without any pre-configured scope."
         },
         {
           "description": "Denies the improv_pair command without any pre-configured scope.",
           "type": "string",
           "const": "reach:deny-improv-pair",
           "markdownDescription": "Denies the improv_pair command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_pair_code command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-improv-pair-code",
-          "markdownDescription": "Denies the improv_pair_code command without any pre-configured scope."
         },
         {
           "description": "Denies the improv_provision command without any pre-configured scope.",
@@ -3115,18 +3091,6 @@
           "type": "string",
           "const": "reach:deny-reach-status",
           "markdownDescription": "Denies the reach_status command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the wifi_forget command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-wifi-forget",
-          "markdownDescription": "Denies the wifi_forget command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the wifi_join command without any pre-configured scope.",
-          "type": "string",
-          "const": "reach:deny-wifi-join",
-          "markdownDescription": "Denies the wifi_join command without any pre-configured scope."
         },
         {
           "description": "This permission set configures which\nshell functionality is exposed by default.\n\n#### Granted Permissions\n\nIt allows to use the `open` functionality with a reasonable\nscope pre-configured. It will allow opening `http(s)://`,\n`tel:` and `mailto:` links.\n\n#### This default permission set includes:\n\n- `allow-open`",

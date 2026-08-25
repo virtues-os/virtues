@@ -3,7 +3,7 @@
 //! All billable API requests are proxied through virtues-api for unified budget enforcement.
 //!
 //! Routes (all metered calls use bearer-auth + DB entitlement::charge):
-//! - /v1/ai/*            - LLM chat / completions / embeddings / models
+//! - /v1/ai/*            - LLM chat / completions / models
 //! - /v1/ai/search       - Web search (gateway-executed)
 //! - /v1/places/*        - Location autocomplete
 //! - /v1/unsplash/*      - Image search

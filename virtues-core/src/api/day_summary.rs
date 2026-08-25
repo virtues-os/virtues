@@ -1666,9 +1666,10 @@ async fn recent_event_case_file(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>)
 /// Call virtues-api for the summary generation
 /// One call, two jobs — so the caller says which model and which instructions.
 ///
-/// Segmenting a day is structured extraction: cut it into spans, name them, ground
-/// each in the data. That is grunt work, and it belongs on the Lite slot. Writing
-/// the day up is prose about what it MEANT, and that is the Chat slot.
+/// Both callers resolve the Chat slot today: segmentation is adjudication, not
+/// extraction (see the callers' comments), and the narration is the narrative
+/// call. If segmentation ever moves to Lite for cost, change it at the caller —
+/// this function takes whatever model it is handed.
 ///
 /// They used to be a single Opus call producing both, which is why events cost
 /// narrative prices, why "only narrate a day with enough events" was circular
