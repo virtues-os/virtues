@@ -1903,8 +1903,37 @@ def _mode_width():
     return 1920.0  # the validated 7" panel; wrong panels beat a dead shim
 
 
-_zoom_env = os.environ.get("VIRTUES_DISPLAY_ZOOM", "")
-ZOOM = float(_zoom_env) if _zoom_env else max(0.5, min(8.0, _mode_width() / DESIGN_WIDTH_PX))
+def _logical_width():
+    # Prefer what the compositor ACTUALLY set over the sysfs guess: a scaler
+    # panel can advertise modes it never runs, and the sysfs read assumes the
+    # first line won. GDK reports the monitor wlroots configured, in logical
+    # px — the same units set_zoom_level divides — so this stays correct even
+    # if an output scale ever appears. Gdk is imported below; by ZOOM time the
+    # display connection exists.
+    try:
+        display = Gdk.Display.get_default()
+        monitor = display.get_monitor(0) if display else None
+        if monitor:
+            w = float(monitor.get_geometry().width)
+            if w > 0:
+                return w
+    except Exception:
+        pass
+    return _mode_width()
+
+
+# The override must degrade to the derived zoom on any garbage — a typo in
+# virtues.env would otherwise crash the shim at import, and Restart=always
+# turns that into a permanently black panel (NEVER A BLANK SCREEN).
+try:
+    _zoom_env = float(os.environ.get("VIRTUES_DISPLAY_ZOOM", "") or 0.0)
+except ValueError:
+    _zoom_env = 0.0
+ZOOM = (
+    _zoom_env
+    if 0.1 <= _zoom_env <= 16.0
+    else max(0.5, min(8.0, _logical_width() / DESIGN_WIDTH_PX))
+)
 DATA_DIR = os.environ.get("VIRTUES_DATA_DIR", "/var/lib/virtues")
 DIAG = "/run/virtues-diag.html"
 GRACE_S = 15  # silent retries before the diagnostic page appears
@@ -2062,8 +2091,12 @@ def _build_page():
         rows.append(("env file", (yes if f["env_exists"] else no) + " · DATABASE_URL " + (yes if f["has_db_url"] else no) + " · key " + ("present" if f["has_key"] else "absent")))
         units = " · ".join(u + " " + s for u, s in f["units"])
         rows.append(("units", units))
+    # The units row wraps instead of truncating: it now names the real cluster
+    # instances, and an ellipsis over the one row that explains a wedge is the
+    # umbrella lie all over again in CSS.
     body_rows = "".join(
-        "<div class='r'><span class='k'>" + esc(k) + "</span><span class='v'>" + esc(v) + "</span></div>"
+        "<div class='r" + (" wrap" if k == "units" else "") + "'><span class='k'>"
+        + esc(k) + "</span><span class='v'>" + esc(v) + "</span></div>"
         for k, v in rows
     )
     journal = esc(f["journal"]) if f else ""
@@ -2074,6 +2107,8 @@ def _build_page():
         "body{margin:8px}"
         ".verdict{color:#e8b04b;font-size:12px;margin:0 0 8px}"
         ".r{display:flex;gap:6px;white-space:nowrap;overflow:hidden}"
+        ".r.wrap{white-space:normal}"
+        ".r.wrap .v{overflow:visible;text-overflow:clip}"
         ".k{color:#5c6773;min-width:58px;flex:none}"
         ".v{overflow:hidden;text-overflow:ellipsis}"
         "pre{color:#7a8494;margin:8px 0 0;font-size:8px;line-height:1.4;white-space:pre-wrap;word-break:break-all}"
@@ -2521,7 +2556,7 @@ MARKER="$DATA_DIR/.needs-firstboot"
 
 # Requeue the service chain once the data disk is mounted. THE CLUSTER
 # INSTANCE by name, not just the umbrella: postgresql.service is a oneshot
-# wrapper that reports active while postgresql@16-main lies dead beside it,
+# wrapper that reports active while postgresql@18-main lies dead beside it,
 # and starting an already-active oneshot is a no-op — so a dependency-failed
 # instance stayed down forever, virtues.service polled a socket that could
 # never appear until its own start-limit parked it, and the glass said
