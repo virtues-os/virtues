@@ -32,15 +32,6 @@ pub fn get_provider_config(model: &str, config: &Config) -> ProviderConfig {
     }
 }
 
-/// Get embeddings endpoint configuration
-pub fn get_embeddings_config(config: &Config) -> ProviderConfig {
-    ProviderConfig {
-        endpoint: format!("{}/v1/embeddings", config.ai_gateway_url),
-        api_key: config.ai_gateway_api_key.clone(),
-        model_name: String::new(),
-    }
-}
-
 /// Calculate cost from token usage. FALLBACK ONLY. `None` means we do not know.
 ///
 /// The gateway's `usage.cost` is authoritative and is present on every call, on
