@@ -1710,14 +1710,16 @@ const PG_MOUNT_GUARD_TEMPLATE: &str = r#"# Installed by virtues-installer.
 [Unit]
 RequiresMountsFor=__DATA_DIR__
 After=virtues-firstboot.service
-# Never park. The vendor unit ships no Restart=, so one lost race at boot —
-# the nofail data-disk mount landing a beat late, the guard below firing in
-# the window — left the instance down FOREVER while the postgresql.service
-# umbrella (a oneshot wrapper) reported active over it, and virtues.service
-# burned its own start-limit polling a socket that could never appear
-# (bench unit, 2026-08-25). A cluster that is genuinely broken restart-loops
-# instead of parking: on an appliance in someone's home, a loop that heals
-# the moment the cause clears beats a unit that stays dead until a reboot.
+# Never park. The vendor unit ships no Restart=, so any failure after a start
+# attempt — a lost mount race, a crash mid-recovery — left the instance down
+# FOREVER while the postgresql.service umbrella (a oneshot wrapper) reported
+# active over it, and virtues.service burned its own start-limit polling a
+# socket that could never appear. (The 2026-08-25 bench wedge itself was the
+# never-started variant — a truncated start.conf skipping the generator —
+# repaired in firstboot §1c'; this drop-in covers the started-then-failed
+# class.) A cluster that is genuinely broken restart-loops instead of
+# parking: on an appliance in someone's home, a loop that heals the moment
+# the cause clears beats a unit that stays dead until a reboot.
 StartLimitIntervalSec=0
 
 [Service]
@@ -2550,18 +2552,29 @@ const FIRSTBOOT_SCRIPT: &str = r#"#!/bin/sh
 # still needs). Each guard is the narrowest true statement about its own job.
 set -eu
 
+# Everything this script writes — cluster config, env file, sentinels, fstab —
+# is written once and read forever, and a first boot is exactly when a new
+# owner is most likely to cut power. A yank minutes after first bringup left
+# pg_createcluster's start.conf ZERO-LENGTH (ext4 delayed allocation), and the
+# postgresql-common generator then never started the cluster on any later
+# boot, while the umbrella unit reported active over the gap (read off a
+# wedged unit's NVMe, 2026-08-25). Flush on every exit path, including §1d's.
+trap sync EXIT
+
 DATA_DIR=__DATA_DIR__
 ENV_FILE="$DATA_DIR/virtues.env"
 MARKER="$DATA_DIR/.needs-firstboot"
 
-# Requeue the service chain once the data disk is mounted. THE CLUSTER
-# INSTANCE by name, not just the umbrella: postgresql.service is a oneshot
-# wrapper that reports active while postgresql@18-main lies dead beside it,
-# and starting an already-active oneshot is a no-op — so a dependency-failed
-# instance stayed down forever, virtues.service polled a socket that could
-# never appear until its own start-limit parked it, and the glass said
-# "postgresql active" the whole time (bench unit, 2026-08-25). The instance
-# names are derived from /etc/postgresql so a version bump cannot rot this.
+# Requeue the service chain. THE CLUSTER INSTANCE by name, not just the
+# umbrella: postgresql.service is a oneshot wrapper that reports active while
+# postgresql@18-main lies dead beside it, and starting an already-active
+# oneshot is a no-op. Confirmed from a wedged unit's NVMe (2026-08-25): a
+# first-boot power yank truncated start.conf, the generator skipped the
+# instance on every later boot, the umbrella said active, and virtues.service
+# polled a socket that could never appear until its own start-limit parked
+# it. Starting the instance by name does not depend on the generator's
+# wants-links, which is what makes this the repair. The names are derived
+# from /etc/postgresql so a version bump cannot rot this.
 requeue_services() {
     UNITS="postgresql.service virtues.service"
     for conf in /etc/postgresql/*/*/postgresql.conf; do
@@ -2653,6 +2666,10 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -e "$DATA_DIR/.claim-complete" ]
         # `-s`, writing the sentinel, latching the repair off, and then failing
         # §1d every boot forever.
         if grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null; then
+            # The seed must be ON DISK before the sentinel that says it is —
+            # ext4 does not order writes across files, and a yank between the
+            # two leaves a sentinel over a hollow disk with the repair latched off.
+            sync
             touch "$DATA_DIR/.claim-complete"
             logger -t virtues-firstboot "completed an interrupted disk claim from the card seed"
         else
@@ -2781,6 +2798,7 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 requeue_services
             fi
             if mountpoint -q "$DATA_DIR" && grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null; then
+                sync   # seed durable before the sentinel that says so
                 touch "$DATA_DIR/.claim-complete"
                 logger -t virtues-firstboot "NVMe-both: claimed data partition $DATA_PART"
             fi
@@ -2883,6 +2901,7 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
             # repair block use (DATABASE_URL present), so "claim complete" and
             # "provisioning incomplete" can never both be true of one disk.
             if mountpoint -q "$DATA_DIR" && grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null; then
+                sync   # seed durable before the sentinel that says so
                 touch "$DATA_DIR/.claim-complete"
             fi
             break
@@ -3113,6 +3132,26 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ -L "$PG_LINK" ] && [ -n "$PG_VER" 
     fi
 fi
 
+# ── 1c'. Repair a truncated start.conf, then requeue the chain — every boot ─
+# The postgresql-common generator reads start.conf at EARLY boot: "auto"
+# starts the cluster, anything else — including the zero-length file a
+# first-boot power yank left behind (2026-08-25 forensics; see the trap at
+# the top) — silently doesn't, and the postgresql.service umbrella reports
+# active over the missing instance forever. Repair the file for future boots'
+# generators; requeue BY NAME for this one — requeue_services does not depend
+# on the generator's wants-links, so this heals a wedged unit in place. The
+# repair rewrites only a file that says nothing; a deliberate manual/disabled
+# is kept. Unconditional requeue is idempotent: starting active units is a
+# no-op, and on a first boot this runs after §1c so the cluster exists.
+for sc in /etc/postgresql/*/*/start.conf; do
+    [ -e "$sc" ] || continue
+    if ! grep -qE '^[[:space:]]*(auto|manual|disabled)' "$sc" 2>/dev/null; then
+        printf 'auto\n' > "$sc"
+        logger -t virtues-firstboot "repaired empty/invalid $sc to 'auto'"
+    fi
+done
+requeue_services
+
 # ── 1d. A provisioned disk with no env file is a FAILURE, said out loud ─────
 # The 2026-08-19 hollow unit reported status=0/SUCCESS on every boot while
 # virtues.service crash-looped beside it, because nothing here ever checked
@@ -3142,6 +3181,10 @@ printf 'VIRTUES_ENCRYPTION_KEY=%s\n' "$KEY" >> "$ENV_FILE"
 chown virtues:virtues "$ENV_FILE" 2>/dev/null || true
 chmod 600 "$ENV_FILE"
 
+# The key must be ON DISK before the marker leaves: the reverse order with a
+# power cut between them is a box with no key and no licence to mint one —
+# and everything encrypted so far is garbage with nothing in the logs to say why.
+sync
 rm -f "$MARKER"
 logger -t virtues-firstboot "minted per-unit encryption key"
 "#;
