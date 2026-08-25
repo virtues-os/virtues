@@ -1710,9 +1710,20 @@ const PG_MOUNT_GUARD_TEMPLATE: &str = r#"# Installed by virtues-installer.
 [Unit]
 RequiresMountsFor=__DATA_DIR__
 After=virtues-firstboot.service
+# Never park. The vendor unit ships no Restart=, so one lost race at boot —
+# the nofail data-disk mount landing a beat late, the guard below firing in
+# the window — left the instance down FOREVER while the postgresql.service
+# umbrella (a oneshot wrapper) reported active over it, and virtues.service
+# burned its own start-limit polling a socket that could never appear
+# (bench unit, 2026-08-25). A cluster that is genuinely broken restart-loops
+# instead of parking: on an appliance in someone's home, a loop that heals
+# the moment the cause clears beats a unit that stays dead until a reboot.
+StartLimitIntervalSec=0
 
 [Service]
 ExecStartPre=/bin/sh -c '! grep -qE "[[:space:]]__DATA_DIR__[[:space:]]" /etc/fstab || mountpoint -q __DATA_DIR__'
+Restart=on-failure
+RestartSec=10
 "#;
 
 /// Stops logind consuming the power key, so `maintenance::reset_button` can
@@ -1822,6 +1833,15 @@ WantedBy=multi-user.target
 /// which is unreadable at any distance. Measured with a CSS `10cm` rule that
 /// came out 3 cm on glass. Never trust EDID-derived DPI on this hardware.
 ///
+/// The zoom is DERIVED from the connected connector's pixel mode, not pinned:
+/// `mode_width / 585`, so every panel renders the same 585×329 CSS canvas the
+/// /display page is designed against (585 = 1920/3.28, the validated 7"
+/// layout). A pinned 3.28 was correct only for a 1080p panel — a bench panel
+/// running 800×480 got a 244-px-wide viewport and drew the setup screen as
+/// overlapping billboard text (2026-08-25). The EDID's physical size is still
+/// never trusted; the MODE is real. `VIRTUES_DISPLAY_ZOOM` remains as a
+/// per-box override via the env file.
+///
 /// Python + GTK because it is what the apt-installable WebKit binding gives
 /// us. Two jobs now: show the real UI, and — after a short grace window when
 /// the real UI won't load — show a locally-generated diagnostic page instead
@@ -1840,6 +1860,7 @@ server takes seconds), then render a locally-generated diagnostic page — built
 here, served over file://, depending on nothing that might be the broken thing —
 and keep probing so a slow-but-healthy boot still lands on the real UI unattended.
 """
+import glob
 import html
 import os
 import subprocess
@@ -1858,9 +1879,32 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
 
 URL = os.environ.get("VIRTUES_DISPLAY_URL", "http://localhost:8000/display")
+
 # See DISPLAY_SHIM's Rust-side doc comment: the panel's EDID lies about its
-# physical size, so the scale factor is pinned, never derived.
-ZOOM = float(os.environ.get("VIRTUES_DISPLAY_ZOOM", "3.28"))
+# PHYSICAL size, so DPI can never be derived — but the pixel MODE is real.
+# Zoom = mode width / 585 renders the same 585x329 CSS canvas the /display
+# page is designed against, on any panel. VIRTUES_DISPLAY_ZOOM (env file)
+# overrides for a panel that needs hand-tuning.
+DESIGN_WIDTH_PX = 585.0
+
+
+def _mode_width():
+    try:
+        for status in glob.glob("/sys/class/drm/card*-*/status"):
+            with open(status) as fh:
+                if fh.read().strip() != "connected":
+                    continue
+            with open(os.path.join(os.path.dirname(status), "modes")) as fh:
+                first = fh.readline().strip()  # first mode = preferred
+            if "x" in first:
+                return float(first.split("x")[0])
+    except Exception:
+        pass
+    return 1920.0  # the validated 7" panel; wrong panels beat a dead shim
+
+
+_zoom_env = os.environ.get("VIRTUES_DISPLAY_ZOOM", "")
+ZOOM = float(_zoom_env) if _zoom_env else max(0.5, min(8.0, _mode_width() / DESIGN_WIDTH_PX))
 DATA_DIR = os.environ.get("VIRTUES_DATA_DIR", "/var/lib/virtues")
 DIAG = "/run/virtues-diag.html"
 GRACE_S = 15  # silent retries before the diagnostic page appears
@@ -1929,6 +1973,24 @@ def _env_facts():
     return f
 
 
+def _pg_units():
+    """The real cluster instances, named from /etc/postgresql. Asking the
+    postgresql.service umbrella is how a bench unit showed "postgresql active"
+    beside a dead cluster and a server that could never reach it (2026-08-25):
+    the umbrella is a oneshot wrapper and stays active over a failed instance.
+    The umbrella is the fallback only when no cluster config exists to name."""
+    units = []
+    try:
+        for ver in sorted(os.listdir("/etc/postgresql")):
+            vdir = os.path.join("/etc/postgresql", ver)
+            for name in sorted(os.listdir(vdir)):
+                if os.path.exists(os.path.join(vdir, name, "postgresql.conf")):
+                    units.append("postgresql@" + ver + "-" + name)
+    except Exception:
+        pass
+    return units or ["postgresql"]
+
+
 def _facts():
     f = _env_facts()
     f["mounted"] = _ok(["mountpoint", "-q", DATA_DIR])
@@ -1941,7 +2003,7 @@ def _facts():
     f["claimed"] = os.path.exists(os.path.join(DATA_DIR, ".claim-complete"))
     f["marker"] = os.path.exists(os.path.join(DATA_DIR, ".needs-firstboot"))
     f["units"] = []
-    for unit in ("virtues", "postgresql", "virtues-firstboot", "virtues-qnnd"):
+    for unit in ["virtues"] + _pg_units() + ["virtues-firstboot", "virtues-qnnd"]:
         state = _out(["systemctl", "is-active", unit + ".service"]) or "unknown"
         f["units"].append((unit, state))
     f["virtues_state"] = dict(f["units"]).get("virtues", "unknown")
@@ -2457,6 +2519,27 @@ DATA_DIR=__DATA_DIR__
 ENV_FILE="$DATA_DIR/virtues.env"
 MARKER="$DATA_DIR/.needs-firstboot"
 
+# Requeue the service chain once the data disk is mounted. THE CLUSTER
+# INSTANCE by name, not just the umbrella: postgresql.service is a oneshot
+# wrapper that reports active while postgresql@16-main lies dead beside it,
+# and starting an already-active oneshot is a no-op — so a dependency-failed
+# instance stayed down forever, virtues.service polled a socket that could
+# never appear until its own start-limit parked it, and the glass said
+# "postgresql active" the whole time (bench unit, 2026-08-25). The instance
+# names are derived from /etc/postgresql so a version bump cannot rot this.
+requeue_services() {
+    UNITS="postgresql.service virtues.service"
+    for conf in /etc/postgresql/*/*/postgresql.conf; do
+        [ -e "$conf" ] || continue
+        cdir="${conf%/postgresql.conf}"
+        cname="${cdir##*/}"
+        cver="${cdir%/*}"; cver="${cver##*/}"
+        UNITS="postgresql@$cver-$cname.service $UNITS"
+    done
+    systemctl reset-failed $UNITS 2>/dev/null || true
+    systemctl --no-block start $UNITS 2>/dev/null || true
+}
+
 # ── 0. Finish an interrupted claim ──────────────────────────────────────────
 # The claim below is minutes of work (mkfs, a several-hundred-MB seed copy),
 # and a first boot is exactly when a new owner is most likely to cut power.
@@ -2660,8 +2743,7 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
             systemctl daemon-reload
             mount "$DATA_DIR" || logger -t virtues-firstboot "mount $DATA_DIR failed (NVMe-both)"
             if mountpoint -q "$DATA_DIR"; then
-                systemctl reset-failed postgresql.service virtues.service 2>/dev/null || true
-                systemctl --no-block start postgresql.service virtues.service 2>/dev/null || true
+                requeue_services
             fi
             if mountpoint -q "$DATA_DIR" && grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null; then
                 touch "$DATA_DIR/.claim-complete"
@@ -2759,8 +2841,7 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 # box, erasing the evidence an operator or `virtues doctor`
                 # needs from the first boot. Only clear the ones this race
                 # actually failed.
-                systemctl reset-failed postgresql.service virtues.service 2>/dev/null || true
-                systemctl --no-block start postgresql.service virtues.service 2>/dev/null || true
+                requeue_services
             fi
             # LAST act, only on the mounted disk, and ONLY when the seed's
             # load-bearing file made it across — same predicate §1d and the
