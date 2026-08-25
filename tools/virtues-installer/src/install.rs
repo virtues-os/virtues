@@ -2062,7 +2062,11 @@ def _verdict(f):
     # verdicts below are only meaningful once it has finished.
     firstboot = dict(f["units"]).get("virtues-firstboot", "")
     if firstboot == "activating":
-        return "Setting up — first boot is claiming the storage disk and preparing the database. This takes a few minutes."
+        # "Don't unplug" rides ONLY this verdict: this is the one window where
+        # a yank interrupts the claim mid-write (2026-08-25: one left the
+        # cluster's start.conf zero-length). The setup screen that replaces
+        # this page is the all-clear — firstboot syncs before it can appear.
+        return "Setting up — claiming the storage disk and preparing the database. This takes a few minutes. Don't unplug me."
     if f["fstab_disk"] and not f["mounted"]:
         return "Storage disconnected — the data disk is not mounted."
     if f["mounted"] and not f["env_exists"]:
@@ -2107,6 +2111,8 @@ def _build_page():
         "<style>"
         "html{background:#0b0f14;color:#c8d0da;font:10px/1.5 monospace;margin:0}"
         "body{margin:8px}"
+        ".lockup{color:#55636f;font-size:9px;letter-spacing:0.04em;margin:0 0 6px}"
+        ".lockup .mk{font-size:11px;color:#46545f}"
         ".verdict{color:#e8b04b;font-size:12px;margin:0 0 8px}"
         ".r{display:flex;gap:6px;white-space:nowrap;overflow:hidden}"
         ".r.wrap{white-space:normal}"
@@ -2115,6 +2121,7 @@ def _build_page():
         ".v{overflow:hidden;text-overflow:ellipsis}"
         "pre{color:#7a8494;margin:8px 0 0;font-size:8px;line-height:1.4;white-space:pre-wrap;word-break:break-all}"
         "</style>"
+        "<div class='lockup'><span class='mk'>&there4;</span> Virtues</div>"
         "<p class='verdict'>" + esc(verdict) + "</p>"
         + body_rows
         + "<pre>" + journal + "</pre>"
