@@ -46,6 +46,13 @@ pub async fn run() -> i32 {
     ui::section("Image check");
     println!();
 
+    // Durability barrier FIRST. This check certifies a disk about to be
+    // unplugged, but reads go through the page cache — on the v0.1.4 first
+    // press (2026-08-25) it truthfully passed a seed env whose data blocks
+    // never reached the NVMe, and every clone booted hollow. After a sync,
+    // what this check reads is what the disk will actually carry.
+    let _ = std::process::Command::new("sync").status();
+
     let mut findings: Vec<Finding> = Vec::new();
 
     // ── Per-unit secrets in the env file ────────────────────────────────────
@@ -646,6 +653,23 @@ fn audit_card_side(findings: &mut Vec<Finding>) {
             ),
             fix: "sudo virtues deprovision",
         }),
+        // Present but useless is the same failure as absent — the v0.1.4
+        // first press shipped a ZERO-LENGTH seed env (unsynced unplug ate the
+        // blocks) and this arm's predecessor (`Ok(_) => {}`) waved it through.
+        Ok(env)
+            if !env
+                .lines()
+                .any(|l| l.trim_start().starts_with("DATABASE_URL=")) =>
+        {
+            findings.push(Finding {
+                what: "card-side env has no DATABASE_URL",
+                detail: format!(
+                    "{}/virtues.env under the mount carries no DATABASE_URL — clones seed a dead env and §1d refuses to serve on every first boot",
+                    data_dir.display()
+                ),
+                fix: "sudo virtues deprovision, then power off CLEANLY (sudo poweroff, never unplug)",
+            })
+        }
         Ok(_) => {}
         Err(_) => findings.push(Finding {
             what: "card-side env missing",

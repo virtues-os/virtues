@@ -280,6 +280,24 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     seed_card_side(&env_path)?;
     write_firstboot_marker()?;
 
+    // FLUSH BEFORE CLAIMING SUCCESS. The operator's next act is pulling power,
+    // and everything above sits in the page cache until the kernel gets around
+    // to it. The v0.1.4 first press (2026-08-25) shipped a ZERO-LENGTH seed
+    // env and marker exactly this way: image-check re-read the cache and
+    // passed truthfully, the NVMe was unplugged, and ext4's delayed
+    // allocation surrendered the data blocks — every clone then failed §1d
+    // ("no DATABASE_URL") on its first boot. `sync` is the whole fix; it
+    // costs a second and makes the ✓ below mean what it says.
+    let synced = std::process::Command::new("sync")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !synced {
+        return Err(crate::Error::Other(
+            "final sync failed — what deprovision wrote may not be on disk; NOT safe to image".into(),
+        ));
+    }
+
     println!();
     println!("✓ deprovisioned — per-unit identity stripped.");
     println!("  NOT safe to image yet: this cannot re-read its own disk. Confirm");

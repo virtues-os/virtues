@@ -2652,8 +2652,14 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -e "$DATA_DIR/.claim-complete" ]
         [ -d "$DATA_DIR/models" ] || cp -a "$CARD/models" "$DATA_DIR/models" 2>/dev/null || true
         # The env file is LOAD-BEARING — no DATABASE_URL, no server — so unlike
         # the models its copy failure is logged, not swallowed, and the
-        # sentinel below stays unwritten without it.
-        if [ ! -e "$DATA_DIR/virtues.env" ]; then
+        # sentinel below stays unwritten without it. An env that exists but
+        # carries no DATABASE_URL is the same failure as no env (the v0.1.4
+        # first press seeded a zero-length one) and is replaced the same way —
+        # but NEVER over a minted key: an env holding VIRTUES_ENCRYPTION_KEY
+        # is the owner's, whatever else it lost, and clobbering it strands
+        # everything already encrypted.
+        if ! grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null && \
+           ! grep -q '^VIRTUES_ENCRYPTION_KEY=' "$DATA_DIR/virtues.env" 2>/dev/null; then
             cp -a "$CARD/virtues.env" "$DATA_DIR/virtues.env" 2>/dev/null || \
                 logger -t virtues-firstboot "FAILED to copy virtues.env from the card seed"
         fi
