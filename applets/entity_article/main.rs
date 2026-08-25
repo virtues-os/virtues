@@ -1,7 +1,10 @@
 //! entity_article: keep the wiki's entity articles current.
 //!
-//! Thin glue over `virtues-core` (same shape as `day_summary_eod`): connect,
+//! Thin glue over `virtues-core` (same plumbing shape as `day_summary_eod` —
+//! "shape" means the connect/run/report skeleton, NOT the model slot): connect,
 //! refresh whatever entities have outgrown their article, report the count.
+//! The generator runs on the **Lite** slot, deliberately — background writing
+//! must not ride the owner's Chat pick (see `entity_article_gen`).
 //! Runs hourly; the growth gate in `refresh_due_entity_articles` is the real
 //! scheduler — a tick with nothing due makes zero model calls.
 

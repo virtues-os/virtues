@@ -1710,9 +1710,22 @@ const PG_MOUNT_GUARD_TEMPLATE: &str = r#"# Installed by virtues-installer.
 [Unit]
 RequiresMountsFor=__DATA_DIR__
 After=virtues-firstboot.service
+# Never park. The vendor unit ships no Restart=, so any failure after a start
+# attempt — a lost mount race, a crash mid-recovery — left the instance down
+# FOREVER while the postgresql.service umbrella (a oneshot wrapper) reported
+# active over it, and virtues.service burned its own start-limit polling a
+# socket that could never appear. (The 2026-08-25 bench wedge itself was the
+# never-started variant — a truncated start.conf skipping the generator —
+# repaired in firstboot §1c'; this drop-in covers the started-then-failed
+# class.) A cluster that is genuinely broken restart-loops instead of
+# parking: on an appliance in someone's home, a loop that heals the moment
+# the cause clears beats a unit that stays dead until a reboot.
+StartLimitIntervalSec=0
 
 [Service]
 ExecStartPre=/bin/sh -c '! grep -qE "[[:space:]]__DATA_DIR__[[:space:]]" /etc/fstab || mountpoint -q __DATA_DIR__'
+Restart=on-failure
+RestartSec=10
 "#;
 
 /// Stops logind consuming the power key, so `maintenance::reset_button` can
@@ -1822,6 +1835,15 @@ WantedBy=multi-user.target
 /// which is unreadable at any distance. Measured with a CSS `10cm` rule that
 /// came out 3 cm on glass. Never trust EDID-derived DPI on this hardware.
 ///
+/// The zoom is DERIVED from the connected connector's pixel mode, not pinned:
+/// `mode_width / 585`, so every panel renders the same 585×329 CSS canvas the
+/// /display page is designed against (585 = 1920/3.28, the validated 7"
+/// layout). A pinned 3.28 was correct only for a 1080p panel — a bench panel
+/// running 800×480 got a 244-px-wide viewport and drew the setup screen as
+/// overlapping billboard text (2026-08-25). The EDID's physical size is still
+/// never trusted; the MODE is real. `VIRTUES_DISPLAY_ZOOM` remains as a
+/// per-box override via the env file.
+///
 /// Python + GTK because it is what the apt-installable WebKit binding gives
 /// us. Two jobs now: show the real UI, and — after a short grace window when
 /// the real UI won't load — show a locally-generated diagnostic page instead
@@ -1840,6 +1862,7 @@ server takes seconds), then render a locally-generated diagnostic page — built
 here, served over file://, depending on nothing that might be the broken thing —
 and keep probing so a slow-but-healthy boot still lands on the real UI unattended.
 """
+import glob
 import html
 import os
 import subprocess
@@ -1858,9 +1881,61 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
 
 URL = os.environ.get("VIRTUES_DISPLAY_URL", "http://localhost:8000/display")
+
 # See DISPLAY_SHIM's Rust-side doc comment: the panel's EDID lies about its
-# physical size, so the scale factor is pinned, never derived.
-ZOOM = float(os.environ.get("VIRTUES_DISPLAY_ZOOM", "3.28"))
+# PHYSICAL size, so DPI can never be derived — but the pixel MODE is real.
+# Zoom = mode width / 585 renders the same 585x329 CSS canvas the /display
+# page is designed against, on any panel. VIRTUES_DISPLAY_ZOOM (env file)
+# overrides for a panel that needs hand-tuning.
+DESIGN_WIDTH_PX = 585.0
+
+
+def _mode_width():
+    try:
+        for status in glob.glob("/sys/class/drm/card*-*/status"):
+            with open(status) as fh:
+                if fh.read().strip() != "connected":
+                    continue
+            with open(os.path.join(os.path.dirname(status), "modes")) as fh:
+                first = fh.readline().strip()  # first mode = preferred
+            if "x" in first:
+                return float(first.split("x")[0])
+    except Exception:
+        pass
+    return 1920.0  # the validated 7" panel; wrong panels beat a dead shim
+
+
+def _logical_width():
+    # Prefer what the compositor ACTUALLY set over the sysfs guess: a scaler
+    # panel can advertise modes it never runs, and the sysfs read assumes the
+    # first line won. GDK reports the monitor wlroots configured, in logical
+    # px — the same units set_zoom_level divides — so this stays correct even
+    # if an output scale ever appears. Gdk is imported below; by ZOOM time the
+    # display connection exists.
+    try:
+        display = Gdk.Display.get_default()
+        monitor = display.get_monitor(0) if display else None
+        if monitor:
+            w = float(monitor.get_geometry().width)
+            if w > 0:
+                return w
+    except Exception:
+        pass
+    return _mode_width()
+
+
+# The override must degrade to the derived zoom on any garbage — a typo in
+# virtues.env would otherwise crash the shim at import, and Restart=always
+# turns that into a permanently black panel (NEVER A BLANK SCREEN).
+try:
+    _zoom_env = float(os.environ.get("VIRTUES_DISPLAY_ZOOM", "") or 0.0)
+except ValueError:
+    _zoom_env = 0.0
+ZOOM = (
+    _zoom_env
+    if 0.1 <= _zoom_env <= 16.0
+    else max(0.5, min(8.0, _logical_width() / DESIGN_WIDTH_PX))
+)
 DATA_DIR = os.environ.get("VIRTUES_DATA_DIR", "/var/lib/virtues")
 DIAG = "/run/virtues-diag.html"
 GRACE_S = 15  # silent retries before the diagnostic page appears
@@ -1929,6 +2004,24 @@ def _env_facts():
     return f
 
 
+def _pg_units():
+    """The real cluster instances, named from /etc/postgresql. Asking the
+    postgresql.service umbrella is how a bench unit showed "postgresql active"
+    beside a dead cluster and a server that could never reach it (2026-08-25):
+    the umbrella is a oneshot wrapper and stays active over a failed instance.
+    The umbrella is the fallback only when no cluster config exists to name."""
+    units = []
+    try:
+        for ver in sorted(os.listdir("/etc/postgresql")):
+            vdir = os.path.join("/etc/postgresql", ver)
+            for name in sorted(os.listdir(vdir)):
+                if os.path.exists(os.path.join(vdir, name, "postgresql.conf")):
+                    units.append("postgresql@" + ver + "-" + name)
+    except Exception:
+        pass
+    return units or ["postgresql"]
+
+
 def _facts():
     f = _env_facts()
     f["mounted"] = _ok(["mountpoint", "-q", DATA_DIR])
@@ -1941,7 +2034,7 @@ def _facts():
     f["claimed"] = os.path.exists(os.path.join(DATA_DIR, ".claim-complete"))
     f["marker"] = os.path.exists(os.path.join(DATA_DIR, ".needs-firstboot"))
     f["units"] = []
-    for unit in ("virtues", "postgresql", "virtues-firstboot", "virtues-qnnd"):
+    for unit in ["virtues"] + _pg_units() + ["virtues-firstboot", "virtues-qnnd"]:
         state = _out(["systemctl", "is-active", unit + ".service"]) or "unknown"
         f["units"].append((unit, state))
     f["virtues_state"] = dict(f["units"]).get("virtues", "unknown")
@@ -1969,7 +2062,11 @@ def _verdict(f):
     # verdicts below are only meaningful once it has finished.
     firstboot = dict(f["units"]).get("virtues-firstboot", "")
     if firstboot == "activating":
-        return "Setting up — first boot is claiming the storage disk and preparing the database. This takes a few minutes."
+        # "Don't unplug" rides ONLY this verdict: this is the one window where
+        # a yank interrupts the claim mid-write (2026-08-25: one left the
+        # cluster's start.conf zero-length). The setup screen that replaces
+        # this page is the all-clear — firstboot syncs before it can appear.
+        return "Setting up — claiming the storage disk and preparing the database. This takes a few minutes. Don't unplug me."
     if f["fstab_disk"] and not f["mounted"]:
         return "Storage disconnected — the data disk is not mounted."
     if f["mounted"] and not f["env_exists"]:
@@ -2000,8 +2097,12 @@ def _build_page():
         rows.append(("env file", (yes if f["env_exists"] else no) + " · DATABASE_URL " + (yes if f["has_db_url"] else no) + " · key " + ("present" if f["has_key"] else "absent")))
         units = " · ".join(u + " " + s for u, s in f["units"])
         rows.append(("units", units))
+    # The units row wraps instead of truncating: it now names the real cluster
+    # instances, and an ellipsis over the one row that explains a wedge is the
+    # umbrella lie all over again in CSS.
     body_rows = "".join(
-        "<div class='r'><span class='k'>" + esc(k) + "</span><span class='v'>" + esc(v) + "</span></div>"
+        "<div class='r" + (" wrap" if k == "units" else "") + "'><span class='k'>"
+        + esc(k) + "</span><span class='v'>" + esc(v) + "</span></div>"
         for k, v in rows
     )
     journal = esc(f["journal"]) if f else ""
@@ -2010,12 +2111,17 @@ def _build_page():
         "<style>"
         "html{background:#0b0f14;color:#c8d0da;font:10px/1.5 monospace;margin:0}"
         "body{margin:8px}"
+        ".lockup{color:#55636f;font-size:9px;letter-spacing:0.04em;margin:0 0 6px}"
+        ".lockup .mk{font-size:11px;color:#46545f}"
         ".verdict{color:#e8b04b;font-size:12px;margin:0 0 8px}"
         ".r{display:flex;gap:6px;white-space:nowrap;overflow:hidden}"
+        ".r.wrap{white-space:normal}"
+        ".r.wrap .v{overflow:visible;text-overflow:clip}"
         ".k{color:#5c6773;min-width:58px;flex:none}"
         ".v{overflow:hidden;text-overflow:ellipsis}"
         "pre{color:#7a8494;margin:8px 0 0;font-size:8px;line-height:1.4;white-space:pre-wrap;word-break:break-all}"
         "</style>"
+        "<div class='lockup'><span class='mk'>&there4;</span> Virtues</div>"
         "<p class='verdict'>" + esc(verdict) + "</p>"
         + body_rows
         + "<pre>" + journal + "</pre>"
@@ -2453,9 +2559,41 @@ const FIRSTBOOT_SCRIPT: &str = r#"#!/bin/sh
 # still needs). Each guard is the narrowest true statement about its own job.
 set -eu
 
+# Everything this script writes — cluster config, env file, sentinels, fstab —
+# is written once and read forever, and a first boot is exactly when a new
+# owner is most likely to cut power. A yank minutes after first bringup left
+# pg_createcluster's start.conf ZERO-LENGTH (ext4 delayed allocation), and the
+# postgresql-common generator then never started the cluster on any later
+# boot, while the umbrella unit reported active over the gap (read off a
+# wedged unit's NVMe, 2026-08-25). Flush on every exit path, including §1d's.
+trap sync EXIT
+
 DATA_DIR=__DATA_DIR__
 ENV_FILE="$DATA_DIR/virtues.env"
 MARKER="$DATA_DIR/.needs-firstboot"
+
+# Requeue the service chain. THE CLUSTER INSTANCE by name, not just the
+# umbrella: postgresql.service is a oneshot wrapper that reports active while
+# postgresql@18-main lies dead beside it, and starting an already-active
+# oneshot is a no-op. Confirmed from a wedged unit's NVMe (2026-08-25): a
+# first-boot power yank truncated start.conf, the generator skipped the
+# instance on every later boot, the umbrella said active, and virtues.service
+# polled a socket that could never appear until its own start-limit parked
+# it. Starting the instance by name does not depend on the generator's
+# wants-links, which is what makes this the repair. The names are derived
+# from /etc/postgresql so a version bump cannot rot this.
+requeue_services() {
+    UNITS="postgresql.service virtues.service"
+    for conf in /etc/postgresql/*/*/postgresql.conf; do
+        [ -e "$conf" ] || continue
+        cdir="${conf%/postgresql.conf}"
+        cname="${cdir##*/}"
+        cver="${cdir%/*}"; cver="${cver##*/}"
+        UNITS="postgresql@$cver-$cname.service $UNITS"
+    done
+    systemctl reset-failed $UNITS 2>/dev/null || true
+    systemctl --no-block start $UNITS 2>/dev/null || true
+}
 
 # ── 0. Finish an interrupted claim ──────────────────────────────────────────
 # The claim below is minutes of work (mkfs, a several-hundred-MB seed copy),
@@ -2535,6 +2673,10 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -e "$DATA_DIR/.claim-complete" ]
         # `-s`, writing the sentinel, latching the repair off, and then failing
         # §1d every boot forever.
         if grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null; then
+            # The seed must be ON DISK before the sentinel that says it is —
+            # ext4 does not order writes across files, and a yank between the
+            # two leaves a sentinel over a hollow disk with the repair latched off.
+            sync
             touch "$DATA_DIR/.claim-complete"
             logger -t virtues-firstboot "completed an interrupted disk claim from the card seed"
         else
@@ -2660,10 +2802,10 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
             systemctl daemon-reload
             mount "$DATA_DIR" || logger -t virtues-firstboot "mount $DATA_DIR failed (NVMe-both)"
             if mountpoint -q "$DATA_DIR"; then
-                systemctl reset-failed postgresql.service virtues.service 2>/dev/null || true
-                systemctl --no-block start postgresql.service virtues.service 2>/dev/null || true
+                requeue_services
             fi
             if mountpoint -q "$DATA_DIR" && grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null; then
+                sync   # seed durable before the sentinel that says so
                 touch "$DATA_DIR/.claim-complete"
                 logger -t virtues-firstboot "NVMe-both: claimed data partition $DATA_PART"
             fi
@@ -2759,14 +2901,14 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 # box, erasing the evidence an operator or `virtues doctor`
                 # needs from the first boot. Only clear the ones this race
                 # actually failed.
-                systemctl reset-failed postgresql.service virtues.service 2>/dev/null || true
-                systemctl --no-block start postgresql.service virtues.service 2>/dev/null || true
+                requeue_services
             fi
             # LAST act, only on the mounted disk, and ONLY when the seed's
             # load-bearing file made it across — same predicate §1d and the
             # repair block use (DATABASE_URL present), so "claim complete" and
             # "provisioning incomplete" can never both be true of one disk.
             if mountpoint -q "$DATA_DIR" && grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null; then
+                sync   # seed durable before the sentinel that says so
                 touch "$DATA_DIR/.claim-complete"
             fi
             break
@@ -2997,6 +3139,26 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ -L "$PG_LINK" ] && [ -n "$PG_VER" 
     fi
 fi
 
+# ── 1c'. Repair a truncated start.conf, then requeue the chain — every boot ─
+# The postgresql-common generator reads start.conf at EARLY boot: "auto"
+# starts the cluster, anything else — including the zero-length file a
+# first-boot power yank left behind (2026-08-25 forensics; see the trap at
+# the top) — silently doesn't, and the postgresql.service umbrella reports
+# active over the missing instance forever. Repair the file for future boots'
+# generators; requeue BY NAME for this one — requeue_services does not depend
+# on the generator's wants-links, so this heals a wedged unit in place. The
+# repair rewrites only a file that says nothing; a deliberate manual/disabled
+# is kept. Unconditional requeue is idempotent: starting active units is a
+# no-op, and on a first boot this runs after §1c so the cluster exists.
+for sc in /etc/postgresql/*/*/start.conf; do
+    [ -e "$sc" ] || continue
+    if ! grep -qE '^[[:space:]]*(auto|manual|disabled)' "$sc" 2>/dev/null; then
+        printf 'auto\n' > "$sc"
+        logger -t virtues-firstboot "repaired empty/invalid $sc to 'auto'"
+    fi
+done
+requeue_services
+
 # ── 1d. A provisioned disk with no env file is a FAILURE, said out loud ─────
 # The 2026-08-19 hollow unit reported status=0/SUCCESS on every boot while
 # virtues.service crash-looped beside it, because nothing here ever checked
@@ -3026,6 +3188,10 @@ printf 'VIRTUES_ENCRYPTION_KEY=%s\n' "$KEY" >> "$ENV_FILE"
 chown virtues:virtues "$ENV_FILE" 2>/dev/null || true
 chmod 600 "$ENV_FILE"
 
+# The key must be ON DISK before the marker leaves: the reverse order with a
+# power cut between them is a box with no key and no licence to mint one —
+# and everything encrypted so far is garbage with nothing in the logs to say why.
+sync
 rm -f "$MARKER"
 logger -t virtues-firstboot "minted per-unit encryption key"
 "#;
