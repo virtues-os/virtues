@@ -260,10 +260,16 @@ if [ -n "$DATA_PART_NUM" ]; then
     # The 4 MiB-block read overshoots the last OS partition's end by up to one
     # block, staging the first bytes of the live data partition. The shrink
     # would truncate them away, but the shrink-failure fallback ("compress by
-    # hand") would ship them — so cut the file to the exact OS end now.
+    # hand") would ship them — so cut the file to the exact OS end now, then
+    # extend it 1 MiB with ZEROS (truncate up zero-fills; a single truncate to
+    # end+1MiB would keep 1 MiB of live data-partition bytes instead). The
+    # slack is for sgdisk -e below: a file ending exactly at the last
+    # partition has no room for the 33-sector backup GPT, and sgdisk aborts
+    # every write on that layout (v0.1.3 press, 2026-08-24).
     # (python3 is guaranteed on this path: the detection required it. macOS
     # has no truncate(1).)
-    python3 -c 'import os, sys; os.truncate(sys.argv[1], int(sys.argv[2]))' "$RAW" "$OS_END_BYTES"
+    python3 -c 'import os, sys
+n = int(sys.argv[2]); os.truncate(sys.argv[1], n); os.truncate(sys.argv[1], n + 1048576)' "$RAW" "$OS_END_BYTES"
     # Give the staged file to the invoking user before any container touches
     # it — the same ownership the shrink below needs.
     if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then

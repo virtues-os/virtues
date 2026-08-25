@@ -198,8 +198,8 @@ v2 is written down rather than dropped.
 - `POST /internal/credit` — Atlas credits a wallet (internal-secret gated)
 - `POST /internal/block` / `POST /internal/unblock` / `GET /internal/blocklist`
 - `GET /v1/whoami`, `GET /v1/usage`, `POST /v1/charge-test` — api_key canaries
-- `/v1/ai/*` (chat/completions, completions, embeddings, models),
-  `/v1/places/*`, `/v1/exa/*`, `/v1/unsplash/*`,
+- `/v1/ai/*` (chat/completions, completions, models, search),
+  `/v1/places/*`, `/v1/unsplash/*`,
   `/v1/services/plaid/*` — gated upstreams
 - `/{provider}/start|callback|exchange|refresh` — the OAuth proxy leg
 - `GET /health`, `GET /ready`

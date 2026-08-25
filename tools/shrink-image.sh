@@ -97,8 +97,18 @@ TARGET_BYTES=$((FS_BYTES + 2 * 1024 * 1024 * 1024))
 TARGET_SECTORS=$(( (TARGET_BYTES + 1048575) / 1048576 * 1048576 / SECTOR ))
 echo "→ fs content $((FS_BYTES / 1024 / 1024)) MiB; partition target $((TARGET_SECTORS * SECTOR / 1024 / 1024)) MiB"
 
-echo "→ shrink partition $PART_NUM"
-printf ",%s\n" "$TARGET_SECTORS" | sfdisk --force -N "$PART_NUM" "$LOOP" >/dev/null
+# A partition already at or below the target (an image cut tight, or a prior
+# shrink) makes the resize a GROW, which sfdisk refuses when nothing follows —
+# and failed the whole run on the v0.1.3 press (2026-08-24). Already-tight is
+# success, not failure: keep the partition and let the fs grow back to fill it.
+PART_SECTORS=$(cat "/sys/class/block/$PART_NAME/size")
+if [ "$TARGET_SECTORS" -ge "$PART_SECTORS" ]; then
+    echo "→ partition $PART_NUM already at or below target; keeping its size"
+    TARGET_SECTORS=$PART_SECTORS
+else
+    echo "→ shrink partition $PART_NUM"
+    printf ",%s\n" "$TARGET_SECTORS" | sfdisk --force -N "$PART_NUM" "$LOOP" >/dev/null
+fi
 # The sfdisk rewrite drops the kernel view of the loop partitions; re-attach
 # for a clean one rather than negotiating with partx. (NO APOSTROPHES in this
 # whole container script — it is one single-quoted shell string, and one
