@@ -195,6 +195,13 @@ db: ## Ensure brew postgres@$(PG_MAJOR) is installed + running, db exists with p
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues'" | grep -q 1 || { echo "→ creating db 'virtues'"; $(PG_BIN)/createdb virtues; }
 	@$(PG_BIN)/psql -d virtues -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues_api'" | grep -q 1 || { echo "→ creating db 'virtues_api' (local virtues-api entitlements)"; $(PG_BIN)/createdb virtues_api; }
+# `createdb` makes the INVOKING user the owner, and since the 2026-08-18
+# de-superuser the `virtues` role can no longer CREATE in a schema it does not
+# own (PG15+ removed public's blanket CREATE) — virtues-api's migrations then
+# die with "permission denied for schema public". Idempotent, like the role
+# downgrade above.
+	@$(PG_BIN)/psql -d postgres -c "ALTER DATABASE virtues_api OWNER TO virtues" >/dev/null
+	@$(PG_BIN)/psql -d virtues_api -c "ALTER SCHEMA public OWNER TO virtues" >/dev/null
 # `vector` into template1, so every database created afterwards inherits it.
 # This is what lets the dev role be a NON-superuser: pgvector is not a trusted
 # extension (`pg_available_extensions.trusted = f`), so `CREATE EXTENSION vector`
