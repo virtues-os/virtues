@@ -284,6 +284,43 @@ Recommend 1 + 2 now, 3 never unless a real need appears.
      can run on a timer with the existing privilege model.
    - Bench residue: `wlopm` and `ddcutil` are now apt-installed on Rosy
      Swallow (harmless; do not run ddcutil against the panel again).
+
+   **Hours design consequences** (settled 2026-08-26, before any build):
+
+   1. **Sleep is a precedence state, not a cron toggle.** A sleeping
+      screen during a storage fault, an update, or a held case button
+      violates the duty-list contract — the button case is the sharp one:
+      a hold against dark glass gets no countdown, the exact failure
+      `button_held_secs` exists to prevent. So the SERVER owns the
+      schedule and overrides it while any interruption state is active:
+      sleep slots into the existing chain *below* every interruption,
+      exactly like a face. The glass wakes to say what must be said, and
+      goes back to sleep when it has said it.
+   2. **The upgrade interaction.** Every upgrade ends in
+      `restart_display()` (cli/upgrade.rs). If that fires mid-sleep
+      against a forced-off connector, `ExecStartPre`'s connected-connector
+      guard fails and the unit parks in `systemctl --failed`
+      (StartLimitBurst). Either the wake path must `reset-failed` + force
+      `detect` before `start`, or — cleaner — implement sleep so the unit
+      keeps running (matte page) and only the connector toggles, leaving
+      nothing for a restart to trip over. Decide at build time; do not
+      discover in the field.
+   3. **Never probe the wire again.** The DDC wedge is a standing
+      constraint, not an incident: any future "brightness" ambition for
+      this panel is answered — no, permanently. Off/on is the entire
+      vocabulary.
+   4. **Forced-connector-off is off-label, on purpose.** The by-the-book
+      path is DPMS via the compositor, which means building cage with
+      wlroots' output-power-management enabled — converting an
+      apt-installed dependency into one we compile and ship, forever, for
+      the same dark glass. The force is a DRM debug facility doing a
+      power-management job; we take it and say so here. Revisit only if a
+      kernel update breaks connector forcing.
+   5. **Pin per panel model, not per box.** This panel served two
+      different EDIDs in one afternoon, so "capture at firstboot" could
+      capture the wrong one. The golden image pins the known-good
+      1920×1080 blob (the one the shipped zoom was verified against) into
+      `/lib/firmware/edid/` + kernel cmdline at install time.
 2. **Sleep enforcement locus**: the shim (Python, has the Wayland session)
    vs. the server (has the schedule). Likely: server computes `is_asleep`
    into `DisplayState`; the `/display` page renders matte; the shim handles
