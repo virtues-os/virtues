@@ -195,7 +195,7 @@ async fn touch_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<()> {
     let Some(title) = &ev.title else {
         sqlx::query(
             "UPDATE data_activity_app_session
-                SET ended_at = greatest(end_time, $1), updated_at = now()
+                SET ended_at = greatest(ended_at, $1), updated_at = now()
               WHERE device_id = $2 AND app_bundle_id = $3 AND is_open",
         )
         .bind(ev.at)
@@ -208,7 +208,7 @@ async fn touch_session(db: &PgPool, device_id: &str, ev: &Ev) -> Result<()> {
 
     sqlx::query(
         "UPDATE data_activity_app_session
-            SET ended_at = greatest(end_time, $1),
+            SET ended_at = greatest(ended_at, $1),
                 window_title = coalesce(window_title, $4),
                 metadata = jsonb_set(
                     metadata, '{titles}',
@@ -261,12 +261,12 @@ async fn close_session(
     at: DateTime<Utc>,
     reason: &str,
 ) -> Result<()> {
-    // `greatest(end_time, $1)` so a close can never move the end BACKWARDS: idle is
+    // `greatest(ended_at, $1)` so a close can never move the end BACKWARDS: idle is
     // back-dated to when input actually stopped, which may precede the last
     // heartbeat, and a negative-duration session is worse than a wrong one.
     sqlx::query(
         "UPDATE data_activity_app_session
-            SET ended_at = greatest(end_time, $1), is_open = false, closed_by = $2,
+            SET ended_at = greatest(ended_at, $1), is_open = false, closed_by = $2,
                 updated_at = now()
           WHERE device_id = $3 AND is_open",
     )
