@@ -1792,66 +1792,94 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         assert_eq!(stale, 0, "reconcile must restore the manifest sentence");
     }
 
-    /// End-to-end for the schema-replay path: a folder on disk carrying
-    /// `schema/NNNN_*.sql` must reach real tables through reconcile alone.
-    /// Nothing had ever exercised this — the versioned-migration work shipped
-    /// with unit tests over the collapse logic and no applet that used it.
+    /// The schema-replay path: a folder carrying `schema/NNNN_*.sql` must
+    /// reach real tables, record each version exactly once, and re-grant the
+    /// applet roles. Exercised against a synthetic fixture dir rather than a
+    /// shipped applet — the last shipped applet with a schema/ was deleted
+    /// 2026-08-26, and pointing VIRTUES_APPLETS_DIR at a fixture would race
+    /// every other reconcile test in the process. `replay_pending` is the
+    /// exact call reconcile makes per template dir.
     #[sqlx::test]
-    async fn a_shipped_applet_gets_its_tables_from_disk(pool: sqlx::PgPool) {
-        reconcile_templates(&pool).await.expect("reconcile");
+    async fn schema_replay_applies_records_and_grants(pool: sqlx::PgPool) {
+        let dir = std::env::temp_dir().join(format!(
+            "virtues-replay-probe-{}",
+            std::process::id()
+        ));
+        let schema_dir = dir.join("schema");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("0001_entries.sql"),
+            "CREATE SCHEMA IF NOT EXISTS applet_replay_probe;\n\
+             CREATE TABLE IF NOT EXISTS applet_replay_probe.entries (\n\
+                 id text PRIMARY KEY DEFAULT gen_random_uuid()::text\n\
+             );\n",
+        )
+        .unwrap();
+        // The migrations table references the applet row, as on a real box.
+        sqlx::query("INSERT INTO app_applets (id, name) VALUES ($1, $2)")
+            .bind("applet_replay_probe")
+            .bind("Replay Probe")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let ran = crate::tools::applet_schema::replay_pending(
+            &pool,
+            "applet_replay_probe",
+            "replay_probe",
+            &dir,
+        )
+        .await;
+        assert_eq!(ran, 1, "the fixture's 0001 did not run");
 
         let table: Option<String> = sqlx::query_scalar(
             "SELECT table_name FROM information_schema.tables \
-              WHERE table_schema = 'applet_calorie_tracker' AND table_name = 'entries'",
+              WHERE table_schema = 'applet_replay_probe' AND table_name = 'entries'",
         )
         .fetch_optional(&pool)
         .await
         .unwrap();
-        assert_eq!(
-            table.as_deref(),
-            Some("entries"),
-            "the tracker's schema/0001 did not reach the database"
-        );
+        assert_eq!(table.as_deref(), Some("entries"));
 
-        // Recorded, so a second reconcile does not run it again.
-        let applied: Vec<(i32, String)> = sqlx::query_as(
-            "SELECT version, name FROM app_applet_schema_migrations \
-              WHERE applet_id = 'applet_calorie_tracker' ORDER BY version",
+        // Recorded, so a second replay does not run it again.
+        let ran_again = crate::tools::applet_schema::replay_pending(
+            &pool,
+            "applet_replay_probe",
+            "replay_probe",
+            &dir,
         )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(applied.len(), 1);
-        assert_eq!(applied[0].0, 1);
-
-        reconcile_templates(&pool).await.expect("second reconcile");
-        let after: i64 = sqlx::query_scalar(
+        .await;
+        assert_eq!(ran_again, 0, "a version must be applied exactly once");
+        let recorded: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM app_applet_schema_migrations \
-              WHERE applet_id = 'applet_calorie_tracker'",
+              WHERE applet_id = 'applet_replay_probe'",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(after, 1, "a version must be applied exactly once");
+        assert_eq!(recorded, 1);
 
-        // A table nobody may read is not a table. Boot grants the roles BEFORE
-        // reconcile runs, so everything created by the pass above arrives
-        // ungranted unless the pass re-grants — the face would see permission
-        // denied on its own applet's table, and sql_write could not log a meal.
+        // A table nobody may read is not a table: the grant sweep must reach
+        // schemas created after boot, or the face sees permission denied on
+        // its own applet's table.
+        crate::server::faces::ensure_applet_db_grants(&pool)
+            .await
+            .expect("grant sweep");
         for (role, priv_) in [
             ("virtues_face_reader", "SELECT"),
             ("virtues_applet_writer", "INSERT"),
         ] {
             let ok: bool = sqlx::query_scalar(
-                "SELECT has_table_privilege($1, 'applet_calorie_tracker.entries', $2)",
+                "SELECT has_table_privilege($1, 'applet_replay_probe.entries', $2)",
             )
             .bind(role)
             .bind(priv_)
             .fetch_one(&pool)
             .await
             .unwrap();
-            assert!(ok, "{role} cannot {priv_} the table reconcile just created");
+            assert!(ok, "{role} cannot {priv_} the replayed table");
         }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[sqlx::test]
