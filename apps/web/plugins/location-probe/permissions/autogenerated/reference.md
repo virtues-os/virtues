@@ -1,10 +1,11 @@
 ## Default Permission
 
-Default permissions for the plugin
+Default permissions for the location-probe plugin
 
 #### This default permission set includes the following:
 
 - `allow-start-probe`
+- `allow-resume-probe`
 - `allow-read-rows`
 
 ## Permission Table

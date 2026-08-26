@@ -331,10 +331,10 @@
           "markdownDescription": "Denies the start_probe command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-start-probe`\n- `allow-read-rows`",
+          "description": "Default permissions for the location-probe plugin\n#### This default permission set includes:\n\n- `allow-start-probe`\n- `allow-resume-probe`\n- `allow-read-rows`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-start-probe`\n- `allow-read-rows`"
+          "markdownDescription": "Default permissions for the location-probe plugin\n#### This default permission set includes:\n\n- `allow-start-probe`\n- `allow-resume-probe`\n- `allow-read-rows`"
         }
       ]
     }

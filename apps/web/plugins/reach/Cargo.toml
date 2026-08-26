@@ -33,6 +33,7 @@ virtues-improv = { path = "../../../../crates/virtues-improv", features = ["clie
 
 [build-dependencies]
 tauri-plugin = { version = "2.6.3", features = ["build"] }
+virtues-plugin-lockstep = { path = "../lockstep" }
 
 # Standalone (excluded from the repo workspace). The empty table stops cargo's
 # workspace walk-up, which otherwise escapes the repo in nested git worktrees
