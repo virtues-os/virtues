@@ -1,10 +1,32 @@
 # The Sitting — a Life Story Interview for onboarding
 
 *Plan, 2026-08-26. Replaces the textarea interview (and the one-evening
-chapter-cards experiment) with a conducted interview. Status: DESIGN LOCKED
-PENDING REVIEW; nothing built yet. The five questions and DraftReview survive;
-Interview.svelte's form UI and ChapterCards.svelte are replaced by what's
-described here.*
+chapter-cards experiment) with a conducted interview. Status: DIRECTION
+CONFIRMED by Adam 2026-08-26 ("the most intellectually felt and authentically
+received we can do besides human interviews"); design below locked pending the
+specimen review. The five questions and DraftReview survive; Interview.svelte's
+form UI and ChapterCards.svelte are replaced by what's described here.*
+
+## The stated goal (said to the user, in these terms)
+
+The user must know exactly what they are doing and why, in one breath:
+
+> **We are doing this to fill in your past, understand your present, and
+> explore your future** — through the chapters of your life, the people who
+> mattered, and the stories that made you.
+
+And the honesty that makes it approachable:
+
+> **This will never be finished, and it isn't supposed to be.** A record of a
+> life can't be complete — there will always be another story worth telling.
+> What matters is an honest start; the rest arrives over years, a question at
+> a time.
+
+That second paragraph is load-bearing: it converts "I must now summarize my
+entire life" (paralyzing) into "I must start honestly" (doable), and it
+pre-announces the resolution queue — the box will keep asking, gently, for
+years. Perfectionism is the silent killer of this step; we disarm it at the
+door.
 
 ## Thesis
 
@@ -58,9 +80,42 @@ corporate we):
 > offer. Anything can be skipped without a mark. And none of her words enter
 > the record — only yours.
 >
-> About twenty minutes. It saves as you go; you can stop anywhere.
+> About twenty minutes. It saves as you go; you can stop anywhere. And it
+> will never be finished — a record of a life can't be. What matters is an
+> honest start.
 >
 > [Begin the sitting]
+
+## The lifeline (the door's visual argument)
+
+Words claim; a picture proves. The door shows a **lifeline** — one horizontal
+axis from birth to today (and a breath beyond) — that makes "filling in your
+past" visible as a matter of **resolution**:
+
+- **The device era** (from the census's real oldest date — e.g. December
+  2017): a dense band of fine ticks. Deterministic record: days, hours,
+  minutes. This is what the box already holds, and the density is drawn from
+  the person's real counts, not a stock illustration.
+- **Before the record**: near-void. This is the argument for the sitting made
+  visually — most of the axis is dark.
+- **What writing does**: chapter bands light the void at *thematic*
+  resolution — translucent arcs with serif titles ("The Wisconsin years") —
+  and salient stories land as point-stars inside them at *episodic*
+  resolution. The gradient the user should perceive: **thematic → episodic →
+  deterministic** as time approaches the present.
+- **The future edge**: past "today," a faint dotted continuation — the
+  ambitions/shadow-future questions (queued) will draw there. "Explore your
+  future" gets its place on the same axis rather than a separate metaphor.
+
+Two rows, same axis, is the strongest form (Tufte small-multiple contrast):
+**"your record now"** (dense right edge, void left) above **"after the
+sitting"** (chapters lit, stars placed). The delta between the rows IS the
+pitch for the next twenty minutes.
+
+The lifeline is born here but does not die here: it is the seed of a
+permanent Lifeline surface (the wiki timeline of eras/chapters), where the
+resolution keeps rising for years as the queue asks its questions. The door
+introduces the object; the product later inhabits it.
 
 ## Choreography
 
