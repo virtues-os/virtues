@@ -471,6 +471,68 @@ export async function applyUpdate(): Promise<ApplyUpdateResponse> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Display — the box's attached screen (Settings → Display)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The face the panel wears in its ambient slot. */
+export interface DisplayFaceConfig {
+	kind: 'builtin' | 'applet';
+	/** Which built-in, when kind is 'builtin': 'record' | 'matte'. */
+	builtin: string;
+	applet_id?: string | null;
+}
+
+export interface DisplayPanelInfo {
+	/** DRM connector name, e.g. `card0-HDMI-A-1`. */
+	connector: string;
+	mode_width?: number;
+	mode_height?: number;
+}
+
+/**
+ * What the glass is showing, redacted for the LAN: the mirror may say THAT
+ * the panel is on its setup screen, never what the words are.
+ */
+export interface DisplayGlassState {
+	claimed: boolean;
+	online: boolean;
+	connectivity: string;
+	devices: number;
+	box_name: string;
+	data_disk_fault?: string | null;
+	record?: Array<{ label: string; count: number }>;
+	record_since?: string | null;
+	updating: boolean;
+}
+
+export interface DisplaySettings {
+	/** This box has the kiosk stack installed at all. */
+	attached: boolean;
+	unit_state: 'active' | 'installed but not running' | 'not installed';
+	panel?: DisplayPanelInfo | null;
+	zoom_derived?: number | null;
+	zoom_override?: number | null;
+	face: DisplayFaceConfig;
+	state: DisplayGlassState;
+}
+
+export function getDisplaySettings(): Promise<DisplaySettings> {
+	return apiGet('/system/display');
+}
+
+export function setDisplayFace(face: {
+	kind: 'builtin' | 'applet';
+	builtin?: string;
+	applet_id?: string;
+}): Promise<DisplayFaceConfig> {
+	return apiSend('PUT', '/system/display/face', face);
+}
+
+export function restartDisplay(): Promise<{ restarted: boolean }> {
+	return apiSend('POST', '/system/display/restart');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sidebar pins
 // ─────────────────────────────────────────────────────────────────────────────
 
