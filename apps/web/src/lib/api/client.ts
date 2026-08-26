@@ -330,6 +330,9 @@ export interface Census {
 	earliest: string | null;
 	latest: string | null;
 	span_days: number;
+	/** The record's first named senders, in the order it met them —
+	 *  chronology, never significance. Empty when none are presentable. */
+	earliest_names: string[];
 }
 
 /** What the box actually holds, counted — the reveal's first movement. */
@@ -2710,9 +2713,6 @@ export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Prom
 }
 export function getServerInfo<T = unknown>(): Promise<T> {
 	return apiGet<T>('/app/server-info');
-}
-export function triggerApplet<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/applets/${encodeURIComponent(id)}/trigger`);
 }
 export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/ai/complete', req);

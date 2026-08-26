@@ -55,10 +55,7 @@
 	let { ready, reduced = false, onEnter, onConnect }: Props = $props();
 
 	let content = $state("");
-	// `earliest_names` typed here rather than in client.ts, which another
-	// session had in flight when this landed — fold it into `Census` there
-	// once that file is free.
-	let census = $state<(Census & { earliest_names?: string[] }) | null>(null);
+	let census = $state<Census | null>(null);
 	let censusFailed = $state(false);
 
 	/** Nothing connected, and we know it rather than are still waiting. */
