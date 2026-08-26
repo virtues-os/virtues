@@ -387,12 +387,17 @@
 								<AccountGate done={accountDone} onLinked={refreshState} />
 							</div>
 						{:else}
-							<!-- The doorway to the interview, which is its own view. -->
-							<h1 class="ob-h1">The part it can't observe</h1>
+							<!-- The doorway to the interview, which is its own view.
+						     The why is COMPLETENESS, not calibration: the record has a
+						     hard left edge (the census names its exact date), and the
+						     life before it has one source. -->
+							<h1 class="ob-h1">Before the record</h1>
 							<p class="ob-lede">
-								Everything else here your box works out by watching. This is the half it
-								cannot: where you have been, what you are up against, who you mean to become.
-								Five questions, and nothing writes them but you.
+								Virtues exists to keep as complete a record of your life as possible. But a
+								record built from devices only reaches back so far — most of a life comes
+								before it, and that part has to be written: who you were, the moments that
+								mattered, what brought you joy, the people who shaped you, and the ones who
+								were missing. Five questions to start it.
 							</p>
 
 							<button class="ob-btn" onclick={() => go("interview")}>
