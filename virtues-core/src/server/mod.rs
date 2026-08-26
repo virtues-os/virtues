@@ -959,6 +959,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             put(crate::api::system_display::set_display_face_handler),
         )
         .route(
+            "/api/system/display/hours",
+            put(crate::api::system_display::set_display_hours_handler),
+        )
+        .route(
             "/api/system/display/restart",
             post(crate::api::system_display::restart_display_handler),
         )
@@ -1182,6 +1186,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // public inbound port. Serves a clone of `app`; the :8000 TCP listener below
     // keeps serving LAN/loopback + the desktop :7117 helper. See `crate::relay`.
     crate::relay::maybe_spawn(client.database.pool().clone(), app.clone());
+
+    // Hours — the screen's sleep schedule, enforced server-side because sleep
+    // is a precedence state (a held button must wake dark glass). No-op off
+    // an appliance. See api::system_display::sleep_engine.
+    crate::api::system_display::sleep_engine::spawn(client.database.pool().clone());
 
     let transport = build_transport(host, port);
     let listener = transport.bind().await?;
