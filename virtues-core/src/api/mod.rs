@@ -40,7 +40,6 @@ pub mod metrics;
 pub mod model_catalog;
 pub mod models;
 pub mod entity_article_gen;
-pub mod narrative_identity_gen;
 pub mod narrative_draft;
 pub mod narrative_interview;
 pub mod bookmarks;

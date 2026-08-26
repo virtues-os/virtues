@@ -144,9 +144,6 @@
 			deviceReady,
 	);
 	const narrativeReady = $derived(onboardingDone("narrative_identity_ready"));
-	const narrativeGenerating = $derived(
-		state_?.onboarding.find((s) => s.id === "narrative_identity_ready")?.kind === "generating",
-	);
 
 	// What the strip shows as behind you. Deliberately generous: `sources` counts
 	// as passed once anything is connected, never as "complete", because more can
@@ -411,7 +408,6 @@
 						<div class="work">
 							<RevealSection
 								ready={narrativeReady}
-								generating={narrativeGenerating}
 								{reduced}
 								onEnter={enterApp}
 								onConnect={() => go("sources")}

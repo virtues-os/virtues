@@ -1,11 +1,13 @@
 //! Drafting "In your own words" from the interview answers.
 //!
-//! Distinct from `narrative_identity_gen`, which drafts a short paragraph from
-//! OBSERVED data — recurring people, places, recent days. This one reads only
-//! what the person wrote themselves, and the difference is the whole point:
-//! values, wounds and direction cannot be derived from behaviour. A machine
-//! guessing at someone's telos from their message volume would be both wrong
-//! and, on the subjects this covers, insulting.
+//! THE ONLY WRITER of narrative identity. There used to be a second —
+//! `narrative_identity_gen`, which drafted a portrait from OBSERVED data
+//! (recurring people, places, recent days) and overwrote this one's work.
+//! Deleted 2026-08-26 as a doctrine violation, not just a race: values,
+//! wounds and direction cannot be derived from behaviour. A machine guessing
+//! at someone's telos from their message volume would be both wrong and, on
+//! the subjects this covers, insulting. This module reads only what the
+//! person wrote themselves.
 //!
 //! TWO ARTIFACTS FROM ONE CALL:
 //!
@@ -63,12 +65,43 @@ pub struct Draft {
     pub proposed_rules: Vec<String>,
 }
 
+/// The singleton subject id — the one narrative-identity article a box has.
+const NAR_IDENTITY_ID: &str = "nar_identity_001";
+
 /// Read the answers, write the document.
 ///
 /// Refuses on an empty interview rather than producing a document about
 /// nobody — an invented identity handed to someone as their own would be the
 /// worst single output this product could generate.
+///
+/// ONE WRITER, ONCE. The document lands as a wiki article (a real page: the
+/// editor, history, marginalia), and from that moment the person owns it —
+/// this function never runs the model again while the article exists. That is
+/// the entire ownership model: the machine may write this document only while
+/// it is empty. (The platform enforces it too: a pool-only write to a
+/// CRDT-backed page is silently discarded.) A repeat call hands back what
+/// stands, so a lost response or a retry cannot double-spend or overwrite.
 pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
+    if let Some(prose) = crate::api::wiki_articles::get_article_prose(
+        pool,
+        "narrative_identity",
+        NAR_IDENTITY_ID,
+    )
+    .await?
+    {
+        let core: String =
+            sqlx::query_scalar("SELECT content FROM wiki_narrative_identity LIMIT 1")
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| Error::Database(format!("read narrative core: {e}")))?
+                .unwrap_or_default();
+        return Ok(Draft {
+            document: prose.content,
+            core,
+            proposed_rules: Vec::new(),
+        });
+    }
+
     let answers = crate::api::narrative_interview::list_answers(pool).await?;
     let written: Vec<_> = answers
         .into_iter()
@@ -96,20 +129,33 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
         return Err(Error::ExternalApi("draft came back empty".into()));
     }
 
+    // The document becomes the singleton narrative-identity article — a page
+    // seeded with this markdown, which the person edits from here on.
+    // (`create_article` is idempotent: a concurrent first draft cannot strand
+    // a second page.)
+    crate::api::wiki_articles::create_article(
+        pool,
+        "narrative_identity",
+        NAR_IDENTITY_ID,
+        "In your own words",
+        &document,
+    )
+    .await?;
+
+    // The core stays apparatus, not article: it is what rides into every chat.
     sqlx::query(
-        "INSERT INTO wiki_narrative_identity (id, content, document, drafted_at) \
-         VALUES ('nar_identity_001', $2, $1, now()) \
+        "INSERT INTO wiki_narrative_identity (id, content, drafted_at) \
+         VALUES ($2, $1, now()) \
          ON CONFLICT (id) DO UPDATE SET \
-           document = EXCLUDED.document, \
            -- The core is only replaced when we have one. A short version that
            -- failed to parse must never blank the paragraph the assistant is
            -- already carrying.
-           content = CASE WHEN $2 <> '' THEN EXCLUDED.content ELSE wiki_narrative_identity.content END, \
+           content = CASE WHEN $1 <> '' THEN EXCLUDED.content ELSE wiki_narrative_identity.content END, \
            drafted_at = now(), \
            updated_at = now()",
     )
-    .bind(&document)
     .bind(&core)
+    .bind(NAR_IDENTITY_ID)
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("save narrative draft: {e}")))?;
@@ -185,7 +231,7 @@ async fn call_model(pool: &PgPool, user_prompt: &str) -> Result<String> {
     }
 
     // `body` is already parsed JSON on this client — the same shape
-    // narrative_identity_gen reads.
+    // entity_article_gen reads.
     Ok(response.body["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or_default()
