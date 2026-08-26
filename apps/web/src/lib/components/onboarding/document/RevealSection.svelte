@@ -55,7 +55,10 @@
 	let { ready, reduced = false, onEnter, onConnect }: Props = $props();
 
 	let content = $state("");
-	let census = $state<Census | null>(null);
+	// `earliest_names` typed here rather than in client.ts, which another
+	// session had in flight when this landed — fold it into `Census` there
+	// once that file is free.
+	let census = $state<(Census & { earliest_names?: string[] }) | null>(null);
 	let censusFailed = $state(false);
 
 	/** Nothing connected, and we know it rather than are still waiting. */
@@ -200,6 +203,14 @@
 				<p class="span">
 					The oldest thing it found is from <strong>{earliest}</strong>{#if census.span_days > 365}, spanning
 						{Math.floor(census.span_days / 365)} years{/if}.
+				</p>
+			{/if}
+			{#if census.earliest_names?.length}
+				<!-- Chronology, never significance: these are the record's first
+				     named senders, the same honest motif as the oldest date —
+				     a fact about the record, not a ranking of anyone's people. -->
+				<p class="span">
+					The earliest names in it: <strong>{census.earliest_names.join(", ")}</strong>.
 				</p>
 			{/if}
 		{:else if censusFailed}
