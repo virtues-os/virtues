@@ -395,9 +395,9 @@ dev-pull: db ## Snapshot the live box's Postgres into a throwaway local db (~min
 	ssh $(DEV_BOX_SSH) 'sudo -u postgres pg_dump -Fc virtues' > "$$dump" || { echo "✖ box dump failed (is 'ssh $(DEV_BOX_SSH)' reachable?)"; exit 1; }; \
 	echo "→ rebuilding local '$(DEV_BOXCOPY_DB)' from the snapshot…"; \
 	$(PG_BIN)/dropdb --if-exists $(DEV_BOXCOPY_DB); \
-	$(PG_BIN)/createdb $(DEV_BOXCOPY_DB); \
+	$(PG_BIN)/createdb -O virtues $(DEV_BOXCOPY_DB); \
 	$(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null; \
-	$(PG_BIN)/pg_restore --no-owner -d $(DEV_BOXCOPY_DB) "$$dump" || true; \
+	$(PG_BIN)/pg_restore --no-owner --role=virtues -d $(DEV_BOXCOPY_DB) "$$dump" || true; \
 	echo "→ disarming applets in the copy…"; \
 	$(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -tAc "UPDATE app_applets SET enabled = false WHERE enabled" >/dev/null 2>&1 || true; \
 	echo "✓ '$(DEV_BOXCOPY_DB)' refreshed ($$($(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -tAc "SELECT pg_size_pretty(pg_database_size('$(DEV_BOXCOPY_DB)'))")), applets disabled. Raw dump deleted. Run 'make dev-real'."
