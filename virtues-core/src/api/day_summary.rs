@@ -417,7 +417,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         // `COALESCE(..., '(unlabeled)')` so a NULL label can never fail the String
         // decode and abort narration for the whole day.
         "SELECT COALESCE(user_label, auto_label, '(unlabeled)') AS label, event_summary, \
-                start_time, ended_at, novelty_z \
+                started_at, ended_at, novelty_z \
          FROM wiki_events \
          WHERE day_id = $1 AND NOT is_unknown AND NOT user_hidden \
          ORDER BY started_at",
@@ -2480,5 +2480,23 @@ mod dossier_tests {
             "the whole-day aggregate block is gone; a count off the spine taught \
              the detective nothing it could place"
         );
+    }
+
+    /// Runs narration's SQL against the schema the migrations actually build.
+    ///
+    /// `sqlx::query_as` is untyped, so a renamed column dies at RUNTIME, not
+    /// build time — and it did: after the 2026-08-17 renames, the events query
+    /// here still selected `start_time`, so `narrate_day` errored every night
+    /// and no day was ever narrated (the door's "a page will be waiting for
+    /// you" was silently false). An empty day exercises both statements — the
+    /// events SELECT and the `narrated_at` read — and must come back `None`
+    /// (below MIN_EVENTS_TO_NARRATE), never `Err`.
+    #[sqlx::test]
+    async fn narrate_day_sql_matches_schema(pool: sqlx::PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 25).unwrap();
+        let out = narrate_day(&pool, date)
+            .await
+            .expect("narration must not die on its own SQL");
+        assert!(out.is_none(), "an empty day earns no story");
     }
 }
