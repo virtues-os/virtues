@@ -241,15 +241,18 @@
 						<Markdown {content} isStreaming={!reduced} />
 					</div>
 					<p class="colophon">
-						Distilled from what you wrote, on your box, stored only here. These are the
-						few lines it keeps in mind whenever you talk — and they are yours.
+						Distilled from what you wrote, on your box, stored only here. Anything that
+						knows you this well must belong to you.
 						<button class="inline-edit" onclick={startEdit}>Edit it</button>
 					</p>
 				{/if}
 			</div>
 		{/if}
 
-		<!-- ③ THE DOOR -->
+		<!-- ③ THE DOOR — the tomorrow-beat, made true by the nightly chain. -->
+		<p class="door-line">
+			Every day, a page will be waiting for you: yesterday, written down.
+		</p>
 		<div class="cta">
 			<button class="ob-btn" onclick={onEnter}>
 				Enter Virtues
@@ -343,6 +346,15 @@
 		font-size: 1.0625rem;
 		line-height: 1.7;
 		color: var(--color-foreground-muted);
+	}
+
+	/* The promise gets the serif and the ink — it is the screen's last word. */
+	.door-line {
+		margin: 2.75rem 0 1.1rem;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 1.0625rem;
+		line-height: 1.6;
+		color: var(--color-foreground);
 	}
 
 	.cta {
