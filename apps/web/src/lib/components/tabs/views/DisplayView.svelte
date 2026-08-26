@@ -29,6 +29,7 @@
 	import {
 		getDisplaySettings,
 		setDisplayFace,
+		setDisplayHours,
 		restartDisplay,
 		listApplets,
 		mintFaceToken,
@@ -111,6 +112,47 @@
 		if (kind === "applet") void choose({ kind: "applet", applet_id: rest });
 		else void choose({ kind: "builtin", builtin: rest });
 	}
+
+	// ── hours ─────────────────────────────────────────────────────────────
+	// Local buffers, seeded once from the box — the 10s refresh must not
+	// clobber a half-picked time. Saved when both are set; cleared as a pair.
+	let sleepStart = $state("");
+	let sleepEnd = $state("");
+	let hoursSeeded = $state(false);
+	$effect(() => {
+		if (hoursSeeded || !data) return;
+		sleepStart = data.hours.sleep_start?.slice(0, 5) ?? "";
+		sleepEnd = data.hours.sleep_end?.slice(0, 5) ?? "";
+		hoursSeeded = true;
+	});
+
+	let savingHours = $state(false);
+	async function saveHours(start: string | null, end: string | null) {
+		if (savingHours) return;
+		savingHours = true;
+		try {
+			await setDisplayHours({ sleep_start: start, sleep_end: end });
+			await refresh();
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : String(e));
+		} finally {
+			savingHours = false;
+		}
+	}
+	function onHoursChange() {
+		// Only a complete pair is a schedule; a lone time just waits for its
+		// partner.
+		if (sleepStart && sleepEnd) void saveHours(sleepStart, sleepEnd);
+	}
+	function clearHours() {
+		sleepStart = "";
+		sleepEnd = "";
+		void saveHours(null, null);
+	}
+	const hoursSet = $derived(
+		Boolean(data?.hours.sleep_start && data?.hours.sleep_end),
+	);
+	const wakeLabel = $derived(data?.hours.sleep_end?.slice(0, 5) ?? "");
 
 	// ── restart ───────────────────────────────────────────────────────────
 	let restarting = $state(false);
@@ -245,6 +287,16 @@
 							     may say the panel is showing them, not what they are. -->
 							<span class="g-sub">Showing the setup words — readable only on the glass itself.</span>
 						</div>
+					{:else if data.state.asleep}
+						<!-- Mirroring blackness would read as a fault; the mirror
+						     says what the darkness is. -->
+						<div class="g-fault">
+							<span class="g-doing">Asleep</span>
+							<span class="g-sub">
+								Backlight off{wakeLabel ? ` until ${wakeLabel}` : ""}. The
+								screen still wakes for anything that matters.
+							</span>
+						</div>
 					{:else if data.face.kind === "builtin" && data.face.builtin === "matte"}
 						<div class="g-matte"></div>
 					{:else if miniAppletId && miniSrc}
@@ -329,6 +381,43 @@
 				<p class="sec-hint">
 					Changes reach the screen within half a minute. Applets with a face
 					appear in the list.
+				</p>
+			</section>
+
+			<section>
+				<h2 class="section-title">Hours</h2>
+				<!-- Two times ARE the whole data model; anything fancier is a
+				     considered-looking widget doing no extra work. What they
+				     control is real power — the backlight goes off with the
+				     signal (backlight audit, docs/display-plan.md). -->
+				<div class="hours-row">
+					<label class="hours-field">
+						Sleeps at
+						<input
+							type="time"
+							bind:value={sleepStart}
+							disabled={savingHours}
+							onchange={onHoursChange}
+						/>
+					</label>
+					<label class="hours-field">
+						Wakes at
+						<input
+							type="time"
+							bind:value={sleepEnd}
+							disabled={savingHours}
+							onchange={onHoursChange}
+						/>
+					</label>
+					{#if hoursSet}
+						<button class="ghost-btn" onclick={clearHours} disabled={savingHours}>
+							Never sleeps
+						</button>
+					{/if}
+				</div>
+				<p class="sec-hint">
+					The screen goes truly dark — backlight off — and still wakes for
+					anything on the duty list. Leave empty and it never sleeps.
 				</p>
 			</section>
 
@@ -534,6 +623,30 @@
 	}
 	.facts dd {
 		margin: 0;
+	}
+
+	/* ── hours ── */
+	.hours-row {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		flex-wrap: wrap;
+	}
+	.hours-field {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.hours-field input {
+		font: inherit;
+		font-size: 13px;
+		padding: 4px 8px;
+		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		background: var(--color-background);
+		color: var(--color-foreground);
 	}
 
 	/* ── the picker ── */

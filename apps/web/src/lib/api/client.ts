@@ -503,6 +503,14 @@ export interface DisplayGlassState {
 	record?: Array<{ label: string; count: number }>;
 	record_since?: string | null;
 	updating: boolean;
+	/** Hours is holding the glass dark right now (backlight off). */
+	asleep: boolean;
+}
+
+/** The screen's hours. Times are box-local "HH:MM:SS"; absent = never sleeps. */
+export interface DisplayHours {
+	sleep_start?: string | null;
+	sleep_end?: string | null;
 }
 
 export interface DisplaySettings {
@@ -513,6 +521,7 @@ export interface DisplaySettings {
 	zoom_derived?: number | null;
 	zoom_override?: number | null;
 	face: DisplayFaceConfig;
+	hours: DisplayHours;
 	state: DisplayGlassState;
 }
 
@@ -530,6 +539,14 @@ export function setDisplayFace(face: {
 
 export function restartDisplay(): Promise<{ restarted: boolean }> {
 	return apiSend('POST', '/system/display/restart');
+}
+
+/** Set the sleep schedule ("HH:MM" box-local), or both null for never. */
+export function setDisplayHours(hours: {
+	sleep_start: string | null;
+	sleep_end: string | null;
+}): Promise<DisplayHours> {
+	return apiSend('PUT', '/system/display/hours', hours);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

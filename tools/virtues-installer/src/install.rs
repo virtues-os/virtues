@@ -1814,7 +1814,14 @@ Environment=GDK_BACKEND=wayland
 # (file presence only, never contents), so it needs to know where it is.
 Environment=VIRTUES_DATA_DIR=__DATA_DIR__
 EnvironmentFile=-__DATA_DIR__/virtues.env
-ExecStartPre=/bin/sh -c "mkdir -p /run/user/0; chmod 700 /run/user/0; grep -qx connected /sys/class/drm/*/status"
+# The connected-connector guard keeps a headless board from crash-looping
+# cage. The marker-file escape is Hours: while the sleep engine holds the
+# panel's connector forced off (api::system_display::sleep_engine), a restart
+# of this unit — an upgrade's restart_display fires one — must still start,
+# or the unit parks in --failed against a connector the box darkened on
+# purpose. Cage runs fine with zero outputs; the page draws to nobody until
+# wake re-detects the connector and wlroots hotplugs it back.
+ExecStartPre=/bin/sh -c "mkdir -p /run/user/0; chmod 700 /run/user/0; grep -qx connected /sys/class/drm/*/status || [ -e /run/virtues-display-asleep ]"
 ExecStart=/usr/bin/cage -s -- /usr/bin/python3 /usr/local/lib/virtues/display.py
 # The box's own server may still be starting; the shim retries, and a crash
 # should put the display back rather than leave a black screen.
