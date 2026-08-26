@@ -61,6 +61,48 @@ The letter runs: *∴ You must protect your life's data to protect your soul.*
 | Technology has one good use: to give back the part of life that has nothing to do with technology — to make us more human, and more virtuous. | the peroration | film script, about page |
 | Every day, a page will be waiting for you: yesterday, written down. | the daily gift | ASSIGNED: the reveal's door (the tomorrow-beat), where "tomorrow" is real |
 
+## Quotables (2026-08-24, the voices exercise)
+
+Written in the styles of the letter's ancestors; original phrasings unless
+flagged. The letter itself is finished — these are for the website, the film,
+the manifesto rewrite, and in-product epigraphs.
+
+**The keepers (Adam-loved):**
+
+- *The trouble with data is not that it is collected, but that it is collected
+  by everyone except its owner.* — (Chestertonian) — website problem-section;
+  press-ready aphorism.
+- *This day, honestly seen, is material enough for virtue. Write to yourself,
+  for yourself — no other reader was ever needed.* — (Marcus Aurelius; "to
+  yourself" = his own title, Ta eis heauton) — strongest candidate for an
+  IN-PRODUCT epigraph: the reveal colophon or the day-page empty state.
+- *The line between good and evil runs through every human heart — and
+  strangers have been mapping your half of it for profit.* — (first clause is
+  REAL Solzhenitsyn, Gulag Archipelago; the turn is ours. If used publicly,
+  frame as allusion or credit him) — film script.
+- *The most revolutionary act available to an ordinary man is an accurate
+  record of his own life, because every power now in existence would prefer he
+  didn't keep one.* — (Orwellian, original) — website hero or the manifesto
+  rewrite's opening.
+
+**Worth keeping warm:** A man's life is the one estate he should refuse to
+rent (Chesterton) · the devils harvest the unnoticed hours / nothing dismays
+them like a man who keeps accounts (Screwtape) · the homely house and the lit
+window are worth all the towers of the wise (Tolkien) · virtue is a habit;
+habit is built of particular acts; particular acts are forgotten unless
+recorded (Aquinas) · rest begins where a man sits down with his own life and
+reads it without lying (Augustine) · call your days to account each evening;
+the man who audits his life owns it (Seneca) · all of man's misery comes from
+his inability to sit quietly in his own room — and an industry arose to keep
+him anywhere else; sit down in your room, your life is in there (Pascal — his
+room IS the box, possibly the best undiscovered frame) · no one — least of
+all himself — was keeping the minutes (Thoreau) · bring your days home; the
+scale of care is the household (Wendell Berry) · own the house (Bond) · be
+attentive, be intelligent, be reasonable, be responsible (Lonergan's actual
+transcendental precepts — could structure the Examen) · a fragment of Adam's:
+"the moderns have built a machine that makes predictable vice out of a man's
+…" (unfinished, keep the scent).
+
 Banked film-script material (spoken-to-camera register, too hot for print):
 "evil dwells in men pretending to be good" · the extraction litany (taxes,
 data, time, energy) · "you have no idea what people do with your data right
