@@ -1,14 +1,29 @@
 <!--
-  /display — the 7" panel on the front of an appliance.
+  /display — the box's face. The 7" panel on the front of an appliance, and
+  any other glass that can show a URL.
 
-  Rendered by a WebKit kiosk running ON the box (installer's
-  virtues-display.service: cage + WebKit on bare DRM, no X, no desktop). It is
-  the only interface a Dragon owner has before any device is paired.
+  On the box it is rendered by a WebKit kiosk (installer's
+  virtues-display.service: cage + WebKit on bare DRM, no X, no desktop) and
+  is the only interface a Dragon owner has before any device is paired.
 
-  It lives in (public) because it draws before a session exists. The secret it
-  shows — the setup phrase — is protected at the API, not here:
-  /api/display/state refuses anything that isn't loopback, and this page only
-  ever runs on the box itself.
+  THE FACE IS A URL. The appliance kiosk is one pre-wired consumer of this
+  page, not its owner: a paired browser on any device — an old tablet on a
+  stand, a spare monitor, a TV — opens the same route, full-screens it, and
+  wears the same face. That is the whole DIY display story, and it costs no
+  kiosk stack. The page has two data doors and tries them in order:
+
+    1. /api/display/state — loopback-only, carries the setup phrase.
+       Answers only on the box itself; proximity is the authority.
+    2. /api/system/display — the authenticated, REDACTED mirror. Answers for
+       any PAIRED device. It may say the panel is showing setup words,
+       never what they are; the record census sits behind pairing, which is
+       the right bar for it.
+
+  A browser that is neither the box nor paired gets an honest sentence, not
+  a forever-bootmark.
+
+  It lives in (public) because on the box it draws before a session exists.
+  The secrets are protected at the API, not here.
 
   DESIGN CONSTRAINTS, all measured on real glass:
 
@@ -127,19 +142,79 @@
 	// server — a session whose client sent no name — so test for null, not truth.
 	const session = $derived(state_?.setup_session ?? null);
 
+	// Which data door answered. `mirror` latches on the first loopback 403 —
+	// a peer address does not change under a running page, so there is no
+	// reason to knock on the shut door again. `mirrorDenied` means neither
+	// door is open: this browser is not the box and not paired.
+	let mirror = $state(false);
+	let mirrorDenied = $state(false);
+
 	async function refresh() {
 		try {
-			const res = await fetch("/api/display/state");
+			if (!mirror) {
+				const res = await fetch("/api/display/state");
+				if (res.status === 403) {
+					// Off the box. Not an error — this glass just has to come
+					// through the paired door instead.
+					mirror = true;
+				} else {
+					if (!res.ok) throw new Error(String(res.status));
+					const next = await res.json();
+					// Advance the log line once per poll, only when the box is
+					// claimed and there is more than one thing to say.
+					if (state_?.claimed && (next.record?.length ?? 0) > 1) logIndex += 1;
+					state_ = next;
+					// Answered, so any latched update is over — whatever
+					// happened, the box is serving again and the ordinary
+					// screens are true.
+					unreachable = false;
+					updating = false;
+					return;
+				}
+			}
+
+			// The mirror. Same face, redacted feed: no phrase, no session
+			// name, no button — a remote glass renders what the panel shows,
+			// never what only the panel may say.
+			const res = await fetch("/api/system/display", { cache: "no-store" });
+			if (res.status === 401 || res.status === 403) {
+				mirrorDenied = true;
+				unreachable = false;
+				return;
+			}
 			if (!res.ok) throw new Error(String(res.status));
-			const next = await res.json();
-			// Advance the log line once per poll, only when the box is claimed
-			// and there is more than one thing to say.
+			const d = await res.json();
+			const next: DisplayState = {
+				box_name: d.state.box_name,
+				linked: true,
+				setup_phrase: null,
+				phrase_frozen: false,
+				setup_session: null,
+				data_disk_fault: d.state.data_disk_fault ?? null,
+				button_held_secs: null,
+				button_hold_target: 3,
+				claimed: d.state.claimed,
+				online: d.state.online,
+				connectivity: d.state.connectivity,
+				wifi_ssid: null,
+				devices: d.state.devices,
+				record: d.state.record,
+				record_since: d.state.record_since ?? null,
+				face: d.face,
+			};
 			if (state_?.claimed && (next.record?.length ?? 0) > 1) logIndex += 1;
 			state_ = next;
-			// Answered, so any latched update is over — whatever happened, the
-			// box is serving again and the ordinary screens are true.
+			mirrorDenied = false;
 			unreachable = false;
-			updating = false;
+			// The mirror carries the upgrade fact inline (the kiosk's separate
+			// /api/display/updating door is loopback-only). Same latch, same
+			// semantics: remember it now so the outage can be narrated.
+			if (d.state.updating) {
+				updating = true;
+				updatingSince = Date.now();
+			} else {
+				updating = false;
+			}
 		} catch {
 			// Keep the last good state on screen. A box whose server blipped
 			// should not blank the panel — the phrase on it is still valid.
@@ -156,6 +231,9 @@
 	/// nicety, and a panel that can't reach the update endpoint has bigger news
 	/// to render.
 	async function pollUpdating() {
+		// The mirror carries this fact inline in refresh(); the dedicated
+		// door is loopback-only and would 403 forever from here.
+		if (mirror) return;
 		try {
 			const res = await fetch("/api/display/updating", { cache: "no-store" });
 			if (!res.ok) return;
@@ -218,7 +296,12 @@
 		// A claimed box is on the 30s ambient cadence, which cannot see a 3s
 		// hold at all — so the ONE screen the button matters on would never
 		// draw. Once a hold is seen, drop to the setup cadence until it ends.
-		const want = state_?.claimed && held === null ? AMBIENT_POLL_MS : SETUP_POLL_MS;
+		// A denied mirror retries slowly: someone may pair this device and
+		// come back, but 2s knocks on a shut door are just noise in the log.
+		const want =
+			mirrorDenied || (state_?.claimed && held === null)
+				? AMBIENT_POLL_MS
+				: SETUP_POLL_MS;
 		if (want !== pollMs) schedulePoll(want);
 	});
 
@@ -389,6 +472,20 @@
 			<p class="doing">Storage disconnected</p>
 			<div class="recall">{state_.data_disk_fault}</div>
 		</div>
+	{:else if mirrorDenied}
+		<!-- Neither door answered: this browser is not the box and not
+		     paired. The one state that must NOT be a silent bootmark —
+		     someone deliberately opened this page on a spare screen, and an
+		     honest sentence is what turns that into a working setup. -->
+		<div class="fault">
+			<span class="lockup"><span class="mk">∴</span>Virtues</span>
+			<p class="doing">This screen isn't paired</p>
+			<div class="recall">
+				Any paired device can wear the box's face. Pair this one — open the
+				app here, Settings → Devices → Add device — then come back to this
+				page and go full screen.
+			</div>
+		</div>
 	{:else if !state_}
 		<!-- Pre-first-response. Deliberately bare: the box is seconds from
 		     answering and a spinner would be the first thing it ever said. -->
@@ -443,6 +540,14 @@
 				{:else if state_.setup_phrase}
 					<p class="instruct">virtues.com/downloads — then type these words.</p>
 					<div class="phrase">{state_.setup_phrase}</div>
+				{:else if mirror}
+					<!-- A remote glass during setup. The redaction is the
+					     feature: this screen may say the words exist, and only
+					     the box's own glass may say what they are. -->
+					<p class="instruct">
+						virtues.com/downloads — the setup words show on the box's own
+						screen.
+					</p>
 				{:else}
 					<!-- Neither frozen nor minted: the box could not produce a
 					     phrase at all. Say so, rather than show a gap. -->
