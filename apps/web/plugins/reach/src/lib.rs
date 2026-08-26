@@ -29,8 +29,66 @@ mod upload;
 pub use error::{Error, Result};
 use models::ReachStatus;
 
-/// The loopback port the webview loads (parity with the desktop `:7117` helper).
-const LOOPBACK_PORT: u16 = 7117;
+// ─── Dev profiles ────────────────────────────────────────────────────────────
+//
+// `VIRTUES_PROFILE=<name>` isolates a SECOND app identity on the same machine:
+// its own store dir (`virtues-<name>/` — fresh iroh key, fresh pairing, own
+// outbox) and its own loopback port, derived from the name so any number of
+// profiles coexist without a registry. Unset = today's behavior, bit for bit.
+//
+// This is a dev instrument, not a feature: env-only, no UI, launched via
+// `make mac-dev PROFILE=<name>`. It exists so the box on a desk can be paired
+// against for UI/pairing work while the machine's REAL pairing — and the
+// collector LaunchAgent shipping the real record home — stays untouched. The
+// desktop shell enforces the other half of that contract: a profiled instance
+// never installs, reconciles, or kickstarts the collector (see main.rs).
+//
+// Mobile never sets the env, so this is inert there by construction.
+
+/// The active dev profile name, if any. Sanitized to `[a-z0-9_-]` — a name
+/// that reaches paths and ports must not carry surprises.
+pub fn profile() -> Option<&'static str> {
+  static P: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+  P.get_or_init(|| {
+    std::env::var("VIRTUES_PROFILE").ok().and_then(|v| {
+      let v = v.trim().to_ascii_lowercase();
+      let ok = !v.is_empty()
+        && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+      ok.then_some(v)
+    })
+  })
+  .as_deref()
+}
+
+/// The loopback port the webview loads. The default profile is `7117` forever —
+/// that number is persisted in every installed collector's endpoint and must
+/// never move. A named profile hashes into a private range (7120–7199) so the
+/// same name always gets the same port and profiles never fight each other or
+/// prod. `VIRTUES_PROXY_PORT` overrides either, for the rare collision.
+pub fn loopback_port() -> u16 {
+  static PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+  *PORT.get_or_init(|| {
+    if let Some(p) = std::env::var("VIRTUES_PROXY_PORT")
+      .ok()
+      .and_then(|v| v.parse::<u16>().ok())
+    {
+      return p;
+    }
+    match profile() {
+      None => 7117,
+      Some(name) => {
+        // FNV-1a; any stable spread works, stability across launches is the
+        // requirement (the persisted reach endpoint must find the same port).
+        let mut h: u32 = 0x811c_9dc5;
+        for b in name.bytes() {
+          h ^= u32::from(b);
+          h = h.wrapping_mul(0x0100_0193);
+        }
+        7120 + (h % 80) as u16
+      }
+    }
+  })
+}
 
 // ─── Process-global warm iroh client ─────────────────────────────────────────
 //
@@ -214,14 +272,21 @@ async fn recover_inner() -> i32 {
 static BASE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// `<AppSupport>/virtues/` — the app container dir holding creds + the outbox.
-fn virtues_dir() -> PathBuf {
+/// A dev profile gets `virtues-<name>/` instead: its own key, pairing, and
+/// outbox, hermetically beside the real one. `pub` so the desktop shell's
+/// pre-window paired check reads the same path this store writes.
+pub fn virtues_dir() -> PathBuf {
+  let leaf = match profile() {
+    None => "virtues".to_string(),
+    Some(p) => format!("virtues-{p}"),
+  };
   if let Some(base) = BASE_DIR.get() {
-    return base.join("virtues");
+    return base.join(leaf);
   }
   let base = dirs::data_dir()
     .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support")))
     .unwrap_or_else(|| PathBuf::from("."));
-  base.join("virtues")
+  base.join(leaf)
 }
 
 /// Initialize the shared outbox and clear any stale in-flight claims. Idempotent
@@ -397,7 +462,7 @@ impl ReachState {
   }
 
   pub fn loopback_url(&self) -> String {
-    format!("http://127.0.0.1:{LOOPBACK_PORT}")
+    format!("http://127.0.0.1:{}", loopback_port())
   }
 
   /// The warm iroh client, if serving. Reads the process-global source of truth
@@ -421,8 +486,9 @@ impl ReachState {
       }
     };
 
-    let std_listener = StdTcpListener::bind(("127.0.0.1", LOOPBACK_PORT))
-      .map_err(|e| Error::Reach(format!("bind 127.0.0.1:{LOOPBACK_PORT}: {e}")))?;
+    let port = loopback_port();
+    let std_listener = StdTcpListener::bind(("127.0.0.1", port))
+      .map_err(|e| Error::Reach(format!("bind 127.0.0.1:{port}: {e}")))?;
     std_listener.set_nonblocking(true)?;
 
     // Refresh the outbox's device id now that we're definitely paired (setup()
