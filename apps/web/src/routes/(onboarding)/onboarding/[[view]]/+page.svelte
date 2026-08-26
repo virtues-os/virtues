@@ -168,7 +168,12 @@
 	 * `/onboarding/you` on an unlinked box now opens the gate, not the reveal,
 	 * which is a better answer than a bounce.
 	 */
-	const resolved = $derived<ViewId>(!worldEnough ? "sources" : "your-words");
+	// A brand-new box starts at the letter — `onboarding_status` is the
+	// server-side memory of having read it (flipped by Begin), so a refresh or
+	// a second browser resumes past it instead of skipping it entirely.
+	const resolved = $derived<ViewId>(
+		state_?.onboarding_status === "new" ? "letter" : !worldEnough ? "sources" : "your-words",
+	);
 
 	/** Every step is offerable — the AI-needing leaves guard themselves. */
 	const open = $derived(STEPS.map((s) => s.id));
@@ -326,7 +331,16 @@
 			{#key view}
 				<div class="ob-page" class:ob-back={back}>
 					{#if view === "letter"}
-						<FoundersLetter onbegin={() => go("introductions")} />
+						<FoundersLetter
+							onbegin={() => {
+								// Begin = the letter is read; remember it on the box. Only
+								// from 'new' — later stages must never be walked back.
+								if (state_?.onboarding_status === "new") {
+									void updateProfile({ onboarding_status: "onboarding" }).then(refreshState).catch(() => {});
+								}
+								go("introductions");
+							}}
+						/>
 					{:else if view === "introductions"}
 						<!-- Introductions is the hand-off from reading to working, so
 						     Continue goes wherever the box actually needs us — not
