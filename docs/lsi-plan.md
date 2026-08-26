@@ -227,6 +227,47 @@ is authored theater with the model at exactly one joint.**
   navigation reopens a movement conversationally; corrections after the draft
   exist happen in the document (EDIT, NOT REDRAFT doctrine).
 
+## Specimen v2 rulings (Adam, 2026-08-26, after seeing v1)
+
+- **One continuous stream.** All questions flow in a single conversation on a
+  single page — no movement sub-screens, no per-question navigation. The
+  movements survive only as internal sequencing (prompt structure, the small
+  I–V numeral). The next question arrives IN the flow ("Then — what makes
+  you…"), never on a new screen.
+- **Nameless interviewer, or their assistant's name — never an invented one.**
+  v1's placeholder "Mira" was wrong. Current treatment: the interviewer's
+  turns carry the ∴ mark as their speaker mark (nameless, branded, and the
+  mark finally speaks); swap to the person's own `assistant_name` (already
+  collected in Introductions, default exists) if named feels better. Their
+  own turns are unmarked body prose — the page is mostly them.
+- **Chrome dies.** v1 showed four affordances at once (Go on / skip this /
+  why do you ask? / stop here) — inundating. v2: the writing surface, one set
+  mark (—), one tiny "skip". Consent-to-advance is conversational (her
+  question IS the invitation), "why?" is a superscript on the question line
+  itself, and "saves as you go" is said once at the door, not carried as a
+  footer.
+- The door is its own screen; Begin replaces it with the stream. (v1 showed
+  both stacked, which read as two competing CTAs.)
+
+## The founder video (open, leaning yes)
+
+The sitting asks for maximum trust, and a human face asking for it is the one
+trust instrument copy can't match — prosody and sincerity don't survive
+transcription. But two videos in one onboarding dilute both, and a mediocre
+video negates gravitas exactly the way cheap UI does. Options:
+
+1. **One-video strategy (lean):** the founder's-letter film carries a final
+   beat that hands off to the sitting — "later it will ask about your life;
+   answer it honestly, I did" — and the door stays text.
+2. **A dedicated door video:** ≤60 seconds, personal testimony not
+   instructions — why these questions exist, that he sat for it himself, the
+   never-finished line spoken aloud. Rules if so: never autoplay; a quiet
+   poster-frame affordance beside the lede; the door must work without it
+   (offline boxes, skippers); bundled small or fetched with graceful absence.
+
+Either way the register is testimony ("I did this") not tutorial ("you
+should"). Decide when the letter film gets made — they are one shoot.
+
 ## UI register (the sitting, typographically)
 
 - **Paris Review page**: a single column in the onboarding document register.
