@@ -65,9 +65,9 @@ pub struct FoundServer {
 /// A bare existence check (not a full parse) — enough for the tray / launch
 /// decision; the reach plugin does the authoritative load when it serves.
 fn is_paired() -> bool {
-    dirs::data_dir()
-        .map(|d| d.join("virtues").join("box.json").exists())
-        .unwrap_or(false)
+    // Through the plugin's path fn, so a dev profile (VIRTUES_PROFILE) checks
+    // ITS store, not the machine's real one.
+    tauri_plugin_reach::virtues_dir().join("box.json").exists()
 }
 
 
@@ -102,7 +102,9 @@ fn probe_box_session_blocking(attempts: u8) -> Option<bool> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
-    let addr = "127.0.0.1:7117".parse().ok()?;
+    let addr = format!("127.0.0.1:{}", tauri_plugin_reach::loopback_port())
+        .parse()
+        .ok()?;
     for i in 0..attempts {
         if let Ok(mut s) = TcpStream::connect_timeout(&addr, PROBE_CONNECT_TIMEOUT) {
             let _ = s.set_read_timeout(Some(PROBE_READ_TIMEOUT));
@@ -410,9 +412,26 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
     }
 }
 
+/// Refuse collector mutations from a dev profile. The collector — its
+/// LaunchAgent, its persisted endpoint, its TCC grants — is machine-global
+/// state belonging to the machine's REAL pairing. A profiled instance exists
+/// precisely so that pairing keeps collecting undisturbed while UI/pairing
+/// work happens beside it; the one way to break that contract is a profile
+/// reaching launchd. Reads (`get_collector_status`) stay allowed.
+fn deny_collector_in_profile() -> Result<(), String> {
+    match tauri_plugin_reach::profile() {
+        None => Ok(()),
+        Some(p) => Err(format!(
+            "dev profile '{p}': the collector belongs to the machine's real \
+             pairing; this instance never touches it"
+        )),
+    }
+}
+
 /// Install the collector as a LaunchAgent
 #[tauri::command]
 async fn install_collector(app: AppHandle, token: String) -> Result<(), String> {
+    deny_collector_in_profile()?;
     let shell = app.shell();
 
     // Point the collector at the LOCAL PROXY (:7117), not its built-in
@@ -426,7 +445,10 @@ async fn install_collector(app: AppHandle, token: String) -> Result<(), String> 
         .sidecar("virtues-collector")
         .map_err(|e| e.to_string())?
         .env("VIRTUES_TOKEN", &token)
-        .env("VIRTUES_API_URL", "http://localhost:7117")
+        .env(
+            "VIRTUES_API_URL",
+            format!("http://localhost:{}", tauri_plugin_reach::loopback_port()),
+        )
         .args(["install", "--token-from-env"])
         .output()
         .await
@@ -442,6 +464,7 @@ async fn install_collector(app: AppHandle, token: String) -> Result<(), String> 
 /// Uninstall the collector LaunchAgent
 #[tauri::command]
 async fn uninstall_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
     let installed_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
@@ -470,6 +493,7 @@ async fn uninstall_collector(app: AppHandle) -> Result<(), String> {
 /// Pause collector
 #[tauri::command]
 async fn pause_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
     let installed_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
@@ -498,6 +522,7 @@ async fn pause_collector(app: AppHandle) -> Result<(), String> {
 /// Resume collector
 #[tauri::command]
 async fn resume_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
     let installed_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
@@ -526,6 +551,7 @@ async fn resume_collector(app: AppHandle) -> Result<(), String> {
 /// Stop collector daemon
 #[tauri::command]
 async fn stop_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
     let installed_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
@@ -706,7 +732,9 @@ fn box_identity_blocking() -> Option<(String, String)> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
-    let addr = "127.0.0.1:7117".parse().ok()?;
+    let addr = format!("127.0.0.1:{}", tauri_plugin_reach::loopback_port())
+        .parse()
+        .ok()?;
     let mut s = TcpStream::connect_timeout(&addr, PROBE_CONNECT_TIMEOUT).ok()?;
     let _ = s.set_read_timeout(Some(PROBE_READ_TIMEOUT));
     s.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
@@ -1478,8 +1506,14 @@ fn main() {
             // been onboarded, so there is nothing to keep in sync yet; the
             // "Turn on this Mac" flow installs the collector and this reconcile
             // takes over from the next launch on.
+            // ... and never from a dev profile: reconcile kickstarts the
+            // machine's real collector, which is exactly the cross-profile
+            // side effect profiles exist to prevent.
             #[cfg(target_os = "macos")]
-            if app.reach().is_paired() && reconcile_helpers() {
+            if tauri_plugin_reach::profile().is_none()
+                && app.reach().is_paired()
+                && reconcile_helpers()
+            {
                 std::thread::sleep(std::time::Duration::from_millis(300));
             }
 
@@ -1542,14 +1576,27 @@ fn main() {
                 WebviewUrl::App("connect.html".into())
             } else {
                 match probe_box_session_blocking(1) {
-                    Some(true) => WebviewUrl::External("http://localhost:7117".parse().unwrap()),
+                    Some(true) => WebviewUrl::External(
+                        format!("http://localhost:{}", tauri_plugin_reach::loopback_port())
+                            .parse()
+                            .unwrap(),
+                    ),
                     Some(false) => WebviewUrl::App("connect.html#reset".into()),
                     None => WebviewUrl::App("connect.html#unreachable".into()),
                 }
             };
 
+            // Tell the airlock (connect.html) which loopback this instance
+            // serves. Its fallback is the default :7117, so this only matters
+            // for dev profiles — but injecting unconditionally keeps one path.
+            let box_url_js = format!(
+                "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
+                tauri_plugin_reach::loopback_port()
+            );
+
             let window = WebviewWindowBuilder::new(app, "main", url)
                 .title("Virtues")
+                .initialization_script(&box_url_js)
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(800.0, 600.0)
                 .center()
