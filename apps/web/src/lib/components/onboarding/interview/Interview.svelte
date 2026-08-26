@@ -21,6 +21,7 @@
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import ChapterCards from "./ChapterCards.svelte";
 	import { ONBOARDING_QUESTIONS as QUESTIONS, wordCount, type Question } from "./questions";
 	import { getInterviewAnswers, saveInterviewAnswer } from "$lib/api/client";
 	import { onMount, onDestroy } from "svelte";
@@ -117,12 +118,26 @@
 				<p>{q.why}</p>
 			</details>
 
-			<textarea
-				bind:value={answers[q.id]}
-				oninput={onInput}
-				placeholder="Take your time."
-				spellcheck="true"
-			></textarea>
+			{#if q.id === "chapters"}
+				<!-- The one structured question — see ChapterCards for why. Keyed
+				     so leaving and returning re-parses the saved text. -->
+				{#key idx}
+					<ChapterCards
+						value={answers[q.id] ?? ""}
+						onchange={(t) => {
+							answers[q.id] = t;
+							onInput();
+						}}
+					/>
+				{/key}
+			{:else}
+				<textarea
+					bind:value={answers[q.id]}
+					oninput={onInput}
+					placeholder="Take your time."
+					spellcheck="true"
+				></textarea>
+			{/if}
 
 			<div class="under">
 				{#if q.hint}<p class="hint">{q.hint}</p>{/if}
