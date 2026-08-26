@@ -175,14 +175,23 @@
 			<li>Who have I lost touch with that I used to talk to every day?</li>
 		</ul>
 
-		<!-- NOTHING AFTER THE ASKS. The letter ends on the lost-touch question,
-		     directly above the signature — the reader finishes inside a
-		     question they can feel, not inside a philosophy (the ∴ line is the
-		     letter's one summit; a closing essay-paragraph was a second, cut
-		     2026-08-24, lines banked in docs/voice.md). The manifesto link was
-		     cut the same day: an exit ramp at the letter's most personal
-		     moment, pointing at a cloud-era document the ledger contradicts —
-		     restore it only once the manifesto matches the doctrine. -->
+		<div class="body">
+			<!-- THE LAST WORD. Two plain sentences after the asks — the grievance
+			     and the turn. The hard words (subsidiarity, the ledger) did
+			     their work upstairs; the close is the line anyone could repeat
+			     at dinner. The you→us shift between the sentences is the
+			     founder stepping in beside the reader for the final clause,
+			     which lands on the cadence every cut spared: more human, and
+			     more virtuous. (The essay-close and the manifesto link were
+			     both cut 2026-08-24 — the essay was a second summit after the
+			     ∴, the link an exit ramp to a cloud-era document the ledger
+			     contradicts; its lines are banked in docs/voice.md.) -->
+			<p>
+				Technology has exploited you long enough. This is what it was always supposed to
+				do: make us more human, and more virtuous.
+			</p>
+		</div>
+
 		<div class="sign">
 			<!-- MASKED, NOT INVERTED. An earlier version inverted black ink assuming
 			     a dark ground, which would have painted white on white for the eight
