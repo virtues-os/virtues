@@ -20,6 +20,7 @@
 	  Devices      /virtues/devices        — paired devices (Unpair, Start over)
 	               /virtues/devices/this   — the machine you're on (local panel)
 	               /virtues/devices/:id    — another device, as the box knows it
+	  Display      /virtues/display        — the screen on the box, and what it shows
 	  Developer    /virtues/developer      — SQL · Terminal · Lake
 
 	"Box" was three of those in one door (2026-08-17). It stacked a Wi-Fi
@@ -52,6 +53,7 @@
 	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
+	import DisplayView from '$lib/components/tabs/views/DisplayView.svelte';
 	import DeviceDetailView from '$lib/components/tabs/views/DeviceDetailView.svelte';
 	import ThisMacView from '$lib/components/tabs/views/ThisMacView.svelte';
 	import ThisDeviceView from '$lib/components/tabs/views/ThisDeviceView.svelte';
@@ -139,6 +141,7 @@
 		| 'network'
 		| 'software'
 		| 'devices'
+		| 'display'
 		| 'developer';
 
 	const SECTIONS = [
@@ -149,6 +152,7 @@
 		'network',
 		'software',
 		'devices',
+		'display',
 		'developer',
 	];
 
@@ -205,6 +209,8 @@
 			{:else}
 				<DeviceDetailView deviceId={sub} />
 			{/if}
+		{:else if section === 'display'}
+			<DisplayView />
 		{:else if section === 'developer'}
 			{#if sub === 'terminal'}
 				<DeveloperTerminalView {tab} {active} />

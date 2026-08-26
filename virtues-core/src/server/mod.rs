@@ -945,6 +945,23 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/system/update/apply",
             post(api::apply_update_handler),
         )
+        // The box's attached screen (Settings → Display). Deliberately NOT in
+        // the loopback-only /api/display/* family: that module's uniform
+        // box-local rule is its security argument, and these are the paired
+        // device's side of the glass — panel facts, the ambient face choice,
+        // and the restart verb. Nothing here carries the setup phrase.
+        .route(
+            "/api/system/display",
+            get(crate::api::system_display::get_display_settings_handler),
+        )
+        .route(
+            "/api/system/display/face",
+            put(crate::api::system_display::set_display_face_handler),
+        )
+        .route(
+            "/api/system/display/restart",
+            post(crate::api::system_display::restart_display_handler),
+        )
         // Re-open onboarding: revoke every device, keep the data. Sits beside
         // the update routes because it is the same kind of thing — a box-wide
         // action a paired device may take, guarded by being paired.

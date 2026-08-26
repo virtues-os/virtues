@@ -62,6 +62,7 @@ pub mod refs;
 pub mod source_auth;
 pub mod subscription;
 pub mod stream_health;
+pub mod system_display;
 pub mod system_telemetry;
 pub mod system_update;
 pub mod terminal;

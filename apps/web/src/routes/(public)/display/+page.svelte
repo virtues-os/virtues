@@ -88,6 +88,9 @@
 		devices: number;
 		record: Array<{ label: string; count: number }> | undefined;
 		record_since: string | null | undefined;
+		face:
+			| { kind: string; builtin: string; applet_id?: string | null }
+			| undefined;
 	};
 
 	let state_ = $state<DisplayState | null>(null);
@@ -282,6 +285,69 @@
 	const dateLabel = $derived(
 		now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }),
 	);
+
+	// ── the face ──────────────────────────────────────────────────────────
+	//
+	// The ambient slot's tenant (Settings → Display). The face NEVER replaces
+	// the interruptions or the setup screens — those branches sit above this
+	// one and outrank any choice the owner made, which is the whole contract:
+	// the glass always tells the truth about the box's condition first.
+	//
+	// An applet face is the same sandboxed-iframe runtime the app uses
+	// (server/faces.rs). This page runs on the box, so its loopback fetch
+	// authenticates as local-console and can mint its own face token — no
+	// pairing ceremony for the box's own screen.
+	const faceAppletId = $derived(
+		state_?.claimed && state_.face?.kind === "applet"
+			? (state_.face.applet_id ?? null)
+			: null,
+	);
+	const matte = $derived(
+		(state_?.claimed &&
+			state_.face?.kind === "builtin" &&
+			state_.face.builtin === "matte") ??
+			false,
+	);
+
+	let faceSrc = $state<string | null>(null);
+
+	// Tokens live one hour (faces.rs TOKEN_TTL); a panel face lives for days.
+	// Re-mint well inside the TTL — the src change reloads the iframe, which
+	// at this cadence is furniture settling, not an animation.
+	const FACE_REMINT_MS = 45 * 60 * 1000;
+
+	$effect(() => {
+		const id = faceAppletId;
+		if (!id) {
+			faceSrc = null;
+			return;
+		}
+		let cancelled = false;
+		const mint = async () => {
+			try {
+				const res = await fetch(
+					`/api/applets/${encodeURIComponent(id)}/face-token`,
+				);
+				if (!res.ok) throw new Error(String(res.status));
+				const { token } = await res.json();
+				if (cancelled) return;
+				faceSrc = `/face/${encodeURIComponent(id)}/?vt=${encodeURIComponent(
+					token,
+				)}&theme=dark&surface=panel`;
+			} catch {
+				// A face that can't be hung (applet deleted, token refused) must
+				// not blank the glass — fall through to the record screen, which
+				// is every box's pre-face ambient.
+				if (!cancelled) faceSrc = null;
+			}
+		};
+		void mint();
+		const t = setInterval(mint, FACE_REMINT_MS);
+		return () => {
+			cancelled = true;
+			clearInterval(t);
+		};
+	});
 </script>
 
 <div class="screen">
@@ -399,6 +465,18 @@
 				</div>
 			{/if}
 		</div>
+	{:else if matte}
+		<!-- MATTE. Black glass on purpose — reserve, not off. Chosen in
+		     Settings → Display; the interruptions above still take the screen
+		     when they must, which is what makes choosing nothing safe. -->
+		<div class="matte"></div>
+	{:else if faceAppletId && faceSrc}
+		<!-- AN APPLET FACE, hanging in the ambient slot. Full-bleed and in the
+		     same jail it lives in everywhere else: opaque origin, strict CSP,
+		     read-only face_reader bridge. If it cannot be hung, `faceSrc`
+		     stays null and the record screen below renders instead. -->
+		<iframe class="panelface" src={faceSrc} sandbox="allow-scripts" title="Face"
+		></iframe>
 	{:else}
 		<!-- AMBIENT. The screen someone sees ten thousand times, so it reports
 		     the record rather than the machine — a ship's log, not htop. -->
@@ -611,6 +689,23 @@
 	}
 	.foot.warn {
 		color: var(--warn);
+	}
+
+	/* ── the face ── */
+	/* True black, not the page's near-black: matte means the least light the
+	   backlight allows, and the difference is visible in a dark room. */
+	.matte {
+		position: absolute;
+		inset: 0;
+		background: #000;
+	}
+	.panelface {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		border: 0;
+		background: var(--bg);
 	}
 
 	/* ── ambient ── */

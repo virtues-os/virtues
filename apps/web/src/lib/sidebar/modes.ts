@@ -67,6 +67,10 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/virtues/software',
 		},
 		{ id: 'devices', label: 'Devices', icon: 'ri:device-line', href: '/virtues/devices' },
+		// The screen on the box itself. Under Devices but not IN it: the panel
+		// is part of the box's body, not a paired thing — it cannot be revoked,
+		// only tended.
+		{ id: 'display', label: 'Display', icon: 'ri:tv-2-line', href: '/virtues/display' },
 	],
 };
 
