@@ -89,10 +89,28 @@
 		}
 	}
 
-	const isBuiltin = (name: string) =>
-		data?.face.kind === "builtin" && data.face.builtin === name;
-	const isApplet = (id: string) =>
-		data?.face.kind === "applet" && data.face.applet_id === id;
+	// The select's value: `builtin:<name>` or `applet:<id>`. A select rather
+	// than a row list — applets grow unbounded, and a page of radio rows
+	// grows with them; a select holds fifty faces as calmly as five.
+	const faceValue = $derived(
+		data?.face.kind === "applet" && data.face.applet_id
+			? `applet:${data.face.applet_id}`
+			: `builtin:${data?.face.builtin ?? "record"}`,
+	);
+	// A hung face whose applet has since vanished still needs an option to
+	// sit on, or the select silently shows the wrong thing.
+	const orphanedAppletId = $derived.by(() => {
+		const f = data?.face;
+		if (f?.kind !== "applet" || !f.applet_id) return null;
+		return applets.some((a) => a.id === f.applet_id) ? null : f.applet_id;
+	});
+	function onFaceChange(value: string) {
+		const sep = value.indexOf(":");
+		const kind = value.slice(0, sep);
+		const rest = value.slice(sep + 1);
+		if (kind === "applet") void choose({ kind: "applet", applet_id: rest });
+		else void choose({ kind: "builtin", builtin: rest });
+	}
 
 	// ── restart ───────────────────────────────────────────────────────────
 	let restarting = $state(false);
@@ -283,87 +301,42 @@
 
 			<section>
 				<h2 class="section-title">The face</h2>
-				<p class="sec-hint">
-					What the screen shows once the box is claimed and nothing needs
-					saying. Changes land on the glass within half a minute.
-				</p>
-
-				<ul class="shelf">
-					<li>
-						<button
-							class="face-row"
-							class:selected={isBuiltin("record")}
-							disabled={saving}
-							onclick={() => choose({ kind: "builtin", builtin: "record" })}
-						>
-							<span class="face-name">The Record</span>
-							<span class="face-desc">
-								The census of the record, ticking — what every box shows out
-								of the box.
-							</span>
-							{#if isBuiltin("record")}
-								<Icon icon="ri:check-line" width="16" class="face-check" />
-							{/if}
-						</button>
-					</li>
-					<li>
-						<button
-							class="face-row"
-							class:selected={isBuiltin("matte")}
-							disabled={saving}
-							onclick={() => choose({ kind: "builtin", builtin: "matte" })}
-						>
-							<span class="face-name">Matte</span>
-							<span class="face-desc">
-								Black glass, on purpose. The screen still speaks up for
-								anything that matters.
-							</span>
-							{#if isBuiltin("matte")}
-								<Icon icon="ri:check-line" width="16" class="face-check" />
-							{/if}
-						</button>
-					</li>
-					{#each applets as applet (applet.id)}
-						<li>
-							<button
-								class="face-row"
-								class:selected={isApplet(applet.id)}
-								disabled={saving}
-								onclick={() => choose({ kind: "applet", applet_id: applet.id })}
-							>
-								<span class="face-name">{applet.name}</span>
-								{#if applet.description}
-									<span class="face-desc">{applet.description}</span>
+				<!-- A SELECT, NOT A ROW LIST — same reasoning as the channel
+				     picker: it has a default, it scales to any number of applet
+				     faces, and the miniature above is the preview. -->
+				<div class="face-picker">
+					<select
+						value={faceValue}
+						disabled={saving}
+						onchange={(e) => onFaceChange(e.currentTarget.value)}
+					>
+						<option value="builtin:record">The Record — the census, ticking</option>
+						<option value="builtin:matte">Matte — black glass, on purpose</option>
+						{#if applets.length || orphanedAppletId}
+							<optgroup label="Applet faces">
+								{#each applets as applet (applet.id)}
+									<option value={`applet:${applet.id}`}>{applet.name}</option>
+								{/each}
+								{#if orphanedAppletId}
+									<option value={`applet:${orphanedAppletId}`}>
+										{orphanedAppletId} (missing)
+									</option>
 								{/if}
-								{#if isApplet(applet.id)}
-									<Icon icon="ri:check-line" width="16" class="face-check" />
-								{/if}
-							</button>
-						</li>
-					{/each}
-				</ul>
-
-				<!-- The door at the end of the shelf: faces are chat-authored
-				     today (applet_setup's face_html), so the invitation is real,
-				     not aspirational. -->
+							</optgroup>
+						{/if}
+					</select>
+				</div>
 				<p class="sec-hint">
-					Any applet with a face can hang here. Ask the assistant for a new
-					one — a small page over your own record, made for a 585 × 329
-					screen that nobody touches.
+					Changes reach the screen within half a minute. Applets with a face
+					appear in the list.
 				</p>
 			</section>
 
 			<section>
 				<h2 class="section-title">Other screens</h2>
-				<!-- The face is a URL, and this paragraph is half the feature:
-				     without it, nobody learns that the appliance kiosk is just
-				     one pre-wired consumer of a page any paired browser can
-				     wear. -->
 				<p class="sec-hint">
-					The face is a page this box serves. Any paired device can wear it:
-					open the box's address at <code>/display</code> in its browser and
-					go full screen — an old tablet on a stand is a second glass. A
-					screen that isn't paired is told how to become one.
+					Any paired device can show the face: open <code>/display</code> in
+					its browser and go full screen.
 				</p>
 			</section>
 		</div>
@@ -563,59 +536,14 @@
 		margin: 0;
 	}
 
-	/* ── the shelf ── */
-	.shelf {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		background: var(--color-surface);
-		overflow: hidden;
-	}
-	.shelf li + li {
-		border-top: 1px solid var(--color-border-subtle, var(--color-border));
-	}
-	.face-row {
-		display: grid;
-		grid-template-columns: 1fr auto;
-		grid-template-areas:
-			"name check"
-			"desc check";
-		row-gap: 2px;
-		column-gap: 12px;
-		align-items: center;
-		width: 100%;
-		text-align: left;
-		padding: 12px 14px;
-		border: 0;
-		background: none;
-		cursor: pointer;
+	/* ── the picker ── */
+	.face-picker select {
 		font: inherit;
-		color: var(--color-foreground);
-	}
-	.face-row:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
-	}
-	.face-row:disabled {
-		cursor: default;
-	}
-	.face-row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-	.face-name {
-		grid-area: name;
 		font-size: 13px;
-		font-weight: 500;
-	}
-	.face-desc {
-		grid-area: desc;
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
-	}
-	.face-row :global(.face-check) {
-		grid-area: check;
-		color: var(--color-primary);
+		padding: 4px 8px;
+		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		background: var(--color-background);
+		color: var(--color-foreground);
 	}
 </style>

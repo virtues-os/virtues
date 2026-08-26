@@ -322,8 +322,12 @@ story; the cage/`display.py` stack stays internal-appliance-only, and a
 
 Verified live on the dev stack (fresh server, migration 0004 applied):
 face PUT validation (bad kind / bad builtin / faceless applet all 400),
-choose-in-UI → check moves → loopback feed carries the face, shelf lists
-all three faced applets, off-box 403 → mirror fallback path (403 confirmed
-via forwarded-header curl). Still owed to a hardware/second-device run:
+choose-in-UI → loopback feed carries the face, picker lists all three
+faced applets, off-box 403 → mirror fallback path (403 confirmed via
+forwarded-header curl). The face chooser is a SELECT, not a row list —
+applet faces grow unbounded and a select holds fifty as calmly as five
+(same argument as the update channel picker); an orphaned choice (applet
+deleted after hanging) keeps a "(missing)" option so the select never
+silently lies. Still owed to a hardware/second-device run:
 claimed-ambient rendering of matte + applet iframe on real glass, and a
 true remote browser wearing the mirror.
