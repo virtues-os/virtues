@@ -249,6 +249,14 @@ void main() {
 
 const canvas = document.getElementById("c");
 const gl = canvas.getContext("webgl2", { alpha: false, antialias: false });
+if (!gl) {
+	// "Never fully black": a client without WebGL2 gets a sentence, not a
+	// void. (The panel and every app pane have it; this is belt and braces.)
+	document.body.innerHTML =
+		'<p style="color:#4a5663;font:13px system-ui;padding:2rem">' +
+		"This face needs WebGL, which this screen does not have.</p>";
+	throw new Error("no webgl2");
+}
 
 function compile(type, src) {
 	const s = gl.createShader(type);
@@ -291,7 +299,10 @@ function makeDotTexture(data) {
 	gl.bindTexture(gl.TEXTURE_2D, tex);
 	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, Math.max(1, n), 1, 0, gl.RGBA, gl.FLOAT, new Float32Array(data));
+	// A zero-dot upload still needs one texel of backing data or texImage2D
+	// raises INVALID_OPERATION; the draw is skipped at n === 0 regardless.
+	const backing = n > 0 ? new Float32Array(data) : new Float32Array(4);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, Math.max(1, n), 1, 0, gl.RGBA, gl.FLOAT, backing);
 	return { tex, n };
 }
 
@@ -299,9 +310,20 @@ let seed = FALLBACK_SEED;
 let stars = { tex: null, n: 0 };
 let events = { tex: null, n: 0 };
 
+// This face runs 24/7: every replaced texture must be deleted or the 30s
+// poll leaks two GPU allocations per cycle, forever. Stars depend only on
+// the seed, so they rebuild only when it changes — not per poll.
+function replaceTexture(slot, data) {
+	if (slot.tex) gl.deleteTexture(slot.tex);
+	return makeDotTexture(data);
+}
+let starSeed = null;
 function rebuild(eventRows) {
-	stars = makeDotTexture(buildStars(seed));
-	events = makeDotTexture(buildEventDots(eventRows, seed));
+	if (starSeed !== seed) {
+		stars = replaceTexture(stars, buildStars(seed));
+		starSeed = seed;
+	}
+	events = replaceTexture(events, buildEventDots(eventRows, seed));
 }
 rebuild([]);
 

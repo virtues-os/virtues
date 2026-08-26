@@ -140,9 +140,12 @@
 		}
 	}
 	function onHoursChange() {
-		// Only a complete pair is a schedule; a lone time just waits for its
-		// partner.
+		// A complete pair is a schedule; BOTH blanked is "never sleeps" —
+		// without that, clearing the fields left the box silently keeping
+		// the old hours behind an empty-looking form. A lone time just
+		// waits for its partner.
 		if (sleepStart && sleepEnd) void saveHours(sleepStart, sleepEnd);
+		else if (!sleepStart && !sleepEnd && hoursSet) void saveHours(null, null);
 	}
 	function clearHours() {
 		sleepStart = "";
@@ -180,6 +183,10 @@
 			: null,
 	);
 	let miniSrc = $state<string | null>(null);
+	// Face tokens live one hour; a Settings tab left open longer would keep
+	// an iframe whose every query fails. Re-mint inside the TTL, same as the
+	// kiosk page does.
+	const MINI_REMINT_MS = 45 * 60 * 1000;
 	$effect(() => {
 		const id = miniAppletId;
 		if (!id) {
@@ -187,7 +194,7 @@
 			return;
 		}
 		let cancelled = false;
-		void (async () => {
+		const mint = async () => {
 			try {
 				const { token } = await mintFaceToken(id);
 				if (cancelled) return;
@@ -197,9 +204,12 @@
 			} catch {
 				if (!cancelled) miniSrc = null;
 			}
-		})();
+		};
+		void mint();
+		const t = setInterval(mint, MINI_REMINT_MS);
 		return () => {
 			cancelled = true;
+			clearInterval(t);
 		};
 	});
 

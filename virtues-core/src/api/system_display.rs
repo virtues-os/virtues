@@ -235,9 +235,11 @@ pub mod sleep_engine {
     use std::sync::{Mutex, OnceLock};
 
     static ASLEEP: AtomicBool = AtomicBool::new(false);
-    /// Connector we forced down, so wake re-detects the same one. Survives
-    /// only in memory: a reboot clears the sysfs force and tmpfs marker too,
-    /// so all three reset together.
+    /// Connector we forced down, so wake re-detects the same one. The MARKER
+    /// file carries the same name as the durable copy: a virtues.service
+    /// restart mid-sleep loses this memory but not the file, and `wake_up`
+    /// falls back to reading it. A reboot clears the sysfs force and the
+    /// tmpfs marker together, so all state resets as one.
     static SLEPT_CONNECTOR: Mutex<Option<String>> = Mutex::new(None);
 
     fn nudge_notify() -> &'static tokio::sync::Notify {
@@ -283,8 +285,11 @@ pub mod sleep_engine {
             return;
         }
         // Marker BEFORE the force: from the moment the connector reads
-        // `disconnected`, a unit (re)start must already have its escape.
-        if !sudo_sh(&format!("touch {MARKER}")) {
+        // `disconnected`, a unit (re)start must already have its escape. The
+        // marker CARRIES the connector name so a successor process — an
+        // upgrade restarts virtues.service while the display unit keeps
+        // running — can adopt the sleep and still know what to wake.
+        if !sudo_sh(&format!("echo {} > {MARKER}", panel.connector)) {
             tracing::warn!("sleep: could not write marker; staying awake");
             return;
         }
@@ -302,14 +307,57 @@ pub mod sleep_engine {
         }
     }
 
+    /// RETRYABLE: nothing is forgotten until the glass is provably waking.
+    /// A transient sudo refusal keeps `ASLEEP` true and the marker in place,
+    /// so the next 1s tick simply tries again — clearing state on a failed
+    /// wake would strand the connector forced-off with an engine that
+    /// believes the screen is on (and, with the marker gone, an ExecStartPre
+    /// that parks the unit on the next restart).
     fn wake_up(reason: &str) {
+        // The in-memory name, or the one the marker carries — a successor
+        // process (upgrade restarts virtues.service; the display unit keeps
+        // running) adopts the sleep and reads the connector from the file.
         let connector = SLEPT_CONNECTOR
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .take();
-        let _ = sudo_sh(&format!("rm -f {MARKER}"));
-        if let Some(c) = connector.filter(|c| connector_ok(c)) {
-            let _ = sudo_sh(&format!("echo detect > /sys/class/drm/{c}/status"));
+            .clone()
+            .or_else(|| {
+                std::fs::read_to_string(MARKER)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            })
+            .filter(|c| connector_ok(c));
+        match connector {
+            Some(c) => {
+                if !sudo_sh(&format!("echo detect > /sys/class/drm/{c}/status")) {
+                    tracing::warn!("wake: detect write failed; will retry");
+                    return;
+                }
+            }
+            None => {
+                // A legacy or empty marker: re-detect every connector reading
+                // `disconnected`. Connected ones are left alone — a re-probe
+                // on a box WITHOUT the pinned EDID is what loses the mode.
+                if let Ok(entries) = std::fs::read_dir("/sys/class/drm") {
+                    for e in entries.flatten() {
+                        let name = e.file_name().to_string_lossy().into_owned();
+                        if !name.contains('-') || !connector_ok(&name) {
+                            continue;
+                        }
+                        let status = std::fs::read_to_string(e.path().join("status"))
+                            .unwrap_or_default();
+                        if status.trim() == "disconnected" {
+                            let _ = sudo_sh(&format!(
+                                "echo detect > /sys/class/drm/{name}/status"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if !sudo_sh(&format!("rm -f {MARKER}")) {
+            tracing::warn!("wake: marker removal failed; will retry");
+            return;
         }
         // Self-heal: an upgrade's restart_display against the forced-off
         // connector may have parked the unit failed before the marker landed
@@ -322,6 +370,7 @@ pub mod sleep_engine {
         if !active {
             let _ = sudo_sh("systemctl reset-failed virtues-display 2>/dev/null; systemctl start virtues-display");
         }
+        *SLEPT_CONNECTOR.lock().unwrap_or_else(|e| e.into_inner()) = None;
         ASLEEP.store(false, Ordering::Relaxed);
         tracing::info!(reason, "display: awake");
     }
@@ -333,6 +382,13 @@ pub mod sleep_engine {
         updating: bool,
         disk_fault: bool,
         window: Option<(chrono::NaiveTime, chrono::NaiveTime)>,
+        /// The owner's home timezone. The APPLIANCE'S SYSTEM CLOCK IS UTC —
+        /// `Local::now()` there would run "sleeps at 22:00" at 5pm in Austin.
+        /// The profile's home_timezone is the same source the face bridge
+        /// sets on its SQL sessions; `None` (unset profile, unparseable name)
+        /// falls back to the process-local zone, which is at least right on
+        /// a dev machine.
+        tz: Option<chrono_tz::Tz>,
     }
 
     pub fn spawn(pool: sqlx::PgPool) {
@@ -340,6 +396,15 @@ pub mod sleep_engine {
         // checkout never reaches the sudo calls.
         if !std::path::Path::new(super::DISPLAY_UNIT_FILE).exists() {
             return;
+        }
+        // Adopt a sleep this process didn't start: the marker survives a
+        // virtues.service restart (an upgrade IS one), and without adoption
+        // the new process believes the glass is awake, never runs the wake
+        // transition, and the connector stays forced off past the window —
+        // a permanently dark panel until someone SSHes in.
+        if std::path::Path::new(MARKER).exists() {
+            ASLEEP.store(true, Ordering::Relaxed);
+            tracing::info!("display: adopted an in-progress sleep from a previous process");
         }
         tokio::spawn(async move {
             let mut slow = Slow::default();
@@ -350,7 +415,10 @@ pub mod sleep_engine {
                     last_slow = std::time::Instant::now();
                 }
 
-                let now = chrono::Local::now().time();
+                let now = match slow.tz {
+                    Some(tz) => chrono::Utc::now().with_timezone(&tz).time(),
+                    None => chrono::Local::now().time(),
+                };
                 let in_window = slow
                     .window
                     .map(|(s, e)| super::window_active(now, s, e))
@@ -394,7 +462,16 @@ pub mod sleep_engine {
                 None
             }
         };
-        Slow { claimed, updating, disk_fault, window }
+        let tz = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT home_timezone FROM app_user_profile LIMIT 1",
+        )
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .and_then(|name| name.parse::<chrono_tz::Tz>().ok());
+        Slow { claimed, updating, disk_fault, window, tz }
     }
 }
 

@@ -164,11 +164,13 @@
 					// claimed and there is more than one thing to say.
 					if (state_?.claimed && (next.record?.length ?? 0) > 1) logIndex += 1;
 					state_ = next;
-					// Answered, so any latched update is over — whatever
-					// happened, the box is serving again and the ordinary
-					// screens are true.
 					unreachable = false;
-					updating = false;
+					// The latch is pollUpdating's to clear, not ours: an
+					// answered state poll proves the server is up, NOT that
+					// the upgrade is over — clearing here raced the 5s
+					// updating poll, and losing that race (server dies inside
+					// the window after a clearing refresh) put NO SERVER on
+					// the glass during the one outage that is deliberate.
 					return;
 				}
 			}
@@ -238,9 +240,16 @@
 			const res = await fetch("/api/display/updating", { cache: "no-store" });
 			if (!res.ok) return;
 			const { active } = await res.json();
+			// Sole owner of the latch, in BOTH directions: armed while the
+			// unit runs, cleared only when the box itself says the upgrade is
+			// over. (Clearing from the state poll raced this one.) During the
+			// outage this fetch fails, which changes nothing — surviving the
+			// outage armed is the latch's entire job.
 			if (active) {
 				updating = true;
 				updatingSince = Date.now();
+			} else {
+				updating = false;
 			}
 		} catch {
 			/* the outage itself is the signal; the latch is already set */
