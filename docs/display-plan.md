@@ -305,3 +305,25 @@ Recommend 1 + 2 now, 3 never unless a real need appears.
 - `DisplayView.svelte` + sidebar/mobile/SettingsView wiring. Verified
   against the dev stack: route dispatch, sidebar placement, error state,
   and the kiosk page tolerating a pre-face server.
+
+## The face is a URL (2026-08-26, second pass)
+
+The appliance kiosk is one pre-wired consumer of `/display`, not its owner.
+The page now has two data doors, tried in order: the loopback state feed
+(the box itself; carries the phrase), then the authenticated **redacted
+mirror** (`/api/system/display`) for any *paired* browser — an old tablet
+on a stand, a spare monitor, a TV. A browser that is neither gets an honest
+"This screen isn't paired" sentence instead of a forever-bootmark. The
+mirror mode carries the updating latch inline, never renders the phrase
+("the setup words show on the box's own screen"), and hangs applet faces
+through the normal authenticated token route. This is the DIY display
+story; the cage/`display.py` stack stays internal-appliance-only, and a
+`virtues display install` for DIY Linux boxes stays deliberately unbuilt.
+
+Verified live on the dev stack (fresh server, migration 0004 applied):
+face PUT validation (bad kind / bad builtin / faceless applet all 400),
+choose-in-UI → check moves → loopback feed carries the face, shelf lists
+all three faced applets, off-box 403 → mirror fallback path (403 confirmed
+via forwarded-header curl). Still owed to a hardware/second-device run:
+claimed-ambient rendering of matte + applet iframe on real glass, and a
+true remote browser wearing the mirror.

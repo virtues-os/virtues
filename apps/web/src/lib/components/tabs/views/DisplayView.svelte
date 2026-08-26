@@ -352,6 +352,20 @@
 					screen that nobody touches.
 				</p>
 			</section>
+
+			<section>
+				<h2 class="section-title">Other screens</h2>
+				<!-- The face is a URL, and this paragraph is half the feature:
+				     without it, nobody learns that the appliance kiosk is just
+				     one pre-wired consumer of a page any paired browser can
+				     wear. -->
+				<p class="sec-hint">
+					The face is a page this box serves. Any paired device can wear it:
+					open the box's address at <code>/display</code> in its browser and
+					go full screen — an old tablet on a stand is a second glass. A
+					screen that isn't paired is told how to become one.
+				</p>
+			</section>
 		</div>
 	{/if}
 </Page>
@@ -396,6 +410,13 @@
 		font-size: 12px;
 		color: var(--color-foreground-subtle);
 		max-width: 60ch;
+	}
+	.sec-hint code {
+		font-family: var(--font-mono, monospace);
+		font-size: 11px;
+		padding: 1px 4px;
+		border-radius: 4px;
+		background: var(--color-surface-elevated);
 	}
 
 	.ghost-btn {
