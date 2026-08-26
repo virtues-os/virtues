@@ -31,7 +31,7 @@
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { fly } from "svelte/transition";
+	import { fade, fly } from "svelte/transition";
 	import { expoOut } from "svelte/easing";
 	import Icon from "$lib/components/Icon.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
@@ -72,27 +72,39 @@
 	);
 
 	/**
-	 * Counting up to each number, once.
+	 * THE ONE EXPENSIVE MOTION — onboarding's whole animation budget, spent
+	 * here (design doctrine: everything before this screen keeps still so this
+	 * one can move). Not a flourish but a sequence: the census lines arrive one
+	 * by one, each number climbing as it lands — an accumulation being read
+	 * out, which is what a record is — then the sleeper and the names, then
+	 * the core, and after a beat, the promise. A number that lands instantly
+	 * reads as a label; a number that climbs reads as something kept.
 	 *
-	 * The only animation on the screen, and it is doing a job rather than
-	 * decorating: a number that lands instantly is read as a label, and a number
-	 * that climbs is read as an accumulation — which is what it is. Eased out so
-	 * it settles rather than stops.
+	 * All timing hangs off STAGGER/SETTLE so the choreography is one knob, and
+	 * `reduced` collapses every delay and duration to zero.
 	 */
+	const STAGGER = 90;
+	const SETTLE = 900;
+	const lineDelay = (i: number) => (reduced ? 0 : 220 + i * STAGGER);
+	/** When the last number has settled — the quiet lines enter after this. */
+	const settled = $derived(reduced ? 0 : lineDelay((census?.lines.length ?? 1) - 1) + SETTLE);
+
 	let shown = $state<Record<string, number>>({});
-	function countUp(id: string, to: number) {
+	function countUp(id: string, to: number, delay = 0) {
 		if (reduced) {
 			shown[id] = to;
 			return;
 		}
-		const dur = 900;
-		const t0 = performance.now();
-		const tick = (now: number) => {
-			const p = Math.min(1, (now - t0) / dur);
-			shown[id] = Math.round(to * (1 - Math.pow(1 - p, 3)));
-			if (p < 1) requestAnimationFrame(tick);
-		};
-		requestAnimationFrame(tick);
+		shown[id] = 0;
+		setTimeout(() => {
+			const t0 = performance.now();
+			const tick = (now: number) => {
+				const p = Math.min(1, (now - t0) / SETTLE);
+				shown[id] = Math.round(to * (1 - Math.pow(1 - p, 3)));
+				if (p < 1) requestAnimationFrame(tick);
+			};
+			requestAnimationFrame(tick);
+		}, delay);
 	}
 
 	async function loadContent() {
@@ -110,7 +122,8 @@
 		// writes identity only from the person's own words, and only once.
 		try {
 			census = await getCensus();
-			census.lines.forEach((l) => countUp(l.id, l.count));
+			// Each count starts as its line enters, not all at once on load.
+			census.lines.forEach((l, i) => countUp(l.id, l.count, lineDelay(i)));
 		} catch {
 			censusFailed = true;
 		}
@@ -187,11 +200,16 @@
 	<div in:fly={{ y: reduced ? 0 : 14, duration: reduced ? 0 : 520, easing: expoOut }}>
 		<!-- ① THE CENSUS -->
 		{#if census && census.lines.length}
-			<p class="ob-label">On your box, as of {today}</p>
+			<p class="ob-label" in:fade={{ duration: reduced ? 0 : 350 }}>
+				On your box, as of {today}
+			</p>
 
 			<dl class="census">
-				{#each census.lines as l (l.id)}
-					<div class="line">
+				{#each census.lines as l, i (l.id)}
+					<div
+						class="line"
+						in:fly={{ y: reduced ? 0 : 10, duration: reduced ? 0 : 420, delay: lineDelay(i), easing: expoOut }}
+					>
 						<dt>{fmt(shown[l.id] ?? 0)}</dt>
 						<dd>{l.label}</dd>
 					</div>
@@ -199,8 +217,9 @@
 			</dl>
 
 			{#if earliest}
-				<!-- The sleeper. A decade of messages nobody remembers keeping. -->
-				<p class="span">
+				<!-- The sleeper. A decade of messages nobody remembers keeping.
+				     It waits for the numbers to settle — it is the punchline. -->
+				<p class="span" in:fade={{ duration: reduced ? 0 : 500, delay: settled }}>
 					The oldest thing it found is from <strong>{earliest}</strong>{#if census.span_days > 365}, spanning
 						{Math.floor(census.span_days / 365)} years{/if}.
 				</p>
@@ -209,7 +228,7 @@
 				<!-- Chronology, never significance: these are the record's first
 				     named senders, the same honest motif as the oldest date —
 				     a fact about the record, not a ranking of anyone's people. -->
-				<p class="span">
+				<p class="span" in:fade={{ duration: reduced ? 0 : 500, delay: settled + 250 }}>
 					The earliest names in it: <strong>{census.earliest_names.join(", ")}</strong>.
 				</p>
 			{/if}
@@ -222,7 +241,10 @@
 		     record. Absent entirely if they skipped the interview: nothing is
 		     generated about a person who wrote nothing. -->
 		{#if ready && content}
-			<div class="portrait-block">
+			<div
+				class="portrait-block"
+				in:fade={{ duration: reduced ? 0 : 500, delay: census ? settled + 500 : 0 }}
+			>
 				<p class="ob-label">What it keeps in mind</p>
 
 				{#if editing}
@@ -249,17 +271,22 @@
 			</div>
 		{/if}
 
-		<!-- ③ THE DOOR — the tomorrow-beat, made true by the nightly chain. -->
-		<p class="door-line">
-			Every day, a page will be waiting for you: yesterday, written down.
-		</p>
-		<div class="cta">
-			<button class="ob-btn" onclick={onEnter}>
-				Enter Virtues
-				<Icon icon="ri:arrow-right-line" width="16" />
-			</button>
+		<!-- ③ THE DOOR — the tomorrow-beat, made true by the nightly chain.
+		     Last to arrive, after a real pause: the promise is the final word,
+		     and it should land in a room that has gone still. Mounts only once
+		     the census has answered (either way) so its delay means something. -->
+		{#if census !== null || censusFailed}
+			<p class="door-line" in:fade={{ duration: reduced ? 0 : 700, delay: reduced ? 0 : settled + 900 }}>
+				Every day, a page will be waiting for you: yesterday, written down.
+			</p>
+			<div class="cta" in:fade={{ duration: reduced ? 0 : 700, delay: reduced ? 0 : settled + 1200 }}>
+				<button class="ob-btn" onclick={onEnter}>
+					Enter Virtues
+					<Icon icon="ri:arrow-right-line" width="16" />
+				</button>
 
-		</div>
+			</div>
+		{/if}
 	</div>
 {/if}
 
