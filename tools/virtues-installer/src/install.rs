@@ -1814,13 +1814,24 @@ Environment=GDK_BACKEND=wayland
 # (file presence only, never contents), so it needs to know where it is.
 Environment=VIRTUES_DATA_DIR=__DATA_DIR__
 EnvironmentFile=-__DATA_DIR__/virtues.env
+# Pin the panel's EDID for every re-probe, when the image ships a blob. The
+# panel's DDC wire reproducibly fails on forced re-detect (Hours' wake), which
+# would fall the connector back to VESA modes and stretch the glass; the
+# pinned blob makes every wake deterministic. RUNTIME module param, not kernel
+# cmdline: on the Q6A the boot chain bakes bootargs into the device tree and
+# /boot/extlinux is decorative (verified 2026-08-26 — /etc/kernel/cmdline +
+# u-boot-update regenerate an append line nothing reads), and Hours' re-detects
+# are post-boot by definition, so the param set here is always in time.
+# `-` prefix: a missing blob or read-only sysfs must not stop the kiosk.
+ExecStartPre=-/bin/sh -c "[ -f /usr/lib/firmware/edid/virtues-panel-1080.bin ] && echo HDMI-A-1:edid/virtues-panel-1080.bin > /sys/module/drm/parameters/edid_firmware"
 # The connected-connector guard keeps a headless board from crash-looping
 # cage. The marker-file escape is Hours: while the sleep engine holds the
 # panel's connector forced off (api::system_display::sleep_engine), a restart
 # of this unit — an upgrade's restart_display fires one — must still start,
 # or the unit parks in --failed against a connector the box darkened on
-# purpose. Cage runs fine with zero outputs; the page draws to nobody until
-# wake re-detects the connector and wlroots hotplugs it back.
+# purpose. Cage survives losing its outputs AND starts with zero outputs
+# (both hardware-verified 2026-08-26); the page draws to nobody until wake
+# re-detects the connector and wlroots hotplugs it back.
 ExecStartPre=/bin/sh -c "mkdir -p /run/user/0; chmod 700 /run/user/0; grep -qx connected /sys/class/drm/*/status || [ -e /run/virtues-display-asleep ]"
 ExecStart=/usr/bin/cage -s -- /usr/bin/python3 /usr/local/lib/virtues/display.py
 # The box's own server may still be starting; the shim retries, and a crash

@@ -321,6 +321,48 @@ Recommend 1 + 2 now, 3 never unless a real need appears.
       capture the wrong one. The golden image pins the known-good
       1920×1080 blob (the one the shipped zoom was verified against) into
       `/lib/firmware/edid/` + kernel cmdline at install time.
+
+## Hours — BUILT + HARDWARE-VERIFIED 2026-08-26
+
+Wave `ab34e908` (code) + bench work on Rosy Swallow. What shipped:
+
+- Migration 0005: `sleep_start`/`sleep_end time` on `app_display`,
+  both-or-neither CHECK. `PUT /api/system/display/hours` ("HH:MM"
+  box-local; both null = never sleeps); GET carries `hours` + `asleep`;
+  the mirror's miniature shows an "Asleep — backlight off until HH:MM"
+  card instead of mirroring blackness. UI = two time fields + "Never
+  sleeps", verified live (set → persists → clear).
+- The **sleep engine** (`api::system_display::sleep_engine`, spawned at
+  server start, appliance-gated): a 1s lane reads the clock and the
+  button atomic; a 30s lane (nudged by the PUT) reads claimed/updating/
+  disk-fault and the config. Sleep = write `/run/virtues-display-asleep`
+  + force the connector off; wake = remove, `detect`, and self-heal a
+  failed unit (`reset-failed` + `start`). Sleep never engages unclaimed
+  or over any interruption; a wake mid-window re-sleeps when the
+  interruption clears. `window_active` unit-tested incl. the overnight
+  wrap and the degenerate equal-times row.
+- **Hardware-verified on the bench**: connector force-off under a RUNNING
+  cage → glass fully dark, unit active, cage + shim alive. Unit restart
+  mid-sleep with the marker escape → starts clean; **cage both survives
+  losing its outputs and starts with zero outputs**. Full off→detect
+  cycle under the pinned EDID → modes hold 1920×1080 (before the pin,
+  every cycle degraded to VESA fallback); glass returns at the right
+  proportions.
+- **The bootloader finding**: on the Q6A, `/boot/extlinux/extlinux.conf`
+  is decorative — the Qualcomm boot chain bakes bootargs into the device
+  tree, and the documented `/etc/kernel/cmdline` + `u-boot-update` flow
+  regenerates an append line nothing reads (live cmdline lacks even the
+  `quiet splash` extlinux has carried all along). So the EDID pin ships
+  as the **runtime module param** — the display unit's first
+  ExecStartPre writes `/sys/module/drm/parameters/edid_firmware` when
+  the image ships a blob — which is always in time, since Hours'
+  re-detects are post-boot by definition. Both cmdline (inert, may start
+  working if Radxa fixes the chain) and the unit line are in place on
+  the bench; the installer template carries the unit line.
+- **Not yet exercised end-to-end**: the engine loop itself on real glass
+  (the bench box runs v0.1.4 stable, which predates all of this) — owed
+  to the next staging cut that reaches a box with a screen. The
+  mechanism it drives is verified move by move above.
 2. **Sleep enforcement locus**: the shim (Python, has the Wayland session)
    vs. the server (has the schedule). Likely: server computes `is_asleep`
    into `DisplayState`; the `/display` page renders matte; the shim handles
