@@ -72,6 +72,10 @@ const SOURCES: &[(&str, &str, &str, &str)] = &[
     ("emails", "emails", "data_communication_email", "occurred_at"),
     ("conversations", "conversations", "data_content_conversation", "occurred_at"),
     ("events", "calendar events", "data_calendar_event", "started_at"),
+    // Visits, not location points: a person went 462 places, a phone logged two
+    // million coordinates. The letter's first promise is "where you went", and
+    // this is the line that keeps it.
+    ("visits", "places you went", "data_location_visit", "started_at"),
     ("browsing", "pages read", "data_activity_web_browsing", "occurred_at"),
     ("bookmarks", "things saved", "data_content_bookmark", "occurred_at"),
     ("recordings", "recordings", "data_audio_recording", "started_at"),
