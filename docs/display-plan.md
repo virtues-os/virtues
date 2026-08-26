@@ -247,11 +247,43 @@ Recommend 1 + 2 now, 3 never unless a real need appears.
 
 ## Open questions / audits before building
 
-1. **Backlight audit on the Dragon panel** (`ssh dragon`): does
-   `/sys/class/backlight` exist? Does the DSI/HDMI path honor DPMS
-   (`wlr-output-power-management` via `wlopm` against cage's socket)?
-   This decides whether Hours can turn the light off or only the pixels.
-   Neither tool is installed by `apply_appliance_profile()` today.
+1. **Backlight audit — DONE 2026-08-26** on the bench box (Rosy Swallow),
+   over UART, with eyes on the glass. Findings, in verdict order:
+   - **True off exists.** Forcing the connector down
+     (`echo off > /sys/class/drm/card1-HDMI-A-1/status`) drops the HDMI
+     signal and the panel goes **fully dark** — backlight off, no glow, no
+     NO SIGNAL banner. Verified by eye.
+   - **No brightness, ever.** `/sys/class/backlight/` is empty (HDMI
+     panel; nothing on a kernel PWM), and the panel does not speak DDC/CI.
+     Hours is off/on, never a slider.
+   - **Never probe DDC on this panel.** The `ddcutil detect` scan threw
+     GENI i2c DMA errors and can leave the DDC line wedged; recovery took
+     a physical power cycle. A brightness feature must not ship a probe.
+   - **cage lacks `wlr-output-power-management-v1`**, so `wlopm` cannot
+     sleep the output under the running kiosk. Not needed given the
+     connector force, but it closes the compositor path without a patch.
+   - **THE TRAP: re-detect cannot re-read EDID.** After any forced
+     off → `detect` cycle, `msm_dp_bridge_get_modes` fails (rc=0,
+     reproducibly, clean cycles included) and the connector falls back to
+     VESA 1024×768/800×600 — the scaler then draws stretched. Only a full
+     power cycle of panel+box recovered the real EDID. And the EDID's
+     *content* is itself inconsistent: 1920×1080-preferred after a cold
+     boot, 1024×600-preferred after one hotplug. This board lies twice.
+   - **Therefore Hours requires the EDID firmware override.** Capture the
+     panel's EDID once and pin it (`drm.edid_firmware=HDMI-A-1:edid/…` on
+     the kernel cmdline, or the per-connector debugfs override) so no
+     probe ever asks the wire again — deterministic modes on every wake,
+     and it structurally retires the lying-EDID/zoom problem too. The
+     bench panel's EDID is captured: 128 bytes, archived at
+     `/home/radxa/panel-edid.bin` on the box
+     (md5 `c20eb215b495a300a9738d06d9285a45`), base64:
+     `AP///////wBI9BFSAQQAAAUXAQSlNR54AoBCrFEwtCUQUFMAAAABAQEBAQEBAQEBAQEBAQEBKDaAoHA4H0AwIDUAB0QhAAAaIi2AoHA4H0AwIDUAB0QhAAAaAAAA/gAKICAgICAgICAgICAgAAAA/gAxOTIweDEwODAKICAgADY=`
+   - Sleep/wake recipe once the override is in place: sleep =
+     `systemctl stop virtues-display` + force connector off; wake = force
+     `detect` + `systemctl start virtues-display`. Both are verbs the box
+     can run on a timer with the existing privilege model.
+   - Bench residue: `wlopm` and `ddcutil` are now apt-installed on Rosy
+     Swallow (harmless; do not run ddcutil against the panel again).
 2. **Sleep enforcement locus**: the shim (Python, has the Wayland session)
    vs. the server (has the schedule). Likely: server computes `is_asleep`
    into `DisplayState`; the `/display` page renders matte; the shim handles
