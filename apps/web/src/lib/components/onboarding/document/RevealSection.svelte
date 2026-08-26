@@ -12,8 +12,12 @@
     ① the census   hard counts from the record, and the date of the oldest
                    thing on the box. Verifiable, impossible to fake, and
                    literally what they paid for.
-    ② the portrait the prose — now READING the numbers above it rather than
-                   arriving out of nowhere.
+    ② the core     the few lines the assistant carries — distilled ONLY from
+                   the interview, their own words arranged. Nothing here is
+                   generated from observed data: that generator was deleted
+                   (2026-08-26) as a doctrine violation — identity is
+                   user-authored, and the machine writes it only while it is
+                   empty. Absent if they skipped the interview.
     ③ the door
 
   THE OLDEST DATE DOES THE MOST WORK. Most people have no idea their Mac has
@@ -32,7 +36,6 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import {
-		triggerApplet,
 		getNarrativeIdentity,
 		updateNarrativeIdentity,
 		getCensus,
@@ -41,23 +44,19 @@
 	import { formatDate } from "$lib/utils/dateUtils";
 
 	interface Props {
-		/** A non-empty portrait exists (from /api/setup/state). */
+		/** A non-empty core exists (from /api/setup/state). */
 		ready: boolean;
-		/** A draft run is currently in flight. */
-		generating?: boolean;
 		reduced?: boolean;
 		onEnter: () => void;
 		/** Back to the sources screen, for a box with nothing on it. */
 		onConnect?: () => void;
 	}
 
-	let { ready, generating = false, reduced = false, onEnter, onConnect }: Props = $props();
+	let { ready, reduced = false, onEnter, onConnect }: Props = $props();
 
 	let content = $state("");
 	let census = $state<Census | null>(null);
 	let censusFailed = $state(false);
-	let triggered = false;
-	let triggerFailed = $state(false);
 
 	/** Nothing connected, and we know it rather than are still waiting. */
 	const empty = $derived(census !== null && census.lines.length === 0);
@@ -93,17 +92,6 @@
 		requestAnimationFrame(tick);
 	}
 
-	async function triggerDraft() {
-		if (triggered) return;
-		triggered = true;
-		triggerFailed = false;
-		try {
-			await triggerApplet("applet_narrative_identity_draft");
-		} catch {
-			triggerFailed = true;
-		}
-	}
-
 	async function loadContent() {
 		try {
 			const d = await getNarrativeIdentity<{ content?: string }>();
@@ -114,15 +102,15 @@
 	}
 
 	onMount(async () => {
-		// The census first: it is the fast, certain half, and it is what the
-		// screen is for. The portrait can take a minute and may never come.
+		// The census is what the screen is for. The core, if the interview was
+		// taken, rides along; nothing here generates anything — the machine
+		// writes identity only from the person's own words, and only once.
 		try {
 			census = await getCensus();
 			census.lines.forEach((l) => countUp(l.id, l.count));
 		} catch {
 			censusFailed = true;
 		}
-		if (!ready) void triggerDraft();
 	});
 
 	$effect(() => {
@@ -218,10 +206,13 @@
 			<p class="ob-note">Couldn't count what's on the box just now.</p>
 		{/if}
 
-		<!-- ② THE PORTRAIT -->
+		<!-- ② IN THEIR OWN WORDS, DISTILLED. The core the assistant carries —
+		     drawn only from what they wrote in the interview, never from the
+		     record. Absent entirely if they skipped the interview: nothing is
+		     generated about a person who wrote nothing. -->
 		{#if ready && content}
 			<div class="portrait-block">
-				<p class="ob-label">And what it makes of you</p>
+				<p class="ob-label">What it keeps in mind</p>
 
 				{#if editing}
 					<textarea bind:value={buffer} rows="9" aria-label="Your portrait"></textarea>
@@ -239,20 +230,10 @@
 						<Markdown {content} isStreaming={!reduced} />
 					</div>
 					<p class="colophon">
-						Written on your box, from the above and from what you wrote. Stored only here.
-						It will be wrong in places — it is a first draft from limited data, and it is
-						yours.
+						Distilled from what you wrote, on your box, stored only here. These are the
+						few lines it keeps in mind whenever you talk — and they are yours.
 						<button class="inline-edit" onclick={startEdit}>Edit it</button>
 					</p>
-				{/if}
-			</div>
-		{:else}
-			<div class="pending">
-				<Icon icon="ri:quill-pen-line" width="16" class={generating || !triggerFailed ? "pen" : ""} />
-				{#if triggerFailed}
-					<span>The portrait will be written once your box has caught up.</span>
-				{:else}
-					<span>Writing the portrait from all of this…</span>
 				{/if}
 			</div>
 		{/if}
@@ -353,17 +334,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.pending {
-		margin-top: 2.5rem;
-		padding-top: 2rem;
-		border-top: 1px solid var(--color-border);
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		color: var(--color-foreground-muted);
-		font-size: 14px;
-	}
-
 	.cta {
 		display: flex;
 		align-items: center;
@@ -424,23 +394,4 @@
 		border-bottom-color: var(--color-foreground-subtle);
 	}
 
-	:global(.pen) {
-		animation: pen-pulse 1.8s ease-in-out infinite;
-	}
-
-	@keyframes pen-pulse {
-		0%,
-		100% {
-			opacity: 0.45;
-		}
-		50% {
-			opacity: 1;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		:global(.pen) {
-			animation: none;
-		}
-	}
 </style>

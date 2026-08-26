@@ -1,5 +1,0 @@
-name = "Narrative Identity Draft"
-description = "Writes the first portrait of you, drawn from what your box has learned so far."
-owner = "system"
-command = ["narrative_identity_draft"]
-triggers = ["manual", "tool", "cron"]
