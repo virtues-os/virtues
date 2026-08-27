@@ -222,3 +222,39 @@ Three principles, then slices.
 The tray survives — slimmer — because three of its jobs cannot move into a
 webview the box serves: box-unreachable when the window is closed, quit, and
 applying a staged update.
+
+## As built (2026-08-27, same day)
+
+Slice 1 landed as `834e6c0d`: the `app=` client-header field (SPA-side, so it
+back-fills every device row with no native build), the collector's stamped
+identity on uploads + pair, `installed_by` provenance keyed on the daemon's
+own declaration (the desktop app's BLE pair also declares `source=mac` — a
+source-only rule would have folded one laptop under another's), the
+Collector badge + fold in Devices, the App/UI split on the detail page, the
+CLI VERSION column, the honest console row, and the dead reach-plugin version
+key deleted. Merge/guard semantics covered by `middleware::auth` tests.
+
+Slice 2 landed as `1e20459d`: mac updater reduced to one channel with
+`CheckOutcome` recorded on every path (U1–U5; check failures count toward the
+two-strikes notification, the manual check says "Couldn't check"), updater
+state mirrored over IPC (surface 3) with the sidebar "Relaunch to update"
+chip, the collector kickstart restart-pending marker (U8), boot-ok confirms a
+shell-captured HASH with first-attempt vs failed-attempt distinguished at
+startup plus a poison file (U10/U11 — note the old design only worked
+*through* the race: the prior session's blind boot-ok is what saved every
+mid-session apply from rollback), `/health` in the mobile proxy prefixes
+(U16), the `X-Virtues-Box-Build` response stamp + background soft-reload
+(U18), and the leaked visibilitychange listener.
+
+`4b8d8595`: a staged mac update applies itself after two hidden hours — the
+decided resolution of dialectic #4 (chip for the present user, invisible
+restart for the absent one; the collector is a separate LaunchAgent and
+survives it).
+
+Still open, deliberately: slice 3 (tray diet + one-vocabulary-per-fact),
+U6 (no wake/network recheck), U12 in full (mid-session pointer flip can still
+strand un-fetched lazy chunks of the OLD session — mitigated by U18's reload),
+U13 (desktop has no ShellTooOld gate), U17/U19/U21 (box-side comparison
+fallbacks), and wiring-or-deleting `min_ios_version` / `shellSupports` /
+`named_at`. Mac-side behavior ships with mac-v1.0.24; box-side with the next
+staging cut; collector identity with the next mac release.
