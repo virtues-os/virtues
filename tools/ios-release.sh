@@ -18,6 +18,21 @@
 #      the archive.
 #   3. Verify the ARCHIVE, not the sources. The 409 above was invisible in the
 #      source PNGs' own check; what matters is the compiled Assets.car.
+#   4. iOS must override `resources` to [] (apps/web/src-tauri/tauri.ios.conf.json).
+#      The base tauri.conf.json ships the compiled *macOS* icon set (Assets.car
+#      + AppIcon.icns) as bundle resources, and platform configs MERGE over the
+#      base — so without that override Tauri copies a macOS asset catalog into
+#      the iOS app at assets/, and App Store rejects the upload with
+#        90562: Invalid Bundle. One of the nested bundles is built for a
+#        platform which is different from the main bundle platform.
+#      Latent from 2026-08-13 (the icons landing) until it bit 1.2.8 on 08-27.
+#      It must be an ARRAY, not `{}`: Tauri DEEP-MERGES objects, so an empty
+#      map contributes nothing and the base's entries survive (tried on 1.2.9,
+#      caught by the verifier). An array replaces wholesale — the same reason
+#      tauri.linux/windows.conf.json override `icon` as arrays. JSON has no
+#      comments and Tauri rejects comment keys, so that bare `resources: []`
+#      looks like a stub — it is not. The archive verifier now fails on any
+#      non-ios asset catalog or stray .icns, which is what caught both tries.
 #
 # Usage:
 #   tools/ios-release.sh            # build at the current version
