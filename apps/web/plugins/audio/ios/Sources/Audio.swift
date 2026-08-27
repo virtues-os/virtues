@@ -84,6 +84,19 @@ public final class AudioRecorder: NSObject {
   private var watchdog: DispatchSourceTimer?
   private let livenessTimeout: TimeInterval = 5
 
+  // Notified-interruption hold: iOS gives us two distinct down-states and they need
+  // different recovery cadences. A SILENT death (18.4 tap bug — no notification)
+  // wants the fast 5s watchdog rebuild. A NOTIFIED interruption (`.began` — alarm,
+  // call, Siri) means higher-priority audio owns the session BY DESIGN: re-arming
+  // `setActive(true)` against it every 5s is a fight we lose, and mid-alarm it cut
+  // the user's wake-up alarm to a snippet. While the hold is set, watchdog re-arms
+  // slow to one per `interruptedRetryInterval` (a fallback for the documented
+  // cases where `.ended` never arrives); the REAL resume is event-driven — `.ended`
+  // / foreground / route change / media reset clear the hold, and a flowing buffer
+  // clears a stale one.
+  private var interruptionHoldUntil: Date?
+  private let interruptedRetryInterval: TimeInterval = 60
+
   // Serialize engine lifecycle (start/stop/restart) off the realtime tap thread.
   private let q = DispatchQueue(label: "com.virtues.audio", qos: .userInitiated)
 
@@ -147,7 +160,10 @@ public final class AudioRecorder: NSObject {
     q.async { [weak self] in self?.stopEngine(finalize: true) }
   }
 
-  public func resume() { ensureRecording(reason: "resume") }
+  public func resume() {
+    interruptionHoldUntil = nil  // explicit user intent outranks the hold
+    ensureRecording(reason: "resume")
+  }
 
   /// Idempotent re-arm — start if we should be recording but the engine is down (or
   /// silently wedged). Safe to spam from interruption-end / foreground / location
@@ -169,6 +185,14 @@ public final class AudioRecorder: NSObject {
     if recording {
       checkGapAndNudge()  // healthy, but still evaluate (clears a stale nudge fast)
       return  // already live — don't churn a bg-task assertion (watchdog)
+    }
+    // Notified interruption in progress: don't fight the interrupter (see the hold's
+    // declaration). Event handlers clear the hold before calling us, so this gate
+    // only ever slows the watchdog. On fallback expiry, try once and re-arm the
+    // hold — a success clears it via the first buffer.
+    if let hold = interruptionHoldUntil {
+      if Date() < hold { return }
+      interruptionHoldUntil = Date().addingTimeInterval(interruptedRetryInterval)
     }
     armEngine(reason: reason)
     // Evaluate the gap AFTER attempting recovery: if the arm just succeeded a buffer
@@ -388,6 +412,7 @@ public final class AudioRecorder: NSObject {
       nudgeFired = false
       DispatchQueue.main.async { [weak self] in self?.clearNudge() }
     }
+    interruptionHoldUntil = nil  // audio is flowing — any interruption is over
     guard let converter = converter else { return }
     let ratio = targetSampleRate / (hwFormat?.sampleRate ?? targetSampleRate)
     let cap = AVAudioFrameCount(Double(input.frameLength) * ratio) + 32
@@ -491,9 +516,21 @@ public final class AudioRecorder: NSObject {
       let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
     switch type {
     case .began:
-      // Call/Siri deactivated our session + stopped the engine. Finalize the
+      // Alarm/call/Siri deactivated our session + stopped the engine. Finalize the
       // partial chunk. Do NOT setActive(false) — keep it as recoverable as possible.
-      NSLog("[Audio] interruption began")
+      // Log the reason (iOS 14.5+): field debugging can't otherwise tell an alarm
+      // from a call from an app-suspend, and the fix for each differs.
+      var why = "n/a"
+      if #available(iOS 14.5, *), let raw = info[AVAudioSessionInterruptionReasonKey] as? UInt {
+        switch AVAudioSession.InterruptionReason(rawValue: raw) {
+        case .default: why = "default"
+        case .builtInMicMuted: why = "builtInMicMuted"
+        case .some(let other): why = "raw=\(other.rawValue)"  // e.g. routeDisconnected (iOS 17)
+        case .none: why = "raw=\(raw)"
+        }
+      }
+      NSLog("[Audio] interruption began (reason=%@) — holding re-arms", why)
+      interruptionHoldUntil = Date().addingTimeInterval(interruptedRetryInterval)
       virtues_location_audio_state(1)
       q.async { [weak self] in
         guard let self = self else { return }
@@ -505,6 +542,7 @@ public final class AudioRecorder: NSObject {
       // always wants back). armEngine wraps it in a bg-task assertion so we probe
       // whether a background reactivation is allowed at all.
       NSLog("[Audio] interruption ended — attempting resume")
+      interruptionHoldUntil = nil
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
         self?.ensureRecording(reason: "interruption-end")
       }
@@ -515,6 +553,7 @@ public final class AudioRecorder: NSObject {
   @objc private func handleConfigChange(_ note: Notification) {
     // Route/format change stopped the engine. Finalize + re-arm (new hw format).
     NSLog("[Audio] engine config change — re-arming")
+    interruptionHoldUntil = nil
     virtues_location_audio_state(1)
     q.async { [weak self] in
       guard let self = self else { return }
@@ -541,6 +580,7 @@ public final class AudioRecorder: NSObject {
       // once one succeeds the rest are no-ops; the location wake is the final
       // backstop. This turns a ~10s recovery (old: wait for the slow location poll)
       // into <1s.
+      interruptionHoldUntil = nil
       q.async { [weak self] in try? self?.configureSession() }
       for delay in [0.7, 2.5] {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -554,6 +594,7 @@ public final class AudioRecorder: NSObject {
   @objc private func handleMediaReset() {
     // Full audio-subsystem reset — rebuild everything.
     NSLog("[Audio] media services reset — rebuilding")
+    interruptionHoldUntil = nil
     virtues_location_audio_state(1)
     q.async { [weak self] in
       guard let self = self else { return }
@@ -566,5 +607,8 @@ public final class AudioRecorder: NSObject {
     }
   }
 
-  @objc private func handleForeground() { ensureRecording(reason: "foreground") }
+  @objc private func handleForeground() {
+    interruptionHoldUntil = nil
+    ensureRecording(reason: "foreground")
+  }
 }
