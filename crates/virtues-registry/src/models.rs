@@ -198,9 +198,41 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
         // Minor, known: it wraps output in markdown fences even when told not
         // to. Callers that paste this straight into a file must strip them.
         ModelSlot::Coding => "alibaba/qwen3-coder-plus",
-        // Titles, summaries, background jobs. Measured 0 reasoning tokens at
-        // every effort level — no thinking tax on the high-volume slot.
-        ModelSlot::Lite => "zai/glm-4.7-flash",
+        // Titles, summaries, bookmark extraction, and the query the web-search
+        // tool composes. High volume, and the only slot whose output the user
+        // reads as a bare string, so output HYGIENE matters here more than
+        // model weight.
+        //
+        // Took the slot from `zai/glm-4.7-flash` on 2026-08-27. Retention was
+        // the reason to look — glm-4.7-flash is the weakest posture we shipped,
+        // `zdr: some` AND `no_training: some`, on the slot that reads bookmarked
+        // articles and summarizes the user's own record — but it only moved
+        // once a candidate beat it on the actual work:
+        //
+        //   llama-4-scout   0.8s  0 reasoning  5/5 extraction  6/6 clean titles
+        //   glm-4.7-flash   1.6s  0 reasoning  5/5 extraction  6/6 clean titles
+        //
+        // Costs ~60% more per call and is still $0.00007 — noise at this slot's
+        // absolute volume. 128K context (down from 200K) is comfortably above
+        // the longest thing this slot reads, one article.
+        //
+        // Hygiene is what eliminated the cheaper candidates, and it does not
+        // track price or size at all — this slot writes strings that land in
+        // the UI verbatim:
+        //   nova-lite       leaked "Title: ..." into a title, and writes
+        //                   comma-salad ("Note: landlord, boiler, issue,
+        //                   urgent.") — cheaper than the incumbent and the
+        //                   worst of the three at the visible job.
+        //   ministral-14b   wrapped 5 of 6 titles in **markdown bold**.
+        //   qwen3.8-flash   the best titles measured, but pays 126 reasoning
+        //                   tokens per call for them. The runner-up, and the
+        //                   pick if title quality ever outranks the tax.
+        //   qwen3.7-flash   1,114 reasoning tokens to write FOUR WORDS, with
+        //                   no reasoning_options to turn it off. Three times
+        //                   worse than the GLM-5.1 tax this file already
+        //                   rejects, from the cheapest model on the shelf.
+        //                   Per-token price is not per-call price.
+        ModelSlot::Lite => "meta/llama-4-scout",
         ModelSlot::Image => "google/gemini-3-pro-image",
         // The audio-native model that won a controlled 5-clip bench. Stays out
         // of the Gemini-3 parallel-tool-call problem entirely: transcription
