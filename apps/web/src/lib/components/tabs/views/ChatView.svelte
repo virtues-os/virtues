@@ -138,7 +138,15 @@
 	let messagesContainer: HTMLDivElement | null = $state(null);
 	let scrollContainer: HTMLDivElement | null = $state(null);
 	let enableTransitions = $state(false);
-	let isLoading = $state(true);
+	// A NEW chat has nothing to load. Starting this at a blanket `true` meant
+	// the composer painted docked at the bottom for one frame and then jumped
+	// to its centered empty-state position once the tab effect flipped it —
+	// with transitions still disabled, that jump was the launch flicker. The
+	// route is known synchronously, so loading starts true only when there is
+	// actually a conversation to fetch. Initial value only, on purpose — the
+	// tab-change effect below owns every later transition.
+	// svelte-ignore state_referenced_locally
+	let isLoading = $state(!isNewChat(tab.route));
 	let isAwaitingResponse = $state(false);
 	// Track C: messages typed while the assistant is still streaming are queued
 	// and sent automatically when the turn finishes (Cursor-style chips above the
@@ -1952,9 +1960,10 @@
 							in:fade={{ duration: 300 }}
 							out:fly={{ y: -14, duration: 300, easing: cubicInOut }}
 						>
-							<Icon icon="ri:ghost-line" width="30" class="ghost-hero-icon" />
+							<!-- The title alone: the tiled ghost field and the inverted
+							     composer already say what this mode is — an icon and an
+							     explainer on top of them was the same fact three times. -->
 							<h1 class="ghost-hero-title">Temporary Chat</h1>
-							<p class="ghost-hero-sub">This chat won't be saved to your history.</p>
 						</div>
 					{/if}
 
@@ -2427,11 +2436,6 @@
 		pointer-events: none;
 	}
 
-	.ghost-hero :global(.ghost-hero-icon) {
-		color: var(--color-foreground-subtle);
-		margin-bottom: 0.125rem;
-	}
-
 	.ghost-hero-title {
 		font-family: var(--font-serif);
 		font-size: 1.75rem;
@@ -2439,11 +2443,6 @@
 		color: var(--color-foreground);
 	}
 
-	.ghost-hero-sub {
-		font-size: 0.875rem;
-		color: var(--color-foreground-muted);
-		max-width: 30rem;
-	}
 
 	.page-container {
 		height: 100%;

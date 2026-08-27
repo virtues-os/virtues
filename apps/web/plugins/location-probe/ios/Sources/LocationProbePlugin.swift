@@ -8,6 +8,13 @@ class RowsArgs: Decodable {
 }
 
 class LocationProbePlugin: Plugin {
+  /// The one moment Tauri hands a plugin the webview. Shell keyboard behavior
+  /// (programmatic-focus keyboard, scroll-view parking) hooks in here — see
+  /// KeyboardShell.swift for why it lives in this plugin.
+  @objc public override func load(webview: WKWebView) {
+    KeyboardShell.attach(webview)
+  }
+
   /// Explicit user opt-in ("Enable"): prompt for permission if undetermined,
   /// then start collecting.
   @objc public func startProbe(_ invoke: Invoke) throws {

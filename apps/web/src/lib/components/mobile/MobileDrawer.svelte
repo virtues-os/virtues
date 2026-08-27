@@ -142,7 +142,11 @@
 		display: flex;
 		flex-direction: column;
 		height: 100%;
-		padding-top: env(safe-area-inset-top);
+		/* NO safe-area padding of its own: the drawer lives inside `main`,
+		   which already pads the status bar (see main.is-mobile in the app
+		   layout). Padding it again pushed the mast a full notch-height below
+		   the viewport's top bar, and the two bars are meant to share a
+		   baseline — the » lands where the ghost/compose control sits. */
 		background: var(--color-surface-elevated, var(--color-surface));
 		color: var(--color-foreground);
 	}
