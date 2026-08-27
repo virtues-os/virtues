@@ -62,6 +62,13 @@ public final class AudioRecorder: NSObject {
   private var nudgeFired = false
   private var lastGoodPersistAt: Date?
 
+  // In-memory mirrors of the UserDefaults flags the 5s watchdog tick consults.
+  // Every mutation goes through this class, so the mirrors can't drift; without
+  // them the tick did several cfprefsd lookups per beat, ~17k/day of waste.
+  private var cachedEnabled = false
+  private var cachedNotify = true
+  private var cachedLastGood: TimeInterval = 0
+
   private let session = AVAudioSession.sharedInstance()
   private let engine = AVAudioEngine()
   private var converter: AVAudioConverter?
@@ -104,6 +111,10 @@ public final class AudioRecorder: NSObject {
 
   private override init() {
     super.init()
+    let d = UserDefaults.standard
+    cachedEnabled = d.bool(forKey: enabledKey)
+    cachedNotify = d.object(forKey: notifyKey) == nil ? true : d.bool(forKey: notifyKey)
+    cachedLastGood = d.double(forKey: lastGoodKey)
     let nc = NotificationCenter.default
     nc.addObserver(self, selector: #selector(handleInterruption),
       name: AVAudioSession.interruptionNotification, object: session)
@@ -142,6 +153,7 @@ public final class AudioRecorder: NSObject {
     requestPermission { [weak self] granted in
       guard let self = self else { completion(false); return }
       if granted {
+        self.cachedEnabled = true
         UserDefaults.standard.set(true, forKey: self.enabledKey)
         // Ask for notification permission in context (they just opted into the
         // feature the gap-nudge protects). Denial just no-ops the nudge.
@@ -154,6 +166,7 @@ public final class AudioRecorder: NSObject {
 
   /// Toggle off / pause: clear the enabled flag, finalize, and stop the engine.
   public func disable() {
+    cachedEnabled = false
     UserDefaults.standard.set(false, forKey: enabledKey)
     stopWatchdog()
     virtues_location_audio_state(0)
@@ -173,7 +186,7 @@ public final class AudioRecorder: NSObject {
       DispatchQueue.main.async { [weak self] in self?.ensureRecording(reason: reason) }
       return
     }
-    guard authorized(), UserDefaults.standard.bool(forKey: enabledKey) else { return }
+    guard authorized(), cachedEnabled else { return }
     // Liveness: if we think we're recording but no tap buffer has arrived within the
     // timeout, the tap silently died — drop the flag so armEngine does a full
     // rebuild instead of short-circuiting on `recording == true`.
@@ -209,12 +222,11 @@ public final class AudioRecorder: NSObject {
   }
 
   public func notifyEnabled() -> Bool {
-    // Default ON: treat "unset" as true.
-    if UserDefaults.standard.object(forKey: notifyKey) == nil { return true }
-    return UserDefaults.standard.bool(forKey: notifyKey)
+    cachedNotify  // default-ON semantics live in the cache's init
   }
 
   public func setNotifyEnabled(_ on: Bool) {
+    cachedNotify = on
     UserDefaults.standard.set(on, forKey: notifyKey)
     if !on { clearNudge(); nudgeFired = false }
   }
@@ -227,12 +239,12 @@ public final class AudioRecorder: NSObject {
   /// gap episode (reset when a buffer flows again, in `process`). Suppressed while a
   /// call owns the mic (that gap is expected + self-heals on hang-up).
   private func checkGapAndNudge() {
-    guard UserDefaults.standard.bool(forKey: enabledKey), notifyEnabled() else { return }
+    guard cachedEnabled, cachedNotify else { return }
     if nudgeFired { return }              // already showing — once-and-done per episode
     if callActive() { return }            // legit call gap — never nudge
     // Gap measured from the persisted last-good-capture (survives kill→relaunch), so
     // a nudge fires ~gapThreshold after recording ACTUALLY died, not after relaunch.
-    let lastGood = UserDefaults.standard.double(forKey: lastGoodKey)
+    let lastGood = cachedLastGood
     guard lastGood > 0 else { return }    // never captured yet → nothing to nudge about
     if Date().timeIntervalSince1970 - lastGood > gapThreshold {
       fireNudge()
@@ -406,6 +418,7 @@ public final class AudioRecorder: NSObject {
     // showing, we've recovered — clear it so no stale "paused" lie lingers.
     if lastGoodPersistAt == nil || now.timeIntervalSince(lastGoodPersistAt!) > 60 {
       lastGoodPersistAt = now
+      cachedLastGood = now.timeIntervalSince1970
       UserDefaults.standard.set(now.timeIntervalSince1970, forKey: lastGoodKey)
     }
     if nudgeFired {
