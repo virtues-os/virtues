@@ -232,7 +232,27 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
         //                   worse than the GLM-5.1 tax this file already
         //                   rejects, from the cheapest model on the shelf.
         //                   Per-token price is not per-call price.
-        ModelSlot::Lite => "meta/llama-4-scout",
+        // Back to glm-4.7-flash on 2026-08-27, hours after llama-4-scout took
+        // the slot from it. The swap was made to escape `zdr: some`, and that
+        // turned out to be the wrong layer to solve it at: the gateway takes
+        // `zeroDataRetention: true` per request and PINS a `some` model to its
+        // zero-retention endpoints, which virtues-api now sets on every call it
+        // can (see Catalog::enforce_zdr). glm-4.7-flash is therefore
+        // zero-retention in practice, and it was the better model for the job
+        // on the measurements that picked scout — 6/6 clean titles like scout,
+        // but visibly better ones ("Running Shoe Recommendation" against
+        // "Shoe Change for Relief"), and cheaper.
+        //
+        // Keeping the record straight about what it is: glm-4.7-flash is the
+        // weakest posture we ship, `zdr: some` AND `no_training: some`, and it
+        // is fine here ONLY because enforcement is on. If the enforcement is
+        // ever removed, this slot goes back to being the leaky one and
+        // llama-4-scout (`all`/`all`, 0.8s, 5/5 extraction) is the drop-in.
+        //
+        // Measured 0 reasoning tokens at every effort level — no thinking tax
+        // on the high-volume slot, which is what put it here originally and is
+        // still the reason it belongs here.
+        ModelSlot::Lite => "zai/glm-4.7-flash",
         ModelSlot::Image => "google/gemini-3-pro-image",
         // The audio-native model that won a controlled 5-clip bench. Stays out
         // of the Gemini-3 parallel-tool-call problem entirely: transcription

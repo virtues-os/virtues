@@ -78,6 +78,15 @@ async fn gateway_search(
     // The gateway takes the model in a header, not the body.
     if let Some(obj) = request.as_object_mut() {
         obj.remove("model");
+        // Zero-retention enforcement, same rule as the chat paths. This route
+        // carries the user's own search text, so leaving it unenforced would
+        // have made web search the one hole in the guarantee.
+        if state.catalog.enforce_zdr(&model) {
+            obj.insert(
+                "providerOptions".to_string(),
+                serde_json::json!({ "gateway": { "zeroDataRetention": true } }),
+            );
+        }
     }
 
     if let Some(resp) = budget_gate(&ent) {
