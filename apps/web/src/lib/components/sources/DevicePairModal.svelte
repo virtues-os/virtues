@@ -312,7 +312,16 @@
 
 					<!-- QR Code (server-rendered SVG encoding /pair#t=<token>), framed
 					     with hairline corner brackets so it reads like a scan target,
-					     not a clip-art box. -->
+					     not a clip-art box.
+
+					     Hidden while a door is open, because it encodes the BOX's LAN
+					     URL — the one address that is wrong precisely when the door is
+					     the reason you're here. Showing a scan target pointing
+					     somewhere other than the address printed above it is worse
+					     than showing no scan target: nothing can scan it today anyway
+					     (the app has no scanner and registers no URL scheme). When a
+					     scannable path exists, this becomes a QR of the door itself. -->
+					{#if !doorOrigin}
 					<div class="qr-frame mb-5">
 						<span class="qr-corner qr-corner--tl"></span>
 						<span class="qr-corner qr-corner--tr"></span>
@@ -335,6 +344,7 @@
 							{/if}
 						</div>
 					</div>
+					{/if}
 
 					<!-- Status -->
 					{#if isPolling}
