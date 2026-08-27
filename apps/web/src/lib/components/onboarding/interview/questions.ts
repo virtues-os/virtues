@@ -95,14 +95,19 @@ export const QUESTIONS: Question[] = [
 	{
 		id: 'chapters',
 		facet: 'WHEN',
-		prompt:
-			'Where have you lived, what were the chapters of your life, and what was the changepoint event for each one?',
+		// Rendered as ChapterCards, not a textarea — the one structured question.
+		// The old triple-barrelled prompt (places + chapters + changepoints)
+		// produced tangled paragraphs; the cards carry places/years/changepoint
+		// as fields, so the prompt asks one thing.
+		prompt: 'What were the chapters of your life?',
 		purpose:
-			'The scaffold everything else hangs on — your own periods, which never match the calendar.',
+			'Name the eras the way you would tell them to a friend — childhood, the moves, the jobs, the years that belong together. Everything else you write gets placed on this timeline.',
 		why: "Everyone privately divides their life into chapters, and nobody's match the calendar. A box that knows yours can say “that was during the Boston years” instead of “in 2017” — the difference between a filing system and a memory. What ENDED each chapter matters most: the moment a period closed is usually the moment something in you did. Places ride along because moves are one of the few universally legible turning points, and where you were usually explains who you knew.",
 		hint:
-			'Name them however you would out loud. Rough dates are fine — the changepoint matters more than the date.',
-		target: 400,
+			'Name them the way you would out loud. Rough years are fine — what ended each one matters most. Most lives so far have four to eight.',
+		// Cards, not prose: a word target against short structured fields would
+		// read as perpetual shortfall. The chapter count is its own progress.
+		target: null,
 		mode: 'speak',
 		tense: 'past',
 		stage: 'onboarding'
@@ -161,7 +166,7 @@ export const QUESTIONS: Question[] = [
 		facet: 'WHO',
 		prompt: 'Which well-known figures do you admire, and what specifically about them?',
 		purpose:
-			'Values named as people, not adjectives — and named people your box has already read.',
+			'Who you point to says what you value — more precisely than any list of traits could.',
 		why: "Values named as adjectives are mush — everyone wants to be honest and kind. Values named as PEOPLE are precise. But precise for WHOM: “my grandmother's stubbornness” means everything to you and nothing to a machine that never met her, while a figure the world knows arrives already carrying a body of work, a temperament, and a way of speaking your box can actually draw on. So name the public ones first; add the private ones after, and say what they were like. The second half does a different job entirely. Nobody can usefully answer “do you want brief or thorough, challenging or supportive”, but everyone can point at someone whose way of telling them a hard thing actually landed. That is how this learns to talk to you, without a single slider.",
 		hint:
 			'Writers, thinkers, founders, saints, athletes — whoever. Private people count too; just name the public ones first. And if someone\'s way of putting things is how you would want this to talk to you, say who.',
@@ -186,7 +191,7 @@ export const QUESTIONS: Question[] = [
 		id: 'novelty',
 		facet: 'DELTA',
 		prompt: 'What makes you different from most people you have met?',
-		purpose: 'The gap between you and what a machine would otherwise assume.',
+		purpose: 'So it never mistakes you for the average person.',
 		why: "A language model's default assumption about you is the average human. Everything it has not been told, it fills in from the population mean. So this question asks, quite literally, for the difference between you and that prior — which makes it the highest-information thing you can write here. It is also the one people skip because it feels like bragging. It is not bragging; it is calibration.",
 		hint: 'The things people find surprising, or that you have stopped mentioning because nobody relates.',
 		target: 300,

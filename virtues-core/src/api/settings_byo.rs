@@ -10,7 +10,7 @@
 //! predicate, so all seven AI callers are covered without opting in:
 //! `agent/stream.rs`, `api/compaction.rs`, `api/day_summary.rs`,
 //! `api/image_gen.rs`, `api/entity_article_gen.rs`,
-//! `api/narrative_identity_gen.rs`, `api/chats.rs`, plus the
+//! `api/narrative_draft.rs`, `api/chats.rs`, plus the
 //! `transcription_resolution` applet.
 //!
 //! Until 2026-08-05 only `stream()` honored the key and the other seven

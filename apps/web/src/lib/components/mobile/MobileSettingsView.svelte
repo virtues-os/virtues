@@ -63,6 +63,7 @@
 		{ label: "Network", icon: "ri:wifi-line", route: "/virtues/network" },
 		{ label: "Software", icon: "ri:box-3-line", route: "/virtues/software" },
 		{ label: "Devices", icon: "ri:device-line", route: "/virtues/devices" },
+		{ label: "Display", icon: "ri:tv-2-line", route: "/virtues/display" },
 		{ label: "Developer", icon: "ri:code-s-slash-line", route: "/virtues/developer" },
 	];
 

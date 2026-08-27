@@ -792,6 +792,13 @@ async fn build_system_prompt(
     let assistant_name = get_assistant_name(pool).await.unwrap_or_else(|_| "Ari".to_string());
     let user_name = get_display_name(pool).await.unwrap_or_else(|_| "there".to_string());
 
+    // The narrative interview is a different room entirely: no tools, no
+    // persona, no data context, no narrative-identity injection (the document
+    // this conversation exists to create). Its prompt stands alone.
+    if agent_mode == "interview" {
+        return crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name);
+    }
+
     // Load persona content from database (or fallback to registry default)
     let persona_content = get_persona_content(pool, persona_id).await.ok().flatten();
 

@@ -36,8 +36,12 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Loopback the in-process reach layer serves the box on.
-const BOX_ADDR: &str = "127.0.0.1:7117";
+/// Loopback the in-process reach layer serves the box on. A fn, not a const:
+/// a dev profile (VIRTUES_PROFILE) serves its own port, and this fetcher must
+/// talk to the same loopback that instance binds.
+fn box_addr() -> String {
+    format!("127.0.0.1:{}", tauri_plugin_reach::loopback_port())
+}
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -266,7 +270,7 @@ pub fn last_outcome(app_data: &Path) -> Option<serde_json::Value> {
 /// `shell_surface` is `COMMAND_SURFACE_VERSION` — the contract the bundle is
 /// checked against before it is allowed anywhere near the active pointer.
 pub fn check_and_apply(app_data: &Path, shell_surface: u32) -> std::io::Result<Outcome> {
-    let Some(body) = http_get(BOX_ADDR, "/api/web-bundle/version")? else {
+    let Some(body) = http_get(&box_addr(), "/api/web-bundle/version")? else {
         return Ok(Outcome::NoBundleOnBox);
     };
     let Some(remote) = Manifest::parse(&String::from_utf8_lossy(&body)) else {
@@ -285,7 +289,7 @@ pub fn check_and_apply(app_data: &Path, shell_surface: u32) -> std::io::Result<O
         return Ok(Outcome::UpToDate);
     }
 
-    let Some(tar_gz) = http_get(BOX_ADDR, "/api/web-bundle/tarball")? else {
+    let Some(tar_gz) = http_get(&box_addr(), "/api/web-bundle/tarball")? else {
         return Ok(Outcome::NoBundleOnBox);
     };
 

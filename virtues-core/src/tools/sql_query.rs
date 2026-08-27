@@ -226,9 +226,9 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         join_hint: None,
     });
     m.insert("wiki_narrative_identity", TableMetadata {
-        description: "The owner's own account of who they are, drafted from the narrative interview",
+        description: "The distilled core of the owner's own account of who they are — the few lines carried into every chat. The full document is a wiki article (subject_type 'narrative_identity') whose prose lives in its page",
         category: "wiki",
-        key_columns: &["content", "active", "drafted_at"],
+        key_columns: &["content", "drafted_at"],
         join_hint: None,
     });
     m.insert("wiki_rules", TableMetadata {

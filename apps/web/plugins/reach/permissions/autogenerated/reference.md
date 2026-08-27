@@ -13,10 +13,10 @@ Default permissions for the reach plugin
 - `allow-provision-join`
 - `allow-improv-discover`
 - `allow-improv-claim`
+- `allow-improv-grant`
 - `allow-improv-wifi-scan`
 - `allow-improv-provision`
 - `allow-improv-pair`
-- `allow-improv-grant`
 - `allow-improv-disconnect`
 - `allow-outbox-stats`
 - `allow-drain-now`

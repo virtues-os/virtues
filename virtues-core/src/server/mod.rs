@@ -298,6 +298,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/display/updating",
             get(crate::api::display::display_updating_handler),
         )
+        // The case button at 1s cadence — the 30s ambient poll cannot see a
+        // 3s hold. See api/display.rs.
+        .route(
+            "/api/display/button",
+            get(crate::api::display::display_button_handler),
+        )
         // `/api/display/qr` and `/api/display/link-qr` are gone — the panel is
         // one screen now and renders no QR at all. See api/display.rs.
         //
@@ -945,6 +951,27 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/system/update/apply",
             post(api::apply_update_handler),
         )
+        // The box's attached screen (Settings → Display). Deliberately NOT in
+        // the loopback-only /api/display/* family: that module's uniform
+        // box-local rule is its security argument, and these are the paired
+        // device's side of the glass — panel facts, the ambient face choice,
+        // and the restart verb. Nothing here carries the setup phrase.
+        .route(
+            "/api/system/display",
+            get(crate::api::system_display::get_display_settings_handler),
+        )
+        .route(
+            "/api/system/display/face",
+            put(crate::api::system_display::set_display_face_handler),
+        )
+        .route(
+            "/api/system/display/hours",
+            put(crate::api::system_display::set_display_hours_handler),
+        )
+        .route(
+            "/api/system/display/restart",
+            post(crate::api::system_display::restart_display_handler),
+        )
         // Re-open onboarding: revoke every device, keep the data. Sits beside
         // the update routes because it is the same kind of thing — a box-wide
         // action a paired device may take, guarded by being paired.
@@ -1165,6 +1192,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // public inbound port. Serves a clone of `app`; the :8000 TCP listener below
     // keeps serving LAN/loopback + the desktop :7117 helper. See `crate::relay`.
     crate::relay::maybe_spawn(client.database.pool().clone(), app.clone());
+
+    // Hours — the screen's sleep schedule, enforced server-side because sleep
+    // is a precedence state (a held button must wake dark glass). No-op off
+    // an appliance. See api::system_display::sleep_engine.
+    crate::api::system_display::sleep_engine::spawn(client.database.pool().clone());
 
     let transport = build_transport(host, port);
     let listener = transport.bind().await?;

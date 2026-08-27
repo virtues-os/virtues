@@ -823,28 +823,36 @@
 	--surface-elevated: #18242F;
 	--surface-overlay: #1D2A36;
 
-	/* Background Treatment — the sheet is ruled at two pitches.
-	   `repeating-linear-gradient` carries its own pitch, which it must: there is
-	   a --surface-elevated-size token but no --background-size, so anything set
-	   here has to be self-sizing.
-	   The rules are DARKER than the ground, not lighter. `.app-shell` and the
-	   pane both composite this with `background-blend-mode: multiply`, and
-	   multiply can only darken — a light grid would vanish there and show only
-	   on `.app-content`. Darker rules read identically under both.
+	/* Background Treatment — the grid rules the DESK, not the page.
+	   `--surface-elevated-image` paints `.app-shell`: the sidebar plus the
+	   gutter the pane floats in. `<main>` is opaque `bg-surface` on top, so the
+	   ruling can never land behind prose or a table. That is the argument for
+	   putting it here — the rail is the one surface with almost no content to
+	   compete with, and its empty lower half has wanted a texture since the
+	   recessed-rail experiment was abandoned for making the void a visible
+	   object.
 
-	   ONE pitch, and faint. Two pitches at working strength read as a drawing
-	   when there is a drawing on them and as interference when there is prose —
-	   and the pane is nearly all prose, so the fine field is dropped and the
-	   coarse one sits barely above the ground. */
-	--background-image:
-		repeating-linear-gradient(to bottom,
-			transparent 0 127px, rgba(0, 0, 0, 0.16) 127px 128px),
-		repeating-linear-gradient(to right,
-			transparent 0 127px, rgba(0, 0, 0, 0.16) 127px 128px);
-	/* The desk stays unruled: the grid belongs to the drawing surface, and
-	   nothing on the sidebar may out-shout the page. */
-	--surface-elevated-image: none;
-	--surface-elevated-size: auto;
+	   TWO WEIGHTS, like real drafting paper: a fine field every 32px and a
+	   heavier rule every 128px. A single-weight mesh reads as a decorative
+	   pattern; the heavier fourth line is what makes it read as engineering
+	   paper.
+
+	   The pitch does NOT try to align to the rows, because it cannot: the nav
+	   runs on a 30px rhythm (28px row + 2px) and the footer group on 32px, so
+	   the sidebar has two rhythms and no grid can sit on both. Measured, not
+	   assumed. A near-miss pitch would read as failed alignment, so the grid
+	   is left as independent ground and kept faint enough that the question
+	   does not arise.
+
+	   Lines are LIGHT, which needs the blend mode overridden — see the
+	   `.app-shell` rule further down. */
+	--background-image: none;
+	--surface-elevated-image:
+		linear-gradient(rgba(233, 243, 250, 0.075) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(233, 243, 250, 0.075) 1px, transparent 1px),
+		linear-gradient(rgba(233, 243, 250, 0.035) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(233, 243, 250, 0.035) 1px, transparent 1px);
+	--surface-elevated-size: 128px 128px, 128px 128px, 32px 32px, 32px 32px;
 
 	/* Content Colors — drawing white, cooled a trace toward the ground */
 	--foreground: #EDF1F4;
@@ -862,15 +870,25 @@
 	--secondary-hover: #FFFFFF;
 	--secondary-active: #D6DEE5;
 
-	/* Status Colors — desaturated to sit on slate without shouting */
+	/* Status Colors — desaturated to sit on slate without shouting.
+	   `--info` is deliberately NOT the accent. The first draft set it to the
+	   same cyan as `--primary`, which made "act on this" and "note this" the
+	   same colour — the failure `design.md` means by "colour means something or
+	   it isn't used". Interactive keeps the cold lamp; informational moves to a
+	   periwinkle ~27° off it. Chosen DARKER than the accent rather than lighter:
+	   the lighter candidates separated from `--foreground-subtle` but converged
+	   with `--primary` in luminance (1.03–1.24), so they were distinguishable
+	   only by hue. This one is 1.53 against the accent, which means the split
+	   survives greyscale and colour-blindness, not just colour. 5.98:1 on the
+	   ground, comfortably above AA. */
 	--success: #5FBF8F;
 	--success-subtle: #10281F;
 	--warning: #D9A54C;
 	--warning-subtle: #2A2113;
 	--error: #E0736B;
 	--error-subtle: #2C1917;
-	--info: #7CC3DE;
-	--info-subtle: #14303D;
+	--info: #7A94D4;
+	--info-subtle: #171D2E;
 
 	/* Diff Colors */
 	--diff-add: #5FBF8F;
@@ -1359,6 +1377,15 @@
 [data-theme="agora"],
 [data-theme="shire"] {
 	--illustration-filter: invert(1);
+}
+
+/* Narnia draws its ruling in LIGHT lines, which the shared blend mode forbids.
+ * `.app-shell` composites `--surface-elevated-image` with `multiply`, and
+ * multiply can only darken — a light grid would vanish there. Overridden for
+ * this theme alone rather than changed globally, because the other fifteen
+ * use that blend for noise and gradient washes that depend on it. */
+[data-theme="narnia"] .app-shell {
+	background-blend-mode: normal;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

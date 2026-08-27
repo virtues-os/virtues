@@ -330,6 +330,9 @@ export interface Census {
 	earliest: string | null;
 	latest: string | null;
 	span_days: number;
+	/** The record's first named senders, in the order it met them —
+	 *  chronology, never significance. Empty when none are presentable. */
+	earliest_names: string[];
 }
 
 /** What the box actually holds, counted — the reveal's first movement. */
@@ -468,6 +471,85 @@ export async function applyUpdate(): Promise<ApplyUpdateResponse> {
 		throw new Error(detail);
 	}
 	return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Display — the box's attached screen (Settings → Display)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The face the panel wears in its ambient slot. */
+export interface DisplayFaceConfig {
+	kind: 'builtin' | 'applet';
+	/** Which built-in, when kind is 'builtin': 'record' | 'matte'. */
+	builtin: string;
+	applet_id?: string | null;
+}
+
+export interface DisplayPanelInfo {
+	/** DRM connector name, e.g. `card0-HDMI-A-1`. */
+	connector: string;
+	mode_width?: number;
+	mode_height?: number;
+}
+
+/**
+ * What the glass is showing, redacted for the LAN: the mirror may say THAT
+ * the panel is on its setup screen, never what the words are.
+ */
+export interface DisplayGlassState {
+	claimed: boolean;
+	online: boolean;
+	connectivity: string;
+	devices: number;
+	box_name: string;
+	data_disk_fault?: string | null;
+	record?: Array<{ label: string; count: number }>;
+	record_since?: string | null;
+	updating: boolean;
+	/** Hours is holding the glass dark right now (backlight off). */
+	asleep: boolean;
+}
+
+/** The screen's hours. Times are box-local "HH:MM:SS"; absent = never sleeps. */
+export interface DisplayHours {
+	sleep_start?: string | null;
+	sleep_end?: string | null;
+}
+
+export interface DisplaySettings {
+	/** This box has the kiosk stack installed at all. */
+	attached: boolean;
+	unit_state: 'active' | 'installed but not running' | 'not installed';
+	panel?: DisplayPanelInfo | null;
+	zoom_derived?: number | null;
+	zoom_override?: number | null;
+	face: DisplayFaceConfig;
+	hours: DisplayHours;
+	state: DisplayGlassState;
+}
+
+export function getDisplaySettings(): Promise<DisplaySettings> {
+	return apiGet('/system/display');
+}
+
+export function setDisplayFace(face: {
+	kind: 'builtin' | 'applet';
+	builtin?: string;
+	applet_id?: string;
+}): Promise<DisplayFaceConfig> {
+	return apiSend('PUT', '/system/display/face', face);
+}
+
+export function restartDisplay(): Promise<{ restarted: boolean }> {
+	return apiSend('POST', '/system/display/restart');
+}
+
+/** Set the sleep schedule ("HH:MM" box-local), or both null for never. */
+export function setDisplayHours(hours: {
+	sleep_start: string | null;
+	sleep_end: string | null;
+}): Promise<DisplayHours> {
+	return apiSend('PUT', '/system/display/hours', hours);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2631,9 +2713,6 @@ export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Prom
 }
 export function getServerInfo<T = unknown>(): Promise<T> {
 	return apiGet<T>('/app/server-info');
-}
-export function triggerApplet<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/applets/${encodeURIComponent(id)}/trigger`);
 }
 export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/ai/complete', req);

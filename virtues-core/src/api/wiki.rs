@@ -145,6 +145,10 @@ pub struct WikiDay {
     pub epigraph: Option<String>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
+    /// Always `None` since the 2026-08-18 squash dropped the acts/chapters
+    /// columns; kept so the client shape doesn't change. Selecting them was
+    /// what broke every day query on the squashed schema — `try_get(...).ok()`
+    /// tolerates an absent column, but SQL naming one does not.
     pub act_id: Option<String>,
     pub chapter_id: Option<String>,
     pub morning_baseline: Option<f64>,
@@ -901,7 +905,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
             id, date, start_timezone,
             (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
-            last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
+            last_edited_by, cover_image, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         FROM wiki_days
         WHERE date = $1
@@ -928,7 +932,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         RETURNING
             id, date, start_timezone,
             epigraph,
-            last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
+            last_edited_by, cover_image, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         "#,
     )
@@ -1228,7 +1232,7 @@ pub async fn list_days(
             id, date, start_timezone,
             (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
-            last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
+            last_edited_by, cover_image, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         FROM wiki_days
         WHERE date >= $1 AND date <= $2
