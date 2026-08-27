@@ -30,22 +30,27 @@ AI knows *happened*; narrative identity fixes **who it is talking to**. It is
 the single highest-leverage document in the product: every conversation,
 every day page, every suggestion is downstream of it.
 
-## The three artifacts
+## The two artifacts (and the neighbor)
 
-One idea, three carriers, different jobs:
+One idea, two carriers:
 
 | artifact | what | reader | size |
 |---|---|---|---|
 | **the document** | the full prose — chapters, worldview, the arc | the person (and the drafter) | pages; a real wiki article page: editor, history, marginalia |
 | **the core** | the distillation carried into every chat (`wiki_narrative_identity.content`) | the AI, every message | 80–120 words (hard ceiling ~2k tokens) |
-| **the rules** | the enforceable half (`wiki_rules`, avoid/defend) | the AI, every message | one line each |
 
-The split matters: prose gets *weighed* by a model, rules get *obeyed*.
-"My father died last year" belongs in the document (context, weighed);
-"never raise my father unless I do" is a rule (enforced). The core exists
-because pages of prose cannot ride on every prompt — and deliberately stays
-short: a longer core does not make the AI understand better, it makes it
-*perform* understanding more often (chat.rs's own doctrine).
+**Rules are NOT part of narrative identity** (settled 2026-08-27). They are a
+neighboring channel: NI is *who the person is* — theirs, prose, weighed by
+the model; rules (`wiki_rules`, avoid/defend) are *standing orders to the
+machine* — governance, enforced, absolute. "My father died last year"
+belongs in the document (context, weighed); "never raise my father unless I
+do" is a rule (obeyed). They ride adjacent in the prompt, but a rule is an
+instruction and the NI is a portrait, and conflating them makes the
+portrait read as a policy file.
+
+The core stays deliberately short: a longer core does not make the AI
+understand better, it makes it *perform* understanding more often (chat.rs's
+own doctrine).
 
 ## What belongs in it
 
@@ -114,6 +119,42 @@ almost never surfacing it:
   ungrounded question is homework, a grounded one is a gift.
 - **Corrected by editing**: the document is a page; the person rewrites it
   whenever they like, and the core follows.
+
+## Its place in the system prompt — the three speeds
+
+The whole personal half of the system prompt is three blocks moving at three
+speeds, and NI is the slowest:
+
+| block | answers | changes | source |
+|---|---|---|---|
+| **narrative identity** | who am I talking to — the arc, past AND future (telos, feared self) | months–years | authored by the person |
+| **rules** | what must I never/always do | rarely | confirmed by the person |
+| **prudential context** | what is the situation right now | hourly–daily | computed from the record, no LLM |
+
+So the formula is **NI + rules + prudential context** — and no separate
+"future" block: the *aspirational* future (who they mean to become) is
+inside NI, while the *operational* future (tomorrow's flight) is prudential.
+Prudence is the right name: the virtue of right action in the particular
+situation, which is exactly what this block supplies.
+
+**Prudential context** (today a thin `build_user_context`: occupation/home,
+last three day-proses, connected sources, timezone) should grow toward a
+budgeted (~600–800 token), deterministic, SQL-only block computed fresh at
+conversation start:
+
+- the clock: local date, time of day, day of week
+- the place: current or last visit; home
+- the day so far: today's deterministic spine (visits + calendar + sleep —
+  the zero-LLM today view that already exists)
+- the calendar: today's and tomorrow's events
+- recent people: the last ~2 weeks' correspondents WITH entity ids (so tool
+  calls can join) — labeled as *recency, not significance*: this is "who is
+  around lately," never a ranking of who matters
+- live threads: recently edited pages, active notebooks, last night's sleep
+
+Same discipline as the core: hard budget, deterministic queries, and
+absence stays silent — a prudential block that lists what it doesn't know
+is noise.
 
 ## What it is NOT
 
