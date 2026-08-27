@@ -413,6 +413,35 @@ pub async fn display_updating_handler(
         .into_response()
 }
 
+/// `GET /api/display/button` — is the case button held, right now?
+///
+/// Exists because the ambient state poll is 30s and a hold lasts 3s: the
+/// countdown the button narrates (`button_held_secs` in `DisplayState`) was
+/// only ever drawn if a poll happened to land mid-hold — about one time in
+/// ten. This is the state poll's fact at a cadence the fact deserves: two
+/// atomic loads behind a loopback GET, cheap enough for the panel to ask
+/// every second, so the one screen the button matters on always draws it.
+///
+/// Box-local like the rest of this module — it carries no secret, but it is
+/// a panel endpoint and the module's rule stays uniform.
+pub async fn display_button_handler(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !is_box_local(&peer, &headers) {
+        return (StatusCode::FORBIDDEN, "not available off-box").into_response();
+    }
+    (
+        StatusCode::OK,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(serde_json::json!({
+            "held_secs": crate::maintenance::reset_button::hold_secs(),
+            "target": crate::maintenance::reset_button::HOLD_SECS,
+        })),
+    )
+        .into_response()
+}
+
 /// Is the transient upgrade unit running?
 ///
 /// `systemctl is-active` on the unit `api::updates` starts the upgrade under.
