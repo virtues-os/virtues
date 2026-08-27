@@ -36,5 +36,7 @@ func initPlugin() -> Plugin {
   // heals the iroh socket on every network-path change + app foreground so the
   // box is reachable whenever it's up — no force-quit.
   ReachMonitor.shared.start()
+  // Register for MetricKit's daily battery/network/location digests.
+  Metrics.shared.start()
   return LocationProbePlugin()
 }

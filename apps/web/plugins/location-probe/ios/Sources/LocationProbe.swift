@@ -380,6 +380,28 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
 
   // MARK: - Writes
 
+  /// MetricKit payload storage (Metrics.swift). Own table in the same
+  /// diagnostics DB — a payload is a ~daily multi-KB JSON blob, not a row of
+  /// the location log.
+  public func writeMetric(kind: String, json: String) {
+    let ts = ISO8601DateFormatter().string(from: Date())
+    withDB { db in
+      var stmt: OpaquePointer?
+      sqlite3_exec(
+        db,
+        "CREATE TABLE IF NOT EXISTS metrics(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, kind TEXT, json TEXT)",
+        nil, nil, nil)
+      if sqlite3_prepare_v2(db, "INSERT INTO metrics (ts, kind, json) VALUES (?,?,?)", -1, &stmt, nil)
+        == SQLITE_OK {
+        sqlite3_bind_text(stmt, 1, ts, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, kind, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, json, -1, SQLITE_TRANSIENT)
+        sqlite3_step(stmt)
+      }
+      sqlite3_finalize(stmt)
+    }
+  }
+
   private func writeMarker(source: String) {
     write(lat: 0, lon: 0, source: source)
   }
