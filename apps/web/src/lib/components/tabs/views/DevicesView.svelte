@@ -39,15 +39,36 @@
 
 	const res = createResource(() => listDevices<DevicesResponse>());
 
-	// The device you are holding, first. The box orders by last-seen, which is
-	// *usually* the same thing and reliably isn't when you have just opened the
-	// app on a second machine — and the current device is both the one whose
-	// warnings you can act on and the one people look for first.
-	const devices = $derived(
-		[...(res.data?.devices ?? [])].sort(
-			(a, b) => Number(b.is_current) - Number(a.is_current),
-		),
-	);
+	// The device you are holding, first — and each machine's collector folded
+	// directly under the app that installed it (`installed_by`, stamped at
+	// pair-consume from the token's minter). The box orders by last-seen,
+	// which is *usually* right and reliably isn't when you have just opened
+	// the app on a second machine; and a flat last-seen order is what made one
+	// Mac read as two unrelated rows. Collectors whose installing app is gone
+	// (revoked, or paired before the join existed) list standalone at the end.
+	const devices = $derived.by(() => {
+		const all = res.data?.devices ?? [];
+		const parents = all
+			.filter((d) => !d.installed_by)
+			.sort((a, b) => Number(b.is_current) - Number(a.is_current));
+		const out: Device[] = [];
+		for (const p of parents) {
+			out.push(p, ...all.filter((d) => d.installed_by === p.id));
+		}
+		out.push(
+			...all.filter(
+				(d) => d.installed_by && !parents.some((p) => p.id === d.installed_by),
+			),
+		);
+		return out;
+	});
+
+	// A collector is a desktop_app credential that declared a data source at
+	// pairing (the app itself pairs sourceless). Its kind badge saying
+	// "Desktop" is what made `phf-virtues.local` unreadable next to the app.
+	function isCollectorRow(d: Device): boolean {
+		return d.kind === "desktop_app" && !!d.source_id;
+	}
 
 	function openDevice(device: Device) {
 		windowShellStore.navigate(deviceHref(device), { label: "Settings" });
@@ -172,8 +193,17 @@
 	// is why the label names this Mac rather than the device in the row.
 	const canFix = $derived(isTauri);
 
-	// Build identity as one string, the way the row has always shown it.
+	// The version a person means: the native app's own release when the device
+	// reports one. The old single string was the UI-bundle identity — which,
+	// for a paired desktop, is the box-served SPA and so mirrored the box:
+	// "This device · 0.1.5-staging.65" on a Mac running app 1.0.22 was the
+	// confusion that triggered the version audit. The full lattice (bundle,
+	// sha, channel) still lives on the device detail page; here one honest
+	// number beats three misleading ones. Bundle identity remains the headline
+	// only for rows that have no app of their own (the console renders the
+	// box's UI; a collector's `version` IS its binary once it reports).
 	function versionText(device: Device): string | null {
+		if (device.app_version) return device.app_version;
 		if (!device.version) return null;
 		const sha = device.sha && device.sha !== "dev" ? ` · ${device.sha}` : "";
 		const channel = device.channel ? ` · ${device.channel}` : "";
@@ -271,9 +301,17 @@
 	>
 		{#snippet tableRow(device: Device)}
 			<td class="px-3 py-2.5">
-				<div class="flex items-center gap-2 flex-wrap">
+				<div class="flex items-center gap-2 flex-wrap" class:pl-5={device.installed_by}>
+					{#if device.installed_by}
+						<!-- Folded under the app that installed it (see the sort). -->
+						<Icon
+							icon="ri:corner-down-right-line"
+							class="text-foreground-muted flex-shrink-0"
+							width="14"
+						/>
+					{/if}
 					<span class="text-sm font-medium text-foreground truncate">{device.label}</span>
-					<Badge>{kindLabel(device.kind)}</Badge>
+					<Badge>{isCollectorRow(device) ? "Collector" : kindLabel(device.kind)}</Badge>
 					{#if device.is_current}
 						<Badge>This device</Badge>
 					{/if}
@@ -355,7 +393,7 @@
 				<Icon icon={kindIcon(device.kind)} class="text-3xl text-foreground-muted" />
 				<span class="text-sm font-medium text-foreground break-all">{device.label}</span>
 				<div class="flex items-center gap-1 flex-wrap justify-center">
-					<Badge>{kindLabel(device.kind)}</Badge>
+					<Badge>{isCollectorRow(device) ? "Collector" : kindLabel(device.kind)}</Badge>
 					{#if device.is_current}
 						<Badge>This device</Badge>
 					{/if}
