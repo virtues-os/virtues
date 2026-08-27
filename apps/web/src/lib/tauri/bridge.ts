@@ -622,3 +622,30 @@ export async function closePairDoor(): Promise<void> {
 		console.warn('[Tauri] pair_door_close failed:', e);
 	}
 }
+
+/** The handoff QR a phone scans, plus the EndpointId it enrols. */
+export interface PairHandoff {
+	qrSvg: string;
+	nodeId: string;
+}
+
+/**
+ * Mint an identity for a phone and enrol it with the box, returning the QR
+ * that hands it over.
+ *
+ * Works where the pairing door cannot: the door needs the phone to open a
+ * socket to this machine, which coworking wifi routinely forbids. This needs
+ * no network between them at all. Desktop-only; null in a browser or on a
+ * phone. The returned QR carries a private key — display it, never persist or
+ * transmit it. See crates/virtues-reach-client/src/handoff.rs.
+ */
+export async function createPairHandoff(label?: string): Promise<PairHandoff | null> {
+	const invoke = await getInvoke();
+	if (!invoke) return null;
+	try {
+		return await invoke<PairHandoff>('plugin:reach|pair_handoff_create', { label });
+	} catch (e) {
+		console.warn('[Tauri] pair_handoff_create unavailable:', e);
+		return null;
+	}
+}

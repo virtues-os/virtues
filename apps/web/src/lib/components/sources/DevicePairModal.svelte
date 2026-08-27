@@ -13,7 +13,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { Button } from "$lib";
 	import * as api from "$lib/api/client";
-	import { openPairDoor, closePairDoor } from "$lib/tauri/bridge";
+	import { openPairDoor, closePairDoor, createPairHandoff } from "$lib/tauri/bridge";
 	import type { PairingInitResponse } from "$lib/types/device-pairing";
 
 	interface Props {
@@ -75,6 +75,22 @@
 	 */
 	let doorOrigin = $state<string | null>(null);
 
+	/**
+	 * The handoff QR — the path that works on any network, including one that
+	 * won't let these two devices see each other.
+	 *
+	 * This machine mints the phone's identity, enrols its public half with the
+	 * box over the relay it already has, and puts the result in this code. The
+	 * phone scans it and is paired; nothing passes between the two devices but
+	 * light. It leads because it is the only option that doesn't depend on the
+	 * network being cooperative — the address below is the fallback, for a
+	 * phone that can reach this machine and would rather type.
+	 *
+	 * The code carries a private key: on screen for this window only, never
+	 * stored, revocable in Devices the moment it's used.
+	 */
+	let handoffQr = $state<string | null>(null);
+
 	async function initiateQRPairing() {
 		isInitiating = true;
 		error = null;
@@ -87,6 +103,7 @@
 			// Same window as the countdown this modal already runs.
 			const door = await openPairDoor(timeRemaining);
 			doorOrigin = door?.origin ?? null;
+			handoffQr = (await createPairHandoff(displayName))?.qrSvg || null;
 			startPolling();
 			startTimer();
 		} catch (err) {
@@ -228,6 +245,7 @@
 		// waiting out its own timer. (The timer is the backstop for a window
 		// that never gets closed properly — a crash, a force-quit.)
 		doorOrigin = null;
+		handoffQr = null;
 		void closePairDoor();
 		resetLocalState();
 		onClose();
@@ -281,11 +299,38 @@
 					{@render getTheApp('iPhone')}
 					<div class="mb-5">
 						<p class="text-sm leading-relaxed text-foreground-muted">
-							<span class="step-n">2</span> Open it and choose
-							<strong class="text-foreground">Connect to a server that's running</strong>,
-							then <strong class="text-foreground">Enter an address manually</strong>
+							{#if handoffQr}
+								<span class="step-n">2</span> Open it and tap
+								<strong class="text-foreground">Scan it</strong>, then point the phone here
+							{:else}
+								<span class="step-n">2</span> Open it and choose
+								<strong class="text-foreground">Connect to a server that's running</strong>,
+								then <strong class="text-foreground">Enter an address manually</strong>
+							{/if}
 						</p>
 					</div>
+
+					{#if handoffQr}
+						<!-- The handoff code. Leads because it needs nothing of the
+						     network: this machine already reached the box to mint it,
+						     and the phone only has to see the screen. -->
+						<div class="qr-frame mb-5">
+							<span class="qr-corner qr-corner--tl"></span>
+							<span class="qr-corner qr-corner--tr"></span>
+							<span class="qr-corner qr-corner--bl"></span>
+							<span class="qr-corner qr-corner--br"></span>
+							<div class="rounded-xl bg-white p-4">
+								<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+								<div class="w-[232px] h-[232px] [&>svg]:w-full [&>svg]:h-full">
+									{@html handoffQr}
+								</div>
+							</div>
+						</div>
+						<p class="mb-5 max-w-[20rem] text-xs leading-relaxed text-foreground-muted">
+							Only show this to the phone you're adding — it carries the key that
+							pairs it. It stops working when this window closes.
+						</p>
+					{/if}
 
 					{#if doorOrigin}
 						<!-- The address is THIS computer, not the box. Pairing has to be
@@ -304,8 +349,13 @@
 								<span class="door-value">{pairingData?.token ?? "…"}</span>
 							</div>
 							<p class="door-note">
-								Works from anywhere this computer and your iPhone are together —
-								your server doesn't have to be on the same network.
+								{#if handoffQr}
+									Can't scan? Type these instead — needs the phone on this
+									computer's network.
+								{:else}
+									Works from anywhere this computer and your iPhone are together —
+									your server doesn't have to be on the same network.
+								{/if}
 							</p>
 						</div>
 					{/if}
