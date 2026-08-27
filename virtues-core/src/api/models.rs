@@ -79,6 +79,11 @@ impl From<CatalogModel> for ModelInfo {
 pub struct ModelsResponse {
     pub data: Vec<ModelInfo>,
     pub slots: SlotMap,
+    /// True when `data` is the compiled floor — the box has never loaded the
+    /// live catalog. The UI says so instead of presenting two models as the
+    /// whole world.
+    #[serde(default)]
+    pub catalog_cold: bool,
 }
 
 /// List the picker — the gateway's language models, slot models flagged.
@@ -99,6 +104,7 @@ pub async fn list_models_with_slots() -> Result<ModelsResponse> {
     Ok(ModelsResponse {
         data: list_models().await?,
         slots: model_catalog::slots(),
+        catalog_cold: model_catalog::is_cold(),
     })
 }
 

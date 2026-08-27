@@ -276,6 +276,21 @@
 		<div class="mb-3 text-sm text-error">{saveError}</div>
 	{/if}
 
+	{#if res.data?.catalog_cold}
+		<!-- Two rows with no explanation reads as "the catalog is two models".
+		     Say what this list actually is and that it heals itself. -->
+		<div
+			class="mb-3 flex items-start gap-2 rounded-md border border-border bg-surface-alt px-3 py-2 text-xs text-foreground-muted"
+		>
+			<Icon icon="ri:cloud-off-line" class="mt-0.5 shrink-0" width="14" />
+			<span>
+				Showing the built-in defaults — this server hasn't loaded the live
+				catalog yet. It retries every few minutes; the full list appears as
+				soon as the cloud is reachable.
+			</span>
+		</div>
+	{/if}
+
 	<UniversalDataGrid
 		items={rows}
 		{columns}

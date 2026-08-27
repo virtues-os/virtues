@@ -36,6 +36,12 @@ use crate::virtues_api::client::BearerClient;
 /// *box* lags a cloud-side model swap.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// While the cache has never been filled, retry much sooner. A fixed 6h
+/// interval meant one failed boot fetch (cloud briefly unreachable, dev api
+/// not yet listening) parked the picker on the 2-model compiled floor for a
+/// quarter of a day.
+const COLD_RETRY_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
 /// One picker entry, as virtues-api derived it from the gateway. Every field
 /// here is the gateway's, not ours. Prices are `None` only when virtues-api's
 /// own catalog is cold.
@@ -181,6 +187,12 @@ pub fn models() -> Vec<CatalogModel> {
         .collect()
 }
 
+/// Whether we have never seen a catalog — the picker is the compiled floor.
+/// The UI uses this to say so instead of presenting two models as the world.
+pub fn is_cold() -> bool {
+    cache().read().map(|s| s.models.is_empty()).unwrap_or(true)
+}
+
 /// The slot map — cloud-served if we have it, compiled floor otherwise.
 pub fn slots() -> SlotMap {
     cache()
@@ -253,7 +265,16 @@ pub fn pricing(model_id: &str) -> Option<(f64, f64)> {
 
 async fn fetch(pool: &PgPool) -> crate::Result<CatalogResponse> {
     let client = BearerClient::from_env(pool.clone());
-    let resp = client.get_json("/v1/ai/models").await?;
+    // Public on purpose: `get_json` refuses to send at all when the box is
+    // unlinked, and an unlinked box still deserves the catalog — the route
+    // serves public data and never charges.
+    let resp = client.get_json_public("/v1/ai/models").await?;
+    if resp.status != 200 {
+        return Err(crate::Error::Configuration(format!(
+            "model catalog: HTTP {}",
+            resp.status
+        )));
+    }
     serde_json::from_value(resp.body)
         .map_err(|e| crate::Error::Configuration(format!("model catalog parse: {e}")))
 }
@@ -268,7 +289,8 @@ fn store(resp: CatalogResponse) {
     }
 }
 
-/// Boot-time fetch + 6-hourly refresh.
+/// Boot-time fetch, then refresh — 6-hourly once warm, every 5 minutes while
+/// cold, so a bad first minute doesn't cost a quarter-day of the floor list.
 ///
 /// A failed fetch is never fatal and never clears the cache: an unreachable
 /// cloud must not empty the model picker. The box keeps the last snapshot it
@@ -276,11 +298,7 @@ fn store(resp: CatalogResponse) {
 /// one at all.
 pub fn spawn(pool: PgPool) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(REFRESH_INTERVAL);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            // First tick fires immediately — that's the boot fetch.
-            interval.tick().await;
             match fetch(&pool).await {
                 Ok(resp) => {
                     tracing::debug!(count = resp.data.len(), "model catalog refreshed");
@@ -291,6 +309,8 @@ pub fn spawn(pool: PgPool) {
                      (picker falls back to the compiled list if we've never fetched)"
                 ),
             }
+            let delay = if is_cold() { COLD_RETRY_INTERVAL } else { REFRESH_INTERVAL };
+            tokio::time::sleep(delay).await;
         }
     });
 }
