@@ -1304,10 +1304,38 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
     // Keep the labels honest. A poll (not an event subscription) because the
     // collector is a separate daemon with no push channel back to this app.
+    //
+    // The same tick decides the auto-apply: a staged update self-applies once
+    // the window has been hidden for two hours. Chrome stages-and-waits
+    // because a browser is full of your tabs and gets relaunched daily; this
+    // app is a picture frame over the box-served SPA (no state to lose) that
+    // is DESIGNED never to relaunch — so "applies on next launch" rounded to
+    // never, and the collector rode the stale app for weeks. Restarting while
+    // hidden is invisible; the collector is a separate LaunchAgent and keeps
+    // running through it, and the post-restart reconcile brings it to the new
+    // build. Never while a window is visible — the chip and the tray line
+    // stay the only interruptions a present user sees.
     let app = app.clone();
-    std::thread::spawn(move || loop {
-        refresh_tray(&app, items.clone());
-        std::thread::sleep(std::time::Duration::from_secs(10));
+    std::thread::spawn(move || {
+        let mut last_visible = std::time::Instant::now();
+        const HIDDEN_APPLY_AFTER: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+        loop {
+            refresh_tray(&app, items.clone());
+            let any_visible = app
+                .webview_windows()
+                .values()
+                .any(|w| w.is_visible().unwrap_or(false));
+            if any_visible {
+                last_visible = std::time::Instant::now();
+            }
+            let staged = app
+                .try_state::<std::sync::Mutex<UpdateState>>()
+                .is_some_and(|st| st.lock().unwrap().ready.is_some());
+            if staged && !any_visible && last_visible.elapsed() > HIDDEN_APPLY_AFTER {
+                apply_update(app.clone()); // restarts; never returns
+            }
+            std::thread::sleep(std::time::Duration::from_secs(10));
+        }
     });
 
     Ok(())
@@ -1738,10 +1766,11 @@ fn main() {
                 setup_tray(app.handle())?;
 
                 // Self-update check loop: first pass ~5s after launch (off the
-                // critical path, after reconcile), then every 6h. The stable
-                // channel (mac-latest latest.json) is the source; download is
-                // deferred to the user's "Restart to update" click. The tray's
-                // own poll surfaces the staged state within its interval.
+                // critical path, after reconcile), then every 6h. The
+                // mac-latest manifest is the one source; a hit downloads and
+                // stages silently. The tray's own poll surfaces the staged
+                // state within its interval — and applies it after two hidden
+                // hours (see the poll loop).
                 let updater_handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(5));
