@@ -15,6 +15,22 @@
 //! the enrollment in a single round trip. Nothing new is exchanged, nothing
 //! comes back out of band, and the phone's secret is still minted on the phone.
 //!
+//! # What it needs from the network, and where that bites
+//!
+//! The phone must be able to reach the laptop directly. That is trivially true
+//! on a home or office LAN and NOT true on much of the guest wifi this feature
+//! exists to serve: coworking and hotel networks routinely enable client
+//! isolation, which lets every device reach the internet and none of them reach
+//! each other. Verified on WeWork wifi 2026-08-27 — the laptop reached the box
+//! at home through this door (a real 422 came back from the box's consume) and
+//! the phone could not open a socket to the laptop three feet away, failing
+//! with `tcp connect error: Host is down`.
+//!
+//! The reliable answer there is the phone's own hotspot: put the laptop on it,
+//! and the two share a private network with no isolation while the laptop keeps
+//! its route to the box. Worth saying in the UI rather than leaving to be
+//! rediscovered — the failure names the laptop, so it reads as a broken door.
+//!
 //! # Why this is not `proxy::serve_on`
 //!
 //! The loopback proxy raw-splices a TCP connection onto an iroh bi-stream, and
