@@ -12,8 +12,7 @@
 //! it would summarize (the records) is rendered directly beneath it on the
 //! page. It is the prose the page is written in.
 //!
-//! Mirrors `narrative_identity_gen.rs`: gate → dossier → `BearerClient` →
-//! write back. The article lives in its own `article` column; `content` and
+//! Shape: gate → dossier → `BearerClient` → write back. The article lives in its own `article` column; `content` and
 //! `notes` remain the user's own writing and are never touched here.
 //!
 //! Cost note: this runs on the **Lite** slot and ships **disabled**. On a box

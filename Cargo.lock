@@ -8965,7 +8965,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "virtues"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "age",
  "anyhow",
@@ -9087,7 +9087,7 @@ dependencies = [
 
 [[package]]
 name = "virtues-applets"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -9161,7 +9161,7 @@ dependencies = [
 
 [[package]]
 name = "virtues-helpers"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9198,7 +9198,7 @@ dependencies = [
 
 [[package]]
 name = "virtues-installer"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -9218,7 +9218,7 @@ dependencies = [
 
 [[package]]
 name = "virtues-iroh"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -9234,7 +9234,7 @@ dependencies = [
 
 [[package]]
 name = "virtues-iroh-ffi"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "thiserror 1.0.69",
  "tokio",

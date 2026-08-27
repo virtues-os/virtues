@@ -6011,6 +6011,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6021,6 +6022,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6031,6 +6033,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6041,6 +6044,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6066,6 +6070,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6076,6 +6081,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6134,6 +6140,7 @@ dependencies = [
  "tokio",
  "tracing",
  "virtues-improv",
+ "virtues-plugin-lockstep",
  "virtues-reach-client",
 ]
 
@@ -7022,7 +7029,7 @@ dependencies = [
 
 [[package]]
 name = "virtues-iroh"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -7034,6 +7041,10 @@ dependencies = [
  "tower",
  "tracing",
 ]
+
+[[package]]
+name = "virtues-plugin-lockstep"
+version = "0.1.0"
 
 [[package]]
 name = "virtues-reach-client"

@@ -28,6 +28,8 @@ exclude = [
     "apps/web/plugins/contacts",
     "apps/web/plugins/finance",
     "apps/web/plugins/audio",
+    # Build-dep of every plugin above (the COMMANDS lockstep enforcer).
+    "apps/web/plugins/lockstep",
     # Throwaway iroh evaluation crate — own Cargo.lock, kept out of the main
     # build so iroh's dep tree can't destabilize it during the spike.
     "spike-iroh",

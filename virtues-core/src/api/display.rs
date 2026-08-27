@@ -142,6 +142,10 @@ pub struct DisplayState {
     /// will not say how to start over.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub setup_session: Option<String>,
+    /// The face the ambient slot wears (Settings → Display). Only consulted
+    /// once the box is claimed and nothing is interrupting; the setup and
+    /// fault screens outrank any choice made here.
+    pub face: crate::api::system_display::FaceConfig,
 }
 
 /// One line of the ambient screen's log: a thing the box holds, and how many.
@@ -216,7 +220,9 @@ mod record_cache {
 }
 
 /// Serve the cached record, refreshing behind the request when it is stale.
-fn record_lines(
+/// `pub(crate)` for `api::system_display`, whose redacted mirror reports the
+/// same lines to the Settings page — one cache, one census.
+pub(crate) fn record_lines(
     pool: &sqlx::PgPool,
 ) -> (Vec<RecordLine>, Option<chrono::DateTime<chrono::Utc>>) {
     let (lines, since, stale) = record_cache::peek();
@@ -332,6 +338,8 @@ pub async fn display_state_handler(
         (Vec::new(), None)
     };
 
+    let face = crate::api::system_display::face_config_or_default(pool).await;
+
     (
         StatusCode::OK,
         Json(DisplayState {
@@ -352,6 +360,7 @@ pub async fn display_state_handler(
             setup_phrase,
             phrase_frozen,
             setup_session,
+            face,
         }),
     )
         .into_response()
@@ -404,6 +413,35 @@ pub async fn display_updating_handler(
         .into_response()
 }
 
+/// `GET /api/display/button` — is the case button held, right now?
+///
+/// Exists because the ambient state poll is 30s and a hold lasts 3s: the
+/// countdown the button narrates (`button_held_secs` in `DisplayState`) was
+/// only ever drawn if a poll happened to land mid-hold — about one time in
+/// ten. This is the state poll's fact at a cadence the fact deserves: two
+/// atomic loads behind a loopback GET, cheap enough for the panel to ask
+/// every second, so the one screen the button matters on always draws it.
+///
+/// Box-local like the rest of this module — it carries no secret, but it is
+/// a panel endpoint and the module's rule stays uniform.
+pub async fn display_button_handler(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !is_box_local(&peer, &headers) {
+        return (StatusCode::FORBIDDEN, "not available off-box").into_response();
+    }
+    (
+        StatusCode::OK,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(serde_json::json!({
+            "held_secs": crate::maintenance::reset_button::hold_secs(),
+            "target": crate::maintenance::reset_button::HOLD_SECS,
+        })),
+    )
+        .into_response()
+}
+
 /// Is the transient upgrade unit running?
 ///
 /// `systemctl is-active` on the unit `api::updates` starts the upgrade under.
@@ -411,7 +449,9 @@ pub async fn display_updating_handler(
 /// background download that changes nothing the owner would notice, and a
 /// panel announcing "Updating" for six hours of scheduled fetching would teach
 /// them to ignore the word by the time it mattered.
-fn upgrade_unit_active() -> bool {
+///
+/// `pub(crate)` for `api::system_display`'s mirror of the same fact.
+pub(crate) fn upgrade_unit_active() -> bool {
     std::process::Command::new("systemctl")
         .args(["is-active", "--quiet", "virtues-upgrade.service"])
         .status()

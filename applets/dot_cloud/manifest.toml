@@ -1,0 +1,14 @@
+# Dot Cloud — a night sky of the day. Every event in the record becomes a
+# star; halos of category color pool where the day was dense. Face-only:
+# nothing runs server-side, the face reads the record through virtues.query.
+#
+# Ported 2026-08-26 from the "Dot Cloud viz (viz #2)" handoff spec —
+# deterministic positioning (same seed + same events = identical layout),
+# additive halos, asymmetric twinkle, preset values preserved verbatim.
+# Made for the box's screen (Settings → Display) but renders anywhere a
+# face renders. GPU-verified on the panel: 58fps at full halo fill.
+name = "Dot Cloud"
+description = "A night sky of your day — every event a star."
+owner = "user"
+triggers = []
+default_enabled = true

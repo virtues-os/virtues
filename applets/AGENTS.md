@@ -210,8 +210,9 @@ real alternative. Never write a prompt that pretends a tool exists.**
 
 - `applets/morning_examen/` — the canonical Reflect: schedule + agent, four
   flat fields, nothing else.
-- `applets/hello_world/` — a face (`face/index.html`): virtues.css theming,
-  `virtues.query`, graceful degradation when tables are absent.
+- `applets/dot_cloud/` — a face-only applet (`face/index.html`): WebGL
+  canvas, `virtues.query` over the `data_*` ontology, graceful degradation
+  (renders its star field even with zero rows). The screen's default face.
 
 ## For builtin (Rust) applet development
 

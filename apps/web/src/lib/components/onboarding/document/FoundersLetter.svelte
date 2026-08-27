@@ -39,8 +39,6 @@
 	const EMAIL = "adam@virtues.com";
 	const X_URL = "https://x.com/adamjaces";
 	const INSTAGRAM_URL = "https://www.instagram.com/aajaces/";
-	// The long version, for anyone the figure just convinced.
-	const MANIFESTO_URL = "https://virtues.com/library/manifesto";
 </script>
 
 <div class="letter">
@@ -57,15 +55,19 @@
 		</div>
 
 		<div class="body">
-			<!-- A BELIEF, THEN A QUESTION, in one breath. The list is three
-			     CATEGORIES, no names — a category cannot be argued with, and a
-			     name invites an argument about that name, which this paragraph
-			     cannot afford. -->
+			<!-- A BELIEF, THEN A QUESTION, in one breath. One continuous motion —
+			     belief, principle, question — no stage directions ("So ask
+			     plainly:" was a command to ask a question the letter asks
+			     anyway) and no fragment drumroll: the question's last word is
+			     "you?", and ¶2's "yours by right" is its answer. The list is
+			     three CATEGORIES, no names — a category cannot be argued with,
+			     and a name invites an argument about that name, which this
+			     paragraph cannot afford. -->
 			<p>
 				I'm Adam Jace, and I started Virtues because I believe in subsidiarity — the old
 				idea that a thing belongs at the most local level that can hold it. Nothing is more
-				local than your own life. So ask plainly: who should hold the whole account of your
-				life? A government, a political party, big tech? Or you.
+				local than your own life. So who should hold the whole account of it: a government,
+				a political party, big tech, or you?
 			</p>
 
 			<!-- THE PREMISE. Two claims: capability (you can hold this yourself)
@@ -132,18 +134,23 @@
 				data to protect your soul.
 			</p>
 
-			<!-- THE GIFT. A page WAITING FOR YOU — future tense, addressed to the
-			     reader — never "it writes / it reads / it keeps": every revision
-			     that made the box the subject turned the gift into a mechanism,
-			     and each one was reverted (last: 2026-08-24). No definitional
-			     opener either — ¶2 and the ledger just did that work. This
-			     paragraph's whole job is what protecting the record BUYS,
-			     arriving right after the thesis commands you to protect it:
-			     command, then gift. The asks below are its proof. -->
+			<!-- THE GIFT. What protecting the record BUYS, right after the thesis
+			     commands you to protect it: command, then gift. The image is the
+			     WIKIPEDIA OF YOUR LIFE — instantly graspable, browsable, always
+			     growing — and the list escalates from logged facts (went, spoke,
+			     worked) through an inferred pattern (the places you go when
+			     you're happy) to meaning (the stories that matter most), which
+			     DEMONSTRATES "a record compounds" instead of asserting it. The
+			     daily-page line ("a page will be waiting for you") moved to the
+			     reveal's door, where tomorrow is real. The asks below are this
+			     paragraph's proof, and the letter ends on them — the ∴ is the
+			     one summit; a closing essay-paragraph was a second one, cut
+			     2026-08-24 (its lines are banked in docs/voice.md). -->
 			<p>
-				Every day, a page will be waiting for you: yesterday, written down. Where you
-				went, who you spoke with, what you were working on. Thin at first, having only
-				just met you. But a record compounds. Give it time, then ask:
+				Every day, Virtues writes the wikipedia of your life: where you went, who you
+				spoke with, what you were working on, the places you go when you're happy, the
+				stories that matter most. Thin at first, having only just met you. But a record
+				compounds. Give it time, then ask:
 			</p>
 		</div>
 
@@ -169,34 +176,21 @@
 		</ul>
 
 		<div class="body">
-			<!-- THE CLOSE. The asks end on product; the letter must end on the
-			     person. The frame is REMEMBERING, not being-known — the system as
-			     a mirror and a way to search your own life (anamnesis). "Growing
-			     older", not "growing up": the aphorism is about the accumulating
-			     life, and "growing up" pointed at childhood — the one season
-			     when discovery genuinely outweighs memory. The last sentence
-			     inverts the manifesto's diagnosis — technology strips away the
-			     part of life that has nothing to do with it — into technology's
-			     one proper use. The us/you shift is deliberate: the founder
-			     joins the reader for the final clause. -->
+			<!-- THE LAST WORD. Two plain sentences after the asks — the grievance
+			     and the turn. The hard words (subsidiarity, the ledger) did
+			     their work upstairs; the close is the line anyone could repeat
+			     at dinner. The you→us shift between the sentences is the
+			     founder stepping in beside the reader for the final clause,
+			     which lands on the cadence every cut spared: more human, and
+			     more virtuous. (The essay-close and the manifesto link were
+			     both cut 2026-08-24 — the essay was a second summit after the
+			     ∴, the link an exit ramp to a cloud-era document the ledger
+			     contradicts; its lines are banked in docs/voice.md.) -->
 			<p>
-				The goal is to know yourself more intimately than any company or model ever
-				will: a mirror for everything you had let slip, a way to search your own life.
-				Because growing older is less about discovering new things than remembering what
-				you already knew. And technology has one good use: to give back the part of life
-				that has nothing to do with technology — to make us more human, and more virtuous.
+				Technology has exploited you long enough. This is what it was always supposed to
+				do: make us more human, and more virtuous.
 			</p>
 		</div>
-
-		<!-- The long-form case (subsidiarity, where the record lives, what is
-		     borrowed) moved out of the letter entirely — it is the manifesto's
-		     to make. One quiet pointer for whoever wants it now. -->
-		<p class="further">
-			<a href={MANIFESTO_URL} target="_blank" rel="noreferrer">
-				Our case for subsidiarity in technology
-				<Icon icon="ri:external-link-line" width="13" />
-			</a>
-		</p>
 
 		<div class="sign">
 			<!-- MASKED, NOT INVERTED. An earlier version inverted black ink assuming
@@ -396,31 +390,6 @@
 	   rather than starting a new block. */
 	.asks + .body {
 		margin-top: 1.5rem;
-	}
-
-	/* SAME TYPE AS THE LETTER, muted rather than smaller — a caption's way of
-	   staying a caption. */
-	.further {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: var(--t-body);
-		line-height: 1.7;
-		color: var(--color-foreground-muted);
-		margin: 2.25rem 0 0;
-	}
-
-	.further a {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		color: var(--color-foreground-muted);
-		text-decoration: none;
-		border-bottom: 1px solid var(--color-border);
-		padding-bottom: 2px;
-	}
-
-	.further a:hover {
-		color: var(--color-foreground);
-		border-bottom-color: var(--color-foreground-subtle);
 	}
 
 	/* ── sign-off ──────────────────────────────────────────────────────── */

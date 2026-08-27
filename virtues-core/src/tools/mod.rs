@@ -227,6 +227,9 @@ pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
     let allowlist = match agent_mode {
         "deep_research" => Some(DEEP_RESEARCH_TOOLS),
         "council" => Some(COUNCIL_TOOLS),
+        // The narrative interview: a listener, not an agent. No tools at all —
+        // it must not read the record mid-confession or claim capabilities.
+        "interview" => Some(&[] as &[&str]),
         _ => None,
     };
     match allowlist {

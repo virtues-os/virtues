@@ -6,7 +6,7 @@
 
 .DEFAULT_GOAL := help
 .PHONY: help init commit migration dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
-        dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app web-test \
+        dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app mac-dev web-test \
         iroh-ffi-ios iroh-ffi-mac ios-release flash
 
 AWS_REGION ?= us-east-1
@@ -195,6 +195,13 @@ db: ## Ensure brew postgres@$(PG_MAJOR) is installed + running, db exists with p
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues'" | grep -q 1 || { echo "→ creating db 'virtues'"; $(PG_BIN)/createdb virtues; }
 	@$(PG_BIN)/psql -d virtues -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues_api'" | grep -q 1 || { echo "→ creating db 'virtues_api' (local virtues-api entitlements)"; $(PG_BIN)/createdb virtues_api; }
+# `createdb` makes the INVOKING user the owner, and since the 2026-08-18
+# de-superuser the `virtues` role can no longer CREATE in a schema it does not
+# own (PG15+ removed public's blanket CREATE) — virtues-api's migrations then
+# die with "permission denied for schema public". Idempotent, like the role
+# downgrade above.
+	@$(PG_BIN)/psql -d postgres -c "ALTER DATABASE virtues_api OWNER TO virtues" >/dev/null
+	@$(PG_BIN)/psql -d virtues_api -c "ALTER SCHEMA public OWNER TO virtues" >/dev/null
 # `vector` into template1, so every database created afterwards inherits it.
 # This is what lets the dev role be a NON-superuser: pgvector is not a trusted
 # extension (`pg_available_extensions.trusted = f`), so `CREATE EXTENSION vector`
@@ -388,9 +395,9 @@ dev-pull: db ## Snapshot the live box's Postgres into a throwaway local db (~min
 	ssh $(DEV_BOX_SSH) 'sudo -u postgres pg_dump -Fc virtues' > "$$dump" || { echo "✖ box dump failed (is 'ssh $(DEV_BOX_SSH)' reachable?)"; exit 1; }; \
 	echo "→ rebuilding local '$(DEV_BOXCOPY_DB)' from the snapshot…"; \
 	$(PG_BIN)/dropdb --if-exists $(DEV_BOXCOPY_DB); \
-	$(PG_BIN)/createdb $(DEV_BOXCOPY_DB); \
+	$(PG_BIN)/createdb -O virtues $(DEV_BOXCOPY_DB); \
 	$(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null; \
-	$(PG_BIN)/pg_restore --no-owner -d $(DEV_BOXCOPY_DB) "$$dump" || true; \
+	$(PG_BIN)/pg_restore --no-owner --role=virtues -d $(DEV_BOXCOPY_DB) "$$dump" || true; \
 	echo "→ disarming applets in the copy…"; \
 	$(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -tAc "UPDATE app_applets SET enabled = false WHERE enabled" >/dev/null 2>&1 || true; \
 	echo "✓ '$(DEV_BOXCOPY_DB)' refreshed ($$($(PG_BIN)/psql -d $(DEV_BOXCOPY_DB) -tAc "SELECT pg_size_pretty(pg_database_size('$(DEV_BOXCOPY_DB)'))")), applets disabled. Raw dump deleted. Run 'make dev-real'."
@@ -467,6 +474,18 @@ icons: ## Rebuild every icon artifact from AppIcon.icon (needs Xcode 26)
 # Ask cargo where the bundle is rather than globbing `src-tauri/target`: that
 # path holds a pre-shared-target-dir build from July, so the find would have
 # hit a months-old .app and cheerfully relaunched it as "freshly built".
+# An ISOLATED second app identity beside the real one: its own store dir
+# (`~/Library/Application Support/virtues-<name>/` — fresh key, fresh pairing,
+# own outbox) and its own loopback port derived from the name (prod keeps
+# :7117). Exists for UI/pairing work against a bench box while the machine's
+# real pairing — and the collector shipping the real record home — stays
+# untouched: a profiled instance refuses every collector mutation by
+# construction. Reset a profile by deleting its dir. Combine with
+# VIRTUES_FORCE_CONNECT=1 to pin the airlock open.
+mac-dev: ## Run the desktop app under an isolated dev profile: PROFILE=work (own pairing + port; never touches the collector)
+	@[ -n "$(PROFILE)" ] || { echo "error: PROFILE is required  —  make mac-dev PROFILE=work"; exit 1; }
+	cd apps/web && VIRTUES_PROFILE=$(PROFILE) pnpm tauri dev
+
 OPEN ?= 1
 mac-app: ## Build the macOS app (Virtues.app + sidecars) and open it (OPEN=0 to skip)
 	tools/build-mac-app.sh

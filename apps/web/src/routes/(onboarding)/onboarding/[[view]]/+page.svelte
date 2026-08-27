@@ -52,7 +52,6 @@
 		updateProfile,
 		getSetupState,
 		skipOnboarding,
-		getInterviewAnswers,
 	} from "$lib/api/client";
 	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
 	import {
@@ -67,7 +66,7 @@
 	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import Introductions from "$lib/components/onboarding/document/Introductions.svelte";
-	import Interview from "$lib/components/onboarding/interview/Interview.svelte";
+	import InterviewChat from "$lib/components/onboarding/interview/InterviewChat.svelte";
 	import DraftReview from "$lib/components/onboarding/interview/DraftReview.svelte";
 	import ConnectWorld from "$lib/components/onboarding/document/ConnectWorld.svelte";
 	import RevealSection from "$lib/components/onboarding/document/RevealSection.svelte";
@@ -144,9 +143,6 @@
 			deviceReady,
 	);
 	const narrativeReady = $derived(onboardingDone("narrative_identity_ready"));
-	const narrativeGenerating = $derived(
-		state_?.onboarding.find((s) => s.id === "narrative_identity_ready")?.kind === "generating",
-	);
 
 	// What the strip shows as behind you. Deliberately generous: `sources` counts
 	// as passed once anything is connected, never as "complete", because more can
@@ -171,7 +167,12 @@
 	 * `/onboarding/you` on an unlinked box now opens the gate, not the reveal,
 	 * which is a better answer than a bounce.
 	 */
-	const resolved = $derived<ViewId>(!worldEnough ? "sources" : "your-words");
+	// A brand-new box starts at the letter — `onboarding_status` is the
+	// server-side memory of having read it (flipped by Begin), so a refresh or
+	// a second browser resumes past it instead of skipping it entirely.
+	const resolved = $derived<ViewId>(
+		state_?.onboarding_status === "new" ? "letter" : !worldEnough ? "sources" : "your-words",
+	);
 
 	/** Every step is offerable — the AI-needing leaves guard themselves. */
 	const open = $derived(STEPS.map((s) => s.id));
@@ -225,9 +226,14 @@
 		reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 		void refreshState();
 		// Best-effort: this only changes a verb on a button, and failing to read
-		// it must never keep someone off the page.
-		void getInterviewAnswers()
-			.then((rows) => (interviewStarted = rows.some((r) => r.answer.trim().length > 0)))
+		// it must never keep someone off the page. The interview is one chat now
+		// (see InterviewChat) — started means the person has said anything in it.
+		void fetch("/api/chats/chat_narrative_interview")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d) => {
+				if (d?.messages?.some((m: { role: string }) => m.role === "user"))
+					interviewStarted = true;
+			})
 			.catch(() => {});
 		void captureTimezone();
 		// Light poll so steps completed elsewhere (OAuth round-trip, the collector
@@ -329,14 +335,23 @@
 			{#key view}
 				<div class="ob-page" class:ob-back={back}>
 					{#if view === "letter"}
-						<FoundersLetter onbegin={() => go("introductions")} />
+						<FoundersLetter
+							onbegin={() => {
+								// Begin = the letter is read; remember it on the box. Only
+								// from 'new' — later stages must never be walked back.
+								if (state_?.onboarding_status === "new") {
+									void updateProfile({ onboarding_status: "onboarding" }).then(refreshState).catch(() => {});
+								}
+								go("introductions");
+							}}
+						/>
 					{:else if view === "introductions"}
 						<!-- Introductions is the hand-off from reading to working, so
 						     Continue goes wherever the box actually needs us — not
 						     blindly to the next slug. -->
 						<Introductions onnext={() => go(resolved)} />
 					{:else if view === "interview"}
-						<Interview onfinish={() => go("draft")} />
+						<InterviewChat onfinish={() => go("draft")} />
 					{:else if view === "draft"}
 						<DraftReview
 							ondone={() => {
@@ -376,12 +391,17 @@
 								<AccountGate done={accountDone} onLinked={refreshState} />
 							</div>
 						{:else}
-							<!-- The doorway to the interview, which is its own view. -->
-							<h1 class="ob-h1">The part it can't observe</h1>
+							<!-- The doorway to the interview, which is its own view.
+						     The why is COMPLETENESS, not calibration: the record has a
+						     hard left edge (the census names its exact date), and the
+						     life before it has one source. -->
+							<h1 class="ob-h1">Before the record</h1>
 							<p class="ob-lede">
-								Everything else here your box works out by watching. This is the half it
-								cannot: where you have been, what you are up against, who you mean to become.
-								Five questions, and nothing writes them but you.
+								Virtues exists to keep as complete a record of your life as possible. But a
+								record built from devices only reaches back so far — most of a life comes
+								before it, and that part has to be written: who you were, the moments that
+								mattered, what brought you joy, the people who shaped you, and the ones who
+								were missing. Five questions to start it.
 							</p>
 
 							<button class="ob-btn" onclick={() => go("interview")}>
@@ -411,7 +431,6 @@
 						<div class="work">
 							<RevealSection
 								ready={narrativeReady}
-								generating={narrativeGenerating}
 								{reduced}
 								onEnter={enterApp}
 								onConnect={() => go("sources")}
