@@ -46,14 +46,10 @@
      * footer bar. Not a trade worth making for a gutter.
      */
     /**
-     * The extra bottom room on the phone is the floating tab bar's. The shell
-     * deliberately does NOT reserve that space — the view runs under the bar so
-     * content passes behind the glass, which is the whole point of it being
-     * glass — so the scroller has to be the thing that ends above it, or the
-     * last row would sit under the bar unreachable.
+     * The phone has no bottom chrome anymore — just the home indicator's
+     * safe-area to stay clear of.
      */
-    const phoneTabbarRoom =
-        "pb-[calc(1.5rem+var(--tabbar-reserve)+env(safe-area-inset-bottom))]";
+    const phoneBottomRoom = "pb-[calc(1.5rem+env(safe-area-inset-bottom))]";
 
     /**
      * A touch more room at the top on the phone than the old `py-8`, because
@@ -63,8 +59,8 @@
      * the notch.
      */
     const paddingClass = $derived({
-        default: `px-5 pt-10 ${phoneTabbarRoom} md:p-12`,
-        compact: `px-4 pt-8 ${phoneTabbarRoom} md:px-6 md:py-8`,
+        default: `px-5 pt-10 ${phoneBottomRoom} md:p-12`,
+        compact: `px-4 pt-8 ${phoneBottomRoom} md:px-6 md:py-8`,
         none: "",
     }[padding]);
 

@@ -5,8 +5,6 @@
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
 	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
-	import MobileTabBar from "$lib/components/mobile/MobileTabBar.svelte";
-	import MobileSettingsView from "$lib/components/mobile/MobileSettingsView.svelte";
 	import MobileOnboarding from "$lib/components/mobile/MobileOnboarding.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
@@ -409,10 +407,9 @@
 	</main>
 </div>
 
-<!-- Mobile bottom-tab chrome (phone shell only) -->
+<!-- First-run stream setup (phone shell only). The shell itself carries all
+     other mobile chrome — the drawer and the top bar live inside it. -->
 {#if mobileLayout.isMobile}
-	<MobileTabBar />
-	<MobileSettingsView />
 	<MobileOnboarding />
 {/if}
 
