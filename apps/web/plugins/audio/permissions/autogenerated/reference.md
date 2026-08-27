@@ -9,6 +9,7 @@ Default permissions for the audio plugin
 - `allow-resume`
 - `allow-status`
 - `allow-set-notify`
+- `allow-set-quiet-hours`
 
 ## Permission Table
 
@@ -119,6 +120,32 @@ Enables the set_notify command without any pre-configured scope.
 <td>
 
 Denies the set_notify command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`audio:allow-set-quiet-hours`
+
+</td>
+<td>
+
+Enables the set_quiet_hours command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`audio:deny-set-quiet-hours`
+
+</td>
+<td>
+
+Denies the set_quiet_hours command without any pre-configured scope.
 
 </td>
 </tr>

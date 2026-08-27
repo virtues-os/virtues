@@ -54,6 +54,10 @@
 		notify: boolean;
 		/** Chunks shipped metadata-only because they measured silent. */
 		silentDropped?: number;
+		/** Quiet-hours window, minutes since local midnight; -1 or absent = off.
+		 * Mute-don't-release: the mic stays armed, chunks stop being written. */
+		quietStart?: number;
+		quietEnd?: number;
 	}
 
 	/** Radio-hygiene counters — the battery A/B harness (reach plugin). */
@@ -318,6 +322,31 @@
 		}
 	}
 
+	// Quiet hours (mute-don't-release). Window is minutes since local midnight.
+	const quietOn = $derived(
+		audio != null && (audio.quietStart ?? -1) >= 0 && (audio.quietEnd ?? -1) >= 0,
+	);
+	function minToTime(m: number): string {
+		const h = Math.floor(m / 60) % 24;
+		return `${String(h).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+	}
+	function timeToMin(t: string): number {
+		const [h, m] = t.split(":").map(Number);
+		return (h || 0) * 60 + (m || 0);
+	}
+	async function setQuietHours(start: number, end: number) {
+		try {
+			audio = await invoke<AudioStatus>("plugin:audio|set_quiet_hours", { start, end });
+		} catch (e) {
+			error = String(e);
+		}
+	}
+	/// Toggle: default window 22:00 → 07:00 on first enable.
+	function toggleQuietHours() {
+		if (quietOn) void setQuietHours(-1, -1);
+		else void setQuietHours(22 * 60, 7 * 60);
+	}
+
 	/// Unpair this device: clear the Keychain-stored pairing (seed + box info), so
 	/// the app forgets the box entirely. Since the pairing survives app deletion
 	/// (Keychain), this is the only way to fully reset — useful for switching boxes
@@ -543,6 +572,28 @@
 				<span class="s-subrow-label">Notify me if recording stops</span>
 				<span class="switch" class:on={audio?.notify} aria-hidden="true"></span>
 			</button>
+			<button class="s-subrow" onclick={toggleQuietHours} type="button">
+				<span class="s-subrow-label">Quiet hours</span>
+				<span class="switch" class:on={quietOn} aria-hidden="true"></span>
+			</button>
+			{#if quietOn && audio}
+				<div class="s-subrow s-times">
+					<input
+						class="s-time"
+						type="time"
+						value={minToTime(audio.quietStart ?? 0)}
+						onchange={(e) => setQuietHours(timeToMin(e.currentTarget.value), audio?.quietEnd ?? 0)}
+					/>
+					<span class="s-subrow-label">to</span>
+					<input
+						class="s-time"
+						type="time"
+						value={minToTime(audio.quietEnd ?? 0)}
+						onchange={(e) => setQuietHours(audio?.quietStart ?? 0, timeToMin(e.currentTarget.value))}
+					/>
+					<span class="s-subrow-label s-times-note">mic stays on, nothing is kept</span>
+				</div>
+			{/if}
 		{/if}
 	</div>
 
@@ -734,6 +785,23 @@
 	.s-subrow-label {
 		font-size: 13px;
 		color: var(--color-foreground-muted);
+	}
+	.s-times {
+		justify-content: flex-start;
+		cursor: default;
+	}
+	.s-time {
+		font: inherit;
+		font-size: 13px;
+		color: var(--color-foreground);
+		background: transparent;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		padding: 3px 6px;
+	}
+	.s-times-note {
+		margin-left: auto;
+		font-size: 11px;
 	}
 	.switch {
 		flex: none;

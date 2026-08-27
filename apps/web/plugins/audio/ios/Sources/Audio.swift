@@ -69,6 +69,40 @@ public final class AudioRecorder: NSObject {
   private var cachedNotify = true
   private var cachedLastGood: TimeInterval = 0
 
+  // Quiet hours — MUTE, DON'T RELEASE. Inside the window the engine, session,
+  // and tap all stay exactly as they are (releasing the mic would hit the
+  // background-restart wall at window end — an app nobody opens at 7am would
+  // never resume); `process()` just stops writing chunks. The mic stays hot, so
+  // this is a privacy/alarm-margin feature more than a battery one — but it
+  // does eliminate the window's chunk encode + drain dials. The window is a
+  // pair of minutes-since-midnight in LOCAL wall-clock time; start==end or
+  // unset (-1) = off; start>end wraps midnight (22:00→07:00).
+  private let quietStartKey = "virtues.audio.quietStart"
+  private let quietEndKey = "virtues.audio.quietEnd"
+  private var cachedQuietStart: Int = -1
+  private var cachedQuietEnd: Int = -1
+
+  private func quietHoursActive(_ now: Date) -> Bool {
+    let start = cachedQuietStart, end = cachedQuietEnd
+    if start < 0 || end < 0 || start == end { return false }
+    let c = Calendar.current.dateComponents([.hour, .minute], from: now)
+    let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    return start < end ? (m >= start && m < end) : (m >= start || m < end)
+  }
+
+  public func quietHours() -> (start: Int, end: Int) {
+    (cachedQuietStart, cachedQuietEnd)
+  }
+
+  public func setQuietHours(start: Int, end: Int) {
+    cachedQuietStart = start
+    cachedQuietEnd = end
+    let d = UserDefaults.standard
+    d.set(start, forKey: quietStartKey)
+    d.set(end, forKey: quietEndKey)
+    NSLog("[Audio] quiet hours set %d..%d (minutes, -1=off)", start, end)
+  }
+
   private let session = AVAudioSession.sharedInstance()
   private let engine = AVAudioEngine()
   private var converter: AVAudioConverter?
@@ -115,6 +149,8 @@ public final class AudioRecorder: NSObject {
     cachedEnabled = d.bool(forKey: enabledKey)
     cachedNotify = d.object(forKey: notifyKey) == nil ? true : d.bool(forKey: notifyKey)
     cachedLastGood = d.double(forKey: lastGoodKey)
+    cachedQuietStart = d.object(forKey: quietStartKey) == nil ? -1 : d.integer(forKey: quietStartKey)
+    cachedQuietEnd = d.object(forKey: quietEndKey) == nil ? -1 : d.integer(forKey: quietEndKey)
     let nc = NotificationCenter.default
     nc.addObserver(self, selector: #selector(handleInterruption),
       name: AVAudioSession.interruptionNotification, object: session)
@@ -426,6 +462,16 @@ public final class AudioRecorder: NSObject {
       DispatchQueue.main.async { [weak self] in self?.clearNudge() }
     }
     interruptionHoldUntil = nil  // audio is flowing — any interruption is over
+    // Quiet hours: mute, don't release. Everything above still ran — the
+    // heartbeat and lastGood stamps say "capture is HEALTHY, just muted", which
+    // keeps the watchdog quiet, the gap nudge silent, and location in its cheap
+    // mode. On window entry the partial chunk finalizes once (outFile goes nil);
+    // on exit the next buffer reopens a chunk and capture resumes seamlessly.
+    if quietHoursActive(now) {
+      if outFile != nil { rotate(restart: false) }
+      return
+    }
+    if outFile == nil { try? openChunk() }
     guard let converter = converter else { return }
     let ratio = targetSampleRate / (hwFormat?.sampleRate ?? targetSampleRate)
     let cap = AVAudioFrameCount(Double(input.frameLength) * ratio) + 32
