@@ -15,9 +15,15 @@
 	interface Props {
 		name: string;
 		size?: number;
+		/**
+		 * Skip the sidebar's dress (`.sidebar-icon`: muted color, half
+		 * opacity, sidebar sizing). The glyphs also serve rooms that are not
+		 * the sidebar — the phone drawer — and there the host styles them.
+		 */
+		bare?: boolean;
 	}
 
-	let { name, size = 16 }: Props = $props();
+	let { name, size = 16, bare = false }: Props = $props();
 
 	const GLYPHS: Record<string, string> = {
 		chats:
@@ -58,7 +64,7 @@
 </script>
 
 <svg
-	class="atlas-icon sidebar-icon"
+	class="atlas-icon {bare ? '' : 'sidebar-icon'}"
 	width={size}
 	height={size}
 	viewBox="0 0 16 16"
