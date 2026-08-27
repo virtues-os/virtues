@@ -598,3 +598,42 @@ pub(crate) async fn pair_door_status<R: Runtime>(app: AppHandle<R>) -> Result<se
     None => serde_json::json!({ "open": false }),
   })
 }
+
+// ─── The pairing handoff ─────────────────────────────────────────────────────
+//
+// The door's sibling, for the network the door cannot survive (coworking wifi
+// that isolates clients). The laptop mints the phone's identity, enrolls its
+// public half with the box over the relay, and hands the result over as one QR
+// the phone scans — no network between the two devices at all.
+
+/// LAPTOP: returns `{qrSvg, nodeId}`. Desktop-only — a phone has no second
+/// device to enroll and no Add-device surface.
+#[command]
+pub(crate) async fn pair_handoff_create<R: Runtime>(
+  app: AppHandle<R>,
+  label: Option<String>,
+) -> Result<serde_json::Value> {
+  #[cfg(any(target_os = "ios", target_os = "android"))]
+  {
+    let _ = (&app, label);
+    return Err(crate::Error::Reach(
+      "a pairing code is created on a computer, not a phone".into(),
+    ));
+  }
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let (qr_svg, node_id) = app.reach().create_handoff(label).await?;
+    Ok(serde_json::json!({ "qrSvg": qr_svg, "nodeId": node_id }))
+  }
+}
+
+/// PHONE: adopt a scanned handoff payload. Returns the same ReachStatus every
+/// other pairing path returns, so the airlock's existing success handling works
+/// unchanged.
+#[command]
+pub(crate) async fn pair_handoff_accept<R: Runtime>(
+  app: AppHandle<R>,
+  payload: String,
+) -> Result<ReachStatus> {
+  app.reach().accept_handoff(&payload).await
+}

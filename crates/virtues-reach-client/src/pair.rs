@@ -57,6 +57,36 @@ pub struct MintedIdentity {
     secret_hex: String,
 }
 
+impl MintedIdentity {
+    /// The raw seed, for the ONE case that has to move an identity off the
+    /// machine that minted it: the pairing handoff, where a paired laptop
+    /// mints a phone's identity, enrolls its public half with the box, and
+    /// hands the seed to the phone in a QR (see `pair_door`'s sibling flow).
+    ///
+    /// Deliberately narrow and deliberately named. Everywhere else the seed
+    /// stays inside this type on the device that generated it — which is why
+    /// the field is private and this is a method you have to reach for.
+    pub fn secret_hex_for_handoff(&self) -> &str {
+        &self.secret_hex
+    }
+
+    /// Rebuild an identity from a seed handed over by a paired device. The
+    /// node id is DERIVED, never carried: a payload claiming a public key that
+    /// doesn't match its seed would otherwise install a record that can never
+    /// dial anything, failing later and somewhere else.
+    pub fn from_handoff_secret(secret_hex: &str) -> Result<Self> {
+        let bytes = hex::decode(secret_hex.trim()).context("decode handoff seed")?;
+        let seed: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow!("handoff seed must be 32 bytes, got {}", bytes.len()))?;
+        Ok(MintedIdentity {
+            node_id: virtues_iroh::SecretKey::from_bytes(&seed).public().to_string(),
+            secret_hex: hex::encode(seed),
+        })
+    }
+}
+
 /// Mint a fresh iroh identity for this device — the same generation
 /// [`consume`] performs inline for the HTTP path.
 pub fn mint_identity() -> MintedIdentity {
