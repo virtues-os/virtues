@@ -1,5 +1,20 @@
 # The Sitting — a Life Story Interview for onboarding
 
+> **FINAL FORM (2026-08-27, built):** the interview left onboarding entirely.
+> Onboarding is letter → introductions → sources → reveal, and the reveal's
+> door says what happens next. The interview is the product's FIRST
+> CONVERSATION: one seeded chat ("In your own words",
+> `chat_narrative_interview`), opened in the real ChatView, where the server
+> forces interview mode by chat id (standalone prompt, zero tools) and the
+> authored opening greets them. "Write it up" in that chat runs the drafter
+> over the whole transcript and opens the document beside it. Everything
+> bespoke died: the words step, both doors, InterviewChat, DraftReview (its
+> rules-consent flow is an OPEN item to restore on the NI page or in the
+> draft flow). The sections below are design history — the territories, the
+> conduct vows, the door copy, and the reciprocity assets (founder video +
+> his own NI excerpt) all survive in the prompt and as planned additions to
+> the chat's empty state.
+
 *Plan, 2026-08-26. Replaces the textarea interview (and the one-evening
 chapter-cards experiment) with a conducted interview. Status: DIRECTION
 CONFIRMED by Adam 2026-08-26 ("the most intellectually felt and authentically

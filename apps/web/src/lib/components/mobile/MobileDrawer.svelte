@@ -55,9 +55,20 @@
 	 * A conversation's recency, said the way a person would: clock time today,
 	 * a weekday inside the week, a date beyond it. Rows carry this as their
 	 * caption, which is what lets the list get by with one section label.
+	 *
+	 * The parse is Safari-proof on purpose: WebKit returns NaN for the
+	 * Postgres-style shapes Chromium happily accepts ("2026-08-27 18:22:33",
+	 * a bare "+00" offset, no timezone at all) — which is exactly why the
+	 * captions rendered in the dev browser and vanished on the phone. Space
+	 * becomes T, "+00" becomes "+00:00", and a timestamp with no zone is
+	 * declared UTC, which is what the server writes.
 	 */
 	function when(iso: string): string {
-		const d = new Date(iso);
+		let s = iso || "";
+		if (!s.includes("T")) s = s.replace(" ", "T");
+		if (/[+-]\d\d$/.test(s)) s += ":00";
+		else if (!/([zZ]|[+-]\d\d:\d\d)$/.test(s)) s += "Z";
+		const d = new Date(s);
 		if (Number.isNaN(d.getTime())) return "";
 		const midnight = new Date();
 		midnight.setHours(0, 0, 0, 0);
@@ -142,7 +153,11 @@
 		display: flex;
 		flex-direction: column;
 		height: 100%;
-		padding-top: env(safe-area-inset-top);
+		/* NO safe-area padding of its own: the drawer lives inside `main`,
+		   which already pads the status bar (see main.is-mobile in the app
+		   layout). Padding it again pushed the mast a full notch-height below
+		   the viewport's top bar, and the two bars are meant to share a
+		   baseline — the » lands where the ghost/compose control sits. */
 		background: var(--color-surface-elevated, var(--color-surface));
 		color: var(--color-foreground);
 	}

@@ -64,6 +64,17 @@ pub extern "C" fn virtues_enqueue(stream: *const c_char, record_json: *const c_c
   }
 }
 
+/// Report radio cost from Swift (ReachMonitor): 1 = constrained (cellular /
+/// expensive path / Low Power Mode, and not charging), 0 = cheap (Wi-Fi or on
+/// power). Each backgrounded drain is a fresh QUIC dial whose LTE
+/// connection-promotion + ~10s high-power tail costs the same regardless of
+/// payload, so on constrained radio the drain loop batches chunks instead of
+/// dialing per chunk (see `drain_due` in lib.rs). Foreground is never held.
+#[no_mangle]
+pub extern "C" fn virtues_radio_constrained(constrained: i32) {
+  crate::set_radio_constrained(constrained != 0);
+}
+
 /// Report app lifecycle from Swift (didEnterBackground=1 / didBecomeActive=0).
 /// Backgrounded is what licenses endpoint parking after a drain: with the
 /// webview suspended nothing needs the endpoint, and a parked endpoint is the
@@ -97,6 +108,13 @@ pub extern "C" fn virtues_drain_blocking(timeout_secs: i32) -> i32 {
   let Some(rec) = store.load().ok().flatten() else {
     return -1;
   };
+  // Constrained-radio holdoff, shared clock with the upload loop: a location
+  // wake / fallback timer inside the holdoff window leaves rows queued for the
+  // batched dial. First call after launch always runs (a cold sig-loc relaunch
+  // may not live long enough to wait out a window).
+  if !crate::bg_drain_due() {
+    return 0;
+  }
   let timeout = std::time::Duration::from_secs(timeout_secs.clamp(1, 60) as u64);
 
   tauri::async_runtime::block_on(async move {
@@ -146,8 +164,10 @@ pub(crate) fn keep_symbols() {
   let drain: extern "C" fn(i32) -> i32 = virtues_drain_blocking;
   let recover: extern "C" fn() -> i32 = virtues_recover_connection;
   let app_bg: extern "C" fn(i32) = virtues_app_background;
+  let radio: extern "C" fn(i32) = virtues_radio_constrained;
   std::hint::black_box(enqueue as *const ());
   std::hint::black_box(drain as *const ());
   std::hint::black_box(recover as *const ());
   std::hint::black_box(app_bg as *const ());
+  std::hint::black_box(radio as *const ());
 }

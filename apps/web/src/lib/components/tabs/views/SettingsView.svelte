@@ -49,6 +49,7 @@
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
+	import ModelsView from '$lib/components/tabs/views/ModelsView.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
@@ -135,6 +136,7 @@
 	type Section =
 		| 'you'
 		| 'assistant'
+		| 'models'
 		| 'billing'
 		| 'usage'
 		| 'system'
@@ -146,6 +148,7 @@
 
 	const SECTIONS = [
 		'assistant',
+		'models',
 		'billing',
 		'usage',
 		'system',
@@ -180,6 +183,8 @@
 			<ProfileView {tab} {active} />
 		{:else if section === 'assistant'}
 			<AssistantView {tab} {active} />
+		{:else if section === 'models'}
+			<ModelsView {tab} {active} />
 		{:else if section === 'billing'}
 			<BillingView {tab} {active} />
 		{:else if section === 'usage'}

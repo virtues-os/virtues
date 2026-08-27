@@ -3,7 +3,7 @@
 // it, and prunes stale permission files (see plugins/lockstep). `set_notify`
 // was missing from this list for six weeks while registered everywhere else —
 // the ACL refused it at runtime and the notify toggle silently died.
-const COMMANDS: &[&str] = &["enable", "disable", "resume", "status", "set_notify"];
+const COMMANDS: &[&str] = &["enable", "disable", "resume", "status", "set_notify", "set_quiet_hours"];
 
 fn main() {
   virtues_plugin_lockstep::enforce(COMMANDS);

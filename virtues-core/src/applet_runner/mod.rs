@@ -727,8 +727,19 @@ const ENV_PASSTHROUGH: &[&str] = &[
     "DATABASE_URL",
     "DATABASE_MAX_CONNECTIONS",
     // Where the box keeps its data, and the paths applets resolve against.
-    "VIRTUES_DATA_DIR",
-    "VIRTUES_LAKE_DIR",
+    //
+    // STORAGE_PATH is the one `lake::lake_root()` actually reads. This list
+    // used to carry VIRTUES_DATA_DIR and VIRTUES_LAKE_DIR instead — two names
+    // that NOTHING in the system ever set — so every applet subprocess
+    // resolved the lake by fallback while the server resolved it by config:
+    // on a CI-built binary the fallback is the GitHub runner's absolute
+    // CARGO_MANIFEST_DIR path, and on a box `/var/lib/virtues/lake` beside a
+    // configured data-disk lake. Either way `lake::archive` died with EACCES,
+    // every mac_ingest run 500'd, and the first box to exercise the lake from
+    // an applet shipped zero bytes ever. lake.rs:95 warns about exactly this
+    // divergence class — "one function is the fix" — and this allowlist had
+    // reintroduced it at the process boundary.
+    "STORAGE_PATH",
     "VIRTUES_APPLETS_DIR",
     "VIRTUES_APPLET_STATE_DIR",
     "VIRTUES_APPLETS_BIN_DIR",
@@ -853,12 +864,18 @@ fn build_command(
     cmd.args(["-p", &format!("MemoryMax={JAILED_MEMORY_MAX}")]);
     cmd.args(["-p", &format!("RuntimeMaxSec={}", timeout.as_secs())]);
     // The applet's own folder and the lake are the only writable paths it gets.
+    // The lake path comes from the resolver itself, not an env var: this used
+    // to read VIRTUES_LAKE_DIR — which nothing ever set — so the jail granted
+    // NO lake write path at all, and a jailed applet's `lake::archive` would
+    // have hit EPERM even after the env passthrough above was fixed.
     cmd.args(["-p", &format!("ReadWritePaths={}", state.display())]);
-    if let Ok(lake) = std::env::var("VIRTUES_LAKE_DIR") {
-        if !lake.is_empty() {
-            cmd.args(["-p", &format!("ReadWritePaths={lake}")]);
-        }
-    }
+    cmd.args([
+        "-p",
+        &format!(
+            "ReadWritePaths={}",
+            crate::storage::lake::lake_root().display()
+        ),
+    ]);
     // The unit does NOT inherit our environment, and `cmd.env()` would set
     // systemd-run's own rather than the unit's — so every variable the applet
     // needs has to be handed over explicitly, before the `--`.

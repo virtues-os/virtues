@@ -142,6 +142,54 @@ pub(crate) fn app_backgrounded() -> bool {
   APP_BACKGROUNDED.load(Ordering::SeqCst)
 }
 
+/// True while the radio is expensive (cellular / Low Power Mode, not charging).
+/// Fed by Swift (ReachMonitor) via `virtues_radio_constrained`. While set AND
+/// backgrounded, background drains batch: hold until `CONSTRAINED_DRAIN_SECS`
+/// since the last drain so ~3 audio chunks share one dial instead of one each —
+/// the LTE promotion + high-power tail per dial dwarfs the payload cost.
+/// Defaults false, so a build without the Swift feed behaves exactly as before.
+static RADIO_CONSTRAINED: AtomicBool = AtomicBool::new(false);
+const CONSTRAINED_DRAIN_SECS: u64 = 900;
+
+pub(crate) fn set_radio_constrained(c: bool) {
+  RADIO_CONSTRAINED.store(c, Ordering::SeqCst);
+}
+
+pub(crate) fn radio_constrained() -> bool {
+  RADIO_CONSTRAINED.load(Ordering::SeqCst)
+}
+
+/// Instant of the last background drain attempt, for the constrained holdoff.
+static LAST_BG_DRAIN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Should a BACKGROUNDED drain run now, given radio cost? Cheap radio: always.
+/// Constrained: only once per `CONSTRAINED_DRAIN_SECS`; first drain after
+/// launch always runs (a cold wake may not live long enough to wait). Stamps
+/// the clock when it answers yes.
+pub(crate) fn bg_drain_due() -> bool {
+  if !radio_constrained() {
+    stamp_bg_drain();
+    return true;
+  }
+  let mut g = match LAST_BG_DRAIN.lock() {
+    Ok(g) => g,
+    Err(_) => return true, // poisoned — never let bookkeeping block delivery
+  };
+  match *g {
+    Some(t) if t.elapsed().as_secs() < CONSTRAINED_DRAIN_SECS => false,
+    _ => {
+      *g = Some(std::time::Instant::now());
+      true
+    }
+  }
+}
+
+fn stamp_bg_drain() {
+  if let Ok(mut g) = LAST_BG_DRAIN.lock() {
+    *g = Some(std::time::Instant::now());
+  }
+}
+
 pub(crate) fn nudge_drain() {
   DRAIN_NUDGE.notify_one();
 }
@@ -541,6 +589,16 @@ impl ReachState {
           if cfg!(target_os = "ios") && app_backgrounded() {
             park_endpoint("idle").await;
           }
+          continue;
+        }
+        // Constrained-radio holdoff (backgrounded only): batch chunks onto one
+        // dial per CONSTRAINED_DRAIN_SECS instead of one per chunk. Rows are
+        // durable in the outbox — this trades latency, never data. Foreground
+        // drains (user watching) are never held. Park any leftover warm client
+        // (e.g. the user just backgrounded): skipping the drain must not skip
+        // the park, or the endpoint chatters through the whole holdoff.
+        if cfg!(target_os = "ios") && app_backgrounded() && !bg_drain_due() {
+          park_endpoint("held").await;
           continue;
         }
         // Warm client if present (foreground), else a cold build (parked). Reading

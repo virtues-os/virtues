@@ -169,6 +169,21 @@
 
 	// Resting offset comes from state; a drag in flight overrides it.
 	const offset = $derived(dragging ? dragX : open ? travel : 0);
+
+	// Parked (closed, settled) the drawer is INVISIBLE — belt to the z-order's
+	// suspenders, so no engine quirk can ever show it bleeding through the
+	// chat. Driven by a timer, not a CSS visibility transition: flipping
+	// `visibility` in the same frame as the transform cancels the settle
+	// animation outright, so the hide waits for the settle in JS instead.
+	let parked = $state(!mobileLayout.drawerOpen);
+	$effect(() => {
+		if (open || dragging) {
+			parked = false;
+			return;
+		}
+		const t = setTimeout(() => (parked = true), 360);
+		return () => clearTimeout(t);
+	});
 	// The drawer travels a third of the viewport's journey, arriving at 0 as
 	// the viewport clears — the classic under-plane parallax. Negative while
 	// anything is still covering it.
@@ -222,10 +237,12 @@
 	onpointerup={endDrag}
 	onpointercancel={endDrag}
 >
-	<!-- The under-plane. Full width; the viewport slides off it entirely. -->
+	<!-- The under-plane. Full width; the viewport slides off it entirely.
+	     Parked and settled, it is also invisible — see the `parked` state. -->
 	<div
 		class="drawer-slot"
 		class:dragging
+		class:parked
 		style:transform="translateX({drawerShift}px)"
 		inert={!open && !dragging}
 	>
@@ -301,11 +318,14 @@
 		min-height: 0;
 		position: relative;
 		overflow: hidden;
+		/* The two planes' stacking resolves in here and nowhere else. */
+		isolation: isolate;
 	}
 
 	.drawer-slot {
 		position: absolute;
 		inset: 0;
+		z-index: 0;
 	}
 
 	.viewport {
@@ -335,6 +355,11 @@
 	.viewport:not(.dragging),
 	.drawer-slot:not(.dragging) {
 		transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+	}
+
+	/* Applied by the `parked` timer, 360ms after the close settles. */
+	.drawer-slot.parked {
+		visibility: hidden;
 	}
 
 	.topbar {
