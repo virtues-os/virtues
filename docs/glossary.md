@@ -143,9 +143,18 @@ holds in mind.
 | **salience** | what survives coarsening with distance — the surprising and the costly; measurable |
 | **significance** | what survives longest — weight the person assigns; declared, never inferred |
 
-One curve serves two consumers: rendered, it is the timeline's geometry
-(space is attention, band is resolution); assembled as prose, it is the
-brief. Salience needs its own mark — height was tried on the spine and read
+The two renderings of the line are named: **the mind** (logarithmic — space
+spent by distance from now, the way memory holds a life) and **the record**
+(linear — every year the same width, the way the archive holds it). Both are
+true; the projection is a toggle, never a setting buried in preferences.
+The record needs a **window** — a resolution control stepping through the
+ladder (life, decade, year, month, week, day) — and the mind refuses one.
+That asymmetry is the argument: linear cannot hold a life and an afternoon
+in one frame; log holds both and so carries no zoom.
+
+One curve serves two consumers: rendered, it is the mind projection's
+geometry (space is attention, band is resolution); assembled as prose, it is
+the brief. Salience needs its own mark — height was tried on the spine and read
 as noise, so the spine draws uniform and the encoding is open. Resolution must match distance — "yesterday you…",
 "last week you…", "in 2015 you…" — a sentence at the wrong granularity is
 wrong tonally even when factually right.
