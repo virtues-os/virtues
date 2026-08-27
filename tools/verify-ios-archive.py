@@ -19,6 +19,7 @@ Exits non-zero with a one-line reason on the first failure.
 import json
 import plistlib
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -166,6 +167,27 @@ def main() -> int:
     check_icons(app)
     check_nested_platforms(app)
     check_signing(build_dir)
+
+    # And again on the IPA, because the IPA is what gets uploaded and it is
+    # EXPORTED from the archive rather than being the archive. On 2026-08-27 a
+    # run whose archive was clean still shipped a stale IPA, because a failed
+    # verification had left the previous attempt's file sitting at this exact
+    # path for Transporter to pick up. Checking the payload closes the gap
+    # between "what we inspected" and "what Apple receives".
+    ipa = build_dir / "arm64/Virtues.ipa"
+    if ipa.is_file():
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(
+                ["unzip", "-q", str(ipa), "-d", tmp],
+                check=True,
+                capture_output=True,
+            )
+            payload = sorted(Path(tmp).glob("Payload/*.app"))
+            if not payload:
+                fail(f"{ipa.name} has no Payload/*.app")
+            print("  — and the exported IPA:")
+            check_version(payload[0], expected)
+            check_nested_platforms(payload[0])
     return 0
 
 

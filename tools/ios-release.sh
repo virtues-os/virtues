@@ -87,8 +87,15 @@ say "verifying the archive"
 # Version, icon opacity in the COMPILED catalog, and signing — all read off
 # the archive rather than the sources that produced it, which is the only
 # reading that predicts what App Store validation will say.
-python3 "$REPO_ROOT/tools/verify-ios-archive.py" "$BUILD_DIR" "$VERSION" \
-  || die "archive verification failed"
+# A FAILED verification must not leave an uploadable artifact behind. The IPA
+# is written before this runs, at a path the operator has already been told to
+# drag into Transporter — so on 2026-08-27 a rejected build's IPA sat there
+# through the next attempt and got uploaded, burning a version on a bug that
+# was already fixed. Delete it: nothing to drag is the only safe failure.
+if ! python3 "$REPO_ROOT/tools/verify-ios-archive.py" "$BUILD_DIR" "$VERSION"; then
+  rm -f "$IPA"
+  die "verification failed — IPA deleted so it cannot be uploaded by mistake"
+fi
 size="$(du -h "$IPA" | cut -f1)"
 printf '\n'
 say "$VERSION ready — $IPA ($size)"
