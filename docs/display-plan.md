@@ -373,26 +373,22 @@ connector — marker now carries the connector name and is adopted at spawn;
 wake made retryable; the kiosk updating-latch race; dot_cloud's per-poll
 GPU texture leak; Settings miniature token TTL + blank-fields-clears-hours).
 
-**Known gaps, deliberately left** (all pre-existing or needing new
-machinery):
+**Gap resolutions (`675dca73`, 2026-08-27)** — three closed, one kept:
 
-1. **A 3s button hold on a claimed box usually never draws its countdown**
-   — the 30s ambient poll samples a 3s hold ~10% of the time, and the
-   re-cadence only engages after a poll lands mid-hold. Pre-dates Hours.
-   Real fix is a push channel (or the state poll surfacing "hold began"
-   with a latch); worth doing when the panel next gets attention.
-2. **Kiosk face tokens die with the server** — the token store is
-   in-memory, so after any virtues.service restart the hung face's queries
-   fail (face keeps its last render) for up to 45min until the kiosk's
-   re-mint. Benign for dot_cloud (stale sky), annoying for data-dense
-   faces. Fix candidates: face reload on the state poll noticing a server
-   restart, or persistent tokens.
-3. **Miniature vs glass "Updating" divergence** — the miniature shows
-   Updating whenever the unit is active; the glass only once the server is
-   unreachable. Cosmetic, documented here so nobody chases it as a bug.
-4. **Deleted-applet rows linger** — reconcile GCs only system-owned rows,
-   so boxes that reconciled Biscuit/Calorie Tracker keep faceless orphan
-   rows in the applets list (they do drop out of the face picker).
+1. **Button hold** — CLOSED. `GET /api/display/button` (loopback family,
+   two atomic loads), polled by the kiosk at 1s; a 3s hold now always
+   draws its countdown. Verified: endpoint + 403 gate + 1s cadence in the
+   page's network log.
+2. **Face tokens dying with the server** — CLOSED. The kiosk bumps a face
+   epoch on the unreachable→reachable transition, re-minting the token and
+   reloading the hung face the moment the server returns.
+3. **Miniature vs glass "Updating" divergence** — KEPT, by judgment:
+   Settings is the surface updates are started from, and showing Updating
+   during the download phase there is earlier honesty, not a bug.
+4. **Deleted-applet orphan rows** — CLOSED. Migration 0008 deletes the two
+   shipped ids (only our templates could have minted them); run history
+   survives via ON DELETE SET NULL, and the calorie schema's logged meals
+   are deliberately kept — a cleanup migration does not delete a record.
 2. **Sleep enforcement locus**: the shim (Python, has the Wayland session)
    vs. the server (has the schedule). Likely: server computes `is_asleep`
    into `DisplayState`; the `/display` page renders matte; the shim handles
