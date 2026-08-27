@@ -21,6 +21,9 @@ Default permissions for the reach plugin
 - `allow-outbox-stats`
 - `allow-drain-now`
 - `allow-radio-stats`
+- `allow-pair-door-open`
+- `allow-pair-door-close`
+- `allow-pair-door-status`
 
 ## Permission Table
 
@@ -339,6 +342,84 @@ Enables the pair command without any pre-configured scope.
 <td>
 
 Denies the pair command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-pair-door-close`
+
+</td>
+<td>
+
+Enables the pair_door_close command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-pair-door-close`
+
+</td>
+<td>
+
+Denies the pair_door_close command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-pair-door-open`
+
+</td>
+<td>
+
+Enables the pair_door_open command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-pair-door-open`
+
+</td>
+<td>
+
+Denies the pair_door_open command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-pair-door-status`
+
+</td>
+<td>
+
+Enables the pair_door_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-pair-door-status`
+
+</td>
+<td>
+
+Denies the pair_door_status command without any pre-configured scope.
 
 </td>
 </tr>

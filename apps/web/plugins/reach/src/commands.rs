@@ -549,3 +549,52 @@ pub(crate) async fn radio_stats<R: Runtime>(_app: AppHandle<R>) -> Result<serde_
   }
   Ok(v)
 }
+
+// ─── The pairing door ────────────────────────────────────────────────────────
+//
+// Lets an already-paired computer stand in for the box while a phone that
+// cannot reach it enrolls — see `virtues_reach_client::pair_door` for why this
+// exists and why it is not the loopback proxy. Mobile-hosted doors are refused:
+// a phone is not a stable address for another device to type, and the phone
+// shells have no "Add device" surface.
+
+/// Open the door on this machine's LAN address. Returns `{origin, ttlSecs}`;
+/// `origin` is the `host:port` to show the user.
+#[command]
+pub(crate) async fn pair_door_open<R: Runtime>(
+  app: AppHandle<R>,
+  ttl_secs: Option<u64>,
+) -> Result<serde_json::Value> {
+  #[cfg(any(target_os = "ios", target_os = "android"))]
+  {
+    let _ = (&app, ttl_secs);
+    return Err(crate::Error::Reach(
+      "the pairing door is opened from a computer, not a phone".into(),
+    ));
+  }
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    // Ten minutes matches the countdown the Add-device sheet already shows.
+    let ttl = ttl_secs.unwrap_or(600).clamp(60, 1800);
+    let (origin, secs) = app.reach().open_pair_door(ttl).await?;
+    Ok(serde_json::json!({ "origin": origin, "ttlSecs": secs }))
+  }
+}
+
+#[command]
+pub(crate) async fn pair_door_close<R: Runtime>(app: AppHandle<R>) -> Result<()> {
+  app.reach().close_pair_door();
+  Ok(())
+}
+
+/// `{open, origin?, attemptsUsed?}` — lets the sheet show the address and
+/// notice a door that closed itself when its window ran out.
+#[command]
+pub(crate) async fn pair_door_status<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value> {
+  Ok(match app.reach().pair_door_status() {
+    Some((origin, used)) => {
+      serde_json::json!({ "open": true, "origin": origin, "attemptsUsed": used })
+    }
+    None => serde_json::json!({ "open": false }),
+  })
+}
