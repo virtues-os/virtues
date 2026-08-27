@@ -882,6 +882,57 @@ impl ReachState {
     Ok(self.status().await)
   }
 
+  /// LAPTOP SIDE of the pairing handoff: mint an identity for a phone that
+  /// cannot reach the box, enroll its public half, and return the QR that
+  /// carries the result. See `virtues_reach_client::handoff` for the shape and
+  /// for the one security trade this makes.
+  ///
+  /// The seed exists only in the returned payload — never written to disk here,
+  /// never logged. This machine is a courier, not a second home for it.
+  pub async fn create_handoff(&self, label: Option<String>) -> Result<(String, String)> {
+    self.ensure_serving().await?;
+    let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
+
+    let identity = virtues_reach_client::pair::mint_identity();
+    let raw = virtues_reach_client::handoff::enroll_request(
+      &identity.node_id,
+      "mobile_app",
+      label.as_deref(),
+    )
+    .map_err(|e| Error::Reach(e.to_string()))?;
+
+    let resp = client
+      .request(&raw)
+      .await
+      .map_err(|e| Error::Reach(format!("enroll failed: {e:#}")))?;
+    let (status, body) =
+      virtues_reach_client::handoff::split_response(&resp).map_err(|e| Error::Reach(e.to_string()))?;
+    if status != 200 {
+      // The box's own words, not a paraphrase — it distinguishes an unknown
+      // kind from a malformed key, and the operator can act on that.
+      return Err(Error::Reach(format!("box refused the enrollment ({status}): {body}")));
+    }
+
+    let payload = virtues_reach_client::HandoffPayload::new(&identity, body);
+    let json = payload.encode().map_err(|e| Error::Reach(e.to_string()))?;
+    let qr = render_handoff_qr(&json);
+    Ok((qr, identity.node_id))
+  }
+
+  /// PHONE SIDE: adopt an identity a paired laptop minted and enrolled.
+  ///
+  /// The same landing as every other pairing — `finish_consume` writes the
+  /// record and `ensure_serving` brings the loopback up — so a handed-off
+  /// pairing is indistinguishable from one the phone negotiated itself.
+  pub async fn accept_handoff(&self, payload_json: &str) -> Result<ReachStatus> {
+    let payload = virtues_reach_client::HandoffPayload::decode(payload_json)
+      .map_err(|e| Error::Reach(e.to_string()))?;
+    let identity = payload.identity().map_err(|e| Error::Reach(e.to_string()))?;
+    virtues_reach_client::pair::finish_consume(self.store.as_ref(), &payload.box_json, identity)?;
+    self.ensure_serving().await?;
+    Ok(self.status().await)
+  }
+
   pub fn forget(&self) -> Result<()> {
     // Full teardown so a re-pair (even to a different box) serves fresh WITHOUT an
     // app restart: abort the loopback + drain tasks (frees the loopback port),
@@ -970,7 +1021,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::radio_stats,
       commands::pair_door_open,
       commands::pair_door_close,
-      commands::pair_door_status
+      commands::pair_door_status,
+      commands::pair_handoff_create,
+      commands::pair_handoff_accept
     ])
     .setup(|app, _api| {
       #[cfg(target_os = "ios")]
@@ -1004,4 +1057,29 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       Ok(())
     })
     .build()
+}
+
+/// Render the handoff payload as an SVG QR.
+///
+/// Rendered here rather than by the box for the reason that defines this whole
+/// flow: the box never learns the seed, so it cannot draw the code that carries
+/// one. The laptop mints, enrolls the public half, and draws the rest itself.
+fn render_handoff_qr(data: &str) -> String {
+  use qrcode::{render::svg, QrCode};
+  match QrCode::new(data.as_bytes()) {
+    Ok(code) => code
+      .render::<svg::Color<'_>>()
+      .min_dimensions(280, 280)
+      .quiet_zone(true)
+      .dark_color(svg::Color("#000000"))
+      .light_color(svg::Color("#ffffff"))
+      .build(),
+    Err(e) => {
+      // A payload too large for a QR is the realistic failure (seed + reach
+      // info + addrs). Say so plainly; the caller surfaces it rather than
+      // showing an empty frame that reads as "scan me".
+      tracing::warn!(error = %e, len = data.len(), "handoff qr render failed");
+      String::new()
+    }
+  }
 }

@@ -26,6 +26,8 @@ const COMMANDS: &[&str] = &[
   "pair_door_open",
   "pair_door_close",
   "pair_door_status",
+  "pair_handoff_create",
+  "pair_handoff_accept",
 ];
 
 fn main() {
