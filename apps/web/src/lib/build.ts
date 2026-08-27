@@ -40,10 +40,28 @@ export function buildLabel(b: BuildInfo = BUILD): string {
 	return `${b.version}${sha} · ${b.channel}`;
 }
 
+/** The native shell's own release (`1.0.23`), once known. The SPA's
+ *  version/sha/channel describe the UI BUNDLE — which, for a paired desktop,
+ *  is the box-served SPA and therefore mirrors the box. Only this field lets
+ *  the box's Devices page answer "which app binary is that device on", so the
+ *  layout feeds it in as soon as the shell bridge resolves. Stays null in a
+ *  plain browser. */
+let shellAppVersion: string | null = null;
+
+export function setShellAppVersion(v: string): void {
+	if (!v) return;
+	shellAppVersion = v;
+	currentHeader = clientHeader();
+}
+
 /** The value for the X-Virtues-Client request header. */
 export function clientHeader(b: BuildInfo = BUILD): string {
-	return `version=${b.version}; sha=${b.sha}; channel=${b.channel}`;
+	const app = shellAppVersion ? `; app=${shellAppVersion}` : '';
+	return `version=${b.version}; sha=${b.sha}; channel=${b.channel}${app}`;
 }
+
+/** Cached header value; recomputed only when the shell identity arrives. */
+let currentHeader = clientHeader();
 
 /**
  * Install a one-time global fetch interceptor that stamps `X-Virtues-Client` on
@@ -59,13 +77,15 @@ export function installClientHeader(): void {
 	w.__virtuesFetchPatched = true;
 
 	const orig = window.fetch.bind(window);
-	const header = clientHeader();
 	window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
 		if (typeof input === 'string' || input instanceof URL) {
 			const url = typeof input === 'string' ? input : input.href;
 			if (url.startsWith('/') || url.startsWith(window.location.origin)) {
 				const headers = new Headers(init?.headers);
-				if (!headers.has('X-Virtues-Client')) headers.set('X-Virtues-Client', header);
+				// `currentHeader`, not a captured snapshot: the shell's app
+				// version arrives after install, and a frozen header would
+				// report every request as app-less forever.
+				if (!headers.has('X-Virtues-Client')) headers.set('X-Virtues-Client', currentHeader);
 				return orig(input, { ...init, headers });
 			}
 		}

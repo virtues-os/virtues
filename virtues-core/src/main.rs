@@ -334,12 +334,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!(
                     "  {}",
                     console::style(format!(
-                        "{:<30}  {:<12}  {:<22}  {:<14}  {}",
-                        "ID", "KIND", "LABEL", "KEY", "LAST SEEN"
+                        "{:<30}  {:<12}  {:<22}  {:<14}  {:<14}  {}",
+                        "ID", "KIND", "LABEL", "KEY", "VERSION", "LAST SEEN"
                     ))
                     .dim()
                 );
-                for (id, kind, label, node_id, last_seen) in &devices {
+                for (id, kind, label, node_id, last_seen, version) in &devices {
                     let key = node_id
                         .as_deref()
                         .map(|n| ui::ellipsize_middle(n, 14))
@@ -356,7 +356,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         label.clone()
                     };
-                    println!("  {id:<30}  {kind:<12}  {label:<22}  {key:<14}  {seen}");
+                    let version = version.as_deref().unwrap_or("—");
+                    println!("  {id:<30}  {kind:<12}  {label:<22}  {key:<14}  {version:<14}  {seen}");
                 }
                 println!();
                 return Ok(());

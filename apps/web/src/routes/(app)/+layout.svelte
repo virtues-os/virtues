@@ -33,8 +33,8 @@
 	import { page } from "$app/stores";
 	import type { Snippet } from "svelte";
 
-	import { installClientHeader } from "$lib/build";
-	import { reportBootOk, otaCheckNow } from "$lib/tauri/bridge";
+	import { installClientHeader, setShellAppVersion } from "$lib/build";
+	import { reportBootOk, otaCheckNow, shellIdentity } from "$lib/tauri/bridge";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 
@@ -44,6 +44,15 @@
 	// Stamp X-Virtues-Client on box requests so this browser's build shows up on
 	// the Devices page (update-manifold Phase 1). Idempotent, SSR-safe.
 	installClientHeader();
+
+	// Then enrich it with the native shell's own release (`app=1.0.23`) once
+	// the bridge answers. The bundle identity above mirrors the box for a
+	// paired desktop, so without this field the Devices page cannot say which
+	// APP a device runs — the confusion the version audit traced. Resolves to
+	// null in a plain browser; header simply stays app-less there.
+	void shellIdentity().then((s) => {
+		if (s?.appVersion) setShellAppVersion(s.appVersion);
+	});
 
 	// Foreground OTA check — hoisted to component scope so onDestroy can remove
 	// it. `onMount` is async here, so a returned cleanup would never run.

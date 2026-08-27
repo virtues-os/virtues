@@ -127,6 +127,23 @@ where
         let is_proxied = parts.headers.contains_key("x-forwarded-for")
             || parts.headers.contains_key("forwarded");
         if is_loopback && !is_proxied {
+            // The console row used to be startup fiction — inserted once with
+            // last_seen NULL and never touched again, so Devices said "Never"
+            // no matter how much the box's own screen or CLI was used. Record
+            // reality instead. Throttled to minute resolution because the
+            // kiosk polls over loopback at 1s and legibility does not need a
+            // write per frame. Best-effort, never blocks auth.
+            let _ = sqlx::query(
+                "UPDATE app_device SET last_seen_at = now() \
+                 WHERE id = $1 AND (last_seen_at IS NULL \
+                    OR last_seen_at < now() - interval '60 seconds')",
+            )
+            .bind(CONSOLE_DEVICE_ID)
+            .execute(&pool)
+            .await;
+            if let Some(cb) = parse_client_header(&parts.headers) {
+                record_client_build(&pool, CONSOLE_DEVICE_ID, &cb).await;
+            }
             return Ok(AuthUser {
                 id: crate::middleware::http::OWNER_USER_ID.to_string(),
                 device_id: CONSOLE_DEVICE_ID.to_string(),
@@ -191,13 +208,20 @@ pub(crate) async fn validate_iroh_peer(pool: &PgPool, node_id: &str) -> Option<A
 }
 
 /// The build identity a client reports via
-/// `X-Virtues-Client: version=…; sha=…; channel=…`. All best-effort — a
-/// malformed header is ignored, never a request failure.
+/// `X-Virtues-Client: version=…; sha=…; channel=…[; app=…]`. All best-effort —
+/// a malformed header is ignored, never a request failure.
 #[derive(Debug, Default)]
 pub(crate) struct ClientBuild {
     pub version: String,
     pub sha: String,
     pub channel: String,
+    /// The NATIVE shell's own version (`1.0.23`), when the client runs inside
+    /// one. `version`/`sha`/`channel` describe the UI bundle — which, for a
+    /// paired desktop, is the box-served SPA and therefore mirrors the box.
+    /// This field is the only one that answers "which app binary is that
+    /// device on", so absence must never erase a previously reported value
+    /// (the SPA sends it only after the shell bridge resolves).
+    pub app: Option<String>,
 }
 
 /// Parse the `X-Virtues-Client` header. Returns `None` unless a version is
@@ -212,10 +236,12 @@ pub(crate) fn parse_client_header(headers: &axum::http::HeaderMap) -> Option<Cli
             (Some("version"), Some(v)) => cb.version = v.to_string(),
             (Some("sha"), Some(v)) => cb.sha = v.to_string(),
             (Some("channel"), Some(v)) => cb.channel = v.to_string(),
+            (Some("app"), Some(v)) if !v.is_empty() => cb.app = Some(v.to_string()),
             _ => {}
         }
     }
     if cb.version.is_empty() || cb.version.len() > 64 || cb.sha.len() > 64 || cb.channel.len() > 32
+        || cb.app.as_deref().is_some_and(|a| a.len() > 64)
     {
         return None;
     }
@@ -228,16 +254,27 @@ pub(crate) fn parse_client_header(headers: &axum::http::HeaderMap) -> Option<Cli
 /// common path (build unchanged between upgrades), so it doesn't churn the row
 /// on every request — it only writes when the reported sha actually changes.
 pub(crate) async fn record_client_build(pool: &PgPool, device_id: &str, cb: &ClientBuild) {
+    // Merged INTO the existing build object (not replacing it): early requests
+    // from a desktop SPA arrive before the shell bridge resolves and carry no
+    // `app` — a whole-object replace would erase the app version the previous
+    // request reported. `jsonb_strip_nulls` drops the absent key instead. The
+    // guard fires on either identity moving: the UI bundle (sha) or the native
+    // shell (app) — an app update under an unchanged bundle must still write.
     let _ = sqlx::query(
         "UPDATE app_device \
-         SET device_info = device_info || jsonb_build_object(\
-             'build', jsonb_build_object('version', $2::text, 'sha', $3::text, 'channel', $4::text)) \
-         WHERE id = $1 AND (device_info->'build'->>'sha') IS DISTINCT FROM $3::text",
+         SET device_info = jsonb_set(device_info, '{build}', \
+             COALESCE(device_info->'build', '{}'::jsonb) || jsonb_strip_nulls(\
+                 jsonb_build_object('version', $2::text, 'sha', $3::text, \
+                                    'channel', $4::text, 'app', $5::text))) \
+         WHERE id = $1 AND ((device_info->'build'->>'sha') IS DISTINCT FROM $3::text \
+             OR ($5::text IS NOT NULL \
+                 AND (device_info->'build'->>'app') IS DISTINCT FROM $5::text))",
     )
     .bind(device_id)
     .bind(&cb.version)
     .bind(&cb.sha)
     .bind(&cb.channel)
+    .bind(cb.app.as_deref())
     .execute(pool)
     .await;
 }
@@ -284,4 +321,81 @@ pub async fn cleanup_expired(pool: &PgPool) -> crate::Result<u64> {
     .rows_affected();
 
     Ok(tokens)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(v: &str) -> axum::http::HeaderMap {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert("x-virtues-client", v.parse().unwrap());
+        h
+    }
+
+    #[test]
+    fn client_header_parses_with_and_without_app() {
+        let cb = parse_client_header(&headers("version=0.1.5; sha=abc1234; channel=staging")).unwrap();
+        assert_eq!(cb.version, "0.1.5");
+        assert_eq!(cb.app, None);
+
+        let cb = parse_client_header(&headers(
+            "version=0.1.5; sha=abc1234; channel=staging; app=1.0.23",
+        ))
+        .unwrap();
+        assert_eq!(cb.app.as_deref(), Some("1.0.23"));
+
+        // Hostile lengths are rejected wholesale, same as the other fields.
+        let long = format!("version=0.1.5; sha=a; channel=c; app={}", "x".repeat(65));
+        assert!(parse_client_header(&headers(&long)).is_none());
+    }
+
+    /// The merge semantics the Devices page depends on: an app-less write
+    /// (early SPA request before the shell bridge resolves) must never erase a
+    /// previously reported app version, and an app change under an unchanged
+    /// UI bundle must still write (the old sha-only guard would have skipped
+    /// exactly the write that records a native app update).
+    #[sqlx::test(migrations = "./migrations")]
+    async fn record_client_build_merges_and_guards(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label) \
+             VALUES ('dev_test', $1, 'desktop_app', 'test')",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        async fn build(pool: &PgPool) -> serde_json::Value {
+            sqlx::query_scalar::<_, serde_json::Value>(
+                "SELECT device_info->'build' FROM app_device WHERE id='dev_test'",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap()
+        }
+
+        // First report carries the app.
+        let mut cb = ClientBuild {
+            version: "0.1.5".into(),
+            sha: "aaa1111".into(),
+            channel: "staging".into(),
+            app: Some("1.0.22".into()),
+        };
+        record_client_build(&pool, "dev_test", &cb).await;
+        assert_eq!(build(&pool).await["app"], "1.0.22");
+
+        // App-less write with a NEW bundle sha: bundle fields move, app stays.
+        cb.sha = "bbb2222".into();
+        cb.app = None;
+        record_client_build(&pool, "dev_test", &cb).await;
+        let b = build(&pool).await;
+        assert_eq!(b["sha"], "bbb2222");
+        assert_eq!(b["app"], "1.0.22");
+
+        // App update under an UNCHANGED bundle must still write.
+        cb.app = Some("1.0.23".into());
+        record_client_build(&pool, "dev_test", &cb).await;
+        assert_eq!(build(&pool).await["app"], "1.0.23");
+    }
 }

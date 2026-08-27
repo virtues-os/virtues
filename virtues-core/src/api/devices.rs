@@ -44,9 +44,21 @@ pub struct DeviceListItem {
     /// The client's reported build identity (from the `X-Virtues-Client`
     /// header, stored under `device_info.build`). Null until the device has
     /// made a request on a build that sends it.
+    ///
+    /// CAREFUL what these mean: for an app device, `version`/`sha`/`channel`
+    /// describe the UI BUNDLE its requests come from — which for a paired
+    /// desktop is the box-served SPA, so it mirrors the box. `app_version` is
+    /// the native shell's own release (`1.0.23`) and is the field that answers
+    /// "which app is that device on". For a collector (which sends its own
+    /// header), `version` IS the binary's release and `app_version` is null.
     pub version: Option<String>,
     pub sha: Option<String>,
     pub channel: Option<String>,
+    pub app_version: Option<String>,
+    /// The device id of the app that installed this collector (the minter of
+    /// its pair token, recorded at consume). Null for standalone devices; the
+    /// UI uses it to fold a machine's collector under its app row.
+    pub installed_by: Option<String>,
     /// What a collector device reports it is currently allowed to read
     /// (`device_info.permissions`, written by its ingest action from the
     /// collector's own self-report). Null for devices that don't collect, or
@@ -63,46 +75,26 @@ pub struct DeviceListItem {
 
 /// `GET /api/devices` — list all active paired devices for the current user.
 pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl IntoResponse {
-    #[allow(clippy::type_complexity)]
-    let rows: Result<Vec<(String, String, Option<String>, String, DateTime<Utc>, Option<DateTime<Utc>>, Option<String>, Option<String>, Option<String>, Option<String>, Option<Value>)>, _> =
-        sqlx::query_as(
-            "SELECT id, kind, source_id, label, paired_at, last_seen_at, paired_from_ip, \
-                    device_info->'build'->>'version' AS version, \
-                    device_info->'build'->>'sha'     AS sha, \
-                    device_info->'build'->>'channel' AS channel, \
-                    device_info->'permissions'       AS permissions \
-             FROM app_device \
-             WHERE user_id = $1 AND revoked_at IS NULL \
-             ORDER BY last_seen_at DESC NULLS LAST, paired_at DESC",
-        )
-        .bind(&user.id)
-        .fetch_all(&pool)
-        .await;
+    let rows: Result<Vec<DeviceListItem>, _> = sqlx::query_as(
+        "SELECT id, kind, source_id, label, paired_at, last_seen_at, paired_from_ip, \
+                device_info->'build'->>'version' AS version, \
+                device_info->'build'->>'sha'     AS sha, \
+                device_info->'build'->>'channel' AS channel, \
+                device_info->'build'->>'app'     AS app_version, \
+                device_info->>'installed_by'     AS installed_by, \
+                device_info->'permissions'       AS permissions, \
+                (id = $2)                        AS is_current \
+         FROM app_device \
+         WHERE user_id = $1 AND revoked_at IS NULL \
+         ORDER BY last_seen_at DESC NULLS LAST, paired_at DESC",
+    )
+    .bind(&user.id)
+    .bind(&user.device_id)
+    .fetch_all(&pool)
+    .await;
 
     match rows {
-        Ok(rows) => {
-            let items: Vec<DeviceListItem> = rows
-                .into_iter()
-                .map(|(id, kind, source_id, label, paired_at, last_seen_at, ip, version, sha, channel, permissions)| {
-                    let is_current = id == user.device_id;
-                    DeviceListItem {
-                        id,
-                        kind,
-                        source_id,
-                        label,
-                        paired_at,
-                        last_seen_at,
-                        paired_from_ip: ip,
-                        version,
-                        sha,
-                        channel,
-                        permissions,
-                        is_current,
-                    }
-                })
-                .collect();
-            (StatusCode::OK, Json(json!({"devices": items}))).into_response()
-        }
+        Ok(items) => (StatusCode::OK, Json(json!({"devices": items}))).into_response(),
         Err(e) => {
             tracing::warn!("devices list failed: {e:#}");
             (
@@ -116,12 +108,18 @@ pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl In
 
 /// Bare-pool device list for the `virtues device ls` CLI. No `AuthUser` — the
 /// on-box operator is the owner (physical access = you). Non-revoked devices,
-/// newest-active first. Returns `(id, kind, label, node_id, last_seen_at)`.
+/// newest-active first. Returns `(id, kind, label, node_id, last_seen_at,
+/// version)` — version prefers the native app's release over the UI bundle's
+/// (same preference the web Devices list renders; the bundle identity mirrors
+/// the box for app devices and is only the headline for a collector).
 pub async fn list_devices_cli(
     pool: &PgPool,
-) -> Result<Vec<(String, String, String, Option<String>, Option<DateTime<Utc>>)>, sqlx::Error> {
+) -> Result<Vec<(String, String, String, Option<String>, Option<DateTime<Utc>>, Option<String>)>, sqlx::Error>
+{
     sqlx::query_as(
-        "SELECT id, kind, label, node_id, last_seen_at \
+        "SELECT id, kind, label, node_id, last_seen_at, \
+                COALESCE(device_info->'build'->>'app', \
+                         device_info->'build'->>'version') AS version \
          FROM app_device \
          WHERE revoked_at IS NULL \
          ORDER BY last_seen_at DESC NULLS LAST, paired_at DESC",
