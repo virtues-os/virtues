@@ -164,9 +164,11 @@ pub async fn revoke_handler(
     //
     //   1. `SELECT … FOR UPDATE` the target device row — takes the row lock so
     //      concurrent revokes can't interleave under the count guard.
-    //   2. `SELECT COUNT(*) … FOR UPDATE` the other active devices — also locked
-    //      so a parallel revoke can't drop the active count between our count
-    //      and our update.
+    //   2. `SELECT id … FOR UPDATE` the other active devices and count the rows
+    //      here — also locked, so a parallel revoke can't drop the active count
+    //      between our count and our update. NOT an aggregate: see the note at
+    //      the query itself for why `COUNT(*) … FOR UPDATE` made this handler
+    //      return 500 on every call.
     //   3. If we'd be revoking the only active device → bail with 409.
     //   4. Capture the WG pubkey from credentials before the credential row's
     //      lookup_hash gets cleared.
@@ -208,17 +210,32 @@ pub async fn revoke_handler(
     // Bubble DB errors as 500 — eating them would conflate "database down"
     // with "actually the only device" and surface a spurious last_device 409
     // to the user.
-    let other_active: Result<Option<(i64,)>, sqlx::Error> = sqlx::query_as(
-        "SELECT COUNT(*) FROM app_device \
+    //
+    // Select the ROWS and count them here — never `SELECT COUNT(*) … FOR
+    // UPDATE`, which Postgres refuses outright:
+    //
+    //     ERROR: FOR UPDATE is not allowed with aggregate functions
+    //
+    // That was this handler's shape until 2026-08-27, so the query failed on
+    // every call and revoking a device returned 500 unconditionally — the
+    // "prod revoke 500" open since the 2026-08-18 master build. It is also why
+    // no amount of reading the transaction logic found it: the bug was in the
+    // one line whose comment explained why it had to be there.
+    //
+    // Counting rows in Rust is not a workaround, it is the thing the comment
+    // above always meant: an aggregate locks nothing even where it is legal,
+    // while this locks each row a concurrent revoke would have to take.
+    let other_active: Result<Vec<(String,)>, sqlx::Error> = sqlx::query_as(
+        "SELECT id FROM app_device \
          WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2 \
          FOR UPDATE",
     )
     .bind(&user.id)
     .bind(&device_id)
-    .fetch_optional(&mut *tx)
+    .fetch_all(&mut *tx)
     .await;
     let other_count = match other_active {
-        Ok(opt) => opt.map(|(n,)| n).unwrap_or(0),
+        Ok(rows) => rows.len(),
         Err(e) => {
             tracing::warn!("devices revoke: count query failed: {e:#}");
             return (
@@ -513,3 +530,55 @@ pub(crate) async fn enroll_peer_core(
 // active peer set (see virtues_wg::reconcile + signal). Revoke marks the row
 // and fires `NOTIFY wg_reconcile`; the daemon drops the peer. This removes the
 // previous dual-writer (a direct `remove_peer` here racing the daemon's poll).
+
+#[cfg(test)]
+mod tests {
+    /// The exact shape `revoke_handler` uses to count the OTHER active devices
+    /// while holding their row locks.
+    ///
+    /// This is a regression guard for a query that could never run. Until
+    /// 2026-08-27 the handler asked for `SELECT COUNT(*) … FOR UPDATE`, which
+    /// Postgres refuses:
+    ///
+    ///     ERROR: FOR UPDATE is not allowed with aggregate functions
+    ///
+    /// So the count failed on every call and revoking a device returned 500
+    /// unconditionally — device revocation had NEVER worked through the API.
+    /// Nothing caught it because nothing exercised this handler against a real
+    /// database; the transaction logic around it reads perfectly.
+    ///
+    /// The assertion is deliberately about the SQL being ACCEPTED, not about
+    /// the number: a count is easy to get right and impossible to run.
+    #[sqlx::test]
+    async fn the_active_device_count_query_is_legal_sql(pool: sqlx::PgPool) {
+        let mut tx = pool.begin().await.expect("begin");
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM app_device \
+             WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2 \
+             FOR UPDATE",
+        )
+        .bind("user_nobody")
+        .bind("dev_nobody")
+        .fetch_all(&mut *tx)
+        .await
+        .expect("row-locking count must be legal SQL — see the doc comment");
+        assert!(rows.is_empty(), "no devices exist in a scratch database");
+
+        // And prove the old shape is genuinely rejected, so this test fails
+        // loudly if someone 'simplifies' it back into an aggregate.
+        let bad = sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM app_device \
+             WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2 \
+             FOR UPDATE",
+        )
+        .bind("user_nobody")
+        .bind("dev_nobody")
+        .fetch_one(&mut *tx)
+        .await;
+        assert!(
+            bad.is_err(),
+            "COUNT(*) with FOR UPDATE must be rejected by Postgres — if this \
+             passes, the guard above has stopped meaning anything"
+        );
+    }
+}
