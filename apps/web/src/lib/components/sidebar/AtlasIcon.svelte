@@ -35,6 +35,14 @@
 		applets:
 			'<path d="M8 2.2 9.6 6.4 13.8 8 9.6 9.6 8 13.8 6.4 9.6 2.2 8 6.4 6.4z"/>',
 		search: '<circle cx="7.1" cy="7.1" r="4.3"/><path d="M10.4 10.4 13.5 13.5"/>',
+		// The chats bubble, empty and waiting — a plus where the conversation
+		// dots would be. Drawn for the phone drawer's "New chat" door.
+		'new-chat':
+			'<circle cx="8" cy="7.5" r="5.2"/><path d="M4.6 11.9l-1.2 2"/><path d="M8 5.6v3.8M6.1 7.5h3.8"/>',
+		// The phone itself — the drawer's "This device" door. A drawn object
+		// like the rest: the slab and its home bar, nothing else.
+		device:
+			'<rect x="4.6" y="2.2" width="6.8" height="11.6" rx="1.5"/><path d="M6.9 11.6h2.2"/>',
 		// An inkwell, taking a drop. The well the record is written from — a desk
 		// object, like the rest of this set, rather than the plug or stacked
 		// database cylinder a general-purpose set would offer. It also avoids the

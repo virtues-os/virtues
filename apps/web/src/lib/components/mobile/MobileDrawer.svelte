@@ -19,6 +19,7 @@
 	 * component only renders content (the shell moves it for parallax).
 	 */
 	import Icon from "$lib/components/Icon.svelte";
+	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatSessions, type ChatSession } from "$lib/stores/chatSessions.svelte";
@@ -88,8 +89,11 @@
 	</header>
 
 	<div class="body">
+		<!-- Doors wear Atlas (the shell's drawn set), matching the desktop
+		     sidebar's rule: Atlas for nav doors, Remix for interface symbols
+		     (the close X above) and per-entity icons. -->
 		<button class="new-chat" onclick={() => go("/chat", "Chat")}>
-			<Icon icon="ri:chat-new-line" width={18} />
+			<AtlasIcon name="new-chat" />
 			<span>New chat</span>
 		</button>
 
@@ -117,11 +121,11 @@
 		     lives on this hardware rather than on the box — so "is this thing
 		     collecting?" outranks configuration. -->
 		<button class="foot-row" onclick={() => go("/virtues/devices/this", "This device")}>
-			<Icon icon="ri:smartphone-line" width={18} />
+			<AtlasIcon name="device" />
 			<span>This device</span>
 		</button>
 		<button class="foot-row" onclick={() => go("/virtues/you", "Settings")}>
-			<Icon icon="ri:settings-3-line" width={18} />
+			<AtlasIcon name="settings" />
 			<span>Settings</span>
 		</button>
 	</footer>
