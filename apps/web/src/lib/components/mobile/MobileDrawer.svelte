@@ -74,9 +74,6 @@
 
 <nav class="drawer" aria-label="Navigation">
 	<header class="mast">
-		<button class="close-btn" onclick={() => mobileLayout.closeDrawer()} aria-label="Close menu">
-			<Icon icon="ri:close-line" width={22} />
-		</button>
 		<!-- The mark, drawn: same optical grid as the desktop mast — the
 		     JJannon ∴ glyph is text-weight, a masthead needs logo weight. -->
 		<span class="mark-glyph" aria-hidden="true">
@@ -87,6 +84,13 @@
 			</svg>
 		</span>
 		<span class="mark-word">Virtues</span>
+		<!-- Close rides top-RIGHT, and it's a double chevron, not an X: the
+		     chat is parked off the right edge, and this points back at it —
+		     "return", not "dismiss". It also matches the closing swipe's
+		     direction, so the button and the gesture tell one story. -->
+		<button class="close-btn" onclick={() => mobileLayout.closeDrawer()} aria-label="Back to chat">
+			<Icon icon="ri:arrow-right-double-line" width={22} />
+		</button>
 	</header>
 
 	<div class="body">
@@ -143,18 +147,22 @@
 		color: var(--color-foreground);
 	}
 
-	/* Mirrors the shell's topbar metrics exactly, so the close control lands
-	   in the hamburger's slot and the wordmark sits on the same baseline the
-	   view's chrome does. */
+	/* Mirrors the shell's topbar height so the wordmark sits on the same
+	   baseline the view's chrome does; the left inset lines the mark up with
+	   the list rows' ink below it. */
 	.mast {
 		flex: none;
 		display: flex;
 		align-items: center;
 		gap: 8px;
 		height: 48px;
-		padding: 0 6px;
+		padding: 0 6px 0 20px;
 		user-select: none;
 		-webkit-user-select: none;
+	}
+
+	.mark-word {
+		flex: 1;
 	}
 
 	.close-btn {
