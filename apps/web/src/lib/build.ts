@@ -86,9 +86,46 @@ export function installClientHeader(): void {
 				// version arrives after install, and a frozen header would
 				// report every request as app-less forever.
 				if (!headers.has('X-Virtues-Client')) headers.set('X-Virtues-Client', currentHeader);
-				return orig(input, { ...init, headers });
+				return orig(input, { ...init, headers }).then((r) => {
+					noteBoxBuild(r);
+					return r;
+				});
 			}
 		}
 		return orig(input, init);
 	};
+}
+
+// ── Staleness watch ─────────────────────────────────────────────────────────
+// A box-served page outlives the box build that served it: after an upgrade
+// the flipped web/ slot no longer holds this page's content-hashed chunks, so
+// the first lazy navigation 404s — and until now nothing told any open page
+// (other tabs, the desktop webview) to reload; only the tab that pressed the
+// update button did. The box now stamps every response with its build
+// (`X-Virtues-Box-Build`); when it moves under us, reload — but only from the
+// background, never out from under someone mid-thought. The always-visible
+// kiosk has its own recovery (`restart_display`), and the bundled mobile SPA
+// serves its chunks locally (a box upgrade cannot strand it), so this guards
+// exactly the surfaces that had none.
+
+let boxBuild: string | null = null;
+let reloadArmed = false;
+
+function noteBoxBuild(r: Response): void {
+	if (window.location.protocol === 'virtues:') return; // bundled SPA — chunks are local
+	const b = r.headers.get('x-virtues-box-build');
+	if (!b) return;
+	if (boxBuild === null) {
+		boxBuild = b;
+		return;
+	}
+	if (b === boxBuild || reloadArmed) return;
+	reloadArmed = true;
+	if (document.hidden) {
+		window.location.reload();
+	} else {
+		document.addEventListener('visibilitychange', () => {
+			if (document.hidden) window.location.reload();
+		});
+	}
 }

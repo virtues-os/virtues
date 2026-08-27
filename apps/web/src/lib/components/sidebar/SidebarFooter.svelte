@@ -2,6 +2,7 @@
 	import { onMount } from "svelte";
 	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { appUpdateState, applyAppUpdate } from "$lib/tauri/bridge";
 	import AtlasIcon from "./AtlasIcon.svelte";
 
 	interface Props {
@@ -52,6 +53,20 @@
 		tick();
 	}
 
+	// A staged app update, waiting for a relaunch. The shell stages silently
+	// (the Chrome model) and applies on the next launch — but this app is a
+	// menu-bar resident designed never to relaunch, so "next launch" rounds to
+	// never and the only surface that knew was the tray. This chip is the
+	// in-app door: quiet, standing, one click. Null everywhere the
+	// self-updater doesn't exist (browser, phone, Windows/Linux), so it simply
+	// never renders there.
+	let stagedVersion = $state<string | null>(null);
+
+	async function pollUpdate() {
+		const s = await appUpdateState();
+		stagedVersion = s?.stagedVersion ?? null;
+	}
+
 	onMount(() => {
 		try {
 			hour12 = localStorage.getItem("virtues:clock12") === "1";
@@ -59,8 +74,15 @@
 			// Fall through to the 24h default.
 		}
 		tick();
+		void pollUpdate();
 		const id = setInterval(tick, 30_000);
-		return () => clearInterval(id);
+		// The shell checks every 6h; ten minutes keeps the chip honest without
+		// chatter on an IPC call that answers from memory.
+		const updateId = setInterval(pollUpdate, 600_000);
+		return () => {
+			clearInterval(id);
+			clearInterval(updateId);
+		};
 	});
 
 	// Three doors, each of which swaps the sidebar into its own mode rather than
@@ -100,6 +122,18 @@
 	class:collapsed
 	style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay}ms"
 >
+	{#if stagedVersion && !collapsed}
+		<button
+			type="button"
+			class="relaunch"
+			onclick={() => void applyAppUpdate()}
+			title="Restart into the downloaded update — takes a few seconds"
+		>
+			<span class="relaunch-label">Relaunch to update</span>
+			<span class="relaunch-version">v{stagedVersion}</span>
+		</button>
+	{/if}
+
 	{#each doors as door (door.id)}
 		<button
 			type="button"
@@ -143,6 +177,47 @@
 		transition:
 			opacity 200ms var(--sidebar-transition-easing) var(--stagger-delay, 0ms),
 			transform 200ms var(--sidebar-transition-easing) var(--stagger-delay, 0ms);
+	}
+
+	/* The update chip: a standing offer, not an alarm. Info tokens (note-this),
+	   never the accent (act-on-this is the doors' register) — the split the
+	   theme pass argued for. Reads like a Library row that happens to carry a
+	   second, dim line. */
+	.relaunch {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 1px;
+		width: 100%;
+		padding: 6px var(--sidebar-interactive-padding);
+		margin-bottom: 4px;
+		border: 1px solid var(--color-info-subtle);
+		border-radius: var(--sidebar-interactive-radius);
+		background: var(--color-info-subtle);
+		cursor: pointer;
+		text-align: left;
+	}
+
+	.relaunch-label {
+		font-size: var(--sidebar-interactive-font-size);
+		color: var(--color-info);
+	}
+
+	.relaunch-version {
+		font-family: var(--font-mono);
+		font-size: 9.5px;
+		letter-spacing: 0.07em;
+		color: var(--color-foreground-muted);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.relaunch:hover {
+		border-color: var(--color-info);
+	}
+
+	.relaunch:focus-visible {
+		outline: 2px solid var(--color-info);
+		outline-offset: -2px;
 	}
 
 	.door {

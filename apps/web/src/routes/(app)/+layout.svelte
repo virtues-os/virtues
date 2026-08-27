@@ -97,10 +97,10 @@
 		// without this a phone could sit on a stale bundle indefinitely. The
 		// check is cheap when there is nothing new (one small GET) and never
 		// swaps the bundle underneath the running session; anything it applies
-		// takes effect at the next launch.
-		function checkForNewUi() {
-			if (!document.hidden) void otaCheckNow();
-		}
+		// takes effect at the next launch. Registers the COMPONENT-SCOPE
+		// function above — an identical inner copy used to shadow it here, so
+		// onDestroy removed a function that was never registered and the
+		// listener leaked per layout mount (audit, minor).
 		document.addEventListener("visibilitychange", checkForNewUi);
 
 		// Global dragover handler: Allow drops on document by preventing default

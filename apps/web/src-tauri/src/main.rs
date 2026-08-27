@@ -289,7 +289,13 @@ fn shell_identity_cmd(app: AppHandle) -> virtues_lib::ShellIdentity {
 #[tauri::command]
 fn bundle_boot_ok(app: AppHandle) {
     if let Ok(dir) = app.path().app_data_dir() {
-        virtues_lib::web_bundle::mark_boot_ok(&dir);
+        // Desktop has no OTA overlay store, so `booted_bundle_id()` is always
+        // None here and this is a guaranteed no-op — kept registered so the
+        // SPA's unconditional boot-ok call has somewhere harmless to land.
+        virtues_lib::web_bundle::mark_boot_ok(
+            &dir,
+            virtues_lib::web_bundle::booted_bundle_id().as_deref(),
+        );
     }
 }
 
@@ -694,38 +700,56 @@ async fn set_summon_shortcut(app: AppHandle, accelerator: String) -> Result<Stri
 #[derive(Default)]
 struct UpdateState {
     ready: Option<ReadyUpdate>,
-    /// Consecutive staging failures. We say nothing about the first: a download
-    /// interrupted by a closing laptop lid is not news, and the next tick
-    /// retries. Two in a row is a real problem worth one line.
+    /// Consecutive failures — check failures AND staging failures. We say
+    /// nothing about the first: a download interrupted by a closing laptop lid
+    /// is not news, and the next tick retries. Two in a row is a real problem
+    /// worth one line. (The counter used to see only staging failures, which
+    /// made a dead manifest URL structurally silent forever — the notification
+    /// could never fire for the failure mode actually observed in production.)
     failures: u8,
+    /// What the most recent check concluded. The tray label and the SPA (over
+    /// `update_state_cmd`) both read this. `Failed` is a first-class outcome:
+    /// the box-side update UI refuses to render "couldn't check" as "up to
+    /// date", and the tray used to commit exactly that lie on a failed manual
+    /// check.
+    last_check: Option<CheckOutcome>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "outcome")]
+enum CheckOutcome {
+    UpToDate,
+    Staged { version: String },
+    Failed { error: String },
 }
 
 struct ReadyUpdate {
     version: String,
 }
 
-/// Check the followed channel for a newer version and, on a hit, STAGE it —
-/// download and install silently, so the next launch is already the new
-/// version. No notification, no "Restart to update" prompt, nothing the user
-/// has to decide.
-///
-/// The old flow asked. That is a question the user has no basis to answer —
-/// they cannot know what is in the release or whether it matters — and the
-/// honest default for a background helper is to keep itself current the way
-/// the browser does. macOS lets us replace the bundle under a running app, so
-/// "apply on quit" costs nothing: whenever they next start Virtues, it is
-/// current.
-///
-/// Silent best-effort. Up-to-date and offline are both no-ops, retried next
-/// tick. Only a SECOND consecutive staging failure is worth a word.
-/// Which release channel this install follows. Stored beside the app's other
-/// config; absent means Main, so an existing install keeps its behaviour.
-///
-/// Read at check time rather than cached, so flipping the channel takes effect
-/// on the next poll instead of on the next launch.
+/// Record a failed check or stage: bump the shared counter, remember the
+/// verdict, and speak exactly once at two consecutive failures.
+fn record_update_failure(app: &AppHandle, err: String) {
+    use tauri_plugin_notification::NotificationExt;
+    let state = app.state::<std::sync::Mutex<UpdateState>>();
+    let mut g = state.lock().unwrap();
+    g.failures = g.failures.saturating_add(1);
+    g.last_check = Some(CheckOutcome::Failed { error: err.clone() });
+    if g.failures == 2 {
+        drop(g);
+        let _ = app
+            .notification()
+            .builder()
+            .title("Virtues could not update itself")
+            .body(format!("{err}\n\nIt will keep trying."))
+            .show();
+    }
+}
+
 /// Ask the box who it is: `(version, channel)` from `/health` via the local
 /// proxy. `None` when the box can't be reached — which is not the same as any
-/// particular answer, and callers must treat it that way.
+/// particular answer, and callers must treat it that way. (Feeds the tray's
+/// version line; the updater no longer routes by it.)
 ///
 /// BLOCKING, same std-only shape as the session probe above.
 fn box_identity_blocking() -> Option<(String, String)> {
@@ -761,62 +785,63 @@ fn parse_box_identity(raw: &str) -> Option<(String, String)> {
     Some((field("version")?, field("channel")?))
 }
 
-async fn box_identity() -> Option<(String, String)> {
-    tauri::async_runtime::spawn_blocking(box_identity_blocking)
-        .await
-        .unwrap_or(None)
-}
-
-/// Which release channel this install follows — **the box's**, not its own.
+/// Check for a newer app release and, on a hit, STAGE it — download and
+/// install silently, so the next launch is already the new version. No
+/// notification, no "Restart to update" prompt, nothing the user has to
+/// decide.
 ///
-/// This used to read a per-device file, which is how you get a fleet that
-/// disagrees with itself: the box updates on one channel while the Mac paired
-/// to it follows another, and every support conversation starts with an extra
-/// unknown. The box already owns channel selection for its own updates, so it
-/// is the one place worth asking.
+/// The old flow asked. That is a question the user has no basis to answer —
+/// they cannot know what is in the release or whether it matters — and the
+/// honest default for a background helper is to keep itself current the way
+/// the browser does. macOS lets us replace the bundle under a running app, so
+/// "apply on quit" costs nothing: whenever they next start Virtues, it is
+/// current.
 ///
-/// `None` means "use the configured stable endpoint": either the box says
-/// stable, or we could not reach it. Preferring stable on an unreachable box is
-/// deliberate — the alternative is silently pulling a prerelease onto a machine
-/// whose owner never chose one.
-async fn updater_endpoint() -> Option<String> {
-    let (_, channel) = box_identity().await?;
-    match channel.trim().to_ascii_lowercase().as_str() {
-        "prerelease" | "pre" | "edge" | "nightly" => Some(
-            "https://github.com/virtues-os/virtues/releases/download/mac-edge/latest.json"
-                .to_string(),
-        ),
-        _ => None,
-    }
-}
-
+/// Best-effort, but never silent about failure: every outcome — up to date,
+/// staged, couldn't check, couldn't download — lands in `last_check`, and two
+/// consecutive failures of either kind earn the one notification.
 async fn check_for_update(app: &AppHandle) {
-    use tauri_plugin_notification::NotificationExt;
     use tauri_plugin_updater::UpdaterExt;
 
-    // Point the updater at the followed channel's manifest. `mac-edge` only
-    // started publishing one alongside the channel selector — before that,
-    // anyone on an edge build had no update path at all.
-    let updater = match updater_endpoint().await {
-        Some(url) => match url::Url::parse(&url) {
-            Ok(parsed) => match app.updater_builder().endpoints(vec![parsed]) {
-                Ok(b) => match b.build() {
-                    Ok(u) => u,
-                    Err(_) => return,
-                },
-                Err(_) => return,
-            },
-            Err(_) => return,
-        },
-        None => match app.updater() {
-            Ok(u) => u,
-            Err(_) => return,
-        },
+    // ONE channel: the configured `mac-latest` manifest. This used to route by
+    // the box's channel toward `mac-edge` — an endpoint that stopped
+    // publishing a manifest (a Mac sent there would never update again, and
+    // the error was swallowed), reached through a match arm ("prerelease")
+    // that the box's /health vocabulary ("staging") never produced anyway. A
+    // staging box's Mac follows stable app releases: the UI it renders is
+    // box-served and already tracks the box, and the gap a newer box may open
+    // against an older shell is the ShellTooOld gate's job — not a parallel
+    // signed-release channel. See docs/device-version-update-audit.md (U1-U5).
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            record_update_failure(app, format!("updater unavailable: {e}"));
+            return;
+        }
     };
 
     let update = match updater.check().await {
         Ok(Some(u)) => u,
-        _ => return,
+        Ok(None) => {
+            let state = app.state::<std::sync::Mutex<UpdateState>>();
+            let mut g = state.lock().unwrap();
+            g.failures = 0;
+            // "Nothing newer than what you have" includes "you already staged
+            // it" — keep the staged verdict visible rather than downgrading it
+            // to a bare up-to-date.
+            g.last_check = Some(match &g.ready {
+                Some(r) => CheckOutcome::Staged { version: r.version.clone() },
+                None => CheckOutcome::UpToDate,
+            });
+            return;
+        }
+        // A failed CHECK (404 manifest, DNS, TLS, bad signature) is a verdict,
+        // not a no-op — collapsing it into silence is how a dead endpoint
+        // stayed invisible while the tray said "Up to date ✓".
+        Err(e) => {
+            record_update_failure(app, e.to_string());
+            return;
+        }
     };
     let version = update.version.clone();
     let note = update
@@ -831,35 +856,25 @@ async fn check_for_update(app: &AppHandle) {
     // would be a deadlock waiting for a slow download.
     {
         let state = app.state::<std::sync::Mutex<UpdateState>>();
-        let g = state.lock().unwrap();
+        let mut g = state.lock().unwrap();
         if g.ready.as_ref().map(|r| r.version.as_str()) == Some(version.as_str()) {
+            g.failures = 0;
+            g.last_check = Some(CheckOutcome::Staged { version });
             return;
         }
     }
 
     let staged = update.download_and_install(|_, _| {}, || {}).await;
 
-    let state = app.state::<std::sync::Mutex<UpdateState>>();
-    let mut g = state.lock().unwrap();
     match staged {
         Ok(()) => {
+            let state = app.state::<std::sync::Mutex<UpdateState>>();
+            let mut g = state.lock().unwrap();
             g.failures = 0;
             g.ready = Some(ReadyUpdate { version: version.clone() });
+            g.last_check = Some(CheckOutcome::Staged { version });
         }
-        Err(e) => {
-            g.failures = g.failures.saturating_add(1);
-            // Exactly at two: report once, then go quiet again rather than
-            // nagging every six hours about something the user cannot fix.
-            if g.failures == 2 {
-                drop(g);
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("Virtues could not update itself")
-                    .body(format!("{e}\n\nIt will keep trying."))
-                    .show();
-            }
-        }
+        Err(e) => record_update_failure(app, e.to_string()),
     }
     // `note` is read only for the tray line now; the release body is not
     // pushed at the user unasked.
@@ -873,14 +888,42 @@ async fn check_for_update(app: &AppHandle) {
 /// On relaunch the helper-reconcile redeploys the new sidecars — loop closed.
 /// `app.restart()` never returns.
 fn apply_update(app: AppHandle) {
-    let staged = {
-        let state = app.state::<std::sync::Mutex<UpdateState>>();
-        let g = state.lock().unwrap();
-        g.ready.is_some()
-    };
+    // try_state: only macOS manages UpdateState (Windows/Linux ship without a
+    // self-updater), and this is now reachable from the SPA on every platform.
+    let staged = app
+        .try_state::<std::sync::Mutex<UpdateState>>()
+        .is_some_and(|state| state.lock().unwrap().ready.is_some());
     if staged {
         app.restart();
     }
+}
+
+/// The updater's state for the SPA — drives the sidebar's "Relaunch to X"
+/// chip, and is the first time anything outside the tray can see a staged
+/// update at all. `None` means "no self-updater on this platform", which the
+/// UI must treat as silence, not as up-to-date.
+#[derive(serde::Serialize)]
+struct UpdateStateView {
+    staged_version: Option<String>,
+    last_check: Option<CheckOutcome>,
+}
+
+#[tauri::command]
+fn update_state_cmd(app: AppHandle) -> Option<UpdateStateView> {
+    let state = app.try_state::<std::sync::Mutex<UpdateState>>()?;
+    let g = state.lock().unwrap();
+    Some(UpdateStateView {
+        staged_version: g.ready.as_ref().map(|r| r.version.clone()),
+        last_check: g.last_check.clone(),
+    })
+}
+
+/// Restart into a staged update, from the SPA chip. No-op when nothing is
+/// staged — the chip only renders when `staged_version` says so, but a stale
+/// click after a background apply must not restart an already-current app.
+#[tauri::command]
+fn apply_update_cmd(app: AppHandle) {
+    apply_update(app);
 }
 
 // ============================================================================
@@ -1199,25 +1242,43 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 tauri::async_runtime::spawn(async move {
                     set_check_label(&app, &items.check_now, "Checking…", false);
                     check_for_update(&app).await;
-                    let staged = {
+                    // The label speaks the actual verdict. This used to read
+                    // only "is something staged" and answered every other case
+                    // — including a failed check — with "Up to date ✓", the
+                    // exact couldn't-check-is-not-up-to-date lie the box-side
+                    // update UI refuses to tell.
+                    let verdict = {
                         let st = app.state::<std::sync::Mutex<UpdateState>>();
-                        let staged = st.lock().unwrap().ready.is_some();
-                        staged
+                        let g = st.lock().unwrap();
+                        match &g.last_check {
+                            Some(CheckOutcome::Staged { .. }) => None,
+                            Some(CheckOutcome::Failed { .. }) => {
+                                Some("Couldn't check — will keep trying")
+                            }
+                            _ => Some("Up to date ✓"),
+                        }
                     };
                     refresh_tray(&app, items.clone());
-                    if staged {
-                        // Amber "Restart to update" line now carries the signal;
-                        // just restore the trigger label.
-                        set_check_label(&app, &items.check_now, "Check for Updates…", true);
-                    } else {
-                        set_check_label(&app, &items.check_now, "Up to date ✓", false);
-                        let app = app.clone();
-                        let item = items.check_now.clone();
-                        // Revert to the actionable label after a brief beat.
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_secs(3));
-                            set_check_label(&app, &item, "Check for Updates…", true);
-                        });
+                    match verdict {
+                        // Green "installs on next launch" line carries the
+                        // signal; just restore the trigger label.
+                        None => set_check_label(
+                            &app,
+                            &items.check_now,
+                            "Check for Updates…",
+                            true,
+                        ),
+                        Some(text) => {
+                            set_check_label(&app, &items.check_now, text, false);
+                            let app = app.clone();
+                            let item = items.check_now.clone();
+                            // Revert to the actionable label after a beat —
+                            // long enough to read a failure.
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_secs(4));
+                                set_check_label(&app, &item, "Check for Updates…", true);
+                            });
+                        }
                     }
                 });
             }
@@ -1302,15 +1363,25 @@ fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
         .parent()
         .ok_or("no exe dir")?
         .join(name);
+    // A marker left by a failed kickstart below. Without it, a failed restart
+    // was UNRECOVERABLE: the copy had already made the byte-compare read "in
+    // sync", so every later launch no-op'd while the old process kept running
+    // from its held inode until logout. The marker keeps "binary replaced" and
+    // "process restarted" as separate facts.
+    let restart_pending = installed.with_file_name(format!(".{name}-restart-pending"));
     // Dev build / sidecar not alongside → nothing we can reconcile against.
-    if !bundled.exists() || !files_differ(&bundled, &installed) {
+    if !bundled.exists() {
         return Ok(false);
     }
-    copy_executable(&bundled, &installed).map_err(|e| e.to_string())?;
+    if !files_differ(&bundled, &installed) && !restart_pending.exists() {
+        return Ok(false);
+    }
+    if files_differ(&bundled, &installed) {
+        copy_executable(&bundled, &installed).map_err(|e| e.to_string())?;
+    }
     // Kick the LaunchAgent so launchd drops the old process and runs the new
     // binary now (rename-over-running is fine on macOS; the live process holds
-    // the old inode until this restart). Best-effort: if the agent isn't loaded
-    // the next login / install picks it up.
+    // the old inode until this restart).
     let uid = std::process::Command::new("id")
         .arg("-u")
         .output()
@@ -1318,10 +1389,21 @@ fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    if !uid.is_empty() {
-        let _ = std::process::Command::new("/bin/launchctl")
+    let kicked = !uid.is_empty()
+        && std::process::Command::new("/bin/launchctl")
             .args(["kickstart", "-k", &format!("gui/{uid}/{agent}")])
-            .output();
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    if kicked {
+        let _ = std::fs::remove_file(&restart_pending);
+    } else {
+        // Remember that the running process is still the old binary; the next
+        // launch retries the kickstart even though the files now match. (An
+        // agent that simply isn't loaded also lands here — the next login
+        // starts the new binary and the retry then clears the marker.)
+        let _ = std::fs::write(&restart_pending, b"");
+        eprintln!("[reconcile] {name}: kickstart failed — will retry next launch");
     }
     Ok(true)
 }
@@ -1456,6 +1538,8 @@ fn main() {
             command_surface_version,
             shell_identity_cmd,
             bundle_boot_ok,
+            update_state_cmd,
+            apply_update_cmd,
             get_client_status,
             discover_servers,
             pair_with_code,
