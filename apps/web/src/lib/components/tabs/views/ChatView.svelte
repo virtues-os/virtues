@@ -2265,6 +2265,40 @@
 		}
 	}
 
+	/* Ghost mode inverts the composer: the pill you type into flips to the
+	   theme's ink, so the mode is a material change under your fingers, not a
+	   label you have to remember reading. Done by remapping the pill's tokens
+	   — everything inside (placeholder, buttons, the model pill) follows on
+	   its own. The originals are captured one scope up because a custom
+	   property cannot swap with itself in place. */
+	.chat-area.ghost {
+		--ghost-pill-bg: var(--color-foreground);
+		--ghost-pill-ink: var(--color-surface);
+	}
+	.chat-area.ghost :global(.chat-input-wrapper.bg-surface) {
+		/* Both token families: the Tailwind theme tokens (--foreground, used
+		   by text-foreground et al.) and the component tokens (--color-*). */
+		--surface: var(--ghost-pill-bg);
+		--foreground: var(--ghost-pill-ink);
+		--color-surface: var(--ghost-pill-bg);
+		--color-foreground: var(--ghost-pill-ink);
+		--color-foreground-muted: color-mix(in srgb, var(--ghost-pill-ink) 65%, transparent);
+		--color-foreground-subtle: color-mix(in srgb, var(--ghost-pill-ink) 45%, transparent);
+		--color-border-strong: transparent;
+		--color-border: color-mix(in srgb, var(--ghost-pill-ink) 18%, transparent);
+		--hover-bg: color-mix(in srgb, var(--ghost-pill-ink) 12%, transparent);
+		background: var(--ghost-pill-bg);
+		color: var(--ghost-pill-ink);
+	}
+
+	/* The send control flips with the pill: ink circle, pill-colored glyph —
+	   otherwise `.btn-primary` (secondary bg, surface ink) lands dark-on-dark
+	   inside the inverted pill. */
+	.chat-area.ghost :global(.chat-input-wrapper .btn-primary) {
+		background-color: var(--ghost-pill-ink);
+		color: var(--ghost-pill-bg);
+	}
+
 	@media (prefers-reduced-motion: reduce) {
 		.chat-area.ghost::before,
 		.chat-topbar-right > :global(*) {
