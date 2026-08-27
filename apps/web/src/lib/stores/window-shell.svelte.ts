@@ -208,7 +208,19 @@ class WindowShellStore {
 
 		try {
 			this.restoreTabState();
-			if (this.singleWindow) this.collapseToSingleWindow();
+			if (this.singleWindow) {
+				this.collapseToSingleWindow();
+				// Chat-first: the phone opens on a fresh chat, whatever view the
+				// last session ended on — recents are one drawer away, and the
+				// empty composer is what auto-raises the keyboard. A deep link
+				// still wins: handleDeepLink runs after init and navigates on top
+				// of this. Not inside collapseToSingleWindow, which also serves a
+				// desktop browser resized below the breakpoint mid-session, where
+				// yanking the current view away would lose the user's place.
+				if (this.activeTab?.route !== '/chat') {
+					this.navigate('/chat', { label: 'Chat' });
+				}
+			}
 		} catch (e) {
 			console.error('[WindowShellStore] Failed to initialize:', e);
 		}
