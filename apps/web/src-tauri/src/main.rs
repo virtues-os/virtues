@@ -15,6 +15,11 @@ use tauri_plugin_shell::ShellExt;
 /// Collector status returned from CLI
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CollectorStatus {
+    /// The installed collector binary's release, from its own status output.
+    /// `None` from a collector predating the field — same rule as the
+    /// permission flags below: absence means "cannot tell", never a value.
+    #[serde(default)]
+    pub version: Option<String>,
     pub running: bool,
     pub paused: bool,
     pub pending_events: i64,
@@ -746,45 +751,6 @@ fn record_update_failure(app: &AppHandle, err: String) {
     }
 }
 
-/// Ask the box who it is: `(version, channel)` from `/health` via the local
-/// proxy. `None` when the box can't be reached — which is not the same as any
-/// particular answer, and callers must treat it that way. (Feeds the tray's
-/// version line; the updater no longer routes by it.)
-///
-/// BLOCKING, same std-only shape as the session probe above.
-fn box_identity_blocking() -> Option<(String, String)> {
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
-
-    let addr = format!("127.0.0.1:{}", tauri_plugin_reach::loopback_port())
-        .parse()
-        .ok()?;
-    let mut s = TcpStream::connect_timeout(&addr, PROBE_CONNECT_TIMEOUT).ok()?;
-    let _ = s.set_read_timeout(Some(PROBE_READ_TIMEOUT));
-    s.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-        .ok()?;
-    let mut raw = String::new();
-    let _ = s.read_to_string(&mut raw);
-    parse_box_identity(&raw)
-}
-
-/// Pull `version` + `channel` out of a raw `/health` response.
-///
-/// Body only, so header text can never false-match — same discipline as
-/// `classify_session_response`, and the same reason for not pulling in a JSON
-/// dep: the shape is small, known, and ours.
-fn parse_box_identity(raw: &str) -> Option<(String, String)> {
-    let body = raw.split("\r\n\r\n").nth(1)?;
-    let field = |key: &str| -> Option<String> {
-        let at = body.find(&format!("\"{key}\""))?;
-        let rest = &body[at + key.len() + 2..];
-        let open = rest.find('"')?;
-        let close = rest[open + 1..].find('"')?;
-        Some(rest[open + 1..open + 1 + close].to_string())
-    };
-    Some((field("version")?, field("channel")?))
-}
-
 /// Check for a newer app release and, on a hit, STAGE it — download and
 /// install silently, so the next launch is already the new version. No
 /// notification, no "Restart to update" prompt, nothing the user has to
@@ -926,6 +892,19 @@ fn apply_update_cmd(app: AppHandle) {
     apply_update(app);
 }
 
+/// Run an update check now, at the UI's request (This Mac's "Check now").
+/// Fire-and-forget: the UI re-reads `update_state_cmd` for the verdict, which
+/// is the same state the tray and the chip read — one fact, three doors.
+/// Also the practical answer to the 6h loop having no wake/foreground recheck:
+/// opening the page that shows update state IS the foreground moment.
+#[tauri::command]
+fn check_app_update_cmd(app: AppHandle) {
+    if app.try_state::<std::sync::Mutex<UpdateState>>().is_none() {
+        return; // no self-updater on this platform
+    }
+    tauri::async_runtime::spawn(async move { check_for_update(&app).await });
+}
+
 // ============================================================================
 // Menu-bar tray
 // ============================================================================
@@ -964,100 +943,46 @@ fn dot_image(dot: Dot) -> Option<tauri::image::Image<'static>> {
 }
 
 /// First line of the tray menu: where this device stands with the box. Returns
-/// (status dot, label).
-fn box_label() -> (Dot, &'static str) {
+/// The tray's ONE line. Worst thing first: an unreachable box outranks a
+/// paused collector outranks all-quiet.
+///
+/// The tray stopped being a control panel in the 2026-08-27 surface diet:
+/// it had grown seven lines in three vocabularies (box, collector, sync,
+/// version, update ×3), duplicating — and disagreeing with — the in-app
+/// surfaces. Every action and every detail now lives in Devices → This Mac,
+/// the one place; this line exists only because a closed window cannot render
+/// that page, and its words match This Mac's exactly.
+fn tray_summary(installed: bool, status: &CollectorStatus) -> (Dot, &'static str) {
     if !is_paired() {
-        return (Dot::Grey, "Box: not connected");
+        return (Dot::Grey, "Not set up — open Virtues");
     }
     match probe_box_session_blocking(1) {
-        Some(true) => (Dot::Green, "Box: connected"),
-        Some(false) => (Dot::Red, "Box: needs re-pairing"),
-        None => (Dot::Amber, "Box: unreachable"),
+        Some(false) => return (Dot::Red, "Box needs re-pairing — open Virtues"),
+        None => return (Dot::Amber, "Box unreachable"),
+        Some(true) => {}
     }
-}
-
-/// Second line: the collector daemon's state, with the same dot vocabulary.
-fn collector_label(installed: bool, status: &CollectorStatus) -> (Dot, &'static str) {
     if !installed {
-        (Dot::Grey, "Collector: off")
+        (Dot::Grey, "Not collecting — open Virtues to set up")
     } else if status.paused {
-        (Dot::Amber, "Collector: paused")
+        (Dot::Amber, "Paused")
     } else if status.running {
-        (Dot::Green, "Collector: collecting")
+        (Dot::Green, "Collecting")
     } else {
-        (Dot::Red, "Collector: stopped")
-    }
-}
-
-/// Third line (a dim subtitle): when the collector last flushed to the box, plus
-/// any backlog. `—` when there's no collector, `never` when it has one but has
-/// not synced yet.
-fn last_sync_label(installed: bool, status: &CollectorStatus) -> String {
-    if !installed {
-        return "Last sync: —".to_string();
-    }
-    let when = match status.last_sync.as_deref() {
-        Some(iso) => format_clock(iso).unwrap_or_else(|| "unknown".to_string()),
-        None => "never".to_string(),
-    };
-    let pending = status.pending_events + status.pending_messages;
-    if pending > 0 {
-        format!("Last sync: {when} · {pending} queued")
-    } else {
-        format!("Last sync: {when}")
-    }
-}
-
-/// Format an RFC3339 timestamp (the workspace's wire format for `DateTime<Utc>`)
-/// as a local clock time — bare "2:34 PM" for today, "Jun 22, 2:34 PM" otherwise.
-/// `None` if it doesn't parse, so the caller can fall back rather than show junk.
-fn format_clock(iso: &str) -> Option<String> {
-    use chrono::{DateTime, Local};
-    let dt = DateTime::parse_from_rfc3339(iso).ok()?.with_timezone(&Local);
-    if dt.date_naive() == Local::now().date_naive() {
-        Some(dt.format("%-I:%M %p").to_string())
-    } else {
-        Some(dt.format("%b %-d, %-I:%M %p").to_string())
+        (Dot::Red, "Collector stopped — open Virtues")
     }
 }
 
 /// The tray's mutable menu items, bundled so the poll loop and the menu-event
-/// handler can each hold a clone and refresh the same lines.
+/// handler can each hold a clone and refresh the same line.
 #[derive(Clone)]
 struct TrayItems {
-    box_status: tauri::menu::IconMenuItem<tauri::Wry>,
-    collector_status: tauri::menu::IconMenuItem<tauri::Wry>,
-    last_sync: tauri::menu::MenuItem<tauri::Wry>,
-    toggle: tauri::menu::MenuItem<tauri::Wry>,
-    /// "Restart to update (vX)" when an update is staged, else a disabled
-    /// "Virtues is up to date". Driven by [`UpdateState`] on each poll.
-    update: tauri::menu::IconMenuItem<tauri::Wry>,
-    /// "Check for Updates…" — a manual trigger for [`check_for_update`]. Its
-    /// label flips to "Checking…" then "Up to date ✓" for transient feedback.
-    check_now: tauri::menu::MenuItem<tauri::Wry>,
-    /// The RELEASE the user is on — the box's version, refreshed each poll.
-    /// Not this bundle's `package_info().version`, which is a build counter
-    /// for the updater and means nothing to a person.
-    version_label: tauri::menu::MenuItem<tauri::Wry>,
+    status: tauri::menu::IconMenuItem<tauri::Wry>,
 }
 
-/// Set the "Check for Updates…" item's label + enabled state on the main
-/// thread (AppKit requires UI mutation there). Used for the transient
-/// "Checking…" / "Up to date ✓" feedback on a manual check.
-fn set_check_label(app: &AppHandle, item: &tauri::menu::MenuItem<tauri::Wry>, text: &str, enabled: bool) {
-    let item = item.clone();
-    let text = text.to_string();
-    let _ = app.run_on_main_thread(move || {
-        let _ = item.set_text(&text);
-        let _ = item.set_enabled(enabled);
-    });
-}
-
-/// Recompute the status lines + toggle and apply them. Spawns its OWN thread
-/// because computing the state BLOCKS (probing the box over TCP, and shelling
-/// out to the collector CLI when installed), then hops to the main thread for
-/// the actual menu mutation — AppKit requires UI changes on the main thread.
-/// Safe to call from anywhere, including the (main-thread) menu-event handler.
+/// Recompute the status line and apply it. Spawns its OWN thread because
+/// computing the state BLOCKS (probing the box over TCP, and shelling out to
+/// the collector CLI when installed), then hops to the main thread for the
+/// actual menu mutation — AppKit requires UI changes on the main thread.
 fn refresh_tray(app: &AppHandle, items: TrayItems) {
     let app = app.clone();
     std::thread::spawn(move || {
@@ -1069,137 +994,48 @@ fn refresh_tray(app: &AppHandle, items: TrayItems) {
         } else {
             CollectorStatus::default()
         };
-        // The release line. `None` (box unreachable) leaves it as the bare
-        // product name rather than falling back to the build counter: showing
-        // a number the user cannot find anywhere else is worse than showing
-        // none. See `box_identity_blocking`.
-        let version_text = match box_identity_blocking() {
-            Some((version, channel)) => {
-                let ch = channel.trim().to_ascii_lowercase();
-                if ch.is_empty() || ch == "stable" || ch == "main" || ch == version {
-                    format!("Virtues {version}")
-                } else {
-                    format!("Virtues {version} ({ch})")
-                }
-            }
-            None => "Virtues".to_string(),
-        };
-        let (box_dot, box_text) = box_label();
-        let (coll_dot, coll_text) = collector_label(installed, &status);
-        let sync_text = last_sync_label(installed, &status);
-        let toggle_text = if status.paused { "Resume collecting" } else { "Pause collecting" };
-
-        // Update line: a staged update is INFORMATION, not a task. It applies
-        // on the next launch on its own, so the escalating amber→red nudge that
-        // used to live here would be pressuring the user about something that
-        // needs nothing from them. Green, stated once; clicking is a shortcut
-        // for the impatient, not a chore.
-        let update = {
-            let st = app.state::<std::sync::Mutex<UpdateState>>();
-            let g = st.lock().unwrap();
-            g.ready
-                .as_ref()
-                .map(|r| (Dot::Green, format!("Virtues {} installs on next launch", r.version)))
-        };
-
+        let (dot, text) = tray_summary(installed, &status);
         let _ = app.run_on_main_thread(move || {
-            let _ = items.box_status.set_text(box_text);
-            let _ = items.box_status.set_icon(dot_image(box_dot));
-            let _ = items.collector_status.set_text(coll_text);
-            let _ = items.collector_status.set_icon(dot_image(coll_dot));
-            let _ = items.last_sync.set_text(sync_text);
-            let _ = items.toggle.set_text(toggle_text);
-            let _ = items.version_label.set_text(&version_text);
-            // Disabled when not installed so pause/resume can't be invoked in a
-            // state where the CLI would just error — keeps the user from a
-            // no-op foot-gun.
-            let _ = items.toggle.set_enabled(installed);
-            match &update {
-                Some((dot, text)) => {
-                    let _ = items.update.set_text(text);
-                    let _ = items.update.set_icon(dot_image(*dot));
-                    let _ = items.update.set_enabled(true);
-                }
-                None => {
-                    let _ = items.update.set_text("Virtues is up to date");
-                    let _ = items.update.set_icon(dot_image(Dot::Grey));
-                    let _ = items.update.set_enabled(false);
-                }
-            }
+            let _ = items.status.set_text(text);
+            let _ = items.status.set_icon(dot_image(dot));
         });
     });
 }
 
-/// Build the macOS menu-bar item: two colored status lines, a dim last-sync
-/// subtitle, a pause/resume toggle, show, and a real Quit (the window close
-/// button only HIDES — see `on_window_event` — so this is the only way to exit).
+/// Build the macOS menu-bar item: ONE colored status line, "Open Virtues",
+/// and a real Quit (the window close button only HIDES — see
+/// `on_window_event` — so Quit is the only way to exit).
+///
+/// This menu was a seven-line control panel — two status lines, last-sync,
+/// pause/resume, a version line, check-for-updates, and an update line — a
+/// second UI speaking its own dialect of facts the app also showed. The
+/// surface diet moved every action and every detail into Devices → This Mac;
+/// what remains is exactly what a closed window cannot provide: the dot, the
+/// door, and the exit.
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     use tauri::menu::{IconMenuItem, Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::TrayIconBuilder;
 
-    // Status lines are ENABLED (so the text reads at full strength, not greyed),
-    // carry a colored status dot, and clicking either one opens the app — handy
-    // when it says "needs re-pairing"/"unreachable" and the fix lives in-window.
-    let status_box = IconMenuItem::with_id(
-        app, "status_box", "Box: checking…", true, dot_image(Dot::Grey), None::<&str>,
+    // Enabled (so the text reads at full strength, not greyed), and clicking
+    // it opens the app — the line often names a problem whose fix lives
+    // in-window.
+    let status = IconMenuItem::with_id(
+        app, "status", "Checking…", true, dot_image(Dot::Grey), None::<&str>,
     )?;
-    let status_collector = IconMenuItem::with_id(
-        app, "status_collector", "Collector: checking…", true, dot_image(Dot::Grey), None::<&str>,
-    )?;
-    // A dim, non-interactive subtitle (disabled = greyed, which is what we want
-    // for secondary info).
-    let last_sync = MenuItem::with_id(app, "last_sync", "Last sync: —", false, None::<&str>)?;
-    // Starts disabled; the first poll enables it iff the collector is installed.
-    let toggle = MenuItem::with_id(app, "toggle_collector", "Pause collecting", false, None::<&str>)?;
-    let show = MenuItem::with_id(app, "show", "Show Virtues", true, None::<&str>)?;
-    // Update line: disabled "up to date" until the check loop stages one, then
-    // the poll flips it to an enabled amber "Restart to update (vX)".
-    let update = IconMenuItem::with_id(
-        app, "update_item", "Virtues is up to date", false, dot_image(Dot::Grey), None::<&str>,
-    )?;
-    // A dim, non-interactive line showing the running version — so a glance at
-    // the menu answers "am I current?" without opening anything.
-    let version_label = MenuItem::with_id(
-        app,
-        "version_label",
-        // Placeholder only — `refresh_tray` replaces this with the box's
-        // release version on the first poll.
-        "Virtues",
-        false,
-        None::<&str>,
-    )?;
-    // Manual "check now" — runs the same check the 6h poll runs, for the
-    // impatient/debugging case. Its label gives transient feedback on click.
-    let check_now = MenuItem::with_id(app, "check_now", "Check for Updates…", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Open Virtues", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Virtues", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
         &[
-            &status_box,
-            &status_collector,
-            &last_sync,
+            &status,
             &PredefinedMenuItem::separator(app)?,
-            &toggle,
             &show,
-            &PredefinedMenuItem::separator(app)?,
-            &version_label,
-            &check_now,
-            &update,
-            &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
     )?;
 
-    let items = TrayItems {
-        box_status: status_box,
-        collector_status: status_collector,
-        last_sync,
-        toggle,
-        update,
-        check_now,
-        version_label,
-    };
+    let items = TrayItems { status };
 
     // The ∴ mark as a TEMPLATE image: monochrome black+alpha that AppKit recolors
     // to fit light/dark menu bars. The full-color app icon would not adapt and
@@ -1207,97 +1043,21 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
         .expect("decode bundled tray icon");
 
-    // Cloned into the menu-event handler so a pause/resume can refresh the menu
-    // at once instead of waiting out the ~10s poll.
-    let event_items = items.clone();
-
     TrayIconBuilder::with_id("main-tray")
         .icon(icon)
         .icon_as_template(true)
         .tooltip("Virtues")
         .menu(&menu)
         .on_menu_event(move |app, event| match event.id.as_ref() {
-            // The two status lines double as a shortcut into the app.
-            "show" | "status_box" | "status_collector" => {
+            // The status line doubles as the door — it often names a problem
+            // whose fix lives in-window (Devices → This Mac).
+            "show" | "status" => {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
             }
             "quit" => app.exit(0),
-            // "Restart to update" — re-check, download+install, relaunch. The
-            // item is only enabled once an update is staged, so a click here
-            // always has something to apply.
-            "update_item" => {
-                let app = app.clone();
-                apply_update(app);
-            }
-            // Manual update check. Flip the label to "Checking…" while it runs,
-            // then either let the staged-update path take over (refresh_tray
-            // surfaces the amber "Restart to update" line) or flash "Up to date
-            // ✓" for a couple seconds before reverting.
-            "check_now" => {
-                let app = app.clone();
-                let items = event_items.clone();
-                tauri::async_runtime::spawn(async move {
-                    set_check_label(&app, &items.check_now, "Checking…", false);
-                    check_for_update(&app).await;
-                    // The label speaks the actual verdict. This used to read
-                    // only "is something staged" and answered every other case
-                    // — including a failed check — with "Up to date ✓", the
-                    // exact couldn't-check-is-not-up-to-date lie the box-side
-                    // update UI refuses to tell.
-                    let verdict = {
-                        let st = app.state::<std::sync::Mutex<UpdateState>>();
-                        let g = st.lock().unwrap();
-                        match &g.last_check {
-                            Some(CheckOutcome::Staged { .. }) => None,
-                            Some(CheckOutcome::Failed { .. }) => {
-                                Some("Couldn't check — will keep trying")
-                            }
-                            _ => Some("Up to date ✓"),
-                        }
-                    };
-                    refresh_tray(&app, items.clone());
-                    match verdict {
-                        // Green "installs on next launch" line carries the
-                        // signal; just restore the trigger label.
-                        None => set_check_label(
-                            &app,
-                            &items.check_now,
-                            "Check for Updates…",
-                            true,
-                        ),
-                        Some(text) => {
-                            set_check_label(&app, &items.check_now, text, false);
-                            let app = app.clone();
-                            let item = items.check_now.clone();
-                            // Revert to the actionable label after a beat —
-                            // long enough to read a failure.
-                            std::thread::spawn(move || {
-                                std::thread::sleep(std::time::Duration::from_secs(4));
-                                set_check_label(&app, &item, "Check for Updates…", true);
-                            });
-                        }
-                    }
-                });
-            }
-            "toggle_collector" => {
-                // Flip based on the LIVE state, not the (possibly stale) label,
-                // then refresh immediately so the menu shows the new state.
-                let app = app.clone();
-                let items = event_items.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Ok(status) = get_collector_status(app.clone()).await {
-                        let _ = if status.paused {
-                            resume_collector(app.clone()).await
-                        } else {
-                            pause_collector(app.clone()).await
-                        };
-                    }
-                    refresh_tray(&app, items);
-                });
-            }
             _ => {}
         })
         .build(app)?;
@@ -1568,6 +1328,7 @@ fn main() {
             bundle_boot_ok,
             update_state_cmd,
             apply_update_cmd,
+            check_app_update_cmd,
             get_client_status,
             discover_servers,
             pair_with_code,
@@ -1814,50 +1575,3 @@ fn main() {
         });
 }
 
-#[cfg(test)]
-mod box_identity_tests {
-    use super::parse_box_identity;
-
-    fn resp(body: &str) -> String {
-        format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}")
-    }
-
-    #[test]
-    fn reads_version_and_channel() {
-        // Verbatim shape from a live box (dragon, 2026-08-05), field order and all.
-        let body = r#"{"status":"healthy","version":"0.3.0","channel":"stable","commit":"abc1234"}"#;
-        assert_eq!(
-            parse_box_identity(&resp(body)),
-            Some(("0.3.0".to_string(), "stable".to_string()))
-        );
-    }
-
-    #[test]
-    fn edge_box_reports_edge() {
-        let body = r#"{"status":"healthy","version":"edge","channel":"edge"}"#;
-        assert_eq!(
-            parse_box_identity(&resp(body)),
-            Some(("edge".to_string(), "edge".to_string()))
-        );
-    }
-
-    #[test]
-    fn header_text_cannot_false_match() {
-        // A header naming the field must not be mistaken for the body value.
-        let raw = "HTTP/1.1 200 OK\r\nX-Note: \"version\":\"9.9.9\"\r\n\r\n{\"version\":\"0.3.0\",\"channel\":\"stable\"}";
-        assert_eq!(
-            parse_box_identity(raw),
-            Some(("0.3.0".to_string(), "stable".to_string()))
-        );
-    }
-
-    #[test]
-    fn missing_field_is_none() {
-        assert_eq!(parse_box_identity(&resp(r#"{"status":"healthy"}"#)), None);
-    }
-
-    #[test]
-    fn no_body_is_none() {
-        assert_eq!(parse_box_identity("HTTP/1.1 500 Internal Server Error"), None);
-    }
-}

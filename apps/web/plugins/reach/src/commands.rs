@@ -461,9 +461,16 @@ pub(crate) async fn improv_pair<R: Runtime>(
 
   #[cfg(not(any(target_os = "ios", target_os = "android")))]
   let body: String = {
-    // `source` distinguishes a collector from a plain device on the box: a
-    // Mac collects, so it declares "mac" and earns its ingest fan-out.
-    match desktop::client().pair(&id, kind, "mac", label, &identity.node_id).await {
+    // NO source: the desktop APP is a viewer, not a collector. It used to
+    // declare "mac" here ("a Mac collects…"), which conflated the two — the
+    // COLLECTOR is a separate daemon with its own pairing (mint-collector →
+    // `virtues-collector init`), and that pairing is what earns the
+    // mac_ingest fan-out. The app declaring "mac" gave every BLE-set-up box a
+    // second mac_ingest applet wired to a device that never posts webhooks —
+    // a phantom that sat at zero runs forever and made one Mac read as two
+    // collectors (found live on a fresh box, 2026-08-27). Empty string →
+    // `resolve_source_id` files it as `__device__`: paired, no fan-out.
+    match desktop::client().pair(&id, kind, "", label, &identity.node_id).await {
       Ok(b) => b,
       Err(e) => return Ok(serde_json::json!({ "ok": false, "error": format!("{e:#}") })),
     }

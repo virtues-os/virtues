@@ -8,6 +8,13 @@ class RowsArgs: Decodable {
 }
 
 class LocationProbePlugin: Plugin {
+  /// The one moment Tauri hands a plugin the webview. Shell keyboard behavior
+  /// (programmatic-focus keyboard, scroll-view parking) hooks in here — see
+  /// KeyboardShell.swift for why it lives in this plugin.
+  @objc public override func load(webview: WKWebView) {
+    KeyboardShell.attach(webview)
+  }
+
   /// Explicit user opt-in ("Enable"): prompt for permission if undetermined,
   /// then start collecting.
   @objc public func startProbe(_ invoke: Invoke) throws {
@@ -36,5 +43,7 @@ func initPlugin() -> Plugin {
   // heals the iroh socket on every network-path change + app foreground so the
   // box is reachable whenever it's up — no force-quit.
   ReachMonitor.shared.start()
+  // Register for MetricKit's daily battery/network/location digests.
+  Metrics.shared.start()
   return LocationProbePlugin()
 }

@@ -62,18 +62,33 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   //
   // GPS at 10m accuracy 24/7 is the single biggest hardware burn and a phone is
   // stationary most of the day. `coarse` (cell/Wi-Fi positioning, GNSS chip off)
-  // is only ever entered while audio records healthily — the audio session owns
-  // process residency then, so location never carries the keepalive in coarse
-  // mode. Movement, or audio going down (the mic re-arm piggyback needs a fast
-  // heartbeat again), escalates straight back to `precise`. Updates are never
-  // stopped — only accuracy/filter are modulated — so background residency and
-  // the sig-loc relaunch path are untouched.
+  // is entered when stationary UNLESS audio is freshly down and needs the fast
+  // re-arm heartbeat (see `heartbeatActive`). In coarse mode location may be the
+  // app's ONLY residency assertion (audio off, or audio session dead) — that is
+  // fine: residency comes from updates being ACTIVE, not from their accuracy.
+  // Updates are never stopped — only accuracy/filter are modulated — so
+  // background residency and the sig-loc relaunch path are untouched.
 
   private enum PowerMode { case precise, coarse }
   private var mode: PowerMode = .precise
   /// 0 = audio off, 1 = enabled but not recording (down), 2 = recording healthy.
   /// Pushed by the audio plugin on every state transition.
   private var audioState: Int32 = 0
+  /// When audio entered state 1 (down). Precise-as-re-arm-heartbeat is only
+  /// justified for a bounded window after that: past `heartbeatCap` a wedge the
+  /// heartbeat hasn't fixed isn't going to be fixed by more heartbeat — the gap
+  /// nudge is the recovery path — and unbounded precise GNSS was the single
+  /// worst battery failure mode in the app (blowtorch until the user notices).
+  private var audioDownSince: Date?
+  private let heartbeatCap: TimeInterval = 600
+  /// Audio is freshly down and still deserves the precise heartbeat. NOTE
+  /// deliberately false for state 0 (audio off BY CHOICE): there is nothing to
+  /// re-arm, but this class conflation previously forced audio-off users into
+  /// precise GNSS 24/7 — including motionless at home all night.
+  private var heartbeatActive: Bool {
+    guard audioState == 1, let since = audioDownSince else { return false }
+    return Date().timeIntervalSince(since) < heartbeatCap
+  }
   /// Last position that counted as movement; displacement is measured from here.
   private var moveAnchor: CLLocation?
   private var lastMovedAt = Date()
@@ -91,6 +106,17 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   /// live long enough to wait out an interval.
   private var lastBgDrainAt: Date?
   private let minBgDrainInterval: TimeInterval = 300
+
+  /// Fallback drain pacing: background drains are otherwise TRIGGERED by
+  /// location callbacks and audio-chunk nudges. An audio-off user in coarse
+  /// mode gets neither while stationary (3km accuracy + 100m filter can mean
+  /// zero callbacks for hours) — queued health/calendar/location rows would sit
+  /// all day. This timer is the floor. We can run one because one residency
+  /// assertion (audio session or active location updates) always holds. The
+  /// generous leeway lets iOS coalesce the wakeup; `maybeDrainInBackground`
+  /// already no-ops in foreground, dedupes, and rate-limits.
+  private var drainTimer: DispatchSourceTimer?
+  private let drainTimerQueue = DispatchQueue(label: "com.virtues.locdrain", qos: .utility)
 
   /// Set by the AppDelegate: "user" for a normal launch, "location" when the
   /// app was relaunched by the OS for a location event (launchOptions carried
@@ -139,7 +165,18 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     updating = true
     manager.startMonitoringSignificantLocationChanges()
     manager.startUpdatingLocation()
+    startDrainTimer()
     writeMarker(source: "start(reason=\(launchReason))")
+  }
+
+  private func startDrainTimer() {
+    if drainTimer != nil { return }
+    let t = DispatchSource.makeTimerSource(queue: drainTimerQueue)
+    t.schedule(deadline: .now() + minBgDrainInterval, repeating: minBgDrainInterval,
+               leeway: .seconds(60))
+    t.setEventHandler { [weak self] in self?.maybeDrainInBackground() }
+    drainTimer = t
+    t.resume()
   }
 
   private func currentStatus() -> CLAuthorizationStatus {
@@ -172,6 +209,12 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   /// a bounded drain so queued fixes reach the box before iOS suspends us.
   /// No-op in the foreground (the plugin's 20s loop handles that).
   private func maybeDrainInBackground() {
+    // Callers: main-thread delegate callbacks AND the fallback drain timer's
+    // utility queue — hop to main so isDraining/lastBgDrainAt have one writer.
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.maybeDrainInBackground() }
+      return
+    }
     if appStateString() == "active" { return }
     if isDraining { return }
     if let last = lastBgDrainAt, Date().timeIntervalSince(last) < minBgDrainInterval { return }
@@ -244,9 +287,9 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
       if mode == .coarse { apply(.precise, reason: "movement") }
       return
     }
-    if mode == .precise, audioState == 2,
+    if mode == .precise, !heartbeatActive,
       Date().timeIntervalSince(lastMovedAt) > stationaryAfter {
-      apply(.coarse, reason: "stationary+audio")
+      apply(.coarse, reason: audioState == 1 ? "stationary+heartbeat-capped" : "stationary")
     }
   }
 
@@ -267,15 +310,24 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   }
 
   /// Audio plugin push (via C ABI): recording health drives how lazy location
-  /// may be. Anything below healthy forces precise — location is the backup
-  /// generator that keeps the process alive and the mic re-arm heartbeat fast
-  /// while the audio session is down.
+  /// may be. Only state 1 (enabled but DOWN — the mic re-arm needs a fast
+  /// heartbeat) forces precise, and only for `heartbeatCap`. State 0 (off by
+  /// choice) deliberately forces nothing: there is nothing to re-arm, and the
+  /// old `state < 2` check burned precise GNSS 24/7 for audio-off users.
   public func setAudioState(_ state: Int32) {
     DispatchQueue.main.async { [weak self] in
       guard let self = self else { return }
+      let old = self.audioState
       self.audioState = state
-      if state < 2, self.mode == .coarse {
-        self.apply(.precise, reason: "audio=\(state)")
+      if state == 1 {
+        // Fresh transition into down restarts the heartbeat window; a repeated
+        // state-1 push (audio retrying) does not — else the cap never lands.
+        if old != 1 { self.audioDownSince = Date() }
+        if self.mode == .coarse { self.apply(.precise, reason: "audio=down") }
+      } else {
+        self.audioDownSince = nil
+        // No forced mode change: updateMotion relaxes to coarse once the
+        // stationary window passes, and movement keeps precise on its own.
       }
     }
   }
@@ -327,6 +379,28 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   }
 
   // MARK: - Writes
+
+  /// MetricKit payload storage (Metrics.swift). Own table in the same
+  /// diagnostics DB — a payload is a ~daily multi-KB JSON blob, not a row of
+  /// the location log.
+  public func writeMetric(kind: String, json: String) {
+    let ts = ISO8601DateFormatter().string(from: Date())
+    withDB { db in
+      var stmt: OpaquePointer?
+      sqlite3_exec(
+        db,
+        "CREATE TABLE IF NOT EXISTS metrics(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, kind TEXT, json TEXT)",
+        nil, nil, nil)
+      if sqlite3_prepare_v2(db, "INSERT INTO metrics (ts, kind, json) VALUES (?,?,?)", -1, &stmt, nil)
+        == SQLITE_OK {
+        sqlite3_bind_text(stmt, 1, ts, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, kind, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, json, -1, SQLITE_TRANSIENT)
+        sqlite3_step(stmt)
+      }
+      sqlite3_finalize(stmt)
+    }
+  }
 
   private func writeMarker(source: String) {
     write(lat: 0, lon: 0, source: source)

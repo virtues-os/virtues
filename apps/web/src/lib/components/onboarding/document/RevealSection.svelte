@@ -268,15 +268,25 @@
 			</div>
 		{/if}
 
-		<!-- ③ THE DOOR — the tomorrow-beat, made true by the nightly chain.
-		     Last to arrive, after a real pause: the promise is the final word,
-		     and it should land in a room that has gone still. Mounts only once
-		     the census has answered (either way) so its delay means something. -->
+		<!-- ③ THE DOOR — what happens next, then the promise as the last word.
+		     Last to arrive, after a real pause, into a room that has gone
+		     still. Mounts only once the census has answered (either way) so
+		     its delay means something. -->
 		{#if census !== null || censusFailed}
-			<p class="door-line" in:fade={{ duration: reduced ? 0 : 700, delay: reduced ? 0 : settled + 900 }}>
-				Every day, a page will be waiting for you: yesterday, written down.
-			</p>
-			<div class="cta" in:fade={{ duration: reduced ? 0 : 700, delay: reduced ? 0 : settled + 1200 }}>
+			<div class="next" in:fade={{ duration: reduced ? 0 : 700, delay: reduced ? 0 : settled + 900 }}>
+				<p class="ob-label">What happens next</p>
+				<p class="next-line">
+					Inside, your first conversation is waiting. It will ask about your life — the
+					chapters, the people, what you believe. Answer it plainly, skip anything, and
+					come back to it whenever you like; it becomes a document in your own words,
+					and it is never finished.
+				</p>
+				<p class="next-line">
+					Your box keeps reading what you connected, and more can be added anytime.
+					And every day, a page will be waiting for you: yesterday, written down.
+				</p>
+			</div>
+			<div class="cta" in:fade={{ duration: reduced ? 0 : 700, delay: reduced ? 0 : settled + 1300 }}>
 				<button class="ob-btn" onclick={onEnter}>
 					Enter Virtues
 					<Icon icon="ri:arrow-right-line" width="16" />
@@ -372,13 +382,19 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* The promise gets the serif and the ink — it is the screen's last word. */
-	.door-line {
+	/* What happens next: the waiting conversation, then the promise — the
+	   serif and the ink, because it is the screen's last word. */
+	.next {
 		margin: 2.75rem 0 1.1rem;
+	}
+
+	.next-line {
+		margin: 0.9rem 0 0;
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 1.0625rem;
-		line-height: 1.6;
+		line-height: 1.65;
 		color: var(--color-foreground);
+		max-width: 38rem;
 	}
 
 	.cta {

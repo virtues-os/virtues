@@ -589,6 +589,28 @@ impl BearerClient {
         self.handle_402_and_retry_get(path, resp).await
     }
 
+    /// GET a virtues-api route that must work before linking (the model
+    /// catalog). Attaches the api_key when the box has one, sends bare
+    /// otherwise — `get_json` refuses outright when unlinked, which is
+    /// exactly right for billable routes and wrong for public ones. No 402
+    /// recovery: public routes never charge.
+    pub async fn get_json_public(&self, path: &str) -> Result<ApiResponse> {
+        let mut req = self
+            .http
+            .get(format!("{}{}", self.api_url.trim_end_matches('/'), path))
+            .header("X-Virtues-Purpose", self.purpose.as_str());
+        if let Ok(bearer) = self.ensure_bearer().await {
+            req = req.header("Authorization", format!("Bearer {}", bearer));
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| anyhow!("virtues-api request failed: {e}"))?;
+        let status = resp.status().as_u16();
+        let body = resp.json::<Value>().await.unwrap_or_else(|_| json!({}));
+        Ok(ApiResponse { status, body })
+    }
+
     async fn handle_402_and_retry_post(
         &self,
         path: &str,

@@ -62,6 +62,47 @@ public final class AudioRecorder: NSObject {
   private var nudgeFired = false
   private var lastGoodPersistAt: Date?
 
+  // In-memory mirrors of the UserDefaults flags the 5s watchdog tick consults.
+  // Every mutation goes through this class, so the mirrors can't drift; without
+  // them the tick did several cfprefsd lookups per beat, ~17k/day of waste.
+  private var cachedEnabled = false
+  private var cachedNotify = true
+  private var cachedLastGood: TimeInterval = 0
+
+  // Quiet hours — MUTE, DON'T RELEASE. Inside the window the engine, session,
+  // and tap all stay exactly as they are (releasing the mic would hit the
+  // background-restart wall at window end — an app nobody opens at 7am would
+  // never resume); `process()` just stops writing chunks. The mic stays hot, so
+  // this is a privacy/alarm-margin feature more than a battery one — but it
+  // does eliminate the window's chunk encode + drain dials. The window is a
+  // pair of minutes-since-midnight in LOCAL wall-clock time; start==end or
+  // unset (-1) = off; start>end wraps midnight (22:00→07:00).
+  private let quietStartKey = "virtues.audio.quietStart"
+  private let quietEndKey = "virtues.audio.quietEnd"
+  private var cachedQuietStart: Int = -1
+  private var cachedQuietEnd: Int = -1
+
+  private func quietHoursActive(_ now: Date) -> Bool {
+    let start = cachedQuietStart, end = cachedQuietEnd
+    if start < 0 || end < 0 || start == end { return false }
+    let c = Calendar.current.dateComponents([.hour, .minute], from: now)
+    let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    return start < end ? (m >= start && m < end) : (m >= start || m < end)
+  }
+
+  public func quietHours() -> (start: Int, end: Int) {
+    (cachedQuietStart, cachedQuietEnd)
+  }
+
+  public func setQuietHours(start: Int, end: Int) {
+    cachedQuietStart = start
+    cachedQuietEnd = end
+    let d = UserDefaults.standard
+    d.set(start, forKey: quietStartKey)
+    d.set(end, forKey: quietEndKey)
+    NSLog("[Audio] quiet hours set %d..%d (minutes, -1=off)", start, end)
+  }
+
   private let session = AVAudioSession.sharedInstance()
   private let engine = AVAudioEngine()
   private var converter: AVAudioConverter?
@@ -84,6 +125,19 @@ public final class AudioRecorder: NSObject {
   private var watchdog: DispatchSourceTimer?
   private let livenessTimeout: TimeInterval = 5
 
+  // Notified-interruption hold: iOS gives us two distinct down-states and they need
+  // different recovery cadences. A SILENT death (18.4 tap bug — no notification)
+  // wants the fast 5s watchdog rebuild. A NOTIFIED interruption (`.began` — alarm,
+  // call, Siri) means higher-priority audio owns the session BY DESIGN: re-arming
+  // `setActive(true)` against it every 5s is a fight we lose, and mid-alarm it cut
+  // the user's wake-up alarm to a snippet. While the hold is set, watchdog re-arms
+  // slow to one per `interruptedRetryInterval` (a fallback for the documented
+  // cases where `.ended` never arrives); the REAL resume is event-driven — `.ended`
+  // / foreground / route change / media reset clear the hold, and a flowing buffer
+  // clears a stale one.
+  private var interruptionHoldUntil: Date?
+  private let interruptedRetryInterval: TimeInterval = 60
+
   // Serialize engine lifecycle (start/stop/restart) off the realtime tap thread.
   private let q = DispatchQueue(label: "com.virtues.audio", qos: .userInitiated)
 
@@ -91,6 +145,12 @@ public final class AudioRecorder: NSObject {
 
   private override init() {
     super.init()
+    let d = UserDefaults.standard
+    cachedEnabled = d.bool(forKey: enabledKey)
+    cachedNotify = d.object(forKey: notifyKey) == nil ? true : d.bool(forKey: notifyKey)
+    cachedLastGood = d.double(forKey: lastGoodKey)
+    cachedQuietStart = d.object(forKey: quietStartKey) == nil ? -1 : d.integer(forKey: quietStartKey)
+    cachedQuietEnd = d.object(forKey: quietEndKey) == nil ? -1 : d.integer(forKey: quietEndKey)
     let nc = NotificationCenter.default
     nc.addObserver(self, selector: #selector(handleInterruption),
       name: AVAudioSession.interruptionNotification, object: session)
@@ -129,6 +189,7 @@ public final class AudioRecorder: NSObject {
     requestPermission { [weak self] granted in
       guard let self = self else { completion(false); return }
       if granted {
+        self.cachedEnabled = true
         UserDefaults.standard.set(true, forKey: self.enabledKey)
         // Ask for notification permission in context (they just opted into the
         // feature the gap-nudge protects). Denial just no-ops the nudge.
@@ -141,13 +202,17 @@ public final class AudioRecorder: NSObject {
 
   /// Toggle off / pause: clear the enabled flag, finalize, and stop the engine.
   public func disable() {
+    cachedEnabled = false
     UserDefaults.standard.set(false, forKey: enabledKey)
     stopWatchdog()
     virtues_location_audio_state(0)
     q.async { [weak self] in self?.stopEngine(finalize: true) }
   }
 
-  public func resume() { ensureRecording(reason: "resume") }
+  public func resume() {
+    interruptionHoldUntil = nil  // explicit user intent outranks the hold
+    ensureRecording(reason: "resume")
+  }
 
   /// Idempotent re-arm — start if we should be recording but the engine is down (or
   /// silently wedged). Safe to spam from interruption-end / foreground / location
@@ -157,7 +222,7 @@ public final class AudioRecorder: NSObject {
       DispatchQueue.main.async { [weak self] in self?.ensureRecording(reason: reason) }
       return
     }
-    guard authorized(), UserDefaults.standard.bool(forKey: enabledKey) else { return }
+    guard authorized(), cachedEnabled else { return }
     // Liveness: if we think we're recording but no tap buffer has arrived within the
     // timeout, the tap silently died — drop the flag so armEngine does a full
     // rebuild instead of short-circuiting on `recording == true`.
@@ -169,6 +234,14 @@ public final class AudioRecorder: NSObject {
     if recording {
       checkGapAndNudge()  // healthy, but still evaluate (clears a stale nudge fast)
       return  // already live — don't churn a bg-task assertion (watchdog)
+    }
+    // Notified interruption in progress: don't fight the interrupter (see the hold's
+    // declaration). Event handlers clear the hold before calling us, so this gate
+    // only ever slows the watchdog. On fallback expiry, try once and re-arm the
+    // hold — a success clears it via the first buffer.
+    if let hold = interruptionHoldUntil {
+      if Date() < hold { return }
+      interruptionHoldUntil = Date().addingTimeInterval(interruptedRetryInterval)
     }
     armEngine(reason: reason)
     // Evaluate the gap AFTER attempting recovery: if the arm just succeeded a buffer
@@ -185,12 +258,11 @@ public final class AudioRecorder: NSObject {
   }
 
   public func notifyEnabled() -> Bool {
-    // Default ON: treat "unset" as true.
-    if UserDefaults.standard.object(forKey: notifyKey) == nil { return true }
-    return UserDefaults.standard.bool(forKey: notifyKey)
+    cachedNotify  // default-ON semantics live in the cache's init
   }
 
   public func setNotifyEnabled(_ on: Bool) {
+    cachedNotify = on
     UserDefaults.standard.set(on, forKey: notifyKey)
     if !on { clearNudge(); nudgeFired = false }
   }
@@ -203,12 +275,12 @@ public final class AudioRecorder: NSObject {
   /// gap episode (reset when a buffer flows again, in `process`). Suppressed while a
   /// call owns the mic (that gap is expected + self-heals on hang-up).
   private func checkGapAndNudge() {
-    guard UserDefaults.standard.bool(forKey: enabledKey), notifyEnabled() else { return }
+    guard cachedEnabled, cachedNotify else { return }
     if nudgeFired { return }              // already showing — once-and-done per episode
     if callActive() { return }            // legit call gap — never nudge
     // Gap measured from the persisted last-good-capture (survives kill→relaunch), so
     // a nudge fires ~gapThreshold after recording ACTUALLY died, not after relaunch.
-    let lastGood = UserDefaults.standard.double(forKey: lastGoodKey)
+    let lastGood = cachedLastGood
     guard lastGood > 0 else { return }    // never captured yet → nothing to nudge about
     if Date().timeIntervalSince1970 - lastGood > gapThreshold {
       fireNudge()
@@ -382,12 +454,37 @@ public final class AudioRecorder: NSObject {
     // showing, we've recovered — clear it so no stale "paused" lie lingers.
     if lastGoodPersistAt == nil || now.timeIntervalSince(lastGoodPersistAt!) > 60 {
       lastGoodPersistAt = now
+      cachedLastGood = now.timeIntervalSince1970
       UserDefaults.standard.set(now.timeIntervalSince1970, forKey: lastGoodKey)
     }
     if nudgeFired {
       nudgeFired = false
       DispatchQueue.main.async { [weak self] in self?.clearNudge() }
     }
+    interruptionHoldUntil = nil  // audio is flowing — any interruption is over
+    // Quiet hours: mute, don't release. Everything above still ran — the
+    // heartbeat and lastGood stamps say "capture is HEALTHY, just muted", which
+    // keeps the watchdog quiet, the gap nudge silent, and location in its cheap
+    // mode. On window entry the partial chunk finalizes once (outFile goes nil);
+    // on exit the next buffer reopens a chunk and capture resumes seamlessly.
+    if quietHoursActive(now) {
+      if let f = outFile {
+        if sampleCount > 0 {
+          rotate(restart: false)
+        } else {
+          // Chunk opened but zero samples converted (window entry within one
+          // buffer of a rotation): rotate() would no-op on its sampleCount
+          // guard and the writer would stay open across the whole window — the
+          // chunk would then span the gap with lying timestamps. Discard the
+          // empty writer (dealloc finalizes it) and delete the husk.
+          let url = f.url
+          outFile = nil
+          try? FileManager.default.removeItem(at: url)
+        }
+      }
+      return
+    }
+    if outFile == nil { try? openChunk() }
     guard let converter = converter else { return }
     let ratio = targetSampleRate / (hwFormat?.sampleRate ?? targetSampleRate)
     let cap = AVAudioFrameCount(Double(input.frameLength) * ratio) + 32
@@ -491,9 +588,21 @@ public final class AudioRecorder: NSObject {
       let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
     switch type {
     case .began:
-      // Call/Siri deactivated our session + stopped the engine. Finalize the
+      // Alarm/call/Siri deactivated our session + stopped the engine. Finalize the
       // partial chunk. Do NOT setActive(false) — keep it as recoverable as possible.
-      NSLog("[Audio] interruption began")
+      // Log the reason (iOS 14.5+): field debugging can't otherwise tell an alarm
+      // from a call from an app-suspend, and the fix for each differs.
+      var why = "n/a"
+      if #available(iOS 14.5, *), let raw = info[AVAudioSessionInterruptionReasonKey] as? UInt {
+        switch AVAudioSession.InterruptionReason(rawValue: raw) {
+        case .default: why = "default"
+        case .builtInMicMuted: why = "builtInMicMuted"
+        case .some(let other): why = "raw=\(other.rawValue)"  // e.g. routeDisconnected (iOS 17)
+        case .none: why = "raw=\(raw)"
+        }
+      }
+      NSLog("[Audio] interruption began (reason=%@) — holding re-arms", why)
+      interruptionHoldUntil = Date().addingTimeInterval(interruptedRetryInterval)
       virtues_location_audio_state(1)
       q.async { [weak self] in
         guard let self = self else { return }
@@ -505,6 +614,7 @@ public final class AudioRecorder: NSObject {
       // always wants back). armEngine wraps it in a bg-task assertion so we probe
       // whether a background reactivation is allowed at all.
       NSLog("[Audio] interruption ended — attempting resume")
+      interruptionHoldUntil = nil
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
         self?.ensureRecording(reason: "interruption-end")
       }
@@ -514,6 +624,11 @@ public final class AudioRecorder: NSObject {
 
   @objc private func handleConfigChange(_ note: Notification) {
     // Route/format change stopped the engine. Finalize + re-arm (new hw format).
+    // Deliberately does NOT clear interruptionHoldUntil: a config change can be
+    // a SIDE EFFECT of the interruption that set the hold (the engine stops when
+    // an alarm/call takes the session), and clearing here would reintroduce the
+    // mid-ring re-arm fight. If a hold stands, the re-arm below gates and the
+    // real resume arrives with `.ended`; with no hold, behavior is unchanged.
     NSLog("[Audio] engine config change — re-arming")
     virtues_location_audio_state(1)
     q.async { [weak self] in
@@ -541,6 +656,7 @@ public final class AudioRecorder: NSObject {
       // once one succeeds the rest are no-ops; the location wake is the final
       // backstop. This turns a ~10s recovery (old: wait for the slow location poll)
       // into <1s.
+      interruptionHoldUntil = nil
       q.async { [weak self] in try? self?.configureSession() }
       for delay in [0.7, 2.5] {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -554,6 +670,7 @@ public final class AudioRecorder: NSObject {
   @objc private func handleMediaReset() {
     // Full audio-subsystem reset — rebuild everything.
     NSLog("[Audio] media services reset — rebuilding")
+    interruptionHoldUntil = nil
     virtues_location_audio_state(1)
     q.async { [weak self] in
       guard let self = self else { return }
@@ -566,5 +683,8 @@ public final class AudioRecorder: NSObject {
     }
   }
 
-  @objc private func handleForeground() { ensureRecording(reason: "foreground") }
+  @objc private func handleForeground() {
+    interruptionHoldUntil = nil
+    ensureRecording(reason: "foreground")
+  }
 }

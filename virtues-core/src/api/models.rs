@@ -36,6 +36,11 @@ pub struct ModelInfo {
     /// BYO path: selectable, but its capability flags are the provider's own
     /// claim. The picker sections on this and labels the unvouched tier.
     pub recommended: bool,
+    /// Retention tri-state from the gateway (`"all" | "some" | "none"`).
+    /// `None` = unknown (cold floor, or virtues-api predates the field) —
+    /// render blank, never a claim.
+    pub zdr: Option<String>,
+    pub no_training: Option<String>,
 }
 
 impl From<CatalogModel> for ModelInfo {
@@ -58,6 +63,8 @@ impl From<CatalogModel> for ModelInfo {
             input_cost_per_1k: m.input_cost_per_1k,
             output_cost_per_1k: m.output_cost_per_1k,
             recommended: m.recommended,
+            zdr: m.zdr,
+            no_training: m.no_training,
         }
     }
 }
@@ -72,6 +79,11 @@ impl From<CatalogModel> for ModelInfo {
 pub struct ModelsResponse {
     pub data: Vec<ModelInfo>,
     pub slots: SlotMap,
+    /// True when `data` is the compiled floor — the box has never loaded the
+    /// live catalog. The UI says so instead of presenting two models as the
+    /// whole world.
+    #[serde(default)]
+    pub catalog_cold: bool,
 }
 
 /// List the picker — the gateway's language models, slot models flagged.
@@ -92,6 +104,7 @@ pub async fn list_models_with_slots() -> Result<ModelsResponse> {
     Ok(ModelsResponse {
         data: list_models().await?,
         slots: model_catalog::slots(),
+        catalog_cold: model_catalog::is_cold(),
     })
 }
 

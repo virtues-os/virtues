@@ -34,7 +34,7 @@
   THE ACCOUNT IS NOT A STEP. It is a setup fact (the airlock's BLE link step,
   skippable there), and nothing before the box WRITES needs it — sources
   connect without one. So the gate renders as an interstitial inside the two
-  AI-needing leaves (`your-words`, `you`) only while it is unsatisfied, for
+  AI-needing leaf (`you`) only while it is unsatisfied, for
   exactly the people who skipped linking. The DIY exemption is mirrored from
   the backend: a DIY box reports `setup_complete` without an account
   (`compute_setup_state` requires it only on appliances), so DIY never sees
@@ -66,8 +66,6 @@
 	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import Introductions from "$lib/components/onboarding/document/Introductions.svelte";
-	import InterviewChat from "$lib/components/onboarding/interview/InterviewChat.svelte";
-	import DraftReview from "$lib/components/onboarding/interview/DraftReview.svelte";
 	import ConnectWorld from "$lib/components/onboarding/document/ConnectWorld.svelte";
 	import RevealSection from "$lib/components/onboarding/document/RevealSection.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -116,10 +114,6 @@
 	// Optimistic local flags — flip a step the instant the local signal fires,
 	// before the next server poll confirms it.
 	let deviceReady = $state(false);
-	// Whether they have written anything yet, so the button can say "keep"
-	// rather than "start" — returning to a page that has forgotten you wrote
-	// eight answers is its own small insult.
-	let interviewStarted = $state(false);
 
 	function setupDone(id: string): boolean {
 		return state_?.setup.find((s) => s.id === id)?.done ?? false;
@@ -155,7 +149,6 @@
 			VIEW_ORDER.indexOf(view) > VIEW_ORDER.indexOf("letter") && "letter",
 			VIEW_ORDER.indexOf(view) > VIEW_ORDER.indexOf("introductions") && "names",
 			worldEnough && "sources",
-			interviewStarted && "words",
 		].filter(Boolean) as StepId[],
 	);
 
@@ -171,7 +164,7 @@
 	// server-side memory of having read it (flipped by Begin), so a refresh or
 	// a second browser resumes past it instead of skipping it entirely.
 	const resolved = $derived<ViewId>(
-		state_?.onboarding_status === "new" ? "letter" : !worldEnough ? "sources" : "your-words",
+		state_?.onboarding_status === "new" ? "letter" : !worldEnough ? "sources" : "you",
 	);
 
 	/** Every step is offerable — the AI-needing leaves guard themselves. */
@@ -225,16 +218,6 @@
 	onMount(() => {
 		reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 		void refreshState();
-		// Best-effort: this only changes a verb on a button, and failing to read
-		// it must never keep someone off the page. The interview is one chat now
-		// (see InterviewChat) — started means the person has said anything in it.
-		void fetch("/api/chats/chat_narrative_interview")
-			.then((r) => (r.ok ? r.json() : null))
-			.then((d) => {
-				if (d?.messages?.some((m: { role: string }) => m.role === "user"))
-					interviewStarted = true;
-			})
-			.catch(() => {});
 		void captureTimezone();
 		// Light poll so steps completed elsewhere (OAuth round-trip, the collector
 		// daemon, the CLI) tick over here too.
@@ -350,16 +333,6 @@
 						     Continue goes wherever the box actually needs us — not
 						     blindly to the next slug. -->
 						<Introductions onnext={() => go(resolved)} />
-					{:else if view === "interview"}
-						<InterviewChat onfinish={() => go("draft")} />
-					{:else if view === "draft"}
-						<DraftReview
-							ondone={() => {
-								interviewStarted = true;
-								void refreshState();
-								go("you");
-							}}
-						/>
 					{:else if view === "sources"}
 						<h1 class="ob-h1">Your data</h1>
 
@@ -370,50 +343,10 @@
 							/>
 						</div>
 
-						<button class="ob-btn" onclick={() => go("your-words")}>
+						<button class="ob-btn" onclick={() => go("you")}>
 							{worldEnough ? "Continue" : "Skip for now"}
 							<Icon icon="ri:arrow-right-line" width="16" />
 						</button>
-					{:else if view === "your-words"}
-						{#if !accountSatisfied}
-							<!-- THE TOLL BOOTH, not a step. From here the box writes, and
-							     writing runs on models the subscription pays for — the
-							     first moment an account is genuinely needed. Renders only
-							     for the appliance owner who skipped linking during setup;
-							     DIY is exempt via `accountSatisfied`. -->
-							<h1 class="ob-h1">Sign in to Virtues</h1>
-							<p class="ob-lede">
-								From here your box starts writing, and the models it writes with are what
-								the subscription pays for. Signing in is the only part of Virtues that
-								touches our servers — everything written stays on the box.
-							</p>
-							<div class="work">
-								<AccountGate done={accountDone} onLinked={refreshState} />
-							</div>
-						{:else}
-							<!-- The doorway to the interview, which is its own view.
-						     The why is COMPLETENESS, not calibration: the record has a
-						     hard left edge (the census names its exact date), and the
-						     life before it has one source. -->
-							<h1 class="ob-h1">Before the record</h1>
-							<p class="ob-lede">
-								Virtues exists to keep as complete a record of your life as possible. But a
-								record built from devices only reaches back so far — most of a life comes
-								before it, and that part has to be written: who you were, the moments that
-								mattered, what brought you joy, the people who shaped you, and the ones who
-								were missing. Five questions to start it.
-							</p>
-
-							<button class="ob-btn" onclick={() => go("interview")}>
-								{interviewStarted ? "Keep writing" : "Start writing"}
-								<Icon icon="ri:arrow-right-line" width="16" />
-							</button>
-							<p class="ob-note">
-								It takes a while, and it saves as you go — stop anywhere and come back.
-							</p>
-
-							<button class="ob-ghost quiet-go" onclick={() => go("you")}>Not now →</button>
-						{/if}
 					{:else if !accountSatisfied}
 						<!-- Same toll booth on the reveal, for whoever arrived here by URL
 						     or the "Not now →" door without ever passing the doorway. -->

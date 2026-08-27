@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-set-quiet-hours"
+description = "Enables the set_quiet_hours command without any pre-configured scope."
+commands.allow = ["set_quiet_hours"]
+
+[[permission]]
+identifier = "deny-set-quiet-hours"
+description = "Denies the set_quiet_hours command without any pre-configured scope."
+commands.deny = ["set_quiet_hours"]
