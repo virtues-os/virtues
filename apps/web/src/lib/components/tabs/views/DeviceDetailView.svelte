@@ -120,8 +120,16 @@
 
 		<section class="chapter">
 			<h2>Identity</h2>
+			<!-- The lattice, labeled — the list shows one number, this page says
+			     which is which. App = the native binary's release. UI = the
+			     bundle its requests come from, which for a paired desktop is
+			     the box-served SPA (it mirrors the box; that mirroring shown
+			     unlabeled is what the version audit was called about). -->
+			{#if device.app_version}
+				{@render row('App', device.app_version, true)}
+			{/if}
 			{@render row(
-				'Build',
+				'UI',
 				device.version
 					? `${device.version}${device.sha && device.sha !== 'dev' ? ` · ${device.sha}` : ''}${device.channel ? ` · ${device.channel}` : ''}`
 					: 'not reported yet',

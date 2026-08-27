@@ -274,6 +274,13 @@ struct Config: Codable {
                 "device_name": host,
                 "os": "macos",
                 "client": "virtues-collector",
+                // Same shape record_client_build writes, so the row knows its
+                // build from the moment it pairs instead of after first upload.
+                "build": [
+                    "version": Version.current,
+                    "sha": Version.gitCommit == "unknown"
+                        ? "dev" : String(Version.gitCommit.prefix(7)),
+                ],
             ],
         ]
 

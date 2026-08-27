@@ -9,6 +9,7 @@
 // entitlement were deleted 2026-08-18 — BLE removed the need to move the phone
 // between networks at all. See `src/commands.rs` for the tombstone.
 
+import Foundation
 import Tauri
 
 class ImprovDiscoverArgs: Decodable {
