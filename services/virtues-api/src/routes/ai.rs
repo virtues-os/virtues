@@ -246,11 +246,11 @@ async fn completions(
 ///
 /// That middle layer is the point: model ids churn faster than we ship boxes.
 ///
-/// Open to any authenticated bearer (free OR paid). No charge.
-async fn list_models(
-    State(state): State<Arc<AppState>>,
-    BearerAuth(_): BearerAuth,
-) -> Response {
+/// Open to ALL callers — no bearer. The list is public data (the gateway
+/// serves the same catalog unauthenticated) plus our slot picks; requiring a
+/// key here left every unlinked box on its 2-model compiled floor, because the
+/// box-side fetch 401'd forever. Completions stay gated; this never charges.
+async fn list_models(State(state): State<Arc<AppState>>) -> Response {
     use virtues_registry::models::{default_model_for_slot, ModelSlot};
 
     let payload = json!({
