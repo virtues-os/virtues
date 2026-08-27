@@ -99,6 +99,19 @@ export async function appUpdateState(): Promise<AppUpdateState | null> {
 	}
 }
 
+/** Ask the shell to run an update check now. Fire-and-forget: re-read
+ *  appUpdateState() for the verdict. Silently nothing in browsers/mobile/old
+ *  shells — same contract as every other addition. */
+export async function checkAppUpdate(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('check_app_update_cmd');
+	} catch {
+		// Shell predates the command — the caller's state read shows nothing new.
+	}
+}
+
 /** Restart into a staged app update. No-op when nothing is staged. */
 export async function applyAppUpdate(): Promise<void> {
 	const invoke = await getInvoke();
@@ -259,6 +272,8 @@ export async function openExternal(url: string): Promise<void> {
  * Collector daemon status
  */
 export interface CollectorStatus {
+	/** The installed collector binary's release, or null from one too old to say. */
+	version: string | null;
 	running: boolean;
 	paused: boolean;
 	pendingEvents: number;
@@ -312,6 +327,7 @@ export async function probeCollectorStatus(): Promise<CollectorProbe> {
 
 	try {
 		const status = await invoke<{
+			version?: string | null;
 			running: boolean;
 			paused: boolean;
 			pending_events: number;
@@ -327,6 +343,7 @@ export async function probeCollectorStatus(): Promise<CollectorProbe> {
 		return {
 			kind: 'ok',
 			status: {
+				version: status.version ?? null,
 				running: status.running,
 				paused: status.paused,
 				pendingEvents: status.pending_events,

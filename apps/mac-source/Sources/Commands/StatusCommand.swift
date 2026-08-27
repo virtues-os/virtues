@@ -4,6 +4,12 @@ import Foundation
 
 /// Status output structure for JSON serialization
 struct CollectorStatus: Codable {
+    /// The release of the INSTALLED binary answering this command (the same
+    /// file launchd runs). Not proof of what the live daemon process is — a
+    /// replaced binary whose kickstart failed still runs the old inode — but
+    /// the reconcile marker makes that window short, and this is the number
+    /// This Mac shows.
+    let version: String
     let running: Bool
     let paused: Bool
     /// True when the permission flags below came from the daemon's own
@@ -82,6 +88,7 @@ struct StatusCommand: ParsableCommand {
         let lastSync = getLastSyncTime()
 
         return CollectorStatus(
+            version: Version.current,
             running: isRunning,
             paused: isPaused,
             permissionsReportedByDaemon: daemonHealth != nil && !(daemonHealth?.isStale ?? true),

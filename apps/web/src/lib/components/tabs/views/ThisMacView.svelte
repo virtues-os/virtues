@@ -29,8 +29,15 @@
 		openAccessibilitySettings,
 		forgetPairing,
 		restartApp,
+		shellIdentity,
+		appUpdateState,
+		applyAppUpdate,
+		checkAppUpdate,
 		type CollectorStatus,
+		type ShellIdentity,
+		type AppUpdateState,
 	} from "$lib/tauri/bridge";
+	import { BUILD, buildLabel } from "$lib/build";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -54,9 +61,36 @@
 
 	const queued = $derived((status?.pendingEvents ?? 0) + (status?.pendingMessages ?? 0));
 
+	// The machine's software ledger — this page is the ONE place that answers
+	// "what is this Mac running": the app, its collector, the UI this window
+	// renders, and the updater's verdict. (The box's own versions live in
+	// Settings → Software, the box's room — one place per subject.)
+	let shell = $state<ShellIdentity | null>(null);
+	let upd = $state<AppUpdateState | null>(null);
+	let checkingUpdate = $state(false);
+
+	async function refreshUpdate() {
+		upd = await appUpdateState();
+	}
+
+	async function checkNow() {
+		checkingUpdate = true;
+		await checkAppUpdate();
+		// The check stages in the background; give it a beat, then read the
+		// same state the tray and the sidebar chip read — one fact, three doors.
+		await new Promise((r) => setTimeout(r, 4000));
+		await refreshUpdate();
+		checkingUpdate = false;
+	}
+
 	onMount(() => {
 		if (isTauri) {
 			void refresh();
+			void shellIdentity().then((s) => (shell = s));
+			void refreshUpdate();
+			// Opening the page that shows update state IS the foreground
+			// moment — the 6h loop has no wake/network recheck of its own.
+			void checkAppUpdate().then(() => setTimeout(() => void refreshUpdate(), 5000));
 			pollTimer = setInterval(refresh, 2000);
 		} else {
 			loading = false;
@@ -235,6 +269,64 @@
 				</Button>
 			</div>
 		</div>
+
+		<!-- ── Software ──────────────────────────────────────────────── -->
+		<!-- The machine's version ledger, labeled. App = this binary.
+		     Collector = the daemon's own answer (null from one too old to say).
+		     Interface = the UI this window renders — box-served, so it tracks
+		     the box; showing it UNLABELED on the Devices list is the confusion
+		     that triggered the version audit. The box's own versions and update
+		     controls stay in Settings → Software: one place per subject. -->
+		<div class="text-xs font-medium uppercase tracking-wide text-foreground-subtle mb-2">
+			Software
+		</div>
+		<ul class="rounded-lg border border-border bg-surface divide-y divide-border mb-6">
+			<li class="p-4 flex items-center gap-3">
+				<div class="flex-1 min-w-0">
+					<div class="text-sm text-foreground">App</div>
+					<div class="text-xs text-foreground-muted mt-0.5 font-mono">
+						{shell?.appVersion ?? "—"}
+					</div>
+				</div>
+				{#if upd?.stagedVersion}
+					<div class="text-xs text-info mr-1">v{upd.stagedVersion} ready</div>
+					<Button variant="secondary" onclick={() => void applyAppUpdate()}>
+						Relaunch to update
+					</Button>
+				{:else}
+					{#if upd?.lastCheck?.outcome === "failed"}
+						<!-- The couldn't-check-is-not-up-to-date rule, everywhere. -->
+						<div class="text-xs text-warning mr-1">Couldn't check</div>
+					{:else if upd?.lastCheck?.outcome === "up_to_date"}
+						<div class="text-xs text-foreground-muted mr-1">Up to date</div>
+					{/if}
+					<Button variant="secondary" onclick={checkNow} disabled={checkingUpdate}>
+						{checkingUpdate ? "Checking…" : "Check now"}
+					</Button>
+				{/if}
+			</li>
+			<li class="p-4 flex items-center gap-3">
+				<div class="flex-1 min-w-0">
+					<div class="text-sm text-foreground">Collector</div>
+					<div class="text-xs text-foreground-muted mt-0.5 font-mono">
+						{status.version ?? "—"}
+					</div>
+				</div>
+				{#if shell?.appVersion && status.version && status.version !== shell.appVersion}
+					<!-- The binary is replaced by the app's launch reconcile, so a
+					     lasting mismatch means a relaunch hasn't happened yet or a
+					     restart failed and is being retried. Name it; don't let it
+					     read as normal. -->
+					<div class="text-xs text-warning">behind the app — relaunch Virtues</div>
+				{/if}
+			</li>
+			<li class="p-4">
+				<div class="text-sm text-foreground">Interface</div>
+				<div class="text-xs text-foreground-muted mt-0.5 font-mono">
+					{buildLabel(BUILD)}
+				</div>
+			</li>
+		</ul>
 
 		<!-- ── Permissions ───────────────────────────────────────────── -->
 		<div class="text-xs font-medium uppercase tracking-wide text-foreground-subtle mb-2">
