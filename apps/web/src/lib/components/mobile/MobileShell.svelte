@@ -17,12 +17,13 @@
 	 * vestigial, and one gesture carrying two meanings depending on depth is
 	 * exactly the indeterminism this shell exists to avoid.
 	 *
-	 * The slide idiom is the viewport moving, not the drawer: the drawer sits
-	 * parked under the left edge and the chat slides right off it, staying
-	 * visible as a sliver that is also the way back. Hand-rolled, because
-	 * neither layer below us offers a drawer gesture — SvelteKit has no gesture
-	 * surface at all, and wry/Tauri expose nothing useful on iOS (see the note
-	 * on `back_forward_navigation_gestures` in git history).
+	 * The drawer is a FULL-SCREEN takeover, not a partial panel. The chat
+	 * slides all the way off to the right and the drawer stands alone — which
+	 * is why it carries its own masthead and close control (see MobileDrawer)
+	 * instead of leaning on a visible sliver of the page behind it. While it is
+	 * up, a leftward drag anywhere brings the chat back; the drawer content
+	 * makes the same journey at a third of the speed (the parallax below), so
+	 * the two planes read as stacked rather than glued.
 	 *
 	 * Chrome above the view returned, minimally, out of necessity: with no tab
 	 * bar and no back gesture, the hamburger is the only exit from any non-chat
@@ -44,25 +45,22 @@
 	const tab = $derived(windowShellStore.activeTab);
 	const open = $derived(mobileLayout.drawerOpen);
 
-	// ── Drawer geometry ──────────────────────────────────────────────────────
-	// Wide enough for titles, never edge-to-edge: the visible sliver of chat is
-	// the close affordance, and it has to survive on the narrowest phone.
-	function measureDrawer(): number {
-		if (typeof window === "undefined") return 300;
-		return Math.min(Math.round(window.innerWidth * 0.84), 320);
-	}
-	let drawerWidth = $state(measureDrawer());
+	// Full-screen: the travel distance is the viewport's own width.
+	let travel = $state(typeof window === "undefined" ? 390 : window.innerWidth);
 	onMount(() => {
-		const onResize = () => (drawerWidth = measureDrawer());
+		const onResize = () => (travel = window.innerWidth);
+		onResize();
 		window.addEventListener("resize", onResize);
 		return () => window.removeEventListener("resize", onResize);
 	});
 
 	// ── The drawer gesture ───────────────────────────────────────────────────
 	// One tracker serves both directions: from the left edge while closed it
-	// opens, from anywhere on the exposed viewport while open it closes. The
-	// viewport's offset follows the finger; release commits by position or by
-	// flick, whichever the finger declared louder.
+	// opens, from anywhere while open it closes (the drawer is full-screen, so
+	// "anywhere" is the drawer — its list scrolls vertically, and the same
+	// intent test that kept vertical scrolls from opening keeps them from
+	// closing). The offset follows the finger; release commits by position or
+	// by flick, whichever the finger declared louder.
 	const EDGE_PX = 28; // how close to the left edge an opening touch must start
 	const INTENT_PX = 8; // travel before the gesture commits to horizontal
 	const FLICK_PX_PER_MS = 0.35; // release speed that overrides position
@@ -92,12 +90,7 @@
 
 	function onPointerDown(e: PointerEvent) {
 		if (e.pointerType === "mouse") return;
-		if (open) {
-			// Closing drag: only from the slid-out viewport (the sliver and the
-			// scrim). Touches left of the offset are on the drawer's own rows and
-			// belong to it.
-			if (e.clientX < drawerWidth) return;
-		} else {
+		if (!open) {
 			if (e.clientX > EDGE_PX) return;
 			// A wide table, a code block, the activity heatmap: dragging one of
 			// those sideways is the user scrolling it, not opening the drawer.
@@ -106,7 +99,7 @@
 		tracking = true;
 		startX = e.clientX;
 		startY = e.clientY;
-		startOffset = open ? drawerWidth : 0;
+		startOffset = open ? travel : 0;
 		lastX = e.clientX;
 		lastT = e.timeStamp;
 		velocity = 0;
@@ -129,7 +122,7 @@
 		if (dt > 0) velocity = (e.clientX - lastX) / dt;
 		lastX = e.clientX;
 		lastT = e.timeStamp;
-		dragX = Math.max(0, Math.min(drawerWidth, startOffset + dx));
+		dragX = Math.max(0, Math.min(travel, startOffset + dx));
 	}
 
 	function endDrag() {
@@ -143,7 +136,7 @@
 		if (Math.abs(velocity) > FLICK_PX_PER_MS) {
 			shouldOpen = velocity > 0;
 		} else {
-			shouldOpen = dragX > drawerWidth / 2;
+			shouldOpen = dragX > travel / 2;
 		}
 		dragX = 0;
 		if (shouldOpen) mobileLayout.openDrawer();
@@ -151,7 +144,11 @@
 	}
 
 	// Resting offset comes from state; a drag in flight overrides it.
-	const offset = $derived(dragging ? dragX : open ? drawerWidth : 0);
+	const offset = $derived(dragging ? dragX : open ? travel : 0);
+	// The drawer travels a third of the viewport's journey, arriving at 0 as
+	// the viewport clears — the classic under-plane parallax. Negative while
+	// anything is still covering it.
+	const drawerShift = $derived((offset - travel) * 0.3);
 
 	function newChat() {
 		mobileLayout.closeDrawer();
@@ -173,8 +170,13 @@
 	onpointerup={endDrag}
 	onpointercancel={endDrag}
 >
-	<!-- Parked under the viewport; it never moves — the viewport slides off it. -->
-	<div class="drawer-slot" style:width="{drawerWidth}px" inert={!open && !dragging}>
+	<!-- The under-plane. Full width; the viewport slides off it entirely. -->
+	<div
+		class="drawer-slot"
+		class:dragging
+		style:transform="translateX({drawerShift}px)"
+		inert={!open && !dragging}
+	>
 		<MobileDrawer />
 	</div>
 
@@ -184,6 +186,7 @@
 		class:dragging
 		class:offset={offset > 0}
 		style:transform={offset ? `translateX(${offset}px)` : undefined}
+		inert={open}
 	>
 		<header class="topbar">
 			<button class="bar-btn" onclick={() => mobileLayout.openDrawer()} aria-label="Menu">
@@ -213,13 +216,6 @@
 				<TabContent {tab} active={true} />
 			{/if}
 		</div>
-
-		{#if open || dragging}
-			<!-- The slid-out viewport is a door, not a page: one tap closes the
-			     drawer, and nothing underneath is reachable until it does. -->
-			<button class="scrim" aria-label="Close menu" onclick={() => mobileLayout.closeDrawer()}
-			></button>
-		{/if}
 	</div>
 </div>
 
@@ -238,9 +234,7 @@
 
 	.drawer-slot {
 		position: absolute;
-		top: 0;
-		bottom: 0;
-		left: 0;
+		inset: 0;
 	}
 
 	.viewport {
@@ -265,11 +259,11 @@
 		box-shadow: -12px 0 32px rgb(0 0 0 / 0.18);
 	}
 
-	/* The drag follows the finger; the release snaps. `transform` here makes
-	   this element a containing block for fixed-position descendants, so the
-	   transition only ever animates between offsets the gesture produced. */
-	.viewport:not(.dragging) {
-		transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+	/* The drag follows the finger; the release snaps. Both planes share one
+	   clock so the parallax holds through the settle, not just the drag. */
+	.viewport:not(.dragging),
+	.drawer-slot:not(.dragging) {
+		transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
 	}
 
 	.topbar {
@@ -277,7 +271,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		height: 44px;
+		height: 48px;
 		padding: 0 6px;
 	}
 
@@ -285,17 +279,20 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 40px;
-		height: 40px;
+		width: 44px;
+		height: 44px;
 		border: 0;
 		border-radius: 10px;
 		background: transparent;
 		color: var(--color-foreground);
 		cursor: pointer;
 		-webkit-tap-highlight-color: transparent;
+		/* Instant on press, fade on release — the native rhythm. */
+		transition: background-color 0.25s ease-out;
 	}
 	.bar-btn:active {
 		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		transition-duration: 0s;
 	}
 
 	/* Same voice as ChatView's desktop ghost toggle: the mode is on. */
@@ -311,18 +308,9 @@
 		overflow: hidden;
 	}
 
-	.scrim {
-		position: absolute;
-		inset: 0;
-		z-index: 2;
-		border: 0;
-		padding: 0;
-		background: transparent;
-		cursor: pointer;
-	}
-
 	@media (prefers-reduced-motion: reduce) {
-		.viewport:not(.dragging) {
+		.viewport:not(.dragging),
+		.drawer-slot:not(.dragging) {
 			transition-duration: 0.12s;
 			transition-timing-function: ease;
 		}
