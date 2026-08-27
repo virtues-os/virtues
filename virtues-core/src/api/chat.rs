@@ -1050,8 +1050,16 @@ pub async fn chat_handler(
     State(yjs_state): State<YjsState>,
     State(cancel_state): State<ChatCancellationState>,
     _user: AuthUser,
-    Json(request): Json<ChatRequest>,
+    Json(mut request): Json<ChatRequest>,
 ) -> Response {
+    // The narrative interview is a MODE OF THE CHAT, decided by the chat id —
+    // never by what the client sent. Any surface that opens this conversation
+    // gets the interviewer (its standalone prompt, zero tools); no client can
+    // opt the interview into tools by sending a different agentMode.
+    if request.chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID {
+        request.agent_mode = "interview".to_string();
+    }
+
     // Validate model against registry
     let valid_models = match crate::api::models::list_models().await {
         Ok(models) => models,

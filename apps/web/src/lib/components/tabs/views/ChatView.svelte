@@ -16,6 +16,18 @@
 	import SelectionPopover from "$lib/components/SelectionPopover.svelte";
 	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
 	import { fetchModels, type ModelOption } from "$lib/config/models";
+
+	// ── the narrative interview ────────────────────────────────────────────
+	// One fixed chat (seeded at boot; the server forces interview mode by this
+	// id — see chat_handler). Mirrors narrative_draft::INTERVIEW_CHAT_ID.
+	const INTERVIEW_CHAT_ID = "chat_narrative_interview";
+	const INTERVIEW_OPENING =
+		"Your box can keep your days from here on — but everything before it, and " +
+		"everything underneath it, only you can tell. I'd like to hear it plainly, " +
+		"the way you'd tell a friend. I won't interpret you, I won't press on " +
+		"anything you don't offer, and only your words end up in the document. " +
+		"Let's start at the beginning: where does your story start, and what were " +
+		"its chapters?";
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
 	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
@@ -41,6 +53,7 @@
 		getProfile,
 		setChatTitle,
 		cancelChat,
+		draftNarrative,
 	} from "$lib/api/client";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
@@ -913,6 +926,22 @@
 								role: msg.role as "user" | "assistant" | "checkpoint",
 								parts: convertMessageToParts(msg),
 							})) as unknown as typeof chat.messages;
+							// The narrative interview opens ALREADY SPEAKING: an
+							// authored first line, shown free (never persisted,
+							// no model call). The interview prompt knows this
+							// opening was delivered and picks up from the reply.
+							if (
+								currentTabConversationId === INTERVIEW_CHAT_ID &&
+								chat.messages.length === 0
+							) {
+								chat.messages = [
+									{
+										id: "interview-opening",
+										role: "assistant",
+										parts: [{ type: "text", text: INTERVIEW_OPENING }],
+									},
+								] as unknown as typeof chat.messages;
+							}
 							if (data.conversation?.model) {
 								initializeSelectedModel(
 									data.conversation.model,
@@ -1203,6 +1232,33 @@
 	// Derived state for layout mode
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
+
+	// "Write it up" appears in the interview once the person has said anything:
+	// the drafter reads this chat's whole transcript and arranges THEIR words
+	// into the narrative-identity document (one writer, once — see
+	// narrative_draft.rs). The finished page opens beside the conversation.
+	const interviewSpoke = $derived(
+		currentChatConversationId === INTERVIEW_CHAT_ID &&
+			uniqueMessages.some((m) => m.role === "user"),
+	);
+	let interviewDrafting = $state(false);
+	let interviewDraftError = $state<string | null>(null);
+
+	async function writeItUp() {
+		interviewDrafting = true;
+		interviewDraftError = null;
+		try {
+			await draftNarrative();
+			const res = await fetch("/api/wiki/articles/narrative_identity/nar_identity_001");
+			const article = res.ok ? await res.json() : null;
+			if (article?.page_id) {
+				windowShellStore.openRouteBeside(`/page/${article.page_id}`);
+			}
+		} catch (e) {
+			interviewDraftError = e instanceof Error ? e.message : String(e);
+		}
+		interviewDrafting = false;
+	}
 
 	// The chat's title, from the persisted session so it stays in step with the
 	// sidebar. It is no longer DRAWN here: a title fixed to the top-left of the
@@ -1902,6 +1958,20 @@
 						</div>
 					{/if}
 
+					{#if interviewSpoke}
+						<!-- The interview's one affordance: the conversation
+						     becomes the document whenever they're ready. -->
+						<div class="interview-writeup">
+							<button onclick={writeItUp} disabled={interviewDrafting}>
+								{interviewDrafting ? "Writing it up…" : "Write it up"}
+								<Icon icon="ri:quill-pen-line" width="14" />
+							</button>
+							{#if interviewDraftError}
+								<span class="err">{interviewDraftError}</span>
+							{/if}
+						</div>
+					{/if}
+
 					<!-- ChatInput -->
 					<div
 						class="chat-input-wrapper"
@@ -2164,6 +2234,38 @@
 		/* No tab bar to clear anymore: the composer sits just above the home
 		   indicator, and the keyboard inset is the shell's problem (main's
 		   content box shrinks under it). */
+		.interview-writeup {
+			display: flex;
+			align-items: center;
+			gap: 0.75rem;
+			padding: 0 1rem 0.5rem;
+			justify-content: center;
+		}
+
+		.interview-writeup button {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.4rem;
+			background: none;
+			border: 1px solid var(--color-border);
+			border-radius: 999px;
+			padding: 0.4rem 1rem;
+			font-family: var(--font-serif, Georgia, serif);
+			font-size: 0.9rem;
+			color: var(--color-foreground-muted);
+			cursor: pointer;
+		}
+
+		.interview-writeup button:hover {
+			color: var(--color-foreground);
+			border-color: var(--color-foreground-subtle);
+		}
+
+		.interview-writeup .err {
+			font-size: 12px;
+			color: var(--color-error, #c00);
+		}
+
 		.chat-input-wrapper {
 			padding-bottom: calc(1rem + env(safe-area-inset-bottom));
 		}

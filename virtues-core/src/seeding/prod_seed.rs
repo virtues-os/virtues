@@ -64,6 +64,18 @@ pub async fn seed_production_data(db: &Database) -> Result<()> {
 
     seed_assistant_profile(db).await?;
 
+    // The narrative interview's conversation — one fixed chat, present from
+    // first boot, so the product's first conversation is already waiting when
+    // the person walks in from onboarding. The chat id forces interview mode
+    // server-side (see chat_handler); the drafter reads this transcript.
+    sqlx::query(
+        "INSERT INTO app_chats (id, title, message_count) VALUES ($1, 'In your own words', 0) \
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(crate::api::narrative_draft::INTERVIEW_CHAT_ID)
+    .execute(db.pool())
+    .await?;
+
     info!("✅ Production seeding completed successfully");
     Ok(())
 }
