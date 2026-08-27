@@ -924,7 +924,7 @@ pub async fn consume_handler(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| default_label_for(kind, user_agent.as_deref(), &body.device_info));
-    let device_info = body
+    let mut device_info = body
         .device_info
         .clone()
         .unwrap_or_else(|| json!({}));
@@ -973,6 +973,46 @@ pub async fn consume_handler(
                 .into_response();
         }
     };
+
+    // Machine provenance: a collector redeems a token the owner's APP minted
+    // on the same machine (`mint-collector` hands it straight to the local
+    // daemon), so the token's minter IS the app this collector belongs to.
+    // Recording it lets Devices fold the collector under its app instead of
+    // presenting one Mac as two unrelated rows.
+    //
+    // Keyed on the daemon's own declaration (`device_info.client`), NOT merely
+    // on "desktop_app with a collector source" — the desktop APP's BLE pair
+    // also declares `source: "mac"` (reach commands.rs), and a BLE redeem of a
+    // web-minted standing code would then fold one person's laptop under
+    // another's. Self-declared, but this is presentational provenance on an
+    // already-authenticated pairing, not a privilege. A CLI-minted collector
+    // (minted_by_device NULL) correctly stays standalone. Recomputed on every
+    // re-pair, so the `device_info = EXCLUDED.device_info` replace in
+    // `insert_device_row` cannot lose it.
+    let is_collector_daemon = kind == "desktop_app"
+        && source_id != "__device__"
+        && device_info.get("client").and_then(|v| v.as_str()) == Some("virtues-collector");
+    if is_collector_daemon {
+        match sqlx::query_as::<_, (Option<String>,)>(
+            "SELECT minted_by_device FROM app_pair_token WHERE id = $1",
+        )
+        .bind(&token_id)
+        .fetch_one(&mut *tx)
+        .await
+        {
+            Ok((Some(minter_id),)) => {
+                if let Some(obj) = device_info.as_object_mut() {
+                    obj.insert("installed_by".into(), json!(minter_id));
+                }
+            }
+            // NULL minter = a CLI-minted token: standalone collector, no join.
+            Ok((None,)) => {}
+            // A failed read here means the tx is already unhealthy; the device
+            // INSERT below will fail loudly. Provenance itself never blocks a
+            // pair, so log rather than abort.
+            Err(e) => tracing::warn!("pair consume: minter lookup failed: {e:#}"),
+        }
+    }
 
     // Idempotent on the device's iroh key: a re-pair of a device that kept its
     // node_id UPDATEs the existing row and returns ITS id (so the token

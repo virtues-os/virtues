@@ -221,6 +221,10 @@ class Uploader {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            // The box records this on the device row (middleware/auth.rs), so
+            // Devices can show which collector build is delivering.
+            request.setValue(Version.clientHeader, forHTTPHeaderField: "X-Virtues-Client")
+            request.setValue(Version.userAgent, forHTTPHeaderField: "User-Agent")
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
             let (data, httpResponse) = try await BoxTransport.shared.send(request)

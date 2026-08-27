@@ -45,14 +45,17 @@ pub mod web_bundle;
 /// |---|---|
 /// | 1 | baseline: the surface as of 2026-08-05 |
 /// | 2 | `ota_check_now` — lets the UI trigger an update check on foreground |
+/// | 3 | `update_state_cmd` / `apply_update_cmd` — the app updater's state and
+/// |   | apply, for the sidebar's "Relaunch to X" chip (desktop-only commands;
+/// |   | mobile at 3 still rejects them and the UI treats that as silence) |
 ///
-/// Note `bundle-contract.json` stays at `minShellVersion: 1`: the UI calls
-/// `ota_check_now` best-effort and works fine without it, so requiring 2 would
-/// strand every client on an older app for no gain.
+/// Note `bundle-contract.json` stays at `minShellVersion: 1`: every addition
+/// so far is called best-effort and the UI works fine without it, so requiring
+/// more would strand clients on an older app for no gain.
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 2;
+pub const COMMAND_SURFACE_VERSION: u32 = 3;
 
 /// What the native shell knows about itself.
 ///
@@ -153,7 +156,10 @@ fn shell_identity_cmd(app: tauri::AppHandle) -> ShellIdentity {
 fn bundle_boot_ok(app: tauri::AppHandle) {
   use tauri::Manager;
   if let Ok(dir) = app.path().app_data_dir() {
-    web_bundle::mark_boot_ok(&dir);
+    // The shell's own record of what this process booted — never the page's
+    // claim, and never the (mutable) active pointer, which the background
+    // check may already have moved to a bundle this session never ran.
+    web_bundle::mark_boot_ok(&dir, web_bundle::booted_bundle_id().as_deref());
   }
 }
 
@@ -373,6 +379,11 @@ pub fn run() {
         if web_bundle::resolve_pending_at_startup(&dir) {
           eprintln!("[ota] a staged bundle failed to confirm; rolled back");
         }
+        // Freeze this process's boot identity NOW, while the active pointer
+        // still names what this launch will serve — the check thread below
+        // can move the pointer mid-session, and boot-ok is judged against
+        // what actually booted, not against wherever the pointer points.
+        web_bundle::capture_booted(&dir);
       }
 
       // Bundled-SPA architecture (Option A): the app IS the bundled SvelteKit

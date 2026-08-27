@@ -11,4 +11,14 @@ struct Version {
     static var userAgent: String {
         return "virtues-mac/\(current)"
     }
+
+    /// `X-Virtues-Client` value for every request to the box. For a collector,
+    /// `version` IS the binary's release (there is no separate UI bundle), so
+    /// the box's Devices page finally gets to say what build this daemon is —
+    /// it read "version unknown" forever because this identity, stamped in CI
+    /// since Phase 1, was transmitted to nobody.
+    static var clientHeader: String {
+        let sha = gitCommit == "unknown" ? "dev" : String(gitCommit.prefix(7))
+        return "version=\(current); sha=\(sha)"
+    }
 }

@@ -1184,8 +1184,17 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             ))
             .allow_credentials(false)
             .allow_methods(tower_http::cors::Any)
-            .allow_headers(tower_http::cors::Any),
+            .allow_headers(tower_http::cors::Any)
+            // Cross-origin callers (the app's own tauri:// origin) may READ the
+            // build stamp — it's how a page notices the box moved under it.
+            .expose_headers([axum::http::HeaderName::from_static(
+                "x-virtues-box-build",
+            )]),
     );
+
+    // Outermost, so every response — API, static, fallback — carries the build
+    // stamp the SPA's staleness watcher compares.
+    let app = app.layer(axum::middleware::from_fn(stamp_box_build));
 
     // iroh reach: the box is an iroh Endpoint that serves this same axum app
     // (LAN-direct → hole-punch → our relay), reachable by EndpointId with no
@@ -1315,6 +1324,34 @@ async fn no_store_for_documents(
         res.headers_mut().remove(axum::http::header::LAST_MODIFIED);
         res.headers_mut().remove(axum::http::header::ETAG);
     }
+    res
+}
+
+/// Stamp every response with the running build identity, so an open page can
+/// notice the box changed underneath it.
+///
+/// After an upgrade the flipped `web/` slot no longer contains the OLD page's
+/// content-hashed `/_app/immutable/*` chunks, so that page's first lazy
+/// navigation 404s — and nothing told any connected surface to reload: only
+/// the tab that pressed the update button (`location.reload()`) and the kiosk
+/// (`restart_display`) recovered. Browsers on other machines and the Mac
+/// webview kept a page whose chunks were gone. The SPA watches this header
+/// across its own requests and soft-reloads from the background when it moves
+/// (see `$lib/build.ts`).
+async fn stamp_box_build(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    static VALUE: std::sync::OnceLock<axum::http::HeaderValue> = std::sync::OnceLock::new();
+    let value = VALUE.get_or_init(|| {
+        let commit: &str = env!("GIT_COMMIT");
+        let short = &commit[..commit.len().min(7)];
+        axum::http::HeaderValue::from_str(&format!("{} {}", crate::codename::version(), short))
+            .unwrap_or(axum::http::HeaderValue::from_static("unknown"))
+    });
+    let mut res = next.run(req).await;
+    res.headers_mut()
+        .insert("x-virtues-box-build", value.clone());
     res
 }
 

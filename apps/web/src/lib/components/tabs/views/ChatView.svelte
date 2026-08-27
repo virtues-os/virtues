@@ -27,6 +27,7 @@
 	import { fade, fly } from "svelte/transition";
 	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { animateChatEdit } from "$lib/ai/aiPresence";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
@@ -1475,6 +1476,16 @@
 		if (!isEmpty) return;
 		isGhost = !isGhost;
 	}
+
+	// Publish this chat's state to the phone shell, whose top-right button is
+	// modal: ghost toggle while the chat is empty (compose would be a no-op),
+	// compose once a conversation exists. Only the active view speaks; the
+	// cleanup keeps a stale claim from surviving a view swap.
+	$effect(() => {
+		if (!mobileLayout.isMobile || !active) return;
+		mobileLayout.setChatChrome({ empty: isEmpty, ghost: isGhost, toggleGhost });
+		return () => mobileLayout.setChatChrome(null);
+	});
 </script>
 
 <svelte:window onmouseup={handleWindowMouseup} />
@@ -1558,7 +1569,9 @@
 							onclick={handleContextClick}
 						/>
 					{/if}
-					{#if isEmpty || isGhost}
+					<!-- On the phone the ghost toggle lives in the shell's top bar
+					     (the modal top-right slot), not here. -->
+					{#if (isEmpty || isGhost) && !mobileLayout.isMobile}
 						<button
 							type="button"
 							class="ghost-toggle"
@@ -2148,6 +2161,13 @@
 	   small and floats over the transcript, so the target grows around it
 	   rather than under it. */
 	@media (max-width: 768px), (pointer: coarse) {
+		/* No tab bar to clear anymore: the composer sits just above the home
+		   indicator, and the keyboard inset is the shell's problem (main's
+		   content box shrinks under it). */
+		.chat-input-wrapper {
+			padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+		}
+
 		.ghost-toggle {
 			position: relative;
 		}
@@ -2243,6 +2263,40 @@
 			opacity: 0.035;
 			clip-path: circle(120% at 50% 50%);
 		}
+	}
+
+	/* Ghost mode inverts the composer: the pill you type into flips to the
+	   theme's ink, so the mode is a material change under your fingers, not a
+	   label you have to remember reading. Done by remapping the pill's tokens
+	   — everything inside (placeholder, buttons, the model pill) follows on
+	   its own. The originals are captured one scope up because a custom
+	   property cannot swap with itself in place. */
+	.chat-area.ghost {
+		--ghost-pill-bg: var(--color-foreground);
+		--ghost-pill-ink: var(--color-surface);
+	}
+	.chat-area.ghost :global(.chat-input-wrapper.bg-surface) {
+		/* Both token families: the Tailwind theme tokens (--foreground, used
+		   by text-foreground et al.) and the component tokens (--color-*). */
+		--surface: var(--ghost-pill-bg);
+		--foreground: var(--ghost-pill-ink);
+		--color-surface: var(--ghost-pill-bg);
+		--color-foreground: var(--ghost-pill-ink);
+		--color-foreground-muted: color-mix(in srgb, var(--ghost-pill-ink) 65%, transparent);
+		--color-foreground-subtle: color-mix(in srgb, var(--ghost-pill-ink) 45%, transparent);
+		--color-border-strong: transparent;
+		--color-border: color-mix(in srgb, var(--ghost-pill-ink) 18%, transparent);
+		--hover-bg: color-mix(in srgb, var(--ghost-pill-ink) 12%, transparent);
+		background: var(--ghost-pill-bg);
+		color: var(--ghost-pill-ink);
+	}
+
+	/* The send control flips with the pill: ink circle, pill-colored glyph —
+	   otherwise `.btn-primary` (secondary bg, surface ink) lands dark-on-dark
+	   inside the inverted pill. */
+	.chat-area.ghost :global(.chat-input-wrapper .btn-primary) {
+		background-color: var(--ghost-pill-ink);
+		color: var(--ghost-pill-bg);
 	}
 
 	@media (prefers-reduced-motion: reduce) {
@@ -2344,11 +2398,13 @@
 		width: 100%;
 		max-width: 48rem;
 		padding: 0 2rem 2rem 2rem;
-		/* The composer is the one piece of bottom chrome that must stay ABOVE
-		   the floating bar rather than pass behind it — glass over the field you
-		   are typing into is not a nice effect, it is a covered input. The
-		   messages behind it still scroll under the bar. */
-		padding-bottom: calc(1rem + var(--tabbar-reserve) + env(safe-area-inset-bottom));
+		/* 78px is what this measured when it was written as "1rem plus the
+		   floating tab bar's reserve": the bar is gone, but on desktop — where
+		   no bar ever rendered — that sum had become the composer's resting
+		   inset off the window edge, so the number stays and the derivation
+		   goes. The phone override below is where the bar's room actually
+		   came out. */
+		padding-bottom: 78px;
 		background-color: var(--color-surface);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;

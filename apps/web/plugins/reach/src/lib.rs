@@ -662,11 +662,15 @@ impl ReachState {
     } else {
       ("desktop_app", "Virtues Desktop", "virtues-desktop")
     };
+    // No version field here: this crate's own version was a never-bumped 0.1.0
+    // that identified nothing, written to a key nothing read. The device's
+    // real build identity arrives on its first request — the SPA stamps
+    // X-Virtues-Client (with the shell's `app=` release) and the box records
+    // it under `device_info.build`, the key the Devices page actually reads.
     let device_info = serde_json::json!({
       "device_name": device_name,
       "os": std::env::consts::OS,
       "client": client_id,
-      "version": env!("CARGO_PKG_VERSION"),
     });
     virtues_reach_client::pair::consume(self.store.as_ref(), &origin, code, client_kind, device_info)
       .await?;
