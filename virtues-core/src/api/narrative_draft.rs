@@ -27,9 +27,9 @@ use sqlx::PgPool;
 
 use crate::error::{Error, Result};
 
-const SYSTEM_PROMPT: &str = r#"You are arranging a person's own answers into a document they will read and correct. It is called "In your own words", and that is the standard: their words, ordered — not your reading of them.
+const SYSTEM_PROMPT: &str = r#"You are arranging a person's own words into a document they will read and correct. It is called "In your own words", and that is the standard: their words, ordered — not your reading of them.
 
-You are given answers to an interview about their life: chapters, a high point, a low point, the people in it, what they have lost, who they admire, what they are proud of, what makes them unusual, which pull is strongest, what they believe, what is live now, what they want, and what they fear becoming.
+You are given the transcript of an interview about their life — the chapters of it, what makes them unlike others, who they admire, what pulls at them, what they believe, and whatever else they offered. THE INTERVIEWER'S WORDS ARE SCAFFOLDING, NEVER MATERIAL: nothing the interviewer said may appear in the document, be paraphrased into it, or shape a claim the person did not themselves make. Only the person's own turns are material.
 
 WRITE TWO THINGS, separated by a line containing only ---CORE---.
 
@@ -51,7 +51,7 @@ Rules for the document:
 
 SECOND, after the ---CORE--- line: 80-120 words, plain text, no heading. This is what an assistant carries into every conversation, so it holds only what would change how to speak to them: what they are working toward, what they are up against, what they believe, and anything they are sensitive about. Not biography. Not their history. What a thoughtful friend keeps in mind, not what they could recite.
 
-THIRD, after a line containing only ---RULES---: any instruction they gave about what NOT to raise, one per line, as a short imperative in their own terms ("never suggest bars", "do not mention my father unless I do"). These are drawn ONLY from what they explicitly asked for — usually the last answer. Never invent one, never infer one from a sad story, never turn an observation into a rule. If they asked for nothing, write nothing after this line. Being told about a loss is not the same as being asked never to mention it.
+THIRD, after a line containing only ---RULES---: any instruction they gave about what NOT to raise, one per line, as a short imperative in their own terms ("never suggest bars", "do not mention my father unless I do"). These are drawn ONLY from what they explicitly asked for, anywhere in the transcript. Never invent one, never infer one from a sad story, never turn an observation into a rule. If they asked for nothing, write nothing after this line. Being told about a loss is not the same as being asked never to mention it.
 
 Output the document, then ---CORE---, then the core, then ---RULES---, then the rules. Nothing else."#;
 
@@ -67,6 +67,10 @@ pub struct Draft {
 
 /// The singleton subject id — the one narrative-identity article a box has.
 const NAR_IDENTITY_ID: &str = "nar_identity_001";
+
+/// The one interview chat. A fixed id, shared with the frontend, so the
+/// conversation resumes forever and the drafter knows where to read.
+pub const INTERVIEW_CHAT_ID: &str = "chat_narrative_interview";
 
 /// Read the answers, write the document.
 ///
@@ -102,24 +106,32 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
         });
     }
 
-    let answers = crate::api::narrative_interview::list_answers(pool).await?;
-    let written: Vec<_> = answers
-        .into_iter()
-        .filter(|a| !a.answer.trim().is_empty())
-        .collect();
+    // The interview CHAT is the source — the whole transcript, in order. The
+    // drafter's prompt firewalls the interviewer's turns (scaffolding, never
+    // material), but they stay in the input because a person's answer often
+    // only makes sense against the question it answered.
+    let turns: Vec<(String, String)> = sqlx::query_as(
+        "SELECT role, content FROM app_chat_messages \
+         WHERE chat_id = $1 AND role IN ('user', 'assistant') \
+           AND content <> '' \
+         ORDER BY sequence_num ASC",
+    )
+    .bind(INTERVIEW_CHAT_ID)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("read interview transcript: {e}")))?;
 
-    if written.is_empty() {
+    let they_spoke = turns.iter().any(|(role, _)| role == "user");
+    if !they_spoke {
         return Err(Error::Other(
-            "nothing written yet — answer a question or two first".into(),
+            "nothing said yet — talk for a bit first".into(),
         ));
     }
 
-    let mut prompt = String::from("Their answers:\n");
-    for a in &written {
-        // The question text stays on the client, which owns the set; the id is
-        // enough for the model to know what was asked, and keeping the wording
-        // out of here means rewording a question never invalidates a draft.
-        prompt.push_str(&format!("\n## {}\n{}\n", a.question_id, a.answer.trim()));
+    let mut prompt = String::from("The transcript:\n");
+    for (role, content) in &turns {
+        let speaker = if role == "user" { "THEM" } else { "INTERVIEWER" };
+        prompt.push_str(&format!("\n{speaker}: {}\n", content.trim()));
     }
 
     let raw = call_model(pool, &prompt).await?;
@@ -161,7 +173,7 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
     .map_err(|e| Error::Database(format!("save narrative draft: {e}")))?;
 
     tracing::info!(
-        answers = written.len(),
+        turns = turns.len(),
         document_chars = document.len(),
         core_chars = core.len(),
         "narrative draft written from the interview"

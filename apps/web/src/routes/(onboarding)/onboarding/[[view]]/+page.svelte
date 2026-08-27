@@ -52,7 +52,6 @@
 		updateProfile,
 		getSetupState,
 		skipOnboarding,
-		getInterviewAnswers,
 	} from "$lib/api/client";
 	import OnboardingHeader from "$lib/components/onboarding/OnboardingHeader.svelte";
 	import {
@@ -67,7 +66,7 @@
 	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import Introductions from "$lib/components/onboarding/document/Introductions.svelte";
-	import Interview from "$lib/components/onboarding/interview/Interview.svelte";
+	import InterviewChat from "$lib/components/onboarding/interview/InterviewChat.svelte";
 	import DraftReview from "$lib/components/onboarding/interview/DraftReview.svelte";
 	import ConnectWorld from "$lib/components/onboarding/document/ConnectWorld.svelte";
 	import RevealSection from "$lib/components/onboarding/document/RevealSection.svelte";
@@ -227,9 +226,14 @@
 		reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 		void refreshState();
 		// Best-effort: this only changes a verb on a button, and failing to read
-		// it must never keep someone off the page.
-		void getInterviewAnswers()
-			.then((rows) => (interviewStarted = rows.some((r) => r.answer.trim().length > 0)))
+		// it must never keep someone off the page. The interview is one chat now
+		// (see InterviewChat) — started means the person has said anything in it.
+		void fetch("/api/chats/chat_narrative_interview")
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d) => {
+				if (d?.messages?.some((m: { role: string }) => m.role === "user"))
+					interviewStarted = true;
+			})
 			.catch(() => {});
 		void captureTimezone();
 		// Light poll so steps completed elsewhere (OAuth round-trip, the collector
@@ -347,7 +351,7 @@
 						     blindly to the next slug. -->
 						<Introductions onnext={() => go(resolved)} />
 					{:else if view === "interview"}
-						<Interview onfinish={() => go("draft")} />
+						<InterviewChat onfinish={() => go("draft")} />
 					{:else if view === "draft"}
 						<DraftReview
 							ondone={() => {
