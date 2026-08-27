@@ -36,6 +36,11 @@ pub struct ModelInfo {
     /// BYO path: selectable, but its capability flags are the provider's own
     /// claim. The picker sections on this and labels the unvouched tier.
     pub recommended: bool,
+    /// Retention tri-state from the gateway (`"all" | "some" | "none"`).
+    /// `None` = unknown (cold floor, or virtues-api predates the field) —
+    /// render blank, never a claim.
+    pub zdr: Option<String>,
+    pub no_training: Option<String>,
 }
 
 impl From<CatalogModel> for ModelInfo {
@@ -58,6 +63,8 @@ impl From<CatalogModel> for ModelInfo {
             input_cost_per_1k: m.input_cost_per_1k,
             output_cost_per_1k: m.output_cost_per_1k,
             recommended: m.recommended,
+            zdr: m.zdr,
+            no_training: m.no_training,
         }
     }
 }

@@ -85,6 +85,16 @@ pub struct GatewayModel {
     /// e.g. `tools`, `tool_choice`, `reasoning`. A second signal for tool use.
     #[serde(default)]
     pub supported_parameters: Vec<String>,
+    /// Zero-data-retention posture across the endpoints that can serve this
+    /// model: `"all"` (every route is ZDR), `"some"` (depends on which
+    /// endpoint the gateway picks per request), `"none"`. The gateway's
+    /// attestation about its providers, passed through verbatim — only
+    /// `"all"` is a promise a model-level badge can honestly make.
+    #[serde(default)]
+    pub zdr: Option<String>,
+    /// Same tri-state for "providers do not train on request data".
+    #[serde(default)]
+    pub no_training: Option<String>,
 }
 
 /// Input/output modality lists as the gateway reports them (`text`, `image`,
@@ -266,6 +276,8 @@ impl Catalog {
                     input_cost_per_1k: Some(input),
                     output_cost_per_1k: Some(output),
                     recommended,
+                    zdr: m.zdr.clone(),
+                    no_training: m.no_training.clone(),
                 })
             })
             .collect();
@@ -379,6 +391,10 @@ pub struct CuratedModel {
     /// declaration. The picker sections on this.
     #[serde(default)]
     pub recommended: bool,
+    /// Retention tri-state from the gateway (`"all" | "some" | "none"`), or
+    /// `None` when it didn't say. `None` is unknown, not `"none"`.
+    pub zdr: Option<String>,
+    pub no_training: Option<String>,
 }
 
 /// Split a bare model name into its family stem and version, e.g. `grok-4.5`
@@ -464,6 +480,8 @@ mod tests {
                 output: vec!["text".to_string()],
             }),
             supported_parameters: vec![],
+            zdr: None,
+            no_training: None,
         }
     }
 
@@ -533,6 +551,28 @@ mod tests {
             "the Omni transcription model must not be recommended for chat"
         );
         assert!(!entry.is_default);
+    }
+
+    /// The retention tri-state is the gateway's attestation, passed through
+    /// verbatim — the picker must not collapse it to a bool or invent a value
+    /// when the gateway sent none.
+    #[test]
+    fn retention_tristate_passes_through_untouched() {
+        let c = Catalog::new();
+        c.store(vec![
+            GatewayModel {
+                zdr: Some("all".to_string()),
+                no_training: Some("some".to_string()),
+                ..gw("anthropic/claude-sonnet-5", "0.000002", &["tool-use"], &["text"])
+            },
+            gw("meta/llama-3.3-70b", "0.000001", &[], &["text"]),
+        ]);
+        let picker = c.picker();
+        let claude = picker.iter().find(|m| m.model_id.contains("sonnet")).unwrap();
+        assert_eq!(claude.zdr.as_deref(), Some("all"));
+        assert_eq!(claude.no_training.as_deref(), Some("some"));
+        let llama = picker.iter().find(|m| m.model_id.contains("llama")).unwrap();
+        assert!(llama.zdr.is_none(), "absent stays absent — unknown is not a value");
     }
 
     #[test]

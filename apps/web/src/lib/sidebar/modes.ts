@@ -43,6 +43,10 @@ export const SETTINGS_MODE: SidebarMode = {
 			icon: 'ri:sparkling-line',
 			href: '/virtues/assistant',
 		},
+		// The full gateway catalog as a table — prices, capabilities, retention.
+		// Assistant keeps the per-slot pickers (the pinning control); this is
+		// the room for comparing ~240 models, which no dropdown can host.
+		{ id: 'models', label: 'Models', icon: 'ri:cpu-line', href: '/virtues/models' },
 		{ id: 'billing', label: 'Billing', icon: 'ri:bank-card-line', href: '/virtues/billing' },
 		// Was "Telemetry", filed under Developer. It is the user's own AI spend
 		// and what the box has been running — not something anyone sends
