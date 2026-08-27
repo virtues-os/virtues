@@ -177,10 +177,10 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Default permissions for the audio plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-resume`\n- `allow-status`\n- `allow-set-notify`",
+          "description": "Default permissions for the audio plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-resume`\n- `allow-status`\n- `allow-set-notify`\n- `allow-set-quiet-hours`",
           "type": "string",
           "const": "audio:default",
-          "markdownDescription": "Default permissions for the audio plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-resume`\n- `allow-status`\n- `allow-set-notify`"
+          "markdownDescription": "Default permissions for the audio plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-resume`\n- `allow-status`\n- `allow-set-notify`\n- `allow-set-quiet-hours`"
         },
         {
           "description": "Enables the disable command without any pre-configured scope.",
@@ -205,6 +205,12 @@
           "type": "string",
           "const": "audio:allow-set-notify",
           "markdownDescription": "Enables the set_notify command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_quiet_hours command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:allow-set-quiet-hours",
+          "markdownDescription": "Enables the set_quiet_hours command without any pre-configured scope."
         },
         {
           "description": "Enables the status command without any pre-configured scope.",
@@ -235,6 +241,12 @@
           "type": "string",
           "const": "audio:deny-set-notify",
           "markdownDescription": "Denies the set_notify command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_quiet_hours command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio:deny-set-quiet-hours",
+          "markdownDescription": "Denies the set_quiet_hours command without any pre-configured scope."
         },
         {
           "description": "Denies the status command without any pre-configured scope.",

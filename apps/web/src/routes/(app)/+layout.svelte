@@ -533,6 +533,12 @@
 	   difference between seeing what you are typing and not. */
 	main.is-mobile {
 		padding-top: env(safe-area-inset-top);
+		/* The inset ANIMATES: stores/keyboard.svelte.ts drives the custom
+		   property frame-by-frame on the keyboard's own clock (the native
+		   bridge hands it UIKit's duration before the keys move). Deliberately
+		   not a CSS transition here — a transition keyed on a var()-derived
+		   value simply never ran in testing, the padding sat at its old value
+		   for the whole duration. The rAF writes are the transition. */
 		padding-bottom: var(--keyboard-inset, 0px);
 	}
 

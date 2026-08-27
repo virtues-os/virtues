@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recheck-box"
+description = "Enables the recheck_box command without any pre-configured scope."
+commands.allow = ["recheck_box"]
+
+[[permission]]
+identifier = "deny-recheck-box"
+description = "Denies the recheck_box command without any pre-configured scope."
+commands.deny = ["recheck_box"]

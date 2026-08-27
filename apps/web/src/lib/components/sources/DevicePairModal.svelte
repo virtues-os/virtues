@@ -13,6 +13,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { Button } from "$lib";
 	import * as api from "$lib/api/client";
+	import { openPairDoor, closePairDoor } from "$lib/tauri/bridge";
 	import type { PairingInitResponse } from "$lib/types/device-pairing";
 
 	interface Props {
@@ -62,6 +63,18 @@
 
 	// --- iOS QR Flow ---
 
+	/**
+	 * The pairing door's address, when this computer could open one.
+	 *
+	 * The QR encodes the BOX's LAN address, so scanning it only works when the
+	 * phone is on the box's network. When the phone is somewhere else — a café,
+	 * an office, anywhere the box isn't — this machine holds a door open on its
+	 * own LAN address and the phone types that instead. Null in a browser, on a
+	 * phone, or when this machine can't reach the box; the QR stands alone then,
+	 * exactly as before.
+	 */
+	let doorOrigin = $state<string | null>(null);
+
 	async function initiateQRPairing() {
 		isInitiating = true;
 		error = null;
@@ -71,6 +84,9 @@
 			pairingData = response;
 			qrSourceId = response.source_id;
 			qrSvg = response.qr_svg ?? "";
+			// Same window as the countdown this modal already runs.
+			const door = await openPairDoor(timeRemaining);
+			doorOrigin = door?.origin ?? null;
 			startPolling();
 			startTimer();
 		} catch (err) {
@@ -208,6 +224,11 @@
 		stopPolling();
 		stopTimer();
 		cleanupPending();
+		// The door is bound to the LAN, so it closes with the sheet rather than
+		// waiting out its own timer. (The timer is the backstop for a window
+		// that never gets closed properly — a crash, a force-quit.)
+		doorOrigin = null;
+		void closePairDoor();
 		resetLocalState();
 		onClose();
 	}
@@ -220,6 +241,9 @@
 	onDestroy(() => {
 		stopPolling();
 		stopTimer();
+		// Not just handleClose's job: a parent unmounting this modal (route
+		// change, window close) must not leave a listener bound to the LAN.
+		void closePairDoor();
 	});
 </script>
 
@@ -257,14 +281,47 @@
 					{@render getTheApp('iPhone')}
 					<div class="mb-5">
 						<p class="text-sm leading-relaxed text-foreground-muted">
-							<span class="step-n">2</span> Open Virtues on your iPhone and tap
-							<strong class="text-foreground">Scan QR Code</strong>
+							<span class="step-n">2</span> Open it and choose
+							<strong class="text-foreground">Connect to a server that's running</strong>,
+							then <strong class="text-foreground">Enter an address manually</strong>
 						</p>
 					</div>
 
+					{#if doorOrigin}
+						<!-- The address is THIS computer, not the box. Pairing has to be
+						     plain HTTP (a device can't use iroh until it's allowlisted, and
+						     allowlisting is what pairing does), so a phone away from home
+						     can't reach the box at all — but it can reach this machine,
+						     which is already paired and holds a door open onto the box's
+						     pair endpoint for as long as this sheet is up. -->
+						<div class="door mb-5">
+							<div class="door-row">
+								<span class="door-label">Address</span>
+								<span class="door-value">{doorOrigin}</span>
+							</div>
+							<div class="door-row">
+								<span class="door-label">Code</span>
+								<span class="door-value">{pairingData?.token ?? "…"}</span>
+							</div>
+							<p class="door-note">
+								Works from anywhere this computer and your iPhone are together —
+								your server doesn't have to be on the same network.
+							</p>
+						</div>
+					{/if}
+
 					<!-- QR Code (server-rendered SVG encoding /pair#t=<token>), framed
 					     with hairline corner brackets so it reads like a scan target,
-					     not a clip-art box. -->
+					     not a clip-art box.
+
+					     Hidden while a door is open, because it encodes the BOX's LAN
+					     URL — the one address that is wrong precisely when the door is
+					     the reason you're here. Showing a scan target pointing
+					     somewhere other than the address printed above it is worse
+					     than showing no scan target: nothing can scan it today anyway
+					     (the app has no scanner and registers no URL scheme). When a
+					     scannable path exists, this becomes a QR of the door itself. -->
+					{#if !doorOrigin}
 					<div class="qr-frame mb-5">
 						<span class="qr-corner qr-corner--tl"></span>
 						<span class="qr-corner qr-corner--tr"></span>
@@ -287,6 +344,7 @@
 							{/if}
 						</div>
 					</div>
+					{/if}
 
 					<!-- Status -->
 					{#if isPolling}
@@ -372,6 +430,49 @@
 </Modal>
 
 <style>
+	/* The pairing door's address + code. Monospace and generously spaced
+	   because these are read off one screen and typed into another — the
+	   failure mode is a misread character, not a slow read. */
+	.door {
+		width: 100%;
+		max-width: 20rem;
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		padding: 0.75rem 0.875rem;
+		text-align: left;
+	}
+
+	.door-row {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.3rem 0;
+	}
+
+	.door-label {
+		font-size: 11px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--color-foreground-muted);
+	}
+
+	.door-value {
+		font-family: var(--font-mono, monospace);
+		font-size: 15px;
+		color: var(--color-foreground);
+		user-select: all;
+	}
+
+	.door-note {
+		margin-top: 0.5rem;
+		padding-top: 0.5rem;
+		border-top: 1px solid var(--color-border);
+		font-size: 12px;
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
+	}
+
 	/* Numbered steps, so the two-beat shape reads before the words do. */
 	.step-n {
 		display: inline-flex;

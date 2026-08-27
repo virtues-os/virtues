@@ -23,6 +23,9 @@ const COMMANDS: &[&str] = &[
   "outbox_stats",
   "drain_now",
   "radio_stats",
+  "pair_door_open",
+  "pair_door_close",
+  "pair_door_status",
 ];
 
 fn main() {

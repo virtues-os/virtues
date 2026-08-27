@@ -898,6 +898,24 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
 /// and exit — never fall through to the misleading Postgres timeout.
 #[cfg(unix)]
 fn maybe_reexec_as_service_user() {
+    // Every command that opens a Postgres pool or reads the `virtues`-owned env
+    // file. Miss one and it runs as the login user, whose role does not exist in
+    // the cluster: `virtues reindex` died with `role "root" does not exist`
+    // after an hour-long restore (2026-08-27), which is a confusing way to say
+    // "wrong user".
+    //
+    // THIS LIST DRIFTED FROM THE ONE AT THE TOP OF `main()`. That one decides
+    // the log level for "interactive" commands and already knew about
+    // `reindex`, `configure-inference`, `restore` and `warm-models`; this one
+    // decides who they run AS, and had never been updated. Two hand-synced
+    // lists, one true — the same shape as the ACL lattice (`plugins/lockstep`)
+    // and the applet env allowlist. When you add a subcommand that touches the
+    // database, add it to BOTH.
+    //
+    // Deliberately absent: the root-only lifecycle verbs — `upgrade`,
+    // `prepare`, `activate`, `rollback`, `deprovision`, `uninstall`,
+    // `image-check`, `bringup` — which drive systemd and must NOT drop
+    // privilege.
     const DB_COMMANDS: &[&str] = &[
         "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
         "migrate", "seed",
@@ -906,6 +924,13 @@ fn maybe_reexec_as_service_user() {
         // would render the default llama-server guess + "DB unknown" — a
         // confident, wrong report. Re-exec so it reports this box's real config.
         "doctor",
+        // Each of these opens its own pool before the app path (main.rs) or
+        // rides the shared one in `cli::run`.
+        "device",
+        "reindex",
+        "configure-inference",
+        "lake-adopt",
+        "volumes",
     ];
     let Some(cmd) = std::env::args().nth(1) else { return };
     if !DB_COMMANDS.contains(&cmd.as_str()) {

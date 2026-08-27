@@ -391,9 +391,15 @@ mod slot_model_smoke {
         };
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        let model = crate::api::model_catalog::model_for_slot(
-            virtues_registry::models::ModelSlot::Chat,
-        );
+        // Defaults to whatever fills the Chat slot today; set SMOKE_MODEL to
+        // drive a CANDIDATE through the same gate before promoting it. The
+        // registry tells you to run this first, and "first" means before the
+        // id is in the registry at all.
+        let model = std::env::var("SMOKE_MODEL").unwrap_or_else(|_| {
+            crate::api::model_catalog::model_for_slot(
+                virtues_registry::models::ModelSlot::Chat,
+            )
+        });
         let tools = get_tool_definitions_for_llm();
         assert!(
             tools.len() > 10,

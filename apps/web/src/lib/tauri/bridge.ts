@@ -577,3 +577,48 @@ export async function onSummon(handler: () => void): Promise<() => void> {
 		return () => {};
 	}
 }
+
+// ─── The pairing door ────────────────────────────────────────────────────────
+//
+// Pairing is structurally LAN-only (a device can't use iroh until it's
+// allowlisted, and allowlisting happens at pairing), so a phone away from home
+// can't enroll against the box — however reachable that box is to this
+// already-paired computer. The door lets THIS machine stand in for the box at
+// its own LAN address, for the length of one Add-device window: the phone
+// types this address into its pairing screen and consumes the code normally.
+// See crates/virtues-reach-client/src/pair_door.rs.
+
+/** `host:port` for the phone to type, plus the window it has. */
+export interface PairDoor {
+	origin: string;
+	ttlSecs: number;
+}
+
+/**
+ * Open the pairing door on this computer's LAN address. Desktop-only —
+ * resolves null in a browser, on a phone, or when this machine isn't paired
+ * and connected (a door onto an unreachable box would only fail later).
+ */
+export async function openPairDoor(ttlSecs?: number): Promise<PairDoor | null> {
+	const invoke = await getInvoke();
+	if (!invoke) return null;
+	try {
+		return await invoke<PairDoor>('plugin:reach|pair_door_open', { ttlSecs });
+	} catch (e) {
+		// Expected on a phone and in a browser; the caller falls back to the
+		// LAN-only QR rather than showing an error for a path that never applied.
+		console.warn('[Tauri] pair_door_open unavailable:', e);
+		return null;
+	}
+}
+
+/** Close the pairing door. Safe to call when none is open. */
+export async function closePairDoor(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('plugin:reach|pair_door_close');
+	} catch (e) {
+		console.warn('[Tauri] pair_door_close failed:', e);
+	}
+}

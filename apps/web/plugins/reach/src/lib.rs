@@ -487,6 +487,20 @@ impl BoxStore for FileStore {
 
 // ─── Plugin state ────────────────────────────────────────────────────────────
 
+/// A pairing door held open for one "Add device" window.
+///
+/// Kept whole so `close()` is one swap: dropping the sender shuts the task
+/// down, and the counter dies with it (a new door gets a fresh budget, which
+/// is correct — a human who mistyped twice and closed the sheet should not
+/// meet a spent limit on their next honest attempt).
+struct PairDoor {
+  addr: std::net::SocketAddr,
+  /// Dropped to signal shutdown; the task selects on its closure.
+  _shutdown: tokio::sync::oneshot::Sender<()>,
+  attempts: Arc<std::sync::atomic::AtomicU32>,
+  task: tauri::async_runtime::JoinHandle<()>,
+}
+
 pub struct ReachState {
   store: Arc<FileStore>,
   serving: AtomicBool,
@@ -494,6 +508,10 @@ pub struct ReachState {
   /// them (freeing the loopback port + dropping the old client) and let a re-pair
   /// serve fresh without an app restart.
   tasks: std::sync::Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
+  /// The pairing door, when one is open. At most one at a time — a second
+  /// "Add device" sheet replaces the first rather than leaving an orphan
+  /// listener bound to the LAN with nobody watching it.
+  pair_door: std::sync::Mutex<Option<PairDoor>>,
 }
 
 impl ReachState {
@@ -502,7 +520,97 @@ impl ReachState {
       store: Arc::new(FileStore::new()),
       serving: AtomicBool::new(false),
       tasks: std::sync::Mutex::new(Vec::new()),
+      pair_door: std::sync::Mutex::new(None),
     }
+  }
+
+  /// Open the pairing door on this machine's LAN address for `ttl_secs`.
+  ///
+  /// Returns `(origin, seconds)` — the `host:port` the phone types into its
+  /// pairing screen, and the window it has to do it in. Requires this device
+  /// to be paired and serving: the door forwards over the same warm iroh
+  /// client the loopback uses, which is what lets it work from a café while
+  /// the box sits at home.
+  pub async fn open_pair_door(&self, ttl_secs: u64) -> Result<(String, u64)> {
+    // A door onto a box we cannot reach would accept the phone's attempt and
+    // then fail it — better to refuse before anything is displayed.
+    self.ensure_serving().await?;
+    let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
+
+    let host = virtues_reach_client::local_private_ipv4s()
+      .into_iter()
+      .next()
+      .ok_or_else(|| {
+        Error::Reach("this computer has no private network address to offer".into())
+      })?;
+    let ip: std::net::Ipv4Addr = host
+      .parse()
+      .map_err(|_| Error::Reach(format!("unusable local address {host}")))?;
+
+    // Port 0: the OS picks a free one. Deliberately NOT the loopback port —
+    // that one is persisted in every installed collector's endpoint and must
+    // never be exposed off-machine.
+    let listener = tokio::net::TcpListener::bind((ip, 0))
+      .await
+      .map_err(|e| Error::Reach(format!("bind {ip}:0: {e}")))?;
+    let addr = listener
+      .local_addr()
+      .map_err(|e| Error::Reach(e.to_string()))?;
+
+    let attempts = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+    let door_attempts = attempts.clone();
+    let task = tauri::async_runtime::spawn(async move {
+      // Two ways to close, whichever comes first: the sheet closing (sender
+      // dropped) or the window expiring. The timer is the one that matters —
+      // a crashed or forgotten UI must not leave the LAN listener up.
+      let shutdown = async move {
+        let _ = tokio::time::timeout(ttl, rx).await;
+      };
+      // `Arc<VirtuesIrohClient>` is itself the Forwarder impl, so the outer
+      // Arc is just the trait-object box.
+      let forwarder: Arc<dyn virtues_reach_client::pair_door::Forwarder> = Arc::new(client);
+      if let Err(e) =
+        virtues_reach_client::serve_pair_door(listener, forwarder, door_attempts, shutdown).await
+      {
+        tracing::warn!(error = %format!("{e:#}"), "pair door ended");
+      }
+    });
+
+    // Replaces (and thereby closes) any door already open.
+    if let Ok(mut g) = self.pair_door.lock() {
+      *g = Some(PairDoor {
+        addr,
+        _shutdown: tx,
+        attempts,
+        task,
+      });
+    }
+    Ok((addr.to_string(), ttl_secs))
+  }
+
+  /// Close the pairing door, if one is open.
+  pub fn close_pair_door(&self) {
+    let door = self.pair_door.lock().ok().and_then(|mut g| g.take());
+    if let Some(d) = door {
+      // Dropping `_shutdown` signals the task; abort covers a task already
+      // parked inside a forwarded request.
+      d.task.abort();
+      tracing::info!(addr = %d.addr, "pair door: closed by request");
+    }
+  }
+
+  /// `(origin, attempts_used)` for an open door, else `None`.
+  pub fn pair_door_status(&self) -> Option<(String, u32)> {
+    self.pair_door.lock().ok().and_then(|g| {
+      g.as_ref().map(|d| {
+        (
+          d.addr.to_string(),
+          d.attempts.load(std::sync::atomic::Ordering::SeqCst),
+        )
+      })
+    })
   }
 
   pub fn is_paired(&self) -> bool {
@@ -760,6 +868,9 @@ impl ReachState {
         h.abort();
       }
     }
+    // A door onto a box we are no longer paired with can only mislead — and it
+    // is bound to the LAN, so leaving it up is the worst of the two.
+    self.close_pair_door();
     clear_warm_client();
     self.serving.store(false, Ordering::SeqCst);
     self.store.delete()?;
@@ -831,7 +942,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::improv_disconnect,
       commands::outbox_stats,
       commands::drain_now,
-      commands::radio_stats
+      commands::radio_stats,
+      commands::pair_door_open,
+      commands::pair_door_close,
+      commands::pair_door_status
     ])
     .setup(|app, _api| {
       #[cfg(target_os = "ios")]
