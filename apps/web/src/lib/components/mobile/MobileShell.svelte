@@ -36,6 +36,7 @@
 	import MobileDrawer from "$lib/components/mobile/MobileDrawer.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { reachability } from "$lib/stores/reachability.svelte";
 
 	// The store folds itself to one window at boot; this catches the other way
 	// in — a desktop browser dragged below the mobile breakpoint mid-session,
@@ -74,6 +75,21 @@
 	let lastX = 0;
 	let lastT = 0;
 	let velocity = 0; // px/ms, rightward positive
+	let viewportEl = $state<HTMLElement | null>(null);
+
+	/**
+	 * Where the viewport actually IS, not where its state says it is going.
+	 * During the settle animation the two differ, and a grab must catch the
+	 * plane at its painted position — starting the drag from the resting
+	 * offset instead is the visible snap that separates a native drawer from
+	 * a web one.
+	 */
+	function paintedOffset(): number {
+		if (!viewportEl) return open ? travel : 0;
+		const t = getComputedStyle(viewportEl).transform;
+		if (t === "none") return 0;
+		return new DOMMatrixReadOnly(t).m41;
+	}
 
 	/** Is the touch inside something that scrolls sideways itself? */
 	function inHorizontalScroller(target: EventTarget | null): boolean {
@@ -90,7 +106,9 @@
 
 	function onPointerDown(e: PointerEvent) {
 		if (e.pointerType === "mouse") return;
-		if (!open) {
+		const painted = paintedOffset();
+		const midFlight = painted > 0.5 && painted < travel - 0.5;
+		if (!midFlight && !open) {
 			if (e.clientX > EDGE_PX) return;
 			// A wide table, a code block, the activity heatmap: dragging one of
 			// those sideways is the user scrolling it, not opening the drawer.
@@ -99,10 +117,16 @@
 		tracking = true;
 		startX = e.clientX;
 		startY = e.clientY;
-		startOffset = open ? travel : 0;
+		startOffset = midFlight ? painted : open ? travel : 0;
 		lastX = e.clientX;
 		lastT = e.timeStamp;
 		velocity = 0;
+		// Mid-settle, the plane is already moving: the grab IS the gesture, so
+		// it skips the intent gate and freezes the plane under the finger.
+		if (midFlight) {
+			dragging = true;
+			dragX = painted;
+		}
 	}
 
 	function onPointerMove(e: PointerEvent) {
@@ -160,6 +184,34 @@
 	// everywhere else it composes.
 	const chrome = $derived(mobileLayout.chatChrome);
 	const showGhostToggle = $derived(chrome?.empty === true);
+
+	// ── Scroll-edge hairline ─────────────────────────────────────────────────
+	// The bar is transparent chrome over the view; the hairline appears only
+	// once content has actually passed beneath it, so a page at rest keeps its
+	// clean top. Every view owns its own scroller and scroll doesn't bubble,
+	// so this is a capture-phase listener on window (the old tab bar's trick),
+	// filtered to scrollers inside this shell's view region.
+	let viewEl = $state<HTMLElement | null>(null);
+	let scrolledUnderBar = $state(false);
+
+	$effect(() => {
+		function onScroll(e: Event) {
+			const t = e.target;
+			if (!(t instanceof Element) || !viewEl?.contains(t)) return;
+			const el = t as HTMLElement;
+			if (typeof el.scrollTop !== "number") return;
+			scrolledUnderBar = el.scrollTop > 2;
+		}
+		window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+		return () => window.removeEventListener("scroll", onScroll, true);
+	});
+
+	// A fresh view starts at its own top — the hairline belongs to a scroll
+	// position this view hasn't reached yet.
+	$effect(() => {
+		void tab?.route;
+		scrolledUnderBar = false;
+	});
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -187,8 +239,9 @@
 		class:offset={offset > 0}
 		style:transform={offset ? `translateX(${offset}px)` : undefined}
 		inert={open}
+		bind:this={viewportEl}
 	>
-		<header class="topbar">
+		<header class="topbar" class:edge={scrolledUnderBar}>
 			<button class="bar-btn" onclick={() => mobileLayout.openDrawer()} aria-label="Menu">
 				<Icon icon="ri:menu-line" width={22} />
 			</button>
@@ -211,7 +264,25 @@
 			{/if}
 		</header>
 
-		<div class="view">
+		{#if reachability.unreachable}
+			<!-- The failure state is the home screen now, so it gets a designed
+			     answer: what's wrong, and the door to the diagnosis. Calm, not
+			     red — the box being asleep is an ordinary morning, not an alarm. -->
+			<div class="unreachable" role="status">
+				<span class="unreachable-text">Can't reach your server</span>
+				<button
+					class="unreachable-door"
+					onclick={() =>
+						windowShellStore.openTabFromRoute("/virtues/devices/this", {
+							label: "This device",
+						})}
+				>
+					This device
+				</button>
+			</div>
+		{/if}
+
+		<div class="view" bind:this={viewEl}>
 			{#if tab}
 				<TabContent {tab} active={true} />
 			{/if}
@@ -267,12 +338,73 @@
 	}
 
 	.topbar {
+		position: relative;
 		flex: none;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		height: 48px;
 		padding: 0 6px;
+	}
+
+	/* The scroll-edge hairline: present only while content is under the bar. */
+	.topbar::after {
+		content: "";
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: 0.5px;
+		background: var(--color-border);
+		opacity: 0;
+		transition: opacity 0.2s ease;
+		pointer-events: none;
+	}
+	.topbar.edge::after {
+		opacity: 1;
+	}
+
+	/* Calm and factual: a strip, not a dialog. Warm-muted, never red — see the
+	   comment at the render site. */
+	.unreachable {
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		min-height: 36px;
+		margin: 0 10px 6px;
+		padding: 4px 6px 4px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: 10px;
+		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+	}
+
+	.unreachable-text {
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.unreachable-door {
+		flex: none;
+		min-height: 28px;
+		padding: 0 10px;
+		border: 0;
+		border-radius: 7px;
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		color: var(--color-foreground);
+		font-size: 13px;
+		font-weight: 550;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+		transition: background-color 0.25s ease-out;
+	}
+	.unreachable-door:active {
+		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		transition-duration: 0s;
 	}
 
 	.bar-btn {
