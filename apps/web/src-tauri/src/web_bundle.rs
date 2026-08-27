@@ -54,6 +54,15 @@ const DIR_BUNDLES: &str = "web-bundles";
 const PTR_ACTIVE: &str = "active";
 const PTR_PENDING: &str = "pending";
 const PTR_PREVIOUS: &str = "previous";
+/// The pending bundle a launch has actually ATTEMPTED to boot. `apply` runs
+/// mid-session, so a pending pointer alone does not mean "tried and failed" —
+/// it usually means "no launch has tried this yet". Only pending + booting
+/// agreeing at startup is evidence of a bundle that does not boot.
+const PTR_BOOTING: &str = "booting";
+/// The content hash of the last bundle abandoned by rollback. Without it the
+/// very next check re-downloads the identical failing bundle, every launch and
+/// every foreground, forever.
+const POISON_FILE: &str = "rolled-back";
 const MANIFEST_NAME: &str = ".virtues-bundle.json";
 
 /// What a bundle says about itself. Mirrors what
@@ -94,6 +103,10 @@ pub enum Outcome {
     /// Box serves no static build (headless install, or a dev box whose UI
     /// comes from vite). Nothing to update from.
     NoBundleOnBox,
+    /// Box offers the exact bundle a previous launch rolled back — it failed
+    /// to boot here once and is not given a second attempt. Clears itself when
+    /// the box serves anything else.
+    RolledBack { content_hash: String },
 }
 
 /// `<app-data>/web-bundles`.
@@ -143,6 +156,24 @@ pub fn active_bundle(app_data: &Path) -> Option<PathBuf> {
     is_usable(&dir).then_some(dir)
 }
 
+/// The overlay bundle this PROCESS booted from — captured once, right after
+/// startup resolution and before any window loads. Distinct from
+/// `active_bundle_id`, which re-reads the pointer and therefore changes when
+/// the background check applies a new bundle mid-session; boot identity is a
+/// process-lifetime fact, and boot-ok must be judged against it.
+static BOOTED: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Call after `resolve_pending_at_startup`, before building the webview.
+pub fn capture_booted(app_data: &Path) {
+    let _ = BOOTED.set(active_bundle_id(app_data));
+}
+
+/// `None` = booted from the baked bundle (or a shell that never captured —
+/// the desktop, which has no overlay store).
+pub fn booted_bundle_id() -> Option<String> {
+    BOOTED.get().cloned().flatten()
+}
+
 /// Identity of the active overlay bundle — its content hash — or `None` when
 /// running the build baked into the binary.
 ///
@@ -158,20 +189,39 @@ pub fn active_bundle_id(app_data: &Path) -> Option<String> {
 
 /// Resolve rollback state at startup, before any window loads.
 ///
-/// A pending pointer here means the previous launch flipped to a bundle and
-/// never came back to confirm it — so that bundle does not boot. Abandon it and
-/// fall back to whatever it replaced.
+/// A pending pointer means a bundle was applied and no session booted from it
+/// has confirmed yet. That is TWO cases, and they used to be conflated:
+///
+///   • No boot has been attempted (apply runs mid-session; the old bundle kept
+///     running). This launch IS the attempt — mark it and serve the bundle.
+///   • The previous launch attempted it (booting == pending) and never
+///     confirmed — so it does not boot. Abandon it, remember it as poisoned,
+///     and fall back to whatever it replaced.
+///
+/// Rolling back on sight of a bare pending pointer — the old behavior — meant
+/// a boot-ok landing before the mid-session apply left a good bundle to be
+/// "resolved" away at the next launch and re-downloaded, in a loop.
 ///
 /// Returns true when a rollback happened (worth logging; the user sees only
 /// that the app works).
 pub fn resolve_pending_at_startup(app_data: &Path) -> bool {
     let root = bundles_root(app_data);
     let Some(pending) = read_pointer(&root, PTR_PENDING) else {
+        // No pending bundle — a leftover attempt marker refers to nothing.
+        clear_pointer(&root, PTR_BOOTING);
         return false;
     };
 
-    // It booted badly enough not to confirm. Do not try it again.
+    if read_pointer(&root, PTR_BOOTING).as_deref() != Some(pending.as_str()) {
+        let _ = write_pointer(&root, PTR_BOOTING, &pending);
+        return false;
+    }
+
+    // Attempted last launch, never confirmed: it booted badly enough not to
+    // land boot-ok. Do not try it again — and do not re-download it either.
     clear_pointer(&root, PTR_PENDING);
+    clear_pointer(&root, PTR_BOOTING);
+    let _ = fs::write(root.join(POISON_FILE), &pending);
     match read_pointer(&root, PTR_PREVIOUS) {
         Some(prev) if is_usable(&root.join(&prev)) => {
             let _ = write_pointer(&root, PTR_ACTIVE, &prev);
@@ -182,11 +232,20 @@ pub fn resolve_pending_at_startup(app_data: &Path) -> bool {
     true
 }
 
-/// Called by the SPA once it has actually rendered from the active bundle.
-/// Promotes pending → confirmed, so the next startup keeps it.
-pub fn mark_boot_ok(app_data: &Path) {
+/// Called by the SPA once it has actually rendered. `booted` is the bundle id
+/// the SHELL captured at webview creation — not anything the page reports.
+///
+/// Confirm only when the pending bundle IS the one this session rendered from.
+/// The launch-time check thread can apply a new bundle while an older session
+/// is still the one calling home, and that session's boot-ok must not vouch
+/// for a bundle it never booted — that race silently disarmed rollback (or,
+/// in the other ordering, rolled back a good bundle forever).
+pub fn mark_boot_ok(app_data: &Path, booted: Option<&str>) {
     let root = bundles_root(app_data);
-    clear_pointer(&root, PTR_PENDING);
+    if read_pointer(&root, PTR_PENDING).as_deref() == booted && booted.is_some() {
+        clear_pointer(&root, PTR_PENDING);
+        clear_pointer(&root, PTR_BOOTING);
+    }
 }
 
 /// Delete bundle directories nothing points at.
@@ -252,6 +311,9 @@ pub fn record_outcome(app_data: &Path, outcome: &Outcome) {
             "state": "shell_too_old", "needs": needs, "have": have,
         }),
         Outcome::NoBundleOnBox => serde_json::json!({ "state": "no_bundle_on_box" }),
+        Outcome::RolledBack { content_hash } => serde_json::json!({
+            "state": "rolled_back", "contentHash": content_hash,
+        }),
     };
     let root = bundles_root(app_data);
     if fs::create_dir_all(&root).is_ok() {
@@ -287,6 +349,17 @@ pub fn check_and_apply(app_data: &Path, shell_surface: u32) -> std::io::Result<O
     let root = bundles_root(app_data);
     if read_pointer(&root, PTR_ACTIVE).as_deref() == Some(remote.content_hash.as_str()) {
         return Ok(Outcome::UpToDate);
+    }
+
+    // A bundle this device already rolled back gets no second download — the
+    // old behavior re-fetched the identical failing bundle on every launch and
+    // every foreground, forever.
+    if fs::read_to_string(root.join(POISON_FILE)).ok().as_deref()
+        == Some(remote.content_hash.as_str())
+    {
+        return Ok(Outcome::RolledBack {
+            content_hash: remote.content_hash,
+        });
     }
 
     let Some(tar_gz) = http_get(&box_addr(), "/api/web-bundle/tarball")? else {

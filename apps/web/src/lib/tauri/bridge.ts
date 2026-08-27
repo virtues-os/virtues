@@ -65,6 +65,52 @@ export async function shellSupports(min: number): Promise<boolean> {
 	return (await shellSurface()) >= min;
 }
 
+/** The app updater's state, mirrored from the shell. See `UpdateStateView` in
+ *  main.rs. `null` everywhere the self-updater doesn't exist — plain browsers,
+ *  mobile, Windows/Linux shells, and shells predating the command — which the
+ *  UI must treat as silence, never as up-to-date. */
+export interface AppUpdateState {
+	/** A downloaded release waiting for a relaunch, e.g. "1.0.24". */
+	stagedVersion: string | null;
+	lastCheck:
+		| { outcome: 'up_to_date' }
+		| { outcome: 'staged'; version: string }
+		| { outcome: 'failed'; error: string }
+		| null;
+}
+
+/**
+ * What the shell's self-updater knows. Until this command, a staged update was
+ * visible ONLY in the menu-bar tray — nothing the SPA rendered could see it,
+ * which is how "is my app current" became unanswerable from inside the app.
+ */
+export async function appUpdateState(): Promise<AppUpdateState | null> {
+	const invoke = await getInvoke();
+	if (!invoke) return null;
+	try {
+		const r = await invoke<{
+			staged_version: string | null;
+			last_check: AppUpdateState['lastCheck'];
+		} | null>('update_state_cmd');
+		if (!r) return null;
+		return { stagedVersion: r.staged_version ?? null, lastCheck: r.last_check ?? null };
+	} catch {
+		return null;
+	}
+}
+
+/** Restart into a staged app update. No-op when nothing is staged. */
+export async function applyAppUpdate(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('apply_update_cmd');
+	} catch {
+		// Shell too old for the command — the chip that calls this only renders
+		// when appUpdateState() answered, so this is belt-and-braces.
+	}
+}
+
 /** What the native shell reports about itself. See `ShellIdentity` in lib.rs. */
 export interface ShellIdentity {
 	/** The native app's version — `tauri.conf.json > version`. */
@@ -82,7 +128,8 @@ export type OtaCheck =
 	| { state: 'up_to_date' }
 	| { state: 'applied'; contentHash: string }
 	| { state: 'shell_too_old'; needs: number; have: number }
-	| { state: 'no_bundle_on_box' };
+	| { state: 'no_bundle_on_box' }
+	| { state: 'rolled_back'; contentHash: string };
 
 /**
  * One line describing an update check, or null when there is nothing worth
@@ -98,6 +145,11 @@ export function describeOtaCheck(c: OtaCheck | null): string | null {
 			return `Your box has newer UI that needs a newer app (needs ${c.needs}, this app has ${c.have}) — update from the App Store.`;
 		case 'applied':
 			return 'Newer UI downloaded — it will be used next time the app starts.';
+		case 'rolled_back':
+			// Also worth a word: the device is deliberately refusing the box's
+			// bundle after a failed boot, which otherwise looks like OTA
+			// silently not working.
+			return 'A newer UI failed to start on this device and was set aside — the next box update clears it.';
 		default:
 			return null;
 	}
