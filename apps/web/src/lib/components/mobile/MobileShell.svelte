@@ -37,6 +37,11 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { reachability } from "$lib/stores/reachability.svelte";
+	// Side-effect import: the keyboard-inset bridge acts entirely through the
+	// `--keyboard-inset` custom property, so nothing imports its exports — the
+	// shell loads it. (The old tab bar used to, and deleting it silently
+	// orphaned the module: the phone shipped with no keyboard inset at all.)
+	import "$lib/stores/keyboard.svelte";
 
 	// The store folds itself to one window at boot; this catches the other way
 	// in — a desktop browser dragged below the mobile breakpoint mid-session,

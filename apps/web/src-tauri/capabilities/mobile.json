@@ -1,10 +1,15 @@
 {
   "$schema": "https://schemas.tauri.app/capability/schema.json",
   "identifier": "mobile",
-  "description": "Capabilities for the iOS build (collectors + reach). Android is viewer-only — see android.json",
+  "description": "Capabilities for the iOS build (collectors + reach). Android is viewer-only — see android.json. The allow-* entries are the app's own commands: declaring an app ACL manifest (build.rs APP_COMMANDS) makes Tauri enforce the ACL for LOCAL windows too, so the bundled mobile SPA needs them even though it is not a remote origin.",
   "platforms": ["iOS"],
   "windows": ["*"],
   "permissions": [
+    "allow-command-surface-version",
+    "allow-shell-identity-cmd",
+    "allow-bundle-boot-ok",
+    "allow-set-appearance",
+    "allow-ota-check-now",
     "core:default",
     "core:window:allow-create",
     "location-probe:default",

@@ -1,0 +1,55 @@
+{
+	"sections": [
+		{
+			"title": "Start here",
+			"pages": [
+				{ "slug": "index", "title": "What Virtues is" },
+				{ "slug": "start/about-these-docs", "title": "About these docs" }
+			]
+		},
+		{
+			"title": "Set up",
+			"pages": [
+				{ "slug": "setup/requirements", "title": "Requirements", "planned": true },
+				{ "slug": "setup/install", "title": "Installing", "planned": true },
+				{ "slug": "setup/first-boot", "title": "First boot", "planned": true },
+				{ "slug": "setup/pairing", "title": "Pairing devices", "planned": true }
+			]
+		},
+		{
+			"title": "Connect",
+			"pages": [
+				{ "slug": "connect/iphone", "title": "iPhone", "planned": true },
+				{ "slug": "connect/mac", "title": "Mac", "planned": true },
+				{ "slug": "connect/sources", "title": "Sources", "planned": true },
+				{ "slug": "connect/byo-ai", "title": "Bring your own AI", "planned": true }
+			]
+		},
+		{
+			"title": "Operate",
+			"pages": [
+				{ "slug": "operate/upgrading", "title": "Upgrading" },
+				{ "slug": "operate/backup-and-restore", "title": "Backup & restore", "planned": true },
+				{ "slug": "operate/recovery", "title": "When something breaks", "planned": true },
+				{ "slug": "operate/reach", "title": "Reaching your server", "planned": true },
+				{ "slug": "operate/cli", "title": "The CLI", "planned": true }
+			]
+		},
+		{
+			"title": "Build",
+			"pages": [
+				{ "slug": "build/applets", "title": "Applets", "planned": true },
+				{ "slug": "build/api", "title": "The API", "planned": true },
+				{ "slug": "build/schema", "title": "Schema & ontology", "planned": true }
+			]
+		},
+		{
+			"title": "Understand",
+			"pages": [
+				{ "slug": "understand/architecture", "title": "Architecture", "planned": true },
+				{ "slug": "understand/privacy", "title": "The privacy model", "planned": true },
+				{ "slug": "understand/glossary", "title": "Glossary", "planned": true }
+			]
+		}
+	]
+}

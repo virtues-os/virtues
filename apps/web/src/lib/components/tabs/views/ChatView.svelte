@@ -2240,9 +2240,6 @@
 	   small and floats over the transcript, so the target grows around it
 	   rather than under it. */
 	@media (max-width: 768px), (pointer: coarse) {
-		/* No tab bar to clear anymore: the composer sits just above the home
-		   indicator, and the keyboard inset is the shell's problem (main's
-		   content box shrinks under it). */
 		.interview-writeup {
 			display: flex;
 			align-items: center;
@@ -2275,9 +2272,9 @@
 			color: var(--color-error, #c00);
 		}
 
-		.chat-input-wrapper {
-			padding-bottom: calc(1rem + env(safe-area-inset-bottom));
-		}
+		/* (The composer's phone padding lives in the docked-composer block at
+		   the end of these styles — it must follow the base rules to win the
+		   cascade.) */
 
 		.ghost-toggle {
 			position: relative;
@@ -2782,6 +2779,26 @@
 		   show through instead of a solid surface block around the composer. */
 		background-color: transparent;
 		background-image: none;
+	}
+
+	/* Phones dock the composer PERMANENTLY — no centered empty state, no
+	   center→dock travel to animate, nothing to snap. The input rests on the
+	   bottom and the keyboard pushes it up (main's content box shrinks under
+	   it via --keyboard-inset). This block sits after the base rules on
+	   purpose: it ties them on specificity, and cascade order is what lets it
+	   win — an earlier version lived above them and silently lost. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.chat-input-wrapper,
+		.chat-input-wrapper.is-empty {
+			bottom: 0;
+			transform: translateY(0);
+			/* Snug above the keys: the home-indicator gap collapses as the
+			   keyboard inset grows, so the pill hugs the keyboard when it's up
+			   and clears the indicator when it's not. */
+			padding-bottom: calc(
+				1rem + max(env(safe-area-inset-bottom) - var(--keyboard-inset, 0px), 0px)
+			);
+		}
 	}
 
 	.hero-section {

@@ -26,11 +26,24 @@ keeps each PR a reviewable slice without anyone ever switching branches.
 `main` only moves on release and is routinely far behind `staging`. Never
 branch from it.
 
-> **No stable release exists right now.** v0.1.0/0.2.0/0.3.0 were deleted on
-> 2026-08-18 when the version line was reset to 0.1.0 before launch, so
-> `virtues.com/sh` has nothing to serve until `v0.1.0` is cut. The prerelease
-> channel (`sh-pre`, the `v0.1.0-staging.N` tags) is unaffected and is how you
-> install a box today.
+> **Stable releases exist — check, don't assume.** The version line was reset
+> to 0.1.0 on 2026-08-18 (v0.1.0/0.2.0/0.3.0 were deleted), and the line has
+> been shipping since: `v0.1.3` on 2026-08-24, `v0.1.4` on 2026-08-25, with
+> `v0.1.5-staging.N` prereleases in flight. `virtues.com/sh` serves the stable
+> channel; `sh-pre` serves the prerelease one.
+>
+> This note said "no stable release exists" for days after that stopped being
+> true, and an agent copied the claim into a user-facing docs page. **Any
+> statement here about what is released is stale by construction** — read it
+> off the repo instead:
+>
+> ```sh
+> gh release list --limit 5
+> ```
+>
+> Beware `releases/latest`: this repo publishes several lines (box `vX.Y.Z`,
+> `mac-vX.Y.Z`, `win-edge`) into one list, so "latest" is whichever GitHub
+> flagged, not necessarily the box's.
 
 Why `wave` exists rather than working on `staging` directly: `staging.N`
 prereleases cut from `staging`, and real boxes install them with
