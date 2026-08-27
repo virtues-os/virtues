@@ -48,6 +48,7 @@ pub mod web_bundle;
 /// | 3 | `update_state_cmd` / `apply_update_cmd` — the app updater's state and
 /// |   | apply, for the sidebar's "Relaunch to X" chip (desktop-only commands;
 /// |   | mobile at 3 still rejects them and the UI treats that as silence) |
+/// | 4 | `check_app_update_cmd` — manual check trigger for This Mac's ledger |
 ///
 /// Note `bundle-contract.json` stays at `minShellVersion: 1`: every addition
 /// so far is called best-effort and the UI works fine without it, so requiring
@@ -55,7 +56,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 3;
+pub const COMMAND_SURFACE_VERSION: u32 = 4;
 
 /// What the native shell knows about itself.
 ///
