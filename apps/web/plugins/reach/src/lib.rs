@@ -160,7 +160,6 @@ pub(crate) fn radio_constrained() -> bool {
 }
 
 /// Instant of the last background drain attempt, for the constrained holdoff.
-/// (Millis since an arbitrary process epoch; Instant isn't const-constructible.)
 static LAST_BG_DRAIN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 
 /// Should a BACKGROUNDED drain run now, given radio cost? Cheap radio: always.

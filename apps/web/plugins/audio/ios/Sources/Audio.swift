@@ -468,7 +468,20 @@ public final class AudioRecorder: NSObject {
     // mode. On window entry the partial chunk finalizes once (outFile goes nil);
     // on exit the next buffer reopens a chunk and capture resumes seamlessly.
     if quietHoursActive(now) {
-      if outFile != nil { rotate(restart: false) }
+      if let f = outFile {
+        if sampleCount > 0 {
+          rotate(restart: false)
+        } else {
+          // Chunk opened but zero samples converted (window entry within one
+          // buffer of a rotation): rotate() would no-op on its sampleCount
+          // guard and the writer would stay open across the whole window — the
+          // chunk would then span the gap with lying timestamps. Discard the
+          // empty writer (dealloc finalizes it) and delete the husk.
+          let url = f.url
+          outFile = nil
+          try? FileManager.default.removeItem(at: url)
+        }
+      }
       return
     }
     if outFile == nil { try? openChunk() }
@@ -611,8 +624,12 @@ public final class AudioRecorder: NSObject {
 
   @objc private func handleConfigChange(_ note: Notification) {
     // Route/format change stopped the engine. Finalize + re-arm (new hw format).
+    // Deliberately does NOT clear interruptionHoldUntil: a config change can be
+    // a SIDE EFFECT of the interruption that set the hold (the engine stops when
+    // an alarm/call takes the session), and clearing here would reintroduce the
+    // mid-ring re-arm fight. If a hold stands, the re-arm below gates and the
+    // real resume arrives with `.ended`; with no hold, behavior is unchanged.
     NSLog("[Audio] engine config change — re-arming")
-    interruptionHoldUntil = nil
     virtues_location_audio_state(1)
     q.async { [weak self] in
       guard let self = self else { return }
