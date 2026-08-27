@@ -38,3 +38,14 @@ pub(crate) async fn set_notify<R: Runtime>(
 ) -> Result<AudioStatus> {
   app.audio().set_notify(enabled)
 }
+
+/// Set the quiet-hours window (minutes since local midnight; -1/-1 = off).
+/// Mute-don't-release: the capture graph stays armed, chunk writing pauses.
+#[command]
+pub(crate) async fn set_quiet_hours<R: Runtime>(
+  app: AppHandle<R>,
+  start: i32,
+  end: i32,
+) -> Result<AudioStatus> {
+  app.audio().set_quiet_hours(start, end)
+}

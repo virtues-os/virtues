@@ -34,11 +34,14 @@ class AudioPlugin: Plugin {
   }
 
   @objc public func status(_ invoke: Invoke) throws {
+    let quiet = AudioRecorder.shared.quietHours()
     invoke.resolve([
       "authorized": AudioRecorder.shared.authorized(),
       "recording": AudioRecorder.shared.recording,
       "notify": AudioRecorder.shared.notifyEnabled(),
       "silentDropped": AudioRecorder.shared.silentDroppedCount(),
+      "quietStart": quiet.start,
+      "quietEnd": quiet.end,
     ])
   }
 
@@ -48,10 +51,31 @@ class AudioPlugin: Plugin {
     AudioRecorder.shared.setNotifyEnabled(on)
     invoke.resolve(["notify": on])
   }
+
+  /// Set the quiet-hours window (minutes since local midnight; -1/-1 = off).
+  /// Mute-don't-release: the mic stays hot, chunks stop being written.
+  @objc public func setQuietHours(_ invoke: Invoke) throws {
+    let args = (try? invoke.parseArgs(QuietHoursArgs.self))
+    AudioRecorder.shared.setQuietHours(start: args?.start ?? -1, end: args?.end ?? -1)
+    // Resolve the same shape as `status` so the Rust side's AudioStatus parses.
+    let quiet = AudioRecorder.shared.quietHours()
+    invoke.resolve([
+      "authorized": AudioRecorder.shared.authorized(),
+      "recording": AudioRecorder.shared.recording,
+      "notify": AudioRecorder.shared.notifyEnabled(),
+      "quietStart": quiet.start,
+      "quietEnd": quiet.end,
+    ])
+  }
 }
 
 struct NotifyArgs: Decodable {
   let enabled: Bool
+}
+
+struct QuietHoursArgs: Decodable {
+  let start: Int
+  let end: Int
 }
 
 @_cdecl("init_plugin_audio")

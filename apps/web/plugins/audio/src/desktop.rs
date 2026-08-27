@@ -29,4 +29,7 @@ impl<R: Runtime> Audio<R> {
   pub fn set_notify(&self, _enabled: bool) -> crate::Result<AudioStatus> {
     Ok(AudioStatus::default())
   }
+  pub fn set_quiet_hours(&self, _start: i32, _end: i32) -> crate::Result<AudioStatus> {
+    Ok(AudioStatus::default())
+  }
 }
