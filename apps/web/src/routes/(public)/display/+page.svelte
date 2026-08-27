@@ -164,6 +164,11 @@
 					// claimed and there is more than one thing to say.
 					if (state_?.claimed && (next.record?.length ?? 0) > 1) logIndex += 1;
 					state_ = next;
+					// Server came BACK: its in-memory face-token store died
+					// with it, so a hung face's queries would fail for up to
+					// 45min on the old token. Bump the epoch so the face
+					// effect re-mints and reloads now.
+					if (unreachable) faceEpoch++;
 					unreachable = false;
 					// The latch is pollUpdating's to clear, not ours: an
 					// answered state poll proves the server is up, NOT that
@@ -207,6 +212,7 @@
 			if (state_?.claimed && (next.record?.length ?? 0) > 1) logIndex += 1;
 			state_ = next;
 			mirrorDenied = false;
+			if (unreachable) faceEpoch++;
 			unreachable = false;
 			// The mirror carries the upgrade fact inline (the kiosk's separate
 			// /api/display/updating door is loopback-only). Same latch, same
@@ -256,15 +262,38 @@
 		}
 	}
 
-	// Seconds the case button has been held, or null between presses. Read
-	// straight off the state poll — the panel is output-only, so this is the
-	// only way it can know, and the 2s setup cadence is what makes a 3s hold
-	// legible at all. (The ambient poll is 30s, so a hold on a CLAIMED box is
-	// re-cadenced below.)
-	const held = $derived(state_?.button_held_secs ?? null);
+	// Seconds the case button has been held, or null between presses.
+	//
+	// Two sources: the state poll carries it, but at the 30s ambient cadence
+	// a 3s hold was only ever SEEN one time in ten — so the dedicated 1s
+	// button poll (below) is what actually makes the countdown reliable on a
+	// claimed box. Loopback-only, like the updating poll; a mirror glass has
+	// no button to narrate.
+	let buttonHeld = $state<{ held: number; target: number } | null>(null);
+	const held = $derived(buttonHeld?.held ?? state_?.button_held_secs ?? null);
 	const remaining = $derived(
-		Math.max(0, (state_?.button_hold_target ?? 3) - (held ?? 0)),
+		Math.max(
+			0,
+			(buttonHeld?.target ?? state_?.button_hold_target ?? 3) - (held ?? 0),
+		),
 	);
+
+	const BUTTON_POLL_MS = 1_000;
+	async function pollButton() {
+		if (mirror) return;
+		try {
+			const res = await fetch("/api/display/button", { cache: "no-store" });
+			if (!res.ok) return;
+			const { held_secs, target } = await res.json();
+			buttonHeld =
+				held_secs === null || held_secs === undefined
+					? null
+					: { held: held_secs, target };
+		} catch {
+			// Server gone — the interruption screens own that story.
+			buttonHeld = null;
+		}
+	}
 
 	// Has the latch gone stale? An update that never finished must stop
 	// claiming it is about to.
@@ -319,6 +348,7 @@
 	// point), and it is the only thing here that needs to run on the ambient
 	// screen, which polls state every 30s.
 	let updateWatch: ReturnType<typeof setInterval> | null = null;
+	let buttonWatch: ReturnType<typeof setInterval> | null = null;
 	const UPDATE_POLL_MS = 5_000;
 
 	onMount(() => {
@@ -326,6 +356,7 @@
 		void pollUpdating();
 		schedulePoll(SETUP_POLL_MS);
 		updateWatch = setInterval(pollUpdating, UPDATE_POLL_MS);
+		buttonWatch = setInterval(pollButton, BUTTON_POLL_MS);
 		// Re-evaluate the latch's expiry even when nothing else ticks.
 		clock = setInterval(() => (now = new Date()), 20_000);
 	});
@@ -333,6 +364,7 @@
 		if (poll) clearInterval(poll);
 		if (clock) clearInterval(clock);
 		if (updateWatch) clearInterval(updateWatch);
+		if (buttonWatch) clearInterval(buttonWatch);
 	});
 
 	// ── the record ────────────────────────────────────────────────────────
@@ -402,6 +434,9 @@
 	);
 
 	let faceSrc = $state<string | null>(null);
+	// Bumped when the server returns from an outage: its in-memory token
+	// store restarted empty, so the hung face needs a fresh token + reload.
+	let faceEpoch = $state(0);
 
 	// Tokens live one hour (faces.rs TOKEN_TTL); a panel face lives for days.
 	// Re-mint well inside the TTL — the src change reloads the iframe, which
@@ -410,6 +445,8 @@
 
 	$effect(() => {
 		const id = faceAppletId;
+		// Read so a bump re-runs this effect (fresh mint + iframe reload).
+		void faceEpoch;
 		if (!id) {
 			faceSrc = null;
 			return;

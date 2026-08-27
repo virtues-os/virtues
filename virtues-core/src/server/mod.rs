@@ -298,6 +298,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/display/updating",
             get(crate::api::display::display_updating_handler),
         )
+        // The case button at 1s cadence — the 30s ambient poll cannot see a
+        // 3s hold. See api/display.rs.
+        .route(
+            "/api/display/button",
+            get(crate::api::display::display_button_handler),
+        )
         // `/api/display/qr` and `/api/display/link-qr` are gone — the panel is
         // one screen now and renders no QR at all. See api/display.rs.
         //
