@@ -555,6 +555,318 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the apply_update_cmd command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-apply-update-cmd",
+          "markdownDescription": "Enables the apply_update_cmd command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the bundle_boot_ok command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-bundle-boot-ok",
+          "markdownDescription": "Enables the bundle_boot_ok command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_app_update_cmd command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-app-update-cmd",
+          "markdownDescription": "Enables the check_app_update_cmd command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the command_surface_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-command-surface-version",
+          "markdownDescription": "Enables the command_surface_version command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the diagnose_box command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-diagnose-box",
+          "markdownDescription": "Enables the diagnose_box command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the discover_servers command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-discover-servers",
+          "markdownDescription": "Enables the discover_servers command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the forget_pairing command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-forget-pairing",
+          "markdownDescription": "Enables the forget_pairing command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_client_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-client-status",
+          "markdownDescription": "Enables the get_client_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_collector_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-collector-status",
+          "markdownDescription": "Enables the get_collector_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the install_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-install-collector",
+          "markdownDescription": "Enables the install_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the install_helpers command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-install-helpers",
+          "markdownDescription": "Enables the install_helpers command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_accessibility_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-accessibility-settings",
+          "markdownDescription": "Enables the open_accessibility_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_full_disk_access command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-full-disk-access",
+          "markdownDescription": "Enables the open_full_disk_access command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ota_check_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ota-check-now",
+          "markdownDescription": "Enables the ota_check_now command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pair_with_code command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pair-with-code",
+          "markdownDescription": "Enables the pair_with_code command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pause_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pause-collector",
+          "markdownDescription": "Enables the pause_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the recheck_box command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-recheck-box",
+          "markdownDescription": "Enables the recheck_box command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restart_app command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-restart-app",
+          "markdownDescription": "Enables the restart_app command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the resume_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-resume-collector",
+          "markdownDescription": "Enables the resume_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_appearance command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-appearance",
+          "markdownDescription": "Enables the set_appearance command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_summon_shortcut command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-summon-shortcut",
+          "markdownDescription": "Enables the set_summon_shortcut command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_identity_cmd command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-identity-cmd",
+          "markdownDescription": "Enables the shell_identity_cmd command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-collector",
+          "markdownDescription": "Enables the stop_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the uninstall_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-uninstall-collector",
+          "markdownDescription": "Enables the uninstall_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the uninstall_helpers command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-uninstall-helpers",
+          "markdownDescription": "Enables the uninstall_helpers command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_state_cmd command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-state-cmd",
+          "markdownDescription": "Enables the update_state_cmd command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the apply_update_cmd command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-apply-update-cmd",
+          "markdownDescription": "Denies the apply_update_cmd command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bundle_boot_ok command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-bundle-boot-ok",
+          "markdownDescription": "Denies the bundle_boot_ok command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_app_update_cmd command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-app-update-cmd",
+          "markdownDescription": "Denies the check_app_update_cmd command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the command_surface_version command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-command-surface-version",
+          "markdownDescription": "Denies the command_surface_version command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the diagnose_box command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-diagnose-box",
+          "markdownDescription": "Denies the diagnose_box command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the discover_servers command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-discover-servers",
+          "markdownDescription": "Denies the discover_servers command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the forget_pairing command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-forget-pairing",
+          "markdownDescription": "Denies the forget_pairing command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_client_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-client-status",
+          "markdownDescription": "Denies the get_client_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_collector_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-collector-status",
+          "markdownDescription": "Denies the get_collector_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-install-collector",
+          "markdownDescription": "Denies the install_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install_helpers command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-install-helpers",
+          "markdownDescription": "Denies the install_helpers command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_accessibility_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-accessibility-settings",
+          "markdownDescription": "Denies the open_accessibility_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_full_disk_access command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-full-disk-access",
+          "markdownDescription": "Denies the open_full_disk_access command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ota_check_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ota-check-now",
+          "markdownDescription": "Denies the ota_check_now command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pair_with_code command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pair-with-code",
+          "markdownDescription": "Denies the pair_with_code command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pause_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pause-collector",
+          "markdownDescription": "Denies the pause_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the recheck_box command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-recheck-box",
+          "markdownDescription": "Denies the recheck_box command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restart_app command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-restart-app",
+          "markdownDescription": "Denies the restart_app command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the resume_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-resume-collector",
+          "markdownDescription": "Denies the resume_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_appearance command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-appearance",
+          "markdownDescription": "Denies the set_appearance command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_summon_shortcut command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-summon-shortcut",
+          "markdownDescription": "Denies the set_summon_shortcut command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_identity_cmd command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-identity-cmd",
+          "markdownDescription": "Denies the shell_identity_cmd command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-collector",
+          "markdownDescription": "Denies the stop_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the uninstall_collector command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-uninstall-collector",
+          "markdownDescription": "Denies the uninstall_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the uninstall_helpers command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-uninstall-helpers",
+          "markdownDescription": "Denies the uninstall_helpers command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_state_cmd command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-state-cmd",
+          "markdownDescription": "Denies the update_state_cmd command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",
