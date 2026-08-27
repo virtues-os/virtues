@@ -487,6 +487,37 @@ impl BoxStore for FileStore {
 
 // ─── Plugin state ────────────────────────────────────────────────────────────
 
+/// The address a phone on the same network would actually reach this machine at.
+///
+/// NOT simply the first private IPv4 the box enumerates. A laptop's list is
+/// unordered and full of addresses no other device can route to — this one
+/// carries two virtualization bridges (192.168.139.x, 192.168.215.x) and a VPN
+/// (100.x) beside the real Wi-Fi. Offering the wrong one hands the phone an
+/// address that answers nothing, and the only symptom is
+/// `tcp connect error: Host is down`, which reads as "the door is broken"
+/// rather than "you were given the wrong door".
+///
+/// So ask the routing table instead: open a UDP socket toward a public address
+/// and read back the local address the kernel selected for it. `connect` on a
+/// UDP socket only fixes the peer — **no packet is sent** — so this costs
+/// nothing, contacts no one, and names the interface that actually carries
+/// traffic. Falls back to the enumeration when there is no default route.
+fn lan_address() -> Option<std::net::Ipv4Addr> {
+  use std::net::{IpAddr, UdpSocket};
+  let probe = UdpSocket::bind("0.0.0.0:0")
+    .ok()
+    .and_then(|s| s.connect("8.8.8.8:53").ok().and_then(|_| s.local_addr().ok()))
+    .map(|a| a.ip());
+  if let Some(IpAddr::V4(v4)) = probe {
+    if !v4.is_loopback() && !v4.is_unspecified() {
+      return Some(v4);
+    }
+  }
+  virtues_reach_client::local_private_ipv4s()
+    .into_iter()
+    .find_map(|s| s.parse().ok())
+}
+
 /// A pairing door held open for one "Add device" window.
 ///
 /// Kept whole so `close()` is one swap: dropping the sender shuts the task
@@ -537,15 +568,9 @@ impl ReachState {
     self.ensure_serving().await?;
     let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
 
-    let host = virtues_reach_client::local_private_ipv4s()
-      .into_iter()
-      .next()
-      .ok_or_else(|| {
-        Error::Reach("this computer has no private network address to offer".into())
-      })?;
-    let ip: std::net::Ipv4Addr = host
-      .parse()
-      .map_err(|_| Error::Reach(format!("unusable local address {host}")))?;
+    let ip = lan_address().ok_or_else(|| {
+      Error::Reach("this computer has no network address a phone could reach".into())
+    })?;
 
     // Port 0: the OS picks a free one. Deliberately NOT the loopback port —
     // that one is persisted in every installed collector's endpoint and must
