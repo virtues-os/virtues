@@ -6,6 +6,7 @@
 		getAssistantProfile,
 		updateAssistantProfile,
 	} from "$lib/api/client";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 
 	interface Model {
 		id?: string;
@@ -122,7 +123,11 @@
 		}
 	}
 
-	/** The list a slot shows: the "Virtues default" row, then the models. */
+	/** The list a slot shows: the "Virtues default" row, then the vouched set,
+	 *  plus whatever this slot is currently pinned to (so a catalog pick still
+	 *  displays here). The full ~240-model gateway list used to ride along and
+	 *  made the dropdown unreadable — browsing lives in Settings → Models now,
+	 *  which has the table, filters, and retention facts a comparison needs. */
 	function optionsFor(slot: SlotConfig): Model[] {
 		const resolved = slotDefaults[slot.key];
 		const name = resolved ? modelName(byId(resolved)) || resolved : null;
@@ -133,7 +138,9 @@
 					? `Virtues default · ${name}`
 					: "Virtues default",
 			},
-			...models,
+			...models.filter(
+				(m) => m.recommended || modelId(m) === slotValues[slot.key],
+			),
 		];
 	}
 
@@ -142,11 +149,11 @@
 	}
 
 	/** Section label for the dropdown. Empty = the ungrouped "default" row.
-	 *  Models arrive Recommended-first from the box, so a single pass groups
-	 *  them cleanly. */
+	 *  Only the vouched set and the slot's own pin survive optionsFor, so a
+	 *  non-recommended entry here is by definition the pinned one. */
 	function groupOf(model: Model): string {
 		if (modelId(model) === DEFAULT) return "";
-		return model.recommended ? "Recommended" : "All models";
+		return model.recommended ? "Recommended" : "Pinned from the catalog";
 	}
 
 	/** What a search query matches: name, provider, and id. */
@@ -294,7 +301,7 @@
 				</div>
 			{/each}
 		</div>
-		<div class="px-4 pb-4 -mt-1">
+		<div class="px-4 pb-4 -mt-1 space-y-1.5">
 			<p class="text-xs text-foreground-subtle">
 				A slot on <span class="text-foreground-muted"
 					>Virtues default</span
@@ -302,6 +309,15 @@
 				follows whatever model we currently recommend, and moves when we move
 				it. Pick a model to pin it — we won't change it.
 			</p>
+			<button
+				class="text-xs text-foreground-muted hover:text-foreground underline underline-offset-2"
+				onclick={() =>
+					windowShellStore.navigate("/virtues/models", {
+						label: "Settings",
+					})}
+			>
+				Browse all {models.length} models in the catalog →
+			</button>
 		</div>
 	{/if}
 </div>

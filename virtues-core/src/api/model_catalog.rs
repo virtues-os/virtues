@@ -66,6 +66,16 @@ pub struct CatalogModel {
     /// claim. The picker sections on this. Absent on older responses → `false`.
     #[serde(default)]
     pub recommended: bool,
+    /// Zero-data-retention posture, the gateway's attestation about the
+    /// endpoints that can serve this model: `"all"` | `"some"`
+    /// (routing-dependent) | `"none"`. `None` is *unknown* — the compiled
+    /// floor and older virtues-api responses — and must render blank, never
+    /// as a claim in either direction.
+    #[serde(default)]
+    pub zdr: Option<String>,
+    /// Same tri-state for "providers do not train on request data".
+    #[serde(default)]
+    pub no_training: Option<String>,
 }
 
 /// Which model fills each slot, per the cloud. Ids only — the models
@@ -164,6 +174,8 @@ pub fn models() -> Vec<CatalogModel> {
                 output_cost_per_1k: None,
                 // These are the slot models, which is what `recommended` means.
                 recommended: true,
+                zdr: None,
+                no_training: None,
             }
         })
         .collect()
@@ -294,6 +306,23 @@ mod tests {
         let s = slots();
         assert!(!s.chat.is_empty() && !s.lite.is_empty());
         assert!(!s.coding.is_empty() && !s.image.is_empty());
+    }
+
+    /// A virtues-api that predates the retention fields must still parse —
+    /// and the absence must read as unknown, not as "none".
+    #[test]
+    fn responses_without_retention_fields_parse_as_unknown() {
+        let json = serde_json::json!({
+            "model_id": "example/model",
+            "display_name": "Model",
+            "provider": "Example",
+            "sort_order": 0,
+            "context_window": 0,
+            "max_output_tokens": 0,
+            "supports_tools": false
+        });
+        let m: CatalogModel = serde_json::from_value(json).expect("older response parses");
+        assert!(m.zdr.is_none() && m.no_training.is_none());
     }
 
     #[test]
