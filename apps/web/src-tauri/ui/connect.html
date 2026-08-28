@@ -511,11 +511,11 @@
          */
         boxStep({ identity, hasBle }) {
           if (identity && identity.linked) return 'pair';
-          // RPC 0x84 is session-gated, so the link code needs the same proof of
-          // line-of-sight the wifi step does. A box that was ALREADY online
-          // reached this step with no session and sat forever on "getting your
-          // box's code…" while every ask was refused — invisibly, because a
-          // refusal and "no code yet" are the same empty answer.
+          // The account grant (RPC 0x82) is session-gated, so linking needs the
+          // same proof of line-of-sight the wifi step does. A box that was
+          // ALREADY online reached this step with no session and sat forever
+          // while every ask was refused — invisibly, because a refusal and
+          // "nothing yet" are the same empty answer.
           if (hasBle) return 'phrase-then-link';
           return 'link';
         },
@@ -1631,7 +1631,7 @@ its devices apart — type its address.",
         // Do NOT disconnect here. This used to tear the link down on every
         // outcome, and both branches below need it moments later: a failed join
         // returns to the picker (which rescans), and a successful one goes on to
-        // fetch the link code over RPC 0x84. Redialing that fast loses the race
+        // hand over the account grant (RPC 0x82). Redialing that fast loses the race
         // against CoreBluetooth and the box's own radio, so `ensure_connected`
         // times out — and the user is told "couldn't connect to the box over
         // Bluetooth" when what actually happened was a wrong Wi-Fi password

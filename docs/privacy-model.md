@@ -1,28 +1,44 @@
-# Privacy &amp; security model — the blind relay
+# Privacy &amp; security model
 
-Virtues lets you reach your home box from any browser, anywhere — without opening
-a port at your house and without us being able to read your data. This page is
-the honest, complete statement of how that works and what each party can (and
-can't) see.
+> **STATUS — the transport half of this page is SUPERSEDED (2026-08-28). Do not
+> quote it.** Everything down to *The inference boundary* describes the pre-iroh
+> design: an SNI-routed TCP relay, per-box ACME, a box-held TLS key, a device
+> bearer token, and browser-anywhere access. None of that is how reach works
+> now. The current, accurate account for users is
+> **[the reach manual page](../manual/operate/reach.md)**; the design notes are
+> in [relay-control-plane.md](relay-control-plane.md).
+>
+> Four claims below are wrong on the merits, not merely dated, and they are the
+> ones most likely to be lifted into copy:
+>
+> - **"Blind relay."** The relay cannot read content — that part is true and
+>   rests on end-to-end encryption. It *does* see which two device keys are
+>   talking, the addresses they connect from, and how much traffic passes when.
+>   Anything that forwards packets sees volume and timing; there is no design in
+>   which it does not.
+> - **"RAM-only relay", "no records".** Nothing enforces or verifies this. It is
+>   an operational description of one process, not a property, and it has never
+>   been audited or attested.
+> - **"Any browser, anywhere, no install."** A browser has no paired key, so it
+>   is refused. Reach is the iPhone app, the desktop app, or a terminal on the
+>   box.
+> - **Box-held TLS key / device bearer.** Reach is an iroh connection
+>   authenticated by the device's own key against the box's allowlist. There is
+>   no per-box ACME certificate and no bearer token.
+>
+> **The inference boundary section is current** and remains the honest account
+> of where your data actually leaves the box.
 
-> **One sentence:** your home box *dials out* to a blind relay and holds the
-> connection open; a browser anywhere hits the relay, which forwards *sealed*
-> bytes to your box over that already-open pipe. Nobody opens a port at your
-> house, and the relay can't read a thing.
+*Everything from here to the inference boundary is kept as a record of the
+superseded design.* It described how you reached your home box from a browser
+without opening a port at your house.
 
-See the [visual walkthrough](relay-walkthrough.html) for the lifecycle diagrams,
-and [relay-control-plane.md](relay-control-plane.md) for the design.
+> **One sentence (superseded):** the home box *dialed out* to the relay and held
+> the connection open; a browser anywhere hit the relay, which forwarded
+> *sealed* bytes to the box over that already-open pipe.
 
-
-> **Accuracy note (2026-08-18).** Two rows below describe the pre-iroh design:
-> there is no longer a **device bearer** token (a device is authenticated by its
-> paired iroh key, checked against an allowlist) and the box does not terminate
-> its own **TLS** for the browser (reach is an iroh connection, LAN-direct or
-> hole-punched, relayed only as a fallback). The blindness property is unchanged
-> — the relay still forwards bytes it cannot read — but the mechanism is iroh's
-> transport encryption rather than a box-held TLS key. Treat the two rows as
-> historical until this page is rewritten against
-> [the current reach design](relay-control-plane.md).
+See the [visual walkthrough](relay-walkthrough.html) for the lifecycle diagrams
+of that design.
 
 ## Who holds which secret — and who deliberately doesn't
 
@@ -142,7 +158,8 @@ relay has no dependency.
 
 ## What we are, legally
 
-Because the relay is blind, it operates as a **mere conduit** — it moves
-encrypted bytes it cannot inspect, the same posture as a network carrier. We
-can't moderate what we can't see; abuse is handled at the edges (payment-gated
-access and revocation), not by reading traffic.
+The relay operates as a **mere conduit** — it moves encrypted bytes it cannot
+inspect, the same posture as a network carrier. We can't moderate what we can't
+read; abuse is handled at the edges (subscription-gated access and revocation),
+not by reading traffic. That is a statement about *content*: the relay still
+observes which keys are connected, from which addresses, and how much passes.

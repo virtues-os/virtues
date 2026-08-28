@@ -1,5 +1,5 @@
 <!--
-  /onboarding — six screens, one at a time.
+  /onboarding — four screens, one at a time.
 
   WAS A DOCUMENT, IS NOW A SEQUENCE. The first build was a single editorial
   scroll with a table of contents in the left margin: you read top to bottom and
@@ -23,8 +23,11 @@
     ① letter    the founder's letter                     (in-memory, once a session)
     ② names     introductions, thirty seconds
     ③ sources   connect what already holds your life     (skippable)
-    ④ words     the interview — its own surface, and the draft after it
-    ⑤ you       the reveal
+    ④ you       the reveal
+
+  There was a fifth (`words` — the interview, and the draft after it). It left
+  2026-08-27: the interview is the product's first CONVERSATION, one chat in the
+  real app, not an onboarding surface. See steps.ts.
 
   THE URL IS THE FLOW. Each view is `/onboarding/<slug>`, so Back and Forward
   work, a refresh keeps your place, and a screen can be linked to. Five local

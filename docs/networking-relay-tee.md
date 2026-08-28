@@ -1,6 +1,31 @@
-# Networking — reach your box via a blind relay (ADR)
+# Networking — reach your box via a relay (ADR, SUPERSEDED)
 
-> **Source of truth (2026-06-29) for Virtues' remote-access model.** Supersedes
+> **STATUS — SUPERSEDED (2026-08-28). This ADR is history, not doctrine, and
+> nothing in it should be quoted as a property of the shipped system.** It was
+> the source of truth on 2026-06-29 and it lost that role when reach moved to
+> iroh. The current design is [relay-control-plane.md](relay-control-plane.md);
+> the accurate user-facing account is
+> [the reach manual page](../manual/operate/reach.md).
+>
+> Two things to hold in mind while reading it:
+>
+> - **The mechanism is gone.** Single-hop SNI-routed L4 relay, per-box ACME, a
+>   box-held TLS key, browser-anywhere access: none of that exists. Reach is an
+>   iroh connection between two Ed25519 keys — LAN-direct, hole-punched, or
+>   relayed as a last resort — and a browser cannot do it, having no key.
+> - **The privacy hardening was never built.** RAM-only/diskless relay,
+>   blinded-token (Privacy Pass) auth, unlinkability, an independent audit, a
+>   warrant canary, open-sourcing the relay — every one of these is a *proposal
+>   in this document*, and every one is unimplemented. The relay we run gates on
+>   an atlas subscription callout keyed by EndpointId, which is the opposite of
+>   unlinkable. Text below that reads as description ("the relay keeps no logs",
+>   "RAM-only", "audited", "blinded") is aspiration written in the present
+>   tense; treat it as such, and never copy it into user-facing or legal text.
+>
+> The failure analysis of the IPv6-direct/WireGuard model, below, is still
+> correct and is why the ladder ends at a relay at all.
+
+> **Original header (2026-06-29).** Supersedes
 > the former `networking.md`, `jetson-wg.md`, and the WG/IPv6-direct parts of
 > `byo-networking.md` (all three since deleted) — those described an
 > IPv6-direct/WireGuard model that **fails on v4-only visited networks** (corporate /
