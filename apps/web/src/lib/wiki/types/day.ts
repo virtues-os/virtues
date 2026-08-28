@@ -56,7 +56,6 @@ export interface DayEvent {
 	// Dayline: Classification
 	isSleep: boolean;
 	userHidden: boolean; // Soft delete
-	userCreated: boolean; // User-created, never modified by recompute
 
 	// Entity/topic novelty
 	entities: string[]; // Wiki entity IDs (person_demo_maya, place_demo_office, etc.)

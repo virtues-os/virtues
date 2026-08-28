@@ -106,24 +106,10 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
         )));
     }
 
-    // Record where this came from. Without the resolved SHA persisted, "is
-    // there a newer version" is unanswerable — which is most of why packages
-    // are worth having as a unit at all.
-    sqlx::query(
-        r#"INSERT INTO app_applet_package (slug, repo_url, git_ref, commit_sha)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (slug) DO UPDATE
-             SET repo_url = EXCLUDED.repo_url,
-                 git_ref = EXCLUDED.git_ref,
-                 commit_sha = EXCLUDED.commit_sha,
-                 updated_at = now()"#,
-    )
-    .bind(&slug)
-    .bind(url)
-    .bind(git_ref)
-    .bind(commit.as_deref())
-    .execute(db)
-    .await?;
+    // Provenance (repo/ref/SHA) used to be persisted to app_applet_package
+    // here — written once, read by nothing, table dropped 2026-08-28. If an
+    // update check for git-imported applets is ever built, the table returns
+    // WITH its reader.
 
     let after: HashSet<String> = ids_under_slug(db, &slug).await?;
 

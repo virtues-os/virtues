@@ -96,10 +96,12 @@ are skipped quietly rather than failing. Registering a drive is, in practice,
 the entire setup.
 
 On a drive the archive is split: a full snapshot of the database, environment
-file and applets, plus separate incremental archives of the lake. Only the
-newest full snapshot is kept, while lake increments accumulate — the lake is
-the part that only ever grows and can't be re-derived. A run refuses to start
-if it would leave under a gigabyte free.
+file and applets, plus separate incremental archives of the lake. Old full
+snapshots are pruned only when the drive starts filling up, and the newest is
+never removed — on a roomy disk you keep a run of them. Lake increments are
+never pruned at all, because the lake is the part that only ever grows and
+can't be re-derived. A run refuses to start if it would leave under a gigabyte
+free.
 
 ## Checking that a backup is real
 

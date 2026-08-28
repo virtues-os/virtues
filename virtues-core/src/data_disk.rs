@@ -74,7 +74,7 @@ impl DataDisk {
 ///
 /// The env var is still honored first as an override for tests and odd layouts;
 /// it just is not the source of truth any more.
-fn data_dir() -> PathBuf {
+pub(crate) fn data_dir() -> PathBuf {
     if let Some(v) = std::env::var_os("VIRTUES_DATA_DIR") {
         return PathBuf::from(v);
     }

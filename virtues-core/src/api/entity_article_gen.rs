@@ -213,7 +213,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             let row = sqlx::query(
                 "SELECT name, relationship_category, nickname, notes, \
                         first_seen::text AS fi, last_seen::text AS li, \
-                        ref_count, article \
+                        seen_count, article \
                  FROM wiki_people WHERE id = $1",
             )
             .bind(&entity.id)
@@ -237,12 +237,15 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("li") {
                 f.push_str(&format!("- Most recent interaction: {}\n", v));
             }
+            if let Ok(v) = row.try_get::<i64, _>("seen_count") {
+                f.push_str(&format!("- Interactions on record: {}\n", v));
+            }
             let prev: Option<String> = row.try_get("article").ok().flatten();
             (name, f, prev)
         }
         "place" => {
             let row = sqlx::query(
-                "SELECT name, category, address, ref_count, \
+                "SELECT name, category, address, seen_count, \
                         first_seen::text AS fv, last_seen::text AS lv, article \
                  FROM wiki_places WHERE id = $1",
             )
@@ -258,7 +261,11 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("address") {
                 f.push_str(&format!("- Address: {}\n", v));
             }
-            if let Ok(v) = row.try_get::<i32, _>("ref_count") {
+            // `seen_count` is bigint — the pre-fix code asked for a phantom
+            // `ref_count` as i32, so this line failed twice over. The rename
+            // sweep (4526df11) missed these two raw-query sites; only
+            // `sqlx::query!` sites got compiler coverage.
+            if let Ok(v) = row.try_get::<i64, _>("seen_count") {
                 f.push_str(&format!("- Visits on record: {}\n", v));
             }
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("fv") {
@@ -512,5 +519,34 @@ mod tests {
     fn cap_appends_ellipsis() {
         assert_eq!(cap("abcdef", 3), "abc…");
         assert_eq!(cap("abc", 3), "abc");
+    }
+
+    /// THE TEST THAT WOULD HAVE CAUGHT THIS. The header queries here are raw
+    /// `sqlx::query`, so a renamed column breaks at runtime, not build time —
+    /// which is how a phantom `ref_count` (renamed to `seen_count` in 0002)
+    /// silently killed person and place article generation while org survived.
+    /// This runs all three header paths against the real migration-built
+    /// schema; a future rename fails here instead of on a fielded box.
+    #[sqlx::test]
+    async fn dossier_header_sql_matches_schema(pool: sqlx::PgPool) {
+        for (table, id, kind) in [
+            ("wiki_people", "person_t1", "person"),
+            ("wiki_places", "place_t1", "place"),
+            ("wiki_orgs", "org_t1", "organization"),
+        ] {
+            sqlx::query(&format!(
+                "INSERT INTO {table} (id, name) VALUES ($1, 'Dossier Subject')"
+            ))
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            let entity = DueEntity { id: id.to_string(), kind: kind.to_string(), refs: 1 };
+            let dossier = build_dossier(&pool, &entity)
+                .await
+                .unwrap_or_else(|e| panic!("{kind} dossier failed against live schema: {e}"));
+            assert!(dossier.contains("Dossier Subject"), "{kind} dossier missing subject name");
+        }
     }
 }

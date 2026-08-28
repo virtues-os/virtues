@@ -34,12 +34,12 @@ the examen does not depend on them.
 SECOND, look at yesterday, briefly. Use `sql_query`, and only on tables that
 have something in them — check before you reach:
 
-  data_calendar_event        (start_time, end_time, title, location_name,
-                              attendee_identifiers, is_sacred)
-  data_activity_app_session  (start_time, end_time, app_name, window_title, url)
-  data_health_heart_rate     (timestamp, bpm)
-  data_health_steps          (timestamp, step_count)
-  data_communication_message (timestamp, from_name, body, is_group_message)
+  data_calendar_event        (started_at, ended_at, title, location_name,
+                              attendee_identifiers)
+  data_activity_app_session  (started_at, ended_at, app_name, window_title)
+  data_health_heart_rate     (occurred_at, bpm)
+  data_health_steps          (occurred_at, step_count)
+  data_communication_message (occurred_at, from_name, body, is_group_message)
 
 These column names are exact. Use them as given rather than guessing — a
 column that does not exist fails this run quietly and every run after it.

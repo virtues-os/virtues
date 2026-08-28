@@ -20,7 +20,6 @@
 //!
 //! There are two types of tools:
 //! - **Built-in tools** (this registry): web_search, query_ontology, semantic_search
-//! - **MCP tools** (Postgres `app_mcp_tools`): dynamically discovered from connected MCP servers
 
 pub mod assistant;
 pub mod models;

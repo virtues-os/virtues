@@ -53,7 +53,7 @@ When it IS relevant — decisions about priorities, questions about direction, m
 /// SEPARATE FROM NARRATIVE IDENTITY ON PURPOSE, and deliberately its opposite.
 /// That block ends with "hold your understanding lightly — you could be wrong."
 /// This one must not be held lightly: these are not impressions to weigh, they
-/// are instructions to obey. `wiki_narrative_interview` puts it exactly right —
+/// are instructions to obey. The old interview design put it exactly right —
 /// a model reading a paragraph "might honour it nine times and miss the tenth,
 /// and the tenth is the one that would matter," which is the whole reason these
 /// sentences are lifted out of the prose and restated as rules.
