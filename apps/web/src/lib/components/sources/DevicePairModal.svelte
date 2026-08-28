@@ -129,7 +129,8 @@
 			const door = await openPairDoor(timeRemaining);
 			doorOrigin = door?.origin ?? null;
 			const outcome = await createPairHandoff(displayName);
-			handoffUnavailable = outcome.kind === "no-shell" ? null : outcome;
+			handoffUnavailable =
+				outcome.kind === "ok" || outcome.kind === "no-shell" ? null : outcome;
 			handoffQr = outcome.kind === "ok" ? outcome.handoff.qrSvg : null;
 			handoffDeviceId = outcome.kind === "ok" ? outcome.handoff.deviceId : null;
 			startPolling();
@@ -298,6 +299,7 @@
 		// that never gets closed properly — a crash, a force-quit.)
 		doorOrigin = null;
 		handoffQr = null;
+		handoffUnavailable = null;
 		handoffDeviceId = null;
 		void closePairDoor();
 		resetLocalState();
@@ -564,6 +566,31 @@
 		border-radius: 12px;
 		padding: 0.75rem 0.875rem;
 		text-align: left;
+	}
+
+	/* Same frame as .door, deliberately: this is an explanation of what is
+	   missing, sitting directly above the fallback it makes you use. Warning
+	   color on the title only — the body is instruction, not alarm. */
+	.notice {
+		width: 100%;
+		max-width: 20rem;
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		padding: 0.75rem 0.875rem;
+		text-align: left;
+	}
+
+	.notice-title {
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--color-warning);
+	}
+
+	.notice-body {
+		margin-top: 0.25rem;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
 	}
 
 	.door-row {
