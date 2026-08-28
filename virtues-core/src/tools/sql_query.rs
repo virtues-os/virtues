@@ -274,6 +274,17 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         key_columns: &["date", "start_timezone", "last_edited_by"],
         join_hint: Some("JOIN wiki_day_prose ON wiki_day_prose.day_id = wiki_days.id"),
     });
+    // A VIEW, not a table — and cataloged on purpose. The wiki_days entry
+    // above instructs a JOIN on it, and the fence in get_schema refuses
+    // anything outside this catalog, so omitting it meant the model was told
+    // to join a relation it was then refused a schema for. list_tables
+    // includes views for the same reason.
+    m.insert("wiki_day_prose", TableMetadata {
+        description: "VIEW: each day's narrated prose (day_id, date, prose). The text of a day page.",
+        category: "wiki_temporal",
+        key_columns: &["day_id", "date", "prose"],
+        join_hint: Some("JOIN wiki_days ON wiki_days.id = wiki_day_prose.day_id"),
+    });
     m.insert("wiki_events", TableMetadata {
         description: "Timeline events within a day",
         category: "wiki_temporal",
@@ -364,17 +375,22 @@ impl SqlQueryTool {
         // Get all queryable tables: data_*, wiki_*
         let rows = sqlx::query(
             r#"
-            SELECT tablename AS name FROM pg_tables
-            WHERE schemaname = 'public' AND (
-                tablename LIKE 'data_%'
-                OR tablename LIKE 'wiki_%'
-            )
+            SELECT name FROM (
+                SELECT tablename AS name FROM pg_tables
+                WHERE schemaname = 'public'
+                UNION ALL
+                -- Views too: wiki_day_prose is where a day's text lives, and a
+                -- relation the catalog instructs a JOIN on must be listable.
+                SELECT viewname AS name FROM pg_views
+                WHERE schemaname = 'public'
+            ) rels
+            WHERE name LIKE 'data_%' OR name LIKE 'wiki_%'
             ORDER BY
                 CASE
-                    WHEN tablename LIKE 'data_%' THEN 1
-                    WHEN tablename LIKE 'wiki_%' THEN 2
+                    WHEN name LIKE 'data_%' THEN 1
+                    WHEN name LIKE 'wiki_%' THEN 2
                 END,
-                tablename
+                name
             "#,
         )
         .fetch_all(self.pool.as_ref())
