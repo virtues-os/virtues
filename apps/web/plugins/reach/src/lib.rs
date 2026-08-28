@@ -940,6 +940,23 @@ impl ReachState {
       .map_err(|e| Error::Reach(e.to_string()))?;
     let identity = payload.identity().map_err(|e| Error::Reach(e.to_string()))?;
     virtues_reach_client::pair::finish_consume(self.store.as_ref(), &payload.box_json, identity)?;
+
+    // Tear the old serving state down BEFORE bringing the new one up.
+    // `ensure_serving` early-returns when `serving` is already set, so on a
+    // phone that was already paired it would store the new record and keep
+    // running the previous identity's client and loopback — the pairing
+    // "succeeds", the box shows a device, and every request from the webview
+    // fails. This mirrors what `forget` does for exactly this reason ("so a
+    // re-pair, even to a different box, serves fresh WITHOUT an app restart"),
+    // minus deleting the credentials we just wrote.
+    if let Ok(mut t) = self.tasks.lock() {
+      for h in t.drain(..) {
+        h.abort();
+      }
+    }
+    clear_warm_client();
+    self.serving.store(false, Ordering::SeqCst);
+
     self.ensure_serving().await?;
     Ok(self.status().await)
   }
