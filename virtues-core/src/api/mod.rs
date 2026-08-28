@@ -86,7 +86,6 @@ pub use credentials::{
 };
 pub use drive::{
     check_quota as check_drive_quota,
-    check_usage_warnings as check_drive_warnings,
     create_folder as create_drive_folder,
     delete_file as delete_drive_file,
     download_file as download_drive_file,
@@ -113,7 +112,6 @@ pub use drive::{
     StagedUpload,
     DriveUsage,
     MoveFileRequest as DriveMoveFileRequest,
-    QuotaWarnings,
     UploadRequest as DriveUploadRequest,
 };
 pub use entities::{
@@ -158,7 +156,6 @@ pub use pages::{
     create_version,
     delete_page,
     delete_page_share,
-    get_reflections_for_date,
     get_page,
     get_page_backlinks,
     get_page_share,

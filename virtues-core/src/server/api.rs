@@ -2859,11 +2859,6 @@ pub async fn get_backup_status_handler(State(state): State<AppState>) -> Respons
     api_response(crate::api::get_backup_status(state.db.pool()).await)
 }
 
-/// GET /api/drive/warnings - Get quota warnings
-pub async fn get_drive_warnings_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::check_drive_warnings(state.db.pool(), &state.drive_config).await)
-}
-
 /// Query params for listing drive files
 #[derive(Debug, Deserialize)]
 pub struct ListDriveFilesQuery {
@@ -3658,16 +3653,6 @@ pub async fn get_page_backlinks_handler(
     Path(id): Path<String>,
 ) -> Response {
     api_response(crate::api::get_page_backlinks(state.db.pool(), &id).await)
-}
-
-/// GET /api/pages/reflections/:date — legacy reflections for a date, read
-/// only. The POST that minted them is retired: writing about a day belongs
-/// to the day's article or a note on the day.
-pub async fn get_reflections_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    api_response(crate::api::get_reflections_for_date(state.db.pool(), &date).await)
 }
 
 /// Query params for entity search

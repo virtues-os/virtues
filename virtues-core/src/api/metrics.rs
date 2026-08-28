@@ -221,9 +221,9 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         .map(|row| RecentError {
             job_id: row.try_get::<String, _>("id").unwrap_or_default(),
             job_type: row.try_get("applet_type").unwrap_or_default(),
-            // Always None. It read `transform_stage`, a column nothing has
-            // ever written; reporting a null as if it were a measurement is
-            // the same lie in miniature as an unenforced limit.
+            // Always None (the column it once read was dropped 2026-08-28;
+            // reporting a null as a measurement is the same lie in miniature
+            // as an unenforced limit).
             stream_name: None,
             error_message: row.try_get("error").unwrap_or_default(),
             error_class: None,
