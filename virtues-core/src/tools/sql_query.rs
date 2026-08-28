@@ -872,6 +872,96 @@ mod tests {
             .collect()
     }
 
+    /// The repo has TWO hand-maintained lists of what the model can see:
+    /// `registered_ontologies()` (drives search, lifeline, day sources) and
+    /// this file's `get_table_metadata()` (the SQL catalog the model reads at
+    /// runtime). They were maintained independently and disagreed in both
+    /// directions — `data_activity_listening` was a registry citizen the SQL
+    /// tool had never heard of, while five catalog tables were invisible to
+    /// the registry. Every divergence is now a named decision, in the mold of
+    /// `entities.rs::every_data_table_participates_or_is_exempted`.
+    #[test]
+    fn registry_and_sql_catalog_agree_or_divergence_is_named() {
+        use std::collections::BTreeSet;
+
+        /// In the registry, deliberately NOT in the SQL catalog. Reason required.
+        const REGISTRY_ONLY: &[(&str, &str)] = &[(
+            "data_activity_listening",
+            "no collector has ever existed; table + descriptor die together in \
+             cleanup item R4 — remove this entry with them",
+        )];
+        /// In the SQL catalog, deliberately NOT in the registry. Reason required.
+        const CATALOG_ONLY: &[(&str, &str)] = &[
+            (
+                "data_audio_recording",
+                "the audio blob itself — indexed via its transcription; \
+                 cataloged so the agent can count/join recordings",
+            ),
+            (
+                "data_financial_asset",
+                "GAP: collected, no lane/measure; cataloged so SQL can reach it",
+            ),
+            (
+                "data_financial_liability",
+                "GAP: collected, no lane/measure; cataloged so SQL can reach it",
+            ),
+            (
+                "data_health_active_energy",
+                "GAP: collected, no lane/measure; cataloged so SQL can reach it",
+            ),
+            (
+                "data_health_distance",
+                "GAP: collected, no lane/measure; cataloged so SQL can reach it",
+            ),
+        ];
+
+        let registry: BTreeSet<&str> = virtues_registry::ontologies::registered_ontologies()
+            .iter()
+            .map(|d| d.table_name)
+            .filter(|t| t.starts_with("data_"))
+            .collect();
+        let catalog: BTreeSet<&str> = get_table_metadata()
+            .keys()
+            .copied()
+            .filter(|t| t.starts_with("data_"))
+            .collect();
+
+        let mut unexplained: Vec<String> = Vec::new();
+        for t in registry.difference(&catalog) {
+            if !REGISTRY_ONLY.iter().any(|(name, _)| name == t) {
+                unexplained.push(format!(
+                    "{t}: in the registry but not the SQL catalog — add a \
+                     get_table_metadata entry or a named REGISTRY_ONLY reason"
+                ));
+            }
+        }
+        for t in catalog.difference(&registry) {
+            if !CATALOG_ONLY.iter().any(|(name, _)| name == t) {
+                unexplained.push(format!(
+                    "{t}: in the SQL catalog but not the registry — add a \
+                     descriptor or a named CATALOG_ONLY reason"
+                ));
+            }
+        }
+        // Stale allowlist entries are drift too: an explanation for a
+        // divergence that no longer exists reads as if it still does.
+        for (t, _) in REGISTRY_ONLY {
+            if !registry.contains(t) || catalog.contains(t) {
+                unexplained.push(format!("stale REGISTRY_ONLY entry: {t}"));
+            }
+        }
+        for (t, _) in CATALOG_ONLY {
+            if !catalog.contains(t) || registry.contains(t) {
+                unexplained.push(format!("stale CATALOG_ONLY entry: {t}"));
+            }
+        }
+        assert!(
+            unexplained.is_empty(),
+            "the two model-facing table lists disagree without explanation:\n  {}",
+            unexplained.join("\n  ")
+        );
+    }
+
     fn ref_of(row: &serde_json::Value) -> Option<&str> {
         row.get("ref").and_then(|v| v.as_str())
     }
