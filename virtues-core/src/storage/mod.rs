@@ -360,15 +360,42 @@ impl StorageBackend for FileStorage {
     }
 
     async fn health_check(&self) -> Result<HealthStatus> {
-        // Check if directory exists and is writable
+        // Actually WRITE. This said "exists and is writable" in a comment and
+        // then only asked `is_dir()`, which is true of a directory owned by
+        // root that this process cannot write a byte into — precisely the state
+        // a box seeded from a card boots in. The lie was free until an applet
+        // hit EACCES every five minutes for days with nothing else reporting a
+        // problem.
+        //
+        // A probe file rather than a permissions calculation: mode bits, owner,
+        // group membership, ACLs and read-only mounts all have to come out
+        // right, and the only way to know they did is to try.
         match tokio::fs::metadata(&self.base_path).await {
-            Ok(metadata) if metadata.is_dir() => Ok(HealthStatus {
-                is_healthy: true,
-                message: format!("Storage at {:?} is accessible", self.base_path),
-            }),
-            _ => Ok(HealthStatus {
+            Ok(m) if m.is_dir() => {}
+            _ => {
+                return Ok(HealthStatus {
+                    is_healthy: false,
+                    message: format!("Storage at {:?} not accessible", self.base_path),
+                })
+            }
+        }
+        let probe = self.base_path.join(".virtues-write-probe");
+        match tokio::fs::write(&probe, b"").await {
+            Ok(()) => {
+                let _ = tokio::fs::remove_file(&probe).await;
+                Ok(HealthStatus {
+                    is_healthy: true,
+                    message: format!("Storage at {:?} is writable", self.base_path),
+                })
+            }
+            Err(e) => Ok(HealthStatus {
                 is_healthy: false,
-                message: format!("Storage at {:?} not accessible", self.base_path),
+                message: format!(
+                    "Storage at {:?} is NOT writable ({e}). The service runs as `virtues`; \
+                     fix with: sudo chown -R virtues:virtues {}",
+                    self.base_path,
+                    self.base_path.display()
+                ),
             }),
         }
     }

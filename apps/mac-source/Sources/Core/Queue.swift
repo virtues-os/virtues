@@ -1029,3 +1029,38 @@ enum QueueError: LocalizedError {
         }
     }
 }
+// MARK: - Sync cursors
+
+/// The incremental-sync watermarks, which live in UserDefaults rather than in
+/// `activity.db`.
+///
+/// They are collected here because that split is a trap. `reset` and
+/// `uninstall --delete-data` both delete the queue database and told the user
+/// their data was gone — while every cursor survived in UserDefaults. Re-pairing
+/// then resumed messages from the old `lastSyncDate`, browser visits from the
+/// old `lastVisit`, and bookmarks from an unchanged content hash, so everything
+/// that had been pending at reset time was never read again and the collector
+/// reported itself perfectly healthy.
+///
+/// Deleting the queue and keeping the cursors is never correct: the cursor's
+/// only meaning is "everything before this is safely in the queue."
+enum SyncCursors {
+    /// Prefixes rather than a fixed list — browser and bookmark cursors are
+    /// per-source (`virtues.browser.<id>.lastVisit`), so enumerating them by
+    /// name would silently miss whichever browser is added next.
+    private static let prefixes = [
+        "virtues.messages.",
+        "virtues.browser.",
+        "virtues.bookmarks.",
+    ]
+
+    /// Forget every incremental-sync position, so the next run re-reads from
+    /// each source's natural starting point.
+    static func clearAll() {
+        let defaults = UserDefaults.standard
+        for (key, _) in defaults.dictionaryRepresentation()
+        where prefixes.contains(where: key.hasPrefix) {
+            defaults.removeObject(forKey: key)
+        }
+    }
+}

@@ -129,8 +129,9 @@ public final class HealthCollector {
 
   private func collectQuantity(_ qt: QType) {
     guard let type = HKObjectType.quantityType(forIdentifier: qt.id) else { return }
-    runAnchored(type: type) { [weak self] samples in
-      guard let self = self else { return }
+    runAnchored(type: type) { [weak self] samples -> Bool in
+      guard let self = self else { return false }
+      var allEnqueued = true
       for s in samples {
         guard let q = s as? HKQuantitySample else { continue }
         let value = q.quantity.doubleValue(for: qt.unit)
@@ -145,22 +146,24 @@ public final class HealthCollector {
           let ctx = q.metadata?[HKMetadataKeyHeartRateMotionContext] as? Int {
           rec["raw_data"] = ["activity_context": ctx == 1 ? "resting" : (ctx == 2 ? "active" : "unknown")]
         }
-        self.enqueue(rec)
+        if !self.enqueue(rec) { allEnqueued = false }
       }
+      return allEnqueued
     }
   }
 
   private func collectSleep() {
     guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return }
-    runAnchored(type: type) { [weak self] samples in
-      guard let self = self else { return }
+    runAnchored(type: type) { [weak self] samples -> Bool in
+      guard let self = self else { return false }
+      var allEnqueued = true
       for s in samples {
         guard let c = s as? HKCategorySample else { continue }
         // Integer minutes — the box reads duration as i64 (a JSON float fails
         // `as_i64()`); it wants top-level `sleep_duration` + `sleep_stage`.
         let mins = Int((c.endDate.timeIntervalSince(c.startDate) / 60).rounded())
         let stage = self.sleepStateName(c.value)
-        self.enqueue([
+        if !self.enqueue([
           "id": c.uuid.uuidString,
           "timestamp": iso.string(from: c.startDate),
           "metric_type": "sleep",
@@ -168,15 +171,26 @@ public final class HealthCollector {
           "sleep_duration": mins,
           "sleep_stage": stage,
           "raw_data": ["sleep_state": stage, "duration_minutes": mins],
-        ])
+        ]) { allEnqueued = false }
       }
+      return allEnqueued
     }
   }
 
   /// Run an anchored query and page through history. Persists the anchor after
-  /// each page (optimistic — over-fetch after a crash is deduped at the box), so
-  /// an interrupted 3-year backfill resumes instead of restarting.
-  private func runAnchored(type: HKSampleType, handle: @escaping ([HKSample]) -> Void) {
+  /// each page (over-fetch after a crash is deduped at the box), so an
+  /// interrupted 3-year backfill resumes instead of restarting.
+  ///
+  /// The anchor advances ONLY when `handle` reports that every sample in the
+  /// page reached the outbox. An `HKQueryAnchor` cannot be rewound: once it
+  /// moves past a sample, the only recovery is resetting it to nil and
+  /// re-backfilling everything. So an anchor that advances past a failed
+  /// enqueue is permanent, silent data loss — which has already happened once
+  /// here (see the `sleep_refetch_v1` migration key below: an earlier build
+  /// sent sleep in a shape the box dropped while the anchor advanced through
+  /// it, and recovery required shipping code). Paging also stops on failure —
+  /// pulling more history we cannot store just widens the hole.
+  private func runAnchored(type: HKSampleType, handle: @escaping ([HKSample]) -> Bool) {
     let key = "virtues.health.anchor." + type.identifier
     let start = Calendar.current.date(byAdding: .year, value: -backfillYears, to: Date())
     let predicate = HKQuery.predicateForSamples(withStart: start, end: nil, options: [])
@@ -186,7 +200,12 @@ public final class HealthCollector {
     ) { [weak self] _, samples, _, newAnchor, _ in
       guard let self = self else { return }
       let samples = samples ?? []
-      handle(samples)
+      let durable = handle(samples)
+      guard durable else {
+        NSLog("[Health] enqueue failed for %@ — anchor HELD, will retry this page",
+              type.identifier)
+        return
+      }
       if let a = newAnchor { self.saveAnchor(key, a) }
       // A full page means there may be more history — page again.
       if samples.count >= self.pageLimit {
@@ -196,13 +215,24 @@ public final class HealthCollector {
     store.execute(query)
   }
 
-  private func enqueue(_ rec: [String: Any]) {
+  /// Hand one record to the outbox. Returns whether it was actually taken —
+  /// the caller uses this to decide if the anchor may advance past it.
+  ///
+  /// A serialization failure counts as NOT durable. It is our bug rather than
+  /// the outbox's, but the sample is equally lost either way, and reporting it
+  /// as stored is what turns a bug into missing history.
+  @discardableResult
+  private func enqueue(_ rec: [String: Any]) -> Bool {
     guard
       let data = try? JSONSerialization.data(withJSONObject: rec),
       let json = String(data: data, encoding: .utf8)
-    else { return }
+    else {
+      NSLog("[Health] record failed to serialize — treating as not durable")
+      return false
+    }
     let rc = "healthkit".withCString { s in json.withCString { j in virtues_enqueue(s, j) } }
     if rc != 0 { NSLog("[Health] enqueue failed rc=%d", rc) }
+    return rc == 0
   }
 
   // MARK: - Anchor persistence

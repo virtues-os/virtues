@@ -31,6 +31,27 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Validate required environment variables early
     validate_environment()?;
 
+    // Prove the lake is writable before serving. Every applet that ingests
+    // anything writes here as the `virtues` user, and when the directory was
+    // root-owned the only symptom was each applet failing with EACCES on its
+    // own schedule — a 500 every five minutes, forever, that no health surface
+    // asked about and no human saw. One probe at boot turns days of silent
+    // failure into a line in the log at the moment it becomes true.
+    //
+    // A warning, not a refusal: the box still serves chat, search and the UI
+    // without ingest, and refusing to boot would take away the surfaces someone
+    // needs in order to FIX this. `is_healthy` carries the remedy.
+    match crate::storage::Storage::file(
+        crate::storage::lake::lake_root().display().to_string(),
+    ) {
+        Ok(storage) => match storage.health_check().await {
+            Ok(h) if h.is_healthy => tracing::info!("{}", h.message),
+            Ok(h) => tracing::error!("{}", h.message),
+            Err(e) => tracing::error!(error = %e, "could not probe the lake for writability"),
+        },
+        Err(e) => tracing::error!(error = %e, "could not open the lake for a write probe"),
+    }
+
     // Initialize usage limits from TIER env var
     if let Err(e) = crate::api::init_limits_from_tier(client.database.pool()).await {
         tracing::warn!("Failed to initialize usage limits: {}", e);

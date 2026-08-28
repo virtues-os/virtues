@@ -92,7 +92,14 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
     // ZERO on every box, forever, however many devices were paired. A wrong
     // query that returns an error is loud; a wrong query behind `unwrap_or` is
     // a lie with a default value.
-    let paired_wg: i64 = crate::api::pair::paired_device_count(pool).await;
+    // `?`, not `paired_device_count`'s `.unwrap_or(0)`. The comment above says
+    // "a wrong query that returns an error is loud" — but the previous fix
+    // corrected the TABLE NAME and left the swallow, so a DB blip could still
+    // report zero paired devices on a box with several. `is_unclaimed` in the
+    // same module already models this correctly; other callers keep the
+    // forgiving wrapper, because only the health snapshot must never round a
+    // failure down to a plausible number.
+    let paired_wg: i64 = crate::api::pair::try_paired_device_count(pool).await?;
 
     Ok(BoxStatus {
         ready: true,
