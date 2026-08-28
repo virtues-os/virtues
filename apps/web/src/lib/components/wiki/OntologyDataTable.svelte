@@ -113,8 +113,8 @@
 
 		// Badge candidates
 		if (name.endsWith('_type') || name === 'status' || name === 'category' || name === 'direction'
-			|| name === 'response_status' || name === 'block_type' || name === 'payment_channel'
-			|| name === 'workout_type' || name === 'sleep_quality_score') {
+			|| name === 'response_status' || name === 'payment_channel'
+			|| name === 'sleep_quality_score') {
 			return 'badge';
 		}
 
