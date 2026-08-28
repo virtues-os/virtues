@@ -205,10 +205,10 @@ async fn reconcile_overlaps(
         "INSERT INTO wiki_events \
            (id, day_id, started_at, ended_at, auto_label, auto_location, \
             source_ontologies, kind, is_user_added, is_user_edited, \
-            user_hidden, user_created, topics, entities, event_summary, confidence) \
+            user_hidden, topics, entities, event_summary, confidence) \
          SELECT 'ev_' || replace(gen_random_uuid()::text, '-', ''), day_id, $3, ended_at, \
                 auto_label, auto_location, source_ontologies, kind, \
-                FALSE, is_user_edited, user_hidden, user_created, topics, entities, \
+                FALSE, is_user_edited, user_hidden, topics, entities, \
                 event_summary, confidence \
          FROM wiki_events \
          WHERE day_id = $1 AND is_sleep = FALSE AND is_user_added = FALSE \

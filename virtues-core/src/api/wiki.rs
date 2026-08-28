@@ -150,8 +150,6 @@ pub struct WikiDay {
     // that never read them. `try_get(...).ok()` is what let that hide —
     // it turns schema drift into silent nulls, so prefer removal over
     // tolerance when a column dies.
-    pub morning_baseline: Option<f64>,
-    pub battery_curve: Option<serde_json::Value>,
     pub data_quality: Option<serde_json::Value>,
     pub snapshot: Option<serde_json::Value>,
     /// Count of entities first referenced on this day
@@ -904,7 +902,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
             id, date, start_timezone,
             (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
-            last_edited_by, cover_image, morning_baseline, battery_curve,
+            last_edited_by, cover_image,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         FROM wiki_days
         WHERE date = $1
@@ -931,7 +929,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         RETURNING
             id, date, start_timezone,
             epigraph,
-            last_edited_by, cover_image, morning_baseline, battery_curve,
+            last_edited_by, cover_image,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         "#,
     )
@@ -965,8 +963,6 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         epigraph: row.try_get("epigraph").ok().flatten(),
         last_edited_by: row.try_get("last_edited_by").ok().flatten(),
         cover_image: row.try_get("cover_image").ok().flatten(),
-        morning_baseline: row.try_get("morning_baseline").ok().flatten(),
-        battery_curve: row.try_get("battery_curve").ok().flatten(),
         data_quality: row.try_get("data_quality").ok().flatten(),
         snapshot: row.try_get("snapshot").ok().flatten(),
         new_entity_count,
@@ -1229,7 +1225,7 @@ pub async fn list_days(
             id, date, start_timezone,
             (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
             epigraph,
-            last_edited_by, cover_image, morning_baseline, battery_curve,
+            last_edited_by, cover_image,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         FROM wiki_days
         WHERE date >= $1 AND date <= $2
@@ -1443,7 +1439,6 @@ pub struct TemporalEvent {
     pub agent_action: Option<String>,
     pub is_sleep: Option<bool>,
     pub user_hidden: Option<bool>,
-    pub user_created: Option<bool>,
     // Entity/topic novelty
     pub entities: Option<serde_json::Value>,
     pub topic_novelty: Option<serde_json::Value>,
@@ -1506,7 +1501,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,
             novelty_z, avg_hr, autonomic_z, hr_z, hrv_z,
             topics, event_summary, agent_action,
-            is_sleep, user_hidden, user_created,
+            is_sleep, user_hidden,
             entities, topic_novelty, entity_novelty,
             created_at, updated_at
         FROM wiki_events
@@ -1599,7 +1594,6 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
                 agent_action: row.try_get::<Option<String>, _>("agent_action").ok().flatten(),
                 is_sleep: row.try_get::<Option<bool>, _>("is_sleep").ok().flatten(),
                 user_hidden: row.try_get::<Option<bool>, _>("user_hidden").ok().flatten(),
-                user_created: row.try_get::<Option<bool>, _>("user_created").ok().flatten(),
                 entities: row.try_get::<Option<serde_json::Value>, _>("entities").ok().flatten(),
                 topic_novelty: row.try_get::<Option<serde_json::Value>, _>("topic_novelty").ok().flatten(),
                 entity_novelty: row.try_get::<Option<serde_json::Value>, _>("entity_novelty").ok().flatten(),
@@ -1721,7 +1715,6 @@ pub async fn create_temporal_event(
         agent_action: None,
         is_sleep: Some(false),
         user_hidden: Some(false),
-        user_created: Some(false),
         entities: None,
         topic_novelty: None,
         entity_novelty: None,
@@ -1790,7 +1783,6 @@ pub async fn update_temporal_event(
         agent_action: None,
         is_sleep: Some(false),
         user_hidden: Some(false),
-        user_created: Some(false),
         entities: None,
         topic_novelty: None,
         entity_novelty: None,
