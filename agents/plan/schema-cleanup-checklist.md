@@ -175,7 +175,7 @@ established (load-bearing, read before executing):**
       `apps/web/src/lib/wiki/api.ts:95-96`) or every day query breaks.
       The `wiki_day_prose` view reads only `d.id`/`d.date` — clear.
       (`readiness_*` → L16.)
-- [x] **R9** ✅ `b5d396a6`+`359739e0` (lof_raw/user_created/dirty_at dropped; **hrv_z KEPT — Adam's call still open**) *(amended by refutation)* `wiki_events`: `lof_raw` and
+- [x] **R9** ✅ `b5d396a6`+`359739e0` (lof_raw/user_created/dirty_at dropped; **hrv_z dropped too** (Adam's call 2026-08-28, migration 0012)) *(amended by refutation)* `wiki_events`: `lof_raw` and
       `dirty_at` are clean drops. **`hrv_z` is never written but
       rendered end-to-end** (`api/wiki.rs:1510,1599,1443,1721,1790` →
       `converters.ts:262` → `types/day.ts:49`) and autonomic scoring
