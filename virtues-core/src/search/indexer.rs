@@ -85,10 +85,10 @@ async fn reconcile_index_geometry(
                 );
             }
             sqlx::query(
-                "INSERT INTO search_index_meta (singleton, model, dim, built_at) \
-                 VALUES (TRUE, $1, $2, now()) \
+                "INSERT INTO search_index_meta (singleton, model, dim) \
+                 VALUES (TRUE, $1, $2) \
                  ON CONFLICT (singleton) DO UPDATE SET \
-                   model = EXCLUDED.model, dim = EXCLUDED.dim, built_at = EXCLUDED.built_at",
+                   model = EXCLUDED.model, dim = EXCLUDED.dim",
             )
             .bind(&model)
             .bind(dim)
@@ -439,8 +439,8 @@ async fn embed_one_batch(
                 // record eternally stale, and the indexer would spin on it forever.
                 sqlx::query(
                     "INSERT INTO search_embeddings \
-                     (id, ontology, record_id, text_hash, model, chunk_index, doc_hash) \
-                     VALUES ($1, $2, $3, 'empty', 'skip', 0, $4) \
+                     (id, ontology, record_id, model, chunk_index, doc_hash) \
+                     VALUES ($1, $2, $3, 'skip', 0, $4) \
                      ON CONFLICT (ontology, record_id, chunk_index) DO UPDATE SET \
                        doc_hash = EXCLUDED.doc_hash",
                 )
@@ -536,11 +536,6 @@ async fn embed_one_batch(
                 tracing::warn!("skipping unembeddable chunk {}/{} #{}", ont_name, record_id, ci);
                 continue;
             };
-            let text_hash = {
-                let mut hasher = Sha256::new();
-                hasher.update(chunk.as_bytes());
-                format!("{:.16x}", hasher.finalize())
-            };
             let embedding_id = embedding_id(ont_name, record_id, ci);
 
             // BM25 lexical terms for this chunk. Same tokenizer query.rs uses.
@@ -559,10 +554,9 @@ async fn embed_one_batch(
 
             sqlx::query(
                 "INSERT INTO search_embeddings \
-                 (id, ontology, record_id, text_hash, model, chunk_index, title, preview, author, occurred_at, content, source_table, bm25_len, doc_hash) \
-                 VALUES ($1, $2, $3, $4, $13, $10, $5, $6, $7, $8, $9, $11, $12, $14) \
+                 (id, ontology, record_id, model, chunk_index, title, preview, author, occurred_at, content, source_table, bm25_len, doc_hash) \
+                 VALUES ($1, $2, $3, $12, $9, $4, $5, $6, $7, $8, $10, $11, $13) \
                  ON CONFLICT (ontology, record_id, chunk_index) DO UPDATE SET \
-                   text_hash = EXCLUDED.text_hash, \
                    model = EXCLUDED.model, \
                    title = EXCLUDED.title, \
                    preview = EXCLUDED.preview, \
@@ -576,7 +570,6 @@ async fn embed_one_batch(
             .bind(&embedding_id)
             .bind(ont_name)
             .bind(record_id)
-            .bind(&text_hash)
             .bind(title)
             .bind(preview)
             .bind(author)
