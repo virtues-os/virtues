@@ -32,11 +32,12 @@
 //! authorization-required state.** `0x86 ClaimSetup` must present the words
 //! shown on the panel before any wifi/pair/link command is served (see "the
 //! gate" in `handle_rpc`) — so an attacker in radio range cannot even set the
-//! box's network without line of sight to the screen. The pair code itself is
-//! then fetched over BLE (`0x85`) into that authorized session, not read off
-//! the panel (`api/display.rs` deliberately does not render it). The earlier
-//! posture — "we skip authorization; the credential is on the screen" —
-//! predates the gate and the BLE-fetched code; do not trust it.
+//! box's network without line of sight to the screen. Pairing then needs no
+//! code on any surface: `0x83` is codeless and session-authorized, so the box
+//! fetches its own standing code and redeems it over loopback (`api/display.rs`
+//! deliberately does not render it, and `0x85` — which used to hand it to the
+//! app — was deleted 2026-08-24). The earlier posture — "we skip authorization;
+//! the credential is on the screen" — predates the gate; do not trust it.
 //!
 //! The GATT plumbing is Linux-only (`bluer` → BlueZ). The protocol layer is
 //! platform-free and unit-tested everywhere.

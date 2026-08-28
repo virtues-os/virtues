@@ -55,10 +55,12 @@
 
   A fifth — the six-digit pair code — was added and then removed the same day
   (2026-08-13), and the round trip is the lesson. It went in because the app
-  asked for digits this screen could not show. But RPC 0x85 hands the code to
-  an authorized session, so the only box that ever needed it printed here was
-  one with no session at all — and a box with no session is a box waiting for
-  someone to START, which needs the PHRASE. The two secrets wanted the same
+  asked for digits this screen could not show. But the code never had to leave
+  the box: pairing is authorized by the SESSION, so the only box that ever
+  needed it printed here was one with no session at all — and a box with no
+  session is a box waiting for someone to START, which needs the PHRASE.
+  (0x85, the RPC that then handed the code to the app, was itself deleted
+  2026-08-24; 0x83 is codeless now and the box redeems its own code.) The two secrets wanted the same
   slot at the same moment, and showing the wrong one stopped a live run dead:
   the app asked for four words while the glass showed six digits.
 

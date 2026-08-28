@@ -114,7 +114,7 @@ says exactly what crosses it and what never does.
 
 **Core** handles data ingestion, entity resolution, the wiki, pages, chat, and serves the web UI. **virtues-api** is a sidecar proxy that mediates all external API calls — LLM requests, web search, bank connections — with budget tracking and key isolation. Core never touches API keys directly.
 
-**Remote access** has no public surface at all. The box is an iroh endpoint whose Ed25519 key *is* its identity, so a paired device reaches it by key — LAN-direct, hole-punched, or bounced off a blind relay — with no inbound port opened at home and no hostname anyone can type. The relay forwards only sealed, end-to-end-encrypted bytes it has no key to read. See **[Privacy &amp; security model](docs/privacy-model.md)** (who holds which secret, and who deliberately doesn't) and the [visual walkthrough](docs/relay-walkthrough.html).
+**Remote access** has no public surface at all. The box is an iroh endpoint whose Ed25519 key *is* its identity, so a paired device reaches it by key — LAN-direct, hole-punched, or bounced off our relay — with no inbound port opened at home and no hostname anyone can type. The relay forwards sealed, end-to-end-encrypted bytes it has no key to read; it does see which two keys are talking, the addresses they connect from, and how much traffic passes. See **[Privacy &amp; security model](docs/privacy-model.md)** (who holds which secret, and who deliberately doesn't) and the [visual walkthrough](docs/relay-walkthrough.html).
 
 <a id="data-sources"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-data-sources-dark.svg"><img alt="Data Sources" src=".github/images/headings/h2-data-sources-light.svg" height="28"></picture>
@@ -226,10 +226,12 @@ Ed25519 key, not knowing an address.
 Your box is an **iroh endpoint**, and its Ed25519 `EndpointId` *is* its identity —
 mutual-key auth, no certificate authority. A paired device dials that identity
 and iroh finds a path: direct on your LAN, hole-punched across NATs, or bounced
-off our blind relay when neither works. The box holds an outbound connection to
+off our relay when neither works. The box holds an outbound connection to
 the relay, so nothing inbound is ever opened at home. It works behind CGNAT,
 coworking/café wifi, and IPv6-only ISPs — anywhere outbound 443 reaches, which is
-everywhere. The relay moves sealed bytes it has no key to read. See
+everywhere. The relay moves sealed bytes it has no key to read — it does see
+which two keys are talking and how much passes between them, which is why we
+describe it as encrypted end-to-end rather than as blind. See
 **[Privacy &amp; security model](docs/privacy-model.md)** and the
 [visual walkthrough](docs/relay-walkthrough.html).
 

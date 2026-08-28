@@ -297,9 +297,11 @@ pub async fn current_standing(pool: &PgPool) -> crate::Result<Option<MintedToken
 }
 
 /// Return the current standing code (minting one if none is valid). Used during
-/// SETUP (unclaimed) — the rotator keeps one fresh so the panel and the BLE
-/// `0x85` fetch always have a valid code, and it is multi-use so a device can
-/// pair with it. Callers on a CLAIMED box must not use this: see `cli_pair_code`
+/// SETUP (unclaimed) — the rotator keeps one fresh so `virtues pair` and the
+/// box's own `0x83` redemption always have a valid code, and it is multi-use so
+/// a device can pair with it. (`0x85`, the RPC that used to hand this code to
+/// the app, was deleted 2026-08-24; the panel never renders it.)
+/// Callers on a CLAIMED box must not use this: see `cli_pair_code`
 /// and `expire_standing_codes` for why the standing code does not outlive claim.
 pub async fn ensure_standing(pool: &PgPool) -> crate::Result<MintedToken> {
     if let Some(m) = current_standing(pool).await? {
@@ -1027,6 +1029,8 @@ pub async fn consume_handler(
         ip.as_deref(),
         body.device_node_id.as_deref(),
         Some(source_id.as_str()),
+        // The device is the other end of THIS request — it is connected now.
+        true,
     )
     .await
     {
@@ -1227,6 +1231,14 @@ pub(crate) async fn claim_pair_token(
 /// Insert the `app_device` row for a freshly-paired device. Shared by
 /// `consume_handler` and `enroll_peer`.
 #[allow(clippy::too_many_arguments)]
+/// `seen_now` = "this device is connected AS WE WRITE THE ROW". True for the
+/// consume path (the device is on the other end of the request). FALSE for a
+/// peer-vouched enrollment: the laptop enrolls a key on the phone's behalf and
+/// the phone has never dialled, so stamping `last_seen_at` there records a
+/// connection that did not happen — and any caller waiting for that column to
+/// go non-NULL as proof of arrival gets its proof at birth. That is exactly
+/// what made the Add-device sheet flash green with the phone untouched, and
+/// enrolled a live device per sheet-open with nobody the wiser.
 pub(crate) async fn insert_device_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     device_id: &str,
@@ -1236,6 +1248,7 @@ pub(crate) async fn insert_device_row(
     ip: Option<&str>,
     node_id: Option<&str>,
     source_id: Option<&str>,
+    seen_now: bool,
 ) -> Result<String, sqlx::Error> {
     // Re-pairing a device that kept its iroh key sends the SAME node_id. Treat
     // that as idempotent: UPDATE the existing row in place and return ITS id, so
@@ -1247,14 +1260,14 @@ pub(crate) async fn insert_device_row(
     let row: (String,) = sqlx::query_as(
         "INSERT INTO app_device \
          (id, user_id, kind, label, device_info, paired_from_ip, node_id, source_id, last_seen_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now()) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $9 THEN now() ELSE NULL END) \
          ON CONFLICT (node_id) WHERE node_id IS NOT NULL AND revoked_at IS NULL DO UPDATE SET \
            kind = EXCLUDED.kind, \
            label = EXCLUDED.label, \
            device_info = EXCLUDED.device_info, \
            paired_from_ip = EXCLUDED.paired_from_ip, \
            source_id = EXCLUDED.source_id, \
-           last_seen_at = now() \
+           last_seen_at = CASE WHEN $9 THEN now() ELSE app_device.last_seen_at END \
          RETURNING id",
     )
     .bind(device_id)
@@ -1265,6 +1278,7 @@ pub(crate) async fn insert_device_row(
     .bind(ip)
     .bind(node_id)
     .bind(source_id)
+    .bind(seen_now)
     .fetch_one(&mut **tx)
     .await?;
     Ok(row.0)

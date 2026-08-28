@@ -48,10 +48,11 @@ listed below.
 
 | Doc | Status | What it's for |
 |---|---|---|
-| [networking-relay-tee.md](networking-relay-tee.md) | Current | **Source of truth** for how you reach your box: the single-hop blind relay, why IPv6-direct/WireGuard failed, and the WG-removal audit. Supersedes the deleted `networking.md`, `jetson-wg.md`, and `byo-networking.md`. |
-| [privacy-model.md](privacy-model.md) | Current | The honest, complete statement of what each party can and can't see on the relay path. The secret-ownership table *is* the model. |
-| [relay-walkthrough.html](relay-walkthrough.html) | Current | Visual lifecycle diagrams for the relay. Open it in a browser. |
-| [relay-control-plane.md](relay-control-plane.md) | Planned | Box provisioning, naming, and auth for the relay — the control plane the shipped L4 relay still lacks. |
+| [../manual/operate/reach.md](../manual/operate/reach.md) | Current | **The accurate account of reach**, and the one to quote: paths, pairing, revocation, and exactly what the relay can and cannot see. Public docs page. |
+| [relay-control-plane.md](relay-control-plane.md) | Design notes | Naming, auth, and revocation reasoning. Its SNI/HMAC mechanism was never built; the *iroh caveat* section is the honest statement of what the relay observes. |
+| [networking-relay-tee.md](networking-relay-tee.md) | **Superseded** | The pre-iroh ADR: single-hop SNI relay, per-box ACME, browser-anywhere. Its privacy hardening — RAM-only, blinded tokens, unlinkability, audit — was **proposed and never built**. History only; do not quote. |
+| [privacy-model.md](privacy-model.md) | **Superseded (transport half)** | Describes the pre-iroh secret-ownership table. Its *inference boundary* section is current and is the honest account of where data leaves the box. |
+| [relay-walkthrough.html](relay-walkthrough.html) | **Superseded** | Visual lifecycle diagrams of the old SNI relay. Kept as a record. |
 | [reach-reliability-plan.md](reach-reliability-plan.md) | Planned | "100% reachable whenever the box is up." Root cause is upstream iroh #4289; the fix is `network_change()` on `NWPathMonitor` plus a watchdog rebuild. |
 | [map-atlas-plan.md](map-atlas-plan.md) | Current | The box serves and caches map tiles so the browser never talks to a tile provider — no location leak, and already-seen areas work offline. |
 
@@ -59,7 +60,7 @@ listed below.
 
 | Doc | Status | What it's for |
 |---|---|---|
-| [recovery.md](recovery.md) | Current | Operator runbook: reaching the UI, lost-session recovery, backup/restore, upgrade rollback, diagnostic beacons. **Start here when something breaks.** |
+| [recovery.md](recovery.md) | Current | **Workshop** operator runbook, rewritten against the code 2026-08-28 after an audit found ~19 stale claims (a config path no box has, three commands that don't exist, a dropped atlas column). Carries the operator-only material: the recovery command surface, the sudo gate, the diagnostic surface, and the described-but-not-implemented list. Owner-facing recovery is [`manual/operate/recovery.md`](../manual/operate/recovery.md), which wins on any disagreement. |
 | [backup-plan.md](backup-plan.md) | Partly built | Surviving the loss of the box. Pillars 1–5 and the volume path landed; Phase A is the gate, and both ends of the pipeline are still missing. |
 | [update-model.md](update-model.md) | Current | The north star for fleet updates: a thin native shell shipped rarely plus a fast web payload pushed freely, with a version contract between them. **Start here** — the three below are history and horizon. |
 | [update-paradigm.md](update-paradigm.md) | Built | How one box moves between builds. Fully shipped; kept as the design record for the three real `virtues upgrade` failures that shaped it. Current behavior lives in `cli/upgrade.rs` + `api/updates.rs`. |
@@ -90,7 +91,7 @@ listed below.
 | [codemirror.md](codemirror.md) | Current | The page editor's document model. The document **is** markdown in a Yjs `Y.Text`; decorations provide live preview. No intermediate AST. |
 | [chat-ux-roadmap.md](chat-ux-roadmap.md) | Planned | The chat surface overhaul, in independently shippable tracks A–L, each ending in a verification gate. |
 | [ui-overhaul-plan.md](ui-overhaul-plan.md) | Planned | Nineteen layout/settings/design items triaged against the codebase, each marked ship / spike / defer / drop. |
-| [onboarding.md](onboarding.md) | Current | Canonical spec for "box in hand" → "Virtues earning its keep," across both hardware tiers, with and without a screen. The channel picks the path; no one is asked. |
+| [onboarding.md](onboarding.md) | Current | "Box in hand" → "Virtues earning its keep," as built — rewritten against the code 2026-08-28. **The one Bluetooth wire (the RPC table), the phrase vs the pair code, the display's seven states, the four onboarding screens, and the DIY handoff.** It previously stacked three generations of doctrine behind a corrections preamble; the corrections are folded in and the superseded generations are kept only as failure history. Intent is [onboarding-paradigm.md](onboarding-paradigm.md). |
 | [appliance-image.md](appliance-image.md) | Partly built | How a Dragon becomes a shippable unit: the card-boots/NVMe-roots truth read off real hardware, the OS-on-card/data-on-NVMe split and why, `tools/build-dragon.sh`, the deprovision → `image-check` → `dd` gate, and the three questions that need the bench. |
 | [plaid-plan.md](plaid-plan.md) | Partly built | Plaid as the *general* finance collector — FinanceKit reaches only Apple's own products, so Plaid is the path that has to work for everyone else. |
 

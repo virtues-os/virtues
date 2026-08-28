@@ -134,7 +134,7 @@ The complete list. If it isn't here, we don't have it.
 |---|---|---|
 | Billing | email, Stripe customer, subscription status, `account_id` | no usage, no content |
 | The API | `account_id`, balance, daily counter, ledger rows (`amount`, `kind`, `timestamp`, pre-markup cost) | no prompts, no completions, no files, **not even which model you used** — an AI charge writes no reference to the call |
-| The relay | in-memory only: destination name (SNI) and byte counts | no logs, no database, no key to decrypt with |
+| The relay | which two endpoint keys are connected, the addresses they connect from, and how many bytes pass when | no key to decrypt with — but **not** "no logs": nothing enforces or attests that, and it sees volume and timing by construction |
 | Your box | everything | — |
 
 **Counters and amounts, not logs of events.** A ledger row says money moved and
@@ -176,8 +176,11 @@ The recurring images. Reach for them in copy, docs, support replies, talks:
 - **"Counters, not logs."** We track amounts moving, never a history of events.
 - **"We know the price, not the purchase."** The cleanest one-line summary of
   what the ledger is.
-- **"Nothing to decrypt with."** The relay's blindness — the strongest fully
-  structural claim we have.
+- **"Nothing to decrypt with."** The relay cannot read your traffic — the
+  strongest fully structural claim we have. Say it about *content* and stop
+  there. It does see which two keys are talking, from where, and how much passes,
+  so "blind", "no logs" and "RAM-only" are claims we have not earned. The
+  user-facing wording that is true is in `manual/operate/reach.md`.
 - **"Bring your own key and we're out of your chat."** Use this wording, not
   "out of the path" — the key covers `stream()` only, so compaction, day
   summaries, image generation, and transcription still run through us. True as

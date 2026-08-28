@@ -73,8 +73,53 @@ def frontmatter(text: str) -> dict[str, str]:
     return fields
 
 
+def check_notes(notes_root: Path) -> None:
+    """The engineering notes have the same law, enforced from their own README.
+
+    `docs/README.md` opens with "Every doc is listed here", and since
+    2026-08-28 that rule has a visible consequence: virtues.com/docs/notes
+    builds its index by parsing that table, so a doc missing from it does not
+    publish at all. The previous cost of forgetting a row was that the doc went
+    unread internally; the cost now is a page nobody outside can reach either.
+    """
+    readme = notes_root / "README.md"
+    if not readme.exists():
+        return
+
+    listed = set(re.findall(r"^\|\s*\[[^\]]+\]\(([a-z0-9-]+)\.md\)", readme.read_text(), re.M))
+
+    # 18 docs were already unlisted when this check was written — the README's
+    # "every doc is listed here" had quietly stopped being true. Failing on all
+    # of them would just make the check something people switch off, and
+    # inventing a status for someone else's design doc is worse than leaving
+    # the row absent. So the debt is frozen, exactly as
+    # tools/check-swallowed-queries.sh freezes its own, and this fails only on
+    # docs added from here on. The baseline should only ever shrink.
+    baseline_path = Path("tools/unlisted-docs.baseline")
+    baseline = set()
+    if baseline_path.exists():
+        for line in baseline_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                baseline.add(line)
+
+    for path in sorted(notes_root.glob("*.md")):
+        if path.name == "README.md" or path.stem in listed:
+            continue
+        if path.name in baseline:
+            continue
+        error(
+            f"docs/{path.name}",
+            "not listed in docs/README.md — it will not publish to /docs/notes. "
+            "Add a row with its status.",
+        )
+
+
 def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "manual")
+    # The engineering notes are the manual's sibling in the repo, and its
+    # sibling on the site at /docs/notes.
+    notes_root = root.parent / "docs"
     manifest_path = root / "manifest.json"
     if not manifest_path.exists():
         print(f"check-manual: no manifest at {manifest_path}", file=sys.stderr)
@@ -132,8 +177,18 @@ def main() -> int:
         for target in LINK_RE.findall(text):
             dest = target.split("#")[0].removesuffix(".md")
             dest_slug = "index" if dest == "/docs" else dest.removeprefix("/docs/")
+            # A manual page may link into the engineering notes, which live in
+            # docs/ and are indexed by their own README rather than by the
+            # manifest. Resolve those against the file on disk.
+            if dest_slug == "notes" or dest_slug.startswith("notes/"):
+                stem = dest_slug.removeprefix("notes")
+                if stem and not (notes_root / f"{stem.lstrip('/')}.md").exists():
+                    error(where, f"link to '{target}' has no matching doc in docs/")
+                continue
             if dest_slug not in published:
                 error(where, f"link to '{target}' does not resolve to a published page")
+
+    check_notes(notes_root)
 
     if errors:
         print(f"check-manual: {len(errors)} problem(s)\n", file=sys.stderr)
@@ -143,7 +198,14 @@ def main() -> int:
 
     written = len(published)
     planned = len(listed) - written
-    print(f"check-manual: ok — {written} published, {planned} planned")
+    notes = 0
+    if (notes_root / "README.md").exists():
+        notes = len(
+            re.findall(
+                r"^\|\s*\[[^\]]+\]\(([a-z0-9-]+)\.md\)", (notes_root / "README.md").read_text(), re.M
+            )
+        )
+    print(f"check-manual: ok — {written} published, {planned} planned, {notes} notes")
     return 0
 
 

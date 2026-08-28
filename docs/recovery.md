@@ -1,12 +1,23 @@
 # Recovery & Operator Guide
 
-> When something on the box breaks, this is where to look first. Each
-> failure mode below has a concrete recipe — no investigation required.
+> **Status: Current.** Rewritten 2026-08-28 against the code after an audit
+> found ~19 stale or wrong claims in the previous version — including three
+> commands and one atlas table that do not exist, and a config path no box has.
 >
-> If your problem isn't here, paste the output of
-> `sudo -u virtues virtues status --json` into a support channel; it
-> contains everything we need to triage without asking follow-up
-> questions.
+> **This is the workshop copy.** The user-facing runbook now lives at
+> [`manual/operate/recovery.md`](../manual/operate/recovery.md) and ships to
+> `virtues.com/docs/operate/recovery`. Anything an owner reads belongs there;
+> **this file is for the people and agents working on the box** — it carries the
+> operator-only material (atlas-side actions, the diagnostic surface, the honest
+> list of what is described-but-not-implemented) and the pointers into source.
+>
+> When the two disagree, **the manual is written from source and wins.**
+
+If you are triaging a live box and want one thing to paste:
+
+```bash
+virtues status --json
+```
 
 ---
 
@@ -14,126 +25,185 @@
 
 | Symptom | Section |
 |---|---|
-| Browser can't reach the box from another device | [Reaching the web UI](#reaching-the-web-ui) |
-| Lost browser session, no other paired device | [Lost session / locked out](#lost-session--locked-out) |
-| Revoked your only paired device by mistake | [Lost session / locked out](#lost-session--locked-out) |
-| Forgot which BYO AI key you saved | [Reset BYO key](#reset-byo-key) |
-| `systemctl status virtues` shows the service failing | [Service won't start](#service-wont-start) |
+| Phone/laptop can't reach the box | [Reaching the box](#reaching-the-box) |
+| Lost every paired device | [Locked out](#locked-out) |
+| Want to replace the BYO AI key | [Reset the BYO key](#reset-the-byo-key) |
+| `systemctl status virtues` failing | [Service won't start](#service-wont-start) |
 | Postgres won't start | [Postgres won't start](#postgres-wont-start) |
-| `curl -sSL https://virtues.com/sh \| sudo sh` failed partway through | [`tools/bootstrap.sh` failed mid-run](#toolsbootstrapsh-failed-mid-run) |
-| Want to copy your box to new hardware | [Migrating to new hardware](#migrating-to-new-hardware) |
-| Want to roll back after a bad upgrade | [Rolling back a `virtues upgrade`](#rolling-back-a-virtues-upgrade) |
-| Chat returns 402 / `insufficient_budget` | [402 on chat](#402-on-chat) |
-| Connecting Google / Notion fails from outside home | [Source-connect requires LAN](#source-connect-requires-lan) |
-| Want to disable / verify the diagnostic beacon | [Diagnostic beacons](#diagnostic-beacons) |
+| Search empty or wrong while the box is healthy | [Search is broken](#search-is-broken) |
+| `curl -sSL https://virtues.com/sh \| sudo sh` failed partway | [Install failed mid-run](#install-failed-mid-run) |
+| Bad release just landed | [Upgrades and rollback](#upgrades-and-rollback) |
+| Moving to new hardware | [Migrating to new hardware](#migrating-to-new-hardware) |
+| Chat returns 402 | [402 on chat](#402-on-chat) |
+| OAuth source-connect fails away from home | [Source-connect and networks](#source-connect-and-networks) |
+| Want to disable the crash beacon | [Diagnostics](#diagnostics) |
 
 ---
 
-## Reaching the web UI
+## Where things live
 
-Virtues serves the web UI over **plain HTTP on port 8000**. There is no TLS
-on the box — see [networking-relay-tee.md](networking-relay-tee.md) for the rationale.
+Read this before any recipe below. **The single most damaging error in the
+previous version of this doc was pointing at `/etc/virtues/env`** — a path the
+installer has never written — so instructions to add a line there silently did
+nothing on every real box.
 
-On the box itself, the web UI is always reachable from a browser at:
+| What | Path |
+|---|---|
+| Everything the box owns | `/var/lib/virtues` |
+| **Config + secrets (`VIRTUES_ENCRYPTION_KEY`, `VIRTUES_DIAG`, …)** | **`/var/lib/virtues/virtues.env`** |
+| Data lake (recordings, drive files) | `/var/lib/virtues/lake` |
+| Models | `/var/lib/virtues/models` |
+| Backups | `/var/lib/virtues/backups` |
+| Backup recipient (**public** half only) | `/var/lib/virtues/backup-recipient` |
+| Release channel | `/var/lib/virtues/channel` |
+| Release slots | `/var/lib/virtues/releases/<slot>/` |
+| The binary | `/usr/local/bin/virtues` → symlink into the live slot |
 
-```
-http://localhost:8000
-```
+The installer writes `<data_dir>/virtues.env` and points the unit's
+`EnvironmentFile=` there (`tools/virtues-installer/src/install.rs:1816`,
+`:3293`).
 
-Loopback is a Secure Context per W3C spec, so all modern browsers treat it
-as if it were HTTPS (cookies, Service Workers, WebAuthn, no warnings).
+`cli/backup.rs` probes **both** paths — `ENV_CANDIDATES = ["/etc/virtues/env",
+"/var/lib/virtues/virtues.env"]` — preferring the FHS one so a box that ever
+migrates wins. That fallback is why backups work; it is not a claim that
+`/etc/virtues/env` exists. **Two doc comments in the tree still say
+`/etc/virtues/env` as if it were the only path** (`middleware/auth.rs:41`,
+`api/pair.rs:1310`). They are describing an intent, not a box.
 
-Since the Virtues client daemon shipped (v0.2), other devices pair via
-WireGuard and reach the box at `http://localhost:8000` on their own machine
-through a local proxy — the WireGuard handshake is the trust pin, so the
-remote browser also lands in a loopback Secure Context.
-
-From other devices on the LAN *without* the daemon, you can still reach the
-box directly at `http://<box-ip>:8000`, but the box's pair-only auth model
-applies — you'll see the pairing prompt unless you have a session.
+`VIRTUES_ENV_FILE` overrides both candidates, for installs that moved
+`DATA_DIR`.
 
 ---
 
-## Lost session / locked out
+## Reaching the box
 
-You closed the browser, the cookie expired, or you accidentally clicked
-"Revoke" on the device you were sitting at. There is no email-magic-link
-recovery — pair-only auth means the recovery path is **physical access to
-the box**.
+The box serves plain HTTP on **port 8000**. There is no TLS on the box — see
+[networking-relay-tee.md](networking-relay-tee.md) for why.
 
-**From the box itself (SSH, console, or attached keyboard):**
+Transport is **iroh**, not WireGuard. WireGuard was removed; `deploy.rs` keeps
+the field name `paired_wg` only for API stability, and any doc sentence about a
+"WireGuard handshake" or a "WireGuard remote-access layer" is describing a
+transport this codebase no longer has.
+
+What actually reaches the box:
+
+- **On the box itself:** `http://localhost:8000`.
+- **The iPhone and desktop apps**, by dialing the box's iroh EndpointId —
+  direct on the LAN, hole-punched across the internet, or through the blind
+  relay. No inbound port is opened at home.
+- **The desktop helper binds `127.0.0.1:7117`** and splices whatever connects
+  to it over that iroh stream (`crates/virtues-reach-client/src/proxy.rs`,
+  `server/mod.rs:1183`). That is the loopback origin the paired web UI is
+  served from on a laptop — **not** `localhost:8000`.
+- **A plain browser cannot pair and is not a client.** It holds no iroh key, so
+  a browser pointed at `http://<box-ip>:8000` from another machine is refused
+  like any stranger.
+
+Full model: [`manual/operate/reach.md`](../manual/operate/reach.md).
+
+---
+
+## Locked out
+
+Pair-only auth means there is no email-magic-link recovery. The recovery path is
+**a terminal on the box** — SSH, console, or attached keyboard.
 
 ```bash
-sudo -u virtues virtues link
+virtues pair
 ```
 
-Print the URL it returns, open on a browser, follow the CA-trust recipe
-above if it's a fresh client, land logged in. Run as often as you need —
-each `virtues link` mints a fresh one-time URL.
+`pair` is the verb (`login` and `link` survive as aliases). It **prints a typed
+code and waits** — not a URL, not a QR, because a browser cannot pair and the
+desktop app has no camera. `--no-wait` prints and exits, for scripts.
 
-**If you revoked your only paired device and the Devices page refused
-the delete:** the refusal is a guard against accidental lockout. The
-device wasn't actually deleted. Pair a second device first (run
-`virtues link` from the box), then revoke the original from the new
-session.
+The allowlist as a CLI:
+
+```bash
+virtues device ls     # who can reach this box
+virtues device rm ID  # de-allowlist — next dial refused at the handshake
+virtues device add    # print a pair code (pair, scoped to the allowlist framing)
+```
+
+**If the Devices page refused to revoke your last device**, that is the
+anti-lockout guard; nothing was deleted. Pair a second device from the box
+first, then revoke.
+
+**On appliance hardware there is a physical fallback**: the button behind the
+case. A long press forgets every paired device — and nothing else. It is
+deliberately *not* a factory reset: it shares exactly one action with the app's
+`/api/pair/reopen-onboarding`, and the claim phrase freezes at first claim and
+never returns to the screen, which is what stops a screwdriver from being a
+takeover. See `virtues-core/src/maintenance/reset_button.rs`.
 
 ---
 
-## Reset BYO key
+## Reset the BYO key
 
-If you forgot which provider key you saved, or want to rotate to a new
-one, you don't need to recover the old key — you just replace it.
+From the UI: `Settings → AI Provider Key` → Remove → paste the new one. Both
+steps fire the sudo gate; approve at the box with `sudo -u virtues virtues
+sudo`.
 
-1. Open `Settings → AI Provider Key`
-2. Click "Remove" (sudo gate fires — approve at the box CLI with
-   `sudo -u virtues virtues sudo`)
-3. Paste the new key with the right provider
-4. Click "Save key" (sudo gate again)
-
-If you can't reach the web UI at all and need to wipe the BYO credential
-from the CLI:
+From the CLI, when the UI is unreachable — this is the statement
+`api/settings_byo.rs:266` actually runs:
 
 ```bash
 sudo -u virtues psql -d virtues -c \
-  "UPDATE credentials SET status='revoked', secret_lookup_hash=NULL \
-   WHERE source_id='__byo_ai_key__' AND status='active';"
+  "UPDATE credentials SET status='revoked', status_reason='replaced_by_user', \
+          updated_at=now() \
+    WHERE source_id='__byo_ai_key__' AND status='active';"
 ```
 
-Chat will fall back to the Virtues wallet on the next call.
+(The previous version of this doc set `secret_lookup_hash=NULL` — a column
+`credentials` has never had, so the whole statement errored out.)
+
+Chat falls back to the Virtues wallet on the next call.
+
+### The sudo gate
+
+Five actions require proof of physical access, listed in `GATED_ACTIONS`
+(`virtues-core/src/api/sudo.rs`): `export_data`, `change_byo_key`, `wipe_box`,
+`revoke_last_device`, `import_applet_package`. Requests carry a 5-minute TTL and
+are single-use.
+
+```bash
+sudo -u virtues virtues sudo          # list open requests, prompt for each
+sudo -u virtues virtues sudo --id REQ # target one
+sudo -u virtues virtues sudo --deny
+```
 
 ---
 
 ## Service won't start
 
-`sudo systemctl status virtues` shows `failed` or `activating
-(auto-restart)` in a loop. Check the journal first:
-
 ```bash
+sudo systemctl status virtues
 sudo journalctl -u virtues -n 100 --no-pager
 ```
 
-Common patterns:
+Everything logs to the journal; there is no Virtues log file.
 
-- **"waiting for postgres to accept connections…"** — this is **normal**
-  on first boot. Postgres takes 10–30s to finish WAL recovery; the
-  daemon waits. If you see this line for >2 minutes, see [Postgres
-  won't start](#postgres-wont-start).
-- **"VIRTUES_ENCRYPTION_KEY not set"** — `/etc/virtues/env` is missing
-  or the key line is empty. The installer writes this; if you restored
-  from a backup tarball, the key is included. If neither, the box is
-  uninitialized — re-run `curl -sSL https://virtues.com/sh | sudo sh`.
-- **"Failed to bind 0.0.0.0:8000"** — something else is using port
-  8000. Find it with `sudo ss -lntp '( sport = :8000 )'`.
-- **Out of memory (OOM) kill** — `dmesg | grep -i oom` will confirm.
-  Check `free -h`; Virtues needs ~6 GB RAM resident for the embedding +
-  reranker models. Add swap or trim cohabitating workloads.
+- **"waiting for postgres to accept connections…"** — normal on first boot;
+  Postgres takes 10–30s to finish WAL recovery. Past ~2 minutes, see below.
+- **"VIRTUES_ENCRYPTION_KEY not set"** — `/var/lib/virtues/virtues.env` is
+  missing or the key line is empty. Restoring from a backup brings the key with
+  it. If there is nothing to restore, the box is uninitialized: re-run the
+  installer.
+- **"Failed to bind 0.0.0.0:8000"** — `sudo ss -lntp '( sport = :8000 )'`.
+- **OOM kill** — `dmesg | grep -i oom`, then `free -h`. The embedding +
+  reranker sidecars want roughly 6 GB resident.
 
-After fixing the cause:
+### The other units
 
-```bash
-sudo systemctl restart virtues
-sudo journalctl -u virtues -f
-```
+| Unit | What it is |
+|---|---|
+| `virtues` | the server, port 8000 |
+| `virtues-embed` | embedding sidecar, `127.0.0.1:18181` |
+| `virtues-rerank` | rerank sidecar, `127.0.0.1:18182` |
+| `virtues-qnnd` | on NPU hardware, replaces both and serves both ports |
+| `virtues-display` | the on-box screen, where there is one |
+
+**The kiosk caches the SPA**, so after an upgrade the panel can draw the old
+interface: `sudo systemctl restart virtues-display`.
 
 ---
 
@@ -144,312 +214,291 @@ sudo systemctl status postgresql
 sudo journalctl -u postgresql -n 50 --no-pager
 ```
 
-Common causes:
-
-- **Disk full.** `df -h /var/lib/postgresql`. Postgres won't accept
-  writes (or even start cleanly) below ~10 MB free. Clear space,
-  then restart.
-- **Permission damage.** `/var/lib/postgresql/18/main/PG_VERSION` should
-  be owned by `postgres:postgres`. Wrong perms after a restore — fix
-  with `sudo chown -R postgres:postgres /var/lib/postgresql`.
-- **WAL corruption** (rare; usually a hardware issue). The journal
-  will say `invalid checkpoint record` or `record with incorrect prev-
-  link`. If you have a recent `virtues backup` tarball, the fastest
-  recovery is to wipe and restore. If not, contact Postgres support;
-  do not run `pg_resetwal` without understanding what you'll lose.
-- **Version mismatch.** If you copied the data directory from another
-  box, Postgres refuses to open a cluster from a different major
-  version. Use `virtues backup` / `virtues restore` instead of raw
-  data-dir copies.
+- **Disk full.** `df -h /var/lib/postgresql`. Below ~10 MB free it won't accept
+  writes or start cleanly.
+- **Permission damage.** `/var/lib/postgresql/18/main/PG_VERSION` should be
+  `postgres:postgres`; after a bad restore,
+  `sudo chown -R postgres:postgres /var/lib/postgresql`.
+- **WAL corruption** (usually hardware). `invalid checkpoint record` or `record
+  with incorrect prev-link` in the journal. Restore from backup if you have
+  one; do not reach for `pg_resetwal` without knowing what it costs.
+- **Version mismatch.** Postgres refuses a data directory from another major
+  version. Use `virtues backup` / `virtues restore`, never a raw data-dir copy.
 
 ---
 
-## `tools/bootstrap.sh` failed mid-run
+## Search is broken
 
-The installer is **idempotent** — re-running picks up where it left off
-without breaking what's already installed. If a previous run failed
-partway through:
+Search failing while the box is otherwise healthy is usually a sidecar or an
+index built by a different model than the one now answering.
+
+```bash
+virtues doctor                # accelerator, CUDA linkage, which models are present — no DB needed
+systemctl status virtues-embed
+journalctl -u virtues-embed -n 50
+virtues configure-inference   # re-probe the endpoint after a model change; --reembed to skip the prompt
+virtues reindex               # rebuild vector + BM25 from source; source data untouched
+```
+
+`virtues doctor` reads no database, which is exactly why it still answers when
+other things are broken.
+
+---
+
+## Install failed mid-run
+
+The installer is idempotent; re-running picks up where it stopped.
 
 ```bash
 curl -sSL https://virtues.com/sh | sudo sh
 ```
 
-Common reasons for an install to fail and recover on retry:
+Common recoverable causes: an unreachable package mirror, a `sudo` timeout (run
+`sudo -v` first), or `postgresql-18` missing from the distro's default repos —
+the installer adds the PGDG repo for Ubuntu 24.04/25.04, but older distros need
+upgrading first.
 
-- **`apt update` / `dnf check-update` failed** because the repo
-  mirror was unreachable. Retry on a different network or wait a
-  minute.
-- **`sudo` timed out** waiting for your password. Run with `sudo -v`
-  first so a fresh credential is cached, then re-run the curl.
-- **`postgresql-18` not available in your distro.** v1 supports Debian
-  13+, Ubuntu 24.04 LTS+, Fedora 40+. The installer adds the
-  [PGDG repo](https://www.postgresql.org/download/linux/)
-  automatically for Ubuntu 24.04/25.04 (where PG18 isn't in the
-  default repos). For older distros, upgrade first.
+**There is no install beacon.** The previous version of this doc said a failed
+step name is posted to atlas at the end of the run. Atlas has the receiver
+(`services/virtues-atlas/src/routes/diag.rs` routes `/diag/install`), but
+**nothing on the box ever posts to it** — the installer contains no beacon code
+and no `VIRTUES_DIAG` handling at all. A failed install is therefore invisible
+to us unless someone says so. Its "pre-set `VIRTUES_DIAG=off` before installing"
+workaround was guarding against a request that is never made.
 
-If the installer has a real bug, the install beacon at the end posts the
-failed step name to atlas (unless `VIRTUES_DIAG=off`). That tells us
-where it broke without a support ticket.
-
----
-
-## How do I back up my data?
-
-```bash
-sudo -u virtues virtues backup
-```
-
-Writes one encrypted archive to
-`/var/lib/virtues/backups/virtues-<utc-iso>.tar.gz.age`. Contents:
-
-- Full Postgres dump (chat, sources, devices, credentials, day pages,
-  events, everything)
-- The data lake (raw stream archives, drive files) — from wherever
-  `STORAGE_PATH` actually points, not a fixed path
-- The env file (`VIRTUES_ENCRYPTION_KEY` — required to decrypt
-  credentials in the DB)
-- `manifest.json` (version, schema migration, sha256 of every member)
-
-### The recovery key — read this once, properly
-
-The **first** `virtues backup` on a box mints an age keypair, prints the
-secret half, and stores only the **public** half at
-`/var/lib/virtues/backup-recipient`.
-
-That means the box **cannot decrypt its own backups**, deliberately. A
-stolen box gives an attacker an encryption key and nothing to decrypt; a
-stolen backup drive gives them ciphertext and no key.
-
-It also means **the secret is shown exactly once and cannot be recovered.**
-There is nowhere on the box it could have been kept that an attacker with
-the box could not also read. Put it in a password manager, or print it and
-file it. Without it, every archive this box has ever written is
-permanently unreadable.
-
-Archives are standard [age](https://age-encryption.org) files, so they can
-also be opened with the `age` CLI on any machine — a backup that only
-Virtues can read would be a poor backup.
-
-To customize the output path:
-
-```bash
-sudo -u virtues virtues backup --output /mnt/external/virtues.tar.gz.age
-```
+Also note that installer bugs hide in both directions — dev and CI each mask a
+different class of them (see [`installer-env-divergence`](deployment.md)); green
+CI is not evidence the installer works.
 
 ---
 
-## How do I restore from a backup?
+## Backups
+
+```bash
+virtues backup --init-key   # ONCE, from a terminal you are watching
+virtues backup
+```
+
+**`--init-key` is required and nothing else mints the key.** Not a first
+backup, and never a scheduled run — a key minted where nobody is reading
+produces archives nobody can ever open. A first `virtues backup` on a box with
+no recipient **fails**; the previous version of this doc said the first backup
+mints one, which would have left owners believing they had been shown a secret
+they never saw.
+
+The archive is `tar → gzip → age`, written to
+`/var/lib/virtues/backups/virtues-<utc-iso>.tar.gz.age`. It carries the Postgres
+dump, the lake, the applet state, the env file (i.e. the encryption key), and a
+`manifest.json` with a sha256 of every member. **Because the env file is inside,
+the tarball is as sensitive as the box itself.**
+
+The box keeps only the **public** half of the age keypair at
+`/var/lib/virtues/backup-recipient` — so a box cannot decrypt its own backups,
+deliberately. The secret half is shown once by `--init-key` and cannot be
+recovered from the box. Archives are standard [age](https://age-encryption.org)
+files and open with the `age` CLI anywhere.
+
+Other verbs worth knowing before you need them:
+
+```bash
+virtues backup --verify ARCHIVE --key-file KEY   # decrypt, re-hash, compare to manifest
+virtues backup --volume ID|all                   # full + increment to a registered drive
+virtues volumes                                  # register and inspect destinations
+virtues backup --allow-missing-key               # dev boxes only; the result cannot decrypt itself
+```
+
+A backup nobody has ever opened is a hope. `--verify` is the cheap way to stop
+it being one.
+
+## Restoring
 
 ```bash
 sudo systemctl stop virtues
-sudo virtues restore --key-file /path/to/recovery-key /path/to/virtues-...tar.gz.age
+sudo virtues restore --key-file /path/to/recovery-key /path/to/virtues-….tar.gz.age
 sudo systemctl start virtues
 ```
 
-`--key-file` holds the recovery key printed at first backup. Archives
-written before encryption landed still restore without it — the format is
-sniffed, not assumed from the filename.
+`--from-volume PATH` restores from a backup drive instead: its newest full
+archive, then every increment in order. It takes a **path** (the mount point),
+not a registered volume id — the registry lives in the database being restored,
+so on replacement hardware there is nothing to look up.
 
-`virtues restore` enforces three checks before touching anything:
+Three checks run before anything is touched: the service is stopped (`--force`
+overrides), the archive's schema version is not newer than this binary
+(never bypassable — upgrade first), and every sha256 matches the manifest
+(never bypassable).
 
-1. The service is stopped (`--force` to override)
-2. The backup's schema version is not newer than this binary's (never
-   bypassable — upgrade the binary first if needed)
-3. Every artifact's sha256 matches the manifest (never bypassable)
+It then drops and recreates the database, replaces the lake and applet state,
+and writes the env file **to whichever candidate path already exists on this
+box**, falling back to `ENV_CANDIDATES[0]` (`cli/restore.rs:29`).
 
-It then drops + recreates the Postgres database, restores the data lake,
-writes `/etc/virtues/env`, and prints the next-step command.
+Owner-facing version: [`manual/operate/backup-and-restore.md`](../manual/operate/backup-and-restore.md).
 
 ---
 
 ## Migrating to new hardware
 
-The full migration is just backup + install + restore:
-
-**On the old box:**
-
 ```bash
-sudo -u virtues virtues backup --output /tmp/migration.tar.gz
-scp /tmp/migration.tar.gz me@new-box:/tmp/
+# old box
+virtues backup --volume all      # or: virtues backup --output /tmp/migration.tar.gz.age
 ```
 
-**On the new box (fresh distro install, never run Virtues before):**
-
 ```bash
+# new box, fresh distro
 curl -sSL https://virtues.com/sh | sudo sh
 sudo systemctl stop virtues
-sudo -u virtues virtues restore /tmp/migration.tar.gz
+sudo virtues restore --key-file /path/to/recovery-key /tmp/migration.tar.gz.age
 sudo systemctl start virtues
-sudo -u virtues virtues link
+virtues pair
 ```
 
-After the new box is up, revoke the old box's paired devices from the
-new Devices page so the old hardware can't reach anything (the data is
-already cloned, but you don't want lingering tunnels).
+Then revoke the old box's devices from the new box (`virtues device rm`).
+
+Note that a restore brings the old box's **identity** with it — the database
+holds the iroh secret. If you are imaging hardware rather than migrating one
+box, that is `virtues deprovision` followed by `virtues image-check`, not this;
+see [appliance-image.md](appliance-image.md).
 
 ---
 
-## Rolling back a `virtues upgrade`
+## Upgrades and rollback
 
-`virtues upgrade` keeps one rollback copy at `/usr/local/bin/virtues.bak`.
-If the new binary has a problem, the exact rollback command is printed
-at the failure boundary. The standalone form is:
+Upgrades stage a whole release into `releases/<slot>/`, preflight it (the
+**staged** binary must pass `migrate --check` plus a version smoke test), then
+activate by flipping the `current` symlink — binary, web, and actions move
+together. Failures before the flip leave the box untouched; failures after it
+flip straight back.
 
 ```bash
-sudo systemctl stop virtues
-sudo mv /usr/local/bin/virtues.bak /usr/local/bin/virtues
-sudo systemctl start virtues
+virtues upgrade --check      # report only
+virtues upgrade              # follow the box's channel
+virtues upgrade --pre        # one-off: newest prerelease
+virtues channel prerelease   # persist it — --pre forgets itself
+virtues prepare              # stage + preflight, don't install
+virtues activate             # install what prepare staged
+sudo virtues rollback        # flip back to the previous slot and restart
 ```
 
-The `.bak` is overwritten on the next successful upgrade — there is only
-ever one rollback level, not a history.
+**Rollback is `sudo virtues rollback`.** There is no `/usr/local/bin/virtues.bak`
+— that file exists nowhere in this codebase, and the three-command `mv` recipe
+the previous version of this doc gave would have deleted the live binary.
 
-If the upgrade applied a schema migration and the rollback binary
-can't read the migrated schema, **stop and restore from backup**
-instead. Migrations are not generally reversible.
+Schema is not rolled back; migrations only go forward and the previous release
+tolerates a newer schema. If the previous release genuinely cannot read the
+migrated schema, restore from backup instead.
+
+`virtues upgrade --only web,actions` refreshes the payload inside the current
+release with no binary swap, no migration, and no restart — the fast path for UI
+iteration.
+
+Full model: [update-paradigm.md](update-paradigm.md),
+[`manual/operate/upgrading.md`](../manual/operate/upgrading.md).
 
 ---
 
 ## 402 on chat
 
-The chat call returns `402` with one of these error codes:
+Codes the box branches on (`virtues_api/renew.rs`, `virtues_api/client.rs`):
 
-- **`insufficient_budget` / `wallet_empty`** — your wallet hit $0 and
-  auto-top-up either didn't fire or failed. Open `Settings →
-  Billing`; either flip auto-top-up back on (it auto-disables after 3
-  consecutive failures) or top up manually via Stripe portal.
-- **`topup_disabled`** — auto-top-up is off (by you or by the 3-strike
-  breaker). Same fix as above; if the breaker tripped it's because
-  Stripe declined the card three times in 24h. Update the payment
-  method in the Stripe portal first, then re-enable auto-top-up.
-- **`bearer_expired`** — voucher needs renewal. The box does this
-  automatically on the next call; if you see this code repeatedly,
-  run `sudo -u virtues virtues subscribe` to relink.
-- **`monthly_cap_reached`** — you hit the locked monthly cap ($100
-  default in the v3 economic model). Wait until next month or raise
-  the cap from Settings.
-- **`subscription_inactive`** — Stripe says the subscription was
-  cancelled or payment is past-due. Open the Stripe portal from
-  Settings → Billing → Manage Subscription.
+- **`wallet_empty` / `insufficient_budget`** — the wallet hit zero and
+  auto-top-up didn't fire or failed. `Settings → Billing`: re-enable auto-top-up
+  (it disables itself after 3 failures in 24h) or top up via the Stripe portal.
+- **`topup_disabled`** — auto-top-up is off, by you or by that breaker. Fix the
+  card in the portal first, then re-enable.
+- **`card_declined` / `authentication_required`** — Stripe needs the card
+  updated, or the payment needs 3-D Secure completed in the portal.
+- **`monthly_cap_reached`** — the locked monthly cap. Wait, or raise it in
+  Settings.
+- **`subscription_inactive`** — Stripe says cancelled or past-due. Stripe portal
+  from `Settings → Billing`.
+- **`bearer_expired`** — renewed automatically on the next call. Repeatedly, run
+  `virtues subscribe` (hidden) to relink.
 
-You can also bypass the wallet entirely by setting a BYO provider key
-under `Settings → AI Provider Key` — chat then routes box → upstream
-provider directly with your key, and Virtues is out of the AI path.
+A BYO provider key bypasses the wallet entirely: chat routes box → provider
+directly and Virtues leaves the AI path.
 
----
-
-## `voucher_too_soon` — stuck account (operator-only)
-
-If `virtues login` or the renew cron repeatedly returns:
-
-```
-429 Too Many Requests — {"error":{"code":"voucher_too_soon",
-  "message":"a voucher was issued recently; wait until near expiry"}}
-```
-
-The customer is locked out by atlas's 25-day anti-stacking gate. This
-should be rare after the box-side double-renew bug fix (`deploy.rs`),
-but legacy state from older boxes can still trigger it.
-
-**Atlas operator unstick** (requires Postgres access on atlas):
-
-```sql
--- Look up the customer by Stripe ID or email
-SELECT stripe_customer_id, last_voucher_issued_at
-  FROM customers
-  WHERE stripe_customer_id = 'cus_XXXX';
-
--- Clear the gate
-UPDATE customers
-   SET last_voucher_issued_at = NULL
- WHERE stripe_customer_id = 'cus_XXXX';
-```
-
-Next `virtues login` / next renew cron tick will mint a fresh voucher
-cleanly. No box-side action required.
+> **`voucher_too_soon` is gone.** The previous version of this doc carried a
+> whole atlas-operator section for it. The 25-day anti-stacking gate was
+> removed: `last_voucher_issued_at` was dropped by
+> `services/virtues-atlas/migrations/0009_rename_billing_token.sql:17`, and the
+> error code appears nowhere in the codebase. The unstick SQL it published would
+> now fail on a column that does not exist.
 
 ---
 
-## Source-connect requires LAN
+## Source-connect and networks
 
-Connecting Google / Notion / Plaid / Strava / GitHub from a browser
-**requires you to be on the same home network as the box.** The OAuth
-provider redirects the final hop to `http://localhost:8000/oauth/callback`,
-which only resolves on your home WiFi.
+The OAuth return hop goes back to the box, so **where the browser is matters —
+but less than it used to.**
 
-v1 ships an intermediary "Almost done — click to continue on your home
-network" page when atlas detects the `.local` callback target, so the
-failure mode is at least clear instead of a blank DNS error page.
+`services/virtues-api/src/routes/oauth.rs` classifies the `return_url`:
 
-If you're traveling and want to add a source, wait until you're home.
-Remote source-connect ships in v1.1 with the WireGuard remote-access
-layer.
+- **Loopback** (`localhost`, `127.0.0.1`) gets the seamless 302, deliberately.
+  That covers a browser on the box *and* the desktop helper's
+  `127.0.0.1:7117` origin — so connecting a source through the desktop app works
+  off-LAN.
+- **A private IP or a `.local` name** gets the "Almost done — continue on my
+  home network" interstitial. The click still fails when you are away; the point
+  is that it fails legibly instead of hanging on a TCP timeout.
+
+So: a browser aimed straight at the box's LAN address needs you to be home. The
+apps do not.
 
 ---
 
-## Diagnostic beacons
+## Diagnostics
 
-By default, the box sends two kinds of anonymized beacons to
-`atlas.virtues.com`:
+There is exactly **one** beacon on the box, and it is the crash beacon.
 
-- **Install beacon** (`POST /diag/install`) — fires once at the end of
-  `tools/bootstrap.sh`. Payload: `{box_id, distro, version, arch, outcome,
-  failed_step}`. No personal data, no source content.
-- **Crash beacon** (`POST /diag/crash`) — fires from systemd's
-  `ExecStopPost=` hook when the daemon exits abnormally (signal,
-  core-dump, watchdog, non-zero exit). Payload: `{box_id, version,
-  service_result, exit_code, journal_tail (last 50 lines)}`. The
-  journal tail is included so we can triage without a support ticket;
-  if your logs happen to contain something sensitive, the tail
-  capture is bounded to 16 KB and you can disable beacons entirely
-  (below).
+**Crash beacon** — `POST <atlas>/diag/crash`, from systemd's `ExecStopPost=`
+hook, only when `SERVICE_RESULT` is `signal`/`core-dump`/`watchdog`/`abort`/
+`oom-kill` or a non-zero `exit-code`. A clean `systemctl stop` sends nothing.
+Payload: `{box_id, version, service_result, exit_code, exit_status,
+journal_tail, ts}` (`cli/report_crash.rs`).
 
-The `box_id` is a SHA-256 prefix of `/etc/machine-id` (or hostname as
-fallback). It's enough to dedupe retries from the same box, not enough
-to identify you.
+Two corrections to what the previous version of this doc claimed:
 
-**To disable both beacons:** add a line to `/etc/virtues/env`:
+- **The journal tail is not bounded to 16 KB.** It is `journalctl -u
+  virtues.service -n 50` with no byte cap — 50 lines can be arbitrarily large.
+  If that matters for your box, turn the beacon off; there is no partial knob.
+- **`box_id` never reads `/etc/machine-id`.** `cli/diag.rs:74` returns
+  `VIRTUES_BOX_ID` if set — and **nothing sets it**; no installer, no unit, no
+  firstboot script — so in practice every box falls through to
+  `h:<sha256(hostname)[..16]>`. Stable and anonymous, but derived from the
+  hostname, not the machine id.
+
+**To disable it**, add to `/var/lib/virtues/virtues.env` (the path systemd's
+`EnvironmentFile=` actually loads — `diag::enabled()` reads the process env, so
+a line anywhere else has no effect):
 
 ```
 VIRTUES_DIAG=off
 ```
 
-Then restart the service:
+then `sudo systemctl restart virtues`. `false`, `0`, `no`, and `disabled` all
+work, case-insensitively. Default is on.
 
-```bash
-sudo systemctl restart virtues
-```
-
-(Or `false`, `0`, `no`, `disabled` — all case-insensitive.)
-
-The install beacon respects the same flag, but the installer reads it
-from the env file *after* it's written, so the first install ever
-will always send one `outcome=ok` beacon before the off-switch takes
-effect. If that one is unacceptable, set the env var in your shell
-before running the installer:
-
-```bash
-sudo VIRTUES_DIAG=off bash -c 'curl -sSL https://virtues.com/sh | sh'
-```
+`virtues status --json` reports the current state as `diag_enabled`.
 
 ---
 
-## When this guide doesn't cover your problem
-
-Paste the output of:
+## When this doesn't cover it
 
 ```bash
-sudo -u virtues virtues status --json
+virtues status --json
 ```
 
-That captures: binary version, schema version, paired device count,
-sudo state, pair-token state, billing flags, action subprocess health,
-recent auth events. It's the boring-but-complete diagnostic; with it,
-support can triage without a back-and-forth.
+Emits `{schema_version, virtues_version, diag_enabled, box_id, auth, sudo,
+pair, billing, actions, network, recent_events}` — device count, pending and
+consumed sudo requests, pair-token counts, auto-top-up and BYO state, applet
+health, and the last 10 auth events. Deliberately excluded: secrets of any kind,
+user content, and paired-device IPs — so it is safe to paste.
 
-If the daemon won't even start enough to run `virtues status`, paste
-the last 100 lines of the journal instead:
+If the daemon won't start far enough to run it:
 
 ```bash
 sudo journalctl -u virtues -n 100 --no-pager
+virtues doctor
 ```
+
+`doctor` needs no database and answers when almost nothing else does.

@@ -1,5 +1,7 @@
 //! Sudo — the "prove physical access to the box" gate for high-sensitivity
-//! actions (export-all, BYO-key swap, wipe, revoke-last-device).
+//! actions (export-all, BYO-key swap, wipe, revoke-last-device,
+//! import-applet-package). `GATED_ACTIONS` below is the list; keep this
+//! sentence in step with it.
 //!
 //! Flow (v1, CLI-confirm):
 //!

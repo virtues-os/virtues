@@ -1,7 +1,19 @@
 # Relay control plane — box provisioning, naming, auth
 
-**Status:** design, not built (2026-06-30). Companion to `docs/networking-relay-tee.md`
-(the architecture source of truth) and memory `project_networking_relay_tee`.
+**Status:** the SNI/HMAC-token control plane described here was **never built**,
+and reach has since moved to iroh (dial-by-EndpointId, gated by an atlas
+subscription callout). Read it for the reasoning, not the mechanism. The one
+part that describes what shipped is *iroh caveat vs. our doctrine* below, and it
+is the honest statement of what the relay sees: **"endpoint X talks to Y, N
+bytes"** — blind to content, *not* blinded-token anonymous.
+
+Wherever the text below calls the relay RAM-only, zero-knowledge, unlinkable, or
+part of a "privacy moat", that is the aspiration of the superseded
+`docs/networking-relay-tee.md` ADR, not a property of anything running. The
+accurate user-facing account is [the reach manual page](../manual/operate/reach.md).
+
+Companion to `docs/networking-relay-tee.md` (superseded) and memory
+`project_networking_relay_tee`.
 
 ## Why this doc exists
 
