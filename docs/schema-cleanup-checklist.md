@@ -8,37 +8,43 @@ strings, `row.get`, catalog, API structs, client types).*
 
 ## 1 · FIX — real bugs, one commit each
 
-- [ ] **F1** `entity_article_gen.rs:216,245` — `ref_count` → `seen_count`
+- [x] **F1** ✅ `f6825723` — `entity_article_gen.rs:216,245` — `ref_count` → `seen_count`
       (person + place branches). Also `sql_query.rs:252,258,264` catalog
       entries (advertise `seen_count`, drop phantom `ref_count`) and the
       stale comment at `home.rs:165`. Add a wiring test in the
       `rules_reach_the_assembled_prompt` mold so article dossiers break
       loudly on the next rename.
-- [ ] **F2** `applets/morning_examen/manifest.toml:36-42` — pre-rename
+- [x] **F2** ✅ `ff9d80ba` — `applets/morning_examen/manifest.toml:36-42` — pre-rename
       column names (`start_time`/`end_time`/`timestamp`) → current names.
       Failing quietly since 2026-08-17.
-- [ ] **F3** `dayline/context.rs:227` — `ORDER BY visit_duration_seconds
+- [x] **F3** ✅ `5a2583b1` — `dayline/context.rs:227` — `ORDER BY visit_duration_seconds
       DESC` (always NULL) → `ORDER BY occurred_at DESC`.
-- [ ] **F4** `extracted_document_chunks` — add `occurred_at` sourced from
+- [x] **F4** ✅ `40f8440a` (migration 0009) — `extracted_document_chunks` — add `occurred_at` sourced from
       the file's own date, repoint `ontologies.rs:1388,1401`. Until then
       every date-scoped document search filters on parse time.
-- [ ] **F5** `app_drive_usage` — verify the write path (UPDATE vs upsert)
+- [x] **F5** ✅ `31f5d08c` (add path was already upsert; the reconcile was the remaining UPDATE-only no-op) — `app_drive_usage` — verify the write path (UPDATE vs upsert)
       against the never-seeded singleton; seed it or convert to upsert.
-- [ ] **F6** `app_ai_calls.status` — write `'error'` on failed calls (the
-      Usage grid currently shows "ok" for everything).
-- [ ] **F7** `credentials.last_seen_at` — bump on successful use, or stop
+- [x] **F6** ✅ `a3e7bcd0` — resolved as REMOVAL, not error-writing: failed calls never produce rows at all (recording comes from usage data), so a status column on success-only rows can only ever say ok. Swept from SELECT/struct/wire; column drop rides the cleanup migration.
+- [x] **F7** ✅ `36b2da53` — bumped in read_credential_secrets (the one decrypt gate), 60s-throttled, best-effort. — bump on successful use, or stop
       rendering it; today it says "never seen" for api-key/Plaid creds in
       daily use.
-- [ ] **F8** `wiki_day_prose` fence mismatch — either add the view to
+- [x] **F8** ✅ `65816c4c` — the view got a catalog entry and list_tables unions pg_views. — either add the view to
       `get_table_metadata()` + the pg_tables query, or remove the
       `JOIN wiki_day_prose` hint at `sql_query.rs:272-275`.
-- [ ] **F9** Ghost selects: remove `act_id`/`chapter_id` from
+- [x] **F9** ✅ `6adb371e` (backend + wire; the place/org `narrativeContext` doc-comments were not ghosts and stay) — remove `act_id`/`chapter_id` from
       `api/wiki.rs:148-153,969-970`, the wire fields at
       `apps/web/src/lib/wiki/api.ts:93-94`, and the orphaned frontend
       types (`types/year.ts`, `acts`/`chapters` fields in
       `types/place.ts:115`, `types/organization.ts:86`).
 
 ## 2 · GUARD — tests that freeze the disease classes
+
+*(Incidental find while landing F4, fixed in `9f9538f3`: the docs-split
+commit had edited comments inside FOUR already-applied migrations —
+0005 + three atlas files — which would have made every staging.65–.71
+box refuse to boot on the next prerelease and broken the next atlas
+deploy. Files restored byte-for-byte. Candidate **G4**: a CI check that
+migrations/ files never change once they exist on origin/staging.)*
 
 - [ ] **G1** Extend `tools/check-dynamic-inserts.py` with the inverse
       check: every `sql_query.rs` `key_columns` entry must exist in the
