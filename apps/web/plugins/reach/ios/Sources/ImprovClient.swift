@@ -308,12 +308,26 @@ final class ImprovClient: NSObject {
   }
 
   /// RPC 0x83 (our extension): pair THROUGH the box's Bluetooth, for LANs
-  /// that block peer-to-peer (office client isolation — the box redeems the
-  /// code against its own consume endpoint and streams the response back).
+  /// that block peer-to-peer (office client isolation).
+  ///
+  /// CODELESS. The box fetches its OWN standing code and redeems it against
+  /// its own consume endpoint over loopback, then streams the response back.
+  /// This command is authorized by the setup SESSION — opened by the
+  /// four-word phrase on the box's panel (0x86) — so a code here would prove
+  /// nothing that has not already been proven.
+  ///
+  /// The wire is `[kind, source, label, endpoint_id]` — FOUR strings, and the
+  /// box rejects a fifth. It carried a leading 6-digit code until 2026-08-24;
+  /// this client kept sending it, so `parse_rpc` failed every packet on
+  /// `!rest.is_empty()` and Bluetooth pairing could not succeed at all. If you
+  /// change this list, change `Command::PairConsume` in
+  /// crates/virtues-improv/src/protocol.rs with it — nothing compiles the two
+  /// together, which is exactly how they drifted.
+  ///
   /// The response is chunked (Improv frames cap at 255 data bytes): JSON
   /// chunks until an empty terminator; a body starting `error:` is a refusal.
   func pair(
-    id: String, code: String, label: String, endpointId: String,
+    id: String, label: String, endpointId: String,
     completion: @escaping (String?, String?) -> Void
   ) {
     queue.async {
@@ -334,13 +348,18 @@ final class ImprovClient: NSObject {
             if body.hasPrefix("error:") {
               let code = String(body.dropFirst("error:".count))
               let msg: String
+              // No code is typed on this path any more, so none of these may
+              // tell the owner to check one — they'd be hunting a screen that
+              // shows nothing to hunt. The failures here are the BOX's own
+              // internal redemption, which the owner can only answer by
+              // starting setup again.
               switch code {
               case "invalid_or_expired_token":
-                msg = "That code didn't match — check the box's screen and try again."
+                msg = "The server's setup code expired before pairing finished — start setup again."
               case "too_many_attempts":
-                msg = "Too many tries — wait a bit and use the code on the box's screen."
+                msg = "Too many pairing attempts on the server — wait a few minutes and try again."
               default:
-                msg = "The box couldn't complete pairing (\(code))."
+                msg = "The server couldn't complete pairing (\(code))."
               }
               finish(nil, msg)
             } else {
@@ -356,7 +375,10 @@ final class ImprovClient: NSObject {
           payload.append(UInt8(bytes.count))
           payload.append(contentsOf: bytes)
         }
-        pushString(code)
+        // Exactly four, in this order. `source = "ios"` because the phone IS a
+        // collector (HealthKit, location, calendar), so it earns the ios ingest
+        // fan-out — unlike the desktop app, which sends "" deliberately and is
+        // filed as `__device__`.
         pushString("mobile_app")
         pushString("ios")
         pushString(label)
