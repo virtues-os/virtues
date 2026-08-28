@@ -249,19 +249,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("wiki_people", TableMetadata {
         description: "Resolved people in user's life",
         category: "wiki_entity",
-        key_columns: &["name", "emails", "phones", "relationship_category", "nickname", "notes", "first_seen", "last_seen", "ref_count", "birthday"],
+        key_columns: &["name", "emails", "phones", "relationship_category", "nickname", "notes", "first_seen", "last_seen", "seen_count", "birthday"],
         join_hint: None,
     });
     m.insert("wiki_places", TableMetadata {
         description: "Resolved places in user's life",
         category: "wiki_entity",
-        key_columns: &["name", "category", "address", "latitude", "longitude", "radius_m", "ref_count", "first_seen", "last_seen"],
+        key_columns: &["name", "category", "address", "latitude", "longitude", "radius_m", "seen_count", "first_seen", "last_seen"],
         join_hint: None,
     });
     m.insert("wiki_orgs", TableMetadata {
         description: "Organizations in user's life",
         category: "wiki_entity",
-        key_columns: &["name", "organization_type", "relationship_type", "role_title", "start_date", "end_date", "ref_count", "first_seen", "last_seen"],
+        key_columns: &["name", "organization_type", "relationship_type", "role_title", "start_date", "end_date", "seen_count", "first_seen", "last_seen"],
         join_hint: None,
     });
 
