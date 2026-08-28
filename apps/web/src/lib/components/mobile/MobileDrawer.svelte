@@ -41,6 +41,12 @@
 
 	const activeRoute = $derived(windowShellStore.activeTab?.route ?? "");
 
+	// "Recents", literally: the drawer shows the last stretch of conversation
+	// and All Chats carries the archive. Uncapped, the list buried the doors
+	// above it and made the archive page redundant-but-worse.
+	const RECENTS_CAP = 15;
+	const recentSessions = $derived(chatSessions.sessions.slice(0, RECENTS_CAP));
+
 	function go(route: string, label: string) {
 		windowShellStore.openTabFromRoute(route, { label });
 		mobileLayout.closeDrawer();
@@ -105,18 +111,27 @@
 	</header>
 
 	<div class="body">
-		<!-- Doors wear Atlas (the shell's drawn set), matching the desktop
-		     sidebar's rule: Atlas for nav doors, Remix for interface symbols
-		     (the close X above). This device leads: on a phone the device IS
-		     the sensor, so "is this thing collecting?" outranks everything
-		     below it. -->
+		<!-- The mini-menu: the drawer's few fixed doors, before the flow of
+		     conversations. Doors wear Atlas (the shell's drawn set), matching
+		     the desktop sidebar's rule: Atlas for nav doors, Remix for
+		     interface symbols (the close » above). New chat leads — it is the
+		     app's primary verb — then the full archive, then the device
+		     itself ("is this thing collecting?"). -->
+		<button class="row" onclick={() => go("/chat", "Chat")}>
+			<AtlasIcon name="new-chat" bare />
+			<span class="row-text">New chat</span>
+		</button>
+		<button class="row" onclick={() => go("/chat-history", "All Chats")}>
+			<AtlasIcon name="chats" bare />
+			<span class="row-text">All chats</span>
+		</button>
 		<button class="row" onclick={() => go("/virtues/devices/this", "This device")}>
 			<AtlasIcon name="device" bare />
 			<span class="row-text">This device</span>
 		</button>
 
-		<div class="section-label">Conversations</div>
-		{#each chatSessions.sessions as s (s.conversation_id)}
+		<div class="section-label">Recents</div>
+		{#each recentSessions as s (s.conversation_id)}
 			{@const route = `/chat/${s.conversation_id}`}
 			<button
 				class="chat-row"

@@ -115,6 +115,9 @@
 	 *  opened, with the phone untouched. Re-opening the sheet then enrolled
 	 *  another one. If this ever flashes shut again, check that column first. */
 	let handoffDeviceId = $state<string | null>(null);
+	/** The typed-address fallback, unfolded. Only meaningful while a handoff
+	 *  QR is up — with no QR the door always shows. */
+	let showManual = $state(false);
 
 	async function initiateQRPairing() {
 		isInitiating = true;
@@ -272,6 +275,7 @@
 		pairingData = null;
 		hasTimedOut = false;
 		error = null;
+		showManual = false;
 	}
 
 	/** Undo everything this sheet created that the user never completed. Called
@@ -357,11 +361,12 @@
 					<div class="mb-5">
 						<p class="text-sm leading-relaxed text-foreground-muted">
 							{#if handoffQr}
-								<span class="step-n">2</span> Open it and tap
-								<strong class="text-foreground">Scan it</strong>, then point the phone here
+								<span class="step-n">2</span> Open it, choose
+								<strong class="text-foreground">Connect to an existing server</strong>,
+								and point the phone here
 							{:else}
-								<span class="step-n">2</span> Open it and choose
-								<strong class="text-foreground">Connect to a server that's running</strong>,
+								<span class="step-n">2</span> Open it, choose
+								<strong class="text-foreground">Connect to an existing server</strong>,
 								then <strong class="text-foreground">Enter an address manually</strong>
 							{/if}
 						</p>
@@ -383,10 +388,6 @@
 								</div>
 							</div>
 						</div>
-						<p class="mb-5 max-w-[20rem] text-xs leading-relaxed text-foreground-muted">
-							Only show this to the phone you're adding — it carries the key that
-							pairs it. It stops working when this window closes.
-						</p>
 					{/if}
 
 					{#if handoffUnavailable}
@@ -414,26 +415,37 @@
 						     allowlisting is what pairing does), so a phone away from home
 						     can't reach the box at all — but it can reach this machine,
 						     which is already paired and holds a door open onto the box's
-						     pair endpoint for as long as this sheet is up. -->
-						<div class="door mb-5">
-							<div class="door-row">
-								<span class="door-label">Address</span>
-								<span class="door-value">{doorOrigin}</span>
+						     pair endpoint for as long as this sheet is up.
+
+						     Folded behind a link while a QR is up: the scan is the whole
+						     flow for almost everyone, and an address+code block sitting
+						     beside it read as a third simultaneous instruction. With no
+						     QR, typing IS the flow, so the door shows itself. -->
+						{#if handoffQr && !showManual}
+							<button type="button" class="door-toggle mb-5" onclick={() => (showManual = true)}>
+								Can't scan? Type an address instead
+							</button>
+						{:else}
+							<div class="door mb-5">
+								<div class="door-row">
+									<span class="door-label">Address</span>
+									<span class="door-value">{doorOrigin}</span>
+								</div>
+								<div class="door-row">
+									<span class="door-label">Code</span>
+									<span class="door-value">{pairingData?.token ?? "…"}</span>
+								</div>
+								<p class="door-note">
+									{#if handoffQr}
+										In the app, choose Enter an address manually and type these —
+										needs the phone on this computer's network.
+									{:else}
+										Works from anywhere this computer and your iPhone are together —
+										your server doesn't have to be on the same network.
+									{/if}
+								</p>
 							</div>
-							<div class="door-row">
-								<span class="door-label">Code</span>
-								<span class="door-value">{pairingData?.token ?? "…"}</span>
-							</div>
-							<p class="door-note">
-								{#if handoffQr}
-									Can't scan? Type these instead — needs the phone on this
-									computer's network.
-								{:else}
-									Works from anywhere this computer and your iPhone are together —
-									your server doesn't have to be on the same network.
-								{/if}
-							</p>
-						</div>
+						{/if}
 					{/if}
 
 					<!-- QR Code (server-rendered SVG encoding /pair#t=<token>), framed
@@ -566,6 +578,23 @@
 		border-radius: 12px;
 		padding: 0.75rem 0.875rem;
 		text-align: left;
+	}
+
+	/* The folded door: one quiet line where the address block will unfold.
+	   Underlined like a link, muted like a footnote — it must not compete
+	   with the QR above it. */
+	.door-toggle {
+		border: none;
+		background: none;
+		padding: 0;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		cursor: pointer;
+	}
+	.door-toggle:hover {
+		color: var(--color-foreground);
 	}
 
 	/* Same frame as .door, deliberately: this is an explanation of what is
