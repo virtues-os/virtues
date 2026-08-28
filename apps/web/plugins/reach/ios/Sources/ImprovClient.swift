@@ -204,6 +204,65 @@ final class ImprovClient: NSObject {
     }
   }
 
+  /// RPC 0x82: hand the box an account grant so it can link itself.
+  ///
+  /// The inversion that made 0x84 unnecessary. Rather than the app reading a
+  /// user_code off the box and carrying it to atlas, the already-signed-in app
+  /// mints a short-lived grant and injects it here; the box redeems it on its
+  /// own outbound poll. The box stays outbound-only and atlas never gains a
+  /// path in.
+  ///
+  /// Session-authorized: 0x86 must have succeeded on this connection.
+  ///
+  /// The box ACKs with `0x82 ["accepted"]` as soon as it has STORED the grant,
+  /// deliberately before redeeming it — redemption may outlive this Bluetooth
+  /// session, and grant-then-join is as legal as join-then-grant. So this
+  /// completing means the box holds the grant, not that the account is linked.
+  ///
+  /// This did not exist until 2026-08-28. `improv_grant` was declared in
+  /// build.rs, permitted by the ACL, and forwarded by commands.rs to a Swift
+  /// method nobody had written — so iOS setup reached the account hand-off and
+  /// died on "No command improv_grant found for plugin reach". Lockstep diffs
+  /// Rust's generate_handler! against COMMANDS and cannot see this file.
+  func claimGrant(id: String, grant: String, completion: @escaping (String?) -> Void) {
+    queue.async {
+      self.ensureConnected(id: id) { err in
+        if let err { completion(err); return }
+        var done = false
+        let finish: (String?) -> Void = { e in
+          guard !done else { return }
+          done = true
+          self.onResult = nil
+          self.onImprovError = nil
+          completion(e)
+        }
+        self.onImprovError = { code in
+          // 0x04 NotAuthorized carries two meanings here and the box will not
+          // distinguish them: no setup session, or ALREADY LINKED. The second
+          // is the one a person actually meets — re-running setup against a box
+          // that kept its key — and it is not a failure of theirs, so say what
+          // is true of both without alarming.
+          if code == 0x04 {
+            finish("This server is already linked to an account. Skip this step.")
+            return
+          }
+          finish("The server couldn't take the account hand-off (error \(code)).")
+        }
+        self.onResult = { data in
+          if Self.parseResult(data, command: 0x82) != nil { finish(nil) }
+        }
+        var payload: [UInt8] = []
+        let bytes = Array(grant.utf8).prefix(255)
+        payload.append(UInt8(bytes.count))
+        payload.append(contentsOf: bytes)
+        self.write(rpc: Self.buildRPC(command: 0x82, data: payload))
+        self.queue.asyncAfter(deadline: .now() + 20) {
+          finish("The server didn't answer — try again.")
+        }
+      }
+    }
+  }
+
   /// RPC 0x04: ask the BOX what networks it can see. Streams one packet per
   /// network; an empty packet ends the list.
   func wifiScan(id: String, completion: @escaping ([[String: Any]]?, String?) -> Void) {

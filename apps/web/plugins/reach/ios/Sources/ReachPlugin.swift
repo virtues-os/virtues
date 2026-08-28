@@ -35,6 +35,13 @@ class ImprovProvisionArgs: Decodable {
   let identity: String?
 }
 
+class ImprovGrantArgs: Decodable {
+  let id: String
+  /// The short-lived account grant this app minted; the box redeems it on its
+  /// own outbound poll. Never a long-lived secret.
+  let grant: String
+}
+
 class ImprovPairArgs: Decodable {
   let id: String
   let label: String?
@@ -60,6 +67,22 @@ class ReachPlugin: Plugin {
         invoke.resolve(["ok": false, "error": err])
       } else {
         invoke.resolve(["ok": true, "gated": gated])
+      }
+    }
+  }
+
+  /// Declared in build.rs and forwarded by commands.rs since the grant landed,
+  /// but never written here — so iOS setup reached the account hand-off and
+  /// failed with "No command improv_grant found for plugin reach" (seen on a
+  /// virgin box, 2026-08-28). Resolving `ok` shape matches its siblings so the
+  /// Rust caller needs no special case.
+  @objc public func improv_grant(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(ImprovGrantArgs.self)
+    ImprovClient.shared.claimGrant(id: args.id, grant: args.grant) { err in
+      if let err {
+        invoke.resolve(["ok": false, "error": err])
+      } else {
+        invoke.resolve(["ok": true])
       }
     }
   }

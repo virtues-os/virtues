@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Fail when the Swift Improv client and the box's parser disagree on a packet.
+"""Fail when the iOS Improv client and the rest of the system disagree.
+
+Two checks, both guarding the same seam: iOS setup is the one flow whose halves
+are written in different languages and never compiled together, so every
+mismatch between them ships silently and surfaces only on a radio, to a person
+mid-setup, as a message they cannot act on. Both bugs below were found that way
+on a virgin box on 2026-08-28, minutes apart.
+
+  1. Every `improv_*` command declared in build.rs has an @objc handler.
+     `improv_grant` did not — declared, ACL-permitted, forwarded by commands.rs
+     to a method nobody had written. Setup reached the account hand-off and died
+     on "No command improv_grant found for plugin reach".
+
+  2. The 0x83 packet has the arity the box parses.
 
 The box parses `0x83 PairConsume` as exactly four length-prefixed strings and
 REJECTS a fifth (`if !rest.is_empty() { return Err(InvalidPacket) }`). The iOS
@@ -28,6 +41,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RUST = ROOT / "crates/virtues-improv/src/protocol.rs"
 SWIFT = ROOT / "apps/web/plugins/reach/ios/Sources/ImprovClient.swift"
+BUILD_RS = ROOT / "apps/web/plugins/reach/build.rs"
+PLUGIN = ROOT / "apps/web/plugins/reach/ios/Sources/ReachPlugin.swift"
+
+
+def missing_ios_handlers() -> list[str]:
+    """Improv commands declared in build.rs with no @objc method to receive them.
+
+    `virtues_plugin_lockstep` already diffs COMMANDS against Rust's
+    generate_handler!, which is why the Rust half is never wrong. It cannot see
+    Swift. So `improv_grant` sat declared, ACL-permitted, and forwarded by
+    commands.rs to a method nobody had written — and iOS setup died at the
+    account hand-off with "No command improv_grant found for plugin reach".
+
+    Only `improv_*` commands: those are the ones commands.rs forwards to the
+    mobile plugin. The rest are desktop-only or handled in Rust on both sides.
+    """
+    declared = set(re.findall(r'"(improv_[a-z_]+)"', BUILD_RS.read_text()))
+    implemented = set(re.findall(r"@objc public func (improv_[a-z_]+)", PLUGIN.read_text()))
+    return sorted(declared - implemented)
 
 
 def box_arity() -> int:
@@ -58,6 +90,21 @@ def client_arity() -> int:
 
 
 def main() -> int:
+    missing = missing_ios_handlers()
+    if missing:
+        print(
+            "Improv commands declared but not implemented on iOS: "
+            + ", ".join(missing)
+            + "\n\n"
+            f"  declared:    {BUILD_RS.relative_to(ROOT)} (COMMANDS)\n"
+            f"  must handle: {PLUGIN.relative_to(ROOT)} (@objc public func)\n\n"
+            "commands.rs forwards these to the mobile plugin by name. A missing "
+            "one is not a compile error anywhere — it reaches the user mid-setup "
+            "as \"No command <name> found for plugin reach\".",
+            file=sys.stderr,
+        )
+        return 1
+
     box, client = box_arity(), client_arity()
     if box != client:
         print(
@@ -71,7 +118,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"✓ Improv 0x83 agrees: {box} strings on both sides")
+    print(f"✓ Improv: all improv_* commands implemented on iOS; 0x83 agrees at {box} strings")
     return 0
 
 
