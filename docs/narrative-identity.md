@@ -66,6 +66,14 @@ Everything below — **when the person offered it**:
 - **Future**: goals lined up; the three-year and ten-year wants; the feared
   future — the version of themselves the AI should help them notice they are
   drifting toward.
+- **Bonds**: the constitutive relationships — who they are bound to and how.
+  The mother, the business partner, the friend of twenty years are not
+  circumstances of a life; they are constituents of the identity (a self is
+  only a self among other selves). One authored line per person, linked to
+  the entity id. This is where the resolution queue's best question lands
+  ("4,000 messages with this person since 2019 — who are they to you?").
+  Distinct from the recent-people list in circumstances: recency says who is
+  *around*; bonds say who *matters* and *how*.
 - **Self-frameworks**: MBTI, Big Five, Enneagram, attachment styles — any
   vocabulary the person uses about themselves. These are welcome and
   valuable precisely because models natively understand them: "INFJ, high
@@ -89,6 +97,25 @@ Everything below — **when the person offered it**:
    the person edits and the machine never overwrites. Growth after that
    happens by *asking* (the resolution queue), never by writing.
 
+Stated more precisely (2026-08-28): **ratification, not composition, is the
+locus of authorship.** The machine may propose anything — a chapter draft, a
+candidate articulation, a Socratic "is it fair to say…?" — so long as
+nothing enters an identity surface without the person's explicit act. The
+line runs through Lonergan's levels: the machine may operate at experience
+and understanding (data, proposed insights), must stop at judgment
+(offering, never affirming — the person's *edit* is the judgment), and
+cannot touch decision (telos, values) — not as a safety policy but
+constitutively: a self authored by another is not a self, it is a
+description. Two invariants fall out and are load-bearing:
+
+- **A chapter never sediments into the life story unedited.** Sedimentation
+  is ratification; skipping the person's pass skips the act that makes the
+  words theirs.
+- **Machine drafts use chronicle-language.** A draft titled "The Decline"
+  has already smuggled a verdict into a provisional block. Drafts narrate
+  what happened, in the person's own prior vocabulary; evaluative namings
+  are offered only as questions.
+
 ## How the AI uses it — the subconscious contract
 
 The NI is **personal knowledge, not conversation material**. The AI reads it
@@ -103,6 +130,13 @@ almost never surfacing it:
 - It calibrates defaults silently: what "a good suggestion" means for THIS
   person, which vices not to feed, which register lands.
 - The rules are the exception: they are enforced, not weighed, and absolute.
+- **Never side with the document by default.** An every-conversation AI
+  holding a person's self-authored identity is a maximal self-verification
+  engine, and sycophantic agreement measurably reduces people's willingness
+  to repair conflicts (Cheng et al., *Science* 2025). Knowing someone's
+  story is not a license to take their side. Attribute, don't assert
+  ("you've written that…"), and hold the account as *theirs, of a date* —
+  not as fact about them.
 
 ## How it comes to exist, and how it grows
 
@@ -120,41 +154,124 @@ almost never surfacing it:
 - **Corrected by editing**: the document is a page; the person rewrites it
   whenever they like, and the core follows.
 
-## Its place in the system prompt — the three speeds
+## Its place in the system prompt — the formula
 
-The whole personal half of the system prompt is three blocks moving at three
-speeds, and NI is the slowest:
+*Settled 2026-08-28 after a seven-perspective review (Thomist, Ricoeur/
+McAdams, personality-psychology literature, 2026 context-engineering
+evidence, product comps, backend design, naming). The design survived; what
+follows is the ratified shape.*
 
-| block | answers | changes | source |
-|---|---|---|---|
-| **narrative identity** | who am I talking to — the arc, past AND future (telos, feared self) | months–years | authored by the person |
-| **rules** | what must I never/always do | rarely | confirmed by the person |
-| **prudential context** | what is the situation right now | hourly–daily | computed from the record, no LLM |
+The system prompt is an ordered set of named blocks — each a different map
+from the same life into text, ordered stable-first for prompt caching, with
+the one imperative block last for constraint recency:
 
-So the formula is **NI + rules + prudential context** — and no separate
-"future" block: the *aspirational* future (who they mean to become) is
-inside NI, while the *operational* future (tomorrow's flight) is prudential.
-Prudence is the right name: the virtue of right action in the particular
-situation, which is exactly what this block supplies.
+| # | tag | UI name | carries | author | changes |
+|---|---|---|---|---|---|
+| 1 | `<character>` | Character | the machine's persona and house style | us | never |
+| 2 | `<tool_usage>` / `<mode>` | — | competence | us | never |
+| 3 | `<narrative_identity>` | In your own words | the life story: arc, worldview, telos, bonds | the person | years |
+| 4 | `<current_chapter>` | The current chapter | the open period, drafted from the record | machine drafts, person edits | weeks |
+| 5 | `<memory>` | What I've learned | facts / manner / practices lanes | machine, person can edit | continuously |
+| 6 | `<circumstances>` | Right now | the computed present | SQL only, no LLM | hourly |
+| 7 | `<active_notebook>` / `<active_context>` | — | the room and the open page | the UI | per turn |
+| 8 | `<rules>` | Precepts | the person's absolute imperatives | the person | rarely |
 
-**Prudential context** (today a thin `build_user_context`: occupation/home,
-last three day-proses, connected sources, timezone) should grow toward a
-budgeted (~600–800 token), deterministic, SQL-only block computed fresh at
-conversation start:
+Prose vocabulary: "your life story" (never "portrait" — a portrait is
+painted by another's hand of a sitting subject, which is the exact
+connotation the doctrine forbids; the word also names a deleted feature).
+The two machine-facing surfaces get first-person UI names on purpose —
+theirs is "In your own words," the machine's is "What I've learned" —
+**voice marks ownership**.
 
-- the clock: local date, time of day, day of week
+**Precedence**, stated once in the prompt, rendered from block metadata:
+rules > narrative identity > current chapter > memory > character >
+circumstances. Declarative blocks describe; the one imperative block binds.
+Six voices describe, one commands, and the command goes last.
+
+### The current chapter (block 4)
+
+The middle duration the three-speed model was missing: too fast for the
+life story, too slow for today. A rolling narration of the open period,
+machine-drafted from the record in chronicle-language, edited by the person
+while they live it, and — when they declare it closed — **sedimented into
+the life story as a written chapter**. Sedimentation is how the NI grows
+without another interview, and closing is a first-class interview moment
+(exploration first: "what was that period really about?" — then
+resolution: "where did it leave you?"). Closed chapters stay versioned and
+reopenable: a *written* identity uniquely enables narrative foreclosure,
+and reinterpretation of the past is half of growth. Exactly one chapter is
+open at a time. No shipping product has this construct.
+
+### Memory (block 5)
+
+The reform of the invisible `<memory>` blob. Three lanes — **facts** (their
+world: the dog's name), **manner** (concise, numbered lists), **practices**
+(what they're holding to) — per-note rows with add/revise/retire, per-lane
+caps, dates on every note, and a page the person can read and edit. A
+machine channel about the person that the person cannot see is the thing
+this product deleted once already. The test for what goes here vs the NI:
+could a stranger who spent 200 hours beside you learn it? Then memory.
+Does being wrong about it insult rather than inconvenience? Then it may
+only ever arrive user-authored.
+
+### Circumstances (block 6)
+
+Formerly "prudential context" — retired, because prudence is a virtue *of
+the agent* and this block is the supply prudence consumes. The right term
+of art already existed: *circumstantiae* (ST I-II q.7), what "stands
+around" the act, and Cicero's canonical list — who, what, where, when,
+how, why — is nearly a spec for the fields:
+
+- the clock (quantized to 15 minutes — honest, and cache-friendly)
 - the place: current or last visit; home
-- the day so far: today's deterministic spine (visits + calendar + sleep —
-  the zero-LLM today view that already exists)
+- the day so far: today's deterministic spine
 - the calendar: today's and tomorrow's events
-- recent people: the last ~2 weeks' correspondents WITH entity ids (so tool
-  calls can join) — labeled as *recency, not significance*: this is "who is
-  around lately," never a ranking of who matters
+- recent people: last ~2 weeks' correspondents WITH entity ids — labeled
+  *recency, not significance*: who is around, never who matters (bonds, in
+  the NI, carry who matters)
 - live threads: recently edited pages, active notebooks, last night's sleep
+- observances: recurring time the person keeps — fasts, sabbaths,
+  anniversaries. Lived time is cyclical as well as linear, and a machine
+  that knows the clock but not that it is Lent or a death-anniversary is
+  missing a dimension of time, not a feature. User-authored sources only.
 
-Same discipline as the core: hard budget, deterministic queries, and
-absence stays silent — a prudential block that lists what it doesn't know
-is noise.
+Hard budget (~600–800 tokens via fixed line caps), deterministic queries,
+absence stays silent. Prudence keeps one sentence, in the docs rather than
+the prompt: *the system is memoria made durable and circumstantiae made
+legible, offered into the person's counsel.*
+
+### Rules (block 8)
+
+Kept few — 3 to 10, capped — because of what bindingness *is*: a rule is
+an exclusionary reason; it doesn't outweigh considerations, it excludes
+them from deliberation. Many rules collide, colliding rules get weighed,
+and a weighed rule has been demoted back to a preference. Discipline:
+
+- **Only imperatives.** One aspiration ("I'm trying to read more") in the
+  block decays every rule toward advice. Aspirations live in the NI or
+  memory.
+- **Revision is ceremonious** — restatement and an explicit act, never a
+  settings toggle. A rule you can casually flip mid-conversation was never
+  a rule; it was a preference wearing a uniform. (A rule is a promise
+  deposited with a witness — self-constancy against your own future moods.)
+- **Affirmative rules cost more than prohibitions.** "Never raise X" binds
+  always; "help me hold Y" binds always *but not at every moment* — each
+  commission spends the machine's judgment about occasions. Cap
+  commissions harder.
+- **Last in the prompt** for recency, plus a compressed digest re-injected
+  near the live turn in long conversations — at 60k tokens of transcript
+  the end of the prompt is the dead middle of the context.
+
+### Assembly notes
+
+Ordered registry, one error policy (log and omit, never fabricate — the
+house rule made structural), per-block budgets with sentence-boundary
+truncation, empty blocks render nothing (an empty `<rules>` teaches the
+model the section is noise), cache breakpoint after memory, every query
+deterministic (total ORDER BY; the clock computed once, quantized).
+Machine-written blocks carry provenance — memory poisoning via ingested
+content is a documented attack class, and *who wrote this, from what
+evidence, when* is the practiced defense.
 
 ## What it is NOT
 
