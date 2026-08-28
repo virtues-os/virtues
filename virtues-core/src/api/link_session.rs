@@ -8,8 +8,11 @@
 //! their phone, and the display's 2s heartbeat both kept the session fresh and
 //! redeemed it when sign-in completed.
 //!
-//! That screen is gone — the app fetches the code over Bluetooth (RPC 0x84) and
-//! puts it straight in a URL, so nothing is retyped. But the SESSION is not
+//! That screen is gone, and so is the code. The app carries an account GRANT to
+//! the box over Bluetooth (RPC 0x82) and the box polls atlas with it — the
+//! inverse of the old round-trip, so nothing is read off the box and nothing is
+//! retyped. (0x84, which handed the app the user_code, was deleted 2026-08-24.)
+//! But the SESSION is not
 //! gone, and moving it out is the correction to a real mistake: it was deleted
 //! along with the screen on 2026-08-17, on the reasoning that no surface
 //! rendered it. `maintenance::ble_provision` did, and does — it is Linux-only,
