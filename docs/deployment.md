@@ -1,8 +1,8 @@
 # Deployment & Runtime Architecture
 
 > How Virtues ships and runs. Companion to
-> [`networking-relay-tee.md`](networking-relay-tee.md) (how a browser reaches the box,
-> via the blind relay)
+> [`relay-control-plane.md`](relay-control-plane.md) (how a paired device reaches
+> the box; `networking-relay-tee.md` is the superseded pre-iroh ADR)
 > and [`entitlement.md`](entitlement.md) (the cloud wall).
 
 ---
@@ -68,10 +68,10 @@ it, also unprivileged. There is no `NET_ADMIN` component and nothing that needs
 > WireGuard: a minimal rootful `virtues-wireguard` daemon (`crates/virtues-wg`)
 > owned `wg0`, the reconcile loop, the netlink IPv6 watcher, and the
 > mDNS/SSDP multicast functions, coordinating with the rootless app through the
-> DB rather than IPC. **All of it is gone.** Reach is the blind relay — the box
+> DB rather than IPC. **All of it is gone.** Reach is iroh over a relay — the box
 > dials *outbound* and needs no kernel networking privileges at all, which is
 > what let the privileged component be deleted rather than merely shrunk. See
-> [`networking-relay-tee.md`](networking-relay-tee.md).
+> [`relay-control-plane.md`](relay-control-plane.md).
 >
 > The only trace left in the codebase is retirement code: `cli/upgrade.rs`
 > disables and removes a leftover `virtues-wireguard.service` on boxes upgrading
@@ -171,7 +171,7 @@ rollback.
 - `docker-compose.yml` (deleted — orphaned by native install)
 - `deploy/quadlet/` (deleted — orphaned by native install)
 - `deploy/wireguard.Dockerfile` **and the WG daemon itself** (`crates/virtues-wg`,
-  `virtues-wireguard.service`) — deleted with the move to the blind relay
+  `virtues-wireguard.service`) — deleted with the move to the relay
 - Nomad job files (gone — replaced by `docker run` on EC2)
 
 The cloud `services/{atlas,virtues-api}/Dockerfile` are the only Dockerfiles that still matter.
