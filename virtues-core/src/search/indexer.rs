@@ -6,7 +6,6 @@
 
 use anyhow::Result;
 use pgvector::Vector;
-use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::collections::HashMap;
 

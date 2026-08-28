@@ -783,9 +783,7 @@ async fn build_system_prompt(
     is_new_user: bool,
     notebook_id: Option<&str>,
 ) -> String {
-    use crate::agent::prompt::build_personalized_prompt;
     use crate::api::assistant_profile::get_assistant_name;
-    use crate::api::personas::get_persona_content;
     use crate::api::profile::get_display_name;
 
     // Load personalization from profiles (with fallbacks)
@@ -799,144 +797,202 @@ async fn build_system_prompt(
         return crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name);
     }
 
-    // Load persona content from database (or fallback to registry default)
-    let persona_content = get_persona_content(pool, persona_id).await.ok().flatten();
-
-    // Build narrative identity (user's present-orientation self-portrait)
-    let narrative_identity = build_narrative_identity(pool).await;
-
-    // Build personalized base prompt (identity → persona → narrative_identity → tools)
-    let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode, &narrative_identity);
-
-    // The enforceable half, right after the prose it governs. Skipped entirely
-    // when there are no rules: an empty <rules> block would teach the model that
-    // the section is usually noise.
-    let rules = build_rules(pool).await;
-    if !rules.is_empty() {
-        prompt.push_str(
-            &crate::agent::prompt::RULES_PROMPT
-                .replace("{user_name}", &user_name)
-                .replace("{rules}", &rules),
-        );
-    }
-
-    // Inject onboarding prompt for new users (first conversation)
-    if is_new_user {
-        prompt.push_str(crate::agent::prompt::NEW_USER_PROMPT);
-    }
-
-    // Load AI persistent memory (if any).
-    //
-    // Read as JSON, because the column is JSONB — decoding straight into String
-    // failed on type, and `if let Ok` dropped the error, so this block never
-    // rendered. Paired with the write in `update_memory`, which was storing a
-    // bare string into the same JSONB column and being rejected: the tool
-    // reported saving nothing and the prompt read back nothing, and neither end
-    // said so.
-    match sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT memory FROM app_assistant_profile WHERE memory IS NOT NULL LIMIT 1"
+    build_system_prompt_blocks(
+        pool,
+        active_page,
+        timezone,
+        agent_mode,
+        persona_id,
+        is_new_user,
+        notebook_id,
+        &assistant_name,
+        &user_name,
     )
-    .fetch_optional(pool)
     .await
-    {
-        Ok(Some(value)) => {
-            // A JSON string is the shape `update_memory` writes; anything else
-            // is older or hand-written, and rendering it verbatim beats
-            // dropping it.
-            let memory = value
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| value.to_string());
-            if !memory.trim().is_empty() {
-                prompt.push_str(&format!(
-                    "\n\n<memory>\nYour persistent memory (saved via update_memory tool). Reference when relevant:\n{}\n</memory>",
-                    memory
-                ));
-            }
-        }
-        Ok(None) => {}
-        Err(e) => tracing::warn!("[chat] persistent memory omitted from the prompt: {e}"),
-    }
+    .0
+}
 
-    // Add current date/time for temporal awareness
-    let now = Utc::now();
+/// The registry: every prompt section as a named block, rendered in list
+/// order by `prompt_blocks::assemble`. This is the current order verbatim —
+/// the formula's reorder (rules last, quantized clock, cache breakpoint) is
+/// a deliberate later slice, and it happens by editing THIS list.
+#[allow(clippy::too_many_arguments)]
+async fn build_system_prompt_blocks(
+    pool: &PgPool,
+    active_page: Option<&ActivePageContext>,
+    timezone: Option<&str>,
+    agent_mode: &str,
+    persona_id: &str,
+    is_new_user: bool,
+    notebook_id: Option<&str>,
+    assistant_name: &str,
+    user_name: &str,
+) -> (String, Vec<crate::agent::prompt_blocks::RenderedBlock>) {
+    use crate::agent::prompt::build_personalized_prompt;
+    use crate::agent::prompt_blocks::{assemble, Author, Block, BlockMeta, Cadence, Mood};
+    use crate::api::personas::get_persona_content;
 
-    if let Some(tz_str) = timezone {
-        // Try to parse the IANA timezone and convert
-        if let Ok(tz) = tz_str.parse::<Tz>() {
-            let local = now.with_timezone(&tz);
-            let date_str = local.format("%A, %B %d, %Y").to_string();
-            let time_str = local.format("%I:%M %p %Z").to_string(); // e.g., "7:20 PM EST"
-            prompt.push_str(&format!(
-                "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
-                date_str, time_str
-            ));
-        } else {
-            // Fallback to UTC if timezone parsing fails
-            let date_str = now.format("%A, %B %d, %Y").to_string();
-            let time_str = now.format("%H:%M UTC").to_string();
-            prompt.push_str(&format!(
-                "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
-                date_str, time_str
-            ));
-        }
-    } else {
-        let date_str = now.format("%A, %B %d, %Y").to_string();
-        let time_str = now.format("%H:%M UTC").to_string();
-        prompt.push_str(&format!(
-            "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
-            date_str, time_str
-        ));
-    }
-
-    // Add user context (identity, recent days, connected sources)
-    if let Some(user_context) = build_user_context(pool, &user_name).await {
-        prompt.push_str(&user_context);
-    }
-
-    // Inline the active Notebook (room) as a salience lens: its name, catch-up
-    // memo, and member URLs. This is the room the chat lives in.
-    if let Some(notebook_id) = notebook_id {
-        if let Some(block) = build_notebook_context(pool, notebook_id).await {
-            prompt.push_str(&block);
-        }
-    }
-
-    if let Some(ctx) = active_page {
-        if let Some(page_id) = &ctx.page_id {
-            let title = ctx.page_title.as_deref().unwrap_or("Untitled");
-
-            // Include the current content from Yjs if available
-            // This is the source of truth - use this for edits, not the database content
-            if let Some(content) = &ctx.content {
-                // Truncate large content to avoid consuming too much context
-                let (content_display, truncation_note) = if content.chars().count() > MAX_PAGE_CONTENT_CHARS {
-                    let truncated_content: String = content.chars().take(MAX_PAGE_CONTENT_CHARS).collect();
-                    let remaining = content.chars().count() - MAX_PAGE_CONTENT_CHARS;
-                    let truncated = format!(
-                        "{}...\n\n[Content truncated - {} more characters]",
-                        truncated_content,
-                        remaining
-                    );
-                    (truncated, " The content shown is truncated. Call get_page_content for the complete document before making edits.")
-                } else {
-                    (content.clone(), "")
+    let blocks: Vec<Block<'_>> = vec![
+        // The fused head: base identity + persona + narrative identity + tool
+        // guidance + mode, still one string from build_personalized_prompt.
+        // Splits into <character>/<narrative_identity>/<tools> in the reorder
+        // slice.
+        Block {
+            meta: BlockMeta { tag: "base", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Slow },
+            body: Box::pin(async move {
+                let persona_content = get_persona_content(pool, persona_id).await.ok().flatten();
+                let narrative_identity = build_narrative_identity(pool).await;
+                Some(build_personalized_prompt(
+                    assistant_name,
+                    user_name,
+                    persona_id,
+                    persona_content.as_deref(),
+                    agent_mode,
+                    &narrative_identity,
+                ))
+            }),
+        },
+        // The enforceable half, right after the prose it governs. Absent
+        // entirely when there are no rules: an empty <rules> block would
+        // teach the model that the section is usually noise.
+        Block {
+            meta: BlockMeta { tag: "rules", author: Author::User, mood: Mood::Imperative, rung: 100, cadence: Cadence::Slow },
+            body: Box::pin(async move {
+                let rules = build_rules(pool).await;
+                (!rules.is_empty()).then(|| {
+                    crate::agent::prompt::RULES_PROMPT
+                        .replace("{user_name}", user_name)
+                        .replace("{rules}", &rules)
+                })
+            }),
+        },
+        // Onboarding guidance for a first conversation.
+        Block {
+            meta: BlockMeta { tag: "new_user", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Slow },
+            body: Box::pin(async move {
+                is_new_user.then(|| crate::agent::prompt::NEW_USER_PROMPT.to_string())
+            }),
+        },
+        // AI persistent memory (if any).
+        //
+        // Read as JSON, because the column is JSONB — decoding straight into
+        // String failed on type, and `if let Ok` dropped the error, so this
+        // block never rendered. Paired with the write in `update_memory`.
+        Block {
+            meta: BlockMeta { tag: "memory", author: Author::Machine, mood: Mood::Declarative, rung: 50, cadence: Cadence::Session },
+            body: Box::pin(async move {
+                match sqlx::query_scalar::<_, serde_json::Value>(
+                    "SELECT memory FROM app_assistant_profile WHERE memory IS NOT NULL LIMIT 1",
+                )
+                .fetch_optional(pool)
+                .await
+                {
+                    Ok(Some(value)) => {
+                        // A JSON string is the shape `update_memory` writes;
+                        // anything else is older or hand-written, and rendering
+                        // it verbatim beats dropping it.
+                        let memory = value
+                            .as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| value.to_string());
+                        (!memory.trim().is_empty()).then(|| {
+                            format!(
+                                "\n\n<memory>\nYour persistent memory (saved via update_memory tool). Reference when relevant:\n{}\n</memory>",
+                                memory
+                            )
+                        })
+                    }
+                    Ok(None) => None,
+                    Err(e) => {
+                        tracing::warn!("[chat] persistent memory omitted from the prompt: {e}");
+                        None
+                    }
+                }
+            }),
+        },
+        // Current date/time for temporal awareness.
+        Block {
+            meta: BlockMeta { tag: "datetime", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Quantized },
+            body: Box::pin(async move {
+                let now = Utc::now();
+                let (date_str, time_str) = match timezone.and_then(|t| t.parse::<Tz>().ok()) {
+                    Some(tz) => {
+                        let local = now.with_timezone(&tz);
+                        (
+                            local.format("%A, %B %d, %Y").to_string(),
+                            local.format("%I:%M %p %Z").to_string(), // e.g., "7:20 PM EST"
+                        )
+                    }
+                    // No timezone, or an unparseable one: fall back to UTC.
+                    None => (
+                        now.format("%A, %B %d, %Y").to_string(),
+                        now.format("%H:%M UTC").to_string(),
+                    ),
                 };
+                Some(format!(
+                    "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
+                    date_str, time_str
+                ))
+            }),
+        },
+        // User context (identity, recent days, connected sources).
+        Block {
+            meta: BlockMeta { tag: "user_context", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Quantized },
+            body: Box::pin(async move { build_user_context(pool, user_name).await }),
+        },
+        // The active Notebook (room) as a salience lens: its name, catch-up
+        // memo, and member URLs. This is the room the chat lives in.
+        Block {
+            meta: BlockMeta { tag: "active_notebook", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::Session },
+            body: Box::pin(async move {
+                match notebook_id {
+                    Some(id) => build_notebook_context(pool, id).await,
+                    None => None,
+                }
+            }),
+        },
+        // The open page's live content (Yjs is the source of truth).
+        Block {
+            meta: BlockMeta { tag: "active_context", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::PerTurn },
+            body: Box::pin(async move { build_active_page_block(active_page) }),
+        },
+    ];
 
-                prompt.push_str(&format!(
-                    "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing.\n\n<current_content>\n{}\n</current_content>\n\nUse the edit_page tool to make changes. The 'find' parameter locates text, 'replace' provides the new text. For a full rewrite, set find to empty string. Edits are applied immediately via real-time sync.{}\n</active_context>",
-                    title, page_id, content_display, truncation_note
-                ));
+    assemble(blocks).await
+}
+
+/// Render the open-page section, if a page is open.
+fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<String> {
+    let ctx = active_page?;
+    let page_id = ctx.page_id.as_ref()?;
+    let title = ctx.page_title.as_deref().unwrap_or("Untitled");
+
+    Some(match &ctx.content {
+        Some(content) => {
+            // Truncate large content to avoid consuming too much context
+            let (content_display, truncation_note) = if content.chars().count() > MAX_PAGE_CONTENT_CHARS {
+                let truncated_content: String = content.chars().take(MAX_PAGE_CONTENT_CHARS).collect();
+                let remaining = content.chars().count() - MAX_PAGE_CONTENT_CHARS;
+                let truncated = format!(
+                    "{}...\n\n[Content truncated - {} more characters]",
+                    truncated_content,
+                    remaining
+                );
+                (truncated, " The content shown is truncated. Call get_page_content for the complete document before making edits.")
             } else {
-                prompt.push_str(&format!(
-                    "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing. Use get_page_content to read it first, then edit_page to make changes.\n</active_context>",
-                    title, page_id
-                ));
-            }
-        }
-    }
+                (content.clone(), "")
+            };
 
-    prompt
+            format!(
+                "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing.\n\n<current_content>\n{}\n</current_content>\n\nUse the edit_page tool to make changes. The 'find' parameter locates text, 'replace' provides the new text. For a full rewrite, set find to empty string. Edits are applied immediately via real-time sync.{}\n</active_context>",
+                title, page_id, content_display, truncation_note
+            )
+        }
+        None => format!(
+            "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing. Use get_page_content to read it first, then edit_page to make changes.\n</active_context>",
+            title, page_id
+        ),
+    })
 }
 
 /// Test-only view of the assembled prompt, so audits in other modules can
@@ -1977,6 +2033,39 @@ mod tests {
     async fn empty_rules_leave_no_block(pool: PgPool) {
         let prompt = build_system_prompt_for_audit(&pool).await;
         assert!(!prompt.contains("<rules>"), "empty rules block was rendered");
+    }
+
+    /// The registry IS the render order. This pins the current order so a
+    /// future edit to the block list is a deliberate, test-visible act — the
+    /// reorder slice (rules last, per the formula doc) flips this assertion
+    /// on purpose, and nothing reorders by accident.
+    #[sqlx::test]
+    async fn prompt_blocks_render_in_registry_order(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_rules (id, kind, rule) VALUES ('rule_t1', 'avoid', 'x')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (prompt, rendered) = build_system_prompt_blocks(
+            &pool, None, Some("America/Chicago"), "default", "default", false, None, "Ari",
+            "Adam",
+        )
+        .await;
+
+        let tags: Vec<&str> = rendered.iter().map(|r| r.tag).collect();
+        // Blocks with no data render nothing; the ones that DO render must
+        // appear in registry order, with the fused head first.
+        assert_eq!(tags.first(), Some(&"base"), "the fused head must render first");
+        assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
+        assert!(tags.contains(&"datetime"));
+        let expected = ["base", "rules", "new_user", "memory", "datetime", "user_context", "active_notebook", "active_context"];
+        let mut last = 0usize;
+        for t in &tags {
+            let pos = expected.iter().position(|e| e == t).expect("unknown block tag");
+            assert!(pos >= last, "block {t} rendered out of registry order: {tags:?}");
+            last = pos;
+        }
+        // And the assembly is still one contiguous prompt, not fragments.
+        assert!(prompt.contains("<rules>") && prompt.contains("<datetime>"));
     }
 
     #[test]
