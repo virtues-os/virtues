@@ -40,10 +40,12 @@ Pairing a device is the one human verb for connecting something to your box:
 virtues pair
 ```
 
-It prints the box's standing code and waits for you to type it into the app.
-The code is multi-use and stays live, so running this again is harmless — it
-prints the same code rather than inventing a new one. (`login` and `link`
-still work as aliases.)
+It prints a code to type into the app, then waits. On a box that's already
+yours each code is fresh, single-use, and good for thirty minutes — running
+this again mints a new one rather than reprinting the last, so use the code
+from the run you're looking at. (Only an unclaimed box, during setup, shows a
+standing code that pairs more than one device.) `login` and `link` still work
+as aliases.
 
 The devices allowed to reach your box are an explicit allowlist, and that
 allowlist *is* the authentication boundary:
