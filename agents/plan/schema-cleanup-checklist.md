@@ -77,25 +77,28 @@ migrations/ files never change once they exist on origin/staging.)*
       temporary allowlist for the four files 9f9538f3 restored — DELETE
       it once this wave merges to staging.
 
-## 3 · RM — dead tables (VERIFIED 2026-08-28, adversarial pass)
+## 3 · RM — dead tables — **LANDED 2026-08-28, migration 0010** (`3b265dc8`)
+
+All nine tables dropped in one migration, code sweeps first, full lib
+suite green (539 passed) and the G1 guard green after.
 
 *Every item below survived a fresh refutation attempt. Caveats are
 mandatory co-deletions, not suggestions.*
 
-- [ ] **R1** ✅ `app_mcp_servers` + `app_mcp_tools` + the two
+- [x] **R1** ✅ `31f9bffa` — `app_mcp_servers` + `app_mcp_tools` + the two
       *uncompiled* modules (`api/mcp_client.rs`, `mcp/client.rs` —
       verified three ways: no mod declaration, no `#[path]`, no external
       callers of any pub item) + indexes + FK. Co-delete two doc-comment
       mentions: `crates/virtues-registry/src/lib.rs:23`, `tools.rs:6`.
 - ~~**R2** `wiki_years`~~ — **KEPT** (Adam, 2026-08-28): the table stays.
-- [ ] **R3** ✅ `wiki_narrative_interview` + `api/narrative_interview.rs`
+- [x] **R3** ✅ `9904c760` — `wiki_narrative_interview` + `api/narrative_interview.rs`
       + route (`server/mod.rs:296-300`) + client fns (`client.ts:383-414`,
       zero callers). **Verifier additions:** must also delete the live
       catalog entry `tools/sql_query.rs:240-245` (else the agent is told
       to query a dropped table) and fix the doc comment
       `agent/prompt.rs:56`. Drafter is unaffected (reads the chat
       transcript, not this table).
-- [ ] **R4** ✅ `data_activity_listening` — **descriptor and table must
+- [x] **R4** ✅ `33b6b30e` — `data_activity_listening` — **descriptor and table must
       drop in the SAME change**: stream_health/lifeline/census/wiki all
       `format!`-build SQL from the registry, and stream_health's single
       UNION takes every stream down if the table is gone but the
@@ -104,14 +107,14 @@ mandatory co-deletions, not suggestions.*
       list), `apps/web/src/lib/wiki/ontology.ts:22`, LaneMeasure
       `ontologies.rs:325`, `dayline/context.rs:250-270`, index +
       trigger + named constraint in 0001.
-- [ ] **R5** ✅ `app_applet_package` + the INSERT at
+- [x] **R5** ✅ `2fde58a2` — `app_applet_package` + the INSERT at
       `applet_git_import.rs:113`. Note: forecloses the "is there a newer
       version" check for git-imported applets (the column's stated
       purpose) — acceptable, feature never built.
-- [ ] **R6** ✅ `app_auth_event_archive` — sweeper's CTE move-then-delete
+- [x] **R6** ✅ `2fde58a2` — `app_auth_event_archive` — sweeper's CTE move-then-delete
       (`sweeper.rs:112`) becomes a plain DELETE; drop table + index +
       the doc comment at `sweeper.rs:17-18`.
-- [ ] **R26** ✅ *(corrected by verification)* Quota subsystem:
+- [x] **R26** ✅ `3b265dc8` — *(corrected by verification)* Quota subsystem:
       `app_api_usage` + `app_usage_limits` + `api/usage.rs` fns + boot
       seed (`server/mod.rs:56`) + re-export block (`api/mod.rs:236-239`)
       + **six** call sites: 3× `record_usage`
@@ -125,7 +128,7 @@ mandatory co-deletions, not suggestions.*
       paid APIs — in practice it never fired (the counter was always 0),
       but note it: if real caps are ever wanted, they come back as a
       simple per-call budget, not this subsystem.
-- [ ] **R27** ✅ `app_erasure` — cleanest item verified: zero references
+- [x] **R27** ✅ `3b265dc8` (migration 0010) — `app_erasure` — cleanest item verified: zero references
       outside migration 0003; outbound FK only; indexes + CHECK drop
       with the table.
 
