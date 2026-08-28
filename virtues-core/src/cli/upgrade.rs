@@ -436,6 +436,12 @@ async fn activate(
     }
 
     ui::step("running migrations under the new binary…");
+    // The child starts as root but demotes itself to `virtues` almost
+    // immediately (main.rs `maybe_reexec_as_service_user` — Postgres peer
+    // auth). The new binary runs its system repairs in that pre-demotion
+    // instant; the `run()` after this match is THIS binary's own root-context
+    // pass, so that once this orchestrator is the old half of a future
+    // upgrade, repairs fire even if the new binary's hook moves again.
     match Command::new(BINARY_PATH).arg("migrate").status() {
         Ok(s) if s.success() => {}
         Ok(s) => {
@@ -446,6 +452,10 @@ async fn activate(
         }
         Err(e) => return Err(flip_back(layout, format!("invoke migrate: {e} — rolled back"))),
     }
+
+    // This orchestrator's own repair pass — see the comment above the migrate
+    // invocation. Never fails the upgrade.
+    crate::cli::system_repairs::run();
 
     // The box keeps its default `virtues.local` name; remove the dead
     // hostname-rename sudoers grant from older installs. Best-effort.

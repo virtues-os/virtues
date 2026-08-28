@@ -948,6 +948,20 @@ fn maybe_reexec_as_service_user() {
     if user.is_empty() || user == "virtues" {
         return;
     }
+    // The one root moment the NEW binary gets during an upgrade, and the last
+    // instruction before it is given away: the orchestrator (the OLD binary)
+    // spawns `virtues migrate` as root, and this guard is about to demote it
+    // to `virtues` — which can never chown root-owned state back to itself.
+    // System repairs run HERE, before the drop. Putting them after the demotion
+    // (in the Migrate arm of cli/mod.rs, where they also sit) is exactly the
+    // mistake that shipped in v0.1.5-staging.72: the repair was present,
+    // root-gated, and skipped silently on every box because this re-exec had
+    // already stripped root by the time it ran. run() gates on euid 0 itself,
+    // so a non-root login user passing through this demotion skips repairs
+    // rather than half-running them.
+    if cmd == "migrate" {
+        virtues::cli::system_repairs::run();
+    }
     eprintln!("(running as '{user}' — switching to the 'virtues' service user)");
     use std::os::unix::process::CommandExt;
     let mut reexec = std::process::Command::new("sudo");
