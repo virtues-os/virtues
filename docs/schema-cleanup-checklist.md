@@ -46,19 +46,36 @@ box refuse to boot on the next prerelease and broken the next atlas
 deploy. Files restored byte-for-byte. Candidate **G4**: a CI check that
 migrations/ files never change once they exist on origin/staging.)*
 
-- [ ] **G1** Extend `tools/check-dynamic-inserts.py` with the inverse
+- [x] **G1** ✅ `49d8d8d6` — done, and it found two blind spots in the
+      ORIGINAL check too (`build_batch_upsert_query` was never validated
+      at all; backslash-continued INSERT strings were skipped). Catalog
+      swept of 8 audited phantoms + `content_summary`; wired into CI
+      after the migrate step. Green: 19 writer lists + 37 catalog
+      entries. Extend `tools/check-dynamic-inserts.py` with the inverse
       check: every `sql_query.rs` `key_columns` entry must exist in the
       schema AND appear in some writer's column list. Retires the
       phantom-column class permanently. *(Verifier addition: the scan
       must include `virtues-core/seeds/*.sql` INSERT column lists — raw
       SQL seeds are a writer class the current check cannot see, and
       they hid five "never written" columns from the audit.)*
-- [ ] **G2** Reconciliation test between `registered_ontologies()` and
+- [x] **G2** ✅ `39afd005` — `registry_and_sql_catalog_agree_or_divergence_is_named`,
+      with stale-allowlist detection (an explanation cannot outlive its
+      divergence). Passed first try, confirming the audit's inventory.
+      Reconciliation test between `registered_ontologies()` and
       `get_table_metadata()` — every divergence must be on an explicit
       allowlist with a reason (the `entities.rs:717` pattern, pointed at
       the second catalog).
-- [ ] **G3** One-off: reconcile the 102 orphaned `search_embeddings` rows
-      that have no `search_vectors` row (crash between the two writes).
+- [x] **G3** ✅ **FALSE ALARM, resolved by diagnosis**: all 102
+      vectorless rows are `model='skip'` — empty records, vectorless BY
+      DESIGN (the indexer writes a hash-only row for empty text so it
+      doesn't respin on it). Zero crash-window orphans exist; the
+      embed/vector writes turn out to share one transaction. No code
+      change; recorded so nobody "fixes" it later.
+- [x] **G4** ✅ `9d8d6a67` — applied migrations are append-only in CI
+      (PR-only step; allows new files + consumed `.sql.pending`; flags
+      any M/D on existing `.sql` in core or atlas chains). Carries a
+      temporary allowlist for the four files 9f9538f3 restored — DELETE
+      it once this wave merges to staging.
 
 ## 3 · RM — dead tables (VERIFIED 2026-08-28, adversarial pass)
 
