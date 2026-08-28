@@ -5,7 +5,7 @@
 > the source of truth on 2026-06-29 and it lost that role when reach moved to
 > iroh. The current design is [relay-control-plane.md](relay-control-plane.md);
 > the accurate user-facing account is
-> [the reach manual page](../manual/operate/reach.md).
+> [the reach manual page](../docs/operate/reach.md).
 >
 > Two things to hold in mind while reading it:
 >

@@ -2,7 +2,7 @@
 //!
 //! On an appliance the state root is its own filesystem — a blank NVMe claimed
 //! at first boot (`virtues-firstboot.sh`) — while the OS lives on the boot
-//! medium (a microSD card on the Q6A; see docs/appliance-image.md). That split
+//! medium (a microSD card on the Q6A; see agents/build/appliance-image.md). That split
 //! is deliberate: the card is the weakest storage on the board and wears out
 //! under database load, so the database, the lake and the journal — everything
 //! that writes continuously — belong on the NVMe, and the card carries only a

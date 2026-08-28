@@ -9,7 +9,7 @@
  * The bundle describes ITSELF rather than inheriting the box's version. That
  * matters: once a client caches a bundle, the box can be upgraded while the
  * client still runs the previous one, and reporting the box's number would
- * assert something the client never loaded. See docs/spa-delivery-plan.md and
+ * assert something the client never loaded. See agents/plan/spa-delivery-plan.md and
  * `mac-plan.md` invariant 4 ("no component asserts a fact it didn't observe").
  *
  * Runs as part of `pnpm build`, after vite, so it lands in the adapter's

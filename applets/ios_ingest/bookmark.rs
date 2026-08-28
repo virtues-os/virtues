@@ -1,6 +1,6 @@
 //! iOS share → `data_content_bookmark`.
 //!
-//! The phone's half of the share sheet (docs/bookmarks-plan.md §5). The
+//! The phone's half of the share sheet (agents/plan/bookmarks-plan.md §5). The
 //! extension writes a payload into a shared App Group container and returns
 //! immediately; the app drains that container and posts here. Nothing in this
 //! file assumes which door sent it — a Shortcut posting the same shape works

@@ -74,7 +74,7 @@
   It shows the SNI-routed TCP relay with per-box ACME, a box-held TLS key, and browser-anywhere access.
   Reach is now an iroh connection between two Ed25519 keys (LAN-direct → hole-punched → relayed), and a browser cannot reach a box at all — it has no key to prove itself.
   The relay still cannot read your traffic, but it is <b>not</b> blind: it sees which two keys are talking, their addresses, and how much passes. &ldquo;RAM-only&rdquo; below was never an implemented or audited property.
-  The accurate account is <code>manual/operate/reach.md</code>; the design notes are in <code>docs/relay-control-plane.md</code>. Kept as a record of the old design.</div>
+  The accurate account is <code>docs/operate/reach.md</code>; the design notes are in <code>agents/archive/relay-control-plane.md</code>. Kept as a record of the old design.</div>
   <p class="sub">A Mac on WeWork wifi reaching your home box — the secrets, the connections, and what happens when you pull the plug.</p>
   <div class="tl"><b>One sentence:</b> your home box <b class="c-box">dials OUT</b> to a <b class="c-relay">blind relay</b> and holds the connection open; a browser anywhere hits the relay, which forwards <i>sealed</i> bytes to your box over that already-open pipe. Nobody opens a port at your house, and the relay can't read a thing.</div>
 
@@ -189,7 +189,7 @@
     <div class="card b-mac"><h4><span class="em">⚠️</span>The honest tradeoff: the relay is a SPOF</h4><p>If the relay is down, <span class="k">remote</span> reach is down (LAN keeps working; the box keeps collecting). That's the price of "reach from anywhere with no install." Mitigations: auto-reconnect, low-TTL DNS to repoint fast, and — later — multi-region.</p></div>
   </div>
 
-  <p class="foot">Concrete values are this deployment's: relay <code>203.0.113.10</code>, box SNI <code>example1234567890abcd.virtues.ch</code>. Companion to <code>docs/relay-control-plane.md</code> + <code>docs/networking-relay-tee.md</code>. Today: TLS cert is self-signed (browser warning) until ACME lands; relay is v4-only.</p>
+  <p class="foot">Concrete values are this deployment's: relay <code>203.0.113.10</code>, box SNI <code>example1234567890abcd.virtues.ch</code>. Companion to <code>agents/archive/relay-control-plane.md</code> + <code>agents/archive/networking-relay-tee.md</code>. Today: TLS cert is self-signed (browser warning) until ACME lands; relay is v4-only.</p>
 </div>
 </body>
 </html>

@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
 	 * Keyboard probe — on-device diagnostics for the Phase-1a spike
-	 * (docs/mobile-ux-plan.md). Shows live viewport metrics while the iOS
+	 * (agents/plan/mobile-ux-plan.md). Shows live viewport metrics while the iOS
 	 * keyboard opens/closes so we can see which signals are trustworthy in
 	 * THIS wry/iOS combo before building the --keyboard-inset bridge:
 	 *   - does window.innerHeight change? (expected: no)

@@ -1,7 +1,7 @@
 //! The button behind the case — the appliance's only physical control.
 //!
 //! **It forgets devices. It is not a factory reset**, and the difference is the
-//! whole security argument (`docs/onboarding-paradigm.md` §3):
+//! whole security argument (`agents/record/onboarding-paradigm.md` §3):
 //!
 //! * Anyone who can open the case can press it. That is a **nuisance**: the
 //!   owner sets their devices up again and their record is where they left it.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Virtues embed bench orchestrator (see docs/inference-bench-spec.md).
+# Virtues embed bench orchestrator (see agents/archive/inference-bench-spec.md).
 #
 # CONTEXT — this is a CONFIRM/REFUTE run, not a fishing trip. A prior on-Orin
 # session (2026-06-26) already found EmbeddingGemma embed is SLOWER on the Orin

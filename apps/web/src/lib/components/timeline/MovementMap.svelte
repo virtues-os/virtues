@@ -231,7 +231,7 @@
 			tap: interactive,
 		});
 
-		// Tiles are served + cached by the box itself (see docs/map-atlas-plan.md):
+		// Tiles are served + cached by the box itself (see agents/record/map-atlas-plan.md):
 		// the browser never talks to a third-party tile provider, and cached areas
 		// keep working offline. Upstream (CartoDB Positron) attribution is preserved.
 		L.tileLayer("/api/map/tiles/light/{z}/{x}/{y}", {

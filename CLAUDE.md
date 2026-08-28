@@ -235,6 +235,39 @@ Two consequences worth knowing before you debug a permissions error:
 kill the running one. `cargo check` will *block* on the shared target-dir lock
 while `make dev` holds it. That is contention, not a hang; wait it out.
 
+## Where writing goes
+
+Two roots, split by who reads them. Put a document in the wrong one and it
+either rots unread or gets published to strangers.
+
+| Path | For | Publishes |
+|---|---|---|
+| `docs/` | people **running** a box — the manual | yes, `virtues.com/docs` |
+| `agents/build/` | whoever is **building** — contracts, vocabularies, style, our runbooks | no |
+| `agents/record/` | what happened: audits, measured findings, design records of shipped work | yes, `virtues.com/docs/notes` |
+| `agents/plan/` | designs for things being built | no |
+| `agents/archive/` | superseded, kept for the reasoning | no |
+
+Two questions place anything: **am I describing or prescribing?** and **will
+this stop being true when we ship?** Describing + permanent is a record;
+prescribing + permanent is build; prescribing + temporary is a plan. There is
+no fourth genre — a description of something temporary is just a record of it.
+
+The rules that keep it from rotting back into the 63-file pile this replaced:
+
+- **Delete a plan when the thing ships.** What survives is a record and a
+  manual page, never a plan describing an intention that is now a fact. Nothing
+  ever left the old `docs/`, which is exactly why it grew unreadable.
+- **Every doc is listed** in its directory's README; `tools/check-manual.py`
+  enforces it, and for `agents/record/` an unlisted doc does not publish at all.
+- **Write against the code, never against another doc.** On 2026-08-28 three
+  audits found docs here wrong in ways that had already reached a user-facing
+  page — a config path that does not exist on a real box, SQL against a dropped
+  column, a relay privacy claim that was never true.
+- **The manual claims only what ships.** It publishes from `main`, so a page
+  cannot describe a command no released box has. Prose describes shape
+  (`vX.Y.Z`); concrete versions belong in code fences. Enforced by the lint.
+
 ## Conventions
 
 - Authored applets (chat/AI-created) are per-box runtime state and live in the

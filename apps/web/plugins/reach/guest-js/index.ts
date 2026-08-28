@@ -146,27 +146,6 @@ export async function improvProvision(
 }
 
 /**
- * Fetch the box's account-link code over BLE (RPC 0x84). `code: null` means
- * the box has no link in flight — already linked, or no internet to start one.
- */
-export async function improvLinkCode(
-  id: string,
-): Promise<{ ok: boolean; code?: string | null; url?: string; error?: string }> {
-  return await invoke('plugin:reach|improv_link_code', { id })
-}
-
-/**
- * Fetch the box's standing pair code over BLE (RPC 0x85; first device only).
- * `code: null` = nothing to give, or firmware that predates the RPC — either
- * way, fall back to typing the code by hand.
- */
-export async function improvPairCode(
-  id: string,
-): Promise<{ ok: boolean; code?: string | null; error?: string }> {
-  return await invoke('plugin:reach|improv_pair_code', { id })
-}
-
-/**
  * Redeem a pair code over BLE (RPC 0x83). Resolves with the consume response
  * verbatim, as a string — parse it with the same code the LAN path uses.
  */

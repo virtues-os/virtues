@@ -442,7 +442,7 @@ async fn session_info(State(state): State<AppState>, headers: HeaderMap) -> impl
 // That blocker fell 2026-08-24: migration 0015 introduced per-box keys
 // (`box_key`, scoped by the box's self-reported endpoint_id;
 // claim.rs::mint_box_key / customer_id_by_key_hash). What remains is the
-// grant itself — see docs/one-wire-plan.md, Phase 2.
+// grant itself — see agents/record/one-wire-plan.md, Phase 2.
 //
 // `POST /init/approve` (link.rs) is NOT this endpoint, though it looks
 // adjacent: it approves the box's own in-flight link — the same attach

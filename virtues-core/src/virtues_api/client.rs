@@ -25,7 +25,7 @@
 //! generation and transcription quietly billed the wallet while the UI said
 //! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/parallel/*`, `/v1/unsplash/*`)
 //! are per-user vendor bills that BYO says nothing about, so they keep going
-//! through the wallet. Plan of record: `docs/byo-ai-plan.md`.
+//! through the wallet. Plan of record: `agents/plan/byo-ai-plan.md`.
 //!
 //! ## Purpose tagging (vestige — no-op)
 //!
@@ -528,7 +528,7 @@ impl BearerClient {
         // reports `usage.cost` — and 0 is the honest number here, since
         // `app_ai_calls` measures what the *wallet* spent, which for a BYO call
         // is nothing. Presenting that as the user's total AI cost would be the
-        // lie; showing tokens instead is `docs/byo-ai-plan.md` phase 5.
+        // lie; showing tokens instead is `agents/plan/byo-ai-plan.md` phase 5.
         self.record_ai_usage(path, &body, &resp, crate::api::ai_calls::Route::Byo)
             .await;
         Ok(resp)

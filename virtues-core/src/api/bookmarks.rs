@@ -1,4 +1,4 @@
-//! In-app bookmark save — the manual capture door (docs/bookmarks-plan.md).
+//! In-app bookmark save — the manual capture door (agents/plan/bookmarks-plan.md).
 //!
 //! `POST /api/bookmarks` is the zero-dependency way to get a URL into
 //! `data_content_bookmark`: the URL box in the web app, chat, and (until the

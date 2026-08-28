@@ -1881,7 +1881,7 @@ pub struct DaySource {
 ///   3. the viewing device's zone, but ONLY for an in-progress today with no
 ///      located points yet (web-only / location off), else
 ///   4. `home_timezone`.
-/// See docs/timezone-model.md.
+/// See agents/record/timezone-model.md.
 async fn resolve_render_timezone(
     pool: &PgPool,
     date: NaiveDate,
@@ -1950,7 +1950,7 @@ pub async fn get_day_sources(
     //   1. the locked wiki_days.start_timezone for this day (past days), else
     //   2. the viewing device's zone for an in-progress today (client_tz), else
     //   3. tzf-rs(first located point of the day) → home_timezone fallback.
-    // See docs/timezone-model.md.
+    // See agents/record/timezone-model.md.
     let timezone = resolve_render_timezone(pool, date, client_tz).await;
     let (start_str, end_str) =
         super::day_summary::day_boundaries_utc(date, Some(&timezone));
@@ -2525,7 +2525,7 @@ pub struct TodayAudioSpan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodayStreamsView {
     pub date: String,
-    /// The zone the spans are anchored to (see docs/timezone-model.md).
+    /// The zone the spans are anchored to (see agents/record/timezone-model.md).
     pub timezone: String,
     pub location: Vec<TodayLocationSpan>,
     pub calendar: Vec<TodayCalendarSpan>,

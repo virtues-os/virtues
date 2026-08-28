@@ -1,7 +1,7 @@
 # Sources as packages
 
 **Status:** P0–P4 shipped 2026-08-04; P5 remaining. Supersedes nothing; extends
-`docs/applets-overhaul-plan.md` (§ Git / distribution).
+`agents/plan/applets-overhaul-plan.md` (§ Git / distribution).
 
 > The "What the sweep found" section below describes the state *before* this
 > work and is kept as the rationale for each phase — every defect it names has
@@ -150,7 +150,7 @@ mostly moot, since those secrets are non-confidential by design. That is a
 product question about registration friction, not an engineering one.
 
 One coupling to check before assuming BYO can bypass the proxy freely:
-`docs/networking-relay-tee.md:209` reuses the OAuth proxy as a Sybil-resistance
+`agents/archive/networking-relay-tee.md:209` reuses the OAuth proxy as a Sybil-resistance
 chokepoint for relay payment gating.
 
 ---
@@ -236,7 +236,7 @@ the value, and it needs no git at all.
 
 1. Fix `ids_under_slug` to key on the `applet_<slug>` id prefix instead of the
    dropped `dir` column. Add the integration test whose absence hid this.
-2. Add the provenance columns `docs/applets-overhaul-plan.md:137` already names:
+2. Add the provenance columns `agents/plan/applets-overhaul-plan.md:137` already names:
    `repo_url`, `git_ref`, `commit`, `imported_at`, `forked_from`. Persist the
    resolved SHA — today it is computed, returned in JSON, and dropped by the TS
    client.
@@ -263,7 +263,7 @@ order of increasing effort:
 - **Build the jail; don't ban the capability.** Face-only and agent-only
   packages are already genuinely bounded (opaque-origin iframe + read-only PG
   role; a 12-tool allowlist). A `command` package is not bounded at all — but
-  the answer is the `systemd-run` jail (`docs/applets-overhaul-plan.md:129`),
+  the answer is the `systemd-run` jail (`agents/plan/applets-overhaul-plan.md:129`),
   not a prohibition. `code_interpreter` (`api/code.rs:87-90`) already runs
   untrusted code under `PrivateNetwork`/`MemoryMax` and refuses to run
   unsandboxed in release builds; that is the pattern, and applying it to
@@ -314,7 +314,7 @@ tracking rather than losing.
   public and tracked — that was never the issue. The cost is that breaking it
   starts costing other people, and we should not accept that until P2–P4 have
   settled the shape.
-- **A registry.** `docs/applets-overhaul-plan.md:139` is right: git URLs, no
+- **A registry.** `agents/plan/applets-overhaul-plan.md:139` is right: git URLs, no
   registry, sharing is v2.
 - **Self-service OAuth for the hosted proxy.** A package can declare a
   `via_proxy` source, but the proxy must have a route and a registered app; that

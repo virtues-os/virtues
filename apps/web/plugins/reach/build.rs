@@ -2,9 +2,9 @@
 // runtime no matter what the permission TOMLs say. That bit three times —
 // the provision_* trio (2026-08-10), improv_pair_code (2026-08-19),
 // audio.set_notify (2026-08-26) — so lockstep now enforces it at build time:
-// generate_handler! in lib.rs is diffed against this list, default.toml is
-// generated from it, and stale permission files are pruned (see
-// plugins/lockstep).
+// generate_handler! in lib.rs is diffed against this list, guest-js/ wrappers
+// are diffed against it too, default.toml is generated from it, and stale
+// permission files are pruned (see plugins/lockstep).
 const COMMANDS: &[&str] = &[
   "pair",
   "reach_status",

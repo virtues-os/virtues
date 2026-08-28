@@ -13,7 +13,7 @@
 //! local-forward recipe. On client-isolated networks the printed LAN URL
 //! never loads — but the SSH session the user is already typing in is a
 //! proven transport to the box, so we fold it into the handoff and into the
-//! `wait_for_pair` 90-second hint (docs/onboarding.md: "auto-enable nothing,
+//! `wait_for_pair` 90-second hint (agents/build/onboarding.md: "auto-enable nothing,
 //! auto-notice everything").
 
 use std::net::{IpAddr, SocketAddr, UdpSocket};
@@ -128,7 +128,7 @@ pub fn mdns_host() -> String {
 /// holds none, so `/api/pair/consume` rejects `kind: "browser"` and the `/pair`
 /// page exists only to say so. The DIY installer's final screen therefore
 /// offered a dead end as its fallback for the user least able to recover from
-/// one. See `docs/onboarding-paradigm.md` §4 and `(auth)/pair/+page.svelte`.
+/// one. See `agents/record/onboarding-paradigm.md` §4 and `(auth)/pair/+page.svelte`.
 ///
 /// The app finds the box by itself on a normal network; this list is for when
 /// it cannot — an office LAN that isolates clients, or a box on another
@@ -228,7 +228,7 @@ pub fn ssh_forward_host() -> String {
 
 /// The URL to encode in the handoff QR. Prefer the raw LAN IP — phones
 /// (notably Android) fumble `.local` resolution, and the QR is precisely the
-/// phone path (docs/onboarding.md: "LAN IP, not mDNS, inside the QR"). Falls
+/// phone path (agents/build/onboarding.md: "LAN IP, not mDNS, inside the QR"). Falls
 /// back to the mDNS name when no address is discoverable.
 pub fn qr_pair_url(token: &str) -> String {
     format!("http://{}:{INTERNAL_PORT}/pair#t={token}", forward_host())
@@ -449,7 +449,7 @@ pub enum PairWaitOutcome {
 /// Block until the minted pair token is consumed or expires, polling the DB.
 ///
 /// After ~90s of silence, print the client-isolation hint
-/// (docs/onboarding.md "hostile networks"): the only reliable box-side signal
+/// (agents/build/onboarding.md "hostile networks"): the only reliable box-side signal
 /// for a network that blocks device-to-device traffic is "the link was
 /// printed and nobody arrived." Two branches: when we auto-noticed an SSH
 /// session ([`ssh_context`]), lead with the concrete `ssh -L` forward — the

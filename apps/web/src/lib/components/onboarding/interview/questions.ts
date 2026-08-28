@@ -86,7 +86,7 @@ export interface Question {
 	 * Asking it cold on day zero spends the person's patience on the one thing
 	 * patience was not needed for.
 	 *
-	 * See docs/narrative-resolution-plan.md.
+	 * See agents/plan/narrative-resolution-plan.md.
 	 */
 	stage: 'onboarding' | 'queue';
 }
@@ -300,6 +300,6 @@ export const ONBOARDING_QUESTIONS: Question[] = ONBOARDING_ORDER.map(
  * Kept here rather than deleted: they are the best writing in the product, and
  * every one of them is still going to be asked. Just later, by a box that has
  * earned the right to ask, and in several cases grounded in something real
- * rather than posed cold. See docs/narrative-resolution-plan.md.
+ * rather than posed cold. See agents/plan/narrative-resolution-plan.md.
  */
 export const QUEUED_QUESTIONS: Question[] = QUESTIONS.filter((q) => q.stage === 'queue');

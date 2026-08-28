@@ -6,7 +6,7 @@
 --
 -- What these drive is real power, not pixels: during the window the box
 -- forces the panel's connector down and the backlight goes off (see
--- docs/display-plan.md, backlight audit 2026-08-26). Sleep is a PRECEDENCE
+-- agents/plan/display-plan.md, backlight audit 2026-08-26). Sleep is a PRECEDENCE
 -- STATE below every interruption — the server-side engine wakes the glass
 -- for a held button, an update, or a storage fault, and never sleeps an
 -- unclaimed box (setup must show).

@@ -4,7 +4,7 @@
 //! nearly empty: an Instagram URL has no title, and a browser bookmark's title
 //! is whatever the page's `<title>` said the day it was saved. Embedded as-is,
 //! it is a document with no words in it, which is why bookmarks were storable
-//! but unfindable (docs/bookmarks-plan.md).
+//! but unfindable (agents/plan/bookmarks-plan.md).
 //!
 //! This is the sweep that fixes that. Per bookmark: fetch the page, compose a
 //! structured **extraction record**, and write it back. The record then joins
@@ -56,7 +56,7 @@ const BATCH_SIZE: i64 = 20;
 /// Settings knob exists and the user can see what it is doing.
 ///
 /// Overridable with `VIRTUES_BOOKMARK_ENRICH_DAILY_CAP`; the Settings knob
-/// (docs/bookmarks-plan.md) writes the same value.
+/// (agents/plan/bookmarks-plan.md) writes the same value.
 const DEFAULT_DAILY_CAP: i64 = 200;
 
 /// Attempts before a bookmark is given up on. Mirrors the transcription drain:

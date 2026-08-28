@@ -188,7 +188,7 @@
 	 *
 	 * An asset-backed bookmark's `url` is the in-app viewer route, so its host
 	 * is `/drive/file_…` — true, and useless to read. Provenance for those
-	 * lives in `source_platform` by design (docs/bookmarks-plan.md), so that
+	 * lives in `source_platform` by design (agents/plan/bookmarks-plan.md), so that
 	 * is what gets shown.
 	 */
 	function originLabel(item: BookmarkApi): string {

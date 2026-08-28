@@ -25,7 +25,7 @@ The full stack, end to end:
   law: one idea per screen, no spinners, no animation loops.
 - **The server cannot see the panel.** Every hardware fact (connector, mode,
   whether cage runs) lives in the Python shim. No EDID parsing, no
-  brightness/DPMS/backlight anywhere in the repo. `docs/onboarding.md:388`
+  brightness/DPMS/backlight anywhere in the repo. `agents/build/onboarding.md:388`
   already lists "dim/sleep schedule" as intended kiosk hygiene; nothing
   implements it. This entire half is greenfield.
 - **`/api/display/*` is loopback-only by explicit doctrine**
@@ -58,7 +58,7 @@ The settings section is named **Display** (a plain device-class noun, sitting
 comfortably in the You/Billing/Devices register), but its central object is
 *the face the screen wears*.
 
-Voice doctrine alignment (`docs/voice.md`):
+Voice doctrine alignment (`agents/build/voice.md`):
 
 - The bank already assigns a line to this surface: *"∴ The record of a life
   belongs where the life is lived"* — likely surface: **packaging, panel
@@ -69,7 +69,7 @@ Voice doctrine alignment (`docs/voice.md`):
 - Section description, in register: **"The screen on the box, and what it
   shows."**
 
-Design doctrine alignment (`docs/design.md`, `display/+page.svelte` header):
+Design doctrine alignment (`agents/build/design.md`, `display/+page.svelte` header):
 the panel is a hearth, not a dashboard. Calm is the product. Every option in
 this section should read as *tending* something, not administering it.
 

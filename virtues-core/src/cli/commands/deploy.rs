@@ -61,7 +61,7 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     }
 
     // Setup + next-wins checklists — the textual mirror of the panel/wizard
-    // (one state machine, three renderers; see docs/onboarding.md).
+    // (one state machine, three renderers; see agents/build/onboarding.md).
     if let Ok(setup) = crate::api::box_status::compute_setup_state(virtues.database.pool()).await {
         println!("  setup:");
         for step in &setup.setup {
