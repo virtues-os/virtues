@@ -102,7 +102,7 @@ pub async fn paired_device_count(pool: &PgPool) -> i64 {
     try_paired_device_count(pool).await.unwrap_or(0)
 }
 
-async fn try_paired_device_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
+pub(crate) async fn try_paired_device_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT count(*) FROM app_device WHERE revoked_at IS NULL AND id <> $1",
     )

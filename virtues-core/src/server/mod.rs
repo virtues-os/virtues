@@ -31,6 +31,27 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Validate required environment variables early
     validate_environment()?;
 
+    // Prove the lake is writable before serving. Every applet that ingests
+    // anything writes here as the `virtues` user, and when the directory was
+    // root-owned the only symptom was each applet failing with EACCES on its
+    // own schedule — a 500 every five minutes, forever, that no health surface
+    // asked about and no human saw. One probe at boot turns days of silent
+    // failure into a line in the log at the moment it becomes true.
+    //
+    // A warning, not a refusal: the box still serves chat, search and the UI
+    // without ingest, and refusing to boot would take away the surfaces someone
+    // needs in order to FIX this. `is_healthy` carries the remedy.
+    match crate::storage::Storage::file(
+        crate::storage::lake::lake_root().display().to_string(),
+    ) {
+        Ok(storage) => match storage.health_check().await {
+            Ok(h) if h.is_healthy => tracing::info!("{}", h.message),
+            Ok(h) => tracing::error!("{}", h.message),
+            Err(e) => tracing::error!(error = %e, "could not probe the lake for writability"),
+        },
+        Err(e) => tracing::error!(error = %e, "could not open the lake for a write probe"),
+    }
+
     // Initialize usage limits from TIER env var
     if let Err(e) = crate::api::init_limits_from_tier(client.database.pool()).await {
         tracing::warn!("Failed to initialize usage limits: {}", e);
@@ -1425,8 +1446,24 @@ async fn server_info() -> impl IntoResponse {
 /// name. A page served from a remote host has none of these origins.
 fn origin_is_ours(origin: &str) -> bool {
     // The app's own origin: `tauri://localhost` on macOS/iOS,
-    // `https://tauri.localhost` on Windows.
-    if origin.starts_with("tauri://") || origin == "https://tauri.localhost" {
+    // `https://tauri.localhost` on Windows — and `virtues://` on the phone,
+    // which registers its OWN scheme so an OTA bundle can answer requests
+    // (see apps/web/src-tauri/src/lib.rs; the window opens at
+    // `virtues://localhost/connect.html`).
+    //
+    // Missing `virtues://` here silently broke every data request the iOS app
+    // made from 2026-08-18 until 2026-08-28: the box answered 200 and omitted
+    // `Access-Control-Allow-Origin`, so WebKit discarded the response and the
+    // app reported "Load failed" while the box's own logs showed the device
+    // authenticating perfectly. Ten days, because the symptom looks like a
+    // network fault and every trace says the network is fine.
+    //
+    // Safe for the same reason `tauri://` is: a custom scheme can only be
+    // claimed by an installed app, so no remote page can present this origin.
+    if origin.starts_with("tauri://")
+        || origin.starts_with("virtues://")
+        || origin == "https://tauri.localhost"
+    {
         return true;
     }
 
@@ -1474,6 +1511,10 @@ mod cors_tests {
             "http://localhost.evil.example",
             "https://tauri.localhost.evil.example",
             "http://notvirtues",
+            // Near-misses on the scheme itself: only the exact `virtues://`
+            // prefix is ours, never a host or path that merely contains it.
+            "https://virtues.evil.example",
+            "http://evil.example/virtues://",
             "http://evil.example/localhost",
             // Non-http schemes and the opaque origin.
             "null",
@@ -1490,6 +1531,10 @@ mod cors_tests {
     fn our_own_origins_are_allowed() {
         for o in [
             "tauri://localhost",
+            // The iOS app's own scheme. Absent from this list until
+            // 2026-08-28, which is exactly how the phone lost every data
+            // request for ten days without a single test going red.
+            "virtues://localhost",
             "https://tauri.localhost",
             "http://localhost:5173",
             "http://127.0.0.1:7117",

@@ -276,11 +276,50 @@ class MessageMonitor {
                 print("  Attachments: \(attachmentsByRow.count) found, \(enriched) attached to messages")
             }
 
-            // Add messages to queue for upload
-            for message in messages {
-                queue.addMessage(message)
+            // The watermark is a DURABILITY claim, so it may only advance past a
+            // message once that message is actually in the local queue.
+            //
+            // `addMessage` is `queue.async`: calling it in a loop and saving the
+            // date immediately persisted "handled" before the INSERT had even
+            // been dispatched, let alone stepped. A prepare/step failure — disk
+            // full during a long backfill, a corrupt db — then silently ate up
+            // to a full batch per tick, permanently, because chat.db is only
+            // ever re-read forward from this date. `addBrowserVisits` already
+            // has the right shape (synchronous, throwing, commit-then-advance);
+            // this waits for the same guarantee.
+            //
+            // Messages whose date is outside the plausible window are dropped
+            // here rather than passed down: `addMessage` rejects them too, and
+            // counting that rejection as a storage failure would wedge the
+            // watermark forever on one malformed row.
+            let calendar = Calendar.current
+            let storable = messages.filter { m in
+                let year = calendar.component(.year, from: m.date)
+                return year >= 2000 && year <= 2100
             }
-            
+
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var allStored = true
+            for message in storable {
+                group.enter()
+                queue.addMessage(message) { result in
+                    if case .failure = result {
+                        lock.lock(); allStored = false; lock.unlock()
+                    }
+                    group.leave()
+                }
+            }
+            group.wait()
+
+            guard allStored else {
+                // Hold the watermark: these messages are still in chat.db, so
+                // the next tick re-reads the same window and tries again. The
+                // box dedups on GUID, so a retry costs nothing.
+                print("⚠️ Some messages failed to queue — holding sync date so they are re-read")
+                return
+            }
+
             // Update last sync date
             if let latestDate = latestMessageDate {
                 lastSyncDate = latestDate

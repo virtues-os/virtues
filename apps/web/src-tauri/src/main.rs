@@ -965,11 +965,38 @@ fn tray_summary(installed: bool, status: &CollectorStatus) -> (Dot, &'static str
         (Dot::Grey, "Not collecting — open Virtues to set up")
     } else if status.paused {
         (Dot::Amber, "Paused")
+    } else if status.running && !permissions_ok(status) {
+        // A running collector with a revoked grant is the worst case this line
+        // has, because every other symptom of it looks like a quiet week: the
+        // process is up, uploads succeed, and only the TCC-gated streams
+        // (iMessage, Safari history, window titles) go dark. This tray said
+        // "Collecting" in green for three days while exactly that was true.
+        //
+        // Worst-thing-first, per this function's contract: a permission gap
+        // outranks "Collecting" because it is the thing the user must act on,
+        // and the tray sits on the machine that owns the permission — the fix
+        // is seconds away from here, rather than a trip to another device.
+        (Dot::Amber, "Permission needed — open Virtues")
     } else if status.running {
         (Dot::Green, "Collecting")
     } else {
         (Dot::Red, "Collector stopped — open Virtues")
     }
+}
+
+/// Does the daemon report every permission it needs?
+///
+/// Only the DAEMON's own fresh self-report counts. `permissions_reported_by_daemon`
+/// false means the flags describe nothing trustworthy — no record has ever been
+/// written, or the one on disk is stale — and an unknown is not a denial. Saying
+/// "permission needed" on a stale record is how this tray previously named the
+/// wrong permission for six days; silence is the honest answer when we cannot
+/// observe, and the collector re-probes every five minutes anyway.
+fn permissions_ok(status: &CollectorStatus) -> bool {
+    if !status.permissions_reported_by_daemon {
+        return true;
+    }
+    status.has_full_disk_access && status.has_accessibility
 }
 
 /// The tray's mutable menu items, bundled so the poll loop and the menu-event
@@ -1165,6 +1192,29 @@ fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
         return Ok(false);
     }
     if files_differ(&bundled, &installed) {
+        // An ad-hoc signed collector has no signing identity for macOS to
+        // recognise it by, so TCC pins its Full Disk Access and Accessibility
+        // grants to that exact build — and this copy voids them. Silently: the
+        // switches in System Settings stay on while every read fails, so
+        // iMessages, Safari history and window titles simply stop arriving.
+        //
+        // This path, not `virtues-collector install`, is how it actually
+        // happens — an app rebuild relaunches, reconciles, and blinds the
+        // collector with nobody having typed anything. Say so HERE, where the
+        // cause is still known; five minutes later the collector's own health
+        // report says only "denied", with no hint of what did it.
+        //
+        // We still copy: a stale collector is the worse failure, and this is
+        // recoverable by removing and re-adding the entries (toggling them off
+        // and on does not repair the grant).
+        if is_adhoc_signed(&bundled) {
+            eprintln!(
+                "[reconcile] {name}: bundled helper is AD-HOC SIGNED — this redeploy \
+                 voids its macOS permissions. Remove and re-add virtues-collector in \
+                 System Settings → Privacy & Security → Full Disk Access and \
+                 Accessibility. Build with APPLE_SIGNING_IDENTITY set to stop this."
+            );
+        }
         copy_executable(&bundled, &installed).map_err(|e| e.to_string())?;
     }
     // Kick the LaunchAgent so launchd drops the old process and runs the new
@@ -1194,6 +1244,24 @@ fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
         eprintln!("[reconcile] {name}: kickstart failed — will retry next launch");
     }
     Ok(true)
+}
+
+/// Is this binary ad-hoc signed (no signing identity, so TCC pins its grants to
+/// the exact build)? Shells out to `codesign` because this runs only on the
+/// redeploy path — rare by construction — and linking the Security framework to
+/// read one flag is not worth it.
+///
+/// Failure reads as `false`: this only decides whether to print a warning, and
+/// a probe that could not run is not evidence that a build is unsigned.
+fn is_adhoc_signed(path: &std::path::Path) -> bool {
+    std::process::Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=2"])
+        .arg(path)
+        .output()
+        .ok()
+        // codesign writes its report to stderr.
+        .map(|o| String::from_utf8_lossy(&o.stderr).contains("adhoc"))
+        .unwrap_or(false)
 }
 
 /// Byte-equal? Cheap size check first, content compare only if sizes match (the

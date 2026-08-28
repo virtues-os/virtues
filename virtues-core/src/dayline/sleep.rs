@@ -39,6 +39,13 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
     .bind(&next_date)
     .fetch_optional(pool)
     .await
+    .inspect_err(|e| {
+        // A failed query and a night with no sleep record are the SAME value
+        // once `.ok()` collapses them, and the difference is the whole story:
+        // one means "nothing to say about this date", the other means the
+        // dayline is missing sleep it actually has. Say which.
+        tracing::error!(date = %date_str, error = %e, "sleep lookup failed — dayline will omit sleep for this date");
+    })
     .ok()
     .flatten();
 
@@ -57,11 +64,23 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
         Ok(v) => v,
         Err(_) => return,
     };
+    // Fall back to the span rather than to zero. `unwrap_or(0)` here wrote the
+    // sentence "Slept 0.0 hours." into the wiki whenever the column was NULL or
+    // decoded to a type this did not expect — a confident, specific, wrong
+    // number that reads as a measurement. We already hold `started_at` and
+    // `ended_at`, so the duration is derivable and never has to be invented.
     let duration_mins: Option<i64> = sleep_row
         .try_get::<Option<i32>, _>("duration_minutes")
+        .inspect_err(|e| {
+            tracing::warn!(error = %e, "duration_minutes did not decode — deriving from the span");
+        })
         .ok()
         .flatten()
-        .map(i64::from);
+        .map(i64::from)
+        .or_else(|| {
+            let mins = (sleep_end - sleep_start).num_minutes();
+            (mins > 0).then_some(mins)
+        });
 
     // Clamp start_time to UTC midnight of this date (the day page's boundary).
     let day_midnight: DateTime<Utc> = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
@@ -99,9 +118,13 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
     .ok()
     .flatten();
 
-    // Build summary
-    let hours = duration_mins.unwrap_or(0) as f64 / 60.0;
-    let summary = format!("Slept {:.1} hours.", hours);
+    // Build summary. No duration at all (a zero/negative span) means we cannot
+    // say how long they slept — so say nothing about the length rather than
+    // assert zero.
+    let summary = match duration_mins {
+        Some(mins) => format!("Slept {:.1} hours.", mins as f64 / 60.0),
+        None => "Slept (duration unknown).".to_string(),
+    };
 
     // Check if sleep event already exists for this day
     let existing: Option<String> = sqlx::query_scalar(

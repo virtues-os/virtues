@@ -862,6 +862,30 @@ pub fn dir_for_applet_id(applet_id: &str) -> Option<String> {
         .map(|t| t.dir.clone())
 }
 
+/// Which ontologies a live applet instance writes, resolved from its id.
+///
+/// The instance-id → template match is the same rule [`dir_for_applet_id`]
+/// uses: the base `id_prefix`, plus the per-credential / per-device fan-out
+/// form `<id_prefix>_<anchor>`.
+///
+/// This is the join that lets a stream say *why* it is empty. Freshness alone
+/// cannot: a stream whose writing applet has failed on every run for three days
+/// has exactly the same row counts as one with nothing to report, and was
+/// therefore reported as `idle`.
+pub fn ontologies_written_by_applet_id(applet_id: &str) -> Vec<String> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard
+        .action
+        .iter()
+        .find(|t| {
+            t.id_prefix.as_deref().is_some_and(|p| {
+                applet_id == p || applet_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
+            })
+        })
+        .map(|t| t.writes.clone())
+        .unwrap_or_default()
+}
+
 /// Which catalog sources can produce a given ontology, by source id.
 ///
 /// Built from the `writes` each template declares, joined to the source that

@@ -9,7 +9,7 @@
 use anyhow::Result;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::Serialize;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 
 use crate::inference_report::{self, ModelSource};
 use crate::server::webhook::AppState;
@@ -23,6 +23,10 @@ pub struct BoxStatus {
     pub identity: IdentityStatus,
     pub subscription: SubscriptionStatus,
     pub devices: DeviceStatus,
+    /// Paired collectors currently missing a permission they need. Empty is the
+    /// healthy case; anything here means a data stream is shut off and looks
+    /// merely idle.
+    pub degraded: Vec<DegradedCollector>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,6 +51,30 @@ pub struct DeviceStatus {
     pub paired_wg: i64,
 }
 
+/// A paired collector that is reporting it cannot read something it collects.
+///
+/// This exists because detection was never the problem. The Mac collector has
+/// written an honest health record since 2026-08-25, the ingest applet logs a
+/// warning on every batch, and the device row has carried
+/// `denied: ["full_disk_access"]` the whole time — and an iMessage outage still
+/// ran for three days, because none of those surfaces is one anybody watches.
+/// A denied permission is indistinguishable from a quiet life until something
+/// says so where health is already read.
+#[derive(Debug, Clone, Serialize)]
+pub struct DegradedCollector {
+    pub device_id: String,
+    pub label: Option<String>,
+    /// Capability names the collector says it does NOT have, e.g.
+    /// `full_disk_access`. Never empty — an entry exists only when it is not.
+    pub denied: Vec<String>,
+    /// The collector's own "my record is older than I trust" flag. Reported
+    /// rather than resolved: a stale record is not evidence of a grant, and
+    /// treating it as one is the bug this whole path exists to avoid.
+    pub stale: bool,
+    /// When the collector last evaluated its permissions, as it reported it.
+    pub checked_at: Option<String>,
+}
+
 /// Whether the box's iroh endpoint is up (bound + homed on the relay).
 fn endpoint_up() -> bool {
     crate::relay::is_relay_registered()
@@ -64,7 +92,14 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
     // ZERO on every box, forever, however many devices were paired. A wrong
     // query that returns an error is loud; a wrong query behind `unwrap_or` is
     // a lie with a default value.
-    let paired_wg: i64 = crate::api::pair::paired_device_count(pool).await;
+    // `?`, not `paired_device_count`'s `.unwrap_or(0)`. The comment above says
+    // "a wrong query that returns an error is loud" — but the previous fix
+    // corrected the TABLE NAME and left the swallow, so a DB blip could still
+    // report zero paired devices on a box with several. `is_unclaimed` in the
+    // same module already models this correctly; other callers keep the
+    // forgiving wrapper, because only the health snapshot must never round a
+    // failure down to a plausible number.
+    let paired_wg: i64 = crate::api::pair::try_paired_device_count(pool).await?;
 
     Ok(BoxStatus {
         ready: true,
@@ -73,7 +108,66 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
         },
         subscription: SubscriptionStatus { linked },
         devices: DeviceStatus { paired_wg },
+        degraded: degraded_collectors(pool).await?,
     })
+}
+
+/// Collectors that are actively reporting a denied permission.
+///
+/// Scoped to devices that reported within the last 30 minutes, which is the
+/// definition of "degraded" being used here: **currently collecting, currently
+/// blocked**. The collector uploads every 5 minutes, so this is six missed
+/// cycles — generous for a live machine, and short enough that a device which
+/// stopped reporting reads as offline rather than as a standing complaint.
+///
+/// The bound is doing real work, not being decorative. Every reinstall mints a
+/// NEW `app_device` row, and the superseded ones keep whatever permissions they
+/// last reported, frozen forever — this box carries three rows for one laptop,
+/// two of them describing builds that no longer exist. A 24-hour window was
+/// tried first and duly surfaced a dead row as a live alarm. An alarm that
+/// cries wolf is precisely the failure being fixed, so the window is tight.
+///
+/// The error is propagated, not defaulted. An empty list means "every live
+/// collector says it is fine"; a failed query must never be able to say that.
+async fn degraded_collectors(pool: &PgPool) -> Result<Vec<DegradedCollector>> {
+    let rows = sqlx::query(
+        "SELECT id,
+                label,
+                device_info->'permissions'->'denied'          AS denied,
+                device_info->'permissions'->>'stale'          AS stale,
+                device_info->'permissions'->>'checked_at'     AS checked_at
+           FROM app_device
+          WHERE revoked_at IS NULL
+            AND id <> $1
+            AND last_seen_at > now() - interval '30 minutes'
+            AND jsonb_typeof(device_info->'permissions'->'denied') = 'array'
+            AND jsonb_array_length(device_info->'permissions'->'denied') > 0
+          ORDER BY last_seen_at DESC",
+    )
+    .bind(crate::middleware::auth::CONSOLE_DEVICE_ID)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let denied: serde_json::Value = row.get("denied");
+            DegradedCollector {
+                device_id: row.get("id"),
+                label: row.get("label"),
+                denied: denied
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                stale: row.get::<Option<String>, _>("stale").as_deref() == Some("true"),
+                checked_at: row.get("checked_at"),
+            }
+        })
+        .collect())
 }
 
 /// `GET /api/box/status` — box health for the phone app's status screen.

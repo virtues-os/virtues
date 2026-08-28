@@ -1,0 +1,62 @@
+name: Docs
+
+# The public manual (`manual/`) is checked here and published from here.
+#
+# WHY THIS IS NOT PART OF ci.yml
+#
+# `ci.yml` deliberately carries `paths-ignore: ["docs/**", "**/*.md"]`, because
+# a docs-only PR was costing a full Rust compile plus a Postgres service on a
+# paid runner, twice. Every change to the manual is a `.md` change, so ci.yml
+# is blind to all of it by design. This workflow is the cheap counterpart: no
+# toolchain, no services, a few seconds of Python.
+#
+# WHY PUBLISHING IS TIED TO `main`
+#
+# `main` moves only when a release ships, so virtues.com/docs describes what
+# boxes actually run rather than what is in flight. Publishing from `wave` or
+# `staging` would put version honesty in a `planned` flag somebody has to
+# remember to flip; tying it to the ref makes it structural. The website's
+# VIRTUES_DOCS_REF must stay in agreement with the deploy trigger below — if
+# one moves, move the other, or the site rebuilds content it did not intend.
+
+on:
+  push:
+    branches: [wave, staging, main]
+    paths:
+      - "manual/**"
+      - "tools/check-manual.py"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "manual/**"
+      - "tools/check-manual.py"
+      - ".github/workflows/docs.yml"
+
+jobs:
+  check:
+    name: Check the manual
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manifest, frontmatter, links, version literals
+        run: tools/check-manual.py
+
+  deploy:
+    name: Publish to virtues.com
+    # Only a release reaching main publishes. `needs: check` so a manifest that
+    # would fail the website's own build never triggers a deploy that fails in
+    # the other repo, where the error lands on a stranger.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the website rebuild
+        env:
+          HOOK: ${{ secrets.VERCEL_DOCS_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::error::VERCEL_DOCS_DEPLOY_HOOK is not set — the manual reached main but virtues.com will keep serving the previous build."
+            exit 1
+          fi
+          curl -fsS -X POST "$HOOK" -o /dev/null
+          echo "Requested a rebuild; the site syncs manual/ from main at build time."

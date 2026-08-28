@@ -365,6 +365,9 @@ public final class AudioRecorder: NSObject {
       startWatchdog()
       virtues_location_audio_state(2)
       NSLog("[Audio] engine armed (%@) hw=%.0fHz/%dch", reason, hw.sampleRate, hw.channelCount)
+      // After the live chunk is open, so the sweep can tell it apart from the
+      // orphans it is retrying.
+      sweepOrphanChunks()
     } catch {
       NSLog("[Audio] arm failed (%@): %@ — will retry on next wake/foreground",
             reason, error.localizedDescription)
@@ -550,9 +553,18 @@ public final class AudioRecorder: NSObject {
   private func finalizeAndEnqueue(
     url: URL, start: Date, end: Date, avgDb: Float, silent: Bool
   ) {
-    defer { try? FileManager.default.removeItem(at: url) }
+    // NO blanket `defer { removeItem }` here. Every other stream this app
+    // collects re-reads a source that persists — chat.db, HealthKit, Contacts —
+    // so a failed handoff costs a retry. Audio's source IS this file. Deleting
+    // it unconditionally, before the enqueue below has even run, made a full
+    // disk or an uninitialized outbox destroy the recording permanently, with
+    // one NSLog as the only trace. The file is now deleted at exactly two
+    // points: when it is provably worthless, and when the outbox has taken it.
     guard let data = try? Data(contentsOf: url), data.count > 1000 else {
-      NSLog("[Audio] chunk too small / unreadable, dropping"); return
+      // Worthless: nothing recoverable in a truncated or unreadable husk.
+      NSLog("[Audio] chunk too small / unreadable, dropping")
+      try? FileManager.default.removeItem(at: url)
+      return
     }
     var rec: [String: Any] = [
       "id": UUID().uuidString,
@@ -574,10 +586,65 @@ public final class AudioRecorder: NSObject {
       rec["audio_data"] = data.base64EncodedString()
     }
     guard let json = try? JSONSerialization.data(withJSONObject: rec),
-          let str = String(data: json, encoding: .utf8) else { return }
+          let str = String(data: json, encoding: .utf8) else {
+      // Our own encoding bug, not the file's fault — keep the audio. The sweep
+      // will retry it, and its age cap eventually bounds the damage.
+      NSLog("[Audio] chunk failed to serialize — KEPT at %@", url.lastPathComponent)
+      return
+    }
     let rc = "microphone".withCString { s in str.withCString { j in virtues_enqueue(s, j) } }
     NSLog("[Audio] enqueued chunk %d bytes, avg=%.0fdB silent=%@ rc=%d",
           data.count, avgDb, silent ? "y (metadata-only)" : "n", rc)
+    guard rc == 0 else {
+      // The outbox did NOT take it (uninitialized, disk full, SQLite error).
+      // Keeping the file is the whole point: the outbox is durable once a row
+      // lands, so the only unrecoverable window is right here.
+      NSLog("[Audio] enqueue failed rc=%d — chunk KEPT at %@", rc, url.lastPathComponent)
+      return
+    }
+    try? FileManager.default.removeItem(at: url)
+  }
+
+  /// Re-offer chunks that a previous run wrote but could not hand to the outbox.
+  ///
+  /// This is the other half of not deleting on failure: without it, a retained
+  /// chunk is never retried and never removed, and Documents grows without
+  /// bound. Runs on arm, which is the same trigger that would have produced
+  /// them, so recovery needs no new schedule.
+  ///
+  /// `maxAge` is a backstop, not a policy — a chunk nothing has accepted in a
+  /// week is not going to be accepted, and unbounded growth on a phone is its
+  /// own failure. It is deliberately far longer than any transient outbox
+  /// problem.
+  private func sweepOrphanChunks() {
+    let fm = FileManager.default
+    guard let dir = fm.urls(for: .documentDirectory, in: .userDomainMask).first,
+          let files = try? fm.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey])
+    else { return }
+    let live = outFile?.url
+    let maxAge: TimeInterval = 7 * 24 * 60 * 60
+    for url in files where url.lastPathComponent.hasPrefix("mic_")
+      && url.pathExtension == "m4a" && url != live {
+      let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+        .contentModificationDate ?? Date()
+      if Date().timeIntervalSince(modified) > maxAge {
+        NSLog("[Audio] orphan chunk older than 7d, dropping %@", url.lastPathComponent)
+        try? fm.removeItem(at: url)
+        continue
+      }
+      // Timestamps are unknown for a chunk we did not just close, so bound it
+      // by the file's own mtime rather than inventing a span. Better a slightly
+      // imprecise window than a lost recording.
+      guard let data = try? Data(contentsOf: url), data.count > 1000 else {
+        try? fm.removeItem(at: url)
+        continue
+      }
+      let end = modified
+      let start = end.addingTimeInterval(-chunkSeconds)
+      NSLog("[Audio] retrying orphan chunk %@", url.lastPathComponent)
+      finalizeAndEnqueue(url: url, start: start, end: end, avgDb: -50, silent: false)
+    }
   }
 
   // MARK: - Interruptions / route / config / foreground (resurrection vectors)

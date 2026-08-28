@@ -90,6 +90,11 @@
 	 * stored, revocable in Devices the moment it's used.
 	 */
 	let handoffQr = $state<string | null>(null);
+	/** The device the handoff enrolled. Success is this row reporting a
+	 *  `last_seen_at` — i.e. the phone has actually dialled the box. The
+	 *  sheet's usual signal (the pair token being consumed) never fires here,
+	 *  because the handoff enrols directly and leaves that token untouched. */
+	let handoffDeviceId = $state<string | null>(null);
 
 	async function initiateQRPairing() {
 		isInitiating = true;
@@ -103,7 +108,9 @@
 			// Same window as the countdown this modal already runs.
 			const door = await openPairDoor(timeRemaining);
 			doorOrigin = door?.origin ?? null;
-			handoffQr = (await createPairHandoff(displayName))?.qrSvg || null;
+			const handoff = await createPairHandoff(displayName);
+			handoffQr = handoff?.qrSvg || null;
+			handoffDeviceId = handoff?.deviceId || null;
 			startPolling();
 			startTimer();
 		} catch (err) {
@@ -151,6 +158,24 @@
 
 	async function checkPairingStatus() {
 		try {
+			// The handoff's own completion signal, checked first: the enrolled
+			// device reporting a last_seen_at means the phone dialled the box.
+			if (handoffDeviceId) {
+				type DeviceRow = { id: string; last_seen_at?: string | null };
+				const devices = await api
+					.listDevices<{ devices?: DeviceRow[] }>()
+					.catch(() => null);
+				const row = devices?.devices?.find((d) => d.id === handoffDeviceId);
+				if (row?.last_seen_at) {
+					stopPolling();
+					stopTimer();
+					pairingSucceeded = true;
+					resetLocalState();
+					onSuccess(handoffDeviceId);
+					onClose();
+					return;
+				}
+			}
 			// Both iOS (QR) and Mac (code) ride the same token → consume lifecycle.
 			const sourceId = pairingData?.source_id || qrSourceId;
 			if (!sourceId) return;
@@ -246,6 +271,7 @@
 		// that never gets closed properly — a crash, a force-quit.)
 		doorOrigin = null;
 		handoffQr = null;
+		handoffDeviceId = null;
 		void closePairDoor();
 		resetLocalState();
 		onClose();
