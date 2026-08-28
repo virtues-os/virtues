@@ -1385,7 +1385,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             lane: None,
             table_name: "extracted_document_chunks",
             source_streams: vec![],
-            timestamp_column: "created_at",
+            // Event time (the file's arrival in the record), not parse time —
+            // `created_at` here is when the extractor ran, and using it made
+            // every date-scoped document search chronologically wrong.
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: Some(EmbeddingConfig {
                 embed_text_sql: "t.text",
@@ -1398,7 +1401,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 ),
                 preview_sql: "SUBSTR(t.text, 1, 200)",
                 author_sql: None,
-                timestamp_sql: "t.created_at",
+                timestamp_sql: "t.occurred_at",
                 embed_where: None,
             }),
             extraction: None,
