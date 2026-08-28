@@ -78,7 +78,7 @@ Today's two branches both break ai rows (system-overwrite clobbers operational c
 
 ## F. AGENTS.md — the contract, not a tutorial
 
-At `actions/AGENTS.md`: the field contract + exact `[config.limits]` spellings; the §B capability table; the three `until` idioms; cron rules (6-field, box-local, **date-anchored asks: nearest future occurrence + `until="once"` mandatory**); the catch_up×window trap; the **cooldown idiom** until the field ships (`condition AND NOT EXISTS (successful run within interval)`); decomposition rule; catalog-check-first via `sql_query`; honest downgrades; web_search-is-not-fetch; Persona marked **v2 — not authorable, offer draft-mode**. Exemplars are **pointers to real folders** (`morning_examen`, `hello_world`/Biscuit), not inline copies that drift.
+At `actions/AGENTS.md`: the field contract + exact `[config.limits]` spellings; the §B capability table; the three `until` idioms; cron rules (6-field, box-local, **date-anchored asks: nearest future occurrence + `until="once"` mandatory**); the catch_up×window trap; the **cooldown idiom** until the field ships (`condition AND NOT EXISTS (successful run within interval)`); decomposition rule; catalog-check-first via `sql_query`; honest downgrades; web_search-is-not-fetch; Persona marked **v2 — not authorable, offer draft-mode**. Exemplars are **pointers to real folders** (`morning_examen`, `dot_cloud`), not inline copies that drift — `hello_world`/Biscuit was deleted in 0008.
 
 ## Sequence (was 6, now 4)
 

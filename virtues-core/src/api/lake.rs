@@ -47,9 +47,10 @@ pub async fn get_lake_summary(pool: &PgPool) -> Result<LakeSummary> {
     .await?;
 
     // Bytes on disk are what they are. `compressed_bytes` exists because the
-    // frontend shows a compression figure; today nothing is compressed
-    // (content_encoding = 'none'), so report the honest 1.0 rather than invent a
-    // ratio. When zstd lands, this becomes a real sum over encoded sizes.
+    // frontend shows a compression figure; nothing is compressed (the old
+    // content_encoding column was a constant 'none' and was dropped
+    // 2026-08-28), so report the honest 1.0 rather than invent a ratio. If
+    // compression ever lands, the column returns with its writer.
     let total_bytes = row.0;
 
     Ok(LakeSummary {

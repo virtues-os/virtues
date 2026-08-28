@@ -132,8 +132,8 @@
       }
     },
     {
-      "name": "Biscuit",
-      "description": "A small dog who lives on your box.",
+      "name": "Dot Cloud",
+      "description": "A quiet constellation of the day so far.",
       "owner": "user",
       "triggers": [],
       "default_enabled": true
