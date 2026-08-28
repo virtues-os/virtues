@@ -1,10 +1,16 @@
-//! Shared diagnostic helpers for `virtues report-crash`, `virtues status
-//! --json`, and the install-time beacon.
+//! Shared diagnostic helpers for `virtues report-crash` and `virtues status
+//! --json`.
+//!
+//! (It used to say "and the install-time beacon" too. There isn't one: atlas
+//! routes `/diag/install`, but nothing on the box has ever posted to it — the
+//! installer contains no beacon code and no `VIRTUES_DIAG` handling at all.)
 //!
 //! Two responsibilities:
 //!
-//! 1. **Opt-out gate.** `VIRTUES_DIAG=off` in `/etc/virtues/env` (or the
-//!    process env, whichever is set) disables every cloud beacon. The
+//! 1. **Opt-out gate.** `VIRTUES_DIAG=off` in the env file systemd's
+//!    `EnvironmentFile=` loads — `/var/lib/virtues/virtues.env` on boxes the
+//!    installer built, NOT `/etc/virtues/env`, which it has never written —
+//!    or the process env, whichever is set. Disables every cloud beacon. The
 //!    `enabled()` helper returns false; callers exit cleanly without
 //!    sending anything. Default is on for v1; the install step prints a
 //!    one-line notice so users see what's happening before they ever
@@ -66,10 +72,14 @@ pub async fn send(path: &str, payload: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Read a stable, anonymized box id from the env. The install step seeds
-/// `VIRTUES_BOX_ID` with a random UUID; if it's not present we generate a
-/// stable one from the hostname (deterministic but anonymous). Either
-/// shape is fine for diag — it's a per-box correlation key, not an
+/// Read a stable, anonymized box id from the env.
+///
+/// `VIRTUES_BOX_ID` wins if set — but **nothing sets it**: no installer, no
+/// unit, no firstboot script writes it, so in practice every box falls through
+/// to the hostname hash below. Left in place as the override hook it always
+/// was; do not document it as the normal path.
+///
+/// Either shape is fine for diag — it's a per-box correlation key, not an
 /// identity claim.
 pub fn box_id() -> String {
     if let Ok(id) = std::env::var("VIRTUES_BOX_ID") {

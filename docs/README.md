@@ -60,7 +60,7 @@ listed below.
 
 | Doc | Status | What it's for |
 |---|---|---|
-| [recovery.md](recovery.md) | Current | Operator runbook: reaching the UI, lost-session recovery, backup/restore, upgrade rollback, diagnostic beacons. **Start here when something breaks.** |
+| [recovery.md](recovery.md) | Current | **Workshop** operator runbook, rewritten against the code 2026-08-28 after an audit found ~19 stale claims (a config path no box has, three commands that don't exist, a dropped atlas column). Carries the operator-only material: the recovery command surface, the sudo gate, the diagnostic surface, and the described-but-not-implemented list. Owner-facing recovery is [`manual/operate/recovery.md`](../manual/operate/recovery.md), which wins on any disagreement. |
 | [backup-plan.md](backup-plan.md) | Partly built | Surviving the loss of the box. Pillars 1–5 and the volume path landed; Phase A is the gate, and both ends of the pipeline are still missing. |
 | [update-model.md](update-model.md) | Current | The north star for fleet updates: a thin native shell shipped rarely plus a fast web payload pushed freely, with a version contract between them. **Start here** — the three below are history and horizon. |
 | [update-paradigm.md](update-paradigm.md) | Built | How one box moves between builds. Fully shipped; kept as the design record for the three real `virtues upgrade` failures that shaped it. Current behavior lives in `cli/upgrade.rs` + `api/updates.rs`. |
