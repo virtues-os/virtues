@@ -2,52 +2,44 @@
 	"sections": [
 		{
 			"title": "Start here",
-			"pages": [
-				{ "slug": "index", "title": "What Virtues is" },
-				{ "slug": "start/about-these-docs", "title": "About these docs" }
-			]
+			"pages": [{ "slug": "index", "title": "What Virtues is" }]
 		},
 		{
 			"title": "Set up",
 			"pages": [
-				{ "slug": "setup/requirements", "title": "Requirements", "planned": true },
+				{ "slug": "setup/requirements", "title": "What to run it on", "planned": true },
 				{ "slug": "setup/install", "title": "Installing" },
 				{ "slug": "setup/first-boot", "title": "First boot", "planned": true },
-				{ "slug": "setup/pairing", "title": "Pairing devices", "planned": true }
+				{ "slug": "setup/devices", "title": "Connecting your devices", "planned": true },
+				{ "slug": "setup/sources", "title": "Connecting your sources", "planned": true }
 			]
 		},
 		{
-			"title": "Connect",
+			"title": "Living with it",
 			"pages": [
-				{ "slug": "connect/iphone", "title": "iPhone", "planned": true },
-				{ "slug": "connect/mac", "title": "Mac", "planned": true },
-				{ "slug": "connect/sources", "title": "Sources", "planned": true },
-				{ "slug": "connect/byo-ai", "title": "Bring your own AI", "planned": true }
+				{ "slug": "use/day", "title": "Your day", "planned": true },
+				{ "slug": "use/asking", "title": "Asking questions", "planned": true },
+				{ "slug": "use/wiki", "title": "People, places, and the record", "planned": true },
+				{ "slug": "use/pages-and-notebooks", "title": "Pages & notebooks", "planned": true },
+				{ "slug": "use/applets", "title": "Applets", "planned": true }
 			]
 		},
 		{
 			"title": "Operate",
 			"pages": [
+				{ "slug": "operate/reach", "title": "Reaching your server" },
 				{ "slug": "operate/upgrading", "title": "Upgrading" },
 				{ "slug": "operate/backup-and-restore", "title": "Backup & restore" },
 				{ "slug": "operate/recovery", "title": "When something breaks" },
-				{ "slug": "operate/reach", "title": "Reaching your server" },
+				{ "slug": "operate/access", "title": "Devices & access", "planned": true },
 				{ "slug": "operate/cli", "title": "The CLI" }
-			]
-		},
-		{
-			"title": "Build",
-			"pages": [
-				{ "slug": "build/applets", "title": "Applets", "planned": true },
-				{ "slug": "build/api", "title": "The API", "planned": true },
-				{ "slug": "build/schema", "title": "Schema & ontology", "planned": true }
 			]
 		},
 		{
 			"title": "Understand",
 			"pages": [
-				{ "slug": "understand/architecture", "title": "Architecture", "planned": true },
-				{ "slug": "understand/privacy", "title": "The privacy model", "planned": true },
+				{ "slug": "understand/privacy", "title": "What leaves the box", "planned": true },
+				{ "slug": "understand/byo-ai", "title": "Bring your own AI", "planned": true },
 				{ "slug": "understand/glossary", "title": "Glossary" }
 			]
 		}

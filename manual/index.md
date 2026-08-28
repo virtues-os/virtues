@@ -59,6 +59,12 @@ ships. Pages marked *soon* in the sidebar are planned; they land as the
 features they cover settle, rather than in advance of them. Nothing published
 here is aspirational — if a page says the box does something, it does.
 
+Every page here is also plain markdown: append `.md` to any docs URL to get
+the source, and [`/llms.txt`](/llms.txt) indexes the lot for anything reading
+on your behalf. The manual is versioned with the software it describes — this
+site publishes from the released branch, so what you read is what a box
+actually runs.
+
 Alongside the manual are the [engineering notes](/docs/notes): the design
 records, audits and measured findings from building this. They are working
 documents rather than documentation, each carrying a status, and they are
