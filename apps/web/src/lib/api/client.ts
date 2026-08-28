@@ -1074,6 +1074,20 @@ export async function pairMint(intendedKind?: string): Promise<PairMintResponse>
 	return res.json();
 }
 
+/** DELETE /api/devices/:id — best-effort, no confirmation.
+ *
+ *  For rows WE created that the user never completed — the handoff enrolls a
+ *  device before the phone has scanned anything, so an abandoned sheet would
+ *  otherwise leave a live allowlisted key on the box. The interactive path is
+ *  `revokeDeviceFlow`, which confirms and reports; this one is cleanup and
+ *  stays quiet (409 on a last-remaining device is a legitimate refusal here,
+ *  not something to surface). */
+export async function revokeDevice(id: string): Promise<void> {
+	await fetch(`${API_BASE}/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {
+		/* benign — the row may already be gone */
+	});
+}
+
 /** POST /api/pair/deny/:id — auth'd. Cancel an outstanding token (e.g. modal close). */
 export async function pairDeny(id: string): Promise<void> {
 	await fetch(`${API_BASE}/pair/deny/${encodeURIComponent(id)}`, { method: 'POST' }).catch(

@@ -93,7 +93,13 @@
 	/** The device the handoff enrolled. Success is this row reporting a
 	 *  `last_seen_at` — i.e. the phone has actually dialled the box. The
 	 *  sheet's usual signal (the pair token being consumed) never fires here,
-	 *  because the handoff enrols directly and leaves that token untouched. */
+	 *  because the handoff enrols directly and leaves that token untouched.
+	 *
+	 *  That only works because enrollment leaves `last_seen_at` NULL. It used
+	 *  to stamp `now()` at insert, so the first poll — which runs immediately —
+	 *  found its own proof and closed the sheet green a half-second after it
+	 *  opened, with the phone untouched. Re-opening the sheet then enrolled
+	 *  another one. If this ever flashes shut again, check that column first. */
 	let handoffDeviceId = $state<string | null>(null);
 
 	async function initiateQRPairing() {
@@ -252,14 +258,20 @@
 		error = null;
 	}
 
-	/** Deny the outstanding (unclaimed) pair token. Called when the user cancels
-	 *  AND when the code/QR times out — no credential exists until the new device
-	 *  consumes, so both flows just deny the pending token. Idempotent +
-	 *  best-effort; the server-side token TTL is the backstop. */
+	/** Undo everything this sheet created that the user never completed. Called
+	 *  when they cancel AND when the code/QR times out. Idempotent +
+	 *  best-effort; the server-side token TTL is the backstop.
+	 *
+	 *  Two things to undo, not one. The token is merely denied — nothing exists
+	 *  until a device consumes it. The HANDOFF is different: it enrolls a live,
+	 *  allowlisted device up front, because the whole point is that the laptop
+	 *  vouches for a phone it cannot reach. So an abandoned sheet leaves a real
+	 *  credential on the box, whose private half was on screen. Revoke it. */
 	function cleanupPending() {
 		if (pairingSucceeded) return;
 		const pendingId = pairingData?.source_id || qrSourceId;
 		if (pendingId) void api.pairDeny(pendingId);
+		if (handoffDeviceId) void api.revokeDevice(handoffDeviceId);
 	}
 
 	function handleClose() {
@@ -286,7 +298,9 @@
 		stopPolling();
 		stopTimer();
 		// Not just handleClose's job: a parent unmounting this modal (route
-		// change, window close) must not leave a listener bound to the LAN.
+		// change, window close) must not leave a listener bound to the LAN —
+		// nor an enrolled device for a phone that never arrived.
+		cleanupPending();
 		void closePairDoor();
 	});
 </script>
