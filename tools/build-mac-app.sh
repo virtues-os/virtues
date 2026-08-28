@@ -64,6 +64,12 @@ CLIENT_BIN="$(target_dir_for "$REPO_ROOT/Cargo.toml")/release/virtues-client"
 echo "→ building iroh FFI xcframework (macOS)…"
 "$REPO_ROOT/crates/virtues-iroh-ffi/build-macos.sh"
 
+# Stamp the collector's release BEFORE compiling it — it is a separate binary
+# from the app that ships it, so this is the only way it can know. Skipping it
+# locally is what made every dev build report 1.0.0 and trip the permanent
+# "behind the app — relaunch Virtues" chip in Settings → This Mac.
+"$REPO_ROOT/tools/stamp-mac-version.sh"
+
 echo "→ building virtues-collector (release)…"
 ( cd "$SWIFT_DIR" && swift build -c release )
 COLLECTOR_BIN="$(cd "$SWIFT_DIR" && swift build -c release --show-bin-path)/virtues-collector"
