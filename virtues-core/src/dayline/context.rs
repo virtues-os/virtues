@@ -221,11 +221,14 @@ pub async fn build_hourly_context(
     }
 
     // Web browsing
+    // Ordered by recency: `visit_duration_seconds` was the old sort key, but
+    // no collector has ever written it, so every row was NULL and the "top 5"
+    // was arbitrary. The mac collector records visit instants, not dwell.
     if let Ok(rows) = sqlx::query(
-        r#"SELECT url, page_title, visit_duration_seconds
+        r#"SELECT url, page_title
            FROM data_activity_web_browsing
            WHERE occurred_at >= $1 AND occurred_at < $2
-           ORDER BY visit_duration_seconds DESC
+           ORDER BY occurred_at DESC
            LIMIT 5"#,
     )
     .bind(window_start)
@@ -235,13 +238,11 @@ pub async fn build_hourly_context(
     {
         let items: Vec<String> = rows.iter().filter_map(|r| {
             let title: Option<String> = r.try_get("page_title").ok().flatten();
-            let dur: Option<i32> = r.try_get("visit_duration_seconds").ok().flatten();
             let display = title.unwrap_or_else(|| {
                 r.try_get::<Option<String>, _>("url").ok().flatten().unwrap_or_default()
             });
             if display.is_empty() { return None; }
-            let mut s = format!("- {}", truncate(&display, 60));
-            if let Some(d) = dur { s.push_str(&format!(" ({}s)", d)); }
+            let s = format!("- {}", truncate(&display, 60));
             Some(s)
         }).collect();
         if !items.is_empty() {
