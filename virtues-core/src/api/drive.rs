@@ -1044,7 +1044,7 @@ async fn soft_delete_folder_recursive(pool: &PgPool, folder_id: &str) -> Result<
                 .bind(&child.id)
                 .execute(pool)
                 .await
-                .ok();
+                .map_err(|e| Error::Database(format!("Failed to soft delete file: {e}")))?;
             total_bytes += child.size_bytes;
             total_count += 1;
         }
@@ -1093,10 +1093,8 @@ async fn hard_delete_folder_recursive(
                 .bind(&child.id)
                 .execute(pool)
                 .await
-                .ok();
-            update_usage_remove(pool, child.size_bytes, false)
-                .await
-                .ok();
+                .map_err(|e| Error::Database(format!("Failed to delete file record: {e}")))?;
+            update_usage_remove(pool, child.size_bytes, false).await?;
         }
     }
 
