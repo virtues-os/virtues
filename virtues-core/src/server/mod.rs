@@ -1446,8 +1446,24 @@ async fn server_info() -> impl IntoResponse {
 /// name. A page served from a remote host has none of these origins.
 fn origin_is_ours(origin: &str) -> bool {
     // The app's own origin: `tauri://localhost` on macOS/iOS,
-    // `https://tauri.localhost` on Windows.
-    if origin.starts_with("tauri://") || origin == "https://tauri.localhost" {
+    // `https://tauri.localhost` on Windows — and `virtues://` on the phone,
+    // which registers its OWN scheme so an OTA bundle can answer requests
+    // (see apps/web/src-tauri/src/lib.rs; the window opens at
+    // `virtues://localhost/connect.html`).
+    //
+    // Missing `virtues://` here silently broke every data request the iOS app
+    // made from 2026-08-18 until 2026-08-28: the box answered 200 and omitted
+    // `Access-Control-Allow-Origin`, so WebKit discarded the response and the
+    // app reported "Load failed" while the box's own logs showed the device
+    // authenticating perfectly. Ten days, because the symptom looks like a
+    // network fault and every trace says the network is fine.
+    //
+    // Safe for the same reason `tauri://` is: a custom scheme can only be
+    // claimed by an installed app, so no remote page can present this origin.
+    if origin.starts_with("tauri://")
+        || origin.starts_with("virtues://")
+        || origin == "https://tauri.localhost"
+    {
         return true;
     }
 
@@ -1495,6 +1511,10 @@ mod cors_tests {
             "http://localhost.evil.example",
             "https://tauri.localhost.evil.example",
             "http://notvirtues",
+            // Near-misses on the scheme itself: only the exact `virtues://`
+            // prefix is ours, never a host or path that merely contains it.
+            "https://virtues.evil.example",
+            "http://evil.example/virtues://",
             "http://evil.example/localhost",
             // Non-http schemes and the opaque origin.
             "null",
@@ -1511,6 +1531,10 @@ mod cors_tests {
     fn our_own_origins_are_allowed() {
         for o in [
             "tauri://localhost",
+            // The iOS app's own scheme. Absent from this list until
+            // 2026-08-28, which is exactly how the phone lost every data
+            // request for ten days without a single test going red.
+            "virtues://localhost",
             "https://tauri.localhost",
             "http://localhost:5173",
             "http://127.0.0.1:7117",
