@@ -572,15 +572,9 @@ mod tests {
         assert_eq!(kind, "article");
         assert!(!a.auto_update, "maintenance is opt-in, never on by default");
 
-        // `date` must stay NULL: the page day-source filters on it, so a day
-        // article with a date would appear inside its own day as authorship.
-        let date: Option<chrono::NaiveDate> =
-            sqlx::query_scalar("SELECT date FROM app_pages WHERE id = $1")
-                .bind(&a.page_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert!(date.is_none(), "an article must not carry a page date");
+        // (The old `date must stay NULL` assertion is gone with the column —
+        // reflections were retired 2026-08-03, the column dropped 2026-08-28;
+        // day-source separation is enforced by `kind` now, asserted above.)
     }
 
     /// Articles are storage-identical to pages, so nothing but this predicate

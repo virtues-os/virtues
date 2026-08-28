@@ -387,15 +387,15 @@ pub async fn attach(pool: &PgPool, t: Target, owner_id: &str) -> Result<u32> {
     let mut attached = 0u32;
     for (c, margin) in admitted {
         let insert = sqlx::query(
-            "INSERT INTO app_notebook_items (notebook_id, url, role, added_by, similarity, sort_order)
-             VALUES ($1, $2, 'library', 'magnet', $3,
+            "INSERT INTO app_notebook_items (notebook_id, url, role, added_by, sort_order)
+             VALUES ($1, $2, 'library', 'magnet',
                      (SELECT COALESCE(MAX(sort_order), -1) + 1
                         FROM app_notebook_items WHERE notebook_id = $1))
              ON CONFLICT (notebook_id, url) DO NOTHING",
         )
         .bind(owner_id)
-        .bind(&c.url)
-        .bind(margin);
+        .bind(&c.url);
+        let _ = margin; // computed for the admission decision; no longer stored
 
         attached += insert.execute(pool).await?.rows_affected() as u32;
     }

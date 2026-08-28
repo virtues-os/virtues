@@ -115,8 +115,6 @@ export interface AppletRun {
 	records_processed: number;
 	error: string | null;
 	trigger: AppletTrigger;
-	parent_run_id: string | null;
-	transform_stage: string | null;
 	result_summary: string | null;
 	/** What the user said, for `message` runs. This plus `result_summary` is
 	 *  the exchange — the conversation lives on the run, not in a thread. */
@@ -2290,18 +2288,6 @@ export async function deletePageShare(pageId: string): Promise<void> {
 export async function getSharedPage(token: string): Promise<SharedPage> {
 	const res = await fetch(`${API_BASE}/s/${token}`);
 	if (!res.ok) throw new Error(`Page not found`);
-	return res.json();
-}
-
-// ============================================================================
-// Reflections API (legacy pages linked to a day — read only; the primitive
-// is retired: writing about a day belongs to the day's article or a note)
-// ============================================================================
-
-/** Legacy reflections for a date. Nothing creates new ones. */
-export async function getReflectionsForDate(date: string): Promise<Page[]> {
-	const res = await fetch(`${API_BASE}/pages/reflections/${date}`);
-	if (!res.ok) throw new Error(`Failed to get reflections: ${res.statusText}`);
 	return res.json();
 }
 

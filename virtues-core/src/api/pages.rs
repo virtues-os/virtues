@@ -45,7 +45,6 @@ pub struct Page {
     pub icon_color: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<serde_json::Value>, // JSONB array: ["tag1", "tag2"]
-    pub date: Option<String>, // YYYY-MM-DD — if set, this page is a reflection for that day
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -59,7 +58,6 @@ pub struct PageSummary {
     pub icon_color: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<serde_json::Value>, // JSONB array: ["tag1", "tag2"]
-    pub date: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -208,7 +206,6 @@ pub async fn list_pages(
 
     // Two exclusions, for two different reasons.
     //
-    // `date IS NULL` drops day-linked reflections, which belong to their day.
     //
     // `kind = 'page'` drops ARTICLES (migration 0081). An article is a page in
     // storage — same table, same editor, same revision history — but it is not
@@ -218,16 +215,16 @@ pub async fn list_pages(
     // would be swallowed by an implementation detail. Articles remain in
     // SEARCH, because prose about your life is exactly what you want to find.
     let total: i64 =
-        sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages WHERE date IS NULL AND kind = 'page'"#)
+        sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages WHERE kind = 'page'"#)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to count pages: {}", e)))?;
 
     let pages = sqlx::query_as::<_, PageSummary>(
         r#"
-        SELECT id, title, icon, icon_color, cover_url, tags, date, created_at, updated_at
+        SELECT id, title, icon, icon_color, cover_url, tags, created_at, updated_at
         FROM app_pages
-        WHERE date IS NULL AND kind = 'page'
+        WHERE kind = 'page'
         ORDER BY updated_at DESC
         LIMIT $1 OFFSET $2
         "#,
@@ -250,7 +247,7 @@ pub async fn list_pages(
 pub async fn get_page(pool: &PgPool, id: &str) -> Result<Page> {
     let page = sqlx::query_as::<_, Page>(
         r#"
-        SELECT id, title, content, icon, icon_color, cover_url, tags, date, created_at, updated_at
+        SELECT id, title, content, icon, icon_color, cover_url, tags, created_at, updated_at
         FROM app_pages
         WHERE id = $1
         "#,
@@ -372,7 +369,7 @@ pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> 
         r#"
         INSERT INTO app_pages (id, title, content, icon, icon_color, cover_url, tags)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, title, content, icon, icon_color, cover_url, tags, date, created_at, updated_at
+        RETURNING id, title, content, icon, icon_color, cover_url, tags, created_at, updated_at
         "#,
     )
     .bind(&id)
@@ -437,7 +434,7 @@ pub async fn update_page(pool: &PgPool, id: &str, req: UpdatePageRequest) -> Res
         UPDATE app_pages
         SET title = $2, content = $3, icon = $4, icon_color = $5, cover_url = $6, tags = $7
         WHERE id = $1
-        RETURNING id, title, content, icon, icon_color, cover_url, tags, date, created_at, updated_at
+        RETURNING id, title, content, icon, icon_color, cover_url, tags, created_at, updated_at
         "#,
     )
     .bind(id)
@@ -476,32 +473,6 @@ pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-// ============================================================================
-// Reflections (pages linked to a day)
-// ============================================================================
-
-/// Legacy reflections for a date — READ ONLY. The reflection primitive is
-/// retired (2026-08-03): writing about a day belongs to the day's article
-/// (or a note on the day), not to a parallel date-linked page. This reader
-/// stays so pages minted before the retirement remain reachable; nothing
-/// creates new ones.
-pub async fn get_reflections_for_date(pool: &PgPool, date: &str) -> Result<Vec<Page>> {
-    let pages = sqlx::query_as::<_, Page>(
-        r#"
-        SELECT id, title, content, icon, icon_color, cover_url, tags, date, created_at, updated_at
-        FROM app_pages
-        WHERE date = $1
-        ORDER BY created_at ASC
-        "#,
-    )
-    .bind(date)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get reflections: {}", e)))?;
-
-    Ok(pages)
 }
 
 // ============================================================================

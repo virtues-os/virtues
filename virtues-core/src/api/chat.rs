@@ -1839,7 +1839,6 @@ fn create_agent_stream(
                     } else {
                         crate::api::ai_calls::Route::Wallet
                     },
-                    chat_id: Some(chat_id.clone()),
                     applet_run_id: None,
                 },
             )
