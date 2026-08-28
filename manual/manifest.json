@@ -48,7 +48,7 @@
 			"pages": [
 				{ "slug": "understand/architecture", "title": "Architecture", "planned": true },
 				{ "slug": "understand/privacy", "title": "The privacy model", "planned": true },
-				{ "slug": "understand/glossary", "title": "Glossary", "planned": true }
+				{ "slug": "understand/glossary", "title": "Glossary" }
 			]
 		}
 	]
