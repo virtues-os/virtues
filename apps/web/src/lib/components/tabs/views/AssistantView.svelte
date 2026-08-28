@@ -4,6 +4,7 @@
 	import ModelSettings from '$lib/components/ModelSettings.svelte';
 	import PersonaSettings from '$lib/components/PersonaSettings.svelte';
 	import AssistantNameSettings from '$lib/components/AssistantNameSettings.svelte';
+	import MemorySettings from '$lib/components/MemorySettings.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 </script>
@@ -19,5 +20,6 @@
 		<AssistantNameSettings />
 		<ModelSettings />
 		<PersonaSettings />
+		<MemorySettings />
 	</div>
 </Page>
