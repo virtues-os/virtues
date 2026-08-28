@@ -1402,7 +1402,9 @@ mod tests {
         let bookmarks = sources_writing("content_bookmark");
         assert!(bookmarks.contains(&"mac".to_string()) && bookmarks.contains(&"github".to_string()));
         // And a stream nothing writes must stay empty rather than guess.
-        assert!(sources_writing("activity_listening").is_empty());
+        // (data_activity_listening itself was deleted 2026-08-28 — no
+        // collector ever existed — so the probe uses another absent name.)
+        assert!(sources_writing("activity_never_existed").is_empty());
     }
 
     /// The keystone of the package model: a directory can contribute a

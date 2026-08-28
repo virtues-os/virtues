@@ -19,7 +19,6 @@ const ONTOLOGY_NAMES: Record<string, string> = {
 	hrv: "Heart Rate Variability",
 	chat: "Chat Sessions",
 	page: "Page Edits",
-	listening: "Listening History",
 	app_usage: "App Usage",
 	web_browsing: "Web Browsing",
 	document: "Documents",
