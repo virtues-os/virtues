@@ -237,12 +237,6 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         key_columns: &["rule", "kind", "active"],
         join_hint: None,
     });
-    m.insert("wiki_narrative_interview", TableMetadata {
-        description: "The owner's answers to the narrative interview questions",
-        category: "wiki",
-        key_columns: &["question_id", "answer", "word_count", "completed_at"],
-        join_hint: None,
-    });
     // ============================================================================
     // WIKI TABLES - Entities (resolved nouns)
     // ============================================================================
