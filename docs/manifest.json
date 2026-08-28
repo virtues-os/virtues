@@ -10,8 +10,22 @@
 				{ "slug": "setup/requirements", "title": "What to run it on", "planned": true },
 				{ "slug": "setup/install", "title": "Installing" },
 				{ "slug": "setup/first-boot", "title": "First boot", "planned": true },
-				{ "slug": "setup/devices", "title": "Connecting your devices", "planned": true },
-				{ "slug": "setup/sources", "title": "Connecting your sources", "planned": true }
+				{
+					"title": "Connecting your devices",
+					"pages": [
+						{ "slug": "setup/devices/iphone", "title": "iPhone", "planned": true },
+						{ "slug": "setup/devices/mac", "title": "Mac", "planned": true }
+					]
+				},
+				{
+					"title": "Connecting your sources",
+					"pages": [
+						{ "slug": "setup/sources", "title": "How sources work", "planned": true },
+						{ "slug": "setup/sources/google", "title": "Google", "planned": true },
+						{ "slug": "setup/sources/apple-health", "title": "Apple Health", "planned": true },
+						{ "slug": "setup/sources/finance", "title": "Banks & cards", "planned": true }
+					]
+				}
 			]
 		},
 		{
@@ -33,6 +47,14 @@
 				{ "slug": "operate/recovery", "title": "When something breaks" },
 				{ "slug": "operate/access", "title": "Devices & access", "planned": true },
 				{ "slug": "operate/cli", "title": "The CLI" }
+			]
+		},
+		{
+			"title": "Build on it",
+			"pages": [
+				{ "slug": "build/applets", "title": "Writing an applet", "planned": true },
+				{ "slug": "build/api", "title": "The API", "planned": true },
+				{ "slug": "build/schema", "title": "Schema & ontology", "planned": true }
 			]
 		},
 		{

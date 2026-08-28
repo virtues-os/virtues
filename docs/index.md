@@ -65,11 +65,10 @@ on your behalf. The manual is versioned with the software it describes — this
 site publishes from the released branch, so what you read is what a box
 actually runs.
 
-Alongside the manual are the [engineering notes](/docs/notes): the design
-records, audits and measured findings from building this. They are working
-documents rather than documentation, each carrying a status, and they are
-public because the reasoning behind a decision is usually worth more than a
-summary of it. Read them for *why*; read these pages for *how*.
+The engineering record behind all of this — design decisions, audits, measured
+findings — lives in the
+[repository](https://github.com/virtues-os/virtues) rather than here. It is
+written for the people and agents building Virtues, and it reads that way.
 
 The [Library](/library) holds the essays — what we think this is for. That's
 the other register entirely.
