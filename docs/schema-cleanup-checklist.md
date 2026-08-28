@@ -56,7 +56,7 @@ strings, `row.get`, catalog, API structs, client types).*
 - [ ] **R1** `app_mcp_servers` + `app_mcp_tools` + the two *uncompiled*
       modules (`api/mcp_client.rs`, `mcp/client.rs` — never declared in
       any mod.rs) + their indexes and FK.
-- [ ] **R2** `wiki_years` + trigger + UNIQUE index.
+- ~~**R2** `wiki_years`~~ — **KEPT** (Adam, 2026-08-28): the table stays.
 - [ ] **R3** `wiki_narrative_interview` + `api/narrative_interview.rs` +
       route (`server/mod.rs:296-300`) + client fns
       (`client.ts:383-414`, zero callers).
@@ -147,30 +147,32 @@ migration file before renaming `.sql.pending`.
       `applet-authoring-plan.md`.
 - [ ] **R25** Dead SET clause `id = EXCLUDED.id` at
       `extraction/mod.rs:272` (no-op PK self-assignment).
+- [ ] **R26** *(was D1, decided: delete)* Quota subsystem:
+      `app_api_usage` + `app_usage_limits` tables,
+      `check_limit`/`get_all_usage`/`record_usage`/`Tier` in
+      `api/usage.rs`, the boot seed (`server/mod.rs:56`), the 3
+      `record_usage` call sites (`server/api.rs:1305,1351,1672`), and
+      both float `estimated_cost_usd` columns. `app_ai_calls.cost_micros`
+      is the real accounting.
+- [ ] **R27** *(was D3, decided: rm)* `app_erasure` + its two indexes
+      (migration 0003's reserved owner-erasure ledger; the sweeper was
+      never built, zero code references). The schema returns with the
+      feature.
 
-## 5 · DECIDE — product calls (each unblocks an RM or a build)
+## 5 · DECIDE — resolved 2026-08-28
 
-- [ ] **D1** Quota subsystem: wire `record_service_usage` into every
-      metered egress, or delete `app_api_usage` + `app_usage_limits` +
-      `check_limit`/`get_all_usage`/`Tier` (+ both float
-      `estimated_cost_usd` columns). `app_ai_calls.cost_micros` already
-      does the real accounting. *Leaning: delete.*
-- [ ] **D2** `wiki_stories`: build the writer or cut the read path + UI.
-- [ ] **D3** `app_erasure`: keep-as-reserved (add a code-visible "not
-      implemented" marker) or cut until the sweeper is real.
-- [ ] **D4** Gmail: 30-day cold start is by design, no backfill path
-      exists. Want backfill?
-- [ ] **D5** `data_health_workout` = 0 rows despite two working writers —
-      check real `stream_ios_healthkit` payloads on the box; collector
-      never emits workouts, or the type match fails.
-- [ ] **D6** Email recipient columns (`to_names`,`cc_emails`,
-      `bcc_emails`): keep only if recipient-side entity resolution is
-      planned (today sender-only). Else RM.
-- [ ] **D7** Readers-with-no-writer: `data_calendar_event.is_sacred`
-      (read at home.rs:116/wiki.rs:2630, always false),
-      `wiki_days.readiness_score`/`readiness_details` (rendered in
-      DaylineChart/DayPage, never written), `wiki_days.snapshot`
-      (wire-only). Build the writers or drop reader+column together.
+- **D1** Quota subsystem → **delete** (now R26).
+- **D2** `wiki_stories` → **keep as-is**; revisit later.
+- **D3** `app_erasure` → **rm** (now R27).
+- **D4** Gmail backfill → confirmed: none exists (30-day cold start +
+  cursor, `google_gmail_sync/main.rs:44`). Backfill is wanted → L15.
+- **D5** `data_health_workout` = 0 → **expected, not a bug**: HealthKit
+  records a workout only when one is started/confirmed (watch
+  auto-detect still requires confirmation; iPhone-only never records
+  workouts). Table stays; Strava also writes it when connected.
+- **D6** Email recipient columns → **keep**; recipient-side resolution
+  is planned.
+- **D7** Readers-with-no-writer trio → parked to L16.
 
 ## 6 · LATER — real, not now (ride along or wait for cause)
 
@@ -222,3 +224,11 @@ migration file before renaming `.sql.pending`.
       (`*_played_at_not_null`, `app_space_items_id_seq`, stale index
       names in the dump) — cosmetic; only worth it inside a future
       squash.
+- [ ] **L15** *(from D4)* Gmail backfill: list historical message ids,
+      batched fetch through the existing transform, resumable cursor.
+      A feature, not cleanup.
+- [ ] **L16** *(from D7)* Readers-with-no-writer trio:
+      `data_calendar_event.is_sacred` (always false),
+      `wiki_days.readiness_score`/`readiness_details` (UI renders,
+      nothing writes), `wiki_days.snapshot` (wire-only). Decide
+      writer-or-drop when those surfaces are next touched.
