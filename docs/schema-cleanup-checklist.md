@@ -43,7 +43,10 @@ strings, `row.get`, catalog, API structs, client types).*
 - [ ] **G1** Extend `tools/check-dynamic-inserts.py` with the inverse
       check: every `sql_query.rs` `key_columns` entry must exist in the
       schema AND appear in some writer's column list. Retires the
-      phantom-column class permanently.
+      phantom-column class permanently. *(Verifier addition: the scan
+      must include `virtues-core/seeds/*.sql` INSERT column lists — raw
+      SQL seeds are a writer class the current check cannot see, and
+      they hid five "never written" columns from the audit.)*
 - [ ] **G2** Reconciliation test between `registered_ontologies()` and
       `get_table_metadata()` — every divergence must be on an explicit
       allowlist with a reason (the `entities.rs:717` pattern, pointed at
@@ -51,113 +54,239 @@ strings, `row.get`, catalog, API structs, client types).*
 - [ ] **G3** One-off: reconcile the 102 orphaned `search_embeddings` rows
       that have no `search_vectors` row (crash between the two writes).
 
-## 3 · RM — dead tables (zero-risk, one commit each)
+## 3 · RM — dead tables (VERIFIED 2026-08-28, adversarial pass)
 
-- [ ] **R1** `app_mcp_servers` + `app_mcp_tools` + the two *uncompiled*
-      modules (`api/mcp_client.rs`, `mcp/client.rs` — never declared in
-      any mod.rs) + their indexes and FK.
+*Every item below survived a fresh refutation attempt. Caveats are
+mandatory co-deletions, not suggestions.*
+
+- [ ] **R1** ✅ `app_mcp_servers` + `app_mcp_tools` + the two
+      *uncompiled* modules (`api/mcp_client.rs`, `mcp/client.rs` —
+      verified three ways: no mod declaration, no `#[path]`, no external
+      callers of any pub item) + indexes + FK. Co-delete two doc-comment
+      mentions: `crates/virtues-registry/src/lib.rs:23`, `tools.rs:6`.
 - ~~**R2** `wiki_years`~~ — **KEPT** (Adam, 2026-08-28): the table stays.
-- [ ] **R3** `wiki_narrative_interview` + `api/narrative_interview.rs` +
-      route (`server/mod.rs:296-300`) + client fns
-      (`client.ts:383-414`, zero callers).
-- [ ] **R4** `data_activity_listening` + descriptor
-      (`ontologies.rs:842-867`) + `listening` LaneMeasure (`:325`) +
-      dayline read (`context.rs:250-270`) + index.
-- [ ] **R5** `app_applet_package` + the INSERT at
-      `applet_git_import.rs:113` (or file a note if git-import packages
-      get a reader someday — today: zero SELECTs).
-- [ ] **R6** `app_auth_event_archive` — sweeper DELETEs instead of
-      archiving; drop table + index. (90-day-old auth events with no
-      query path are retention risk, not history.)
+- [ ] **R3** ✅ `wiki_narrative_interview` + `api/narrative_interview.rs`
+      + route (`server/mod.rs:296-300`) + client fns (`client.ts:383-414`,
+      zero callers). **Verifier additions:** must also delete the live
+      catalog entry `tools/sql_query.rs:240-245` (else the agent is told
+      to query a dropped table) and fix the doc comment
+      `agent/prompt.rs:56`. Drafter is unaffected (reads the chat
+      transcript, not this table).
+- [ ] **R4** ✅ `data_activity_listening` — **descriptor and table must
+      drop in the SAME change**: stream_health/lifeline/census/wiki all
+      `format!`-build SQL from the registry, and stream_health's single
+      UNION takes every stream down if the table is gone but the
+      descriptor lives. Co-deletions beyond the audit's list:
+      `crates/virtues-registry/src/tools.rs:542` (prompt-visible table
+      list), `apps/web/src/lib/wiki/ontology.ts:22`, LaneMeasure
+      `ontologies.rs:325`, `dayline/context.rs:250-270`, index +
+      trigger + named constraint in 0001.
+- [ ] **R5** ✅ `app_applet_package` + the INSERT at
+      `applet_git_import.rs:113`. Note: forecloses the "is there a newer
+      version" check for git-imported applets (the column's stated
+      purpose) — acceptable, feature never built.
+- [ ] **R6** ✅ `app_auth_event_archive` — sweeper's CTE move-then-delete
+      (`sweeper.rs:112`) becomes a plain DELETE; drop table + index +
+      the doc comment at `sweeper.rs:17-18`.
+- [ ] **R26** ✅ *(corrected by verification)* Quota subsystem:
+      `app_api_usage` + `app_usage_limits` + `api/usage.rs` fns + boot
+      seed (`server/mod.rs:56`) + re-export block (`api/mod.rs:236-239`)
+      + **six** call sites: 3× `record_usage`
+      (`server/api.rs:1305,1351,1672`) and 3× `check_limit`
+      (`server/api.rs:1284,1331,1646` — Google Places ×2, Parallel
+      search). **Corrections:** only `app_api_usage.estimated_cost_usd`
+      dies — `app_chat_usage.estimated_cost_usd` is NOT quota, it's the
+      cost figure rendered in the chat context panel
+      (`ContextViewPanel.svelte:235`); keep it (float→cents is L5).
+      Removing `check_limit` removes the *intended* guardrail on two
+      paid APIs — in practice it never fired (the counter was always 0),
+      but note it: if real caps are ever wanted, they come back as a
+      simple per-call budget, not this subsystem.
+- [ ] **R27** ✅ `app_erasure` — cleanest item verified: zero references
+      outside migration 0003; outbound FK only; indexes + CHECK drop
+      with the table.
 
-## 4 · RM — the one cleanup migration (columns, indexes, CHECKs)
+## 4 · RM — the one cleanup migration (VERIFIED 2026-08-28)
 
-Batch these into a single migration + its code sweeps. Grouped so each
-group is reviewable; land groups as separate commits against the same
-migration file before renaming `.sql.pending`.
+One migration + its code sweeps. **Ordering rules the verification
+established (load-bearing, read before executing):**
 
-- [ ] **R7** Unread indexes: `idx_lake_objects_kind`,
+1. **Code sweeps land BEFORE the migration.** Removing a struct field,
+   SELECT-list entry, or INSERT column is compatible with the old
+   schema; the reverse order breaks at runtime (`SELECT *` + `FromRow`
+   / non-optional `try_get` decode failures that sqlx cannot catch at
+   compile time — the R12/R14/R16 class).
+2. **`DROP INDEX IF EXISTS`** for the four indexes whose columns other
+   items drop (`parent_run_id`, `block_type`, both `dirty_at`) — the
+   column drop cascades the index away first.
+3. **The demo seed is a writer**: `virtues-core/seeds/demo_day.sql` runs
+   via `raw_sql` and one missing column aborts the ENTIRE demo seed.
+   Every column it names must be co-edited there.
+4. **Grep hazards** (same name, different live thing):
+   `wiki_notes.resolved_by`, `wiki_events.confidence`, the *computed*
+   `DriveUsage.quota_bytes`/`total_bytes` struct fields (load-bearing
+   in the storage bar UI), and `free_bytes` as a common Rust fn name.
+
+- [ ] **R7** ✅ Unread indexes: `idx_lake_objects_kind`,
       `idx_lake_objects_stream`, `idx_lake_objects_replay`,
-      `idx_backup_archived_file_increment`, `idx_storage_volume_state`,
+      `idx_backup_archived_file_increment` (PK already covers its only
+      predicate), `idx_storage_volume_state`,
       `idx_app_applet_runs_parent`, `idx_calendar_block_type`,
-      `idx_wiki_days_dirty`, `idx_wiki_events_dirty`.
-- [ ] **R8** `wiki_days`: drop `illustration`, `morning_baseline`,
-      `battery_curve`, `segmented_at`, `dirty_at`. (`readiness_*` → D7.)
-- [ ] **R9** `wiki_events`: drop `hrv_z`, `lof_raw`, `user_created`,
-      `dirty_at`. Sweep the two reset paths (`cli/reindex.rs:118`,
-      `cli/configure_inference.rs:136`) and the wire.
-- [ ] **R10** `wiki_refs`: drop `confidence`, `resolved_by`, `metadata`
-      (three dead columns × 100k+ rows).
-- [ ] **R11** `app_chats`: drop `trace`, `action_instruction`.
-- [ ] **R12** `app_applet_runs`: drop `parent_run_id`, `transform_stage`
-      + the two always-null JSON keys in `client.ts:118-119`.
-- [ ] **R13** `app_drive_usage`: drop `quota_bytes`, `data_lake_bytes`,
-      `total_bytes`, `last_scan_at`, `last_scan_bytes`, `trash_bytes`,
-      `trash_count`, `warning_80/90/100_sent`; delete
-      `check_usage_warnings` (`api/drive.rs:414`, uncalled) and the
-      `data_lake_bytes` UI segment (`DriveView.svelte:537,582`).
-- [ ] **R14** `app_user_profile`: drop `crux`, `technology_vision`,
-      `pain_point_primary`, `pain_point_secondary`, `excited_features`.
-- [ ] **R15** `app_pages.date` + `get_reflections_for_date` +
-      `/api/pages/reflections/:date` + JournalCard — the retired
-      reflections feature, wired end-to-end, returning `[]` forever.
-- [ ] **R16** Small leaves: `app_assistant_profile.embedding_model_id`,
-      `app_auth_user.is_owner`, `app_ai_calls.chat_id`,
-      `app_notebook_items.similarity`,
-      `app_page_versions.content_preview`.
-- [ ] **R17** `data_calendar_event`: drop `event_type`, `conference_url`,
-      `conference_platform`, `recurrence_rule`, `timezone`, `block_type`
-      — unless D7 decides to populate from Google (the API returns them).
-      Remove the phantom entries from `sql_query.rs:101` either way.
-- [ ] **R18** `data_activity_app_session`: drop `url`, `document_path`,
-      `app_category` (+ catalog entry `sql_query.rs:139`, and the `url`
-      mention in `morning_examen/manifest.toml:39`).
-- [ ] **R19** `data_activity_web_browsing`: drop
-      `visit_duration_seconds`, `scroll_depth_percent` (+ catalog
-      `sql_query.rs:145`). Lands with F3.
-- [ ] **R20** Scattered never-written data columns:
+      `idx_wiki_days_dirty`, `idx_wiki_events_dirty`. Do NOT touch the
+      partial UNIQUE on `lake_objects.sha256` — load-bearing dedup.
+- [ ] **R8** ✅ *(amended)* `wiki_days`: `illustration` and `dirty_at`
+      are clean drops; `segmented_at` needs its one writer swept
+      (`day_summary.rs:360`); `morning_baseline` + `battery_curve` are
+      always-NULL but **actively SELECTed** — co-sweep six read sites
+      first (`api/wiki.rs:908,935,971-972,1235,154-155` +
+      `apps/web/src/lib/wiki/api.ts:95-96`) or every day query breaks.
+      The `wiki_day_prose` view reads only `d.id`/`d.date` — clear.
+      (`readiness_*` → L16.)
+- [ ] **R9** ⚠️ *(amended by refutation)* `wiki_events`: `lof_raw` and
+      `dirty_at` are clean drops. **`hrv_z` is never written but
+      rendered end-to-end** (`api/wiki.rs:1510,1599,1443,1721,1790` →
+      `converters.ts:262` → `types/day.ts:49`) and autonomic scoring
+      names it as intended-future ("would use -hrv_z"): either drop
+      with the 7-site sweep or leave until scoring writes it — Adam's
+      call. **`user_created` IS named in live SQL** (carry-over INSERT
+      at `dayline/sleep.rs:208,211`) though never true: drop = sweep
+      that INSERT + 5 read sites + `converters.ts:268` +
+      `types/day.ts:59`. Sweep the two reset paths either way
+      (`cli/reindex.rs:118`, `cli/configure_inference.rs:136`).
+- [ ] **R10** ✅ `wiki_refs`: drop `confidence`, `resolved_by`,
+      `metadata` — verified against all 96 references: no writer, no
+      reader, no `SELECT *` on the table. Mind grep hazard #4.
+- [ ] **R11** ✅ `app_chats`: drop `trace`, `action_instruction` —
+      every query uses explicit column lists. Caveat: `app_chats` is a
+      registered ontology, so both currently appear in the record
+      viewer via `to_jsonb`; check for non-null rows before dropping
+      (user-visible data would disappear).
+- [ ] **R12** ⚠️ *(refuted as written; droppable with ordering)*
+      `app_applet_runs.parent_run_id` + `transform_stage` are never
+      written but **actively read by a compiled mapper off
+      `SELECT *`/`RETURNING *`** (`scheduler/applets.rs:1093-1094`,
+      non-optional `?`) — a bare drop breaks run creation/detail/list
+      at runtime. Sweep first: `applets.rs:113-114` (struct),
+      `:1093-1094` (mapper), `client.ts:118-119`; then drop (self-FK +
+      index cascade). Also sweep the stale comment
+      `api/metrics.rs:224-226`.
+- [ ] **R13** ⚠️ *(refuted in part)* `app_drive_usage`:
+      `quota_bytes` + `data_lake_bytes` are clean (plus the
+      `data_lake_bytes` UI segment, `DriveView.svelte:537,582` — NOT
+      the computed struct fields of the same names, grep hazard #4).
+      `total_bytes` (4 write sites: `drive.rs:362,366,391,1812`),
+      `trash_bytes`/`trash_count` (3: `:1090,1332,1374`),
+      `last_scan_at`/`last_scan_bytes` (1: `:1817-1818`) — sweep
+      writes, then drop. **`warning_80/90/100_sent` are LIVE-read by a
+      routed endpoint** (`/api/drive/warnings`: `server/mod.rs:751` →
+      `api.rs:2956` → `check_usage_warnings`); no web caller, so
+      delete endpoint + route + re-export (`api/mod.rs:91`) first,
+      then the columns.
+- [ ] **R14** ✅ `app_user_profile` discovery fields — confirmed unread,
+      but `profile.rs:49` is `SELECT *` into `FromRow`: delete
+      `storage/models.rs:72-76` + the `profile.rs:38-42,89-93,151-163`
+      request/apply blocks FIRST, then the migration.
+- [ ] **R15** ⚠️ *(refuted as stated; still droppable)* `app_pages.date`
+      has a live reader beyond the dead reflections route:
+      `list_pages` filters `WHERE date IS NULL` (`pages.rs:221,230`) to
+      keep old day-reflections out of the Pages list. Drop = same
+      migration must `DELETE FROM app_pages WHERE date IS NOT NULL`
+      (verify rows are disposable first — on the box these are
+      pre-2026-08-03 auto-reflections). Sweep: 5 SELECT/RETURNING lists
+      (`pages.rs:228,253,375,440,493`), `Page`/`PageSummary` structs
+      (`:48,:62`), the filter, the test
+      (`wiki_articles.rs:576-583`), route + handler + client fn +
+      JournalCard mount (`DayPage.svelte:33,609`).
+- [ ] **R16** *(amended)* `app_auth_user.is_owner` ✅ clean.
+      `app_assistant_profile.embedding_model_id` — delete
+      `storage/models.rs:98` first (`SELECT *`/`RETURNING *` decode).
+      `app_ai_calls.chat_id` — written with real values; sweep struct
+      field `ai_calls.rs:33` + 4 construction sites (`chat.rs:1824`,
+      `applet_runner.rs:165`, `virtues_api/client.rs:565,577`,
+      `executor.rs:83`). `app_notebook_items.similarity` — sweep the
+      magnet INSERT (`magnet.rs:390`).
+      ~~`app_page_versions.content_preview`~~ — **STRUCK: fully live**
+      (written, selected, consumed by the frontend versions panel,
+      `yjs/versions.ts:19,56`). The audit was wrong.
+- [ ] **R17** ⚠️ *(refuted in part — the demo seed writes 4 of 6)*
+      `data_calendar_event`: `recurrence_rule` ✅ clean. `event_type`,
+      `conference_url`/`conference_platform`, `timezone` are written by
+      `virtues-core/seeds/demo_day.sql` (5/3/5 INSERTs) — co-edit the
+      seed (ordering rule #3). `block_type` — also swept from
+      `OntologyDataTable.svelte:116` (badge switch); its partial index
+      is in R7 (ordering rule #2). Catalog sweep `sql_query.rs:101`.
+- [ ] **R18** ⚠️ `data_activity_app_session`: `document_path` ✅ clean;
+      `url` + `app_category` are written by `demo_day.sql`
+      (`:732-790`) — co-edit the seed, plus the `url` mention in
+      `morning_examen/manifest.toml:39` (lands with F2).
+- [ ] **R19** ⚠️ `data_activity_web_browsing`: `scroll_depth_percent` ✅
+      clean. **`visit_duration_seconds` has a second live reader**: the
+      Dot Cloud face's `EVENTS_SQL`
+      (`applets/dot_cloud/face/index.html:158`) — one UNION across nine
+      tables, so a bare drop blacks out the whole default face. Co-edit
+      the face SQL (it already `COALESCE(...,60)`s — remove the term),
+      then drop. Catalog sweep `sql_query.rs:145`. Lands with F3.
+- [ ] **R20** *(amended — 3 of 8 struck)* Confirmed clean drops:
       `data_health_workout.route_geometry`,
-      `data_communication_transcription.speaker_segments`,
       `data_financial_account.institution_id`,
       `data_content_bookmark.content_type`,
-      `data_content_conversation.{model,tags,metadata}`,
-      `data_financial_transaction.authorized_timestamp`,
-      `data_audio_recording.audio_format` (constant 'm4a'). Catalog
-      sweeps: `sql_query.rs:111,161,167`.
-- [ ] **R21** Search: drop `search_embeddings.text_hash`,
-      `search_index_meta.fingerprint`, `search_index_meta.built_at`.
+      `data_content_conversation.{model,tags,metadata}`.
+      `data_communication_transcription.speaker_segments` — droppable
+      with a `demo_day.sql:933` co-edit.
+      ~~`authorized_timestamp`~~ — **STRUCK: live Plaid writer**
+      (insert + update paths + seed); it's real data, rename to
+      `authorized_at` in L5 instead.
+      ~~`audio_format`~~ — **STRUCK: actively read** — the
+      transcription drain selects it into a non-Option field and picks
+      the Gemini upload MIME type from it
+      (`transcription_resolution/transform.rs:176,383,674`); dropping
+      breaks transcription for every recording.
+      Catalog sweeps: `sql_query.rs:111,161,167`.
+- [ ] **R21** ✅ Search: drop `search_embeddings.text_hash` (sweep 3
+      INSERT lists: `indexer.rs:442,562`, `wiki_articles.rs:817`),
+      `search_index_meta.fingerprint` (the live fingerprint is
+      env-based, never this column), `search_index_meta.built_at`.
       Sweep the NULL-resets in `cli/reindex.rs` /
-      `cli/configure_inference.rs`.
-- [ ] **R22** Infra: drop `lake_objects.source_id`,
-      `backup_archived_file.{size_bytes,archived_at}`,
+      `cli/configure_inference.rs`. The derive-id trigger doesn't touch
+      `text_hash` — clear.
+- [ ] **R22** *(amended — source_id struck)*
+      ~~`lake_objects.source_id`~~ — **STRUCK: carries real
+      provenance** — for all nine cloud-sync applets it's the applet
+      ACTION, not the provider (`storage/lake.rs:339-357`), and it's
+      baked into storage-key paths. The audit's "always = provider"
+      premise was wrong.
+      Confirmed: `backup_archived_file.{size_bytes,archived_at}`
+      (sweep the INSERT `cli/backup_volume.rs:216-218` + the
+      `UNNEST($4)` plumbing at `:764-767`),
       `storage_volume.{capacity_bytes,free_bytes,probed_at,
-      last_error_at,roles}` (+ the roles CHECK and the four
-      `= ANY(roles)` scans), `credentials.scopes`.
-- [ ] **R23** Narrow aspirational CHECKs to produced values:
-      `lake_objects.kind` (drop `'drive'`), `content_encoding` (drop
-      `'zstd'` — or the whole column: it is a constant),
-      `storage_volume.kind` (drop `'internal'`,`'network'`), `state`
-      (drop `'degraded'`), `credentials.status` (drop
-      `'reauth_required'`,`'error'`), `app_user_profile
-      .onboarding_status` (drop `'complete'`).
-- [ ] **R24** 0008 leftovers outside the DB: fix dead path
-      `applets/AUTHORING.md:139`, `"Biscuit"` in
-      `applets/MANIFEST_SCHEMA.json:135`, delete/refresh the
-      `hello_world` references in `agents/plan/display-plan.md` and
-      `applet-authoring-plan.md`.
-- [ ] **R25** Dead SET clause `id = EXCLUDED.id` at
-      `extraction/mod.rs:272` (no-op PK self-assignment).
-- [ ] **R26** *(was D1, decided: delete)* Quota subsystem:
-      `app_api_usage` + `app_usage_limits` tables,
-      `check_limit`/`get_all_usage`/`record_usage`/`Tier` in
-      `api/usage.rs`, the boot seed (`server/mod.rs:56`), the 3
-      `record_usage` call sites (`server/api.rs:1305,1351,1672`), and
-      both float `estimated_cost_usd` columns. `app_ai_calls.cost_micros`
-      is the real accounting.
-- [ ] **R27** *(was D3, decided: rm)* `app_erasure` + its two indexes
-      (migration 0003's reserved owner-erasure ledger; the sweeper was
-      never built, zero code references). The schema returns with the
-      feature.
+      last_error_at}` (mind `free_bytes` the fn name — hazard #4),
+      `storage_volume.roles` + CHECK + the four `= ANY(roles)` scans +
+      struct field (`volumes.rs:28`) + `serves_backup()` (`:49`) +
+      SELECT list (`:176`) + the unit test (`:292-306`),
+      `credentials.scopes` (+ the never-constructed field
+      `credentials/types.rs:71`).
+- [ ] **R23** *(amended — one value saved)* Narrow CHECKs:
+      `lake_objects.kind` drop `'drive'`; `content_encoding` — drop the
+      whole column (provably constant `'none'`); `storage_volume.kind`
+      drop `'internal'`/`'network'`; `state` drop `'degraded'`;
+      `app_user_profile.onboarding_status` drop `'complete'` (note: the
+      profile API accepts client-supplied strings into this column —
+      narrowing turns a bad value into a 500, which is correct but new).
+      ~~`credentials.status`~~ — **KEEP both `'reauth_required'`
+      (PRODUCED at `auth/refresh.rs:137-144` on provider-rejected
+      refresh — narrowing would turn every failed refresh into a
+      constraint violation) and `'error'`** (parsed on read, one line
+      from produced).
+- [ ] **R24** ✅ 0008 leftovers: `applets/AUTHORING.md:139` dead path,
+      `"Biscuit"` in `applets/MANIFEST_SCHEMA.json:135`, `hello_world`
+      refs in `agents/plan/display-plan.md:46,119` +
+      `applet-authoring-plan.md:81` + (verifier addition)
+      `agents/record/applets-surface-audit.md:73`.
+- [ ] **R25** ✅ Dead SET clause `id = EXCLUDED.id` at
+      `extraction/mod.rs:272` — verified pure function of the conflict
+      target. Run the one-line legacy-id sanity count against the live
+      DB first (if any pre-formula rows exist, the clause is silently
+      repairing them).
 
 ## 5 · DECIDE — resolved 2026-08-28
 
@@ -193,8 +322,11 @@ migration file before renaming `.sql.pending`.
 - [ ] **L5** Money: `_cents` suffix on the 8 bigint-cents columns
       (financial account/transaction/asset/liability), state the unit in
       the asset/liability catalog descriptions (`sql_query.rs:121,127`)
-      — today an agent reports holdings 100× too large. Float
-      `estimated_cost_usd` dies with D1.
+      — today an agent reports holdings 100× too large. Also rename
+      `authorized_timestamp` → `authorized_at` (live Plaid data, struck
+      from R20). *(Corrected: only `app_api_usage.estimated_cost_usd`
+      dies with R26 — `app_chat_usage`'s is user-visible chat cost and
+      converts float→`cost_micros` here instead.)*
 - [ ] **L6** Boolean renames (`enabled`→`is_enabled` etc., `active` vs
       `is_active`) and instant renames (`sampled_at`, `completed_at`,
       `last_modified_time`, `sleep_start`/`sleep_end` from 0005) — ride
