@@ -294,11 +294,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .post(crate::api::narrative_draft::save_rules_handler),
         )
         .route(
-            "/api/narrative/interview",
-            get(crate::api::narrative_interview::list_handler)
-                .post(crate::api::narrative_interview::save_handler),
-        )
-        .route(
             "/api/setup/skip-onboarding",
             post(crate::api::box_status::skip_onboarding_handler),
         )
