@@ -1165,6 +1165,29 @@ fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
         return Ok(false);
     }
     if files_differ(&bundled, &installed) {
+        // An ad-hoc signed collector has no signing identity for macOS to
+        // recognise it by, so TCC pins its Full Disk Access and Accessibility
+        // grants to that exact build — and this copy voids them. Silently: the
+        // switches in System Settings stay on while every read fails, so
+        // iMessages, Safari history and window titles simply stop arriving.
+        //
+        // This path, not `virtues-collector install`, is how it actually
+        // happens — an app rebuild relaunches, reconciles, and blinds the
+        // collector with nobody having typed anything. Say so HERE, where the
+        // cause is still known; five minutes later the collector's own health
+        // report says only "denied", with no hint of what did it.
+        //
+        // We still copy: a stale collector is the worse failure, and this is
+        // recoverable by removing and re-adding the entries (toggling them off
+        // and on does not repair the grant).
+        if is_adhoc_signed(&bundled) {
+            eprintln!(
+                "[reconcile] {name}: bundled helper is AD-HOC SIGNED — this redeploy \
+                 voids its macOS permissions. Remove and re-add virtues-collector in \
+                 System Settings → Privacy & Security → Full Disk Access and \
+                 Accessibility. Build with APPLE_SIGNING_IDENTITY set to stop this."
+            );
+        }
         copy_executable(&bundled, &installed).map_err(|e| e.to_string())?;
     }
     // Kick the LaunchAgent so launchd drops the old process and runs the new
@@ -1194,6 +1217,24 @@ fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
         eprintln!("[reconcile] {name}: kickstart failed — will retry next launch");
     }
     Ok(true)
+}
+
+/// Is this binary ad-hoc signed (no signing identity, so TCC pins its grants to
+/// the exact build)? Shells out to `codesign` because this runs only on the
+/// redeploy path — rare by construction — and linking the Security framework to
+/// read one flag is not worth it.
+///
+/// Failure reads as `false`: this only decides whether to print a warning, and
+/// a probe that could not run is not evidence that a build is unsigned.
+fn is_adhoc_signed(path: &std::path::Path) -> bool {
+    std::process::Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=2"])
+        .arg(path)
+        .output()
+        .ok()
+        // codesign writes its report to stderr.
+        .map(|o| String::from_utf8_lossy(&o.stderr).contains("adhoc"))
+        .unwrap_or(false)
 }
 
 /// Byte-equal? Cheap size check first, content compare only if sizes match (the

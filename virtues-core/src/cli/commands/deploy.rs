@@ -49,6 +49,17 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     // gone — the operator sees "paired", not our internal name.
     println!("    paired               {}", s.devices.paired_wg);
 
+    // A collector that cannot read a source looks exactly like a quiet one, so
+    // name it here rather than leaving the operator to infer it from an empty
+    // stream. Listed under devices because it is a property of the device.
+    for d in &s.degraded {
+        let who = d.label.as_deref().unwrap_or(&d.device_id);
+        println!("    {:<20} ⚠  denied: {}", who, d.denied.join(", "));
+        if d.stale {
+            println!("    {:<20}    (self-report is stale — may be worse)", "");
+        }
+    }
+
     // Setup + next-wins checklists — the textual mirror of the panel/wizard
     // (one state machine, three renderers; see docs/onboarding.md).
     if let Ok(setup) = crate::api::box_status::compute_setup_state(virtues.database.pool()).await {
@@ -99,6 +110,17 @@ fn next_step(s: &BoxStatus) -> String {
         // desktop app has no camera. The app takes the code by hand; `virtues
         // pair` on this terminal prints it.
         return "pair a device — get the app, run `virtues pair`, type the code".to_string();
+    }
+    // Ahead of "ready": a paired box with a blinded collector is the state this
+    // whole path exists to stop calling healthy. Grant it and the stream
+    // backfills on its own — the collector keeps its own watermark.
+    if let Some(d) = s.degraded.first() {
+        let who = d.label.as_deref().unwrap_or(&d.device_id);
+        return format!(
+            "grant {} on {who} — System Settings → Privacy & Security. \
+             If the switch already looks on, REMOVE the entry and re-add it",
+            d.denied.join(" + ")
+        );
     }
     "ready — your box is set up and paired".to_string()
 }
