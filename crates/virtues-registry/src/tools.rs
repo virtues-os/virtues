@@ -3,9 +3,6 @@
 //! This module defines BUILT-IN tools that are part of Virtues core.
 //! These are executed as native Rust functions via the ToolExecutor.
 //!
-//! MCP tools (user-connected) are stored in the Postgres `app_mcp_tools` table
-//! and executed via the MCP protocol.
-//!
 //! # Tool Types
 //!
 //! - `builtin` - Native Rust implementation (web_search, sql_query, create_page, get_page_content, edit_page)
