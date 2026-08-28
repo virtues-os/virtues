@@ -250,33 +250,6 @@ pub async fn build_hourly_context(
         }
     }
 
-    // Listening (Spotify etc)
-    if let Ok(rows) = sqlx::query(
-        r#"SELECT track_name, artist_name
-           FROM data_activity_listening
-           WHERE occurred_at >= $1 AND occurred_at < $2
-           ORDER BY occurred_at
-           LIMIT 5"#,
-    )
-    .bind(window_start)
-    .bind(window_end)
-    .fetch_all(pool)
-    .await
-    {
-        let items: Vec<String> = rows.iter().filter_map(|r| {
-            let track: String = r.try_get("track_name").ok()?;
-            let artist: Option<String> = r.try_get("artist_name").ok().flatten();
-            if let Some(a) = artist {
-                Some(format!("- {} by {}", track, a))
-            } else {
-                Some(format!("- {}", track))
-            }
-        }).collect();
-        if !items.is_empty() {
-            sections.push(format!("LISTENING:\n{}", items.join("\n")));
-        }
-    }
-
     // Today's events so far (for continuity — the agent needs to know what it already created)
     if let Ok(rows) = sqlx::query(
         r#"SELECT e.id, e.started_at, e.ended_at, e.auto_label, e.event_summary, e.agent_action
