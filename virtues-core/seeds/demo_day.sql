@@ -122,11 +122,10 @@ INSERT INTO data_location_visit (
 
 -- Primary day: Feb 13 (the detailed one)
 INSERT INTO wiki_days (
-    id, date, start_timezone, morning_baseline, epigraph
+    id, date, start_timezone, epigraph
 ) VALUES
 (
     'day_2026-02-13', '2026-02-13', 'America/Chicago',
-    0.52,
     'The Trader Joe''s detour'
 ) ON CONFLICT DO NOTHING;
 
@@ -140,20 +139,18 @@ UPDATE wiki_days SET readiness_score = 59, readiness_details = '{"hrv":50,"rhr":
 
 -- Adjacent day: Feb 12 (routine Thursday — for cross-day comparison)
 INSERT INTO wiki_days (
-    id, date, start_timezone, morning_baseline
+    id, date, start_timezone
 ) VALUES
 (
-    'day_2026-02-12', '2026-02-12', 'America/Chicago',
-    0.48
+    'day_2026-02-12', '2026-02-12', 'America/Chicago'
 ) ON CONFLICT DO NOTHING;
 
 -- Adjacent day: Feb 14 (Valentine's Saturday — slightly different texture)
 INSERT INTO wiki_days (
-    id, date, start_timezone, morning_baseline
+    id, date, start_timezone
 ) VALUES
 (
-    'day_2026-02-14', '2026-02-14', 'America/Chicago',
-    0.55
+    'day_2026-02-14', '2026-02-14', 'America/Chicago'
 ) ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
