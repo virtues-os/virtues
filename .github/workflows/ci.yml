@@ -257,6 +257,42 @@ jobs:
           sqlx migrate run --source virtues-core/migrations
           cargo sqlx prepare --check --workspace
 
+      # An applied migration's file is part of the fleet's history. sqlx
+      # checksums the BYTES, so editing one after boxes have applied it —
+      # even a comment — makes their next `migrate run` refuse with
+      # "previously applied but has been modified", which on a box is a boot
+      # refusal. Not hypothetical: a docs path-sweep (b75a20ce) edited
+      # comments inside 0005 + three atlas migrations after staging.65-.71
+      # had shipped them; caught by hand (9f9538f3) one prerelease before it
+      # bricked every upgrade. New files are welcome; .sql.pending
+      # placeholders may be consumed; everything else is append-only. A
+      # deliberate squash is the one exception, and it edits this step
+      # knowingly.
+      - name: Applied migrations are append-only
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags origin ${{ github.base_ref }}
+          base=$(git merge-base FETCH_HEAD HEAD)
+          # TEMPORARY allowlist: the wave that INTRODUCED this check also
+          # carries 9f9538f3, which restores four migrations to the bytes
+          # fielded boxes actually applied — a modification relative to
+          # staging's (bad) copy, and the one edit that is the fix rather
+          # than the disease. DELETE these four lines once that wave merges.
+          drift=$(git diff --name-status --no-renames "$base" HEAD -- \
+                    virtues-core/migrations services/virtues-atlas/migrations \
+                  | grep -E '^\s*[MD]\s' | grep -E '\.sql$' \
+                  | grep -v -e '0005_display_hours\.sql' \
+                            -e '0001_customers\.sql' \
+                            -e '0015_box_keys\.sql' \
+                            -e '0016_granted_links\.sql' || true)
+          if [ -n "$drift" ]; then
+            echo "✖ applied migration files modified or deleted:"
+            echo "$drift"
+            echo "Migrations are append-only once merged — revert the edit; new behavior gets a NEW migration."
+            exit 1
+          fi
+          echo "✓ migrations are append-only against $base"
+
       # Two drift classes sqlx cannot see, because the SQL is built from
       # string arrays at runtime: (1) dynamic INSERT/upsert column lists that
       # name columns the schema no longer has (the 2026-08-17 renames left
