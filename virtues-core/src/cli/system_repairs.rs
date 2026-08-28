@@ -115,24 +115,40 @@ fn state_ownership(data_dir: &std::path::Path) -> Outcome {
             .args(["!", "-user", "virtues"]);
     };
 
-    // Detect first, repair second, as two invocations: the detection pass is
-    // capped for the log, and piping the REPAIRING find through a cap lets
-    // SIGPIPE kill it after the cap — silently fixing a prefix and leaving the
-    // rest, the same shape of half-truth this repair exists to end.
+    // Detect first, repair second, as two invocations: the log wants the list
+    // of what was wrong, and threading a cap into the REPAIRING pass (a la
+    // `| head`) lets SIGPIPE kill it after the cap — silently fixing a prefix
+    // and leaving the rest, the same shape of half-truth this repair exists to
+    // end. The full list is held in memory, which is fine: mass wrong
+    // ownership is repaired at its sources (restore chowns after unpacking,
+    // firstboot after seeding), so what reaches this sweep is drift, not bulk.
     let mut detect = Command::new("find");
     prunes(&mut detect);
     detect.arg("-print");
-    let found = match detect.output() {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+    let (found, detect_ok) = match detect.output() {
+        Ok(o) => (
+            String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            o.status.success(),
+        ),
         Err(e) => return Outcome::Failed(format!("could not run find: {e}")),
     };
     if found.is_empty() {
+        // Nothing found by a find that also FAILED is not convergence — e.g.
+        // `-user virtues` hard-errors before traversal on a machine with no
+        // such user. Reading that as "all good" is the swallowed-error shape
+        // this repo keeps paying for.
+        if !detect_ok {
+            return Outcome::Failed("ownership scan failed before finding anything".to_string());
+        }
         return Outcome::Converged;
     }
 
+    // `-h`: `find ! -user` tests the symlink ITSELF, so repair the symlink
+    // itself — plain chown would dereference and change the target's owner
+    // while leaving the link that failed the test untouched.
     let mut repair = Command::new("find");
     prunes(&mut repair);
-    repair.args(["-exec", "chown", "virtues:virtues", "{}", "+"]);
+    repair.args(["-exec", "chown", "-h", "virtues:virtues", "{}", "+"]);
     match repair.output() {
         Ok(o) if o.status.success() => {
             let paths: Vec<&str> = found.lines().collect();
