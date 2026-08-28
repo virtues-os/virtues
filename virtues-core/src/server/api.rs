@@ -1279,42 +1279,8 @@ pub async fn places_autocomplete_handler(
     State(state): State<AppState>,
     Query(request): Query<crate::api::AutocompleteRequest>,
 ) -> Response {
-    // Check usage limit first
-    if let Err(e) =
-        crate::api::check_limit(state.db.pool(), crate::api::Service::GooglePlaces).await
-    {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": "usage_limit_exceeded",
-                "service": e.service,
-                "used": e.used,
-                "limit": e.limit,
-                "unit": e.unit,
-                "resets_at": e.resets_at,
-                "message": format!("Monthly Google Places limit reached. Resets at {}", e.resets_at)
-            })),
-        )
-            .into_response();
-    }
-
     match crate::api::autocomplete(state.db.pool(), request).await {
         Ok(response) => {
-            // Record usage on success - warn but don't fail if recording fails
-            // The user already received their response, so this is a billing/tracking issue only
-            if let Err(e) = crate::api::record_service_usage(
-                state.db.pool(),
-                crate::api::Service::GooglePlaces,
-                1,
-            )
-            .await
-            {
-                tracing::warn!(
-                    service = "google_places",
-                    error = %e,
-                    "Usage recording failed - request succeeded but usage may be undercounted"
-                );
-            }
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(e) => error_response(e),
@@ -1326,41 +1292,8 @@ pub async fn places_details_handler(
     State(state): State<AppState>,
     Query(request): Query<crate::api::PlaceDetailsRequest>,
 ) -> Response {
-    // Check usage limit first
-    if let Err(e) =
-        crate::api::check_limit(state.db.pool(), crate::api::Service::GooglePlaces).await
-    {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": "usage_limit_exceeded",
-                "service": e.service,
-                "used": e.used,
-                "limit": e.limit,
-                "unit": e.unit,
-                "resets_at": e.resets_at,
-                "message": format!("Monthly Google Places limit reached. Resets at {}", e.resets_at)
-            })),
-        )
-            .into_response();
-    }
-
     match crate::api::get_place_details(state.db.pool(), request).await {
         Ok(response) => {
-            // Record usage on success - warn but don't fail if recording fails
-            if let Err(e) = crate::api::record_service_usage(
-                state.db.pool(),
-                crate::api::Service::GooglePlaces,
-                1,
-            )
-            .await
-            {
-                tracing::warn!(
-                    service = "google_places",
-                    error = %e,
-                    "Usage recording failed - request succeeded but usage may be undercounted"
-                );
-            }
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(e) => error_response(e),
@@ -1643,22 +1576,6 @@ pub async fn web_search_handler(
     State(state): State<AppState>,
     Json(request): Json<WebSearchRequest>,
 ) -> Response {
-    if let Err(e) = crate::api::check_limit(state.db.pool(), crate::api::Service::Parallel).await {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": "usage_limit_exceeded",
-                "service": e.service,
-                "used": e.used,
-                "limit": e.limit,
-                "unit": e.unit,
-                "resets_at": e.resets_at,
-                "message": format!("Monthly web search limit reached. Resets at {}", e.resets_at)
-            })),
-        )
-            .into_response();
-    }
-
     let search = crate::api::web_search::SearchRequest {
         objective: request.objective,
         query: request.query,
@@ -1668,16 +1585,6 @@ pub async fn web_search_handler(
 
     match crate::api::web_search::search(state.db.pool(), search).await {
         Ok(response) => {
-            if let Err(e) =
-                crate::api::record_service_usage(state.db.pool(), crate::api::Service::Parallel, 1)
-                    .await
-            {
-                tracing::warn!(
-                    service = "parallel",
-                    error = %e,
-                    "Usage recording failed - request succeeded but usage may be undercounted"
-                );
-            }
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(e) => error_response(e),

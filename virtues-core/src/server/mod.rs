@@ -52,10 +52,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         Err(e) => tracing::error!(error = %e, "could not open the lake for a write probe"),
     }
 
-    // Initialize usage limits from TIER env var
-    if let Err(e) = crate::api::init_limits_from_tier(client.database.pool()).await {
-        tracing::warn!("Failed to initialize usage limits: {}", e);
-    }
 
     // Reap runs left in `running` by a crash/restart mid-execution, so a stale
     // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
