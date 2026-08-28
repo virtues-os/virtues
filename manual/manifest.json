@@ -11,7 +11,7 @@
 			"title": "Set up",
 			"pages": [
 				{ "slug": "setup/requirements", "title": "Requirements", "planned": true },
-				{ "slug": "setup/install", "title": "Installing", "planned": true },
+				{ "slug": "setup/install", "title": "Installing" },
 				{ "slug": "setup/first-boot", "title": "First boot", "planned": true },
 				{ "slug": "setup/pairing", "title": "Pairing devices", "planned": true }
 			]
