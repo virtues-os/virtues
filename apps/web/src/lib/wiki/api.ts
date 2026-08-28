@@ -90,8 +90,6 @@ export interface WikiDayApi {
 	epigraph: string | null;
 	last_edited_by: string | null;
 	cover_image: string | null;
-	act_id: string | null;
-	chapter_id: string | null;
 	morning_baseline: number | null;
 	battery_curve: string | null;
 	data_quality: {

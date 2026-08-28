@@ -145,12 +145,11 @@ pub struct WikiDay {
     pub epigraph: Option<String>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
-    /// Always `None` since the 2026-08-18 squash dropped the acts/chapters
-    /// columns; kept so the client shape doesn't change. Selecting them was
-    /// what broke every day query on the squashed schema — `try_get(...).ok()`
-    /// tolerates an absent column, but SQL naming one does not.
-    pub act_id: Option<String>,
-    pub chapter_id: Option<String>,
+    // act_id/chapter_id are gone: the 2026-08-18 squash dropped the columns,
+    // and the fields spent months serializing a permanent None to a client
+    // that never read them. `try_get(...).ok()` is what let that hide —
+    // it turns schema drift into silent nulls, so prefer removal over
+    // tolerance when a column dies.
     pub morning_baseline: Option<f64>,
     pub battery_curve: Option<serde_json::Value>,
     pub data_quality: Option<serde_json::Value>,
@@ -966,8 +965,6 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         epigraph: row.try_get("epigraph").ok().flatten(),
         last_edited_by: row.try_get("last_edited_by").ok().flatten(),
         cover_image: row.try_get("cover_image").ok().flatten(),
-        act_id: row.try_get("act_id").ok().flatten(),
-        chapter_id: row.try_get("chapter_id").ok().flatten(),
         morning_baseline: row.try_get("morning_baseline").ok().flatten(),
         battery_curve: row.try_get("battery_curve").ok().flatten(),
         data_quality: row.try_get("data_quality").ok().flatten(),
