@@ -852,18 +852,14 @@ async fn build_system_prompt_blocks(
                 ))
             }),
         },
-        // The enforceable half, right after the prose it governs. Absent
-        // entirely when there are no rules: an empty <rules> block would
-        // teach the model that the section is usually noise.
+        // The precedence ladder, stated once. GPT-5-era guidance and our own
+        // formula doc agree: unresolved hierarchy ambiguity measurably
+        // degrades compliance, so the ranking is text the model can cite,
+        // not an emergent property of ordering.
         Block {
-            meta: BlockMeta { tag: "rules", author: Author::User, mood: Mood::Imperative, rung: 100, cadence: Cadence::Slow },
+            meta: BlockMeta { tag: "precedence", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Static },
             body: Box::pin(async move {
-                let rules = build_rules(pool).await;
-                (!rules.is_empty()).then(|| {
-                    crate::agent::prompt::RULES_PROMPT
-                        .replace("{user_name}", user_name)
-                        .replace("{rules}", &rules)
-                })
+                Some(crate::agent::prompt_blocks::precedence_line().to_string())
             }),
         },
         // Onboarding guidance for a first conversation.
@@ -914,23 +910,30 @@ async fn build_system_prompt_blocks(
         Block {
             meta: BlockMeta { tag: "datetime", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Quantized },
             body: Box::pin(async move {
+                // Floored to the quarter hour, and SAID to be — honest, and
+                // cache-honest too: a minute-granular clock re-tokenizes the
+                // whole tail every turn (0% provider-cache hits documented in
+                // the wild), while a 15-minute floor keeps consecutive
+                // tool-loop turns byte-identical through this block. A turn
+                // that genuinely needs the second hand has sql_query.
                 let now = Utc::now();
+                let floored = now - chrono::Duration::minutes(i64::from(now.format("%M").to_string().parse::<u32>().unwrap_or(0) % 15));
                 let (date_str, time_str) = match timezone.and_then(|t| t.parse::<Tz>().ok()) {
                     Some(tz) => {
-                        let local = now.with_timezone(&tz);
+                        let local = floored.with_timezone(&tz);
                         (
                             local.format("%A, %B %d, %Y").to_string(),
-                            local.format("%I:%M %p %Z").to_string(), // e.g., "7:20 PM EST"
+                            local.format("%I:%M %p %Z").to_string(), // e.g., "7:15 PM CST"
                         )
                     }
                     // No timezone, or an unparseable one: fall back to UTC.
                     None => (
-                        now.format("%A, %B %d, %Y").to_string(),
-                        now.format("%H:%M UTC").to_string(),
+                        floored.format("%A, %B %d, %Y").to_string(),
+                        floored.format("%H:%M UTC").to_string(),
                     ),
                 };
                 Some(format!(
-                    "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
+                    "\n\n<datetime>\nToday is {}. Current time: about {} (to the quarter hour).\n</datetime>",
                     date_str, time_str
                 ))
             }),
@@ -955,6 +958,25 @@ async fn build_system_prompt_blocks(
         Block {
             meta: BlockMeta { tag: "active_context", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::PerTurn },
             body: Box::pin(async move { build_active_page_block(active_page) }),
+        },
+        // The enforceable half — LAST, nearest the conversation (moved
+        // 2026-08-28; RULES_PROMPT's own placement note predicted exactly
+        // this lever). Constraint adherence tracks recency, and rules are
+        // the one block that must hold at 1-in-1000. Sitting after the
+        // volatile tail also means they are never cached and never bust
+        // anything — a few hundred deliberately re-sent tokens. Absent
+        // entirely when there are no rules: an empty <rules> block would
+        // teach the model that the section is usually noise.
+        Block {
+            meta: BlockMeta { tag: "rules", author: Author::User, mood: Mood::Imperative, rung: 100, cadence: Cadence::Slow },
+            body: Box::pin(async move {
+                let rules = build_rules(pool).await;
+                (!rules.is_empty()).then(|| {
+                    crate::agent::prompt::RULES_PROMPT
+                        .replace("{user_name}", user_name)
+                        .replace("{rules}", &rules)
+                })
+            }),
         },
     ];
 
@@ -2032,7 +2054,12 @@ mod tests {
     #[sqlx::test]
     async fn empty_rules_leave_no_block(pool: PgPool) {
         let prompt = build_system_prompt_for_audit(&pool).await;
-        assert!(!prompt.contains("<rules>"), "empty rules block was rendered");
+        // The <precedence> block legitimately NAMES <rules>; what must be
+        // absent is the rules block's own body.
+        assert!(
+            !prompt.contains("has marked some things as rules"),
+            "empty rules block was rendered"
+        );
     }
 
     /// The registry IS the render order. This pins the current order so a
@@ -2055,9 +2082,10 @@ mod tests {
         // Blocks with no data render nothing; the ones that DO render must
         // appear in registry order, with the fused head first.
         assert_eq!(tags.first(), Some(&"base"), "the fused head must render first");
+        assert_eq!(tags.last(), Some(&"rules"), "rules must render last — nearest the conversation");
         assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
         assert!(tags.contains(&"datetime"));
-        let expected = ["base", "rules", "new_user", "memory", "datetime", "user_context", "active_notebook", "active_context"];
+        let expected = ["base", "precedence", "new_user", "memory", "datetime", "user_context", "active_notebook", "active_context", "rules"];
         let mut last = 0usize;
         for t in &tags {
             let pos = expected.iter().position(|e| e == t).expect("unknown block tag");
