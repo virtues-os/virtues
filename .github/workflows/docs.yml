@@ -19,17 +19,26 @@ name: Docs
 # VIRTUES_DOCS_REF must stay in agreement with the deploy trigger below — if
 # one moves, move the other, or the site rebuilds content it did not intend.
 
+# `docs/**` is here as well as `manual/**` because both publish now: the manual
+# at virtues.com/docs and the engineering notes at virtues.com/docs/notes, the
+# latter indexed by docs/README.md's own table. A workshop edit that reaches
+# main has to republish the site, and an unlisted doc has to be caught before
+# it silently fails to appear.
 on:
   push:
     branches: [wave, staging, main]
     paths:
       - "manual/**"
+      - "docs/**"
       - "tools/check-manual.py"
+      - "tools/unlisted-docs.baseline"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "manual/**"
+      - "docs/**"
       - "tools/check-manual.py"
+      - "tools/unlisted-docs.baseline"
       - ".github/workflows/docs.yml"
 
 jobs:

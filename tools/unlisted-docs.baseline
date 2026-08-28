@@ -1,0 +1,27 @@
+# Workshop docs missing a row in docs/README.md.
+#
+# The README says "Every doc is listed here", and since 2026-08-28 that has a
+# visible consequence: virtues.com/docs/notes builds its index from that table,
+# so an unlisted doc does not publish. These were already unlisted when the
+# check was written; tools/check-manual.py fails on any doc added after.
+#
+# This list should only ever shrink. To clear one, add its row to
+# docs/README.md with an honest status and delete the line here.
+applets-surface-audit.md
+byo-ai-plan.md
+device-version-update-audit.md
+display-plan.md
+glossary.md
+linking-plan.md
+lsi-plan.md
+mac-plan.md
+narrative-identity.md
+narrative-resolution-plan.md
+onboarding-paradigm.md
+onboarding-plan.md
+one-wire-plan.md
+resolution-audit.md
+sources-packages-plan.md
+voice.md
+why-this-was-hard-to-debug.md
+wiki-plan.md
