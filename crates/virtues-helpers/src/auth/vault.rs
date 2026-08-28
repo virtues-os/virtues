@@ -229,6 +229,21 @@ pub async fn read_credential_secrets(
             .fetch_optional(db)
             .await?;
     let (ciphertext,) = row.ok_or_else(|| AuthError::NotFound(credential_id.to_string()))?;
+
+    // `last_seen_at` means "last USED", and this decrypt is the one gate every
+    // use passes through. It used to be bumped only by token refresh, so an
+    // api-key or Plaid credential in daily service rendered as "never seen" in
+    // Settings forever. Throttled to once a minute (the app_device pattern) and
+    // best-effort: a failed bump must never fail the read.
+    let _ = sqlx::query(
+        "UPDATE credentials SET last_seen_at = now() \
+         WHERE id = $1 AND (last_seen_at IS NULL \
+            OR last_seen_at < now() - interval '60 seconds')",
+    )
+    .bind(credential_id)
+    .execute(db)
+    .await;
+
     let encryptor = TokenEncryptor::from_env()?;
     let plaintext = encryptor.decrypt(&ciphertext)?;
     Ok(serde_json::from_str(&plaintext)?)
