@@ -53,7 +53,7 @@ review time; machine text and user text stay segregated.
   VLM text representation must exist anyway; the embedder (gte-small 384-d
   on the Dragon NPU / EmbeddingGemma sidecar) is on-box, and routing the
   whole life corpus through a cloud embedder is a different product.
-  A second engine is the magnet disease (see docs/ir-notes.md).
+  A second engine is the magnet disease (see agents/record/ir-notes.md).
 - **jina-v5-omni evaluated and rejected** for v1 (multi-B params, cloud/GPU
   only, forks the index, marginal measured win).
 - v2 hedge: a **similarity-only** CLIP-class sidecar for "more like this"
@@ -218,7 +218,7 @@ To build:
 - Later: bookmark → notebook admission as sources; entity linking.
 
 **Naming**: user-facing "Bookmarks" = this feature. Sidebar route pins stay
-"Pinned". `docs/ui-overhaul-plan.md` item 8 (renaming `app_pins` →
+"Pinned". `agents/plan/ui-overhaul-plan.md` item 8 (renaming `app_pins` →
 `app_bookmarks`) COLLIDES with this and should be dropped/renamed.
 
 ## What shipped (2026-08-04)

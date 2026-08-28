@@ -1,4 +1,4 @@
-//! OTA web-bundle store — the client half of `docs/spa-delivery-plan.md`.
+//! OTA web-bundle store — the client half of `agents/plan/spa-delivery-plan.md`.
 //!
 //! The box serves the UI build it carries (`/api/web-bundle/version` and
 //! `/api/web-bundle/tarball`, see `virtues-core/src/api/web_bundle.rs`). This

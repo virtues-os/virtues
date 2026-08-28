@@ -5,7 +5,7 @@
 -- virtues-api, and the two share no column. The bridge between them is a
 -- disposable voucher that neither side retains as a link.
 --
--- See Virtues-API.md (the idea) and docs/entitlement.md (spec).
+-- See Virtues-API.md (the idea) and agents/build/entitlement.md (spec).
 
 
 -- One row per Stripe customer.

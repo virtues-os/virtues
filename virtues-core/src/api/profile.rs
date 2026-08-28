@@ -32,7 +32,7 @@ pub struct UpdateProfileRequest {
     pub onboarding_status: Option<String>,
     // Preferences
     pub theme: Option<String>,
-    /// Timezone of the box's physical home location (IANA). See docs/timezone-model.md.
+    /// Timezone of the box's physical home location (IANA). See agents/record/timezone-model.md.
     pub home_timezone: Option<String>,
     // Discovery context
     pub crux: Option<String>,
@@ -190,7 +190,7 @@ pub async fn get_display_name(db: &PgPool) -> Result<String> {
 /// `home_timezone` is the timezone of the box's physical location — a stable
 /// anchor + fallback floor, NOT the owner's current location. The per-day
 /// "where the owner was" timezone lives on `wiki_days.start_timezone`.
-/// See docs/timezone-model.md.
+/// See agents/record/timezone-model.md.
 ///
 /// Returns `None` until [`ensure_home_timezone`] has seeded it (run once at
 /// startup); callers fall back to UTC at the boundary in the meantime.

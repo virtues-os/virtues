@@ -1213,7 +1213,7 @@ export async function getDaySources(
 	fetchFn: FetchFn = fetch
 ): Promise<DaySourceApi[]> {
 	// Pass the viewing device's IANA zone so an in-progress "today" is anchored to
-	// where the owner currently is (see docs/timezone-model.md). Harmless for past
+	// where the owner currently is (see agents/record/timezone-model.md). Harmless for past
 	// days — the server prefers the day's locked start_timezone.
 	const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 	const qs = tz ? `?tz=${encodeURIComponent(tz)}` : "";

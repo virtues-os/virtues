@@ -399,7 +399,7 @@
 				<!-- Two times ARE the whole data model; anything fancier is a
 				     considered-looking widget doing no extra work. What they
 				     control is real power — the backlight goes off with the
-				     signal (backlight audit, docs/display-plan.md). -->
+				     signal (backlight audit, agents/plan/display-plan.md). -->
 				<div class="hours-row">
 					<label class="hours-field">
 						Sleeps at

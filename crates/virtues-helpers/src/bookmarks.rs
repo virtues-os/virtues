@@ -3,7 +3,7 @@
 //! Shared by every producer — the mac_ingest browser-bookmark transform, the
 //! github_stars_sync applet, and core's `POST /api/bookmarks` — so the row
 //! shape, identity rules, and tombstone semantics live in exactly one place
-//! (docs/bookmarks-plan.md).
+//! (agents/plan/bookmarks-plan.md).
 //!
 //! Two sync models write here, and they differ on deletion:
 //!

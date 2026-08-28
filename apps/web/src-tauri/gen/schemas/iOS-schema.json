@@ -2841,10 +2841,10 @@
           "markdownDescription": "Denies the start_probe command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`",
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`",
           "type": "string",
           "const": "reach:default",
-          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`"
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`"
         },
         {
           "description": "Enables the discover command without any pre-configured scope.",
@@ -2935,6 +2935,18 @@
           "type": "string",
           "const": "reach:allow-pair-door-status",
           "markdownDescription": "Enables the pair_door_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pair_handoff_accept command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-pair-handoff-accept",
+          "markdownDescription": "Enables the pair_handoff_accept command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pair_handoff_create command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:allow-pair-handoff-create",
+          "markdownDescription": "Enables the pair_handoff_create command without any pre-configured scope."
         },
         {
           "description": "Enables the provision_join command without any pre-configured scope.",
@@ -3055,6 +3067,18 @@
           "type": "string",
           "const": "reach:deny-pair-door-status",
           "markdownDescription": "Denies the pair_door_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pair_handoff_accept command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-pair-handoff-accept",
+          "markdownDescription": "Denies the pair_handoff_accept command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pair_handoff_create command without any pre-configured scope.",
+          "type": "string",
+          "const": "reach:deny-pair-handoff-create",
+          "markdownDescription": "Denies the pair_handoff_create command without any pre-configured scope."
         },
         {
           "description": "Denies the provision_join command without any pre-configured scope.",

@@ -777,7 +777,7 @@ async fn check_for_update(app: &AppHandle) {
     // staging box's Mac follows stable app releases: the UI it renders is
     // box-served and already tracks the box, and the gap a newer box may open
     // against an older shell is the ShellTooOld gate's job — not a parallel
-    // signed-release channel. See docs/device-version-update-audit.md (U1-U5).
+    // signed-release channel. See agents/record/device-version-update-audit.md (U1-U5).
     let updater = match app.updater() {
         Ok(u) => u,
         Err(e) => {
@@ -1493,7 +1493,7 @@ fn main() {
             // none of the documents that were the entire point. Offline needs
             // ONE origin across all four states (box up, box down, baked
             // bundle, OTA bundle) — see "The origin problem" in
-            // docs/spa-delivery-plan.md. Do not re-add the fallback alone;
+            // agents/plan/spa-delivery-plan.md. Do not re-add the fallback alone;
             // it looks like it works and does not.
             // A SINGLE fast probe (not the multi-retry loop): reachable boxes
             // reconnect silently with no connect-screen flash (the

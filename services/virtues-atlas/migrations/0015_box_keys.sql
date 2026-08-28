@@ -1,4 +1,4 @@
--- Per-box api keys (docs/one-wire-plan.md, Phase 0).
+-- Per-box api keys (agents/record/one-wire-plan.md, Phase 0).
 --
 -- `customers.api_key_hash` is ONE key per customer, and every attach rotates
 -- it — so a household linking a second box silently killed the first box's

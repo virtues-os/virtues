@@ -1,6 +1,6 @@
 # Things
 
-**Status: removed (2026-07-21).** Deprecated by `docs/stories-plan.md` §8
+**Status: removed (2026-07-21).** Deprecated by `agents/archive/stories-plan.md` §8
 (2026-07-13) and finished: the `wiki_things` table is dropped
 (migration `0060_drop_wiki_things.sql`), the `/api/things` write path and the
 `api::things` module are gone. Projects/hobbies now become stories, concepts

@@ -2538,7 +2538,7 @@ pub async fn timeline_get_day_handler(
 }
 
 /// Optional `?tz=` query — the viewing device's IANA zone, used to anchor an
-/// in-progress "today" to where the owner currently is. See docs/timezone-model.md.
+/// in-progress "today" to where the owner currently is. See agents/record/timezone-model.md.
 #[derive(Debug, Deserialize, Default)]
 pub struct DaySourcesQuery {
     pub tz: Option<String>,
@@ -2583,7 +2583,7 @@ pub async fn today_streams_handler(
 // ============================================================================
 // Map tile cache (the Atlas) — serve map tiles from the box, caching upstream
 // tiles on first request so the browser never talks to a third-party tile
-// provider and cached areas keep working offline. See docs/map-atlas-plan.md.
+// provider and cached areas keep working offline. See agents/record/map-atlas-plan.md.
 // ============================================================================
 
 /// Allowed styles → upstream tile URL template. The ONLY place the upstream

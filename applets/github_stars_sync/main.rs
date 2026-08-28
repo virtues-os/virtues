@@ -8,7 +8,7 @@
 //! Stars are an event source, not a snapshot: absence from a page means
 //! nothing, so there is no tombstoning here. Unstars are a known gap — catching
 //! them needs a periodic full re-walk, which isn't worth 30-minutely API spend
-//! for v1 (docs/bookmarks-plan.md).
+//! for v1 (agents/plan/bookmarks-plan.md).
 
 mod transform;
 

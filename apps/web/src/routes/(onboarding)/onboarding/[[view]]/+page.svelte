@@ -203,7 +203,7 @@
 	// The box normally seeds this from its own system clock; but a datacenter box
 	// reads "UTC", which is wrong. So only fall back to the onboarding browser's
 	// zone when the server value is unset or UTC — a real appliance configured at
-	// home keeps its server-detected zone. See docs/timezone-model.md.
+	// home keeps its server-detected zone. See agents/record/timezone-model.md.
 	async function captureTimezone() {
 		try {
 			const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;

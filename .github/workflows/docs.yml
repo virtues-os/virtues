@@ -1,6 +1,7 @@
 name: Docs
 
-# The public manual (`manual/`) is checked here and published from here.
+# The public manual (`docs/`) and the engineering records (`agents/record/`)
+# are checked here and published from here.
 #
 # WHY THIS IS NOT PART OF ci.yml
 #
@@ -19,26 +20,24 @@ name: Docs
 # VIRTUES_DOCS_REF must stay in agreement with the deploy trigger below — if
 # one moves, move the other, or the site rebuilds content it did not intend.
 
-# `docs/**` is here as well as `manual/**` because both publish now: the manual
-# at virtues.com/docs and the engineering notes at virtues.com/docs/notes, the
-# latter indexed by docs/README.md's own table. A workshop edit that reaches
-# main has to republish the site, and an unlisted doc has to be caught before
-# it silently fails to appear.
+# Two paths publish: `docs/**` is the manual at virtues.com/docs, and
+# `agents/record/**` is the engineering notes at virtues.com/docs/notes,
+# indexed by its own README table. `agents/build/**` and `agents/plan/**` are
+# deliberately absent — they never publish, so a change there must not spend a
+# runner or trigger a deploy.
 on:
   push:
     branches: [wave, staging, main]
     paths:
-      - "manual/**"
       - "docs/**"
+      - "agents/record/**"
       - "tools/check-manual.py"
-      - "tools/unlisted-docs.baseline"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
-      - "manual/**"
       - "docs/**"
+      - "agents/record/**"
       - "tools/check-manual.py"
-      - "tools/unlisted-docs.baseline"
       - ".github/workflows/docs.yml"
 
 jobs:
@@ -68,4 +67,4 @@ jobs:
             exit 1
           fi
           curl -fsS -X POST "$HOOK" -o /dev/null
-          echo "Requested a rebuild; the site syncs manual/ from main at build time."
+          echo "Requested a rebuild; the site syncs docs/ and agents/record/ from main at build time."
