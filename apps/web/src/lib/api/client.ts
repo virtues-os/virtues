@@ -2679,7 +2679,6 @@ export interface AiCallRow {
 	cost_micros: number;
 	/** `wallet` | `byo` — which purse paid. */
 	route: string;
-	status: string;
 }
 
 /** GET /api/telemetry/ai-calls — one page of the call log, newest first. */
