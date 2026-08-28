@@ -25,7 +25,7 @@ There are two release channels:
 - **Stable** — `vX.Y.Z` releases. What a server should be on unless you've
   chosen otherwise, and the default for every command below.
 - **Prerelease** — the newest staging build, versioned like
-  `v0.1.5-staging.67`. Explicit opt-in via `--pre`. If you've heard it called
+  `vX.Y.Z-staging.N`. Explicit opt-in via `--pre`. If you've heard it called
   *edge* or *nightly*, this is the same thing.
 
 Your server remembers its channel, so a plain `sudo virtues upgrade` keeps
