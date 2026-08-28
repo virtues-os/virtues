@@ -627,6 +627,10 @@ export async function closePairDoor(): Promise<void> {
 export interface PairHandoff {
 	qrSvg: string;
 	nodeId: string;
+	/** The device row the box created. Poll this for a `last_seen_at` — it is
+	 *  the only honest "it worked" signal, because the handoff enrols directly
+	 *  and never consumes the pair token the sheet otherwise waits on. */
+	deviceId: string;
 }
 
 /**

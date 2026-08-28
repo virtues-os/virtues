@@ -622,8 +622,8 @@ pub(crate) async fn pair_handoff_create<R: Runtime>(
   }
   #[cfg(not(any(target_os = "ios", target_os = "android")))]
   {
-    let (qr_svg, node_id) = app.reach().create_handoff(label).await?;
-    Ok(serde_json::json!({ "qrSvg": qr_svg, "nodeId": node_id }))
+    let (qr_svg, node_id, device_id) = app.reach().create_handoff(label).await?;
+    Ok(serde_json::json!({ "qrSvg": qr_svg, "nodeId": node_id, "deviceId": device_id }))
   }
 }
 

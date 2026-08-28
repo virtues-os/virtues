@@ -889,7 +889,7 @@ impl ReachState {
   ///
   /// The seed exists only in the returned payload — never written to disk here,
   /// never logged. This machine is a courier, not a second home for it.
-  pub async fn create_handoff(&self, label: Option<String>) -> Result<(String, String)> {
+  pub async fn create_handoff(&self, label: Option<String>) -> Result<(String, String, String)> {
     self.ensure_serving().await?;
     let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
 
@@ -913,10 +913,21 @@ impl ReachState {
       return Err(Error::Reach(format!("box refused the enrollment ({status}): {body}")));
     }
 
+    // The device row the box just created. The Add-device sheet polls for THIS
+    // id to start reporting a `last_seen_at`, which is the only honest signal
+    // that the handoff worked: the sheet's usual signal is the pair token being
+    // consumed, and the handoff never consumes one — it enrols directly — so
+    // without this the sheet sits on "Waiting for your device…" forever while
+    // the phone is already paired and talking.
+    let device_id = serde_json::from_str::<serde_json::Value>(&body)
+      .ok()
+      .and_then(|v| v.get("device_id").and_then(|d| d.as_str().map(str::to_string)))
+      .unwrap_or_default();
+
     let payload = virtues_reach_client::HandoffPayload::new(&identity, body);
     let json = payload.encode().map_err(|e| Error::Reach(e.to_string()))?;
     let qr = render_handoff_qr(&json);
-    Ok((qr, identity.node_id))
+    Ok((qr, identity.node_id, device_id))
   }
 
   /// PHONE SIDE: adopt an identity a paired laptop minted and enrolled.
