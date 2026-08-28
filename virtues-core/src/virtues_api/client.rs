@@ -574,7 +574,6 @@ impl BearerClient {
             reasoning_tokens: reasoning,
             cost_micros,
             route,
-            chat_id: None,
             applet_run_id: None,
         };
         if let Err(e) = crate::api::ai_calls::record_ai_call(&self.pool, &call).await {

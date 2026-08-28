@@ -152,13 +152,6 @@ pub struct MoveFileRequest {
     pub new_path: String,
 }
 
-/// Quota warning levels
-#[derive(Debug, Clone, Serialize)]
-pub struct QuotaWarnings {
-    pub warnings: Vec<String>,
-    pub usage_percent: f64,
-}
-
 // =============================================================================
 // Path Security
 // =============================================================================
@@ -359,11 +352,10 @@ async fn update_usage_add(pool: &PgPool, size_bytes: i64, is_folder: bool) -> Re
 
     sqlx::query(
         r#"
-        INSERT INTO app_drive_usage (id, drive_bytes, total_bytes, file_count, folder_count)
-        VALUES ($4, GREATEST(0, $1), GREATEST(0, $1), GREATEST(0, $2), GREATEST(0, $3))
+        INSERT INTO app_drive_usage (id, drive_bytes, file_count, folder_count)
+        VALUES ($4, GREATEST(0, $1), GREATEST(0, $2), GREATEST(0, $3))
         ON CONFLICT (id) DO UPDATE
         SET drive_bytes = app_drive_usage.drive_bytes + $1,
-            total_bytes = app_drive_usage.total_bytes + $1,
             file_count = app_drive_usage.file_count + $2,
             folder_count = app_drive_usage.folder_count + $3,
             updated_at = now()
@@ -388,7 +380,6 @@ async fn update_usage_remove(pool: &PgPool, size_bytes: i64, is_folder: bool) ->
         r#"
         UPDATE app_drive_usage
         SET drive_bytes = GREATEST(0, drive_bytes - $1),
-            total_bytes = GREATEST(0, total_bytes - $1),
             file_count = GREATEST(0, file_count - $2),
             folder_count = GREATEST(0, folder_count - $3),
             updated_at = now()
@@ -404,73 +395,6 @@ async fn update_usage_remove(pool: &PgPool, size_bytes: i64, is_folder: bool) ->
     .map_err(|e| Error::Database(format!("Failed to update drive usage: {e}")))?;
 
     Ok(())
-}
-
-// =============================================================================
-// Quota Warnings
-// =============================================================================
-
-/// Check usage and return any warnings
-pub async fn check_usage_warnings(pool: &PgPool, config: &DriveConfig) -> Result<QuotaWarnings> {
-    let usage = get_drive_usage(pool, config).await?;
-    let mut warnings = Vec::new();
-
-    // Get current warning state
-    let (w80, w90, w100): (bool, bool, bool) = sqlx::query_as(
-        r#"
-        SELECT warning_80_sent, warning_90_sent, warning_100_sent
-        FROM app_drive_usage
-        WHERE id = $1
-        "#,
-    )
-    .bind(USAGE_SINGLETON_ID)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get warning state: {e}")))?;
-
-    let percent = usage.usage_percent;
-
-    if percent >= 100.0 && !w100 {
-        warnings.push("The box's disk is full. Delete files to continue uploading.".into());
-        sqlx::query("UPDATE app_drive_usage SET warning_100_sent = TRUE WHERE id = $1")
-            .bind(USAGE_SINGLETON_ID)
-            .execute(pool)
-            .await
-            .ok();
-    } else if percent >= 90.0 && !w90 {
-        warnings.push(format!(
-            "Disk usage at {:.1}%. Consider cleaning up.",
-            percent
-        ));
-        sqlx::query("UPDATE app_drive_usage SET warning_90_sent = TRUE WHERE id = $1")
-            .bind(USAGE_SINGLETON_ID)
-            .execute(pool)
-            .await
-            .ok();
-    } else if percent >= 80.0 && !w80 {
-        warnings.push(format!("Storage usage at {:.1}%.", percent));
-        sqlx::query("UPDATE app_drive_usage SET warning_80_sent = TRUE WHERE id = $1")
-            .bind(USAGE_SINGLETON_ID)
-            .execute(pool)
-            .await
-            .ok();
-    }
-
-    // Reset warnings if usage drops below thresholds
-    if percent < 80.0 && (w80 || w90 || w100) {
-        sqlx::query(
-            "UPDATE app_drive_usage SET warning_80_sent = FALSE, warning_90_sent = FALSE, warning_100_sent = FALSE WHERE id = $1",
-        )
-        .bind(USAGE_SINGLETON_ID)
-        .execute(pool)
-        .await
-        .ok();
-    }
-
-    Ok(QuotaWarnings {
-        warnings,
-        usage_percent: percent,
-    })
 }
 
 // =============================================================================
@@ -1070,9 +994,12 @@ pub async fn delete_file(pool: &PgPool, _config: &DriveConfig, file_id: &str) ->
         return Err(Error::InvalidInput("File is already in trash".into()));
     }
 
-    let (trash_bytes, trash_count) = if file.is_folder {
+    // No usage tally here: the old trash_bytes/trash_count columns were
+    // written on every path and read by nothing (dropped 2026-08-28) —
+    // anything that wants trash totals computes from app_drive_files.
+    if file.is_folder {
         // Recursively soft-delete folder contents
-        soft_delete_folder_recursive(pool, &file.id).await?
+        soft_delete_folder_recursive(pool, &file.id).await?;
     } else {
         // Soft delete single file (mark as deleted, keep on disk)
         sqlx::query("UPDATE app_drive_files SET deleted_at = now() WHERE id = $1")
@@ -1080,25 +1007,7 @@ pub async fn delete_file(pool: &PgPool, _config: &DriveConfig, file_id: &str) ->
             .execute(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to soft delete file: {e}")))?;
-        (file.size_bytes, 1i64)
-    };
-
-    // Update trash tracking with actual bytes and count
-    sqlx::query(
-        r#"
-        UPDATE app_drive_usage
-        SET trash_bytes = trash_bytes + $1,
-            trash_count = trash_count + $2,
-            updated_at = now()
-        WHERE id = $3
-        "#,
-    )
-    .bind(trash_bytes)
-    .bind(trash_count)
-    .bind(USAGE_SINGLETON_ID)
-    .execute(pool)
-    .await
-    .ok();
+    }
 
     Ok(())
 }
@@ -1325,22 +1234,6 @@ pub async fn restore_file(pool: &PgPool, file_id: &str) -> Result<DriveFile> {
         .map_err(|e| Error::Database(format!("Failed to restore file: {e}")))?;
     }
 
-    // Update trash tracking
-    sqlx::query(
-        r#"
-        UPDATE app_drive_usage
-        SET trash_bytes = GREATEST(0, trash_bytes - $1),
-            trash_count = GREATEST(0, trash_count - 1),
-            updated_at = now()
-        WHERE id = $2
-        "#,
-    )
-    .bind(file.size_bytes)
-    .bind(USAGE_SINGLETON_ID)
-    .execute(pool)
-    .await
-    .ok();
-
     get_file_metadata(pool, file_id).await
 }
 
@@ -1364,24 +1257,6 @@ pub async fn purge_file(pool: &PgPool, config: &DriveConfig, file_id: &str) -> R
 
         // Update usage
         update_usage_remove(pool, file.size_bytes, false).await?;
-    }
-
-    // Update trash tracking if file was in trash
-    if file.deleted_at.is_some() {
-        sqlx::query(
-            r#"
-            UPDATE app_drive_usage
-            SET trash_bytes = GREATEST(0, trash_bytes - $1),
-                trash_count = GREATEST(0, trash_count - 1),
-                updated_at = now()
-            WHERE id = $2
-            "#,
-        )
-        .bind(file.size_bytes)
-        .bind(USAGE_SINGLETON_ID)
-        .execute(pool)
-        .await
-        .ok();
     }
 
     Ok(())
@@ -1812,16 +1687,12 @@ pub async fn reconcile_usage(pool: &PgPool, config: &DriveConfig) -> Result<Driv
     sqlx::query(
         r#"
         INSERT INTO app_drive_usage
-            (id, drive_bytes, total_bytes, file_count, folder_count,
-             last_scan_at, last_scan_bytes)
-        VALUES ($4, $1, $1, $2, $3, now(), $1)
+            (id, drive_bytes, file_count, folder_count)
+        VALUES ($4, $1, $2, $3)
         ON CONFLICT (id) DO UPDATE
         SET drive_bytes = $1,
-            total_bytes = $1,
             file_count = $2,
             folder_count = $3,
-            last_scan_at = now(),
-            last_scan_bytes = $1,
             updated_at = now()
         "#,
     )

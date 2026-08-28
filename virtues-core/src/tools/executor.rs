@@ -589,38 +589,161 @@ impl ToolExecutor {
         &self,
         arguments: serde_json::Value,
     ) -> Result<ToolResult, ToolError> {
-        let content = arguments
-            .get("content")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParameters("content is required".into()))?;
+        // The memory is per-note rows in app_assistant_memories, not a blob:
+        // the old whole-replace contract destroyed everything the model
+        // failed to re-transcribe, and the column it wrote was visible in no
+        // surface. Ops: add | revise | retire. A bare {content} call (the
+        // old shape — onboarding's prompt and old transcripts still produce
+        // it) is an add to the facts lane, so nothing breaks on flag day.
+        let op = arguments.get("op").and_then(|v| v.as_str()).unwrap_or("add");
+        let lane = arguments.get("lane").and_then(|v| v.as_str()).unwrap_or("facts");
+        if !matches!(lane, "facts" | "manner" | "practices") {
+            return Err(ToolError::InvalidParameters(
+                "lane must be one of: facts, manner, practices".into(),
+            ));
+        }
+        let pool = self._pool.as_ref();
 
-        // Cap at 2000 chars (find a valid UTF-8 boundary)
-        let content = if content.len() > 2000 {
-            let end = content.char_indices()
-                .map(|(i, c)| i + c.len_utf8())
-                .take_while(|&i| i <= 2000)
-                .last()
-                .unwrap_or(0);
-            &content[..end]
-        } else {
-            content
-        };
+        match op {
+            "add" | "revise" => {
+                let content = arguments
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|c| !c.is_empty())
+                    .ok_or_else(|| ToolError::InvalidParameters("content is required".into()))?;
+                if content.chars().count() > 500 {
+                    // Refuse whole rather than truncate silently — the
+                    // applet-memory precedent: a clipped note reads complete
+                    // and is not, and the model is in a loop that can retry.
+                    return Ok(ToolResult::success(serde_json::json!({
+                        "saved": false,
+                        "error": "a memory is at most 500 characters; nothing was saved",
+                        "hint": "one durable fact per note — split it, or drop the narration",
+                    })));
+                }
 
-        // `memory` is JSONB. Binding the raw &str sends TEXT, and Postgres then
-        // parses it as JSON — so every note that was not itself valid JSON was
-        // rejected with `Token "Adam" is invalid`, which is to say all of them.
-        // Wrapping it in a JSON string is what makes the column and the tool
-        // agree; `build_user_context` reads it back the same way.
-        sqlx::query("UPDATE app_assistant_profile SET memory = $1 WHERE id = '00000000-0000-0000-0000-000000000001'")
-            .bind(serde_json::Value::String(content.to_string()))
-            .execute(self._pool.as_ref())
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to update memory: {}", e)))?;
+                if op == "revise" {
+                    let id = arguments.get("note_id").and_then(|v| v.as_i64()).ok_or_else(|| {
+                        ToolError::InvalidParameters("revise requires note_id (shown in <memory>)".into())
+                    })?;
+                    let n = sqlx::query(
+                        "UPDATE app_assistant_memories SET body = $2, updated_at = now() \
+                         WHERE id = $1 AND retired_at IS NULL AND author = 'ai'",
+                    )
+                    .bind(id)
+                    .bind(content)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed(format!("revise memory: {e}")))?
+                    .rows_affected();
+                    if n == 0 {
+                        // Absent, retired, or human-authored. The last is the
+                        // one that matters: once the person rewrote a memory
+                        // in their words, the machine may not overwrite them.
+                        return Ok(ToolResult::success(serde_json::json!({
+                            "saved": false,
+                            "error": format!(
+                                "memory {id} was not revised — it does not exist, was removed, \
+                                 or was edited by the user (their words are not yours to rewrite; \
+                                 add a new note instead)"
+                            ),
+                        })));
+                    }
+                    return Ok(ToolResult::success(serde_json::json!({ "saved": true, "note_id": id })));
+                }
 
-        Ok(ToolResult::success(serde_json::json!({
-            "saved": true,
-            "length": content.len()
-        })))
+                // add — dedup first: an exact or containment match against the
+                // lane's live notes becomes a revise of that note.
+                let live: Vec<(i64, String, String)> = sqlx::query_as(
+                    "SELECT id, body, author FROM app_assistant_memories \
+                     WHERE lane = $1 AND retired_at IS NULL ORDER BY created_at, id",
+                )
+                .bind(lane)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("read lane: {e}")))?;
+
+                let norm = |s: &str| s.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+                let new_n = norm(content);
+                if let Some((id, _, author)) = live.iter().find(|(_, b, _)| {
+                    let bn = norm(b);
+                    bn == new_n || bn.contains(&new_n) || new_n.contains(&bn)
+                }) {
+                    if author == "human" {
+                        // Already known, in the person's own words. Leave it.
+                        return Ok(ToolResult::success(serde_json::json!({
+                            "saved": false,
+                            "merged_into": id,
+                            "note": "already covered by a user-edited memory; not changed",
+                        })));
+                    }
+                    sqlx::query(
+                        "UPDATE app_assistant_memories SET body = $2, updated_at = now() WHERE id = $1",
+                    )
+                    .bind(id)
+                    .bind(content)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed(format!("merge memory: {e}")))?;
+                    return Ok(ToolResult::success(serde_json::json!({ "saved": true, "merged_into": id })));
+                }
+
+                let cap = crate::api::assistant_memories::lane_cap(lane);
+                if live.len() >= cap {
+                    // Refuse whole; the lane's contents come back so the model
+                    // can retire or revise in the same breath.
+                    let notes: Vec<serde_json::Value> = live
+                        .iter()
+                        .map(|(id, body, _)| serde_json::json!({ "note_id": id, "body": body }))
+                        .collect();
+                    return Ok(ToolResult::success(serde_json::json!({
+                        "saved": false,
+                        "error": format!("the {lane} lane is full ({cap} memories)"),
+                        "hint": "retire or revise one of these first — budget pressure is the forgetting mechanism",
+                        "notes": notes,
+                    })));
+                }
+
+                let id: i64 = sqlx::query_scalar(
+                    "INSERT INTO app_assistant_memories (lane, body) VALUES ($1, $2) RETURNING id",
+                )
+                .bind(lane)
+                .bind(content)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("add memory: {e}")))?;
+                Ok(ToolResult::success(serde_json::json!({ "saved": true, "note_id": id })))
+            }
+            "retire" => {
+                let id = arguments.get("note_id").and_then(|v| v.as_i64()).ok_or_else(|| {
+                    ToolError::InvalidParameters("retire requires note_id (shown in <memory>)".into())
+                })?;
+                let n = sqlx::query(
+                    "UPDATE app_assistant_memories \
+                     SET retired_at = now(), retired_reason = 'retired_by_ai' \
+                     WHERE id = $1 AND retired_at IS NULL AND author = 'ai'",
+                )
+                .bind(id)
+                .execute(pool)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("retire memory: {e}")))?
+                .rows_affected();
+                if n == 0 {
+                    return Ok(ToolResult::success(serde_json::json!({
+                        "retired": false,
+                        "error": format!(
+                            "memory {id} was not retired — it does not exist, is already gone, \
+                             or was edited by the user (their memories are theirs to remove)"
+                        ),
+                    })));
+                }
+                Ok(ToolResult::success(serde_json::json!({ "retired": true, "note_id": id })))
+            }
+            other => Err(ToolError::InvalidParameters(format!(
+                "op must be add, revise, or retire (got '{other}')"
+            ))),
+        }
     }
 
     /// Update an action's persistent memory (markdown scratchpad across runs).
@@ -967,58 +1090,93 @@ mod live_read_asset {
     }
 }
 
-/// Round-trips the assistant's persistent memory through the real column.
-///
-/// The write and the read live in different modules and disagreed about the
-/// column's type for the tool's whole life: `update_memory` bound a bare string
-/// to JSONB (rejected by Postgres) and the prompt builder decoded JSONB into
-/// String (rejected by sqlx). Each end failed quietly in its own way, so only a
-/// test that does both catches it.
-///   cargo test -p virtues --lib tools::executor::live_memory -- --ignored --nocapture
+/// The memory contract, end to end, against the migration-built schema:
+/// add (with the bare-{content} back-compat shape), dedup-merge, the lane
+/// cap's refuse-whole, revise, the human-authored firewall, retire — and the
+/// prompt render with ids. The old blob's write and read disagreed about a
+/// column type for the tool's whole life because nothing exercised both ends;
+/// this does, per op.
 #[cfg(test)]
-mod live_memory {
+mod memory_contract {
     use super::*;
 
-    #[tokio::test]
-    #[ignore]
-    async fn a_note_survives_the_round_trip_and_reaches_the_prompt() {
-        let url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
-        let pool = PgPool::connect(&url).await.expect("dev database");
-
-        // Restore whatever the box already had — this is a real database.
-        let before: Option<serde_json::Value> =
-            sqlx::query_scalar("SELECT memory FROM app_assistant_profile LIMIT 1")
-                .fetch_optional(&pool)
-                .await
-                .expect("read")
-                .flatten();
-
+    #[sqlx::test]
+    async fn ops_round_trip_and_reach_the_prompt(pool: PgPool) {
         let ex = ToolExecutor::new(pool.clone());
-        // Prose, not JSON — the case that was rejected for the tool's whole life.
-        let note = "Adam prefers concise answers and dislikes hedging.";
+
+        // Back-compat: the old {content} shape is an add to facts.
         let out = ex
-            .execute_update_memory(serde_json::json!({ "content": note }))
+            .execute_update_memory(serde_json::json!({ "content": "Prefers concise answers." }))
             .await
-            .expect("write succeeded");
+            .unwrap();
+        assert_eq!(out.data["saved"], true);
+        let id = out.data["note_id"].as_i64().unwrap();
+
+        // Near-duplicate add merges instead of duplicating.
+        let out = ex
+            .execute_update_memory(
+                serde_json::json!({ "op": "add", "lane": "facts", "content": "prefers  concise answers" }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.data["merged_into"].as_i64(), Some(id), "dedup did not merge");
+
+        // Revise rewrites in place.
+        let out = ex
+            .execute_update_memory(serde_json::json!({
+                "op": "revise", "note_id": id,
+                "content": "Prefers concise, numbered answers."
+            }))
+            .await
+            .unwrap();
         assert_eq!(out.data["saved"], true);
 
-        let back: serde_json::Value =
-            sqlx::query_scalar("SELECT memory FROM app_assistant_profile LIMIT 1")
-                .fetch_one(&pool)
-                .await
-                .expect("read back as JSON");
-        assert_eq!(back.as_str(), Some(note), "stored shape is not a JSON string");
-
+        // The prompt renders the note with its id, inside its lane.
         let prompt = crate::api::chat::build_system_prompt_for_audit(&pool).await;
         assert!(prompt.contains("<memory>"), "memory never reached the prompt");
-        assert!(prompt.contains(note), "memory block does not contain the note");
-        println!("round-trip OK: {note}");
+        assert!(prompt.contains(&format!("(#{id})")), "note id missing from the block");
+        assert!(prompt.contains("Prefers concise, numbered answers."));
 
-        sqlx::query("UPDATE app_assistant_profile SET memory = $1")
-            .bind(before)
-            .execute(&pool)
+        // A human-edited note is not the machine's to revise or retire.
+        crate::api::assistant_memories::edit_memory(&pool, id, "My words now.")
             .await
-            .expect("restore");
+            .unwrap();
+        let out = ex
+            .execute_update_memory(
+                serde_json::json!({ "op": "revise", "note_id": id, "content": "overwrite" }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.data["saved"], false, "revised a user-edited memory");
+        let out = ex
+            .execute_update_memory(serde_json::json!({ "op": "retire", "note_id": id }))
+            .await
+            .unwrap();
+        assert_eq!(out.data["retired"], false, "retired a user-edited memory");
+
+        // A full lane refuses whole and returns its contents.
+        for i in 0..crate::api::assistant_memories::lane_cap("manner") {
+            let out = ex
+                .execute_update_memory(serde_json::json!({
+                    "op": "add", "lane": "manner",
+                    "content": format!("manner note number {i} with its own words")
+                }))
+                .await
+                .unwrap();
+            assert_eq!(out.data["saved"], true, "add {i} failed early");
+        }
+        let out = ex
+            .execute_update_memory(
+                serde_json::json!({ "op": "add", "lane": "manner", "content": "one too many entirely" }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.data["saved"], false, "cap did not refuse");
+        assert!(out.data["notes"].as_array().is_some(), "refusal did not list the lane");
+
+        // The person retires their own; it leaves the prompt.
+        crate::api::assistant_memories::retire_memory(&pool, id).await.unwrap();
+        let prompt = crate::api::chat::build_system_prompt_for_audit(&pool).await;
+        assert!(!prompt.contains("My words now."), "retired memory still rendered");
     }
 }

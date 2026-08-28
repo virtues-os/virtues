@@ -11,13 +11,27 @@
 //! run, and repairs it when it doesn't hold. Running them twice is the same as
 //! running them once; running them on an already-correct box changes nothing.
 //!
-//! They run from the `migrate` arm of the CLI, and that placement is the whole
-//! trick: `virtues upgrade` runs the **new** binary's `migrate` as root right
-//! after the symlink flip, which is the one root-context moment an upgrade
-//! gives code shipped *in* the release. (Code in `upgrade.rs` itself is the
-//! OLD binary — a fix there only runs when upgrading from the release after
-//! this one. The server can't do it either: `virtues.service` runs as
-//! `User=virtues`, which cannot chown a root-owned directory back to itself.)
+//! WHERE the root context actually is took two releases to get right, so
+//! spell it out. During `virtues upgrade`, the orchestrator (the OLD binary,
+//! root) spawns the NEW binary as `virtues migrate` — also root, but only for
+//! an instant: main.rs's `maybe_reexec_as_service_user` immediately re-execs
+//! every DB-touching subcommand, `migrate` included, as the `virtues` user
+//! (Postgres peer auth). v0.1.5-staging.72 hooked repairs *after* that
+//! demotion, in the Migrate arm of cli/mod.rs — present on every box, root-
+//! gated, and silently skipped on all of them. The working hooks are:
+//!
+//!   1. main.rs, in the re-exec guard, before the drop — the NEW binary's
+//!      root instant, which is what heals a box on the upgrade that first
+//!      carries a repair;
+//!   2. upgrade.rs, after migrate succeeds — the orchestrator's own pass,
+//!      which keeps firing on future upgrades once this release is the old
+//!      half.
+//!
+//!   (The Migrate arm's call stays as a third site: inert today because of
+//!   the demotion, live again if the re-exec ever stops covering `migrate`.
+//!   The server can't ever do this work: `virtues.service` runs as
+//!   `User=virtues`, which cannot chown a root-owned directory to itself.)
+//!
 //! `virtues migrate` is also a documented power-user command that runs
 //! un-sudo'd, so everything here is gated on euid 0 and skips quietly without
 //! it — a repair that can only half-run without privilege must not half-run.

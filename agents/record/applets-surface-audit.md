@@ -70,7 +70,7 @@ now have one.
 | ~~**T5**~~ | `AppletDetailView.svelte:243` | **FIXED.** | — |
 | ~~**T6**~~ | `AppletDetailView.svelte:259, 299, 304` | **FIXED.** | Applet everywhere (phase 1) |
 | ~~**T7**~~ | `AppletDetailView.svelte:287–293` | **FIXED.** Now "Notes it keeps" — what this applet wrote down for its own next run | *"notes this applet keeps"* |
-| ~~**F1**~~ | `applet-views/index.ts` · `TabContent.svelte:32` | **FIXED.** Registry deleted, `hello_world/ui/` deleted, `[config.view]` gone from the manifest and the schema. Biscuit now renders through the iframe face like everything else | *"`{view:{name}}` dies with iframe faces"* |
+| ~~**F1**~~ | `applet-views/index.ts` · `TabContent.svelte:32` | **FIXED.** Registry deleted, `hello_world/ui/` deleted (the whole applet followed in migration 0008), `[config.view]` gone from the manifest and the schema. Biscuit now renders through the iframe face like everything else | *"`{view:{name}}` dies with iframe faces"* |
 | ~~**F2**~~ | `applet-views/index.ts` | **FIXED.** Gone with the registry | — |
 | ~~**F3**~~ | `applets/palette.ts:32–134` | **FIXED.** Deleted; the file is 194 → 70 lines and keeps only the schedule/time formatters anything actually imports | dead code; also violates the no-hardcoded-colors rule if ever revived |
 | ~~**M1**~~ | 23 of 24 manifests | **FIXED.** Field deleted from every manifest, from the loader, and from the schema. Reconcile's empty-triggers guard now derives "does it run" from `command`/`agent` instead of trusting the declaration | phase 1 drops `runtime` — it is derived from which fields are set |

@@ -136,7 +136,7 @@ default_enabled = true
 
 Inside `index.html`, link `virtues.css` for the box's theme and use
 `await virtues.query(sql)` for read-only access to your data. See
-`applets/hello_world/face/index.html` for a working one.
+`applets/dot_cloud/face/index.html` for a working one.
 
 ---
 

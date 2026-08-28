@@ -25,7 +25,6 @@ pub struct Volume {
     pub id: String,
     pub name: String,
     pub kind: String,
-    pub roles: Vec<String>,
     pub fs_uuid: String,
     pub mount_path: Option<String>,
     pub prefix: String,
@@ -45,9 +44,6 @@ impl Volume {
         resolve_mount(&self.fs_uuid).map(|m| m.join(&self.prefix))
     }
 
-    pub fn serves_backup(&self) -> bool {
-        self.roles.iter().any(|r| r == ROLE_BACKUP)
-    }
 }
 
 /// Live mount point for a filesystem UUID, or `None` when the volume is absent.
@@ -173,46 +169,19 @@ fn source_for_mount(mountinfo: &str, path: &Path) -> Option<PathBuf> {
 /// Every registered destination that may hold backups.
 pub async fn backup_volumes(pool: &sqlx::PgPool) -> Result<Vec<Volume>, crate::Error> {
     sqlx::query_as::<_, Volume>(
-        "SELECT id, name, kind, roles, fs_uuid, mount_path, prefix, state, \
+        // Every registered volume serves backup: the old `roles` array + its
+        // CHECK could provably hold only {'backup'} (dropped 2026-08-28). If a
+        // second role ever exists, it returns as a real column with >1 value.
+        "SELECT id, name, kind, fs_uuid, mount_path, prefix, state, \
                 last_ok_at, last_error \
          FROM storage_volume \
-         WHERE $1 = ANY(roles) \
          ORDER BY created_at",
     )
-    .bind(ROLE_BACKUP)
     .fetch_all(pool)
     .await
     .map_err(|e| crate::Error::Database(format!("list storage volumes: {e}")))
 }
 
-/// Record what a probe saw. `mount_path` is refreshed on every probe precisely
-/// because it is not identity — the same drive legitimately appears elsewhere
-/// after a reboot.
-pub async fn record_probe(
-    pool: &sqlx::PgPool,
-    id: &str,
-    mount: Option<&Path>,
-    capacity: Option<u64>,
-    free: Option<u64>,
-) -> Result<(), crate::Error> {
-    sqlx::query(
-        "UPDATE storage_volume \
-         SET state = $2, mount_path = $3, capacity_bytes = $4, free_bytes = $5, \
-             probed_at = NOW(), last_seen_at = CASE WHEN $2 = 'present' THEN NOW() \
-                                                    ELSE last_seen_at END, \
-             updated_at = NOW() \
-         WHERE id = $1",
-    )
-    .bind(id)
-    .bind(if mount.is_some() { "present" } else { "absent" })
-    .bind(mount.map(|m| m.to_string_lossy().into_owned()))
-    .bind(capacity.map(|v| v as i64))
-    .bind(free.map(|v| v as i64))
-    .execute(pool)
-    .await
-    .map_err(|e| crate::Error::Database(format!("record volume probe: {e}")))?;
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
@@ -288,22 +257,4 @@ mod tests {
         assert_eq!(unescape_mountinfo("/mnt/x\\"), "/mnt/x\\");
     }
 
-    #[test]
-    fn roles_gate_what_a_volume_may_hold() {
-        let mut v = Volume {
-            id: "vol_1".into(),
-            name: "Archive".into(),
-            kind: "removable".into(),
-            roles: vec![ROLE_BACKUP.into()],
-            fs_uuid: "u".into(),
-            mount_path: None,
-            prefix: "virtues/box".into(),
-            state: "absent".into(),
-            last_ok_at: None,
-            last_error: None,
-        };
-        assert!(v.serves_backup());
-        v.roles.clear();
-        assert!(!v.serves_backup());
     }
-}

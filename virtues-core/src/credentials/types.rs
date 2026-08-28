@@ -68,7 +68,6 @@ pub struct Credential {
     pub status_reason: Option<String>,
     /// Decrypted secret payload. Shape declared by the connector manifest.
     pub secrets: serde_json::Value,
-    pub scopes: Option<Vec<String>>,
     pub expires_at: Option<String>,
     pub next_refresh_at: Option<String>,
     pub metadata: serde_json::Value,

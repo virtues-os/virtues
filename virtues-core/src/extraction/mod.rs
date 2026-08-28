@@ -273,8 +273,7 @@ async fn extract_one(
                 char_end = EXCLUDED.char_end,
                 quote_head = EXCLUDED.quote_head,
                 text = EXCLUDED.text,
-                occurred_at = EXCLUDED.occurred_at,
-                id = EXCLUDED.id
+                occurred_at = EXCLUDED.occurred_at
             "#,
         )
         .bind(chunk_id(file_id, idx))

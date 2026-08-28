@@ -103,15 +103,10 @@ pub struct AppletRun {
     pub records_processed: i64,
     pub error: Option<String>,
     pub trigger: String,
-    // Chaining. Both columns exist from the original schema and NEITHER HAS
-    // EVER BEEN WRITTEN — 13,359 runs on a real box, zero non-null. The
-    // functions that would have written them (`create_child_run`,
-    // `get_child_runs`) had no callers and are deleted; composition is not on
-    // the roadmap, because cron + condition already covers what data triggers
-    // would buy and no applet has ever wanted to chain. Kept only so the API
-    // shape does not change; do not read them expecting data.
-    pub parent_run_id: Option<String>,
-    pub transform_stage: Option<String>,
+    // Chaining columns (parent_run_id, transform_stage) were dropped
+    // 2026-08-28: never written across 190k real runs, and the functions
+    // that would have written them were deleted long before. Composition,
+    // if ever wanted, returns whole — schema, writers, and readers together.
     pub result_summary: Option<String>,
     /// What the user said, for `trigger = "message"` runs. The exchange lives
     /// on the run — this plus `result_summary` IS the conversation.
@@ -1090,8 +1085,6 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
         records_processed: row.try_get("records_processed")?,
         error: row.try_get("error")?,
         trigger: row.try_get("trigger")?,
-        parent_run_id: row.try_get("parent_run_id")?,
-        transform_stage: row.try_get("transform_stage")?,
         result_summary: row.try_get("result_summary")?,
         // Absent from queries that do not ask for it (`SELECT *` on the runs
         // table alone) — those callers do not show cost, so 0 is right.

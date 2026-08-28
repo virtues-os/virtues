@@ -76,6 +76,9 @@ def frontmatter(text: str) -> dict[str, str]:
 def check_notes(notes_root: Path) -> None:
     """Records obey the same law, enforced from their own README.
 
+    Records no longer publish — the site serves the manual only — but the index
+    rule still holds internally: an unlisted record is one nobody finds.
+
     `agents/record/README.md` lists every record, and since
     2026-08-28 that rule has a visible consequence: virtues.com/docs/notes
     builds its index by parsing that table, so a doc missing from it does not
@@ -93,8 +96,7 @@ def check_notes(notes_root: Path) -> None:
             continue
         error(
             f"agents/record/{path.name}",
-            "not listed in agents/record/README.md — it will not publish to /docs/notes. "
-            "Add a row with its status.",
+            "not listed in agents/record/README.md — nobody will find it. Add a row.",
         )
 
 
@@ -110,11 +112,26 @@ def main() -> int:
 
     manifest = json.loads(manifest_path.read_text())
     listed: dict[str, dict] = {}
+
+    def walk(entries: list, depth: int, where: str) -> None:
+        """The manifest is a tree: an entry is a page or a group of entries.
+
+        Three levels is the cap (section -> group -> page). Deeper than that
+        means the outline is wrong, not that the schema is too shallow, so it
+        is an error rather than a silently-accepted nesting.
+        """
+        for entry in entries:
+            if "pages" in entry:
+                if depth >= 2:
+                    error("manifest.json", f"group '{entry['title']}' nests deeper than section → group → page")
+                walk(entry["pages"], depth + 1, f"{where} → {entry['title']}")
+                continue
+            if entry["slug"] in listed:
+                error("manifest.json", f"duplicate slug '{entry['slug']}'")
+            listed[entry["slug"]] = entry
+
     for section in manifest["sections"]:
-        for page in section["pages"]:
-            if page["slug"] in listed:
-                error("manifest.json", f"duplicate slug '{page['slug']}'")
-            listed[page["slug"]] = page
+        walk(section["pages"], 1, section["title"])
 
     published = {s: p for s, p in listed.items() if not p.get("planned")}
 
@@ -160,14 +177,6 @@ def main() -> int:
         for target in LINK_RE.findall(text):
             dest = target.split("#")[0].removesuffix(".md")
             dest_slug = "index" if dest == "/docs" else dest.removeprefix("/docs/")
-            # A manual page may link into the engineering notes, which live in
-            # agents/record/ and are indexed by their own README rather than by
-            # the manifest. Resolve those against the file on disk.
-            if dest_slug == "notes" or dest_slug.startswith("notes/"):
-                stem = dest_slug.removeprefix("notes")
-                if stem and not (notes_root / f"{stem.lstrip('/')}.md").exists():
-                    error(where, f"link to '{target}' has no matching doc in docs/")
-                continue
             if dest_slug not in published:
                 error(where, f"link to '{target}' does not resolve to a published page")
 
