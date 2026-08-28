@@ -133,7 +133,7 @@ async fn wipe_derived(pool: &PgPool) -> Result<()> {
         // scores; null them so each scoring pass recomputes with the new model.
         "UPDATE wiki_events SET \
              embedding = NULL, novelty_z = NULL, local_novelty_z = NULL, \
-             hr_z = NULL, hrv_z = NULL, autonomic_z = NULL, topic_novelty = NULL, \
+             hr_z = NULL, autonomic_z = NULL, topic_novelty = NULL, \
              entity_novelty = NULL",
     ] {
         sqlx::query(stmt)
