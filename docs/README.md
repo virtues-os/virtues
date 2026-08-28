@@ -48,10 +48,11 @@ listed below.
 
 | Doc | Status | What it's for |
 |---|---|---|
-| [networking-relay-tee.md](networking-relay-tee.md) | Current | **Source of truth** for how you reach your box: the single-hop blind relay, why IPv6-direct/WireGuard failed, and the WG-removal audit. Supersedes the deleted `networking.md`, `jetson-wg.md`, and `byo-networking.md`. |
-| [privacy-model.md](privacy-model.md) | Current | The honest, complete statement of what each party can and can't see on the relay path. The secret-ownership table *is* the model. |
-| [relay-walkthrough.html](relay-walkthrough.html) | Current | Visual lifecycle diagrams for the relay. Open it in a browser. |
-| [relay-control-plane.md](relay-control-plane.md) | Planned | Box provisioning, naming, and auth for the relay — the control plane the shipped L4 relay still lacks. |
+| [../manual/operate/reach.md](../manual/operate/reach.md) | Current | **The accurate account of reach**, and the one to quote: paths, pairing, revocation, and exactly what the relay can and cannot see. Public docs page. |
+| [relay-control-plane.md](relay-control-plane.md) | Design notes | Naming, auth, and revocation reasoning. Its SNI/HMAC mechanism was never built; the *iroh caveat* section is the honest statement of what the relay observes. |
+| [networking-relay-tee.md](networking-relay-tee.md) | **Superseded** | The pre-iroh ADR: single-hop SNI relay, per-box ACME, browser-anywhere. Its privacy hardening — RAM-only, blinded tokens, unlinkability, audit — was **proposed and never built**. History only; do not quote. |
+| [privacy-model.md](privacy-model.md) | **Superseded (transport half)** | Describes the pre-iroh secret-ownership table. Its *inference boundary* section is current and is the honest account of where data leaves the box. |
+| [relay-walkthrough.html](relay-walkthrough.html) | **Superseded** | Visual lifecycle diagrams of the old SNI relay. Kept as a record. |
 | [reach-reliability-plan.md](reach-reliability-plan.md) | Planned | "100% reachable whenever the box is up." Root cause is upstream iroh #4289; the fix is `network_change()` on `NWPathMonitor` plus a watchdog rebuild. |
 | [map-atlas-plan.md](map-atlas-plan.md) | Current | The box serves and caches map tiles so the browser never talks to a tile provider — no location leak, and already-seen areas work offline. |
 

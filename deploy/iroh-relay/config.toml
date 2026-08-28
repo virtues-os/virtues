@@ -1,8 +1,18 @@
 # iroh-relay for relay.virtues.ch  (see README.md in this dir)
 #
 # Schema: iroh-relay 1.0.1 `Config` (src/main.rs). This replaces the hand-rolled
-# frp relay. The relay is blind — it moves QUIC/ciphertext, never sees content,
-# volume, or timing. Access is gated by an atlas active-subscription callout.
+# frp relay.
+#
+# What the relay can and cannot see, stated exactly. It moves QUIC ciphertext it
+# holds no key for, so it cannot read content. It DOES see which two EndpointIds
+# are talking, the addresses they connect from, and how many bytes pass when —
+# unavoidable for anything that forwards packets, and it keeps no promise about
+# not logging it. The access gate below adds one more: which EndpointId is
+# subscribed.
+#
+# Do not describe this relay as "blind" or "RAM-only". Privacy wording in this
+# repo has a habit of being lifted verbatim into user-facing copy; the wording
+# that is true is in manual/operate/reach.md.
 
 enable_relay = true
 # Plain-HTTP relay endpoint (also serves the LetsEncrypt HTTP path). HTTPS/QUIC
