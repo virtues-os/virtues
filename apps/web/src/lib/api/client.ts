@@ -2439,6 +2439,44 @@ export async function getSetupState(): Promise<SetupState> {
 // ============================================================================
 
 // ── Assistant profile ────────────────────────────────────────────────────────
+// ── Assistant memories (What I've learned) ──
+// The machine's per-note memory, visible and editable. Every live note rides
+// in the system prompt of every conversation.
+
+export interface AssistantMemory {
+	id: number;
+	/** facts | manner | practices */
+	lane: string;
+	/** 'ai' until the person edits — then 'human', and the machine can no longer revise it. */
+	author: string;
+	body: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function listAssistantMemories(): Promise<AssistantMemory[]> {
+	const res = await fetch(`${API_BASE}/assistant/memories`);
+	if (!res.ok) throw new Error(`Failed to load memories: ${res.statusText}`);
+	return res.json();
+}
+
+/** Rewrite one memory in your own words. It becomes yours. */
+export async function editAssistantMemory(id: number, body: string): Promise<AssistantMemory> {
+	const res = await fetch(`${API_BASE}/assistant/memories/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ body }),
+	});
+	if (!res.ok) throw new Error(`Failed to edit memory: ${res.statusText}`);
+	return res.json();
+}
+
+/** Remove a memory from every future conversation (soft-retired with provenance). */
+export async function retireAssistantMemory(id: number): Promise<void> {
+	const res = await fetch(`${API_BASE}/assistant/memories/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to remove memory: ${res.statusText}`);
+}
+
 export function getAssistantProfile<T = unknown>(): Promise<T> {
 	return apiGet<T>('/assistant-profile');
 }

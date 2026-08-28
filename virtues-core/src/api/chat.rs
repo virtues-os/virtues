@@ -869,41 +869,41 @@ async fn build_system_prompt_blocks(
                 is_new_user.then(|| crate::agent::prompt::NEW_USER_PROMPT.to_string())
             }),
         },
-        // AI persistent memory (if any).
-        //
-        // Read as JSON, because the column is JSONB — decoding straight into
-        // String failed on type, and `if let Ok` dropped the error, so this
-        // block never rendered. Paired with the write in `update_memory`.
+        // The machine's memory: per-note rows the person can read and edit
+        // (Settings), rendered with ids so the update_memory ops can name
+        // them. Three lanes per docs/narrative-identity.md: facts of their
+        // world, their preferred manner, their practices.
         Block {
             meta: BlockMeta { tag: "memory", author: Author::Machine, mood: Mood::Declarative, rung: 50, cadence: Cadence::Session },
             body: Box::pin(async move {
-                match sqlx::query_scalar::<_, serde_json::Value>(
-                    "SELECT memory FROM app_assistant_profile WHERE memory IS NOT NULL LIMIT 1",
-                )
-                .fetch_optional(pool)
-                .await
-                {
-                    Ok(Some(value)) => {
-                        // A JSON string is the shape `update_memory` writes;
-                        // anything else is older or hand-written, and rendering
-                        // it verbatim beats dropping it.
-                        let memory = value
-                            .as_str()
-                            .map(str::to_string)
-                            .unwrap_or_else(|| value.to_string());
-                        (!memory.trim().is_empty()).then(|| {
-                            format!(
-                                "\n\n<memory>\nYour persistent memory (saved via update_memory tool). Reference when relevant:\n{}\n</memory>",
-                                memory
-                            )
-                        })
-                    }
-                    Ok(None) => None,
+                let memories = match crate::api::assistant_memories::list_memories(pool).await {
+                    Ok(m) => m,
                     Err(e) => {
-                        tracing::warn!("[chat] persistent memory omitted from the prompt: {e}");
-                        None
+                        tracing::warn!("[chat] memory omitted from the prompt: {e}");
+                        return None;
                     }
+                };
+                if memories.is_empty() {
+                    return None;
                 }
+                let mut out = String::from(
+                    "\n\n<memory>\nWhat you have learned alongside {user}, in notes you keep (they can read and edit these in Settings; a note marked [theirs] is in their words — never revise or retire it). Use silently: reference when relevant, never recite unprompted.\n",
+                );
+                out = out.replace("{user}", user_name);
+                for lane in ["facts", "manner", "practices"] {
+                    let in_lane: Vec<_> = memories.iter().filter(|m| m.lane == lane).collect();
+                    if in_lane.is_empty() {
+                        continue;
+                    }
+                    out.push_str(&format!("<{lane}>\n"));
+                    for m in in_lane {
+                        let theirs = if m.author == "human" { " [theirs]" } else { "" };
+                        out.push_str(&format!("- (#{}){} {}\n", m.id, theirs, m.body));
+                    }
+                    out.push_str(&format!("</{lane}>\n"));
+                }
+                out.push_str("</memory>");
+                Some(out)
             }),
         },
         // Current date/time for temporal awareness.

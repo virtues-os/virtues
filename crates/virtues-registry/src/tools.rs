@@ -257,30 +257,42 @@ fn update_memory_tool() -> ToolConfig {
     ToolConfig {
         id: "update_memory".to_string(),
         name: "Memory".to_string(),
-        description: "Save notes that persist across conversations".to_string(),
-        llm_description: r#"Save or update your persistent memory — notes that carry across every conversation.
+        description: "Keep, revise, or retire one memory that persists across conversations".to_string(),
+        llm_description: r#"Your persistent memory: per-note rows in three lanes, shown to you in <memory> with ids. The user can read and edit every note in Settings — write nothing you would not want them to read, because they will.
 
-Use this tool to remember:
-- The user's name, preferences, and goals
-- What role they want you to play (coach, tracker, observer, etc.)
-- Important context they've shared (habits, routines, projects)
-- Decisions made or plans agreed upon
+Lanes:
+- facts — durable facts of their world (names, places, projects, the dog)
+- manner — how to speak and behave with them (concise, numbered lists, no preamble)
+- practices — what they are holding to and how you help
 
-Your memory is plain text (max 2000 chars). Each call REPLACES the full content, so always include everything you want to keep. Read your current memory from the system prompt before updating.
+Ops (one note per call):
+- {op:"add", lane, content} — one durable fact, at most 500 chars. Near-duplicates merge into the existing note automatically.
+- {op:"revise", note_id, content} — rewrite one of YOUR notes (ids are in <memory>).
+- {op:"retire", note_id} — remove one of your notes when it stops being true.
 
-Guidelines:
-- Write in concise bullet points, not prose
-- Organize by topic (identity, goals, preferences, context)
-- Don't store sensitive data (passwords, keys, SSNs)
-- Update incrementally — add new info, keep existing info that's still relevant
-- If memory is getting long, summarize older items"#.to_string(),
+A note marked [theirs] was edited by the user: it is in their words and you cannot revise or retire it. A full lane refuses adds until you retire something — few, true notes beat many stale ones.
+
+What does NOT belong here: who they are — values, wounds, telos, self-understanding. That is their narrative identity, which only they author. Also never store secrets (passwords, keys, IDs)."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["content"],
             "properties": {
+                "op": {
+                    "type": "string",
+                    "enum": ["add", "revise", "retire"],
+                    "description": "What to do. Defaults to add."
+                },
+                "lane": {
+                    "type": "string",
+                    "enum": ["facts", "manner", "practices"],
+                    "description": "Which lane (add only). Defaults to facts."
+                },
+                "note_id": {
+                    "type": "integer",
+                    "description": "The note to revise or retire — its id is shown in <memory> as (#id)."
+                },
                 "content": {
                     "type": "string",
-                    "description": "The full memory content (replaces existing). Max 2000 characters."
+                    "description": "The note text (add/revise). One durable fact, at most 500 characters."
                 }
             }
         }),
