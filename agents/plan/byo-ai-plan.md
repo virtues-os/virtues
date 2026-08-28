@@ -1,6 +1,33 @@
 # BYO AI — Plan of Record
 
-*Design-locked 2026-08-05. The generation-side companion to
+> **STATUS 2026-08-28, verified against code: ABOUT 60% SHIPPED.** The line
+> below saying "nothing here is built yet" is false. Shipped: the leak fix
+> (all `/v1/ai/*` fork at `BearerClient` rather than per caller),
+> `normalize_upstream_error`, the per-slot model map on the credential,
+> tokens-not-dollars for BYO usage, the URL field replacing the provider
+> dropdown, and the employer-visibility warning.
+>
+> **What remains is the thesis:** the per-slot **route** axis was never built,
+> so BYO is still all-or-nothing — any `/v1/ai/*` call diverts if one
+> credential exists. With it go many-credentials (`*_route` columns), the
+> per-route audio encoder, "Test this slot" probes, and a selectable option
+> list for the Image slot, which has a UI row bound to `image_model_id` and
+> nothing to put in it.
+>
+> **Known limitation worth carrying into the manual:** BYO audio and
+> transcription do not work. The Omni path sends audio as an `image_url` data
+> URI, the Gemini-through-our-gateway idiom; OpenAI-compatible endpoints want
+> `input_audio`. Fixing it needs the route axis, because the encoder has to
+> know where the call is going. It fails legibly rather than silently —
+> `normalize_upstream_error` turns the provider's 2xx-with-error body into a
+> 502 carrying their message — but it cannot succeed in that shape.
+>
+> **False below:** `default_model` is deprecated and never fires; Image is now
+> user-overridable; every use of `xai/grok-4.5` as "our chat address" is
+> historical, since the chat slot moved to `anthropic/claude-sonnet-5` on
+> 2026-08-27 over `zdr: none` retention; the `byo_slot_routes` migration was
+> never claimed.
+
 [`composable-inference.md`](composable-inference.md), which already ships the
 same idea for embeddings and reranking: the user owns the endpoint, and we
 validate it at the door. Nothing here is built yet; §"What is already true"

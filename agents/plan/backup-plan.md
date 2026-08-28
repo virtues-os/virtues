@@ -1,17 +1,31 @@
 # Backup paradigm — surviving the loss of the box
 
-> **Status:** Partly built (2026-07-25, branch `feat/backup-durability`). Pillars
-> 1–5 and the volume path have landed; see [Sequence](#sequence) for exactly what
-> shipped and what remains. **Phase A is the gate — both ends of the pipeline are
-> still missing.** Explicitly **excludes** storage tiering, volume routing, and
-> object storage — see [Not building](#not-building) for why.
+> **STATUS 2026-08-28, verified against code: SHIPPED THROUGH PHASE C/13.**
+> The header this replaces claimed "Phase A is the gate — both ends of the
+> pipeline are still missing." Both ends shipped. So did the scheduler, the
+> age encryption, the restore tests, and the Settings panel.
 >
-> [The gap](#the-gap) and [A live bug](#a-live-bug-this-plan-must-fix-first) below
-> are the original diagnosis, kept as written. Both are now fixed; they are the
-> record of why, not a description of today.
+> **What genuinely remains:** missing-increment detection on volume restore
+> (a hole restores silently instead of failing loudly and naming the window);
+> the Home warning line and the onboarding unfinished-step framing; scheduled
+> random verification; volume probing in core (`record_probe` has zero
+> callers, so capacity and free space are written once at registration and
+> never refreshed); and the format offer for an unmountable drive, whose
+> exFAT/NTFS driver dependency in the Dragon image is still unverified.
 >
-> Complements `data-durability.md`, which covers getting data *in* without loss. This
-> doc covers keeping it once it's in.
+> **Two policies stated here that the code does not honor** — gaps, not plan:
+> "never prune below 2" is not implemented (`prune_full_archives` protects
+> only the single newest full, so a tight drive can be pruned to one), and the
+> local `/var/lib/virtues/backups` directory has no retention at all.
+>
+> **False below:** the tarball is age-encrypted, not plaintext gzip; the
+> restore path has tests; migrations 0063/0064 do not exist (both tables live
+> in the squashed `0001_initial.sql`); Pillar 3's DDL omits the `NOT NULL`
+> `prefix` column; Pillar 5's torn-write note describes a mirror design that
+> Pillar 2's own amendment replaced with increments.
+>
+> User-facing behavior is documented at
+> [`../../docs/operate/backup-and-restore.md`](../../docs/operate/backup-and-restore.md).
 
 ## The gap
 
