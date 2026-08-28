@@ -501,6 +501,10 @@ pub(crate) async fn enroll_peer_core(
         None,
         Some(peer_node_id),
         Some(source_id.as_str()),
+        // A vouched peer has NEVER connected — the voucher speaks for it. Its
+        // first authenticated request is what sets `last_seen_at`, which is
+        // what makes that column usable as "the device actually arrived".
+        false,
     )
     .await
     .map_err(|e| {
@@ -579,6 +583,63 @@ mod tests {
             bad.is_err(),
             "COUNT(*) with FOR UPDATE must be rejected by Postgres — if this \
              passes, the guard above has stopped meaning anything"
+        );
+    }
+
+    /// A vouched peer has never connected, so its row must start with a NULL
+    /// `last_seen_at`.
+    ///
+    /// The Add-device sheet waits for that column to go non-NULL as proof the
+    /// phone arrived. While enrollment stamped `now()` at insert, the proof was
+    /// true the instant it was created: the sheet's first poll (which fires
+    /// immediately) closed it green about half a second after it opened, having
+    /// watched nothing happen. Opening it again enrolled a second live device,
+    /// and a third — each one an allowlisted key for a phone that had never
+    /// seen the QR.
+    ///
+    /// The consume path is the opposite case and is asserted alongside it: that
+    /// device IS the other end of the request, so `now()` there is the truth.
+    #[sqlx::test]
+    async fn a_vouched_peer_is_not_marked_seen_until_it_connects(pool: sqlx::PgPool) {
+        let seen_at = |id: &'static str, seen_now: bool| {
+            let pool = pool.clone();
+            async move {
+                let mut tx = pool.begin().await.expect("begin");
+                let device_id = crate::api::pair::insert_device_row(
+                    &mut tx,
+                    id,
+                    "mobile_app",
+                    "test phone",
+                    &serde_json::json!({}),
+                    None,
+                    Some(id), // node_id — distinct per case, so neither conflicts
+                    None,
+                    seen_now,
+                )
+                .await
+                .expect("insert");
+                tx.commit().await.expect("commit");
+
+                sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+                    "SELECT last_seen_at FROM app_device WHERE id = $1",
+                )
+                .bind(&device_id)
+                .fetch_one(&pool)
+                .await
+                .expect("read back last_seen_at")
+            }
+        };
+
+        assert!(
+            seen_at("dev_vouched", false).await.is_none(),
+            "a peer enrolled on someone else's word has not connected — a \
+             non-NULL last_seen_at here is a connection that never happened, \
+             and it is what the Add-device sheet mistakes for the phone arriving"
+        );
+        assert!(
+            seen_at("dev_consumed", true).await.is_some(),
+            "the consume path's device is the other end of that request, so it \
+             genuinely has been seen"
         );
     }
 }
