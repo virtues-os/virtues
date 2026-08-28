@@ -879,11 +879,8 @@ mod tests {
         use std::collections::BTreeSet;
 
         /// In the registry, deliberately NOT in the SQL catalog. Reason required.
-        const REGISTRY_ONLY: &[(&str, &str)] = &[(
-            "data_activity_listening",
-            "no collector has ever existed; table + descriptor die together in \
-             cleanup item R4 — remove this entry with them",
-        )];
+        /// (Empty since R4 removed data_activity_listening with its table.)
+        const REGISTRY_ONLY: &[(&str, &str)] = &[];
         /// In the SQL catalog, deliberately NOT in the registry. Reason required.
         const CATALOG_ONLY: &[(&str, &str)] = &[
             (
