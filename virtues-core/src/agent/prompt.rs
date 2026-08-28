@@ -66,9 +66,9 @@ When it IS relevant — decisions about priorities, questions about direction, m
 /// Rendered only when rules exist. An empty block teaches a model that this
 /// section is usually noise, which is the last thing it can afford to be.
 ///
-/// PLACEMENT: immediately after narrative identity, whose material it governs.
-/// If adherence ever proves weak, moving this last — nearest the conversation —
-/// is the lever to try before rewriting the wording.
+/// PLACEMENT: LAST in the prompt, nearest the conversation (moved
+/// 2026-08-28 — this comment's own predicted lever). Constraint adherence
+/// tracks recency, and this is the one block that must hold at 1-in-1000.
 pub const RULES_PROMPT: &str = r#"
 <rules>
 {user_name} has marked some things as rules rather than as context. These are not preferences to be weighed against other considerations. They are binding, they outrank the guidance in every other section, and they do not expire.

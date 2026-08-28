@@ -2,11 +2,14 @@
 //!
 //! One ordered list of named blocks, rendered in list order — the registry
 //! the formula doc (docs/narrative-identity.md, "Its place in the system
-//! prompt") builds toward. Slice 1 of that build: this module changes NOTHING
-//! about the rendered bytes. The blocks wrap the existing builders in the
-//! existing order, so `chat.rs` stops being a 160-line push_str chain and the
-//! coming changes (rules last, the quantized clock, the cache breakpoint,
-//! per-block budgets) become one-list edits here instead of surgery there.
+//! prompt") builds toward. Slice 1 made the seam (byte-identical wrap of the
+//! old push_str chain); slice 2 made the first formula moves: rules render
+//! LAST (constraint recency), the clock is floored to the quarter hour (and
+//! says so — a minute-granular clock re-tokenizes the whole tail every
+//! turn), and the precedence ladder is stated as text the model can cite.
+//! Still to come as one-list edits: the head split
+//! (<character>/<narrative_identity>/<tools>), <circumstances>, per-block
+//! budgets, the cache breakpoint.
 //!
 //! Error policy: a block that fails renders nothing and says so in the log —
 //! never a default, never fabricated bytes (the house swallowed-query rule,
@@ -116,4 +119,12 @@ pub async fn assemble(blocks: Vec<Block<'_>>) -> (String, Vec<RenderedBlock>) {
         }
     }
     (out, rendered)
+}
+
+/// The precedence ladder, stated once near the head of the prompt. Rendered
+/// text rather than an emergent property of block order, so the model can
+/// cite the ranking instead of inferring it. Keep in sync with the registry's
+/// `rung` values — the reorder slice's audit test asserts both exist.
+pub fn precedence_line() -> &'static str {
+    "\n\n<precedence>\nWhen sections of this prompt conflict: <rules> outrank everything and are absolute; <narrative_identity> outranks the machine's own <memory>; both outrank house guidance; <datetime> and <user_context> are situational fact, not instruction. Declarative sections describe — only <rules> command.\n</precedence>"
 }
