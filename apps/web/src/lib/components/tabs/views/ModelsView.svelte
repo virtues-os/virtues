@@ -10,9 +10,13 @@
 
 	Every fact here is the gateway's, fetched live — nothing on this page is
 	hand-maintained (see api/model_catalog.rs for what happened when it was).
-	Retention is a tri-state and only "all" is a promise: "some" means it
-	depends on which endpoint serves a given request. Unknown renders as a
-	dash, never as a claim in either direction.
+
+	The Retention column reports the posture AFTER enforcement, not the
+	gateway's raw tri-state: virtues-api sets `zeroDataRetention` on every call
+	whose model has any zero-retention endpoint, so a `some` model is pinned to
+	those endpoints and is genuinely zero-retention here. Only `none` — no such
+	endpoint exists — is retained, and picking one is a deliberate, per-slot
+	choice that leaves every other slot untouched.
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
@@ -125,11 +129,14 @@
 	}
 
 	// ── Retention rendering ──────────────────────────────────────────────────
-	// Positives get a badge; negatives are plain words; unknown is a dash.
-	// "Some" is deliberately not a badge — it isn't a promise, it's a maybe.
+	// What this column reports is the posture AFTER our enforcement, not the
+	// gateway's raw tri-state. The box asks the gateway for zero-retention
+	// routing on every call whose model has any, so `some` — retention depends
+	// on which endpoint gets picked — resolves to zero retention in practice,
+	// and showing "varies" would understate what we actually do. Only `none`,
+	// where no zero-retention endpoint exists at all, is genuinely retained.
 	function zdrText(v: string | null | undefined): string {
-		if (v === "all") return "Zero retention";
-		if (v === "some") return "Varies by route";
+		if (v === "all" || v === "some") return "Zero retention";
 		if (v === "none") return "Retained";
 		return "—";
 	}
@@ -141,12 +148,12 @@
 	}
 	function zdrDetail(v: string | null | undefined): string {
 		if (v === "all")
-			return "Every endpoint the gateway can route this model to is zero-data-retention.";
+			return "Every endpoint this model can be served from is zero-data-retention.";
 		if (v === "some")
-			return "Some endpoints serving this model are zero-data-retention — it depends on which one the gateway picks for a given request.";
+			return "Only some endpoints serving this model are zero-data-retention, so every request is pinned to those — the others are never used.";
 		if (v === "none")
-			return "The endpoints serving this model retain request data.";
-		return "The gateway hasn't reported a retention posture for this model.";
+			return "No zero-data-retention endpoint exists for this model. Choosing it means this slot's requests are retained by the provider; every other slot stays zero-retention.";
+		return "This model's retention posture hasn't been reported. Requests are sent with zero-retention required, so an endpoint that can't honor it is refused rather than used.";
 	}
 
 	function perM(per1k: number | null | undefined): string {
@@ -183,7 +190,7 @@
 			width: "13%",
 			minWidth: "110px",
 			groupable: true,
-			groupOrder: ["Zero retention", "Varies by route", "Retained", "—"],
+			groupOrder: ["Zero retention", "Retained", "—"],
 			getValue: (m) => zdrText(m.zdr),
 		},
 		{
@@ -232,7 +239,7 @@
 
 	const RETENTION_OPTIONS = [
 		{ value: "all", label: "Zero retention" },
-		{ value: "some", label: "Varies by route" },
+		{ value: "some", label: "Zero retention (pinned)" },
 		{ value: "none", label: "Retained" },
 	];
 
@@ -269,7 +276,7 @@
 
 <Page
 	title="Models"
-	description="Every model the gateway carries — prices, capabilities, and retention, reported live."
+	description="Every model the gateway carries. Requests go only to zero-retention endpoints wherever the model has any."
 	maxWidth="wide"
 >
 	{#if saveError}
@@ -323,12 +330,10 @@
 			</td>
 			<td class="px-3 py-2.5 text-sm text-foreground-muted">{m.provider}</td>
 			<td class="px-3 py-2.5">
-				{#if m.zdr === "all"}
+				{#if m.zdr === "all" || m.zdr === "some"}
 					<Badge variant="success">Zero retention</Badge>
-				{:else if m.zdr === "some"}
-					<span class="text-sm text-foreground-muted">Varies by route</span>
 				{:else if m.zdr === "none"}
-					<span class="text-sm text-foreground-muted">Retained</span>
+					<Badge variant="warning">Retained</Badge>
 				{:else}
 					<span class="text-sm text-foreground-subtle">—</span>
 				{/if}
@@ -366,8 +371,10 @@
 			<div class="flex flex-col items-center gap-2 text-center">
 				<span class="text-sm font-medium text-foreground break-all">{m.display_name}</span>
 				<span class="text-xs text-foreground-muted">{m.provider}</span>
-				{#if m.zdr === "all"}
+				{#if m.zdr === "all" || m.zdr === "some"}
 					<Badge variant="success">Zero retention</Badge>
+				{:else if m.zdr === "none"}
+					<Badge variant="warning">Retained</Badge>
 				{/if}
 				<span class="text-xs font-mono text-foreground-muted">
 					{perM(m.input_cost_per_1k)} / {perM(m.output_cost_per_1k)} · {ctxText(

@@ -24,6 +24,8 @@ Default permissions for the reach plugin
 - `allow-pair-door-open`
 - `allow-pair-door-close`
 - `allow-pair-door-status`
+- `allow-pair-handoff-create`
+- `allow-pair-handoff-accept`
 
 ## Permission Table
 
@@ -420,6 +422,58 @@ Enables the pair_door_status command without any pre-configured scope.
 <td>
 
 Denies the pair_door_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-pair-handoff-accept`
+
+</td>
+<td>
+
+Enables the pair_handoff_accept command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-pair-handoff-accept`
+
+</td>
+<td>
+
+Denies the pair_handoff_accept command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-pair-handoff-create`
+
+</td>
+<td>
+
+Enables the pair_handoff_create command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-pair-handoff-create`
+
+</td>
+<td>
+
+Denies the pair_handoff_create command without any pre-configured scope.
 
 </td>
 </tr>

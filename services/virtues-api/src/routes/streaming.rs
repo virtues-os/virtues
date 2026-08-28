@@ -114,6 +114,14 @@ where
         body["reasoning_effort"] = serde_json::json!(effort);
     }
 
+    // Same zero-retention enforcement as the non-streaming path. Chat streams,
+    // so omitting it here would have left the single highest-volume, most
+    // personal route as the one that never asked.
+    if catalog.enforce_zdr(&request.model) {
+        body["providerOptions"] =
+            serde_json::json!({ "gateway": { "zeroDataRetention": true } });
+    }
+
     // Only include tools if present and non-empty (providers reject null/empty arrays)
     if let Some(ref tools) = request.tools {
         if !tools.is_empty() {

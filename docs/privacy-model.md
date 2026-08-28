@@ -76,12 +76,38 @@ What goes out, concretely:
 | You ask a question in chat | Your question, plus the parts of your record retrieved to answer it — message text, transcripts, calendar entries, transactions — plus your narrative identity and standing rules |
 | The nightly day write-up | Verbatim message excerpts (both directions), individual transactions with merchant and amount, calendar entries with attendee names, app and browser titles, transcript text |
 | A voice recording is transcribed | **The audio itself**, not a transcript — the recording is uploaded to the transcription model |
+| An image is generated | Your prompt, and any image you supplied to edit |
 | An applet with an `agent` prompt runs | Whatever that applet was written to look at |
 
 It travels box → `api.virtues.com` → an AI gateway → the model provider
-(OpenAI, Anthropic, Google, xAI, depending on the slot). So two parties beyond
+(Anthropic, Alibaba, Z.AI, Google, depending on the slot). So two parties beyond
 the provider handle it in the clear. [virtues-api.md](virtues-api.md) states
 this plainly and is the detailed account.
+
+**What we do about it: every one of those requests demands zero data
+retention.** The gateway holds retention agreements with its providers and will
+route a request only through endpoints covered by one. `api.virtues.com` sets
+that requirement on every call it forwards — chat, streaming chat, background
+jobs, web searches, transcription, image generation — for every model that has
+such an endpoint. It is not a preference you enable and it is not a default you
+can drift off of; it is attached per request, derived from the model, and a
+model whose provider offers no zero-retention route is refused rather than
+quietly used.
+
+Concretely, that means the providers behind your slots do not keep your
+prompts, and do not train on them.
+
+Two honest edges:
+
+- **A few models have no zero-retention route at all.** They are marked
+  *Retained* in Settings → Models and you can still choose one deliberately —
+  some models are only available that way. Doing so affects **only the slot you
+  put it in**: pin one for chat and your bookmarks, summaries, searches and
+  transcripts stay zero-retention. There is no global switch to leave flipped,
+  on purpose.
+- **A model we have never heard of enforces anyway.** If the id is newer than
+  our catalog or simply wrong, the request fails loudly instead of falling back
+  to an endpoint we can't vouch for.
 
 **What does NOT leave, and this is not incidental:**
 
@@ -91,15 +117,19 @@ this plainly and is the detailed account.
 - **The usage ledger records metadata only** — model, token counts, cost. Never
   content.
 
-**What you can do about it:** point the box at a local model. The slot system
-takes any OpenAI-compatible endpoint, so a model running on your own hardware
-keeps inference on your own hardware. The trade is quality and speed, and it is
-yours to make.
+**What you can do beyond that:** point the box at a local model. The slot
+system takes any OpenAI-compatible endpoint, so a model running on your own
+hardware keeps inference on your own hardware — nothing leaves at all. The trade
+is quality and speed, and it is yours to make.
 
 **What we will not claim:** that this is private by construction. The relay
 genuinely cannot read your data — that is physics, not policy. The inference
-boundary is the opposite: it rests on the provider's contract and our choice of
-provider. Saying so is the point of this page.
+boundary is different in kind: zero retention is enforced on our side and
+contractual on theirs, which is a real, checkable guarantee and still a promise
+rather than an impossibility. A provider that breaks its agreement breaks
+something we cannot detect from here. That is precisely why the local-model path
+exists, and why this page describes the mechanism instead of asking you to trust
+a badge.
 
 ## The honest tradeoff
 

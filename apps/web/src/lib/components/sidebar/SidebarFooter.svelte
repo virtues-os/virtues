@@ -62,9 +62,44 @@
 	// never renders there.
 	let stagedVersion = $state<string | null>(null);
 
+	// ── The OTHER update track ───────────────────────────────────────────────
+	//
+	// Two clocks reach this app, and until now the chip only knew one. The
+	// SHELL stages a signed release and needs a relaunch (above). The UI is a
+	// separate thing entirely: the desktop bakes no SPA at all
+	// (`frontendDist: "ui"` is the airlock), so after pairing it renders the
+	// box's live SPA over the loopback proxy — meaning a box upgrade changes
+	// the UI with no app release involved, and this window keeps showing the
+	// old bundle until something reloads it. A menu-bar resident is never
+	// relaunched, so "until something reloads it" rounds to never, exactly as
+	// the shell's own comment says of "next launch".
+	//
+	// `/health` already reports the box's commit, and the running bundle knows
+	// its own, so the difference IS the signal — no new endpoint, no version
+	// negotiation. `dev` is skipped because a dev SPA and a dev binary are
+	// built separately and always differ, which would pin the chip open.
+	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
+	const BUILD_COMMIT: string = __BUILD_COMMIT__;
+	let boxCommit = $state<string | null>(null);
+	const uiStale = $derived(
+		BUILD_COMMIT !== "dev" && !!boxCommit && boxCommit !== BUILD_COMMIT
+	);
+
 	async function pollUpdate() {
 		const s = await appUpdateState();
 		stagedVersion = s?.stagedVersion ?? null;
+
+		// Cheap and unauthenticated; served by the box we're already rendering.
+		try {
+			const res = await fetch("/health", { cache: "no-store" });
+			if (res.ok) {
+				const h = await res.json();
+				boxCommit = typeof h?.commit === "string" ? h.commit : null;
+			}
+		} catch {
+			// Offline or mid-upgrade — keep the last verdict rather than
+			// flapping the chip on a dropped poll.
+		}
 	}
 
 	onMount(() => {
@@ -122,6 +157,11 @@
 	class:collapsed
 	style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay}ms"
 >
+	<!-- ONE chip, two tracks — never both at once. A staged shell release wins
+	     because relaunching also reloads the UI, so offering "Reload" beside it
+	     would be offering the smaller half of what the other button already
+	     does. Neither ever acts on its own: an update that interrupts what you
+	     were typing is worse than an update that waits. -->
 	{#if stagedVersion && !collapsed}
 		<button
 			type="button"
@@ -131,6 +171,16 @@
 		>
 			<span class="relaunch-label">Relaunch to update</span>
 			<span class="relaunch-version">v{stagedVersion}</span>
+		</button>
+	{:else if uiStale && !collapsed}
+		<button
+			type="button"
+			class="relaunch"
+			onclick={() => window.location.reload()}
+			title="Your box is serving a newer interface — reload to pick it up"
+		>
+			<span class="relaunch-label">Reload for the latest</span>
+			<span class="relaunch-version">{boxCommit?.slice(0, 7)}</span>
 		</button>
 	{/if}
 
