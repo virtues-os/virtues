@@ -380,40 +380,6 @@ export async function saveNarrativeRules(rules: string[]): Promise<void> {
 	if (!res.ok) throw new Error(`Couldn't save your rules: ${res.statusText}`);
 }
 
-export interface InterviewAnswer {
-	question_id: string;
-	answer: string;
-	word_count: number;
-	completed_at: string | null;
-}
-
-export async function getInterviewAnswers(): Promise<InterviewAnswer[]> {
-	const res = await fetch(`${API_BASE}/narrative/interview`);
-	if (!res.ok) throw new Error(`Failed to load your answers: ${res.statusText}`);
-	return (await res.json()).answers ?? [];
-}
-
-/**
- * Save one answer. Called while the person is still typing, because this is an
- * hour of writing about grief, vice and family and losing it to a reload is a
- * betrayal rather than an inconvenience.
- *
- * Throws on failure so the caller can SAY so — a save that fails quietly is the
- * worst outcome available here.
- */
-export async function saveInterviewAnswer(
-	question_id: string,
-	answer: string,
-	completed = false,
-): Promise<void> {
-	const res = await fetch(`${API_BASE}/narrative/interview`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ question_id, answer, completed }),
-	});
-	if (!res.ok) throw new Error(`Couldn't save: ${res.statusText}`);
-}
-
 export interface ReopenOnboardingResponse {
 	devices: number;
 	credentials: number;
@@ -2679,7 +2645,6 @@ export interface AiCallRow {
 	cost_micros: number;
 	/** `wallet` | `byo` — which purse paid. */
 	route: string;
-	status: string;
 }
 
 /** GET /api/telemetry/ai-calls — one page of the call log, newest first. */

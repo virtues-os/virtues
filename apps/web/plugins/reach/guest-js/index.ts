@@ -146,17 +146,17 @@ export async function improvProvision(
 }
 
 /**
- * Redeem a pair code over BLE (RPC 0x83). Resolves with the consume response
- * verbatim, as a string — parse it with the same code the LAN path uses.
+ * Pair over BLE (RPC 0x83), for LANs that block peer-to-peer.
+ *
+ * Takes no code: 0x83 became codeless and session-authorized on 2026-08-24,
+ * and the Rust command mints the identity and label itself — passing a code
+ * here was passing a field nothing read. Key custody stays in Rust on both
+ * platforms, so this wrapper only names the box.
  */
 export async function improvPair(
   id: string,
-  code: string,
-  label?: string,
-  /** This device's iroh EndpointId — the box allowlists it at enrollment. */
-  endpointId?: string,
 ): Promise<{ ok: boolean; response?: string; error?: string }> {
-  return await invoke('plugin:reach|improv_pair', { id, code, label, endpointId })
+  return await invoke('plugin:reach|improv_pair', { id })
 }
 
 /** Drop the BLE connection when leaving setup. Always safe. */

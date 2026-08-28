@@ -14,9 +14,10 @@
 //!     `expired` — handled inline by `verify_and_consume` when the gated
 //!     handler attempts to use it.
 //!
-//!   - `app_auth_event` rows older than 90 days are moved to
-//!     `app_auth_event_archive`. The live table stays small for
-//!     incident-response queries while the archive keeps full history.
+//!   - `app_auth_event` rows older than 90 days are deleted. The archive
+//!     table that used to receive them had no reader anywhere — full auth
+//!     history with no query path is retention risk, not history — and was
+//!     dropped 2026-08-28.
 //!
 //! No job queue, no worker pool, no PID file — one tokio task spawned by
 //! `server::run`. Stops when the daemon stops.
@@ -100,19 +101,9 @@ async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
     .await?
     .rows_affected();
 
-    // Move-then-delete in one statement using a CTE. Postgres guarantees
-    // RETURNING from the DELETE is visible to the INSERT only inside the
-    // same statement, so this is atomic — no partial archive states.
     let archived = sqlx::query(
-        "WITH moved AS (
-             DELETE FROM app_auth_event
-             WHERE occurred_at < now() - make_interval(days => $1::int)
-             RETURNING id, user_id, device_id, event_type, detail, ip, user_agent, occurred_at
-         )
-         INSERT INTO app_auth_event_archive
-             (id, user_id, device_id, event_type, detail, ip, user_agent, occurred_at)
-         SELECT id, user_id, device_id, event_type, detail, ip, user_agent, occurred_at
-         FROM moved",
+        "DELETE FROM app_auth_event \
+         WHERE occurred_at < now() - make_interval(days => $1::int)",
     )
     .bind(EVENT_RETENTION_DAYS as i32)
     .execute(pool)

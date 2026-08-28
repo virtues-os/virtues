@@ -105,6 +105,14 @@ jobs:
       DATABASE_URL: postgres://virtues:virtues@localhost:5432/virtues
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, not the default depth 1: the append-only migrations
+          # step runs `git merge-base` against the PR base, and a shallow
+          # checkout grafts HEAD parentless — merge-base then has nothing to
+          # walk and the step dies before its first comparison (it did, on
+          # this check's first real PR). ~266 MiB of pack, seconds on the
+          # runner's network.
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -136,6 +144,12 @@ jobs:
       # on NEW ones — see the script for why it is not a wall.
       - name: No new swallowed query errors
         run: tools/check-swallowed-queries.sh
+
+      # The box parses the Improv pair packet in Rust; the iPhone builds it in
+      # Swift. Nothing compiles the two together, so they drifted for four days
+      # and BLE pairing failed at parse_rpc every time.
+      - name: Improv wire shapes agree across languages
+        run: tools/check-improv-wire.py
 
       # Create the one thing `#[sqlx::test]`'s throwaway databases SHARE.
       #
@@ -250,6 +264,53 @@ jobs:
         run: |
           sqlx migrate run --source virtues-core/migrations
           cargo sqlx prepare --check --workspace
+
+      # An applied migration's file is part of the fleet's history. sqlx
+      # checksums the BYTES, so editing one after boxes have applied it —
+      # even a comment — makes their next `migrate run` refuse with
+      # "previously applied but has been modified", which on a box is a boot
+      # refusal. Not hypothetical: a docs path-sweep (b75a20ce) edited
+      # comments inside 0005 + three atlas migrations after staging.65-.71
+      # had shipped them; caught by hand (9f9538f3) one prerelease before it
+      # bricked every upgrade. New files are welcome; .sql.pending
+      # placeholders may be consumed; everything else is append-only. A
+      # deliberate squash is the one exception, and it edits this step
+      # knowingly.
+      - name: Applied migrations are append-only
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags origin ${{ github.base_ref }}
+          base=$(git merge-base FETCH_HEAD HEAD)
+          # TEMPORARY allowlist: the wave that INTRODUCED this check also
+          # carries 9f9538f3, which restores four migrations to the bytes
+          # fielded boxes actually applied — a modification relative to
+          # staging's (bad) copy, and the one edit that is the fix rather
+          # than the disease. DELETE these four lines once that wave merges.
+          drift=$(git diff --name-status --no-renames "$base" HEAD -- \
+                    virtues-core/migrations services/virtues-atlas/migrations \
+                  | grep -E '^\s*[MD]\s' | grep -E '\.sql$' \
+                  | grep -v -e '0005_display_hours\.sql' \
+                            -e '0001_customers\.sql' \
+                            -e '0015_box_keys\.sql' \
+                            -e '0016_granted_links\.sql' || true)
+          if [ -n "$drift" ]; then
+            echo "✖ applied migration files modified or deleted:"
+            echo "$drift"
+            echo "Migrations are append-only once merged — revert the edit; new behavior gets a NEW migration."
+            exit 1
+          fi
+          echo "✓ migrations are append-only against $base"
+
+      # Two drift classes sqlx cannot see, because the SQL is built from
+      # string arrays at runtime: (1) dynamic INSERT/upsert column lists that
+      # name columns the schema no longer has (the 2026-08-17 renames left
+      # seven of these), and (2) the model-facing catalog in sql_query.rs
+      # advertising columns that exist but that NO writer populates — the
+      # agent then queries forever-NULL columns (eight found in the
+      # 2026-08-28 audit, including a ref_count that did not exist at all).
+      # Needs the migrated service Postgres from the step above.
+      - name: Dynamic SQL + model catalog match the schema
+        run: python3 tools/check-dynamic-inserts.py
 
       # `--workspace`, not `-p virtues`. This used to test the one package, so
       # virtues-registry, virtues-helpers, virtues-iroh and virtues-installer

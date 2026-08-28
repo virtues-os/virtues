@@ -1,11 +1,28 @@
 # Settings › Display — the box's face
 
-> A new settings section, under Devices, for the screen on the box: whether it
-> is awake, what we know about it, and — the real feature — **what it shows**.
-> The thesis of this doc: the panel is not a peripheral to configure, it is
-> the box's face, and choosing what it shows is choosing which face the box
-> wears. The word "face" already exists in this codebase for exactly the right
-> thing.
+> **STATUS 2026-08-28, verified against code: PHASES 1 AND 2 SHIPPED,
+> PHASE 3 ABOUT HALF.** The Settings › Display section, the miniature and
+> facts block, the restart verb, the duty list, `GET /api/system/display`, the
+> `app_display` table, the face precedence chain, the applet-face shelf,
+> `?surface=panel`, Hours, the sleep engine and its unit tests, the
+> button-hold endpoint and the face-token epoch are all built and wired.
+>
+> **What remains:** the four Phase-3 built-in faces (Weather, The Day, The
+> Clock, On This Day) and the "Ask for a new one" chat-authoring door.
+>
+> **Read the body below with care — parts of it are now false.** The endpoint
+> shipped as `/api/system/display/face` and `/hours`, not `/config`. The EDID
+> parse for vendor/model was deliberately dropped. `hello_world`/Biscuit,
+> `calorie_tracker` and `heart_rate_explorer` no longer exist, so every
+> sentence about Biscuit as a built-in face is moot; exactly one applet ships
+> a face today (`dot_cloud`), and it is the default rather than The Record.
+> `MobileSettingsView.svelte` does not exist. Open question 2 is settled: the
+> server owns sleep.
+>
+> **The bench hardware findings that lived here have moved** to
+> [`../record/display-hardware.md`](../record/display-hardware.md) — the
+> ddcutil prohibition, the lying EDID, the Q6A bootloader finding, and the
+> captured EDID blob, which is still the only copy anywhere.
 
 ## Where things stand today (surveyed 2026-08-26)
 
@@ -270,14 +287,12 @@ Recommend 1 + 2 now, 3 never unless a real need appears.
      *content* is itself inconsistent: 1920×1080-preferred after a cold
      boot, 1024×600-preferred after one hotplug. This board lies twice.
    - **Therefore Hours requires the EDID firmware override.** Capture the
-     panel's EDID once and pin it (`drm.edid_firmware=HDMI-A-1:edid/…` on
-     the kernel cmdline, or the per-connector debugfs override) so no
-     probe ever asks the wire again — deterministic modes on every wake,
-     and it structurally retires the lying-EDID/zoom problem too. The
-     bench panel's EDID is captured: 128 bytes, archived at
-     `/home/radxa/panel-edid.bin` on the box
-     (md5 `c20eb215b495a300a9738d06d9285a45`), base64:
-     `AP///////wBI9BFSAQQAAAUXAQSlNR54AoBCrFEwtCUQUFMAAAABAQEBAQEBAQEBAQEBAQEBKDaAoHA4H0AwIDUAB0QhAAAaIi2AoHA4H0AwIDUAB0QhAAAaAAAA/gAKICAgICAgICAgICAgAAAA/gAxOTIweDEwODAKICAgADY=`
+     panel's EDID once and pin it so no probe ever asks the wire again —
+     deterministic modes on every wake, and it structurally retires the
+     lying-EDID/zoom problem too. **The captured blob, the ddcutil
+     prohibition and the Q6A bootloader finding now live in
+     [`../record/display-hardware.md`](../record/display-hardware.md)**, which
+     holds the only surviving copy of the EDID itself.
    - Sleep/wake recipe once the override is in place: sleep =
      `systemctl stop virtues-display` + force connector off; wake = force
      `detect` + `systemctl start virtues-display`. Both are verbs the box

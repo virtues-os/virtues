@@ -7,7 +7,7 @@
 //! - **Global novelty** (`novelty_z`): cosine distance from a kernel-weighted
 //!   centroid of the baseline. "Rare in your life at all." Below midline =
 //!   routine, > 1σ notable, > 2σ rare.
-//! - **Local novelty** (`local_novelty_z`, with `lof_raw` underneath): a
+//! - **Local novelty** (`local_novelty_z`): a
 //!   density-relative Local Outlier Factor, log-transformed and robustly
 //!   standardized onto the same σ axis. "Off-pattern for its KIND" — e.g.
 //!   first cardio when you always lift, which global novelty misses because
@@ -65,7 +65,7 @@ const Z_MAX: f64 = 3.0;
 /// Compute global + local novelty for all events on a given day that need it.
 ///
 /// Batch-embeds summaries in one call, builds the baseline once, scores each
-/// event, and stores `embedding`, `novelty_z`, `lof_raw`, `local_novelty_z`.
+/// event, and stores `embedding`, `novelty_z`, `local_novelty_z`.
 /// Returns the number of events that received a global novelty_z.
 pub async fn compute_novelty_for_day(pool: &PgPool, date: NaiveDate) -> anyhow::Result<u32> {
     // Events needing scoring. Re-scored if EITHER channel is missing, so a
@@ -112,12 +112,12 @@ pub async fn compute_novelty_for_day(pool: &PgPool, date: NaiveDate) -> anyhow::
         let novelty_z = baseline
             .as_ref()
             .and_then(|b| score_global(b, embedding, phase));
-        let (lof_raw, local_z) = baseline
+        let local_z = baseline
             .as_ref()
             .and_then(|b| score_local(b, embedding))
-            .map_or((None, None), |(l, z)| (Some(l), Some(z)));
+            .map(|(_, z)| z);
 
-        if let Err(e) = store_scores(pool, event_id, embedding, novelty_z, lof_raw, local_z).await {
+        if let Err(e) = store_scores(pool, event_id, embedding, novelty_z, local_z).await {
             tracing::warn!(event_id = %event_id, error = %e, "Failed to store novelty");
             continue;
         }
@@ -199,17 +199,15 @@ async fn store_scores(
     event_id: &str,
     embedding: &[f32],
     novelty_z: Option<f64>,
-    lof_raw: Option<f64>,
     local_z: Option<f64>,
 ) -> anyhow::Result<()> {
     sqlx::query(
         "UPDATE wiki_events
-         SET embedding = $1, novelty_z = $2, lof_raw = $3, local_novelty_z = $4
+         SET embedding = $1, novelty_z = $2, local_novelty_z = $3
          WHERE id = $5",
     )
     .bind(embedding_to_bytes(embedding))
     .bind(novelty_z)
-    .bind(lof_raw)
     .bind(local_z)
     .bind(event_id)
     .execute(pool)

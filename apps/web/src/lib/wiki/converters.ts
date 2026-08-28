@@ -265,7 +265,6 @@ export function apiToDayEvent(api: TemporalEventApi): DayEvent {
 		agentAction: (api.agent_action as DayEvent["agentAction"]) ?? null,
 		isSleep: api.is_sleep ?? false,
 		userHidden: api.user_hidden ?? false,
-		userCreated: api.user_created ?? false,
 		entities: Array.isArray(api.entities) ? api.entities : [],
 		topicNovelty: api.topic_novelty ?? null,
 		entityNovelty: api.entity_novelty ?? null,

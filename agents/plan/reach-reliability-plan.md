@@ -1,5 +1,33 @@
 # Reach reliability — "100% reachable whenever the box is up"
 
+> **STATUS 2026-08-28, verified against code: THE MECHANISM IS SHIPPED.**
+> This was labelled Planned; that was wrong. L1 (`network_change()`
+> passthrough), L2 (probe, then rebuild the Endpoint from the stored seed so
+> the EndpointId survives), the Swift `NWPathMonitor` and foreground triggers,
+> and the loopback reading the current client per inbound connection are built
+> and wired end to end. Parts go beyond the plan: the loopback holds an
+> accepted connection up to 3s waiting for a rebuilt client, because browser
+> fetches do not retry a reset.
+>
+> **What remains** is the R3 polish: the desktop `:7117` helper still uses the
+> fixed-client path and has no recovery at all; there is no recovery counter,
+> so a rebuild is indistinguishable from a cold build in stats; and the UI
+> shows live path state rather than reconnect events.
+>
+> **False below:** `virtues_network_changed()` and `virtues_rebuild_client()`
+> do not exist — one merged `virtues_recover_connection()` does both layers,
+> and Swift never decides to rebuild, it makes a single blocking call. There
+> is no Swift-side watchdog. The probe is `probe_session` at 4s, not
+> `endpoint.online()` at 5s. There is no retry before rebuild. `ReachMonitor`
+> lives in the **location-probe** plugin, not reach, because the Rust-only
+> reach plugin has no iOS lifecycle hook. iroh is 1.0.2, not 1.0.1.
+>
+> **The live tripwire:** all of L2 exists to work around upstream
+> `n0-computer/iroh#4289` — iroh's netmon attempts one rebind on iOS and, on
+> failure, silently kills the EndpointDriver with no error and no `rebind()`
+> API, leaving the Endpoint dead for the life of the process. When #4289
+> lands, L2 can be deleted and L1 alone suffices.
+
 Goal: the user NEVER thinks about connectivity. If their box is up, the app reaches it — across
 Wi-Fi↔cellular switches, LAN drops, and app suspend/resume — with **no force-quit, ever**.
 

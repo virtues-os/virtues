@@ -1,4 +1,4 @@
--- The 0x82 grant, atlas side (agents/record/one-wire-plan.md, Phase 2).
+-- The 0x82 grant, atlas side (docs/one-wire-plan.md, Phase 2).
 --
 -- A signed-in, entitled app asks POST /init/grant for a pre-approved
 -- device_code and writes it to the box over the BLE setup session; the box
