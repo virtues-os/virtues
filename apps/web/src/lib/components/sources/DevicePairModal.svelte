@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { openExternal } from "$lib/tauri/bridge";
 
-	/** Canonical app download page — see docs/deployment.md. */
+	/** Canonical app download page — see agents/build/deployment.md. */
 	const DOWNLOADS_URL = "https://virtues.com/downloads";
 	/**
 	 * DevicePairModal - Handles device pairing for iOS and Mac.
@@ -14,6 +14,7 @@
 	import { Button } from "$lib";
 	import * as api from "$lib/api/client";
 	import { openPairDoor, closePairDoor, createPairHandoff } from "$lib/tauri/bridge";
+	import type { HandoffOutcome } from "$lib/tauri/bridge";
 	import type { PairingInitResponse } from "$lib/types/device-pairing";
 
 	interface Props {
@@ -90,6 +91,19 @@
 	 * stored, revocable in Devices the moment it's used.
 	 */
 	let handoffQr = $state<string | null>(null);
+	/**
+	 * Why there is no handoff QR, when there ought to be one.
+	 *
+	 * Null means "no explanation is owed" — a browser or the phone, where the
+	 * option was never on offer. Anything else must be SAID. A released Mac app
+	 * older than 1.0.26 has no `pair_handoff_create` at all, and this used to
+	 * read as the feature simply not existing: the person who most needed it —
+	 * on a network that forbids the two devices seeing each other — was handed
+	 * the LAN QR and no reason why the other one was missing.
+	 */
+	let handoffUnavailable = $state<Exclude<HandoffOutcome, { kind: "ok" | "no-shell" }> | null>(
+		null
+	);
 	/** The device the handoff enrolled. Success is this row reporting a
 	 *  `last_seen_at` — i.e. the phone has actually dialled the box. The
 	 *  sheet's usual signal (the pair token being consumed) never fires here,
@@ -114,9 +128,10 @@
 			// Same window as the countdown this modal already runs.
 			const door = await openPairDoor(timeRemaining);
 			doorOrigin = door?.origin ?? null;
-			const handoff = await createPairHandoff(displayName);
-			handoffQr = handoff?.qrSvg || null;
-			handoffDeviceId = handoff?.deviceId || null;
+			const outcome = await createPairHandoff(displayName);
+			handoffUnavailable = outcome.kind === "no-shell" ? null : outcome;
+			handoffQr = outcome.kind === "ok" ? outcome.handoff.qrSvg : null;
+			handoffDeviceId = outcome.kind === "ok" ? outcome.handoff.deviceId : null;
 			startPolling();
 			startTimer();
 		} catch (err) {
@@ -370,6 +385,25 @@
 							Only show this to the phone you're adding — it carries the key that
 							pairs it. It stops working when this window closes.
 						</p>
+					{/if}
+
+					{#if handoffUnavailable}
+						<!-- The scan-anywhere option is missing and the person is entitled
+						     to know why. Silence here reads as "no such feature", which is
+						     what sent someone on a coworking network round in circles with
+						     the one QR that cannot work there. -->
+						<div class="notice mb-5">
+							{#if handoffUnavailable.kind === "too-old"}
+								<p class="notice-title">Scanning needs a newer app on this Mac</p>
+								<p class="notice-body">
+									Update Virtues here, then reopen this window. Until then the phone
+									has to reach this computer's network using the address below.
+								</p>
+							{:else}
+								<p class="notice-title">Couldn't prepare a scan code</p>
+								<p class="notice-body">{handoffUnavailable.error}</p>
+							{/if}
+						</div>
 					{/if}
 
 					{#if doorOrigin}

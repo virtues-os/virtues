@@ -21,7 +21,7 @@
  * ChatView's INTERVIEW_CHAT_ID) — not an onboarding surface. Onboarding is
  * done when the record is flowing; the reveal's door points at the waiting
  * conversation. Three form factors died teaching us this (textareas, chapter
- * cards, a bespoke chat) — docs/lsi-plan.md has the history.
+ * cards, a bespoke chat) — agents/record/lsi-plan.md has the history.
  */
 
 export type StepId = "letter" | "names" | "sources" | "you";

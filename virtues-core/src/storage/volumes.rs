@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 
 /// Roles a volume may serve. Only one exists in this version, deliberately —
-/// see `docs/backup-plan.md` for why tiering is excluded.
+/// see `agents/plan/backup-plan.md` for why tiering is excluded.
 pub const ROLE_BACKUP: &str = "backup";
 
 /// A registered destination, as stored in `storage_volume`.

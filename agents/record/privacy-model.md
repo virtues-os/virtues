@@ -5,7 +5,7 @@
 > design: an SNI-routed TCP relay, per-box ACME, a box-held TLS key, a device
 > bearer token, and browser-anywhere access. None of that is how reach works
 > now. The current, accurate account for users is
-> **[the reach manual page](../manual/operate/reach.md)**; the design notes are
+> **[the reach manual page](../docs/operate/reach.md)**; the design notes are
 > in [relay-control-plane.md](relay-control-plane.md).
 >
 > Four claims below are wrong on the merits, not merely dated, and they are the

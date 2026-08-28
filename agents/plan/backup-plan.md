@@ -337,7 +337,7 @@ largely dropped.
 
 ### Phase D — housekeeping
 
-15. `docs/recovery.md:274` still documents the deleted `/usr/local/bin/virtues.bak`
+15. `agents/build/recovery.md:274` still documents the deleted `/usr/local/bin/virtues.bak`
     rollback mechanism.
 
 ### One-way door
@@ -424,8 +424,8 @@ real RTO tradeoff to make deliberately rather than discover mid-incident.
 
 ## Related
 
-- `docs/update-paradigm.md` — release slots, migration preflight, rollback
-- `docs/data-durability.md` — ingestion reliability (device → box)
-- `docs/recovery.md` — operator runbook. **Stale:** `:274-291` documents the deleted
+- `agents/record/update-paradigm.md` — release slots, migration preflight, rollback
+- `agents/record/data-durability.md` — ingestion reliability (device → box)
+- `agents/build/recovery.md` — operator runbook. **Stale:** `:274-291` documents the deleted
   `/usr/local/bin/virtues.bak` mechanism, and `:202` cites an env path the installer
   does not use. Fix alongside step 1.

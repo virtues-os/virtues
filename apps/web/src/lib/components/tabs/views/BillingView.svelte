@@ -189,7 +189,7 @@
 	// varies. Example URLs live in the markup as *copy*, never as <option>s —
 	// a stale doc line is wrong, a stale option is a broken feature, which is
 	// precisely how `anthropic` and `google` shipped pointing at APIs we
-	// cannot call. Plan of record: docs/byo-ai-plan.md.
+	// cannot call. Plan of record: agents/plan/byo-ai-plan.md.
 	//
 	// Save and Delete are both sudo-gated (`change_byo_key` is one of the four
 	// locked sensitive actions); the SudoModal handles the prompt + CLI
@@ -734,7 +734,7 @@
 	examples below are copy, deliberately — when a vendor moves a path, stale
 	help text is wrong, whereas a stale <option> is a broken shipped feature.
 	That is exactly how `anthropic` and `google` came to point at APIs we
-	cannot call. See docs/byo-ai-plan.md.
+	cannot call. See agents/plan/byo-ai-plan.md.
 -->
 {#snippet byoKeyForm()}
 	<div class="space-y-3">

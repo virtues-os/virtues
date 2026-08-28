@@ -1075,7 +1075,7 @@ pub async fn consume_handler(
     // normally seeds this from its own system clock, but a datacenter box reads
     // "UTC", which is wrong — so when the current value is unset or UTC, fall back
     // to the pairing device's reported zone. A real appliance configured at home
-    // keeps its server-detected zone. See docs/timezone-model.md.
+    // keeps its server-detected zone. See agents/record/timezone-model.md.
     if let Some(dev_tz) = device_info
         .get("timezone")
         .and_then(|v| v.as_str())

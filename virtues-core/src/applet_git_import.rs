@@ -22,7 +22,7 @@
 //! with the same privileges as built-ins. `command` is argv and the authoring
 //! docs teach `["python3", "main.py"]`, so an import is arbitrary code
 //! execution as the box user — which has passwordless sudo. There is no
-//! sandbox yet. Until P4 of `docs/sources-packages-plan.md` lands (argv policy
+//! sandbox yet. Until P4 of `agents/plan/sources-packages-plan.md` lands (argv policy
 //! by provenance, sudo-gating, and the `systemd-run` jail that
 //! `code_interpreter` already proves out), this endpoint should not be put in
 //! front of anyone who would not audit the repo themselves.
@@ -189,7 +189,7 @@ fn validate_url(url: &str) -> Result<()> {
 /// check, not full SSRF protection — a hostname that *resolves* to a private
 /// address still passes, and DNS rebinding is not addressed. It stops the
 /// obvious and the accidental; the real containment for what an import can do
-/// once fetched is the jail (P4 in docs/sources-packages-plan.md).
+/// once fetched is the jail (P4 in agents/plan/sources-packages-plan.md).
 fn deny_internal_host(url: &str) -> Result<()> {
     let no_scheme = url
         .split_once("://")

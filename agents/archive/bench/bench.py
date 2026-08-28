@@ -2,7 +2,7 @@
 """
 Virtues inference bench — pure measurement client for the llama-server sidecars.
 
-Measures the two user-facing moments (see docs/inference-bench-spec.md):
+Measures the two user-facing moments (see agents/archive/inference-bench-spec.md):
   TEST A  live rerank latency (30 docs, p50/p95) at short/realistic/long lengths
   TEST B  100-page-PDF embed wall-clock (passages/sec, tokens/sec)
 

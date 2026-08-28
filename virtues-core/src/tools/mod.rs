@@ -82,7 +82,7 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
 }
 
 /// The explicit allowlist for a headless applet run — the runtime capability
-/// table from docs/applet-authoring-plan.md §B, enforced. What an applet's
+/// table from agents/plan/applet-authoring-plan.md §B, enforced. What an applet's
 /// agent may do: think, read (sql_query/semantic_search/web_search), write
 /// its own applet_* tables (sql_write), keep notes (update_applet_memory),
 /// write pages, compute in the jail, and introspect applets read-only. Its

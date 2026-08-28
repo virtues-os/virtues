@@ -64,7 +64,7 @@ pub enum Commands {
     /// (it holds no iroh key) and the desktop app has no camera, so the code is
     /// typed by hand. No `.env` touching, no prompts. Idempotent — run as often
     /// as needed. THE one human verb for connecting a device to the box
-    /// (docs/onboarding.md). `login` and `link` survive as aliases (this used
+    /// (agents/build/onboarding.md). `login` and `link` survive as aliases (this used
     /// to be `virtues login`).
     #[command(alias = "login", alias = "link")]
     Pair {
@@ -301,7 +301,7 @@ pub enum Commands {
     /// encryption key decrypts every unit ever shipped.
     ///
     /// Exits non-zero on any finding, so it can be the last line of a
-    /// manufacturing script. See docs/appliance-image.md.
+    /// manufacturing script. See agents/build/appliance-image.md.
     #[command(name = "image-check")]
     ImageCheck,
 
@@ -460,7 +460,7 @@ pub enum Commands {
     /// Hidden power-user command, and the distinction it turns on is worth
     /// keeping straight: `virtues pair` attaches a DEVICE to this box, this
     /// attaches this box to an ACCOUNT. In the normal flow the app carries the
-    /// account grant over Bluetooth (docs/onboarding-paradigm.md §7) and
+    /// account grant over Bluetooth (agents/record/onboarding-paradigm.md §7) and
     /// neither is typed.
     ///
     /// (It used to describe itself as pairing with `virtues init`'s "[1] Log

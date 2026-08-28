@@ -12,7 +12,7 @@
 // comment claimed until 2026-08-05. Desktop shells to the box and renders the
 // build the box serves; mobile IS the bundled SvelteKit build and uses the box
 // only as a REST/WS API. That difference is the whole reason `web_bundle`
-// exists — see docs/spa-delivery-plan.md.
+// exists — see agents/plan/spa-delivery-plan.md.
 
 /// OTA web-bundle overlay. Lives in the lib so BOTH shells can reach it: the
 /// mobile entry below, and the desktop bin via `virtues_lib::web_bundle`.

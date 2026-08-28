@@ -20,7 +20,7 @@
 //!
 //! Also home to the **sleep engine** (`spawn_sleep_engine`) — the server-side
 //! task that enforces Hours. See its module docs; the design was settled by
-//! the 2026-08-26 backlight audit (docs/display-plan.md): sleep is a
+//! the 2026-08-26 backlight audit (agents/plan/display-plan.md): sleep is a
 //! precedence state below every interruption, the kiosk unit keeps running,
 //! and only the connector toggles.
 
@@ -213,7 +213,7 @@ pub async fn set_display_hours_handler(
 /// unclaimed box (setup must show). The duty list on the Settings page is a
 /// promise; this task is where it is kept at 3am.
 ///
-/// Mechanism (backlight audit, docs/display-plan.md): the kiosk unit KEEPS
+/// Mechanism (backlight audit, agents/plan/display-plan.md): the kiosk unit KEEPS
 /// RUNNING; only the connector toggles. Sleep = write the
 /// `/run/virtues-display-asleep` marker (the unit's ExecStartPre accepts it in
 /// lieu of a connected connector, so a mid-sleep `restart_display()` after an

@@ -220,7 +220,7 @@
 		}
 
 		// NOTE: home_timezone (the box's location) is server-sourced and NOT
-		// browser-tracked — see docs/timezone-model.md. The browser's zone is sent
+		// browser-tracked — see agents/record/timezone-model.md. The browser's zone is sent
 		// per-request via ?tz= for the live "today" view (getDaySources), so there
 		// is no profile write-through here.
 

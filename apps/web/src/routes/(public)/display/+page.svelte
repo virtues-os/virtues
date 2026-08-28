@@ -549,7 +549,7 @@
 		     are the same words that get the owner back in after a reset. They
 		     rotate every 15 minutes while the box is empty (so a photograph taken
 		     last week is worthless) and freeze forever the moment it is claimed.
-		     See docs/onboarding-paradigm.md §1.
+		     See agents/record/onboarding-paradigm.md §1.
 
 		     BRAND TOP-LEFT, CODENAME BOTTOM-LEFT (2026-08-19, bench feedback):
 		     an unboxed unit's first screen led with "Honest Kestrel", which reads

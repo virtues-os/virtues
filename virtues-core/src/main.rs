@@ -155,7 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle Init command early (doesn't need Virtues client).
     //
-    // `virtues init` is PLUMBING, not a wizard (docs/onboarding.md): resolve
+    // `virtues init` is PLUMBING, not a wizard (agents/build/onboarding.md): resolve
     // config from the env the installer wrote, run migrations, mint a pair
     // token, print the handoff. The account/subscribe conversation lives in
     // the web setup wizard (/setup) — a TTY is the worst possible medium for
@@ -271,7 +271,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ─── `virtues pair` (aliases: `login`, `link`) ──────────────────────────
-    // THE human verb for connecting a device to the box (docs/onboarding.md). Mints a
+    // THE human verb for connecting a device to the box (agents/build/onboarding.md). Mints a
     // CLI-origin pair token (authorized immediately because typing this
     // command IS proof of physical access), prints the one-time URL + QR,
     // then waits until the link is opened — the wait is also the

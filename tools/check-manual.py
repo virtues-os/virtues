@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check `manual/` — the public docs — for the drift English cannot catch.
+"""Check `docs/` — the public manual — for the drift English cannot catch.
 
 WHY THIS EXISTS
 
@@ -10,7 +10,7 @@ else:
    listed. The website builds its nav, prerender entries, sitemap and
    llms.txt from that manifest, so a mismatch fails the SITE build — in the
    other repo, landing on whoever next deploys it, quite possibly someone
-   pushing a marketing change who has never heard of manual/. The person who
+   pushing a marketing change who has never heard of docs/. The person who
    broke it should be the person who sees it.
 
 2. A hardcoded release number in prose. CLAUDE.md asserted "No stable release
@@ -29,7 +29,7 @@ Deliberately NOT checked: whether every `virtues …` invocation parses against
 the clap definitions. That is a parser's worth of work for a fraction of the
 value these three checks give.
 
-Usage: tools/check-manual.py [manual_dir]
+Usage: tools/check-manual.py [docs_dir]
 """
 
 import json
@@ -74,9 +74,9 @@ def frontmatter(text: str) -> dict[str, str]:
 
 
 def check_notes(notes_root: Path) -> None:
-    """The engineering notes have the same law, enforced from their own README.
+    """Records obey the same law, enforced from their own README.
 
-    `docs/README.md` opens with "Every doc is listed here", and since
+    `agents/record/README.md` lists every record, and since
     2026-08-28 that rule has a visible consequence: virtues.com/docs/notes
     builds its index by parsing that table, so a doc missing from it does not
     publish at all. The previous cost of forgetting a row was that the doc went
@@ -88,38 +88,21 @@ def check_notes(notes_root: Path) -> None:
 
     listed = set(re.findall(r"^\|\s*\[[^\]]+\]\(([a-z0-9-]+)\.md\)", readme.read_text(), re.M))
 
-    # 18 docs were already unlisted when this check was written — the README's
-    # "every doc is listed here" had quietly stopped being true. Failing on all
-    # of them would just make the check something people switch off, and
-    # inventing a status for someone else's design doc is worse than leaving
-    # the row absent. So the debt is frozen, exactly as
-    # tools/check-swallowed-queries.sh freezes its own, and this fails only on
-    # docs added from here on. The baseline should only ever shrink.
-    baseline_path = Path("tools/unlisted-docs.baseline")
-    baseline = set()
-    if baseline_path.exists():
-        for line in baseline_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                baseline.add(line)
-
     for path in sorted(notes_root.glob("*.md")):
         if path.name == "README.md" or path.stem in listed:
             continue
-        if path.name in baseline:
-            continue
         error(
-            f"docs/{path.name}",
-            "not listed in docs/README.md — it will not publish to /docs/notes. "
+            f"agents/record/{path.name}",
+            "not listed in agents/record/README.md — it will not publish to /docs/notes. "
             "Add a row with its status.",
         )
 
 
 def main() -> int:
-    root = Path(sys.argv[1] if len(sys.argv) > 1 else "manual")
-    # The engineering notes are the manual's sibling in the repo, and its
-    # sibling on the site at /docs/notes.
-    notes_root = root.parent / "docs"
+    root = Path(sys.argv[1] if len(sys.argv) > 1 else "docs")
+    # The engineering notes that publish are the records — agents/record/ —
+    # which are the site's /docs/notes. build/ and plan/ never publish.
+    notes_root = root.parent / "agents" / "record"
     manifest_path = root / "manifest.json"
     if not manifest_path.exists():
         print(f"check-manual: no manifest at {manifest_path}", file=sys.stderr)
@@ -178,8 +161,8 @@ def main() -> int:
             dest = target.split("#")[0].removesuffix(".md")
             dest_slug = "index" if dest == "/docs" else dest.removeprefix("/docs/")
             # A manual page may link into the engineering notes, which live in
-            # docs/ and are indexed by their own README rather than by the
-            # manifest. Resolve those against the file on disk.
+            # agents/record/ and are indexed by their own README rather than by
+            # the manifest. Resolve those against the file on disk.
             if dest_slug == "notes" or dest_slug.startswith("notes/"):
                 stem = dest_slug.removeprefix("notes")
                 if stem and not (notes_root / f"{stem.lstrip('/')}.md").exists():

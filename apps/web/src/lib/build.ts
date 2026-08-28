@@ -2,7 +2,7 @@
 // Vite (see vite.config.ts) and mirroring the box's build.rs/codename.rs so every
 // artifact reports the same shape. This is what "this browser" sends to the box in
 // the X-Virtues-Client header and shows on the Devices page.
-// See docs/update-identity-spine.md.
+// See agents/record/update-identity-spine.md.
 
 export type Channel = 'stable' | 'staging' | 'edge' | 'dev';
 

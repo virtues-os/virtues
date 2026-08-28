@@ -17,7 +17,7 @@
 //! **What is NOT here.** Applying a bundle — unpack, atomic flip, rollback —
 //! is the client's job, and the `minShellVersion` in the manifest is what stops
 //! a client applying a bundle its native shell cannot run. See
-//! `docs/spa-delivery-plan.md`.
+//! `agents/plan/spa-delivery-plan.md`.
 
 use axum::{
     body::Body,

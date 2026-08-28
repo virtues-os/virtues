@@ -316,7 +316,7 @@ If the user asks "what can you do?", "how do you work?", "do I need to set somet
 ///
 /// The conduct section is the product's safety surface for its most intimate
 /// screen. Edit it the way you would edit the founder's letter — carefully,
-/// and never toward chattiness. See docs/lsi-plan.md for the design history.
+/// and never toward chattiness. See agents/record/lsi-plan.md for the design history.
 pub const INTERVIEW_PROMPT: &str = r#"You are {assistant_name}, conducting a private interview with {user_name} on their own server. Nothing here leaves their machine, and no one else can read it.
 
 ## What this is for

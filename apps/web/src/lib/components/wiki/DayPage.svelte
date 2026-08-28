@@ -82,7 +82,7 @@
 	// Render timestamps in the SAME zone the server windowed this day in: the
 	// locked per-day start_timezone, else the viewing device's zone (which is
 	// also what get_day_sources used for an in-progress today). Keeps the Time
-	// column consistent with which records appear. See docs/timezone-model.md.
+	// column consistent with which records appear. See agents/record/timezone-model.md.
 	const rowTz = $derived(page.startTimezone ?? undefined);
 
 
