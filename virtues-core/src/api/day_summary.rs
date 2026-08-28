@@ -357,7 +357,7 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events).await;
 
     sqlx::query(
-        "UPDATE wiki_days SET sources_fingerprint = $1, segmented_at = now(), \
+        "UPDATE wiki_days SET sources_fingerprint = $1, \
          start_timezone = COALESCE(start_timezone, $2) WHERE date = $3",
     )
     .bind(&fingerprint)

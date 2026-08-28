@@ -132,7 +132,7 @@ async fn wipe_derived(pool: &PgPool) -> Result<()> {
         // wiki_events carries its own embedding blob + derived novelty/autonomic
         // scores; null them so each scoring pass recomputes with the new model.
         "UPDATE wiki_events SET \
-             embedding = NULL, novelty_z = NULL, local_novelty_z = NULL, lof_raw = NULL, \
+             embedding = NULL, novelty_z = NULL, local_novelty_z = NULL, \
              hr_z = NULL, hrv_z = NULL, autonomic_z = NULL, topic_novelty = NULL, \
              entity_novelty = NULL",
     ] {

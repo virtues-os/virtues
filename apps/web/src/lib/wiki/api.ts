@@ -90,8 +90,6 @@ export interface WikiDayApi {
 	epigraph: string | null;
 	last_edited_by: string | null;
 	cover_image: string | null;
-	morning_baseline: number | null;
-	battery_curve: string | null;
 	data_quality: {
 		coverage: { who: number; whom: number; what: number; when: number; where: number; why: number; how: number };
 		overall: number;
@@ -1016,7 +1014,6 @@ export interface TemporalEventApi {
 	agent_action: string | null;
 	is_sleep: boolean | null;
 	user_hidden: boolean | null;
-	user_created: boolean | null;
 	// Autonomic scoring
 	avg_hr: number | null;
 	autonomic_z: number | null;
