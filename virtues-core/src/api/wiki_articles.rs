@@ -808,9 +808,9 @@ mod tests {
             .unwrap();
 
         sqlx::query(
-            "INSERT INTO search_embeddings (id, ontology, record_id, text_hash, model, \
+            "INSERT INTO search_embeddings (id, ontology, record_id, model, \
              chunk_index, content, doc_hash) \
-             VALUES ('se_1', 'wiki_article', $1, 'th', 'test-model', 0, 'Prose.', 'h')",
+             VALUES ('se_1', 'wiki_article', $1, 'test-model', 0, 'Prose.', 'h')",
         )
         .bind(&a.page_id)
         .execute(&pool)

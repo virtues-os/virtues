@@ -211,16 +211,14 @@ async fn record_increment(
         .filter(|(_, rel, _)| written.contains(rel.as_str()))
         .collect();
     let rels: Vec<String> = kept.iter().map(|(_, r, _)| r.clone()).collect();
-    let sizes: Vec<i64> = kept.iter().map(|(_, _, s)| *s as i64).collect();
     sqlx::query(
-        "INSERT INTO backup_archived_file (volume_id, rel_path, increment, size_bytes) \
-         SELECT $1, r, $3, s FROM UNNEST($2::TEXT[], $4::BIGINT[]) AS t(r, s) \
+        "INSERT INTO backup_archived_file (volume_id, rel_path, increment) \
+         SELECT $1, r, $3 FROM UNNEST($2::TEXT[]) AS t(r) \
          ON CONFLICT (volume_id, rel_path) DO NOTHING",
     )
     .bind(&volume.id)
     .bind(&rels)
     .bind(increment)
-    .bind(&sizes)
     .execute(pool)
     .await
     .map_err(|e| crate::Error::Database(format!("record increment: {e}")))?;
@@ -322,7 +320,6 @@ mod tests {
             id: id.into(),
             name: "Test Drive".into(),
             kind: "removable".into(),
-            roles: vec![crate::storage::volumes::ROLE_BACKUP.into()],
             fs_uuid: format!("uuid-{id}"),
             mount_path: None,
             prefix: "virtues/box".into(),
@@ -694,7 +691,7 @@ pub async fn run_cli(
 async fn mark_ok(pool: &PgPool, id: &str) {
     let _ = sqlx::query(
         "UPDATE storage_volume SET last_ok_at = NOW(), last_error = NULL, \
-         last_error_at = NULL, updated_at = NOW() WHERE id = $1",
+         updated_at = NOW() WHERE id = $1",
     )
     .bind(id)
     .execute(pool)
@@ -704,7 +701,7 @@ async fn mark_ok(pool: &PgPool, id: &str) {
 async fn mark_detached(pool: &PgPool, id: &str) {
     let _ = sqlx::query(
         "UPDATE storage_volume SET state = 'absent', last_error = NULL, \
-         last_error_at = NULL, updated_at = NOW() WHERE id = $1",
+         updated_at = NOW() WHERE id = $1",
     )
     .bind(id)
     .execute(pool)
@@ -713,7 +710,7 @@ async fn mark_detached(pool: &PgPool, id: &str) {
 
 async fn mark_error(pool: &PgPool, id: &str, err: &str) {
     let _ = sqlx::query(
-        "UPDATE storage_volume SET last_error = $2, last_error_at = NOW(), \
+        "UPDATE storage_volume SET last_error = $2, \
          updated_at = NOW() WHERE id = $1",
     )
     .bind(id)

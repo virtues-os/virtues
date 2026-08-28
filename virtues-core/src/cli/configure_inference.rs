@@ -128,7 +128,7 @@ async fn wipe_derived(pool: &PgPool) -> Result<()> {
         // from a model the index was not built with — and adopting the new model is
         // the entire point of this command, so the old geometry must not survive it.
         "UPDATE search_index_meta SET n_docs = 0, sum_len = 0, \
-             model = NULL, dim = NULL, fingerprint = NULL, built_at = NULL",
+             model = NULL, dim = NULL",
         // wiki_events carries its own embedding blob + derived novelty/autonomic
         // scores; null them so each scoring pass recomputes with the new model.
         "UPDATE wiki_events SET \
