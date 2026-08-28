@@ -32,7 +32,11 @@ pub struct StreamHealth {
     /// Registry name, e.g. `communication_message`.
     pub name: String,
     pub display_name: String,
-    /// `never` | `live` | `stalled` | `idle`.
+    /// `never` | `live` | `stalled` | `idle` | `blocked`.
+    ///
+    /// `blocked` outranks every freshness verdict: it means the applet that
+    /// writes this stream is failing, so the emptiness has a known cause and
+    /// must not be drawn as quiet.
     pub status: String,
     pub total: i64,
     pub count_24h: i64,
@@ -54,6 +58,9 @@ pub struct StreamHealth {
     /// streams (a sessionizer). "Connect something" is the wrong advice here,
     /// so the UI must not offer it.
     pub derived: bool,
+    /// Why this stream is `blocked`, verbatim from the failing applet's last
+    /// run. `None` for every other status.
+    pub blocked_reason: Option<String>,
 }
 
 /// The arrivals window: the UTC date `days[0]` refers to, and its length.
@@ -248,6 +255,7 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
                     .collect(),
                 // Filled in below — needs one query, not one per stream.
                 connected: false,
+                blocked_reason: None,
                 derived: writers.is_empty() && total > 0,
                 name,
             }
@@ -264,8 +272,7 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
          SELECT source_id FROM app_device WHERE source_id IS NOT NULL AND revoked_at IS NULL",
     )
     .fetch_all(db.pool())
-    .await
-    .unwrap_or_default()
+    .await?
     .into_iter()
     .collect();
 
@@ -274,14 +281,70 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
         s.connected = ids.iter().any(|id| live_sources.contains(id));
     }
 
+    // Streams whose writer is failing. Without this, freshness alone decides
+    // the verdict — and a stream whose applet has errored on every run for
+    // three days has exactly the row counts of one with nothing to say, so it
+    // was reported as `idle`. That is the surface on /home and /sources, which
+    // means this is where "blocked" was being rendered as "quiet".
+    //
+    // Applied after the freshness pass so it overrides it: a known cause always
+    // outranks an inference from counts. `live` is left alone — rows arriving
+    // now means the pipe works, whatever the last run said.
+    for (ontology, reason) in blocked_streams(db).await? {
+        for s in out.iter_mut().filter(|s| s.name == ontology) {
+            if s.status != "live" {
+                s.status = "blocked".to_string();
+                s.blocked_reason = Some(reason.clone());
+            }
+        }
+    }
+
     fn rank(s: &str) -> u8 {
         match s {
-            "stalled" => 0,
-            "idle" => 1,
-            "never" => 2,
-            _ => 3, // live
+            "blocked" => 0,
+            "stalled" => 1,
+            "idle" => 2,
+            "never" => 3,
+            _ => 4, // live
         }
     }
     out.sort_by(|a, b| rank(&a.status).cmp(&rank(&b.status)).then(a.name.cmp(&b.name)));
+    Ok(out)
+}
+
+/// Ontologies whose writing applet's most recent run failed, mapped to that
+/// run's error text.
+///
+/// Keyed on the LATEST run per applet rather than a failure count: one error
+/// followed by a success is a transient the user need not see, while a failing
+/// latest run means the stream is not being written right now. The error text
+/// is passed through verbatim — "Permission denied (os error 13)" is exactly
+/// the sentence that shortens the next diagnosis.
+///
+/// Errors propagate. An empty map must mean "every writer's last run
+/// succeeded"; a failed query must never be able to say that.
+async fn blocked_streams(db: &Database) -> Result<Vec<(String, String)>> {
+    let rows = sqlx::query(
+        "SELECT a.id AS applet_id, r.error AS error
+           FROM app_applets a
+           JOIN LATERAL (
+                SELECT status, error FROM app_applet_runs
+                 WHERE applet_id = a.id
+                 ORDER BY created_at DESC LIMIT 1
+           ) r ON TRUE
+          WHERE a.enabled AND a.archived_at IS NULL AND r.status = 'error'",
+    )
+    .fetch_all(db.pool())
+    .await?;
+
+    let mut out = Vec::new();
+    for row in rows {
+        let applet_id: String = row.get("applet_id");
+        let error: Option<String> = row.get("error");
+        let reason = error.unwrap_or_else(|| "last run failed".to_string());
+        for ontology in crate::applet_templates::ontologies_written_by_applet_id(&applet_id) {
+            out.push((ontology, reason.clone()));
+        }
+    }
     Ok(out)
 }

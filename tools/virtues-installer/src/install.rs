@@ -2809,6 +2809,12 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 mkdir -p /run/virtues-seed/journal /run/virtues-seed/lake
                 chown root:systemd-journal /run/virtues-seed/journal 2>/dev/null || true
                 chmod 2755 /run/virtues-seed/journal 2>/dev/null || true
+                # The lake needs an owner too. It sat directly beside the two
+                # journal lines above with nothing of its own, so a seeded box
+                # booted with a root-owned lake and its ingest applet failed
+                # with EACCES every five minutes — indistinguishable, from the
+                # outside, from a source with nothing to say.
+                chown -R virtues:virtues /run/virtues-seed/lake 2>/dev/null || true
                 umount /run/virtues-seed
                 # The seed is complete — only now may the real label exist,
                 # which is what lets the fstab line (and the mount below) find
@@ -2895,6 +2901,11 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 # root:root 755 here means no journal ever lands, silently.
                 chown root:systemd-journal /run/virtues-seed/journal 2>/dev/null || true
                 chmod 2755 /run/virtues-seed/journal 2>/dev/null || true
+                # Same for the lake, whose owner is the service user. The
+                # comment above explains why journal needs this; the lake sat
+                # beside it with nothing, and a root-owned lake fails the ingest
+                # applet with EACCES on every run while looking merely idle.
+                chown -R virtues:virtues /run/virtues-seed/lake 2>/dev/null || true
                 umount /run/virtues-seed
                 logger -t virtues-firstboot "seeded new disk from the card-side $DATA_DIR"
             fi
@@ -2997,6 +3008,39 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ -L /var/log/journal ] && [ ! -e /r
     rmdir /run/virtues-cardshadow 2>/dev/null || true
     systemctl try-restart systemd-journald 2>/dev/null || true
     touch /run/virtues-journal-rehomed
+fi
+
+# ── 1b'' state ownership, every boot ────────────────────────────────────────
+# Every directory under the data dir is written by the `virtues` service user
+# and must be owned by it. The installer establishes that (see the `find`
+# with -prune at install time) but only on the machine it runs on — a disk
+# seeded afterwards by firstboot never passes through it, so a box cloned from
+# a card can boot with root-owned state that nothing ever repairs.
+#
+# That is not hypothetical: `lake` shipped that way, and the ingest applet
+# failed with `Permission denied (os error 13)` on every run, for days, while
+# every surface reported the source as merely idle.
+#
+# `-prune` on the Postgres cluster and a list-free sweep, deliberately copying
+# the installer's shape rather than naming `lake`: the reason that form was
+# chosen there is that enumerating siblings means the NEXT one added gets
+# forgotten, which is exactly how this bug happened. `-print` so the repair is
+# never silent — a boot that had to fix something says which paths.
+if mountpoint -q "$DATA_DIR" 2>/dev/null; then
+    FIXED="$(find "$DATA_DIR" -path "$DATA_DIR/postgresql" -prune -o \
+                  \( -path "$DATA_DIR/journal" -o -path "$DATA_DIR/journal/*" \) -prune -o \
+                  ! -user virtues -print 2>/dev/null | head -20)"
+    if [ -n "$FIXED" ]; then
+        # Repair separately from the listing above, and WITHOUT `head`: piping
+        # the repairing find into head lets SIGPIPE kill it once 20 paths have
+        # been printed, which would silently fix a prefix and leave the rest —
+        # the same shape of half-truth this block exists to end. The cap is for
+        # the log line only.
+        find "$DATA_DIR" -path "$DATA_DIR/postgresql" -prune -o \
+             \( -path "$DATA_DIR/journal" -o -path "$DATA_DIR/journal/*" \) -prune -o \
+             ! -user virtues -exec chown virtues:virtues {} + 2>/dev/null || true
+        logger -t virtues-firstboot "repaired state ownership (was not virtues): $(echo "$FIXED" | tr '\n' ' ')"
+    fi
 fi
 
 # sudo resolves the hostname on every invocation; without a hosts entry each

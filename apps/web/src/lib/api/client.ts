@@ -985,8 +985,10 @@ export interface StreamHealth {
 	name: string;
 	display_name: string;
 	/** never = source never connected · live = data in last 24h ·
-	 *  stalled = was flowing this week, silent for a day · idle = nothing in 7d */
-	status: 'never' | 'live' | 'stalled' | 'idle';
+	 *  stalled = was flowing this week, silent for a day · idle = nothing in 7d ·
+	 *  blocked = the applet writing this stream is failing, so the emptiness has
+	 *  a known cause and must not be drawn as quiet. */
+	status: 'never' | 'live' | 'stalled' | 'idle' | 'blocked';
 	total: number;
 	count_24h: number;
 	count_7d: number;
@@ -997,6 +999,8 @@ export interface StreamHealth {
 	/** At least one of those sources is connected. Distinguishes "nothing
 	 *  provides this" from "provided, but switched off or not yet delivering". */
 	connected: boolean;
+	/** Why the stream is `blocked`, from the failing applet's last run. */
+	blocked_reason?: string | null;
 	/** No source writes it, yet rows exist — the box computes it from other
 	 *  streams, so "connect something" is the wrong advice. */
 	derived: boolean;
