@@ -297,9 +297,11 @@ pub async fn current_standing(pool: &PgPool) -> crate::Result<Option<MintedToken
 }
 
 /// Return the current standing code (minting one if none is valid). Used during
-/// SETUP (unclaimed) — the rotator keeps one fresh so the panel and the BLE
-/// `0x85` fetch always have a valid code, and it is multi-use so a device can
-/// pair with it. Callers on a CLAIMED box must not use this: see `cli_pair_code`
+/// SETUP (unclaimed) — the rotator keeps one fresh so `virtues pair` and the
+/// box's own `0x83` redemption always have a valid code, and it is multi-use so
+/// a device can pair with it. (`0x85`, the RPC that used to hand this code to
+/// the app, was deleted 2026-08-24; the panel never renders it.)
+/// Callers on a CLAIMED box must not use this: see `cli_pair_code`
 /// and `expire_standing_codes` for why the standing code does not outlive claim.
 pub async fn ensure_standing(pool: &PgPool) -> crate::Result<MintedToken> {
     if let Some(m) = current_standing(pool).await? {
