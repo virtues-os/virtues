@@ -1806,10 +1806,16 @@ pub async fn reconcile_usage(pool: &PgPool, config: &DriveConfig) -> Result<Driv
     .await
     .map_err(|e| Error::Database(format!("Failed to calculate usage: {e}")))?;
 
-    // Update usage table (drive_bytes and total_bytes for backwards compat)
+    // Upsert, same reason as update_usage_add: the singleton is born on first
+    // write, and a reconcile is exactly the path that runs on a box where the
+    // row never got born — as an UPDATE it silently repaired nothing there.
     sqlx::query(
         r#"
-        UPDATE app_drive_usage
+        INSERT INTO app_drive_usage
+            (id, drive_bytes, total_bytes, file_count, folder_count,
+             last_scan_at, last_scan_bytes)
+        VALUES ($4, $1, $1, $2, $3, now(), $1)
+        ON CONFLICT (id) DO UPDATE
         SET drive_bytes = $1,
             total_bytes = $1,
             file_count = $2,
@@ -1817,7 +1823,6 @@ pub async fn reconcile_usage(pool: &PgPool, config: &DriveConfig) -> Result<Driv
             last_scan_at = now(),
             last_scan_bytes = $1,
             updated_at = now()
-        WHERE id = $4
         "#,
     )
     .bind(drive_bytes)
