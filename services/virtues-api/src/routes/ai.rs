@@ -157,6 +157,12 @@ async fn chat_completions(
             }
         }
     }
+    // Pin the call to zero-retention endpoints wherever the model has any.
+    // See Catalog::enforce_zdr — this is per-request and derived from the
+    // model, never a global switch someone can leave flipped.
+    if state.catalog.enforce_zdr(&model) {
+        body["providerOptions"] = json!({ "gateway": { "zeroDataRetention": true } });
+    }
 
     let upstream = state
         .http_client
@@ -217,6 +223,19 @@ async fn completions(
         .to_string();
     let provider = get_provider_config(&model, &state.config);
     let _ = &headers;
+
+    // Same zero-retention enforcement as the chat paths. This route forwards
+    // the caller's body verbatim, so the option is merged in rather than set
+    // on a body we built.
+    let mut request = request;
+    if state.catalog.enforce_zdr(&model) {
+        if let Some(obj) = request.as_object_mut() {
+            obj.insert(
+                "providerOptions".to_string(),
+                json!({ "gateway": { "zeroDataRetention": true } }),
+            );
+        }
+    }
 
     let upstream = state
         .http_client

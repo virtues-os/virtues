@@ -487,6 +487,37 @@ impl BoxStore for FileStore {
 
 // ─── Plugin state ────────────────────────────────────────────────────────────
 
+/// The address a phone on the same network would actually reach this machine at.
+///
+/// NOT simply the first private IPv4 the box enumerates. A laptop's list is
+/// unordered and full of addresses no other device can route to — this one
+/// carries two virtualization bridges (192.168.139.x, 192.168.215.x) and a VPN
+/// (100.x) beside the real Wi-Fi. Offering the wrong one hands the phone an
+/// address that answers nothing, and the only symptom is
+/// `tcp connect error: Host is down`, which reads as "the door is broken"
+/// rather than "you were given the wrong door".
+///
+/// So ask the routing table instead: open a UDP socket toward a public address
+/// and read back the local address the kernel selected for it. `connect` on a
+/// UDP socket only fixes the peer — **no packet is sent** — so this costs
+/// nothing, contacts no one, and names the interface that actually carries
+/// traffic. Falls back to the enumeration when there is no default route.
+fn lan_address() -> Option<std::net::Ipv4Addr> {
+  use std::net::{IpAddr, UdpSocket};
+  let probe = UdpSocket::bind("0.0.0.0:0")
+    .ok()
+    .and_then(|s| s.connect("8.8.8.8:53").ok().and_then(|_| s.local_addr().ok()))
+    .map(|a| a.ip());
+  if let Some(IpAddr::V4(v4)) = probe {
+    if !v4.is_loopback() && !v4.is_unspecified() {
+      return Some(v4);
+    }
+  }
+  virtues_reach_client::local_private_ipv4s()
+    .into_iter()
+    .find_map(|s| s.parse().ok())
+}
+
 /// A pairing door held open for one "Add device" window.
 ///
 /// Kept whole so `close()` is one swap: dropping the sender shuts the task
@@ -537,15 +568,9 @@ impl ReachState {
     self.ensure_serving().await?;
     let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
 
-    let host = virtues_reach_client::local_private_ipv4s()
-      .into_iter()
-      .next()
-      .ok_or_else(|| {
-        Error::Reach("this computer has no private network address to offer".into())
-      })?;
-    let ip: std::net::Ipv4Addr = host
-      .parse()
-      .map_err(|_| Error::Reach(format!("unusable local address {host}")))?;
+    let ip = lan_address().ok_or_else(|| {
+      Error::Reach("this computer has no network address a phone could reach".into())
+    })?;
 
     // Port 0: the OS picks a free one. Deliberately NOT the loopback port —
     // that one is persisted in every installed collector's endpoint and must
@@ -857,6 +882,57 @@ impl ReachState {
     Ok(self.status().await)
   }
 
+  /// LAPTOP SIDE of the pairing handoff: mint an identity for a phone that
+  /// cannot reach the box, enroll its public half, and return the QR that
+  /// carries the result. See `virtues_reach_client::handoff` for the shape and
+  /// for the one security trade this makes.
+  ///
+  /// The seed exists only in the returned payload — never written to disk here,
+  /// never logged. This machine is a courier, not a second home for it.
+  pub async fn create_handoff(&self, label: Option<String>) -> Result<(String, String)> {
+    self.ensure_serving().await?;
+    let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
+
+    let identity = virtues_reach_client::pair::mint_identity();
+    let raw = virtues_reach_client::handoff::enroll_request(
+      &identity.node_id,
+      "mobile_app",
+      label.as_deref(),
+    )
+    .map_err(|e| Error::Reach(e.to_string()))?;
+
+    let resp = client
+      .request(&raw)
+      .await
+      .map_err(|e| Error::Reach(format!("enroll failed: {e:#}")))?;
+    let (status, body) =
+      virtues_reach_client::handoff::split_response(&resp).map_err(|e| Error::Reach(e.to_string()))?;
+    if status != 200 {
+      // The box's own words, not a paraphrase — it distinguishes an unknown
+      // kind from a malformed key, and the operator can act on that.
+      return Err(Error::Reach(format!("box refused the enrollment ({status}): {body}")));
+    }
+
+    let payload = virtues_reach_client::HandoffPayload::new(&identity, body);
+    let json = payload.encode().map_err(|e| Error::Reach(e.to_string()))?;
+    let qr = render_handoff_qr(&json);
+    Ok((qr, identity.node_id))
+  }
+
+  /// PHONE SIDE: adopt an identity a paired laptop minted and enrolled.
+  ///
+  /// The same landing as every other pairing — `finish_consume` writes the
+  /// record and `ensure_serving` brings the loopback up — so a handed-off
+  /// pairing is indistinguishable from one the phone negotiated itself.
+  pub async fn accept_handoff(&self, payload_json: &str) -> Result<ReachStatus> {
+    let payload = virtues_reach_client::HandoffPayload::decode(payload_json)
+      .map_err(|e| Error::Reach(e.to_string()))?;
+    let identity = payload.identity().map_err(|e| Error::Reach(e.to_string()))?;
+    virtues_reach_client::pair::finish_consume(self.store.as_ref(), &payload.box_json, identity)?;
+    self.ensure_serving().await?;
+    Ok(self.status().await)
+  }
+
   pub fn forget(&self) -> Result<()> {
     // Full teardown so a re-pair (even to a different box) serves fresh WITHOUT an
     // app restart: abort the loopback + drain tasks (frees the loopback port),
@@ -945,7 +1021,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::radio_stats,
       commands::pair_door_open,
       commands::pair_door_close,
-      commands::pair_door_status
+      commands::pair_door_status,
+      commands::pair_handoff_create,
+      commands::pair_handoff_accept
     ])
     .setup(|app, _api| {
       #[cfg(target_os = "ios")]
@@ -979,4 +1057,29 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       Ok(())
     })
     .build()
+}
+
+/// Render the handoff payload as an SVG QR.
+///
+/// Rendered here rather than by the box for the reason that defines this whole
+/// flow: the box never learns the seed, so it cannot draw the code that carries
+/// one. The laptop mints, enrolls the public half, and draws the rest itself.
+fn render_handoff_qr(data: &str) -> String {
+  use qrcode::{render::svg, QrCode};
+  match QrCode::new(data.as_bytes()) {
+    Ok(code) => code
+      .render::<svg::Color<'_>>()
+      .min_dimensions(280, 280)
+      .quiet_zone(true)
+      .dark_color(svg::Color("#000000"))
+      .light_color(svg::Color("#ffffff"))
+      .build(),
+    Err(e) => {
+      // A payload too large for a QR is the realistic failure (seed + reach
+      // info + addrs). Say so plainly; the caller surfaces it rather than
+      // showing an empty frame that reads as "scan me".
+      tracing::warn!(error = %e, len = data.len(), "handoff qr render failed");
+      String::new()
+    }
+  }
 }

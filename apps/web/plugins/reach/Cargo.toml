@@ -12,6 +12,9 @@ links = "tauri-plugin-reach"
 tauri = { version = "2" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# The handoff QR is rendered on the laptop, where the payload is assembled —
+# the box never sees it (it never sees the seed at all).
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 thiserror = "2"
 tokio = { version = "1.40", features = ["net", "rt", "time"] }
 anyhow = "1.0"

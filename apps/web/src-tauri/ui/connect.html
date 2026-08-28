@@ -951,9 +951,114 @@
           <p class="sub">${note ? esc(note) + ' ' : ''}Is this a server you're setting up for the
             first time, or one that's already running?</p>
           <button class="primary" id="fresh">Set up a new server</button>
-          <button class="secondary" id="existing">Connect to a server that's running</button>`;
+          <button class="secondary" id="existing">Connect to a server that's running</button>
+          ${IS_MOBILE ? `<p class="hint" style="margin-top:18px">Have a pairing code on a
+            computer? <a href="#" id="scan">Scan it</a>.</p>` : ''}`;
         document.getElementById('fresh').addEventListener('click', () => start());
         document.getElementById('existing').addEventListener('click', () => startExisting());
+        const scan = document.getElementById('scan');
+        if (scan) scan.addEventListener('click', (e) => { e.preventDefault(); renderScan(); });
+      }
+
+      // ── SCAN A PAIRING CODE ───────────────────────────────────────────────
+      //
+      // The way in when the phone can reach neither the box nor the computer:
+      // the box is elsewhere, and coworking wifi isolates clients so the two
+      // devices in your hands cannot see each other either. A paired computer
+      // mints this phone's identity, enrols its public half with the box over
+      // the relay it already has, and shows the result as a QR. Nothing
+      // crosses a network here — only a camera pointed at a screen.
+      //
+      // `BarcodeDetector` rather than a bundled decoder: it is native, it is
+      // fast enough to run per frame, and this file has no bundler (it is
+      // plain HTML served from src-tauri/ui). WebKit shipped it in iOS 17; on
+      // anything older we say so plainly instead of showing a camera that can
+      // never succeed.
+      let scanStream = null;
+
+      function stopScan() {
+        if (scanStream) {
+          scanStream.getTracks().forEach((t) => t.stop());
+          scanStream = null;
+        }
+      }
+
+      async function renderScan() {
+        searchGen++;
+        setServer('');
+        app.innerHTML = `
+          <button class="backnav" id="back" aria-label="Back">←</button>
+          <h1>Scan the code</h1>
+          <p class="sub">On your computer: Settings → Devices → Add device. Point this phone at
+            the code it shows.</p>
+          <video id="cam" playsinline muted
+                 style="width:100%;max-width:340px;border-radius:14px;background:#000"></video>
+          <p class="hint err" id="scanerr"></p>`;
+        document.getElementById('back').addEventListener('click', () => { stopScan(); renderEntry(); });
+
+        const err = document.getElementById('scanerr');
+        if (!('BarcodeDetector' in window)) {
+          err.textContent =
+            'This iPhone is too old to scan in-app (iOS 17 or newer). Use “Connect to a server that’s running” instead.';
+          return;
+        }
+
+        let stream;
+        try {
+          // `environment` = the back camera. A phone pointed at a laptop screen
+          // is always using the back one; asking for it by name avoids opening
+          // the selfie camera and looking broken.
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment' },
+          });
+        } catch (e) {
+          err.textContent =
+            'The camera is unavailable — allow camera access for Virtues in Settings, then try again. (' + String(e && e.name || e) + ')';
+          return;
+        }
+        scanStream = stream;
+        const video = document.getElementById('cam');
+        if (!video) { stopScan(); return; } // navigated away mid-permission
+        video.srcObject = stream;
+        await video.play().catch(() => {});
+
+        const detector = new BarcodeDetector({ formats: ['qr_code'] });
+        const gen = searchGen;
+        let handled = false;
+
+        async function tick() {
+          // Bail the moment the screen changes underneath us — the back button
+          // and a successful pair both bump searchGen.
+          if (handled || gen !== searchGen || !scanStream) return;
+          try {
+            const found = await detector.detect(video);
+            if (found && found.length && found[0].rawValue) {
+              handled = true;
+              stopScan();
+              return acceptScanned(found[0].rawValue);
+            }
+          } catch { /* a frame that won't decode is not an error */ }
+          requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      }
+
+      async function acceptScanned(payload) {
+        searchGen++;
+        app.innerHTML = `
+          <h1>Pairing</h1>
+          <div class="wait"><span class="pip"></span><span>Setting this phone up</span></div>`;
+        try {
+          await invoke('plugin:reach|pair_handoff_accept', { payload });
+          return finishPairing('Paired');
+        } catch (e) {
+          // Straight back to the scanner carrying the reason — a wrong or
+          // expired code is the common case and deserves another try, not a
+          // dead end.
+          await renderScan();
+          const err = document.getElementById('scanerr');
+          if (err) err.textContent = String(e && e.message ? e.message : e);
+        }
       }
 
       // The "already running" half: look on the LAN, and fall to typing an

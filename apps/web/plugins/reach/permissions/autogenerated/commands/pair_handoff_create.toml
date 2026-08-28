@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-pair-handoff-create"
+description = "Enables the pair_handoff_create command without any pre-configured scope."
+commands.allow = ["pair_handoff_create"]
+
+[[permission]]
+identifier = "deny-pair-handoff-create"
+description = "Denies the pair_handoff_create command without any pre-configured scope."
+commands.deny = ["pair_handoff_create"]
