@@ -68,12 +68,6 @@ pub struct UserProfile {
     /// Timezone of the box's physical home location (IANA). Stable anchor +
     /// fallback floor — NOT the owner's current location. See agents/record/timezone-model.md.
     pub home_timezone: Option<String>,
-    // Discovery context
-    pub crux: Option<String>,
-    pub technology_vision: Option<String>,
-    pub pain_point_primary: Option<String>,
-    pub pain_point_secondary: Option<String>,
-    pub excited_features: Option<serde_json::Value>,
     // Audit
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -95,7 +89,6 @@ pub struct AssistantProfile {
     pub image_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
-    pub embedding_model_id: Option<String>,
     /// AI persona/tone: selected persona ID
     pub persona: Option<String>,
     /// JSON blob storing persona definitions: { "items": [...], "hidden": [...] }

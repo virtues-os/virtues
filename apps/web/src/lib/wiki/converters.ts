@@ -259,7 +259,6 @@ export function apiToDayEvent(api: TemporalEventApi): DayEvent {
 		autonomicZ: api.autonomic_z ?? null,
 		avgHr: api.avg_hr ?? null,
 		hrZ: api.hr_z ?? null,
-		hrvZ: api.hrv_z ?? null,
 		topics: api.topics ?? [],
 		eventSummary: api.event_summary ?? null,
 		agentAction: (api.agent_action as DayEvent["agentAction"]) ?? null,

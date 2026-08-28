@@ -1018,7 +1018,6 @@ export interface TemporalEventApi {
 	avg_hr: number | null;
 	autonomic_z: number | null;
 	hr_z: number | null;
-	hrv_z: number | null;
 	// Entity/topic novelty
 	entities: string[] | null;
 	topic_novelty: Record<string, number> | null;

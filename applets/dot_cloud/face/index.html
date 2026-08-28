@@ -154,8 +154,7 @@ SELECT t, cat, mag FROM (
 	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 2,
 			LEAST(1.0, EXTRACT(EPOCH FROM (ended_at - started_at)) / 3600.0)
 		FROM data_activity_app_session, today WHERE started_at >= d0
-	UNION ALL SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int, 2,
-			LEAST(1.0, COALESCE(visit_duration_seconds, 60) / 600.0)
+	UNION ALL SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int, 2, 0.1
 		FROM data_activity_web_browsing, today WHERE occurred_at >= d0
 	UNION ALL SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int, 3, 0.6
 		FROM data_health_steps, today WHERE occurred_at >= d0

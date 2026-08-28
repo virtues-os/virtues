@@ -46,7 +46,6 @@ export interface DayEvent {
 	autonomicZ: number | null; // z-scored HR/HRV vs embedding-similar past events
 	avgHr: number | null; // average heart rate during event
 	hrZ: number | null; // HR z-score (raw, before context gating)
-	hrvZ: number | null; // HRV z-score (raw, when available)
 
 	// Dayline: Event structure
 	topics: string[]; // Activity contexts (e.g., "code review", "grocery run")

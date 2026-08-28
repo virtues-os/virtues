@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
         .to_string();
 
     let registered: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM storage_volume WHERE 'backup' = ANY(roles)")
+        sqlx::query_scalar("SELECT COUNT(*) FROM storage_volume")
             .fetch_one(&pool)
             .await
             .context("count backup volumes")?;
@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
     let rows = sqlx::query(
         "SELECT name, last_ok_at, last_error, \
                 EXTRACT(EPOCH FROM (NOW() - last_ok_at))::BIGINT AS age_secs \
-         FROM storage_volume WHERE 'backup' = ANY(roles) ORDER BY name",
+         FROM storage_volume ORDER BY name",
     )
     .fetch_all(&pool)
     .await

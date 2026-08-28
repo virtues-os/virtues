@@ -115,8 +115,6 @@ export interface AppletRun {
 	records_processed: number;
 	error: string | null;
 	trigger: AppletTrigger;
-	parent_run_id: string | null;
-	transform_stage: string | null;
 	result_summary: string | null;
 	/** What the user said, for `message` runs. This plus `result_summary` is
 	 *  the exchange — the conversation lives on the run, not in a thread. */
@@ -2294,18 +2292,6 @@ export async function getSharedPage(token: string): Promise<SharedPage> {
 }
 
 // ============================================================================
-// Reflections API (legacy pages linked to a day — read only; the primitive
-// is retired: writing about a day belongs to the day's article or a note)
-// ============================================================================
-
-/** Legacy reflections for a date. Nothing creates new ones. */
-export async function getReflectionsForDate(date: string): Promise<Page[]> {
-	const res = await fetch(`${API_BASE}/pages/reflections/${date}`);
-	if (!res.ok) throw new Error(`Failed to get reflections: ${res.statusText}`);
-	return res.json();
-}
-
-// ============================================================================
 // Backlinks / References API
 // ============================================================================
 
@@ -2453,6 +2439,44 @@ export async function getSetupState(): Promise<SetupState> {
 // ============================================================================
 
 // ── Assistant profile ────────────────────────────────────────────────────────
+// ── Assistant memories (What I've learned) ──
+// The machine's per-note memory, visible and editable. Every live note rides
+// in the system prompt of every conversation.
+
+export interface AssistantMemory {
+	id: number;
+	/** facts | manner | practices */
+	lane: string;
+	/** 'ai' until the person edits — then 'human', and the machine can no longer revise it. */
+	author: string;
+	body: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function listAssistantMemories(): Promise<AssistantMemory[]> {
+	const res = await fetch(`${API_BASE}/assistant/memories`);
+	if (!res.ok) throw new Error(`Failed to load memories: ${res.statusText}`);
+	return res.json();
+}
+
+/** Rewrite one memory in your own words. It becomes yours. */
+export async function editAssistantMemory(id: number, body: string): Promise<AssistantMemory> {
+	const res = await fetch(`${API_BASE}/assistant/memories/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ body }),
+	});
+	if (!res.ok) throw new Error(`Failed to edit memory: ${res.statusText}`);
+	return res.json();
+}
+
+/** Remove a memory from every future conversation (soft-retired with provenance). */
+export async function retireAssistantMemory(id: number): Promise<void> {
+	const res = await fetch(`${API_BASE}/assistant/memories/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to remove memory: ${res.statusText}`);
+}
+
 export function getAssistantProfile<T = unknown>(): Promise<T> {
 	return apiGet<T>('/assistant-profile');
 }

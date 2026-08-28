@@ -178,7 +178,6 @@ pub async fn run_agent_loop(
                         } else {
                             crate::api::ai_calls::Route::Wallet
                         },
-                        chat_id: chat_id.clone(),
                         applet_run_id: Some(run_id.to_string()),
                     },
                 )

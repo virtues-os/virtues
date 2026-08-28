@@ -243,7 +243,6 @@ pub async fn oauth_callback_handler(
         &resp.secrets,
         &resp.metadata,
         resp.expires_in,
-        resp.scopes.as_deref(),
     )
     .await
     {

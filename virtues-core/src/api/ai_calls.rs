@@ -30,7 +30,6 @@ pub struct AiCall {
     pub cost_micros: i64,
     /// Which purse paid: `wallet` or `byo`. See [`Route`].
     pub route: Route,
-    pub chat_id: Option<String>,
     pub applet_run_id: Option<String>,
 }
 
@@ -82,8 +81,8 @@ pub async fn record_ai_call(pool: &PgPool, call: &AiCall) -> Result<(), sqlx::Er
         r#"
         INSERT INTO app_ai_calls
             (id, feature, model, prompt_tokens, completion_tokens,
-             reasoning_tokens, cost_micros, route, chat_id, applet_run_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             reasoning_tokens, cost_micros, route, applet_run_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#,
     )
     .bind(id)
@@ -94,7 +93,6 @@ pub async fn record_ai_call(pool: &PgPool, call: &AiCall) -> Result<(), sqlx::Er
     .bind(call.reasoning_tokens)
     .bind(call.cost_micros)
     .bind(call.route.as_str())
-    .bind(&call.chat_id)
     .bind(&call.applet_run_id)
     .execute(pool)
     .await?;

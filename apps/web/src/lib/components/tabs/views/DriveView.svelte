@@ -532,10 +532,6 @@
 				usage.quota_bytes > 0
 					? (usage.drive_bytes / usage.quota_bytes) * 100
 					: 0}
-			{@const dataLakePercent =
-				usage.quota_bytes > 0
-					? (usage.data_lake_bytes / usage.quota_bytes) * 100
-					: 0}
 			<div class="bg-surface border border-border rounded-lg p-4 mb-6">
 				<div class="flex items-center justify-between mb-2">
 					<span class="text-sm text-foreground-muted">
@@ -549,19 +545,7 @@
 					{#if drivePercent > 0}
 						<div
 							class="h-full bg-primary transition-all duration-300"
-							style="width: {Math.min(
-								drivePercent,
-								100 - dataLakePercent,
-							)}%"
-						></div>
-					{/if}
-					{#if dataLakePercent > 0}
-						<div
-							class="h-full bg-secondary transition-all duration-300"
-							style="width: {Math.min(
-								dataLakePercent,
-								100 - drivePercent,
-							)}%"
+							style="width: {Math.min(drivePercent, 100)}%"
 						></div>
 					{/if}
 				</div>
@@ -573,14 +557,6 @@
 						<span class="w-2.5 h-2.5 bg-primary rounded-sm"></span>
 						Drive ({formatBytes(usage.drive_bytes)})
 					</span>
-					<a
-						href="/developers/lake"
-						class="flex items-center gap-1.5 hover:text-foreground transition-colors"
-					>
-						<span class="w-2.5 h-2.5 bg-secondary rounded-sm"
-						></span>
-						Lake ({formatBytes(usage.data_lake_bytes)})
-					</a>
 					<span class="flex items-center gap-1.5">
 						<span class="w-2.5 h-2.5 bg-border rounded-sm"></span>
 						<!-- Real free space on the box's disk — other data

@@ -1897,6 +1897,32 @@ pub async fn lifeline_processed_handler(
 }
 
 /// Notes on a subject.
+/// GET /api/assistant/memories — the live memories, lane-grouped.
+pub async fn list_assistant_memories_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::assistant_memories::list_memories(state.db.pool()).await)
+}
+
+/// PUT /api/assistant/memories/:id — the person rewrites one in their words.
+pub async fn edit_assistant_memory_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<crate::api::assistant_memories::EditMemoryRequest>,
+) -> Response {
+    api_response(crate::api::assistant_memories::edit_memory(state.db.pool(), id, &req.body).await)
+}
+
+/// DELETE /api/assistant/memories/:id — soft-retire with provenance.
+pub async fn retire_assistant_memory_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Response {
+    api_response(
+        crate::api::assistant_memories::retire_memory(state.db.pool(), id)
+            .await
+            .map(|_| serde_json::json!({ "retired": true })),
+    )
+}
+
 pub async fn list_notes_handler(
     State(state): State<AppState>,
     Path((subject_type, subject_id)): Path<(String, String)>,
@@ -2859,11 +2885,6 @@ pub async fn get_backup_status_handler(State(state): State<AppState>) -> Respons
     api_response(crate::api::get_backup_status(state.db.pool()).await)
 }
 
-/// GET /api/drive/warnings - Get quota warnings
-pub async fn get_drive_warnings_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::check_drive_warnings(state.db.pool(), &state.drive_config).await)
-}
-
 /// Query params for listing drive files
 #[derive(Debug, Deserialize)]
 pub struct ListDriveFilesQuery {
@@ -3658,16 +3679,6 @@ pub async fn get_page_backlinks_handler(
     Path(id): Path<String>,
 ) -> Response {
     api_response(crate::api::get_page_backlinks(state.db.pool(), &id).await)
-}
-
-/// GET /api/pages/reflections/:date — legacy reflections for a date, read
-/// only. The POST that minted them is retired: writing about a day belongs
-/// to the day's article or a note on the day.
-pub async fn get_reflections_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    api_response(crate::api::get_reflections_for_date(state.db.pool(), &date).await)
 }
 
 /// Query params for entity search
