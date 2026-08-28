@@ -10,6 +10,13 @@
 > Intended to be stable. If a change contradicts something here, the change is
 > probably wrong — or this document needs a deliberate revision, not a quiet
 > exception.
+>
+> **Audited against the code 2026-08-28.** §1, §3, §7 and §9 held exactly —
+> including the grant flow, which is the sentence this document exists to
+> defend. Four corrections are marked inline where they sit: the panel's string
+> and its state count (§2), the browser hop that setup really does make (§4),
+> and a throttle described in more detail than was built (§5). Nothing in the
+> model changed.
 
 ## 1. One secret, one phrase
 
@@ -45,7 +52,7 @@ defend if any of this is revisited.
 ```
     ∴ Honest Kestrel
 
-    Get Virtues for Mac
+    Get Virtues for your computer
     virtues.com/downloads — then type these words.
 
     mango-burly-skull-dough
@@ -55,17 +62,25 @@ The name is a lockup in the corner, not the heading: a box announcing itself is
 odd, and the heading's job is what the *person* does. Its real job is the
 identity you check against the app before typing a secret into it.
 
-**Mac, not "the app".** Setup is a desktop job — it wants the keyboard that
-802.1X credentials and a four-word phrase want. A phone joins later as a second
-device. There is no QR: it pointed a phone at the download page, so scanning it
-would hand setup to the wrong machine.
+**A computer, not "the app".** Setup is a desktop job — it wants the keyboard
+that 802.1X credentials and a four-word phrase want. A phone joins later as a
+second device. There is no QR: it pointed a phone at the download page, so
+scanning it would hand setup to the wrong machine.
+
+> **Revised 2026-08-24 (Pemberley pass).** This said *Mac*, and the panel
+> rendered "Get Virtues for Mac". Windows became a first-device platform —
+> `btleplug` speaks WinRT and `tauri.windows.conf.json` ships the bundle — so
+> the string is platform-neutral on the glass, in `DisplayView`, and in the
+> airlock. The doctrine is unchanged: a keyboard, not a phone.
 
 The phrase must fit **one line**. It is read across a room while being typed on
 another machine, and a phrase that wraps loses its shape. That is why the
-wordlist is capped at seven-letter words (`setup_phrase::MAX_WORD_LEN`) — 50 of
+wordlist is capped at seven-letter words (`MAX_WORD_LEN` in
+`api/setup_phrase.rs`) — 50 of
 400 words, 2^34.6 → 2^33.8, unmeasurable against a throttled online guess.
 
-Two more panel states follow from the same rules:
+Two more panel states follow from the same rules — these three are the *setup*
+screens, and they are what this section governs:
 
 - **Session live** — the moment the phrase is accepted it leaves the glass, and
   `Setting up · with Adam's Mac` takes its place. The words are spent, so nobody
@@ -78,6 +93,14 @@ Two more panel states follow from the same rules:
   **"your record is still here"** — the sentence that stops someone assuming the
   reset wiped them. Without this state the virgin layout renders with a blank
   where the words go, which reads as a fault at the worst possible moment.
+
+Three more were added later and **outrank all of these**: the button-hold
+countdown, "updating", and "no data disk". They are interruptions rather than
+steps — each is a thing happening to the box right now that an ordinary screen
+would paper over, most sharply the last, where an ambient "REACHABLE · 3 devices
+syncing" over a missing disk would spend the entire reason the OS lives on the
+eMMC. Seven states in five ranks, in
+`routes/(public)/display/+page.svelte`.
 
 **Then, in the app:**
 
@@ -164,8 +187,17 @@ left — and it exists not to move information but to prove line of sight.
 > **The app is the courier.**
 
 Setup is one Bluetooth conversation: the app carries the Wi-Fi credentials,
-carries the account grant, takes the pairing back, and opens no browser. Nothing
-else is ever read off the panel and retyped.
+carries the account grant, and takes the pairing back. Nothing else is ever read
+off the panel and retyped.
+
+**The one browser hop is payment, and it is deliberate.** Sign-in happens inside
+the airlock — email plus a code, `atlasPost('/account/login')` — but checkout
+opens the real browser (`openUrl` on the atlas checkout URL), because cards and
+Apple Pay live there and an embedded webview asking for a card is the shape of
+every phishing screen ever built. The airlock says so plainly and polls until
+the payment lands. This is the exception that proves the courier rule: the app
+opens no browser to move *information it could have carried* — it opens one for
+a payment instrument it must not touch.
 
 A corollary that settles a recurring argument: **the app must never instruct
 someone to go read something it could have fetched itself.** If a screen says
@@ -197,10 +229,22 @@ The phrase authorizes; the **session** carries the work.
   attempt starts over.
 - **Guessing is budgeted by the BOX, not by the caller.** A BLE central can
   change its address between attempts, so per-device throttling is theatre. Only
-  one legitimate setup ever happens at a time, so a global budget with
-  exponential backoff costs a real owner nothing and stops a patient attacker in
-  range. A tighter per-connection cap sits on top, so a single session cannot
-  burn the global budget in one breath.
+  one legitimate setup ever happens at a time, so a global budget costs a real
+  owner nothing and stops a patient attacker in range.
+
+  As built (`api::setup_phrase`): a flat box-wide sliding window — **10 attempts
+  per 15 minutes**, held in memory, cleared on success so a fumbled entry never
+  eats into the next legitimate setup. A poisoned lock fails *open*, because
+  locking the owner out is the worse failure. It is deliberately in memory: a
+  restart clears it, and forcing a restart already requires the physical access
+  this does not try to defend against.
+
+  > **Corrected 2026-08-28.** This section described exponential backoff and "a
+  > tighter per-connection cap on top". Neither exists — the budget is flat and
+  > there is only one. Both would be reasonable to add; neither should be
+  > described as present until it is. (`ble_provision` does rate-limit `0x83`
+  > pair attempts separately, which is a different surface and a different
+  > budget.)
 - **It survives the network change.** Bluetooth is a separate radio from Wi-Fi,
   which is precisely why provisioning rides it. The conversation continues
   through the switchover that used to end it.
@@ -224,6 +268,12 @@ session establishes all three.
 the relay and the relay rides the account. Pairing before linking produces a box
 that is paired and unreachable — observed live at an office on 2026-08-11, which
 is how the ordering was discovered rather than decided.
+
+**Skipping the link is a supported choice, not a hazard.** The airlock offers
+"Skip — run it without a subscription", and a skipped sign-in writes no grant and
+goes straight to pairing: LAN-only, by choice. The ordering above is what makes
+that a *choice* rather than a trap — link first and reach exists by the time
+anything needs it; skip it and you get exactly the box you asked for.
 
 ## 7. Atlas may carry, never grant
 
@@ -250,7 +300,7 @@ second door to the same data.
 |---|---|---|
 | **Box display** | one setup screen (app + phrase) while virgin; narrate the live session; then ambient | show the phrase once claimed, or count steps |
 | **App** | the wizard *and* the authenticator: holds the account session, couriers grants, offers copy / save-to-password-manager / print for the phrase | persist the phrase itself, or email it |
-| **Browser** | deliver the app; account and card management | appear during setup |
+| **Browser** | deliver the app; account and card management — including the one checkout hop during setup (§4) | hold a session that could reach the record, or be where the phrase is typed |
 
 The box drives its own state and the app mirrors it — never the reverse.
 `/api/box/identity` carries `linked`/`online` for exactly this, because the box
