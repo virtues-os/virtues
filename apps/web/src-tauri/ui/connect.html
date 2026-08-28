@@ -171,6 +171,21 @@
                        color: var(--ink-subtle); }
       .scan { font-size: 12px; color: var(--ink-subtle); margin-bottom: 14px; }
 
+      /* The entry fork's two doors: title + situation, one card each. The
+         caption is the disambiguator — "is this me?" answered under the verb
+         instead of inferred from it — so the card construction is the point,
+         not decoration. Same hairline language as .box/.net. */
+      .choice { display: block; width: 100%; text-align: left; background: var(--paper);
+                border: 1px solid var(--line); border-radius: 12px; padding: 15px 16px;
+                margin-bottom: 10px; color: var(--ink);
+                transition: border-color .15s var(--ease), box-shadow .2s var(--ease); }
+      .choice:hover { border-color: var(--line-strong); box-shadow: 0 1px 4px rgba(23,23,26,.06); }
+      .choice:active { border-color: var(--ink-faint); }
+      .choice b { display: block; font-family: var(--serif); font-size: 17px;
+                  font-weight: 400; margin-bottom: 3px; }
+      .choice span { display: block; font-size: 13px; line-height: 1.45;
+                     color: var(--ink-subtle); }
+
       /* ── setup mode ── */
       .net { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
              background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
@@ -946,18 +961,29 @@
       function renderEntry(note) {
         searchGen++; // nothing should be scanning while we ask
         setServer('');
+        // TWO CARDS, each carrying its own situation — "first time" vs
+        // "already running" as bare buttons made people stop and work out
+        // which sentence described them. The caption under each title does
+        // that work instead. On a phone, "existing" leads with the camera
+        // (renderScan) because a QR on a computer's screen is the one path
+        // that works on any network; the LAN search and typed address live
+        // behind its "can't scan" escape. The old third door — a separate
+        // "Scan it" hint link — collapsed into that flow: it was the same
+        // destination wearing a different name.
         app.innerHTML = `
           <h1>Connect this ${IS_MOBILE ? 'Phone' : 'Computer'}</h1>
-          <p class="sub">${note ? esc(note) + ' ' : ''}Is this a server you're setting up for the
-            first time, or one that's already running?</p>
-          <button class="primary" id="fresh">Set up a new server</button>
-          <button class="secondary" id="existing">Connect to a server that's running</button>
-          ${IS_MOBILE ? `<p class="hint" style="margin-top:18px">Have a pairing code on a
-            computer? <a href="#" id="scan">Scan it</a>.</p>` : ''}`;
+          <p class="sub">${note ? esc(note) + ' ' : ''}Where is your server in its life?</p>
+          <button class="choice" id="fresh">
+            <b>Set up a new server</b>
+            <span>Just unboxed — nothing has connected to it yet</span>
+          </button>
+          <button class="choice" id="existing">
+            <b>Connect to an existing server</b>
+            <span>Already running — add ${THIS_DEVICE} to it</span>
+          </button>`;
         document.getElementById('fresh').addEventListener('click', () => start());
-        document.getElementById('existing').addEventListener('click', () => startExisting());
-        const scan = document.getElementById('scan');
-        if (scan) scan.addEventListener('click', (e) => { e.preventDefault(); renderScan(); });
+        document.getElementById('existing').addEventListener('click', () =>
+          IS_MOBILE ? renderScan() : startExisting());
       }
 
       // ── SCAN A PAIRING CODE ───────────────────────────────────────────────
@@ -1004,18 +1030,25 @@
         setServer('');
         app.innerHTML = `
           <button class="backnav" id="back" aria-label="Back">←</button>
-          <h1>Scan the code</h1>
-          <p class="sub">On your computer: Settings → Devices → Add device. Point this phone at
-            the code it shows.</p>
+          <h1>Scan the QR code</h1>
+          <p class="sub">On a computer that's already connected: Settings → Devices →
+            Add device. Point this phone at the code it shows.</p>
           <video id="cam" playsinline muted
                  style="width:100%;max-width:340px;border-radius:14px;background:#000"></video>
-          <p class="hint err" id="scanerr"></p>`;
+          <p class="hint err" id="scanerr"></p>
+          <p class="hint" style="margin-top:18px">No computer, or can't scan?
+            <a href="#" id="lanpath">Find your server on this network</a>.</p>`;
         document.getElementById('back').addEventListener('click', () => { stopScan(); renderEntry(); });
+        // The escape into the LAN/typed-address path — the pre-scanner flow,
+        // still the only one that works with no second computer around.
+        document.getElementById('lanpath').addEventListener('click', (e) => {
+          e.preventDefault(); stopScan(); startExisting();
+        });
 
         const err = document.getElementById('scanerr');
         if (!(await loadDecoder())) {
           err.textContent =
-            'The scanner failed to load. Use “Connect to a server that’s running” instead.';
+            'The scanner failed to load. Use “Find your server on this network” below instead.';
           return;
         }
 

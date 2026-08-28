@@ -5,6 +5,7 @@
 	import type { ModelOption } from "$lib/config/models";
 	import { createEntityBadgeElement } from "$lib/utils/refBadge";
 	import RefPicker, { type EntityResult } from "./RefPicker.svelte";
+	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 
 	let {
 		value = $bindable(""),
@@ -327,6 +328,13 @@
 		if (value && inputEl) {
 			inputEl.textContent = value;
 		}
+		// Set imperatively: `autocorrect` is WebKit's own attribute (not in
+		// Svelte's HTML typings) and iOS keys the QuickType prediction row off
+		// it — with it off (plus spellcheck=false above), the keyboard drops
+		// the suggested-words strip the way native chat apps do.
+		if (mobileLayout.isMobile && inputEl) {
+			inputEl.setAttribute("autocorrect", "off");
+		}
 	});
 </script>
 
@@ -383,6 +391,9 @@
 			role="textbox"
 			aria-multiline="true"
 			tabindex="0"
+			spellcheck={mobileLayout.isMobile ? false : undefined}
+			autocapitalize={mobileLayout.isMobile ? "sentences" : undefined}
+			enterkeyhint={mobileLayout.isMobile ? "send" : undefined}
 			style:height="{inputHeight.current}px"
 			style:overflow-y={shouldScroll ? 'auto' : 'hidden'}
 		></div>
