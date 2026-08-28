@@ -98,7 +98,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_calendar_event", TableMetadata {
         description: "Calendar events with attendees and location",
         category: "calendar",
-        key_columns: &["title", "description", "calendar_name", "event_type", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "conference_url", "started_at", "ended_at", "is_all_day", "timezone"],
+        key_columns: &["title", "description", "calendar_name", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "started_at", "ended_at", "is_all_day"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_calendar_event' AND er.source_id = data_calendar_event.id"),
     });
 
@@ -108,7 +108,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_financial_account", TableMetadata {
         description: "Bank, credit, and investment accounts",
         category: "financial",
-        key_columns: &["account_name", "account_type", "institution_name", "mask", "currency", "current_balance", "available_balance", "credit_limit", "is_active"],
+        key_columns: &["account_name", "account_type", "institution_name", "mask", "currency", "current_balance", "available_balance"],
         join_hint: None,
     });
     m.insert("data_financial_transaction", TableMetadata {
@@ -136,13 +136,13 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_activity_app_session", TableMetadata {
         description: "Desktop/mobile app usage sessions",
         category: "activity",
-        key_columns: &["app_name", "app_bundle_id", "app_category", "started_at", "ended_at", "window_title", "url"],
+        key_columns: &["app_name", "app_bundle_id", "started_at", "ended_at", "window_title"],
         join_hint: None,
     });
     m.insert("data_activity_web_browsing", TableMetadata {
         description: "Web browsing history",
         category: "activity",
-        key_columns: &["url", "domain", "page_title", "visit_duration_seconds", "occurred_at"],
+        key_columns: &["url", "domain", "page_title", "occurred_at"],
         join_hint: None,
     });
 
@@ -152,19 +152,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_content_document", TableMetadata {
         description: "Saved documents and notes",
         category: "content",
-        key_columns: &["title", "content", "content_summary", "document_type", "tags", "is_authored", "occurred_at", "last_modified_time"],
+        key_columns: &["title", "content", "document_type", "tags", "is_authored", "occurred_at", "last_modified_time"],
         join_hint: None,
     });
     m.insert("data_content_conversation", TableMetadata {
         description: "Past AI chat conversation history",
         category: "content",
-        key_columns: &["conversation_id", "message_id", "role", "content", "model", "provider", "occurred_at"],
+        key_columns: &["conversation_id", "message_id", "role", "content", "provider", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_content_bookmark", TableMetadata {
         description: "Saved/starred content (GitHub stars, browser bookmarks, etc.)",
         category: "content",
-        key_columns: &["url", "title", "description", "source_platform", "bookmark_type", "content_type", "author", "tags", "occurred_at"],
+        key_columns: &["url", "title", "description", "source_platform", "bookmark_type", "author", "tags", "occurred_at"],
         join_hint: None,
     });
 

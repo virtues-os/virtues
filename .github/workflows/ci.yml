@@ -257,6 +257,17 @@ jobs:
           sqlx migrate run --source virtues-core/migrations
           cargo sqlx prepare --check --workspace
 
+      # Two drift classes sqlx cannot see, because the SQL is built from
+      # string arrays at runtime: (1) dynamic INSERT/upsert column lists that
+      # name columns the schema no longer has (the 2026-08-17 renames left
+      # seven of these), and (2) the model-facing catalog in sql_query.rs
+      # advertising columns that exist but that NO writer populates — the
+      # agent then queries forever-NULL columns (eight found in the
+      # 2026-08-28 audit, including a ref_count that did not exist at all).
+      # Needs the migrated service Postgres from the step above.
+      - name: Dynamic SQL + model catalog match the schema
+        run: python3 tools/check-dynamic-inserts.py
+
       # `--workspace`, not `-p virtues`. This used to test the one package, so
       # virtues-registry, virtues-helpers, virtues-iroh and virtues-installer
       # had their tests skipped entirely — a failing registry test sat on green
