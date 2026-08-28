@@ -1,6 +1,6 @@
 # Schema cleanup — the working checklist
 
-*Companion to [schema-audit-2026-08-28.md](schema-audit-2026-08-28.md),
+*Companion to [schema-audit-2026-08-28.md](../record/schema-audit-2026-08-28.md),
 which holds the evidence. This is the do-list, ordered for incremental
 work: fix → guard → rm → decide → later. Check items off as they land.
 Every RM that touches a column needs the CLAUDE.md rename sweep (SQL
