@@ -35,6 +35,7 @@ these are not promises.
 | [reach-reliability-plan.md](reach-reliability-plan.md) | Planned | "100% reachable whenever the box is up." Root cause is upstream iroh #4289; the fix is `network_change()` on `NWPathMonitor` plus a watchdog rebuild. |
 | [references.md](references.md) | Planned | One primitive for `@`, peek, and open, so a person / place / file / page stops being rendered by a different code path each time. |
 | [researcher-plan.md](researcher-plan.md) | Planned | The researcher/PhD archetype, built complete in v1 — corpus, annotation, scholarly metadata, synthesis bridge. Extends notebooks-plan Phase D. |
+| [schema-cleanup-checklist.md](schema-cleanup-checklist.md) | In progress | The do-list for the 2026-08-28 schema audit, ordered fix → guard → rm → decide → later; evidence lives in [the audit record](../record/schema-audit-2026-08-28.md). FIX and GUARD are checked off; delete this when the RM/DECIDE tiers land. |
 | [sources-packages-plan.md](sources-packages-plan.md) | — | _Needs a line._ |
 | [spa-delivery-plan.md](spa-delivery-plan.md) | Ready to schedule | One UI-delivery architecture for phone and Mac: baked bundle, OTA overlay pulled from the box, local data. Unlocks the offline editing already built into Yjs, and makes UI-ahead-of-box skew impossible. |
 | [ui-overhaul-plan.md](ui-overhaul-plan.md) | Planned | Nineteen layout/settings/design items triaged against the codebase, each marked ship / spike / defer / drop. |

@@ -24,6 +24,7 @@ a page, indexed from this table, so a record missing a row does not publish.
 | [one-wire-plan.md](one-wire-plan.md) | — | _Needs a line._ |
 | [privacy-model.md](privacy-model.md) | Superseded (transport half) | Describes the pre-iroh secret-ownership table. Its *inference boundary* section is current and is the honest account of where data leaves the box. |
 | [resolution-audit.md](resolution-audit.md) | — | _Needs a line._ |
+| [schema-audit-2026-08-28.md](schema-audit-2026-08-28.md) | Current | Full-schema audit against the code, 2026-08-28: 6 dead tables, ~60 dead columns, 10 live bugs — several dead-since-rename. The FIX and GUARD tiers landed the same day; the do-list driving the rest is [schema-cleanup-checklist](../plan/schema-cleanup-checklist.md). |
 | [the-day.md](the-day.md) | Partly built | Design spec for the Day Page — the life-mirror you read at night. The Four Questions, each with a different implementation maturity. |
 | [timezone-model.md](timezone-model.md) | Current | Two timezones: the box's stable `home_timezone` plus a per-day user-location timezone. Implemented 2026-06-25. |
 | [update-identity-spine.md](update-identity-spine.md) | Built | Phase 1 of the manifold: every artifact states its `{version, sha, channel}` and the fleet shows on the Devices page. |
