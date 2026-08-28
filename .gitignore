@@ -138,6 +138,10 @@ tmp/*
 /.pnpm-store
 /apps/web/.pnpm-store
 /apps/mac-source/.build
+# Same for the Tauri iOS plugins: building one locally (e.g. to check a change
+# compiles against the iOS SDK) leaves a .build tree that is otherwise untracked
+# and can be swept into someone else's commit — this repo has lost work that way.
+/apps/web/plugins/*/ios/.build
 /crates/virtues-registry/target
 /virtues-core/core/
 /virtues-core/.sqlx
