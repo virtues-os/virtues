@@ -13,7 +13,7 @@
 //!
 //! Every sessionizer is **mechanical**: it finds boundaries and stitches content.
 //! It never labels or summarises — that is the detective's job in the day
-//! pipeline, where the full context lives. See `docs/event-timeline.md`.
+//! pipeline, where the full context lives. See `agents/record/event-timeline.md`.
 
 pub mod audio;
 pub mod changepoint;

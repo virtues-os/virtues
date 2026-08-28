@@ -72,7 +72,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     }
 
     // Seed home_timezone from the box's own system clock once, before the
-    // scheduler resolves cron timezones. Idempotent. See docs/timezone-model.md.
+    // scheduler resolves cron timezones. Idempotent. See agents/record/timezone-model.md.
     if let Err(e) = crate::api::profile::ensure_home_timezone(client.database.pool()).await {
         tracing::warn!("Failed to seed home_timezone: {}", e);
     }
@@ -262,7 +262,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/box/health",
             get(crate::api::box_status::box_health_handler),
         )
-        // Setup/onboarding state machine (docs/onboarding.md) — public-on-LAN
+        // Setup/onboarding state machine (agents/build/onboarding.md) — public-on-LAN
         // for the same reason as /api/box/health: the wizard + panel render it
         // pre-auth, and it carries only booleans + step copy.
         // Who is this box — name + claimed, for discovery chips. Public like
@@ -443,7 +443,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
         .route("/api/today/:date/streams", get(api::today_streams_handler))
-        // Map tiles — the Atlas: box-cached tiles (private + offline). docs/map-atlas-plan.md
+        // Map tiles — the Atlas: box-cached tiles (private + offline). agents/record/map-atlas-plan.md
         .route("/api/map/tiles/:style/:z/:x/:y", get(api::map_tile_handler))
         // Home-page loops — weather · upcoming calendar · unnamed-place backlog
         .route("/api/weather/current", get(api::weather_now_handler))
@@ -481,7 +481,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // ─── Billing-state aggregator (local view) ────────────────────
         .route("/api/billing/state",           get(crate::api::billing_state::state_handler))
         .route("/api/billing/auto-topup",      post(crate::api::billing_state::set_auto_topup_handler))
-        // Setup wizard transitions (docs/onboarding.md) — session-authed; the
+        // Setup wizard transitions (agents/build/onboarding.md) — session-authed; the
         // wizard reads progress from the public /api/setup/state.
         .route("/api/setup/subscribe/start",   post(crate::api::setup::subscribe_start_handler))
         .route("/api/setup/login/start",       post(crate::api::setup::login_start_handler))

@@ -230,7 +230,7 @@ pub(crate) async fn ensure_client(rec: &PairedBox) -> Option<Arc<VirtuesIrohClie
 static RECOVERING: AtomicBool = AtomicBool::new(false);
 
 /// Recover the box connection after an iOS network change / foreground.
-/// Two layers (docs/reach-reliability-plan.md):
+/// Two layers (agents/plan/reach-reliability-plan.md):
 ///   • **L1 poke** — `Endpoint::network_change()` (rebind sockets / re-STUN /
 ///     relay reconnect). Heals the common case.
 ///   • **L2 rebuild** — if a bounded probe still fails, the iOS UDP socket is

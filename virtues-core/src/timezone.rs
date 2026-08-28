@@ -1,6 +1,6 @@
 //! Timezone resolution.
 //!
-//! Two distinct timezones (see docs/timezone-model.md):
+//! Two distinct timezones (see agents/record/timezone-model.md):
 //!
 //! 1. **`home_timezone`** — the timezone of the box's physical location, read
 //!    from the server's own system clock ([`system_timezone`]). Stable anchor +
@@ -51,7 +51,7 @@ pub fn coords_to_tz(lat: f64, lon: f64) -> Option<String> {
 /// moment the day begins and must not drift as the day unfolds. The same value
 /// is used live (today) and at the EOD lock, so they agree on travel days.
 /// `home_tz` only roughly bounds the local-day window to locate the points.
-/// See docs/timezone-model.md.
+/// See agents/record/timezone-model.md.
 pub async fn first_point_timezone(
     pool: &PgPool,
     date: NaiveDate,

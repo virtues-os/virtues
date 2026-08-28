@@ -66,7 +66,7 @@ pub struct UserProfile {
     // Preferences
     pub theme: Option<String>,
     /// Timezone of the box's physical home location (IANA). Stable anchor +
-    /// fallback floor — NOT the owner's current location. See docs/timezone-model.md.
+    /// fallback floor — NOT the owner's current location. See agents/record/timezone-model.md.
     pub home_timezone: Option<String>,
     // Discovery context
     pub crux: Option<String>,

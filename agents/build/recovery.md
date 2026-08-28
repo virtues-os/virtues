@@ -5,7 +5,7 @@
 > commands and one atlas table that do not exist, and a config path no box has.
 >
 > **This is the workshop copy.** The user-facing runbook now lives at
-> [`manual/operate/recovery.md`](../manual/operate/recovery.md) and ships to
+> [`docs/operate/recovery.md`](../docs/operate/recovery.md) and ships to
 > `virtues.com/docs/operate/recovery`. Anything an owner reads belongs there;
 > **this file is for the people and agents working on the box** — it carries the
 > operator-only material (atlas-side actions, the diagnostic surface, the honest
@@ -99,7 +99,7 @@ What actually reaches the box:
   a browser pointed at `http://<box-ip>:8000` from another machine is refused
   like any stranger.
 
-Full model: [`manual/operate/reach.md`](../manual/operate/reach.md).
+Full model: [`docs/operate/reach.md`](../docs/operate/reach.md).
 
 ---
 
@@ -332,7 +332,7 @@ It then drops and recreates the database, replaces the lake and applet state,
 and writes the env file **to whichever candidate path already exists on this
 box**, falling back to `ENV_CANDIDATES[0]` (`cli/restore.rs:29`).
 
-Owner-facing version: [`manual/operate/backup-and-restore.md`](../manual/operate/backup-and-restore.md).
+Owner-facing version: [`docs/operate/backup-and-restore.md`](../docs/operate/backup-and-restore.md).
 
 ---
 
@@ -392,7 +392,7 @@ release with no binary swap, no migration, and no restart — the fast path for 
 iteration.
 
 Full model: [update-paradigm.md](update-paradigm.md),
-[`manual/operate/upgrading.md`](../manual/operate/upgrading.md).
+[`docs/operate/upgrading.md`](../docs/operate/upgrading.md).
 
 ---
 

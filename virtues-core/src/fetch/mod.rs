@@ -12,7 +12,7 @@
 //! reason YouTube caption tracks and paywall-lite pages resolve from here at
 //! all, and a fetch that stays on the box tells no third party what the user
 //! saved. When this path fails — JS-rendered SPAs, bot walls — the escalation
-//! is Parallel Extract, opt-in per source (docs/bookmarks-plan.md step 2).
+//! is Parallel Extract, opt-in per source (agents/plan/bookmarks-plan.md step 2).
 
 pub mod article;
 pub mod guard;

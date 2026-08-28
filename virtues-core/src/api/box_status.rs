@@ -299,7 +299,7 @@ pub async fn box_health_handler(State(state): State<AppState>) -> impl IntoRespo
     }
 }
 
-// ─── Setup / onboarding state machine (docs/onboarding.md) ──────────────────
+// ─── Setup / onboarding state machine (agents/build/onboarding.md) ──────────────────
 //
 // One source of truth, three renderers: the phone wizard, the appliance
 // panel, and `virtues status`. Two distinct lists by design:
@@ -365,7 +365,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     // Claimed = at least one device has paired (the pair token was consumed
     // by an owner's browser or phone). Ownership-by-proximity, see
-    // docs/onboarding.md "trust on first boot".
+    // agents/build/onboarding.md "trust on first boot".
     let claimed: i64 =
         sqlx::query_scalar("SELECT count(*) FROM app_device WHERE revoked_at IS NULL")
             .fetch_one(pool)

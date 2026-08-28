@@ -12,7 +12,7 @@
 #
 # Do not describe this relay as "blind" or "RAM-only". Privacy wording in this
 # repo has a habit of being lifted verbatim into user-facing copy; the wording
-# that is true is in manual/operate/reach.md.
+# that is true is in docs/operate/reach.md.
 
 enable_relay = true
 # Plain-HTTP relay endpoint (also serves the LetsEncrypt HTTP path). HTTPS/QUIC

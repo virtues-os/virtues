@@ -27,7 +27,7 @@ async function getInvoke() {
 // unknown command reject somewhere the user cannot interpret.
 //
 // The Rust side is `COMMAND_SURFACE_VERSION` in src-tauri/src/main.rs; the two
-// must move together. See docs/spa-delivery-plan.md.
+// must move together. See agents/plan/spa-delivery-plan.md.
 
 /** Surface version of a shell too old to answer the question at all. */
 const SURFACE_UNKNOWN = 0;
@@ -643,13 +643,61 @@ export interface PairHandoff {
  * phone. The returned QR carries a private key — display it, never persist or
  * transmit it. See crates/virtues-reach-client/src/handoff.rs.
  */
-export async function createPairHandoff(label?: string): Promise<PairHandoff | null> {
+export type HandoffOutcome =
+	/** The QR is ready. */
+	| { kind: 'ok'; handoff: PairHandoff }
+	/** No native shell at all — a plain browser or the phone. Show nothing. */
+	| { kind: 'no-shell' }
+	/** The shell is here but has no such command: an app predating the handoff. */
+	| { kind: 'too-old' }
+	/** Our code ran and said why it couldn't. Show the reason verbatim. */
+	| { kind: 'failed'; error: string };
+
+/**
+ * Does this error read as "the command never reached our code"?
+ *
+ * Tauri rejects a command absent from the plugin ACL before any of our Rust
+ * runs, so the message is the framework's, not ours. Matching it is imprecise
+ * by nature — but the classification only picks the WORDING. Both branches
+ * surface something; neither returns to the silent null this replaces.
+ */
+function readsAsMissingCommand(message: string): boolean {
+	const m = message.toLowerCase();
+	return (
+		m.includes('not allowed') ||
+		m.includes('acl') ||
+		m.includes('not found') ||
+		m.includes('unknown command')
+	);
+}
+
+/**
+ * Mint an identity for a phone and enrol it with the box, returning the QR
+ * that hands it over.
+ *
+ * Works where the pairing door cannot: the door needs the phone to open a
+ * socket to this machine, which coworking wifi routinely forbids. This needs
+ * no network between them at all. Desktop-only. The returned QR carries a
+ * private key — display it, never persist or transmit it. See
+ * crates/virtues-reach-client/src/handoff.rs.
+ *
+ * Returns an OUTCOME rather than `PairHandoff | null`, because the null was a
+ * lie by omission. `mac-v1.0.25` shipped 2h before the handoff landed, so every
+ * released Mac app refuses this command — and this function used to swallow
+ * that into a `console.warn` and return null, leaving the sheet to render one
+ * fewer option. Indistinguishable from a deliberate design, on the machines
+ * that needed it most: someone on a coworking network got only the LAN QR,
+ * which is exactly the case the handoff exists to solve. An unavailable
+ * capability must say it is unavailable.
+ */
+export async function createPairHandoff(label?: string): Promise<HandoffOutcome> {
 	const invoke = await getInvoke();
-	if (!invoke) return null;
+	if (!invoke) return { kind: 'no-shell' };
 	try {
-		return await invoke<PairHandoff>('plugin:reach|pair_handoff_create', { label });
+		return { kind: 'ok', handoff: await invoke<PairHandoff>('plugin:reach|pair_handoff_create', { label }) };
 	} catch (e) {
-		console.warn('[Tauri] pair_handoff_create unavailable:', e);
-		return null;
+		const error = e instanceof Error ? e.message : String(e);
+		console.warn('[Tauri] pair_handoff_create failed:', e);
+		return readsAsMissingCommand(error) ? { kind: 'too-old' } : { kind: 'failed', error };
 	}
 }

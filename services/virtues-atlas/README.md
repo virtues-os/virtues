@@ -4,7 +4,7 @@ Identity, billing, and entitlement issuance for Virtues.
 
 Atlas holds the Stripe customer side of the Chinese wall. It runs the Privacy Pass issuer, processes Stripe webhooks, and pushes entitlement updates to `virtues-api` keyed on `activation_handle`. **It never sees a raw bearer. It never receives a call from virtues-api.**
 
-This is the design from [WS-6a](../../docs/entitlement.md).
+This is the design from [WS-6a](../../agents/build/entitlement.md).
 
 ## Status
 

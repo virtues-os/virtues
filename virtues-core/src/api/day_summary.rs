@@ -95,7 +95,7 @@ RULES:
 /// This deliberately dropped the old "elevated moves" (fabricated behavioural
 /// fingerprints, forced quantified closers), the literary epigraph, and the W6H
 /// data-quality block — all of which pushed the model to invent meaning the day did
-/// not carry. See docs/event-timeline.md and the essay "A Day, Well Written": the
+/// not carry. See agents/record/event-timeline.md and the essay "A Day, Well Written": the
 /// machine records what happened and hands the meaning back.
 const NARRATE_PROMPT: &str = r#"You write the ARTICLE OF THE DAY for a personal wiki — the day's page, in the sense a wikipedia gives that word. It is NOT a log (the event timeline beneath the article already lists what happened, when) and it is not a summary squeezed into a sentence quota. It is prose about the day, written from the record, that read back weeks later drops the reader straight into it.
 
@@ -146,7 +146,7 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
 
     // Fallback: a true 24h UTC day when no/invalid timezone is available. (This
     // should rarely execute — home_timezone is seeded from the server's own
-    // system clock; see docs/timezone-model.md.)
+    // system clock; see agents/record/timezone-model.md.)
     let start = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
     let end = date
         .succ_opt()
@@ -200,7 +200,7 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
 
     // 2. Compute date boundaries using the per-day "where the owner was" timezone
     //    (fixed at the day's start), falling back to the box's home_timezone.
-    //    See docs/timezone-model.md.
+    //    See agents/record/timezone-model.md.
     let home_tz = super::profile::get_timezone(pool)
         .await
         .unwrap_or(None)
@@ -2388,7 +2388,7 @@ mod dossier_tests {
     /// bare card transaction next to an unnamed conversation, because the
     /// detective was handed `- 14 with <name>` and nothing else. Messages must
     /// arrive PLACED IN TIME and CARRYING THEIR TEXT, or no prompt wording can
-    /// rescue the cut. See docs/attention-plan.md.
+    /// rescue the cut. See agents/plan/attention-plan.md.
     ///
     /// Also pins the two properties that make that safe: bursts split on a real
     /// gap rather than smearing a day into one line, and a thread whose

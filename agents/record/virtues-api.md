@@ -180,11 +180,11 @@ The recurring images. Reach for them in copy, docs, support replies, talks:
   strongest fully structural claim we have. Say it about *content* and stop
   there. It does see which two keys are talking, from where, and how much passes,
   so "blind", "no logs" and "RAM-only" are claims we have not earned. The
-  user-facing wording that is true is in `manual/operate/reach.md`.
+  user-facing wording that is true is in `docs/operate/reach.md`.
 - **"Bring your own key and we're out of your chat."** Use this wording, not
   "out of the path" — the key covers `stream()` only, so compaction, day
   summaries, image generation, and transcription still run through us. True as
-  stated, false if broadened. `docs/byo-ai-plan.md` phase 1 closes the gap.
+  stated, false if broadened. `agents/plan/byo-ai-plan.md` phase 1 closes the gap.
 
 **Retired — do not use.** These described the voucher model and are now false:
 *"the link lives in your house"* (it also lives with us), *"two rooms, no shared

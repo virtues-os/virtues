@@ -9,10 +9,10 @@ bytes"** — blind to content, *not* blinded-token anonymous.
 
 Wherever the text below calls the relay RAM-only, zero-knowledge, unlinkable, or
 part of a "privacy moat", that is the aspiration of the superseded
-`docs/networking-relay-tee.md` ADR, not a property of anything running. The
-accurate user-facing account is [the reach manual page](../manual/operate/reach.md).
+`agents/archive/networking-relay-tee.md` ADR, not a property of anything running. The
+accurate user-facing account is [the reach manual page](../docs/operate/reach.md).
 
-Companion to `docs/networking-relay-tee.md` (superseded) and memory
+Companion to `agents/archive/networking-relay-tee.md` (superseded) and memory
 `project_networking_relay_tee`.
 
 ## Why this doc exists

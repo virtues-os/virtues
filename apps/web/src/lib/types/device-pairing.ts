@@ -13,7 +13,7 @@ export interface DeviceInfo {
 	app_version?: string;
 	/** IANA timezone of this device at pairing time (e.g. "America/Chicago").
 	 *  Used by the box as a cross-check for home_timezone when its own system
-	 *  clock reads UTC (cloud deploys). See docs/timezone-model.md. */
+	 *  clock reads UTC (cloud deploys). See agents/record/timezone-model.md. */
 	timezone?: string;
 }
 

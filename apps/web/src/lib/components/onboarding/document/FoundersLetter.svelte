@@ -145,7 +145,7 @@
 			     reveal's door, where tomorrow is real. The asks below are this
 			     paragraph's proof, and the letter ends on them — the ∴ is the
 			     one summit; a closing essay-paragraph was a second one, cut
-			     2026-08-24 (its lines are banked in docs/voice.md). -->
+			     2026-08-24 (its lines are banked in agents/build/voice.md). -->
 			<p>
 				Every day, Virtues writes the wikipedia of your life: where you went, who you
 				spoke with, what you were working on, the places you go when you're happy, the
@@ -185,7 +185,7 @@
 			     more virtuous. (The essay-close and the manifesto link were
 			     both cut 2026-08-24 — the essay was a second summit after the
 			     ∴, the link an exit ramp to a cloud-era document the ledger
-			     contradicts; its lines are banked in docs/voice.md.) -->
+			     contradicts; its lines are banked in agents/build/voice.md.) -->
 			<p>
 				Technology has exploited you long enough. This is what it was always supposed to
 				do: make us more human, and more virtuous.
