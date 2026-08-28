@@ -238,9 +238,19 @@ pub async fn build_hourly_context(
     {
         let items: Vec<String> = rows.iter().filter_map(|r| {
             let title: Option<String> = r.try_get("page_title").ok().flatten();
-            let display = title.unwrap_or_else(|| {
-                r.try_get::<Option<String>, _>("url").ok().flatten().unwrap_or_default()
-            });
+            let display = match title {
+                Some(t) => t,
+                // `url` is NOT NULL, so a failed read is a rename/decode bug,
+                // never an empty page — defaulting it to "" would silently
+                // drop every row and the WEB section with them.
+                None => match r.try_get::<String, _>("url") {
+                    Ok(u) => u,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "web-browsing url failed to decode — row dropped from context");
+                        return None;
+                    }
+                },
+            };
             if display.is_empty() { return None; }
             let s = format!("- {}", truncate(&display, 60));
             Some(s)
