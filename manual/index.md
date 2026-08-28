@@ -1,47 +1,69 @@
 ---
 title: What Virtues is
-description: Virtues is a home server that holds the data of your life, and the operating system that turns that data into self-knowledge. Start here.
-updated: 2026-08-27
+description: Virtues is a server that holds the data of your life under your own roof, and the software that turns it into a readable record. Start here.
+updated: 2026-08-28
 ---
 
-Virtues is two things at once. A premium home server that holds the data of
-your life — emails, messages, calendars, health, transactions, journals —
-under your roof. And the operating system that turns that data into
-self-knowledge.
+Virtues is a server that holds the data of your life — messages, calendar,
+health, location, transactions, recordings, files — on a machine you own, and
+the software that turns that pile into something readable: a record of your
+days, articles about the people and places in them, and an AI that reasons
+from your actual life rather than a generic profile.
 
-The result: a private AI that learns your patterns, writes an honest record of
-your days, and grounds every model you use in who you actually are. Less
-brilliant stranger. More personal intelligence.
+It runs on your own Linux machine today. Purpose-built hardware comes later;
+nothing on this site requires it.
 
-## The shape of it
+## What runs where
 
-The heart of it is simple: a data lake that lives at home. We take the raw
-mess of your accounts and abstract it away from rows and tables into something
-you'd actually recognize — the clean narrative of your day. That narrative is
-what makes the rest possible. It's how a model can reason about your life from
-your actual life instead of a generic profile.
+This is the part most people want answered first, so here it is plainly.
 
-We're building it for two kinds of people at the same time. If you never want
-to touch a terminal, you'll plug the server in, connect your sources, and just
-live your day with it. And if you do, it's your machine: full `ssh` access,
-root over your own data, a stack meant to be read and extended. A big part of
-that is what we *can't* do. Virtues has no path into your device — no remote
-access, no backdoor. That isn't a promise in a policy, it's how the thing is
-built.
+**Your records stay on the box.** Sources are pulled in and written to a
+database and a file store on your own disk. Nothing syncs them out. The
+embedding and reranking models that make your record searchable also run on
+the box, locally, on ports nothing outside it can reach.
 
-For people who want to own every layer, there's a full DIY mode — the whole
-stack, self-hosted on your own hardware, no Virtues server required. And
-whatever model you want to point at your data, you can: local weights on the
-server, or a hosted model you trust. Your lake stays the ground truth; the AI
-is just the lens, and you can swap it whenever you like.
+**The language models that write do not run on the box.** When Virtues
+composes an account of your day or answers a question, the material for that
+request goes to a model provider — through our gateway by default, or through
+any OpenAI-compatible endpoint you point it at, including a provider you have
+your own account with. We meter what a request cost and never keep what was in
+it.
 
-## Where the docs stand
+**No inbound port is opened at home, and we have no way in.** Your devices
+reach the box by key, on a list the box itself keeps. We aren't on that list.
+[Reaching your server](/docs/operate/reach) describes the paths and states
+exactly what our relay can and cannot see, without rounding it up.
 
-These docs are being written alongside the software. The outline in the
-sidebar is the real table of contents — pages marked *soon* are planned and
-land as the features they describe stabilize, targeting the server's first
-units. What's published describes what ships; nothing here is aspirational.
+## Where to start
 
-If you're evaluating Virtues before buying or self-hosting, the
-[Library](/library) holds the essays — why we're building this and what we
-think it's for. These pages are the other register: how it actually works.
+If you're installing on your own hardware, [Installing](/docs/setup/install)
+is one command and the ten minutes around it. After that,
+[Reaching your server](/docs/operate/reach) covers pairing a phone or laptop,
+which is how you actually use the thing.
+
+Once it's running, four pages carry the weight:
+[Upgrading](/docs/operate/upgrading),
+[Backup & restore](/docs/operate/backup-and-restore) — read that one before you
+need it, since the box deliberately cannot decrypt its own archives —
+[When something breaks](/docs/operate/recovery), and
+[The CLI](/docs/operate/cli).
+
+The [Glossary](/docs/understand/glossary) defines the words this system uses
+for the parts of your life it holds, which is worth ten minutes if the
+vocabulary feels invented. It partly is.
+
+## What's here, and what isn't
+
+These docs are written alongside the software and describe what actually
+ships. Pages marked *soon* in the sidebar are planned; they land as the
+features they cover settle, rather than in advance of them. Nothing published
+here is aspirational — if a page says the box does something, it does.
+
+Alongside the manual are the [engineering notes](/docs/notes): the design
+records, audits and measured findings from building this. They are working
+documents rather than documentation, each carrying a status, and they are
+public because the reasoning behind a decision is usually worth more than a
+summary of it. Read them for *why*; read these pages for *how*.
+
+The [Library](/library) holds the essays — what we think this is for. That's
+the other register entirely.
