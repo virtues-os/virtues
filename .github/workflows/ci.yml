@@ -137,6 +137,12 @@ jobs:
       - name: No new swallowed query errors
         run: tools/check-swallowed-queries.sh
 
+      # The box parses the Improv pair packet in Rust; the iPhone builds it in
+      # Swift. Nothing compiles the two together, so they drifted for four days
+      # and BLE pairing failed at parse_rpc every time.
+      - name: Improv wire shapes agree across languages
+        run: tools/check-improv-wire.py
+
       # Create the one thing `#[sqlx::test]`'s throwaway databases SHARE.
       #
       # Roles are cluster-wide, not per-database, and migration 0052 does

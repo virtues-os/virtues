@@ -37,7 +37,6 @@ class ImprovProvisionArgs: Decodable {
 
 class ImprovPairArgs: Decodable {
   let id: String
-  let code: String
   let label: String?
   /// This device's iroh EndpointId — the box allowlists it at enrollment.
   let endpointId: String?
@@ -95,7 +94,7 @@ class ReachPlugin: Plugin {
   @objc public func improv_pair(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(ImprovPairArgs.self)
     ImprovClient.shared.pair(
-      id: args.id, code: args.code, label: args.label ?? "", endpointId: args.endpointId ?? ""
+      id: args.id, label: args.label ?? "", endpointId: args.endpointId ?? ""
     ) { json, err in
       if let err {
         invoke.resolve(["ok": false, "error": err])
