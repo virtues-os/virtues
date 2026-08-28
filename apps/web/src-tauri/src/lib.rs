@@ -260,15 +260,21 @@ pub fn run() {
       // purpose. Same doctrine as the include_bytes fallback below ("an
       // airlock must not depend on packaging"), completed: it must not be
       // OVERRIDABLE by packaging either.
-      let airlock: Option<&'static [u8]> = match resolved.as_str() {
-        "connect.html" => Some(include_bytes!("../ui/connect.html")),
-        "probe.html" => Some(include_bytes!("../ui/probe.html")),
+      let airlock: Option<(&'static [u8], &'static str)> = match resolved.as_str() {
+        "connect.html" => Some((include_bytes!("../ui/connect.html"), "text/html")),
+        "probe.html" => Some((include_bytes!("../ui/probe.html"), "text/html")),
+        // jsQR (Apache-2.0), vendored because the airlock has no bundler and
+        // must not depend on packaging. WebKit has NEVER shipped
+        // `BarcodeDetector` — it is a Chrome API, and building the scanner on
+        // it meant every iPhone reported itself "too old" while the camera
+        // never even started. A real decoder is the only portable answer.
+        "jsqr.js" => Some((include_bytes!("../ui/jsqr.js"), "text/javascript")),
         _ => None,
       };
-      if let Some(bytes) = airlock {
+      if let Some((bytes, mime)) = airlock {
         return tauri::http::Response::builder()
           .status(200)
-          .header("Content-Type", "text/html")
+          .header("Content-Type", mime)
           .body(bytes.to_vec())
           .unwrap();
       }

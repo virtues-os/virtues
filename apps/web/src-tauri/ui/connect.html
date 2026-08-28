@@ -969,18 +969,34 @@
       // the relay it already has, and shows the result as a QR. Nothing
       // crosses a network here — only a camera pointed at a screen.
       //
-      // `BarcodeDetector` rather than a bundled decoder: it is native, it is
-      // fast enough to run per frame, and this file has no bundler (it is
-      // plain HTML served from src-tauri/ui). WebKit shipped it in iOS 17; on
-      // anything older we say so plainly instead of showing a camera that can
-      // never succeed.
+      // Decoding is jsQR (vendored beside this file; the airlock has no
+      // bundler). NOT `BarcodeDetector`: that is a Chrome API and WebKit has
+      // never shipped it, so the first version of this screen feature-detected
+      // it, told every iPhone it was "too old to scan", and returned before
+      // even starting the camera — a black rectangle under a false sentence.
+      // A decoder that runs everywhere costs 251K and removes the whole class.
       let scanStream = null;
+      let scanRaf = 0;
 
       function stopScan() {
+        if (scanRaf) { cancelAnimationFrame(scanRaf); scanRaf = 0; }
         if (scanStream) {
           scanStream.getTracks().forEach((t) => t.stop());
           scanStream = null;
         }
+      }
+
+      /// Load the decoder once, on demand. Kept out of the boot path: the
+      /// airlock's first paint must not wait on 251K nobody has asked for yet.
+      function loadDecoder() {
+        if (window.jsQR) return Promise.resolve(true);
+        return new Promise((resolve) => {
+          const s = document.createElement('script');
+          s.src = 'jsqr.js';
+          s.onload = () => resolve(!!window.jsQR);
+          s.onerror = () => resolve(false);
+          document.head.appendChild(s);
+        });
       }
 
       async function renderScan() {
@@ -997,9 +1013,9 @@
         document.getElementById('back').addEventListener('click', () => { stopScan(); renderEntry(); });
 
         const err = document.getElementById('scanerr');
-        if (!('BarcodeDetector' in window)) {
+        if (!(await loadDecoder())) {
           err.textContent =
-            'This iPhone is too old to scan in-app (iOS 17 or newer). Use “Connect to a server that’s running” instead.';
+            'The scanner failed to load. Use “Connect to a server that’s running” instead.';
           return;
         }
 
@@ -1022,25 +1038,37 @@
         video.srcObject = stream;
         await video.play().catch(() => {});
 
-        const detector = new BarcodeDetector({ formats: ['qr_code'] });
+        // jsQR reads pixels, so frames go through a canvas. Sized once from the
+        // stream rather than per frame — a reallocation per frame is what makes
+        // a scanner feel sluggish on a phone.
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
         const gen = searchGen;
         let handled = false;
 
-        async function tick() {
+        function tick() {
           // Bail the moment the screen changes underneath us — the back button
           // and a successful pair both bump searchGen.
           if (handled || gen !== searchGen || !scanStream) return;
-          try {
-            const found = await detector.detect(video);
-            if (found && found.length && found[0].rawValue) {
-              handled = true;
-              stopScan();
-              return acceptScanned(found[0].rawValue);
-            }
-          } catch { /* a frame that won't decode is not an error */ }
-          requestAnimationFrame(tick);
+          const w = video.videoWidth, h = video.videoHeight;
+          if (w && h) {
+            if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
+            ctx.drawImage(video, 0, 0, w, h);
+            try {
+              const img = ctx.getImageData(0, 0, w, h);
+              // `dontInvert`: our code is dark-on-light, and asking jsQR to also
+              // try the inverted reading doubles the per-frame cost for nothing.
+              const found = window.jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' });
+              if (found && found.data) {
+                handled = true;
+                stopScan();
+                return acceptScanned(found.data);
+              }
+            } catch { /* a frame that won't decode is not an error */ }
+          }
+          scanRaf = requestAnimationFrame(tick);
         }
-        requestAnimationFrame(tick);
+        scanRaf = requestAnimationFrame(tick);
       }
 
       async function acceptScanned(payload) {
