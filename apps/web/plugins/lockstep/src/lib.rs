@@ -18,7 +18,9 @@
 //!      COMMANDS no longer knows (the masking artifact);
 //!   3. generates `permissions/default.toml` from COMMANDS — every plugin's
 //!      default set is a plain allow-everything list, pure transcription, and
-//!      transcription errors were the whole disease.
+//!      transcription errors were the whole disease;
+//!   4. diffs the plugin's own `guest-js/` wrappers against COMMANDS — the
+//!      same drift arriving from the JS side.
 
 use std::collections::BTreeSet;
 use std::env;
@@ -50,6 +52,7 @@ pub fn enforce_excluding(commands: &[&str], excluded_from_default: &[&str]) {
     }
 
     check_handlers(root, &plugin, commands);
+    check_guest_js(root, &plugin, commands);
     prune_stale_permissions(root, &plugin, commands);
     write_default_toml(root, &plugin, commands, excluded_from_default);
 }
@@ -98,6 +101,58 @@ fn check_handlers(root: &Path, plugin: &str, commands: &[&str]) {
         "[{plugin}] COMMANDS in build.rs and generate_handler! in src/lib.rs have drifted.\n\
          registered in lib.rs but missing from COMMANDS (the ACL would refuse these at runtime): {unlisted:?}\n\
          in COMMANDS but not registered in lib.rs (permission granted for a command that cannot dispatch): {unregistered:?}"
+    );
+}
+
+/// Diff the plugin's own `guest-js/` wrappers against COMMANDS. A wrapper that
+/// invokes `plugin:<name>|<cmd>` for a command COMMANDS no longer knows is this
+/// same drift arriving from the JS side, and it fails identically: the ACL has
+/// nothing to resolve, so the first caller to reach for the wrapper gets
+/// "not allowed by ACL" rather than anything naming the deleted command.
+/// `improv_link_code`/`improv_pair_code` outlived their Rust commands that way
+/// — deleted 2026-08-24, wrappers still exported and found by hand on
+/// 2026-08-28. Only latent, because nothing had called them yet.
+///
+/// Scoped to this plugin's `guest-js/`, which is the part of the JS side a
+/// plugin build script owns. Callers elsewhere in the web app invoke by raw
+/// string and are out of reach from here.
+///
+/// One direction only: a command with no wrapper is ordinary (iOS-only
+/// commands, and commands `src/` invokes by string, both have none).
+fn check_guest_js(root: &Path, plugin: &str, commands: &[&str]) {
+    let dir = root.join("guest-js");
+    let Ok(entries) = fs::read_dir(&dir) else { return };
+    println!("cargo:rerun-if-changed={}", dir.display());
+
+    let needle = format!("plugin:{plugin}|");
+    let mut stale: BTreeSet<String> = BTreeSet::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e != "ts").unwrap_or(true) {
+            continue;
+        }
+        println!("cargo:rerun-if-changed={}", path.display());
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("[{plugin}] cannot read {}: {e}", path.display()));
+        let mut rest = src.as_str();
+        while let Some(at) = rest.find(&needle) {
+            rest = &rest[at + needle.len()..];
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() && !commands.contains(&name.as_str()) {
+                stale.insert(name);
+            }
+        }
+    }
+
+    assert!(
+        stale.is_empty(),
+        "[{plugin}] guest-js invokes commands that are not in COMMANDS \
+         (the ACL would refuse these at runtime): {stale:?}\n\
+         Either add them to COMMANDS and register them in src/lib.rs, or delete \
+         the wrappers — a wrapper for a deleted command is a trap for its next caller."
     );
 }
 
