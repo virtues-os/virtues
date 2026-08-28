@@ -965,11 +965,38 @@ fn tray_summary(installed: bool, status: &CollectorStatus) -> (Dot, &'static str
         (Dot::Grey, "Not collecting — open Virtues to set up")
     } else if status.paused {
         (Dot::Amber, "Paused")
+    } else if status.running && !permissions_ok(status) {
+        // A running collector with a revoked grant is the worst case this line
+        // has, because every other symptom of it looks like a quiet week: the
+        // process is up, uploads succeed, and only the TCC-gated streams
+        // (iMessage, Safari history, window titles) go dark. This tray said
+        // "Collecting" in green for three days while exactly that was true.
+        //
+        // Worst-thing-first, per this function's contract: a permission gap
+        // outranks "Collecting" because it is the thing the user must act on,
+        // and the tray sits on the machine that owns the permission — the fix
+        // is seconds away from here, rather than a trip to another device.
+        (Dot::Amber, "Permission needed — open Virtues")
     } else if status.running {
         (Dot::Green, "Collecting")
     } else {
         (Dot::Red, "Collector stopped — open Virtues")
     }
+}
+
+/// Does the daemon report every permission it needs?
+///
+/// Only the DAEMON's own fresh self-report counts. `permissions_reported_by_daemon`
+/// false means the flags describe nothing trustworthy — no record has ever been
+/// written, or the one on disk is stale — and an unknown is not a denial. Saying
+/// "permission needed" on a stale record is how this tray previously named the
+/// wrong permission for six days; silence is the honest answer when we cannot
+/// observe, and the collector re-probes every five minutes anyway.
+fn permissions_ok(status: &CollectorStatus) -> bool {
+    if !status.permissions_reported_by_daemon {
+        return true;
+    }
+    status.has_full_disk_access && status.has_accessibility
 }
 
 /// The tray's mutable menu items, bundled so the poll loop and the menu-event

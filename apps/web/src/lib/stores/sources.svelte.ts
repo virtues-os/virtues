@@ -108,7 +108,25 @@ function fromDevice(d: DeviceRow): Connection {
 	// A stale record supports no claim in either direction. Say when we last
 	// heard instead of inventing a state, and don't file it as broken: we have
 	// not observed a fault, only a silence.
-	const stale = d.permissions?.stale === true;
+	// Two different staleness questions, and only one of them was being asked.
+	//
+	// `permissions.stale` is the COLLECTOR's claim about its own record. It says
+	// nothing about whether this device row is still the live one — and every
+	// reinstall mints a NEW `app_device` row, leaving the old one frozen with
+	// whatever it last reported, `stale: false` included. This box carries three
+	// rows for one laptop; without a liveness bound, one laptop with one problem
+	// raises three permission alarms, two of them describing builds that no
+	// longer exist.
+	//
+	// So bound on `last_seen_at` too: "broken" must mean currently collecting and
+	// currently blocked. The window matches `degraded_collectors` in
+	// box_status.rs — the collector reports every 5 minutes, so 30 covers six
+	// missed cycles. A device that is merely switched off reads as unreported
+	// rather than as a standing complaint.
+	const LIVE_WINDOW_MS = 30 * 60 * 1000;
+	const lastSeenMs = d.last_seen_at ? Date.parse(d.last_seen_at) : NaN;
+	const reportingNow = !isNaN(lastSeenMs) && Date.now() - lastSeenMs < LIVE_WINDOW_MS;
+	const stale = d.permissions?.stale === true || !reportingNow;
 	const checkedAt = d.permissions?.checked_at as string | undefined;
 	if (stale) {
 		return {

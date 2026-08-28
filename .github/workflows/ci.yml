@@ -131,6 +131,12 @@ jobs:
       - name: Clippy
         run: cargo clippy -p virtues -p virtues-installer
 
+      # A ratchet over the repo's most-repeated bug: a query whose error is
+      # discarded answers with a plausible value and never surfaces. Fails only
+      # on NEW ones — see the script for why it is not a wall.
+      - name: No new swallowed query errors
+        run: tools/check-swallowed-queries.sh
+
       # Create the one thing `#[sqlx::test]`'s throwaway databases SHARE.
       #
       # Roles are cluster-wide, not per-database, and migration 0052 does
