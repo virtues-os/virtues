@@ -105,6 +105,14 @@ jobs:
       DATABASE_URL: postgres://virtues:virtues@localhost:5432/virtues
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, not the default depth 1: the append-only migrations
+          # step runs `git merge-base` against the PR base, and a shallow
+          # checkout grafts HEAD parentless — merge-base then has nothing to
+          # walk and the step dies before its first comparison (it did, on
+          # this check's first real PR). ~266 MiB of pack, seconds on the
+          # runner's network.
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
         with:
