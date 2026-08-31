@@ -64,7 +64,7 @@ pub fn router() -> Router<AppState> {
         // airlock webview, hence the CORS layer — the browser pages above
         // need none.
         .route("/init/approve", post(approve).layer(crate::routes::app_cors()))
-        // THE KEYSTONE (one-wire-plan Phase 2): a signed-in, entitled app
+        // THE KEYSTONE (one-wire-plan Phase 2): a signed-in app
         // asks for a pre-approved device_code and writes it to the box over
         // BLE (0x82); the box redeems it through its ordinary /init/poll the
         // moment it is online. Attach happens AT REDEMPTION, when the box can
@@ -635,20 +635,12 @@ async fn login_web(
     // one fact needed to understand the failure was the one not shown.
     let who = html_escape(&email);
     let back = format!("<a href='/init/signin?code={code}'>try another address</a>");
-    let buy = format!("<a href='/init/checkout?code={code}'>start a subscription</a>");
     match begin_login(&state, &device_code_hash, &email).await {
         LoginOutcome::Sent => page(
             "Check your email",
             &format!(
                 "We sent a link to <b>{who}</b>. Open it on any device &mdash; your box links \
                  itself within a few seconds.<br><br>Wrong address? You can {back}."
-            ),
-        ),
-        LoginOutcome::NoAccount => page(
-            "No account with that address",
-            &format!(
-                "We couldn't find a Virtues subscription for <b>{who}</b>. If you pay for \
-                 Virtues under a different address, {back} &mdash; otherwise {buy}."
             ),
         ),
         LoginOutcome::RateLimited => page(
@@ -681,9 +673,10 @@ struct ApproveBody {
 /// `attach_link_to_customer`, so the two doors cannot drift.
 ///
 /// Error codes are part of the airlock contract (linking-plan.md):
-/// `no_subscription` routes the app to browser checkout; `link_not_found` /
-/// `link_expired` tell it to re-fetch the code and retry — the session stays
-/// good, so neither costs a second email round-trip.
+/// `link_not_found` / `link_expired` tell it to re-fetch the code and retry —
+/// the session stays good, so neither costs a second email round-trip.
+/// (`no_subscription` left the contract with 0017: linking is identity, not
+/// billing — see open-relay-plan §Work 1b.)
 /// Approve calls per account per hour. Generous for a legitimate owner (one
 /// approve, maybe a couple of retries after a code rotation); tight enough that
 /// the endpoint cannot be ground as an enumeration oracle.
@@ -697,33 +690,18 @@ async fn approve(
     let Some(sess) = super::account::authed(&state, &headers).await else {
         return err(StatusCode::UNAUTHORIZED, "unauthorized", "sign in again");
     };
-    // Entitlement is checked here, not only at sign-in: the airlock may hold
-    // a session minted before checkout completed, and approving a link for an
-    // unpaid account would hand out an api_key nothing funds.
-    let Some(customer_id) = sess.customer_id.as_deref() else {
-        return err(
-            StatusCode::PAYMENT_REQUIRED,
-            "no_subscription",
-            "no subscription on this account yet",
-        );
-    };
-    match super::account::is_entitled(&state, Some(customer_id)).await {
-        Ok(true) => {}
-        Ok(false) => {
-            return err(
-                StatusCode::PAYMENT_REQUIRED,
-                "no_subscription",
-                "no active subscription on this account",
-            );
-        }
-        // A broken entitlement query must NOT read as "unpaid" — that routes a
-        // paying customer to checkout. Surface it as an internal error and let
-        // the airlock retry (the session stays good).
+    // No entitlement gate (0017): linking is identity, not billing. An unpaid
+    // account's api_key funds nothing — the wallet is empty and virtues-api
+    // refuses spend — so the key is safe to mint; what it buys is reachability
+    // and ownership, which are not for sale. The account row is ensured here
+    // because the session may predate the accounts table.
+    let account_id = match super::account::ensure_account(&state.pool, &sess.email).await {
+        Ok(id) => id,
         Err(e) => {
-            tracing::warn!("approve entitlement check failed: {e:#}");
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't verify the subscription");
+            tracing::warn!("approve ensure_account failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't resolve the account");
         }
-    }
+    };
 
     // Attempt budget, keyed on the authenticated account's email — bounds an
     // entitled session's guess rate regardless of which codes it tries, and
@@ -794,7 +772,7 @@ async fn approve(
         );
     };
 
-    match attach_link_to_customer(&state, &device_code_hash, customer_id).await {
+    match attach_link_to_account(&state, &device_code_hash, &account_id).await {
         AttachOutcome::Attached => {
             (StatusCode::OK, Json(json!({ "approved": true }))).into_response()
         }
@@ -814,8 +792,7 @@ async fn approve(
 /// How long a grant stays redeemable. Generous on purpose: the box may sit
 /// offline while the owner finishes setup, and the grant is pre-authorized to
 /// one account and delivered over a proven line-of-sight channel — the real
-/// guards are the entitlement RE-CHECK at redemption and single-use claiming,
-/// not this clock.
+/// guard is single-use claiming, not this clock.
 const GRANT_TTL_HOURS: i64 = 24;
 
 async fn grant(
@@ -825,19 +802,15 @@ async fn grant(
     let Some(sess) = super::account::authed(&state, &headers).await else {
         return err(StatusCode::UNAUTHORIZED, "unauthorized", "sign in again");
     };
-    let Some(customer_id) = sess.customer_id.as_deref() else {
-        return err(StatusCode::PAYMENT_REQUIRED, "no_subscription", "no subscription on this account yet");
-    };
-    match super::account::is_entitled(&state, Some(customer_id)).await {
-        Ok(true) => {}
-        Ok(false) => {
-            return err(StatusCode::PAYMENT_REQUIRED, "no_subscription", "no active subscription on this account");
-        }
+    // No entitlement gate (0017) — same reasoning as approve: the key an
+    // unpaid account earns funds nothing, and linking is not for sale.
+    let account_id = match super::account::ensure_account(&state.pool, &sess.email).await {
+        Ok(id) => id,
         Err(e) => {
-            tracing::warn!("grant entitlement check failed: {e:#}");
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't verify the subscription");
+            tracing::warn!("grant ensure_account failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "couldn't resolve the account");
         }
-    }
+    };
     // Same attempt budget as approve — one shared table, one shared story
     // about how fast a session may mint box-shaped things. Fail closed.
     let recent: i64 = match sqlx::query_scalar(
@@ -868,14 +841,15 @@ async fn grant(
     let expires_at = Utc::now() + Duration::hours(GRANT_TTL_HOURS);
     if let Err(e) = sqlx::query(
         r#"
-        INSERT INTO device_link (device_code_hash, user_code, status, expires_at, stripe_customer_id)
-        VALUES ($1, $2, 'granted', $3, $4)
+        INSERT INTO device_link (device_code_hash, user_code, status, expires_at, account_id, stripe_customer_id)
+        VALUES ($1, $2, 'granted', $3, $4, $5)
         "#,
     )
     .bind(&device_code_hash[..])
     .bind(&user_code)
     .bind(expires_at)
-    .bind(customer_id)
+    .bind(&account_id)
+    .bind(sess.customer_id.as_deref())
     .execute(&state.pool)
     .await
     {
@@ -892,32 +866,27 @@ async fn grant(
 /// Redeem a granted link: the attach, deferred to the moment the box shows up
 /// with its endpoint. Returns the poll response to send.
 ///
-/// Ordering inside mirrors `attach_link_to_customer`: claim the row first
-/// (granted → linking, so a double poll can't double-mint), re-check
-/// entitlement (a 24 h grant must not outlive a refund), register with
+/// Ordering inside mirrors `attach_link_to_account`: claim the row first
+/// (granted → linking, so a double poll can't double-mint), register with
 /// virtues-api, record the key, answer ready. Failures after the claim revert
 /// to 'granted' and answer pending — the box's poll loop IS the retry.
+/// (The entitlement re-check left with 0017: a refund empties the wallet,
+/// which is where non-payment actually bites; it no longer unlinks a box.)
 async fn redeem_granted_link(
     state: &AppState,
     device_code_hash: &[u8],
     poll_endpoint_id: Option<&str>,
 ) -> axum::response::Response {
-    let claim: Result<Option<(Option<String>, Option<String>)>, _> = sqlx::query_as(
+    let claim: Result<Option<(Option<String>, Option<String>, Option<String>)>, _> = sqlx::query_as(
         "UPDATE device_link SET status = 'linking' \
          WHERE device_code_hash = $1 AND status = 'granted' AND expires_at > now() \
-         RETURNING stripe_customer_id, endpoint_id",
+         RETURNING account_id, stripe_customer_id, endpoint_id",
     )
     .bind(device_code_hash)
     .fetch_optional(&state.pool)
     .await;
-    let (customer_id, row_endpoint) = match claim {
-        Ok(Some((Some(cid), ep))) => (cid, ep),
-        // A granted row with no customer is a bug, not a state; deny rather
-        // than mint something unowned.
-        Ok(Some((None, _))) => {
-            tracing::warn!("granted link with no customer — denying");
-            return Json(json!({ "status": "denied" })).into_response();
-        }
+    let (row_account, customer_id, row_endpoint) = match claim {
+        Ok(Some(v)) => v,
         // Lost the race to a concurrent poll (it is doing the work), or the
         // grant lapsed. The generic poll flow already answered the caller
         // correctly for both on the next round.
@@ -937,22 +906,6 @@ async fn redeem_granted_link(
         .await;
     };
 
-    // Entitlement re-check AT REDEMPTION — the grant's TTL is generous, and a
-    // refund in the gap must win. Errors deny nothing and grant nothing: the
-    // row goes back to granted and the box retries.
-    match super::account::is_entitled(&state, Some(&customer_id)).await {
-        Ok(true) => {}
-        Ok(false) => {
-            release().await;
-            return Json(json!({ "status": "denied" })).into_response();
-        }
-        Err(e) => {
-            tracing::warn!("redemption entitlement check failed: {e:#}");
-            release().await;
-            return Json(json!({ "status": "pending" })).into_response();
-        }
-    }
-
     // The box self-reports its endpoint at redemption (the poll body); the
     // grant-time row has none (the app minted it before the box was even
     // online). Label, never an authorization input.
@@ -961,18 +914,42 @@ async fn redeem_granted_link(
         .or(row_endpoint)
         .filter(|s| !s.is_empty());
 
-    let account_id: String = match sqlx::query_scalar(
-        "SELECT account_id FROM customers WHERE stripe_customer_id = $1",
-    )
-    .bind(&customer_id)
-    .fetch_one(&state.pool)
-    .await
-    {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::warn!("redemption account lookup failed: {e:#}");
-            release().await;
-            return Json(json!({ "status": "pending" })).into_response();
+    // account_id is on the row for grants minted since 0017; a grant minted
+    // by an older binary carries only the customer, so resolve through it.
+    // A row with neither is a bug, not a state; deny — and park the row at
+    // 'denied' rather than leaving it 'linking', where every later poll
+    // reads as pending and the box's link loop wedges silently.
+    let deny = || async {
+        let _ = sqlx::query(
+            "UPDATE device_link SET status = 'denied' \
+             WHERE device_code_hash = $1 AND status = 'linking'",
+        )
+        .bind(device_code_hash)
+        .execute(&state.pool)
+        .await;
+        Json(json!({ "status": "denied" })).into_response()
+    };
+    let account_id: String = match row_account {
+        Some(a) => a,
+        None => {
+            let Some(cid) = customer_id.as_deref() else {
+                tracing::warn!("granted link with no account and no customer — denying");
+                return deny().await;
+            };
+            match sqlx::query_scalar(
+                "SELECT account_id FROM customers WHERE stripe_customer_id = $1",
+            )
+            .bind(cid)
+            .fetch_one(&state.pool)
+            .await
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    tracing::warn!("redemption account lookup failed: {e:#}");
+                    release().await;
+                    return Json(json!({ "status": "pending" })).into_response();
+                }
+            }
         }
     };
 
@@ -983,7 +960,7 @@ async fn redeem_granted_link(
         .register_device(&crate::virtues_api_client::RegisterDevice {
             box_id: endpoint_id.clone(),
             api_key_hash: hex::encode(&api_key_hash),
-            account_id,
+            account_id: account_id.clone(),
         })
         .await
     {
@@ -993,7 +970,7 @@ async fn redeem_granted_link(
     }
     if let Err(e) = super::claim::mint_box_key(
         &state.pool,
-        &customer_id,
+        &account_id,
         endpoint_id.as_deref(),
         &api_key_hash[..],
     )
@@ -1021,7 +998,6 @@ async fn redeem_granted_link(
 /// two can never drift into different rules about accounts or rate limits.
 enum LoginOutcome {
     Sent,
-    NoAccount,
     RateLimited,
     Failed,
 }
@@ -1036,9 +1012,9 @@ fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Respons
 //
 // Pattern:
 //   box  POST /init/login {device_code, email}
-//        └→ atlas looks up customers.email → stripe_customer_id
-//           - found:   insert login_attempt(token_hash, …), send magic link via Resend
-//           - missing: return {status:"no_account"} (box surfaces "subscribe?" prompt)
+//        └→ atlas inserts login_attempt(token_hash, …), sends a magic link via
+//           Resend for ANY address (0017: an unknown email is a sign-up; the
+//           account is minted at verify, when the click proves the address)
 //   user opens magic link
 //        └→ GET /init/login/verify?token=…
 //           - hash + lookup login_attempt
@@ -1088,9 +1064,6 @@ async fn login_start(
 
     match begin_login(&state, &device_code_hash, &email).await {
         LoginOutcome::Sent => (StatusCode::OK, Json(json!({ "status": "sent" }))).into_response(),
-        LoginOutcome::NoAccount => {
-            (StatusCode::OK, Json(json!({ "status": "no_account" }))).into_response()
-        }
         LoginOutcome::RateLimited => err(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
@@ -1104,7 +1077,7 @@ async fn login_start(
     }
 }
 
-/// Rate-limit, resolve the customer, mint a magic-link token, send it.
+/// Rate-limit, ensure the account, mint a magic-link token, send it.
 ///
 /// The one implementation behind both doors — the box's `/init/login` and the
 /// page's `/init/login-web`. They differ only in how they learned the
@@ -1129,19 +1102,14 @@ async fn begin_login(
         return LoginOutcome::RateLimited;
     }
 
-    let customer: Option<(String,)> =
-        sqlx::query_as("SELECT stripe_customer_id FROM customers WHERE email = $1 LIMIT 1")
-            .bind(email)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
-
-    // No email when there is no account: it would be a spam vector AND would
-    // not help anyone. The caller offers "start a subscription" instead.
-    let Some((customer_id,)) = customer else {
-        return LoginOutcome::NoAccount;
-    };
-
+    // Account-first (0017): an unknown email is someone signing UP, not an
+    // error — send the link, exactly as the app's /account/login door already
+    // does for any address. The account is minted at VERIFY, not here: the
+    // click is the proof of the address, and minting at send would let anyone
+    // holding one device_code create a permanent accounts row for every email
+    // they can type (the per-email send cap bounds mail rate, not distinct
+    // addresses). No customer resolution here either — the key mirror derives
+    // its customer from `accounts` at mint time.
     let token = random_hex(32);
     let token_hash = sha256(token.as_bytes());
     let expires_at = Utc::now() + Duration::minutes(LOGIN_TTL_MINUTES);
@@ -1149,13 +1117,12 @@ async fn begin_login(
     let ins = sqlx::query(
         r#"
         INSERT INTO login_attempt
-            (token_hash, email, customer_id, device_code_hash, expires_at)
-        VALUES ($1, $2, $3, $4, $5)
+            (token_hash, email, device_code_hash, expires_at)
+        VALUES ($1, $2, $3, $4)
         "#,
     )
     .bind(&token_hash[..])
     .bind(email)
-    .bind(&customer_id)
     .bind(device_code_hash)
     .bind(expires_at)
     .execute(&state.pool)
@@ -1192,22 +1159,34 @@ async fn login_verify(
 
     // Atomic: claim the login_attempt + mark used in one shot. Concurrent
     // clicks lose the race and see "already used".
-    let row: Option<(String, Vec<u8>, chrono::DateTime<Utc>, String)> = sqlx::query_as(
+    // A DB error here must NOT render as "link expired" — that page tells the
+    // owner to restart the whole flow for an outage that will pass. Surface it
+    // as its own page and keep the token unclaimed (the UPDATE didn't run).
+    let row: Option<(String, Vec<u8>, chrono::DateTime<Utc>)> = match sqlx::query_as(
         r#"
         UPDATE login_attempt
         SET status = 'used', used_at = now()
         WHERE token_hash = $1
           AND status = 'pending'
           AND expires_at > now()
-        RETURNING email, device_code_hash, expires_at, customer_id
+        RETURNING email, device_code_hash, expires_at
         "#,
     )
     .bind(&token_hash[..])
     .fetch_optional(&state.pool)
     .await
-    .unwrap_or(None);
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("login_attempt claim failed: {e:#}");
+            return page(
+                "Something went wrong",
+                "We couldn't check this link just now. Wait a moment and open it again — it is still valid.",
+            );
+        }
+    };
 
-    let Some((_email, device_code_hash, _exp, customer_id)) = row else {
+    let Some((email, device_code_hash, _exp)) = row else {
         return page(
             "Link expired or already used",
             "This login link is no longer valid. Open the Virtues app and start the link again \
@@ -1216,10 +1195,24 @@ async fn login_verify(
         );
     };
 
-    match attach_link_to_customer(&state, &device_code_hash, &customer_id).await {
+    // The click proved control of the address — THIS is where the account is
+    // minted (or fetched) for the magic-link door; see begin_login for why
+    // not at send time.
+    let account_id: String = match super::account::ensure_account(&state.pool, &email).await {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("magic-link account resolve failed: {e:#}");
+            return page(
+                "Something went wrong",
+                "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
+            );
+        }
+    };
+
+    match attach_link_to_account(&state, &device_code_hash, &account_id).await {
         AttachOutcome::Attached => page(
             "✓ Box attached",
-            "Your Virtues box is now attached to your subscription. Go back to the Virtues app — it continues on its own within a few seconds.",
+            "Your Virtues box is now attached to your account. Go back to the Virtues app — it continues on its own within a few seconds.",
         ),
         AttachOutcome::LinkGone => page(
             "Link expired",
@@ -1233,7 +1226,7 @@ async fn login_verify(
     }
 }
 
-/// What `attach_link_to_customer` decided — shared by the magic-link click and
+/// What `attach_link_to_account` decided — shared by the magic-link click and
 /// the app's `/init/approve`, so the two proofs of identity can never drift
 /// into different attach rules.
 enum AttachOutcome {
@@ -1244,14 +1237,16 @@ enum AttachOutcome {
     Failed,
 }
 
-/// Attach an in-flight device_link to an existing customer: mint a fresh
-/// api_key, register it with virtues-api, rotate the stored hash, flip the
-/// link to ready for the box's poll.
+/// Attach an in-flight device_link to an account: mint a fresh api_key,
+/// register it with virtues-api, rotate the stored hash, flip the link to
+/// ready for the box's poll. A free account attaches identically (0017); the
+/// legacy key mirror derives its customer from `accounts` inside
+/// `mint_box_key`.
 ///
-/// Re-link recovery semantics: we trust our own customers table (the caller
-/// has already verified control of the email — magic-link click or OTP
-/// session), so no Stripe call. We re-point to the SAME `account_id` and do
-/// NOT re-credit — the wallet is preserved (the recovery win).
+/// Re-link recovery semantics: the caller has already verified control of the
+/// email (magic-link click or OTP session), so no Stripe call. We re-point to
+/// the SAME `account_id` and do NOT re-credit — the wallet is preserved (the
+/// recovery win).
 ///
 /// ## Why the link is CLAIMED before anything is rotated
 ///
@@ -1275,10 +1270,10 @@ enum AttachOutcome {
 /// with virtues-api FIRST, then rotate `customers.api_key_hash`. If register
 /// fails, nothing in virtues-api changed and we release the claim back to
 /// pending so a retry (or the other door) can proceed cleanly.
-async fn attach_link_to_customer(
+async fn attach_link_to_account(
     state: &AppState,
     device_code_hash: &[u8],
-    customer_id: &str,
+    account_id: &str,
 ) -> AttachOutcome {
     let api_key = super::claim::random_token();
     let api_key_hash = sha256(api_key.as_bytes());
@@ -1322,21 +1317,6 @@ async fn attach_link_to_customer(
         .await;
     };
 
-    let lookup: Result<(String,), _> = sqlx::query_as(
-        "SELECT account_id FROM customers WHERE stripe_customer_id = $1",
-    )
-    .bind(customer_id)
-    .fetch_one(&state.pool)
-    .await;
-    let (account_id,) = match lookup {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("customers lookup failed: {e:#}");
-            release().await;
-            return AttachOutcome::Failed;
-        }
-    };
-
     if let Err(e) = state
         .virtues_api
         .register_device(&crate::virtues_api_client::RegisterDevice {
@@ -1346,7 +1326,7 @@ async fn attach_link_to_customer(
             // rotation. Label, never an authorization input.
             box_id: endpoint_id.clone(),
             api_key_hash: hex::encode(&api_key_hash),
-            account_id,
+            account_id: account_id.to_string(),
         })
         .await
     {
@@ -1366,7 +1346,7 @@ async fn attach_link_to_customer(
     // below is idempotent on it) rather than re-registering.
     if let Err(e) = super::claim::mint_box_key(
         &state.pool,
-        customer_id,
+        account_id,
         endpoint_id.as_deref(),
         &api_key_hash[..],
     )

@@ -31,10 +31,6 @@ pub struct Config {
     /// `https://relay.virtues.ch`. Empty → `/relay/config` returns 503.
     /// Env: `VIRTUES_RELAY_URL`.
     pub relay_url: String,
-    /// Shared bearer iroh-relay presents to `/relay/authorize` (matches the
-    /// relay's `access.http.bearer_token`). Empty → callout unauthenticated (dev).
-    /// Env: `VIRTUES_RELAY_AUTH_SECRET`.
-    pub relay_auth_secret: String,
 
     /// Monthly renewal credit (micros USD). Default $20/mo (full sub value).
     pub renewal_micros: i64,
@@ -120,8 +116,6 @@ impl Config {
 
         // iroh reach: which relay boxes home on. Empty → /relay/config → 503.
         let relay_url = std::env::var("VIRTUES_RELAY_URL").unwrap_or_default();
-        // Shared bearer iroh-relay presents to /relay/authorize.
-        let relay_auth_secret = std::env::var("VIRTUES_RELAY_AUTH_SECRET").unwrap_or_default();
 
         // Wallet economics — linked prepaid model.
         //   * Monthly renewal credit: $20 (overwrites wallet to the full
@@ -199,7 +193,6 @@ impl Config {
             stripe_price_id,
             public_url,
             relay_url,
-            relay_auth_secret,
             renewal_micros,
             auto_topup_micros,
             topup_min_micros,
