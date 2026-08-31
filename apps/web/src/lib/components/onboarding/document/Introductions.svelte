@@ -20,6 +20,7 @@
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import UniversalPicker from "$lib/components/UniversalPicker.svelte";
 	import { getProfile, updateProfile, getAssistantProfile, updateAssistantProfile } from "$lib/api/client";
 	import { onMount } from "svelte";
 
@@ -41,6 +42,16 @@
 			return [];
 		}
 	})();
+
+	/** "America/New_York" → "New York" — the city is the answer; the region
+	 *  renders once as a group header, so repeating it per row is noise. */
+	function cityOf(z: string): string {
+		const last = z.split("/").pop() ?? z;
+		return last.replace(/_/g, " ");
+	}
+	function regionOf(z: string): string {
+		return z.includes("/") ? z.split("/")[0] : "Other";
+	}
 	/** What it is already called, so the field can suggest rather than demand. */
 	let assistantDefault = $state("Ari");
 	let loading = $state(true);
@@ -181,19 +192,38 @@
 					<input class="ob-input" type="date" bind:value={born} />
 				</label>
 
-				<label>
+				<div class="field-group">
 					<span class="label">What time zone is home?</span>
 					{#if ZONES.length}
-						<select class="ob-input" bind:value={tz}>
-							{#each ZONES as z (z)}
-								<option value={z}>{z.replace(/_/g, " ")}</option>
-							{/each}
-						</select>
+						<UniversalPicker
+							items={ZONES}
+							value={tz}
+							getKey={(z) => z}
+							getValue={(z) => z}
+							onSelect={(z) => (tz = z)}
+							width="w-full"
+							maxHeight="max-h-64"
+							searchable={true}
+							getSearchText={(z) => z.replace(/[_/]/g, " ")}
+							getGroup={regionOf}
+							searchPlaceholder="Search for a city…"
+						>
+							{#snippet trigger(current, _disabled, open)}
+								<div class="ob-input tz-trigger">
+									<span>{current ? cityOf(current) : "Choose a time zone"}</span>
+									<span class="tz-caret" class:open>
+										<Icon icon="ri:arrow-down-s-line" width="16" />
+									</span>
+								</div>
+							{/snippet}
+							{#snippet item(z, selected)}
+								<span class="tz-item" class:selected>{cityOf(z)}</span>
+							{/snippet}
+						</UniversalPicker>
 					{:else}
 						<input class="ob-input" type="text" bind:value={tz} placeholder="America/Chicago" />
 					{/if}
-					<span class="hint">Guessed from this browser — correct it if home is elsewhere.</span>
-				</label>
+				</div>
 			</div>
 
 			{#if error}
@@ -287,10 +317,28 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	/* The admission under the timezone field: the value is a guess, not a
-	   reading. Quietest voice on the screen. */
-	.hint {
-		font-size: 0.8rem;
+	/* The timezone trigger wears the same coat as the inputs above it; the
+	   caret is the only hint it opens instead of types. */
+	.tz-trigger {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		cursor: pointer;
+		text-align: left;
+	}
+	.tz-caret {
+		display: inline-flex;
 		color: var(--color-foreground-subtle);
+		transition: transform 0.15s ease;
+	}
+	.tz-caret.open {
+		transform: rotate(180deg);
+	}
+	.tz-item {
+		font-size: 0.9rem;
+	}
+	.tz-item.selected {
+		font-weight: 500;
 	}
 </style>
