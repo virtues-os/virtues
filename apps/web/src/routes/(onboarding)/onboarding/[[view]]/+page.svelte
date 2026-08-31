@@ -267,7 +267,7 @@
 {#if loading}
 	<div class="flex min-h-screen items-center justify-center gap-2.5 text-sm text-foreground-muted" in:fade>
 		<Icon icon="ri:loader-4-line" class="animate-spin" />
-		<span>Checking your box…</span>
+		<span>Checking your server…</span>
 	</div>
 {:else if !state_}
 	<div class="flex min-h-screen items-center justify-center px-6">

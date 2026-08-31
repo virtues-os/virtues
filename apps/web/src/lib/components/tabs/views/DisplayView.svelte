@@ -237,13 +237,13 @@
 
 <Page
 	title="Display"
-	description="The screen on the box, and what it shows."
+	description="The screen on your server, and what it shows."
 	maxWidth="wide"
 >
 	{#if !data && !loadError}
 		<LoadingState />
 	{:else if !data}
-		<ErrorState message={loadError ?? "Couldn't reach the box."} onRetry={refresh} />
+		<ErrorState message={loadError ?? "Couldn't reach your server."} onRetry={refresh} />
 	{:else}
 		<div class="display-settings">
 			{#if !data.attached}
