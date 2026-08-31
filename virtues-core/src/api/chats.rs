@@ -816,6 +816,8 @@ pub async fn generate_title(
             .fetch_optional(pool)
             .await
             .map_err(|e| Error::Database(format!("read interview title: {e}")))?
+            // absent-ok: the error path is handled by the `?` above; this
+            // default only covers a chat that has no title yet.
             .unwrap_or_else(|| "In your own words".to_string());
         return Ok(GenerateTitleResponse { chat_id, title });
     }

@@ -214,13 +214,25 @@ async fn verify(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> 
     };
 
     // Must be a live pending link.
-    let row: Option<(chrono::DateTime<Utc>,)> = sqlx::query_as(
+    // A DB error must not render as "code not found" — that tells the owner
+    // to fetch a fresh code and retry a DB outage forever (CLAUDE.md,
+    // "Do not swallow a query error").
+    let row: Option<(chrono::DateTime<Utc>,)> = match sqlx::query_as(
         "SELECT expires_at FROM device_link WHERE user_code = $1 AND status = 'pending'",
     )
     .bind(&code)
     .fetch_optional(&state.pool)
     .await
-    .unwrap_or(None);
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("device_link lookup failed: {e:#}");
+            return page(
+                "Something went wrong",
+                "We couldn't look that code up just now. Wait a moment and reload this page.",
+            );
+        }
+    };
     let Some((expires_at,)) = row else {
         return page(
             "Link not found",
@@ -254,13 +266,25 @@ async fn checkout(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -
     let Some(code) = q.code.map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()) else {
         return connect_page();
     };
-    let row: Option<(chrono::DateTime<Utc>,)> = sqlx::query_as(
+    // A DB error must not render as "code not found" — that tells the owner
+    // to fetch a fresh code and retry a DB outage forever (CLAUDE.md,
+    // "Do not swallow a query error").
+    let row: Option<(chrono::DateTime<Utc>,)> = match sqlx::query_as(
         "SELECT expires_at FROM device_link WHERE user_code = $1 AND status = 'pending'",
     )
     .bind(&code)
     .fetch_optional(&state.pool)
     .await
-    .unwrap_or(None);
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("device_link lookup failed: {e:#}");
+            return page(
+                "Something went wrong",
+                "We couldn't look that code up just now. Wait a moment and reload this page.",
+            );
+        }
+    };
     let Some((expires_at,)) = row else {
         return page(
             "Link not found",
@@ -469,13 +493,25 @@ async fn signin(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> 
     let Some(code) = q.code.map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()) else {
         return connect_page();
     };
-    let row: Option<(chrono::DateTime<Utc>,)> = sqlx::query_as(
+    // A DB error must not render as "code not found" — that tells the owner
+    // to fetch a fresh code and retry a DB outage forever (CLAUDE.md,
+    // "Do not swallow a query error").
+    let row: Option<(chrono::DateTime<Utc>,)> = match sqlx::query_as(
         "SELECT expires_at FROM device_link WHERE user_code = $1 AND status = 'pending'",
     )
     .bind(&code)
     .fetch_optional(&state.pool)
     .await
-    .unwrap_or(None);
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("device_link lookup failed: {e:#}");
+            return page(
+                "Something went wrong",
+                "We couldn't look that code up just now. Wait a moment and reload this page.",
+            );
+        }
+    };
     let Some((expires_at,)) = row else {
         return page(
             "Link not found",
@@ -609,14 +645,23 @@ async fn login_web(
         );
     }
 
-    let row: Option<(Vec<u8>,)> = sqlx::query_as(
+    let row: Option<(Vec<u8>,)> = match sqlx::query_as(
         "SELECT device_code_hash FROM device_link \
          WHERE user_code = $1 AND status = 'pending' AND expires_at > now()",
     )
     .bind(&code)
     .fetch_optional(&state.pool)
     .await
-    .unwrap_or(None);
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("device_link lookup failed: {e:#}");
+            return page(
+                "Something went wrong",
+                "We couldn't look that code up just now. Wait a moment and resubmit.",
+            );
+        }
+    };
     let Some((device_code_hash,)) = row else {
         return page(
             "Link not found",
@@ -1047,13 +1092,22 @@ async fn login_start(
 
     // The box must already have an active /init/start in flight.
     let device_code_hash = sha256(body.device_code.as_bytes());
-    let device_link_exists: Option<(String,)> = sqlx::query_as(
+    let device_link_exists: Option<(String,)> = match sqlx::query_as(
         "SELECT status FROM device_link WHERE device_code_hash = $1 AND expires_at > now()",
     )
     .bind(&device_code_hash[..])
     .fetch_optional(&state.pool)
     .await
-    .unwrap_or(None);
+    {
+        Ok(r) => r,
+        // A DB error must not answer as "no such link" — the box would
+        // restart the whole flow against an outage (CLAUDE.md, "Do not
+        // swallow a query error").
+        Err(e) => {
+            tracing::warn!("login_start device_link lookup failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not check the link");
+        }
+    };
     if device_link_exists.is_none() {
         return err(
             StatusCode::BAD_REQUEST,
