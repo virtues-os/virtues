@@ -24,7 +24,7 @@
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page, Button, LoadingState, ErrorState } from "$lib";
+	import { Page, Button, Card, Section, LoadingState, ErrorState } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onDestroy, onMount } from "svelte";
 	import { createResource } from "$lib/utils/resource.svelte";
@@ -171,22 +171,6 @@
 	});
 </script>
 
-{#snippet vantage(where: string)}
-	<!-- The one piece of furniture that makes a merged page honest: every
-	     section says where its facts came from, so two sections disagreeing
-	     reads as two vantages rather than as a bug. -->
-	<span class="text-[11px] text-foreground-subtle font-normal normal-case tracking-normal">
-		{where}
-	</span>
-{/snippet}
-
-{#snippet heading(label: string, where: string)}
-	<div class="flex items-baseline justify-between gap-3 mb-2 mt-6">
-		<span class="text-xs font-medium uppercase tracking-wide text-foreground-subtle">{label}</span>
-		{@render vantage(where)}
-	</div>
-{/snippet}
-
 {#if res.loading}
 	<LoadingState />
 {:else if res.error}
@@ -198,7 +182,7 @@
 {:else}
 	<Page title={device.label} description="What this device runs, and whether it is reaching your server.">
 		<!-- ── Header: the two questions people open this page for ─────────── -->
-		<div class="rounded-lg border border-border bg-surface p-4">
+		<Card>
 			<div class="flex items-center gap-3">
 				<Icon icon={kindIcon(device.kind)} class="text-foreground-muted flex-none" />
 				<div class="flex-1 min-w-0">
@@ -219,12 +203,12 @@
 					</div>
 				</div>
 			</div>
-		</div>
+		</Card>
 
 		<!-- ── Now — live, and only where there is something live to read ──── -->
 		{#if localMac}
-			{@render heading("Now", "measured here")}
-			<div class="rounded-lg border border-border bg-surface p-4">
+			<Section title="Now" note="measured here">
+			<Card>
 				<div class="flex items-center gap-3">
 					<span
 						class={`w-2.5 h-2.5 rounded-full flex-none ${
@@ -249,7 +233,8 @@
 						{toggling ? "…" : status?.paused ? "Resume" : "Pause"}
 					</Button>
 				</div>
-			</div>
+			</Card>
+			</Section>
 		{/if}
 
 		<!-- ── Software — ONE ledger, and each line says what it governs ────
@@ -258,8 +243,9 @@
 		     server, the collector ships inside the app. Printing three bare
 		     numbers is what made "is this current?" unanswerable. -->
 		{#if hasApp}
-		{@render heading("Software", local ? "measured here" : "as your server heard it")}
-		<ul class="rounded-lg border border-border bg-surface divide-y divide-border">
+		<Section title="Software" note={local ? "measured here" : "as your server heard it"}>
+		<Card list>
+		<ul>
 			<li class="p-4 flex items-center gap-3">
 				<div class="flex-1 min-w-0">
 					<div class="text-sm text-foreground">App</div>
@@ -319,6 +305,8 @@
 				</li>
 			{/if}
 		</ul>
+		</Card>
+		</Section>
 		{/if}
 
 		<!-- ── Permissions ─────────────────────────────────────────────────
@@ -327,8 +315,9 @@
 		     told about months ago is not the same claim as one read a second
 		     ago, and the label is what keeps them apart. -->
 		{#if denied.length || granted.length}
-			{@render heading("Permissions", local ? "measured here" : "as this device last reported")}
-			<ul class="rounded-lg border border-border bg-surface divide-y divide-border">
+			<Section title="Permissions" note={local ? "measured here" : "as this device last reported"}>
+			<Card list>
+			<ul>
 				{#each denied as perm (perm.label)}
 					<li class="p-4 flex items-center gap-3">
 						<Icon icon="ri:error-warning-line" class="text-warning flex-none" />
@@ -348,14 +337,17 @@
 					</li>
 				{/each}
 			</ul>
+			</Card>
+			</Section>
 		{/if}
 
 		<!-- ── Feeds ───────────────────────────────────────────────────────── -->
 		{#if device.source_id}
-			{@render heading("Feeds", "as your server heard it")}
-			<div class="rounded-lg border border-border bg-surface p-4 text-sm text-foreground">
+			<Section title="Feeds" note="as your server heard it">
+			<Card class="text-sm text-foreground">
 				Sends as <span class="font-mono text-foreground-muted">{device.source_id}</span>
-			</div>
+			</Card>
+			</Section>
 		{/if}
 
 		<!-- ── The honest sentence, where a panel would otherwise look broken ── -->

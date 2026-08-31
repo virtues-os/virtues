@@ -64,7 +64,7 @@
 			startPolling();
 		} catch {
 			accountError =
-				"Couldn't reach the Virtues billing service. Check the box's internet connection and try again.";
+				"Couldn't reach the Virtues billing service. Check your server's internet connection and try again.";
 		}
 	}
 	async function startLogin() {
@@ -84,7 +84,7 @@
 				accountError = "Too many attempts for that email — try again in an hour.";
 		} catch {
 			accountError =
-				"Couldn't reach the Virtues billing service. Check the box's internet connection and try again.";
+				"Couldn't reach the Virtues billing service. Check your server's internet connection and try again.";
 		}
 	}
 
@@ -108,7 +108,7 @@
 		</summary>
 		<div class="space-y-3 px-4 pb-4 text-foreground-muted">
 			<div>
-				<div class="mb-1 font-medium text-foreground">Stays on your box</div>
+				<div class="mb-1 font-medium text-foreground">Stays on your server</div>
 				<p>Every message, photo, file, note, and prompt. Your encryption keys. Anything semantic about who you are.</p>
 			</div>
 			<div>

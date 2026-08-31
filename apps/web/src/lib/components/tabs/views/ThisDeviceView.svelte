@@ -28,7 +28,7 @@
      Swipe-back / the drawer are the ways out. -->
 <Page
 	title="This device"
-	description="What this phone collects, and whether it is reaching the box."
+	description="What this phone collects, and whether it is reaching your server."
 	padding="compact"
 >
 	<MobileDeviceScreen />

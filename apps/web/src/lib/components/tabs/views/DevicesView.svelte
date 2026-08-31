@@ -291,7 +291,7 @@
 		error={res.error}
 		onRetry={res.reload}
 		emptyIcon="ri:device-line"
-		emptyMessage="No paired devices — run `virtues pair` on the box to pair this browser, or click Add device above."
+		emptyMessage="No paired devices — run `virtues pair` on your server to pair this browser, or click Add device above."
 		loadingMessage="Loading devices..."
 		searchPlaceholder="Search devices..."
 		onRefresh={res.reload}

@@ -28,7 +28,7 @@
 			key: "location",
 			title: "Location",
 			icon: "ri:map-pin-line",
-			why: "Builds your timeline of places — even in the background, recorded on your box.",
+			why: "Builds your timeline of places — even in the background, recorded on your server.",
 			enableCmd: "plugin:location-probe|start_probe",
 			state: "off",
 		},

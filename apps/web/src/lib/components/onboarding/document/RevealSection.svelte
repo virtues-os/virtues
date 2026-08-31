@@ -230,7 +230,7 @@
 				</p>
 			{/if}
 		{:else if censusFailed}
-			<p class="ob-note">Couldn't count what's on the box just now.</p>
+			<p class="ob-note">Couldn't count what's on your server just now.</p>
 		{/if}
 
 		<!-- ② IN THEIR OWN WORDS, DISTILLED. The core the assistant carries —

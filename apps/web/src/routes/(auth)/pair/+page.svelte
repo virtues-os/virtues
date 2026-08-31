@@ -105,7 +105,7 @@
 
 			<ol class="space-y-3 pl-11">
 				<li>
-					<span class="text-foreground">From the box itself:</span>
+					<span class="text-foreground">From the server itself:</span>
 					run
 					<code
 						class="px-1.5 py-0.5 rounded bg-surface-alt border border-border text-xs">virtues pair</code
