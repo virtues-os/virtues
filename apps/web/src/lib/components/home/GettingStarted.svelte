@@ -20,6 +20,14 @@
 	the sidebar). Dismissals persist on the profile so the page sheds
 	identically on every glass. The one escape hatch is the hidden door at the
 	block's foot — the same tucked-away gesture onboarding's skip used to be.
+
+	TWO DRESSES, ONE COMPONENT. While the askers are open (sign-in,
+	introductions, connect) this IS the page — HomeView renders nothing else,
+	because a getting-started block sharing a screen with a nine-track day
+	chart of silence is a mess wearing two costumes. The `phase` binding tells
+	HomeView which dress is on: "focus" until the askers settle, "settled"
+	once only the quiet residuals (schedule, first day, interview, enrichment)
+	remain, "loading" while neither end has answered yet.
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
@@ -39,9 +47,19 @@
 	 *  but the door means "I want none of this" — so it goes too. */
 	const ALL_DISMISSIBLE = ["introductions", "connect", "interview", "applet", "learn", "first_day"];
 
+	let {
+		phase = $bindable("loading"),
+	}: {
+		/** Which dress the page wears — HomeView reads this, never sets it. */
+		phase?: "loading" | "focus" | "settled";
+	} = $props();
+
 	let profile = $state<Profile | null>(null);
 	let census = $state<Census | null>(null);
 	let dismissed = $state<string[]>([]);
+	/** Set even on failure — "couldn't read the profile" must not hold the
+	 *  whole of Home in the loading dress forever. */
+	let profileSettled = $state(false);
 	/** The Mac collector finishing fires before the next setup-state poll. */
 	let deviceReady = $state(false);
 
@@ -53,6 +71,8 @@
 			dismissed = profile.getting_started_dismissed ?? [];
 		} catch {
 			/* box briefly unreachable — sections that need the profile wait */
+		} finally {
+			profileSettled = true;
 		}
 	}
 
@@ -129,6 +149,15 @@
 			enrichment.length > 0,
 	);
 
+	// The page's dress. Open askers own the whole screen; quiet residuals
+	// share it with Home. Loading holds until both ends have answered once,
+	// so a first-run box never flashes Home's furniture before the focus
+	// dress lands.
+	const focus = $derived(showSignin || showIntro || showConnect);
+	$effect(() => {
+		phase = !store.loaded || !profileSettled ? "loading" : focus ? "focus" : "settled";
+	});
+
 	onMount(() => {
 		void loadProfile();
 		void loadCensus();
@@ -176,8 +205,15 @@
 </script>
 
 {#if anything}
-	<div class="gs" in:fade={{ duration: 200 }}>
-		<h2 class="kicker">getting started</h2>
+	<div class="gs" class:focus in:fade={{ duration: 200 }}>
+		{#if focus}
+			<!-- The Page heading already says "Getting started", so no kicker —
+			     that would stutter. The standfirst is the page's one line of
+			     framing; it leaves with the focus dress. -->
+			<p class="stand">A few things to set up, then the record takes over.</p>
+		{:else}
+			<h2 class="kicker">getting started</h2>
+		{/if}
 
 		{#if showSignin}
 			<section class="sec">
@@ -314,6 +350,18 @@
 	}
 
 	.sec { margin-bottom: clamp(28px, 4vh, 44px); }
+
+	/* The focus dress: this is the whole page, so the type and the air both
+	   grow — a screen with three things on it should not be set like a margin
+	   note. */
+	.stand {
+		font-family: var(--font-serif); font-size: 21px; line-height: 1.45;
+		color: var(--color-foreground); margin: 0 0 clamp(36px, 6vh, 64px); max-width: 30ch;
+	}
+	.gs.focus { padding-top: clamp(8px, 2vh, 24px); }
+	.gs.focus .sec { margin-bottom: clamp(40px, 7vh, 72px); }
+	.gs.focus .q { font-size: 20px; margin-bottom: 10px; }
+	.gs.focus .lede { font-size: 14px; }
 
 	/* The section's own line, in the voice the rest of Home speaks. */
 	.q {
