@@ -1,5 +1,5 @@
 <!--
-  This device — the iOS/iPadOS half of `devices/this`, the way ThisMacView is
+  This device — the iOS/iPadOS half of `devices/this`, the way DeviceView is
   the macOS half.
 
   Exists because MobileDeviceScreen used not to be route-driven at all: it
@@ -28,7 +28,7 @@
      Swipe-back / the drawer are the ways out. -->
 <Page
 	title="This device"
-	description="What this phone collects, and whether it is reaching the box."
+	description="What this phone collects, and whether it is reaching your server."
 	padding="compact"
 >
 	<MobileDeviceScreen />

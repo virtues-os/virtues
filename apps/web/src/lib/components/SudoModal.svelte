@@ -201,7 +201,7 @@
 			{:else if phase === "waiting"}
 				<div class="rounded-lg bg-surface-alt border border-border p-4 text-sm space-y-3">
 					<div>
-						<div class="font-medium text-foreground mb-1">Run this on the box:</div>
+						<div class="font-medium text-foreground mb-1">Run this on the server:</div>
 						<code
 							class="block px-3 py-2 rounded bg-surface border border-border font-mono text-xs"
 						>
@@ -234,7 +234,7 @@
 				</div>
 			{:else if phase === "denied"}
 				<ErrorState
-					title="Denied at the box"
+					title="Denied at the server"
 					message="The CLI confirmation was denied. The action was not performed."
 				/>
 				<div class="flex justify-end mt-4">

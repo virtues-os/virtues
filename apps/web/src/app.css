@@ -23,6 +23,31 @@
    =================================== */
 
 /* App shell background - gradient applied via inline style in layout */
+/* The one settings heading.
+ *
+ * Five settings views had four definitions of "a section heading": serif 19px
+ * beside sans 14px and 15px, weight 500 beside 600, `--foreground` beside
+ * `--foreground-muted`, and two spellings of the same custom property
+ * (`--foreground-muted` and `--color-foreground-muted`). None of that was
+ * chosen; it is what a copied shape turns into. Which one you met depended on
+ * which settings page you had opened.
+ *
+ * This is the label treatment `Section.svelte` renders, available as a class
+ * for views whose markup has not been restructured into that component yet.
+ * A settings heading is a LABEL — a category you scan past on the way to a
+ * value — not a title you stop and read. Reading surfaces (the wiki pages,
+ * narrative identity) keep their own serif voice deliberately: they ARE meant
+ * to be read, and their `.section-title` is untouched.
+ */
+.settings-label {
+	font-size: 0.75rem;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--color-foreground-subtle);
+	margin: 0 0 0.5rem;
+}
+
 .app-shell {
 	background-attachment: fixed;
 	background-blend-mode: multiply;

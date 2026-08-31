@@ -9,18 +9,20 @@
 		     visible in the Tauri webview, where there's no browser chrome to
 		     hide behind. Both values are written by applyTheme().
 
-		     The fallback tracks the DEFAULT theme — Pemberley, #FFFFFF, which
-		     is also what :root carries, so the two agree. Only a first run
-		     reaches this line (afterwards localStorage has the real value), so
-		     getting it wrong means every new box flashes one colour on its very
-		     first paint and then settles to another. Keep this in step with
-		     virtues-registry DEFAULT_THEME. -->
+		     The fallback tracks the DEFAULT theme — Oxford, #FDFCF9. That is
+		     NOT what :root carries (:root is Pemberley white), so a first run
+		     paints this colour and only settles once the profile delivers the
+		     data-theme attribute. Only a first run reaches this line
+		     (afterwards localStorage has the real value), so getting it wrong
+		     means every new box flashes one colour on its very first paint and
+		     then settles to another. Keep this in step with virtues-registry
+		     DEFAULT_THEME. -->
 		<script>
 			(function () {
 				try {
 					var t = localStorage.getItem("virtues-theme");
 					if (t) document.documentElement.setAttribute("data-theme", t);
-					var bg = localStorage.getItem("virtues-theme-bg") || "#FFFFFF";
+					var bg = localStorage.getItem("virtues-theme-bg") || "#FDFCF9";
 					document.documentElement.style.backgroundColor = bg;
 				} catch (e) {
 					/* private mode / storage disabled — the stylesheet still wins */

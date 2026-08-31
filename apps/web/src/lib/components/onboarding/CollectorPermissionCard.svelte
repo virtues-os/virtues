@@ -116,7 +116,7 @@
 		<p class="text-sm text-foreground-muted">
 			Open the <strong>Virtues desktop app</strong> on this Mac to let it remember
 			what happens here — the docs you open, the people you message, your calendar.
-			It all stays on your box.
+			It all stays on your server.
 		</p>
 	</div>
 {:else}
@@ -179,7 +179,7 @@
 					/>
 					<div class="flex-1">
 						<span class="text-foreground">Accessibility</span>
-						<span class="text-foreground-subtle">— what's on your screen, stays on your box</span>
+						<span class="text-foreground-subtle">— what's on your screen, stays on your server</span>
 						{#if !status.hasAccessibility}
 							<button
 								class="text-xs text-primary hover:underline mt-1 block"

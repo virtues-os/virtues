@@ -117,11 +117,11 @@
 	const conn = $derived.by(() => {
 		if (!reach) return { label: "Checking…", sub: "", tone: "idle" };
 		if (!reach.paired)
-			return { label: "Not paired", sub: "Pair this phone to your box to sync", tone: "off" };
+			return { label: "Not paired", sub: "Pair this phone to your server to sync", tone: "off" };
 		if (reach.session === "rejected")
 			return { label: "Access rejected", sub: "Re-pair this phone", tone: "off" };
 		if (!reach.reachable)
-			return { label: "Can’t reach your box", sub: "Paired, but offline right now", tone: "off" };
+			return { label: "Can’t reach your server", sub: "Paired, but offline right now", tone: "off" };
 		// Reachable — show HOW we're connected.
 		const via =
 			reach.path === "direct"
@@ -129,7 +129,7 @@
 				: reach.path === "relay"
 					? "Via relay"
 					: "Connected";
-		return { label: "Connected to your box", sub: via, tone: "on" };
+		return { label: "Connected to your server", sub: via, tone: "on" };
 	});
 
 	// Collapse consecutive fixes at the same rounded coord + state into one run,

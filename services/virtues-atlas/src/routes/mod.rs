@@ -62,9 +62,6 @@ pub struct RelayPolicy {
     /// The relay URL boxes home on and clients dial through, e.g.
     /// `https://relay.virtues.ch`. Empty → `/relay/config` returns 503.
     pub relay_url: String,
-    /// Shared bearer that iroh-relay presents to `/relay/authorize`
-    /// (`access.http.bearer_token`). Empty → the callout is unauthenticated (dev).
-    pub relay_auth_secret: String,
 }
 
 /// Shared route state for atlas.

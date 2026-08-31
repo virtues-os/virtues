@@ -53,7 +53,15 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import GettingStarted from "$lib/components/home/GettingStarted.svelte";
 	import DayDeck from "$lib/components/home/DayDeck.svelte";
+
+	// Which page this is — written by GettingStarted, read here. While any
+	// getting-started section remains ("focus"), those sections ARE the page:
+	// no subtitle, no day stepper, no deck of silent tracks sharing the
+	// screen with them. Home's own furniture exists only at "settled", when
+	// getting started has retired entirely.
+	let gsPhase = $state<"loading" | "focus" | "settled">("loading");
 	import DayGround from "$lib/components/home/DayGround.svelte";
 	import DayNovelty from "$lib/components/home/DayNovelty.svelte";
 	import PlaceAsk from "$lib/components/home/PlaceAsk.svelte";
@@ -299,7 +307,7 @@
 			notes = [...notes, saved];
 			keepText = "";
 		} catch {
-			keepError = "That didn't save. The box may be offline — try again.";
+			keepError = "That didn't save. Your server may be offline — try again.";
 		} finally {
 			keeping = false;
 		}
@@ -321,23 +329,36 @@
 	}
 </script>
 
-<Page title="Home" description={subtitle} maxWidth="wide">
+<Page
+	title={gsPhase === "focus" ? "Getting started" : "Home"}
+	description={gsPhase === "settled" ? subtitle : undefined}
+	maxWidth="wide"
+>
 	{#snippet actions()}
-		<!-- The two adjacent days, as a stepper: they are neighbours on one axis,
-		     which a pair of loose links did not say. -->
-		<div class="days" role="group" aria-label="Go to a day">
-			<button type="button" onclick={() => open(`/day/day_${yesterdayDate}`, "Yesterday")}>
-				<Icon icon="ri:arrow-left-s-line" width="15" />
-				Yesterday
-			</button>
-			<button type="button" class="now" onclick={() => open(`/day/day_${todayDate}`, "Today")}>
-				Today
-				<Icon icon="ri:arrow-right-s-line" width="15" />
-			</button>
-		</div>
+		{#if gsPhase === "settled"}
+			<!-- The two adjacent days, as a stepper: they are neighbours on one axis,
+			     which a pair of loose links did not say. -->
+			<div class="days" role="group" aria-label="Go to a day">
+				<button type="button" onclick={() => open(`/day/day_${yesterdayDate}`, "Yesterday")}>
+					<Icon icon="ri:arrow-left-s-line" width="15" />
+					Yesterday
+				</button>
+				<button type="button" class="now" onclick={() => open(`/day/day_${todayDate}`, "Today")}>
+					Today
+					<Icon icon="ri:arrow-right-s-line" width="15" />
+				</button>
+			</div>
+		{/if}
 	{/snippet}
 
 	<div class="body">
+		<!-- First run: the getting-started page, whole and alone, each section
+		     retiring as it is answered or as its promise lands. Renders nothing
+		     on a settled box — see GettingStarted.svelte and
+		     agents/plan/getting-started-plan.md. -->
+		<div class="rv"><GettingStarted bind:phase={gsPhase} /></div>
+
+		{#if gsPhase === "settled"}
 		<!-- The box speaks — today's rhythm against the trailing twelve weeks —
 		     then, if it wrote one, quotes itself. -->
 		<div class="rv">
@@ -470,6 +491,7 @@
 				{/if}
 			</div>
 		</section>
+		{/if}
 	</div>
 </Page>
 

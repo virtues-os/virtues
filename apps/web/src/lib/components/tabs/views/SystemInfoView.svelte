@@ -2,6 +2,7 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import NetworkSection from "$lib/components/settings/NetworkSection.svelte";
 	import { apiGet } from "$lib/api/client";
 	import { onMount, onDestroy } from "svelte";
 	import { getBackupStatus } from "$lib/api/client";
@@ -241,9 +242,19 @@
 			<Icon icon="ri:loader-4-line" width="20" class="spin" />
 		</div>
 	{:else}
+		<!--
+		  ORDER IS THE NARRATIVE. Four questions, asked the way an operator asks
+		  them: is it healthy (vitals, thermal, service) · what is it doing
+		  (processes, inference) · what is it holding (storage, backup) · what is
+		  it (host, least consulted, so last).
+		
+		  It used to run vitals, inference, backup, storage, host, processes,
+		  thermal, service — which is not an order, and left thermal and service
+		  (both health) separated from vitals by five unrelated chapters.
+		-->
 		<!-- ─── VITALS ─────────────────────────────────────────────────── -->
 		<section class="chapter">
-			<h2 class="chapter-title">Vitals</h2>
+			<h2 class="settings-label">Vitals</h2>
 			<div class="vitals-grid">
 				{@render vital(
 					"Processor",
@@ -306,10 +317,95 @@
 			{/if}
 		</section>
 
+		<!-- ─── THERMAL (detail) ───────────────────────────────────────── -->
+		{#if detail && t?.thermal?.length}
+			<section class="chapter">
+				<h2 class="settings-label">Thermal</h2>
+				<div class="cols">
+					<div class="col">
+						{#each t.thermal as s}
+							{@render ledger(s.label, `${s.temp_c.toFixed(1)} °C`, true, pressure(s.temp_c))}
+						{/each}
+					</div>
+					<div class="col">
+						{#if t.gpu?.temp_c != null}{@render ledger("GPU temp", `${t.gpu.temp_c.toFixed(1)} °C`, true)}{/if}
+						{#if t.gpu?.power_mw != null}{@render ledger("GPU power", `${(t.gpu.power_mw / 1000).toFixed(2)} W`, true)}{/if}
+						{#if t.gpu?.mem_total}{@render ledger("GPU memory", `${bytesStr(t.gpu.mem_used ?? 0)} / ${bytesStr(t.gpu.mem_total)}`, true)}{/if}
+					</div>
+				</div>
+			</section>
+		{/if}
+
+		<!-- ─── SERVICE ────────────────────────────────────────────────── -->
+		<!-- Was "About", and it carried the three version lines. Those moved to
+		     Settings → Software, which is now the one place that answers "what
+		     am I running" — they were being told here *and* by the update
+		     panel that used to sit at the top of this same scroll. What stays
+		     is live: is the service healthy, is the database there, how much
+		     of the pool is in use. `Package` goes too — Software says it, with
+		     the channel and the build counter beside it, which is the version
+		     sentence that is actually true. -->
+		<section class="chapter">
+			<h2 class="settings-label">Service</h2>
+			<!-- Three facts, so ONE column rather than the two-column grid the
+			     other chapters use: three splits 2/1 whichever way you cut it,
+			     and a lone ledger row across from a pair reads as something
+			     failed to load. The half-width measure is unchanged, so the
+			     chapter still lines up with its neighbours. -->
+			<div class="cols">
+				<div class="col">
+					{@render ledger("Status", serverStatus, false, serverStatus === "healthy" ? "ok" : "crit")}
+					{@render ledger("Database", database, false, database === "connected" ? "ok" : "crit")}
+					{@render ledger("Pool", t?.pool ? `${t.pool.idle} idle / ${t.pool.size} total` : "—", true)}
+				</div>
+			</div>
+
+			{#if detail}
+				<button class="raw-toggle mono" onclick={() => (rawOpen = !rawOpen)}>
+					<Icon icon={rawOpen ? "ri:arrow-down-s-line" : "ri:arrow-right-s-line"} width="14" />
+					raw telemetry
+				</button>
+				{#if rawOpen}
+					<pre class="raw mono">{JSON.stringify(t, null, 2)}</pre>
+				{/if}
+			{/if}
+		</section>
+		<NetworkSection />
+
+		<!-- ─── PROCESSES (detail) ─────────────────────────────────────── -->
+		{#if detail && t?.processes?.length}
+			<section class="chapter">
+				<h2 class="settings-label">Processes</h2>
+				<table class="data-table proc mono">
+					<thead>
+						<tr>
+							<th class="rank">#</th>
+							<th>process</th>
+							<th class="num">pid</th>
+							<th class="num">cpu</th>
+							<th class="num">memory</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each t.processes as p, i}
+							<tr>
+								<td class="rank">{i + 1}</td>
+								<td class="pname">{p.name}</td>
+								<td class="num dim">{p.pid}</td>
+								<td class="num {pressure(p.cpu_pct)}">{p.cpu_pct.toFixed(1)}%</td>
+								<td class="num">{bytesStr(p.mem)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+				<div class="table-caption">top {t.processes.length} by memory</div>
+			</section>
+		{/if}
+
 		<!-- ─── INFERENCE ──────────────────────────────────────────────── -->
 		{#if t?.inference}
 			<section class="chapter">
-				<h2 class="chapter-title">Inference</h2>
+				<h2 class="settings-label">Inference</h2>
 				<div class="cols">
 					<div class="col">
 						{@render ledger("Accelerator", t.inference.accelerator, true)}
@@ -341,6 +437,30 @@
 			</section>
 		{/if}
 
+		<!-- ─── STORAGE ────────────────────────────────────────────────── -->
+		{#if t?.disks?.length}
+			<section class="chapter">
+				<h2 class="settings-label">Storage</h2>
+				<div class="drives">
+					{#each t.disks as d}
+						{@const usedPct = d.total ? Math.round(((d.total - d.available) / d.total) * 100) : 0}
+						<div class="drive">
+							<div class="drive-head">
+								<span class="drive-mount mono">{d.mount}</span>
+								<span class="drive-meta">{d.fs}{d.removable ? " · removable" : ""}</span>
+							</div>
+							<div class="meter tall"><div class="meter-fill {pressure(usedPct)}" style="width:{usedPct}%"></div></div>
+							<div class="drive-foot">
+								<span class="mono">{bytesStr(d.total - d.available)}</span> used
+								<span class="leader"></span>
+								<span class="mono">{bytesStr(d.available)}</span> free of <span class="mono">{bytesStr(d.total)}</span>
+							</div>
+						</div>
+					{/each}
+				</div>
+			</section>
+		{/if}
+
 		<!-- ─── BACKUP ─────────────────────────────────────────────────── -->
 		<!--
 			Deliberately above Storage: "how much would I lose" is a more urgent
@@ -351,11 +471,11 @@
 		-->
 		{#if backup}
 			<section class="chapter">
-				<h2 class="chapter-title">Backup</h2>
+				<h2 class="settings-label">Backup</h2>
 				<div class="cols">
 					<div class="col">
 						{#if backup.state === "none"}
-							{@render ledger("Off-box copies", "none", false, "crit")}
+							{@render ledger("Off-server copies", "none", false, "crit")}
 						{:else}
 							{@render ledger(
 								"Last backup",
@@ -378,7 +498,7 @@
 				</div>
 				{#if backup.state === "none"}
 					<p class="note">
-						This box holds one copy of its data. Register a drive with
+						This server holds one copy of its data. Register a drive with
 						<code>virtues volumes add &lt;path&gt;</code>.
 					</p>
 				{:else if backup.volumes.some((v) => v.last_error)}
@@ -389,30 +509,6 @@
 			</section>
 		{/if}
 
-		<!-- ─── STORAGE ────────────────────────────────────────────────── -->
-		{#if t?.disks?.length}
-			<section class="chapter">
-				<h2 class="chapter-title">Storage</h2>
-				<div class="drives">
-					{#each t.disks as d}
-						{@const usedPct = d.total ? Math.round(((d.total - d.available) / d.total) * 100) : 0}
-						<div class="drive">
-							<div class="drive-head">
-								<span class="drive-mount mono">{d.mount}</span>
-								<span class="drive-meta">{d.fs}{d.removable ? " · removable" : ""}</span>
-							</div>
-							<div class="meter tall"><div class="meter-fill {pressure(usedPct)}" style="width:{usedPct}%"></div></div>
-							<div class="drive-foot">
-								<span class="mono">{bytesStr(d.total - d.available)}</span> used
-								<span class="leader"></span>
-								<span class="mono">{bytesStr(d.available)}</span> free of <span class="mono">{bytesStr(d.total)}</span>
-							</div>
-						</div>
-					{/each}
-				</div>
-			</section>
-		{/if}
-
 		<!-- ─── HOST ───────────────────────────────────────────────────── -->
 		<!-- Was "Network & Devices", which claimed two subjects this page no
 		     longer owns: which Wi-Fi the box is on is Settings → Network, and
@@ -420,7 +516,7 @@
 		     also do something about it. What is left is the machine's own
 		     identity and the traffic crossing it — measurements, not settings. -->
 		<section class="chapter">
-			<h2 class="chapter-title">Host</h2>
+			<h2 class="settings-label">Host</h2>
 			<div class="cols">
 				<div class="col">
 					{@render ledger("Hostname", t?.host?.hostname ?? "—", true)}
@@ -445,89 +541,6 @@
 			{/if}
 		</section>
 
-		<!-- ─── PROCESSES (detail) ─────────────────────────────────────── -->
-		{#if detail && t?.processes?.length}
-			<section class="chapter">
-				<h2 class="chapter-title">Processes</h2>
-				<table class="data-table proc mono">
-					<thead>
-						<tr>
-							<th class="rank">#</th>
-							<th>process</th>
-							<th class="num">pid</th>
-							<th class="num">cpu</th>
-							<th class="num">memory</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each t.processes as p, i}
-							<tr>
-								<td class="rank">{i + 1}</td>
-								<td class="pname">{p.name}</td>
-								<td class="num dim">{p.pid}</td>
-								<td class="num {pressure(p.cpu_pct)}">{p.cpu_pct.toFixed(1)}%</td>
-								<td class="num">{bytesStr(p.mem)}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-				<div class="table-caption">top {t.processes.length} by memory</div>
-			</section>
-		{/if}
-
-		<!-- ─── THERMAL (detail) ───────────────────────────────────────── -->
-		{#if detail && t?.thermal?.length}
-			<section class="chapter">
-				<h2 class="chapter-title">Thermal</h2>
-				<div class="cols">
-					<div class="col">
-						{#each t.thermal as s}
-							{@render ledger(s.label, `${s.temp_c.toFixed(1)} °C`, true, pressure(s.temp_c))}
-						{/each}
-					</div>
-					<div class="col">
-						{#if t.gpu?.temp_c != null}{@render ledger("GPU temp", `${t.gpu.temp_c.toFixed(1)} °C`, true)}{/if}
-						{#if t.gpu?.power_mw != null}{@render ledger("GPU power", `${(t.gpu.power_mw / 1000).toFixed(2)} W`, true)}{/if}
-						{#if t.gpu?.mem_total}{@render ledger("GPU memory", `${bytesStr(t.gpu.mem_used ?? 0)} / ${bytesStr(t.gpu.mem_total)}`, true)}{/if}
-					</div>
-				</div>
-			</section>
-		{/if}
-
-		<!-- ─── SERVICE ────────────────────────────────────────────────── -->
-		<!-- Was "About", and it carried the three version lines. Those moved to
-		     Settings → Software, which is now the one place that answers "what
-		     am I running" — they were being told here *and* by the update
-		     panel that used to sit at the top of this same scroll. What stays
-		     is live: is the service healthy, is the database there, how much
-		     of the pool is in use. `Package` goes too — Software says it, with
-		     the channel and the build counter beside it, which is the version
-		     sentence that is actually true. -->
-		<section class="chapter">
-			<h2 class="chapter-title">Service</h2>
-			<!-- Three facts, so ONE column rather than the two-column grid the
-			     other chapters use: three splits 2/1 whichever way you cut it,
-			     and a lone ledger row across from a pair reads as something
-			     failed to load. The half-width measure is unchanged, so the
-			     chapter still lines up with its neighbours. -->
-			<div class="cols">
-				<div class="col">
-					{@render ledger("Status", serverStatus, false, serverStatus === "healthy" ? "ok" : "crit")}
-					{@render ledger("Database", database, false, database === "connected" ? "ok" : "crit")}
-					{@render ledger("Pool", t?.pool ? `${t.pool.idle} idle / ${t.pool.size} total` : "—", true)}
-				</div>
-			</div>
-
-			{#if detail}
-				<button class="raw-toggle mono" onclick={() => (rawOpen = !rawOpen)}>
-					<Icon icon={rawOpen ? "ri:arrow-down-s-line" : "ri:arrow-right-s-line"} width="14" />
-					raw telemetry
-				</button>
-				{#if rawOpen}
-					<pre class="raw mono">{JSON.stringify(t, null, 2)}</pre>
-				{/if}
-			{/if}
-		</section>
 	{/if}
 </Page>
 
@@ -604,20 +617,13 @@
 	}
 
 	/* ─── Chapters ─────────────────────────────────────────────────────── */
+
 	.chapter {
 		padding-top: 28px;
 		margin-top: 28px;
 		border-top: 1px solid var(--border-subtle, var(--border));
 	}
 	.chapter:first-of-type { border-top: none; margin-top: 8px; padding-top: 8px; }
-	.chapter-title {
-		font-family: var(--font-serif);
-		font-size: 19px;
-		font-weight: 500;
-		letter-spacing: 0.01em;
-		color: var(--foreground);
-		margin-bottom: 18px;
-	}
 
 	/* ─── Vitals grid ──────────────────────────────────────────────────── */
 	.vitals-grid {

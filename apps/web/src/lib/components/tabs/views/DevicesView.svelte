@@ -265,7 +265,7 @@
 -->
 <Page
 	title="Devices"
-	description="Every browser, app, and sensor paired with this box."
+	description="Every browser, app, and sensor paired with this server."
 	maxWidth="wide"
 >
 	{#snippet actions()}
@@ -274,6 +274,31 @@
 			Add device
 		</Button>
 	{/snippet}
+
+	<!-- ROW ZERO. The server is a participant like the rest, and the first one
+	     — but it is not a peer, so it sits above the grid rather than inside it:
+	     it cannot be revoked, it is what the others are paired TO, and its
+	     lifecycle is an upgrade rather than a pairing. "Software" was its own
+	     sidebar row until 2026-08-31, which meant the release a machine runs was
+	     described on a page that could not show you the machine. -->
+	<a
+		class="server-row"
+		href="/virtues/devices/server"
+		onclick={(e) => {
+			if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+			e.preventDefault();
+			windowShellStore.navigate("/virtues/devices/server", { label: "Settings" });
+		}}
+	>
+		<Icon icon="ri:server-line" class="text-foreground-muted flex-none" />
+		<span class="flex-1 min-w-0">
+			<span class="block text-sm text-foreground">This server</span>
+			<span class="block text-xs text-foreground-subtle mt-0.5">
+				the release it runs, and the channel it follows
+			</span>
+		</span>
+		<Icon icon="ri:arrow-right-s-line" width="16" class="text-foreground-subtle flex-none" />
+	</a>
 
 	<!--
 		The universal grid, not a hand-rolled list — Devices was the one list in
@@ -291,7 +316,7 @@
 		error={res.error}
 		onRetry={res.reload}
 		emptyIcon="ri:device-line"
-		emptyMessage="No paired devices — run `virtues pair` on the box to pair this browser, or click Add device above."
+		emptyMessage="No paired devices — run `virtues pair` on your server to pair this browser, or click Add device above."
 		loadingMessage="Loading devices..."
 		searchPlaceholder="Search devices..."
 		onRefresh={res.reload}
@@ -521,6 +546,18 @@
 {/if}
 
 <style>
+	/* Above the grid, not in it — see ROW ZERO. */
+	.server-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.875rem 1rem;
+		margin-bottom: 1rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.5rem;
+		background: var(--color-surface);
+		text-decoration: none;
+	}
 	.fix-btn {
 		display: inline-flex;
 		align-items: center;

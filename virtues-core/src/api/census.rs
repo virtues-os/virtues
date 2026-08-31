@@ -59,6 +59,10 @@ pub struct Census {
     /// the oldest date — a fact about the record, not a judgment about the
     /// people. Empty when there are no messages or no presentable names.
     pub earliest_names: Vec<String>,
+    /// The date of the first day the box actually narrated, so the client can
+    /// point at a real page ("your first day is written up") rather than guess.
+    /// None until SEGMENT→NARRATE has finished its first day.
+    pub first_day: Option<chrono::NaiveDate>,
 }
 
 /// What gets counted, in the order the reveal should read it.
@@ -101,7 +105,11 @@ const SOURCES: &[(&str, &str, &str, &str)] = &[
 const DERIVED: &[(&str, &str, &str)] = &[
     ("people", "people", "wiki_people"),
     ("places", "places", "wiki_places"),
-    ("days", "days written up", "wiki_days"),
+    // Narrated days only. A bare `wiki_days` count lies: `get_or_create_day`
+    // inserts a stub row from merely VIEWING a day page, so "days written up"
+    // once counted days nobody wrote up. `narrated_at` is the marker the
+    // narration queue itself trusts (day_summary.rs).
+    ("days", "days written up", "wiki_days WHERE narrated_at IS NOT NULL"),
 ];
 
 /// Count one table, tolerating its absence but never hiding a failure.
@@ -178,6 +186,23 @@ async fn earliest_names(pool: &PgPool) -> Vec<String> {
     })
 }
 
+/// The first narrated day's date. Absence quiet, failure loud — same rule as
+/// `count_of`, and same garnish status as `earliest_names`.
+async fn first_narrated_day(pool: &PgPool) -> Option<chrono::NaiveDate> {
+    sqlx::query_scalar::<_, Option<chrono::NaiveDate>>(
+        "SELECT min(date) FROM wiki_days WHERE narrated_at IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| {
+        if !matches!(&e, sqlx::Error::Database(d) if d.code().as_deref() == Some("42P01")) {
+            tracing::warn!(error = %e, "census: first-narrated-day query failed; omitting");
+        }
+    })
+    .ok()
+    .flatten()
+}
+
 pub async fn census(pool: &PgPool) -> Result<Census> {
     let mut lines: Vec<CensusLine> = Vec::new();
     let mut earliest: Option<chrono::DateTime<chrono::Utc>> = None;
@@ -224,6 +249,7 @@ pub async fn census(pool: &PgPool) -> Result<Census> {
         latest,
         span_days,
         earliest_names: earliest_names(pool).await,
+        first_day: first_narrated_day(pool).await,
     })
 }
 
