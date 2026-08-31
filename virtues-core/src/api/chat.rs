@@ -19,7 +19,6 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use chrono_tz::Tz;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -587,121 +586,6 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
     }
 }
 
-/// Build user context block for system prompt enrichment.
-///
-/// Queries lightweight indexed data (~20ms total) to give the LLM personal context:
-/// - Identity: occupation, employer, home location
-/// - Recent days: last 3 autobiographies (truncated)
-/// - Connected sources: active data source names
-/// The DB-backed prompt sections inside `<user_context>`, by name. One list,
-/// so assembly, the error policy, and the audit test all iterate the same
-/// registry rather than each hand-maintaining its own idea of what exists.
-pub(crate) const USER_CONTEXT_SECTIONS: &[&str] = &["identity", "recent_days", "connected_sources"];
-
-/// Build one named context section. `Ok(None)` = no data, section legitimately
-/// absent; `Err` = the section HAS data it failed to deliver.
-///
-/// Every arm is total: it either renders or errors — never `if let Ok` — and
-/// the caller applies one uniform policy to errors. That policy exists because
-/// this file shipped two sections that never rendered once (`recent_days`, a
-/// DATE decoded as String; `memory`, JSONB decoded as String) and the swallow
-/// meant nothing anywhere said so. A section that fails to render costs no
-/// error the user sees — the model just quietly knows less — so the log line
-/// is the only witness this failure mode can have.
-pub(crate) async fn build_context_section(
-    pool: &PgPool,
-    name: &str,
-) -> Result<Option<String>, sqlx::Error> {
-    match name {
-        "identity" => {
-            let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
-                r#"SELECT p.occupation, p.employer, wp.name
-                 FROM app_user_profile p
-                 LEFT JOIN wiki_places wp ON p.home_place_id = wp.id
-                 WHERE p.id = '00000000-0000-0000-0000-000000000001'"#,
-            )
-            .fetch_optional(pool)
-            .await?;
-            let Some(row) = row else { return Ok(None) };
-            let mut parts = Vec::new();
-            if let (Some(occ), Some(emp)) = (&row.0, &row.1) {
-                parts.push(format!("{} at {}", occ, emp));
-            } else if let Some(occ) = &row.0 {
-                parts.push(occ.clone());
-            }
-            if let Some(place) = &row.2 {
-                parts.push(format!("Lives in {}", place));
-            }
-            Ok((!parts.is_empty())
-                .then(|| format!("<identity>{}</identity>", parts.join(". "))))
-        }
-        "recent_days" => {
-            // `date::text` because the column is a Postgres DATE and this
-            // decodes into String. Without the cast sqlx errors — which is the
-            // decode failure that kept this section out of every prompt from
-            // the day it shipped until 2026-08-01.
-            let rows = sqlx::query_as::<_, (String, Option<String>)>(
-                r#"SELECT date::text, prose FROM wiki_day_prose
-                 WHERE prose IS NOT NULL
-                 ORDER BY date DESC LIMIT 3"#,
-            )
-            .fetch_all(pool)
-            .await?;
-            let day_lines: Vec<String> = rows
-                .iter()
-                .filter_map(|(date, auto)| {
-                    let text = auto.as_deref()?;
-                    let truncated = if text.chars().count() > 300 {
-                        format!("{}...", text.chars().take(300).collect::<String>())
-                    } else {
-                        text.to_string()
-                    };
-                    Some(format!("{date}: {truncated}"))
-                })
-                .collect();
-            Ok((!day_lines.is_empty())
-                .then(|| format!("<recent_days>\n{}\n</recent_days>", day_lines.join("\n"))))
-        }
-        "connected_sources" => {
-            let rows = sqlx::query_as::<_, (String,)>(
-                "SELECT name FROM credentials WHERE status = 'active' ORDER BY name",
-            )
-            .fetch_all(pool)
-            .await?;
-            let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
-            Ok((!names.is_empty())
-                .then(|| format!("<connected_sources>{}</connected_sources>", names.join(", "))))
-        }
-        other => {
-            tracing::warn!("[chat] unknown context section requested: {other}");
-            Ok(None)
-        }
-    }
-}
-
-async fn build_user_context(pool: &PgPool, user_name: &str) -> Option<String> {
-    let mut sections = Vec::new();
-    for name in USER_CONTEXT_SECTIONS {
-        match build_context_section(pool, name).await {
-            Ok(Some(body)) => sections.push(body),
-            Ok(None) => {}
-            // One policy for every section, present and future: an error is a
-            // section with data it failed to deliver, and it must be audible.
-            Err(e) => tracing::warn!("[chat] {name} omitted from the prompt: {e}"),
-        }
-    }
-
-    if sections.is_empty() {
-        None
-    } else {
-        Some(format!(
-            "\n\n<user_context>\nBackground context about {}. Reference when relevant; do not recite unprompted.\n{}\n</user_context>",
-            user_name,
-            sections.join("\n")
-        ))
-    }
-}
-
 /// The rules block — `wiki_rules`, grouped by kind.
 ///
 /// THIS TABLE WAS WRITTEN AND NEVER READ. From 0101 until now, `wiki_rules` (and
@@ -906,42 +790,22 @@ async fn build_system_prompt_blocks(
                 Some(out)
             }),
         },
-        // Current date/time for temporal awareness.
+        // The computed present — clock, place, today's spine, calendar,
+        // recent people (with entity ids), live threads, last night's sleep,
+        // narrated recent days, connected sources. Deterministic, SQL-only,
+        // budgeted by fixed caps; the quarter-hour clock is computed ONCE and
+        // every line derives from the same instant. Replaces the old
+        // <datetime> + <user_context> pair (formula slice 4).
         Block {
-            meta: BlockMeta { tag: "datetime", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Quantized },
+            meta: BlockMeta { tag: "circumstances", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Quantized },
             body: Box::pin(async move {
-                // Floored to the quarter hour, and SAID to be — honest, and
-                // cache-honest too: a minute-granular clock re-tokenizes the
-                // whole tail every turn (0% provider-cache hits documented in
-                // the wild), while a 15-minute floor keeps consecutive
-                // tool-loop turns byte-identical through this block. A turn
-                // that genuinely needs the second hand has sql_query.
                 let now = Utc::now();
-                let floored = now - chrono::Duration::minutes(i64::from(now.format("%M").to_string().parse::<u32>().unwrap_or(0) % 15));
-                let (date_str, time_str) = match timezone.and_then(|t| t.parse::<Tz>().ok()) {
-                    Some(tz) => {
-                        let local = floored.with_timezone(&tz);
-                        (
-                            local.format("%A, %B %d, %Y").to_string(),
-                            local.format("%I:%M %p %Z").to_string(), // e.g., "7:15 PM CST"
-                        )
-                    }
-                    // No timezone, or an unparseable one: fall back to UTC.
-                    None => (
-                        floored.format("%A, %B %d, %Y").to_string(),
-                        floored.format("%H:%M UTC").to_string(),
-                    ),
-                };
-                Some(format!(
-                    "\n\n<datetime>\nToday is {}. Current time: about {} (to the quarter hour).\n</datetime>",
-                    date_str, time_str
-                ))
+                let floored = now
+                    - chrono::Duration::minutes(i64::from(
+                        now.format("%M").to_string().parse::<u32>().unwrap_or(0) % 15,
+                    ));
+                crate::api::circumstances::build_circumstances(pool, timezone, floored).await
             }),
-        },
-        // User context (identity, recent days, connected sources).
-        Block {
-            meta: BlockMeta { tag: "user_context", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Quantized },
-            body: Box::pin(async move { build_user_context(pool, user_name).await }),
         },
         // The active Notebook (room) as a salience lens: its name, catch-up
         // memo, and member URLs. This is the room the chat lives in.
@@ -2084,8 +1948,8 @@ mod tests {
         assert_eq!(tags.first(), Some(&"base"), "the fused head must render first");
         assert_eq!(tags.last(), Some(&"rules"), "rules must render last — nearest the conversation");
         assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
-        assert!(tags.contains(&"datetime"));
-        let expected = ["base", "precedence", "new_user", "memory", "datetime", "user_context", "active_notebook", "active_context", "rules"];
+        assert!(tags.contains(&"circumstances"));
+        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "active_notebook", "active_context", "rules"];
         let mut last = 0usize;
         for t in &tags {
             let pos = expected.iter().position(|e| e == t).expect("unknown block tag");
@@ -2093,7 +1957,7 @@ mod tests {
             last = pos;
         }
         // And the assembly is still one contiguous prompt, not fragments.
-        assert!(prompt.contains("<rules>") && prompt.contains("<datetime>"));
+        assert!(prompt.contains("<rules>") && prompt.contains("<circumstances>"));
     }
 
     #[test]
@@ -2248,66 +2112,3 @@ mod live_prompt_audit {
     }
 }
 
-/// Regression guard for the prompt sections that are assembled from database
-/// queries whose errors are non-fatal by design.
-///
-/// A section that fails to render costs nothing visible — no error reaches the
-/// user, the model simply knows less — so nothing catches it but a test that
-/// checks the section against the data it was built from. `<recent_days>` was
-/// absent from every prompt ever built, for a DATE/String decode mismatch, and
-/// went unnoticed exactly this way.
-///   cargo test -p virtues --lib api::chat::live_context_sections -- --ignored --nocapture
-#[cfg(test)]
-mod live_context_sections {
-    use sqlx::PgPool;
-
-    /// Per-section "has data" predicate — the ground truth each section's
-    /// rendering is checked against. Adding a section to
-    /// [`super::USER_CONTEXT_SECTIONS`] without adding its predicate here
-    /// fails the test, which is the point: the registry and the audit can't
-    /// drift apart silently.
-    async fn section_has_data(pool: &PgPool, name: &str) -> bool {
-        let sql = match name {
-            "identity" => {
-                "SELECT EXISTS(SELECT 1 FROM app_user_profile \
-                 WHERE COALESCE(occupation, '') <> '' OR home_place_id IS NOT NULL)"
-            }
-            "recent_days" => {
-                "SELECT EXISTS(SELECT 1 FROM wiki_day_prose WHERE prose IS NOT NULL)"
-            }
-            "connected_sources" => {
-                "SELECT EXISTS(SELECT 1 FROM credentials WHERE status = 'active')"
-            }
-            other => panic!("section {other} has no data predicate — add one here"),
-        };
-        sqlx::query_scalar(sql).fetch_one(pool).await.expect("predicate")
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn every_registered_section_renders_whenever_its_data_exists() {
-        let url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
-        let pool = PgPool::connect(&url).await.expect("dev database");
-
-        let ctx = super::build_user_context(&pool, "Tester").await.unwrap_or_default();
-        println!("user_context:\n{ctx}");
-
-        for name in super::USER_CONTEXT_SECTIONS {
-            let has_data = section_has_data(&pool, name).await;
-            let rendered = ctx.contains(&format!("<{name}>"));
-            println!("  {name:<20} data={has_data} rendered={rendered}");
-            if has_data {
-                assert!(
-                    rendered,
-                    "section {name} has data but did not reach the prompt \
-                     — the silent-section disease, again"
-                );
-            }
-            // A section rendering WITHOUT data is the inverse lie.
-            if !has_data {
-                assert!(!rendered, "section {name} rendered with no underlying data");
-            }
-        }
-    }
-}
