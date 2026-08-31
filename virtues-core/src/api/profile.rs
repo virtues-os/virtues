@@ -34,6 +34,9 @@ pub struct UpdateProfileRequest {
     pub theme: Option<String>,
     /// Timezone of the box's physical home location (IANA). See agents/record/timezone-model.md.
     pub home_timezone: Option<String>,
+    /// Getting-started sections dismissed from Home. The full array each time —
+    /// the client owns the merge, the box just remembers it.
+    pub getting_started_dismissed: Option<Vec<String>>,
 }
 
 /// Get the user's profile (singleton row)
@@ -80,6 +83,7 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     if request.onboarding_status.is_some()     { push("onboarding_status", &mut set_clauses, &mut next); }
     if request.theme.is_some()                 { push("theme", &mut set_clauses, &mut next); }
     if request.home_timezone.is_some()         { push("home_timezone", &mut set_clauses, &mut next); }
+    if request.getting_started_dismissed.is_some() { push("getting_started_dismissed", &mut set_clauses, &mut next); }
 
     if set_clauses.is_empty() {
         // No updates requested, just return current profile
@@ -135,6 +139,9 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.home_timezone {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.getting_started_dismissed {
         query_builder = query_builder.bind(v);
     }
 

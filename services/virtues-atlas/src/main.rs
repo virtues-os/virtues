@@ -88,7 +88,6 @@ async fn main() -> Result<()> {
         },
         relay: routes::RelayPolicy {
             relay_url: cfg.relay_url.clone(),
-            relay_auth_secret: cfg.relay_auth_secret.clone(),
         },
         resend_api_key: cfg.resend_api_key.clone(),
         allow_promotion_codes: cfg.allow_promotion_codes,

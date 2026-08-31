@@ -68,6 +68,10 @@ pub struct UserProfile {
     /// Timezone of the box's physical home location (IANA). Stable anchor +
     /// fallback floor — NOT the owner's current location. See agents/record/timezone-model.md.
     pub home_timezone: Option<String>,
+    /// Getting-started sections the owner dismissed from Home (section ids).
+    /// Dismissed means gone, not collapsed — the features stay reachable where
+    /// they permanently live. See agents/plan/getting-started-plan.md.
+    pub getting_started_dismissed: Vec<String>,
     // Audit
     pub created_at: Timestamp,
     pub updated_at: Timestamp,

@@ -140,7 +140,9 @@
 							{kind === "wallet_empty" || kind === "topup_disabled" ? "Add credits" : "Manage billing"}
 						</a>
 					{:else if kind === "reconnect" || kind === "subscription"}
-						<a href="/onboarding" class="usage-link">
+						<!-- The account gate lives on the getting-started page now,
+						     which shows itself at the app root while unsatisfied. -->
+						<a href="/" class="usage-link">
 							<Icon icon="ri:link" width="16" />
 							Reconnect subscription
 						</a>

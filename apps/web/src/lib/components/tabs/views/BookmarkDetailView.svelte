@@ -214,7 +214,7 @@
 			<!-- Everything below this line was written by a model, and is
 			     separated from the user's words above it on purpose. -->
 			<section class="block machine">
-				<h2>What the box made of it</h2>
+				<h2>What your server made of it</h2>
 
 				{#if ex.subject?.length}
 					<div class="row">

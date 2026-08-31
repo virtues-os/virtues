@@ -33,9 +33,12 @@
 		onConnected: () => void;
 		/** Called the moment the local Mac collector finishes (optimistic). */
 		onDeviceReady?: () => void;
+		/** Where an OAuth round-trip lands back. Home mounts this now, so the
+		 *  default is the app; the onboarding route no longer exists to return to. */
+		next?: string;
 	}
 
-	let { onConnected, onDeviceReady }: Props = $props();
+	let { onConnected, onDeviceReady, next = "/" }: Props = $props();
 
 	let catalog = $state<SourceCatalogItem[]>([]);
 	let credentials = $state<Credential[]>([]);
@@ -126,9 +129,9 @@
 
 	async function connect(source: SourceCatalogItem) {
 		err = null;
-		// A connect started here must land back here — the callback's default
-		// 302 into /sources dumps the person into the app mid-onboarding.
-		const intent = await connectIntent(source, { next: "/onboarding/sources" });
+		// A connect started here must land back where it started — the
+		// callback's default 302 into /sources loses the person's place.
+		const intent = await connectIntent(source, { next });
 		switch (intent.kind) {
 			case "pair":
 				pairDeviceType = intent.deviceType;

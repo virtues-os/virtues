@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { Page, Button, Input, Badge, SudoModal } from '$lib';
+	import { Button, Input, Badge, SudoModal } from '$lib';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatMicrosUSD, formatMicrosPrecise } from '$lib/utils/currency';
@@ -396,11 +396,12 @@
 	};
 </script>
 
-<Page title="Billing" description="Manage your subscription and payment method" maxWidth="wide">
+<!-- No <Page>: this is a SECTION of Plan now, not a page. See PlanView. -->
+<div class="space-y-8">
 
 		<!-- Subscription Status -->
 		<div class="border border-border rounded-lg p-6 mb-6">
-			<h2 class="text-lg font-medium text-foreground mb-4">Subscription</h2>
+			<h2 class="settings-label">Subscription</h2>
 			<div class="space-y-3">
 				<div class="flex justify-between items-center">
 					<span class="text-foreground-muted">Status</span>
@@ -433,7 +434,7 @@
 		{#if usage}
 			<div class="border border-border rounded-lg p-6 mb-6">
 				<div class="flex items-baseline justify-between mb-1">
-					<h2 class="text-lg font-medium text-foreground">Balance</h2>
+					<h2 class="settings-label">Balance</h2>
 					{#if renewsLabel}
 						<span class="text-xs text-foreground-muted">Renews {renewsLabel}</span>
 					{/if}
@@ -483,7 +484,7 @@
 		<!-- Connect subscription (device-authorization link flow) -->
 		{#if !isSubscribed}
 			<div class="border border-border rounded-lg p-6 mb-6">
-				<h2 class="text-lg font-medium text-foreground mb-2">Connect your subscription</h2>
+				<h2 class="settings-label">Connect your subscription</h2>
 				<p class="text-foreground-muted text-sm mb-4">
 					Link this box to your Virtues subscription to enable AI. Checkout happens
 					securely on Stripe — your box never sees a payment key.
@@ -542,7 +543,7 @@
 		<!-- Auto-top-up + BYO status — local box state, no virtues-api call -->
 		{#if !localLoading && local}
 			<div class="border border-border rounded-lg p-6 mb-6">
-				<h2 class="text-lg font-medium text-foreground mb-4">Wallet & top-up</h2>
+				<h2 class="settings-label">Wallet & top-up</h2>
 
 				<div class="flex items-center justify-between mb-3">
 					<div>
@@ -709,7 +710,7 @@
 
 		<!-- Manage Subscription -->
 		<div class="border border-border rounded-lg p-6 mb-6">
-			<h2 class="text-lg font-medium text-foreground mb-2">Payment</h2>
+			<h2 class="settings-label">Payment</h2>
 			<p class="text-foreground-muted text-sm mb-4">
 				Manage your payment method, view invoices, and change your plan through Stripe.
 			</p>
@@ -726,7 +727,7 @@
 				{portalLoading ? 'Opening...' : 'Manage Subscription'}
 			</button>
 		</div>
-</Page>
+</div>
 
 <!--
 	Endpoint URL, not a provider picker. There is no provider taxonomy: we
@@ -806,7 +807,7 @@
 	bind:show={showSudoSave}
 	action="change_byo_key"
 	title="Save BYO AI key"
-	description="Sensitive action — chat will route through this key instead of the Virtues wallet. Background AI still bills the wallet. Confirm at the box CLI."
+	description="Sensitive action — chat will route through this key instead of the Virtues wallet. Background AI still bills the wallet. Confirm at the server's CLI."
 	onApproved={performByoSave}
 />
 
@@ -814,6 +815,6 @@
 	bind:show={showSudoDelete}
 	action="change_byo_key"
 	title="Remove BYO AI key"
-	description="Sensitive action — chat will switch back to the Virtues wallet. Confirm at the box CLI."
+	description="Sensitive action — chat will switch back to the Virtues wallet. Confirm at the server's CLI."
 	onApproved={performByoDelete}
 />

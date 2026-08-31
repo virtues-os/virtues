@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 use crate::api::chat::UIPart;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::types::Timestamp;
 
 // ============================================================================
@@ -804,6 +804,23 @@ pub async fn generate_title(
     chat_id: String,
     messages: &[TitleMessage],
 ) -> Result<GenerateTitleResponse> {
+    // The narrative interview keeps its seeded name, and the id decides that
+    // — never the client (same doctrine as interview mode itself, see
+    // chat_handler). A generated title would ship the most private transcript
+    // on the box to a model to be summarised, and then print the summary in
+    // the sidebar: this chat had already renamed itself after the person's
+    // own childhood.
+    if chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID {
+        let title: String = sqlx::query_scalar("SELECT title FROM app_chats WHERE id = $1")
+            .bind(&chat_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Database(format!("read interview title: {e}")))?
+            // absent-ok: the error path is handled by the `?` above; this
+            // default only covers a chat that has no title yet.
+            .unwrap_or_else(|| "In your own words".to_string());
+        return Ok(GenerateTitleResponse { chat_id, title });
+    }
     // Get background model from assistant profile
     let background_model = crate::api::assistant_profile::get_background_model(pool).await?;
 
