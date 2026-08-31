@@ -154,13 +154,12 @@
 		return rows;
 	});
 
-	/** A step the person clicked forward, overriding the default. */
+	/** A step the person clicked forward, overriding the default. Done steps
+	 *  are choosable too — a sequence you cannot walk back through reads as a
+	 *  ratchet, and introductions or sources are worth reopening. */
 	let chosen = $state<StepId | null>(null);
-	/** The open step: chosen if still open, else the first not-done one. */
-	const active = $derived.by(() => {
-		if (chosen && steps.some((s) => s.id === chosen && !s.done)) return chosen;
-		return steps.find((s) => !s.done)?.id ?? null;
-	});
+	/** The open step: chosen, else the first not-done one. */
+	const active = $derived(chosen ?? steps.find((s) => !s.done)?.id ?? null);
 
 	const anything = $derived(steps.some((s) => !s.done));
 	$effect(() => {
@@ -213,12 +212,26 @@
 
 {#if anything}
 	<div class="gs" in:fade={{ duration: 200 }}>
+		<button
+			class="door"
+			class:expanded={doorExpanded}
+			onclick={doorClick}
+			onblur={() => (doorExpanded = false)}
+			aria-label="Skip getting started"
+		>
+			{#if doorExpanded}
+				<span in:fade={{ duration: 120 }}>Skip getting started →</span>
+			{:else}
+				<Icon icon="ri:door-open-line" width="14" />
+			{/if}
+		</button>
+
 		<ol class="steps">
 			{#each steps as s, i (s.id)}
 				<li class="step" class:done={s.done} class:active={s.id === active}>
 					<div class="line">
 						<span class="n mono">{i + 1}</span>
-						{#if !s.done && s.id !== active}
+						{#if s.id !== active}
 							<button class="t" type="button" onclick={() => (chosen = s.id)}>{s.title}</button>
 						{:else}
 							<span class="t">{s.title}</span>
@@ -234,16 +247,22 @@
 						{/if}
 					</div>
 
-					{#if s.id === active && !s.done}
+					{#if s.id === active}
 						<div class="body" in:fade={{ duration: 150 }}>
-							{#if s.id === "introductions"}
+							{#if s.id === "letter"}
+								<a class="link" href="/founders-letter">Read it again <span class="arw">→</span></a>
+							{:else if s.id === "introductions"}
 								<p class="lede">The few things it cannot learn by reading.</p>
 								<IntroductionsCard
 									ondone={() => {
 										void loadProfile();
 										void dismiss("introductions");
+										chosen = null;
 									}}
-									ondismiss={() => void dismiss("introductions")}
+									ondismiss={() => {
+										void dismiss("introductions");
+										chosen = null;
+									}}
 								/>
 							{:else if s.id === "connect"}
 								<p class="lede">What already holds your life — the box reads it from here on.</p>
@@ -252,9 +271,11 @@
 									onDeviceReady={() => (deviceReady = true)}
 									next="/"
 								/>
-								<button class="skip" type="button" onclick={() => void dismiss("connect")}>
-									Skip — sources stay available in Settings
-								</button>
+								{#if !s.done}
+									<button class="skip" type="button" onclick={() => void dismiss("connect")}>
+										Skip — sources stay available in Settings
+									</button>
+								{/if}
 							{:else if s.id === "signin"}
 								<p class="lede">
 									The models your box writes with are what the subscription pays for. Signing in
@@ -274,7 +295,9 @@
 									<button class="link" type="button" onclick={openInterview}>
 										Open the conversation <span class="arw">→</span>
 									</button>
-									<button class="skip" type="button" onclick={() => void dismiss("interview")}>Skip</button>
+									{#if !s.done}
+										<button class="skip" type="button" onclick={() => void dismiss("interview")}>Skip</button>
+									{/if}
 								</div>
 							{:else if s.id === "first_day"}
 								<p class="lede">
@@ -282,9 +305,15 @@
 									with, what the day was. The first page arrives tomorrow morning, and every
 									day after writes itself.
 								</p>
-								<button class="skip" type="button" onclick={() => void dismiss("first_day")}>
-									Don't wait for it here
-								</button>
+								{#if firstDay !== null}
+									<button class="link" type="button" onclick={() => openDay(firstDay)}>
+										Read {prettyDay(firstDay)} <span class="arw">→</span>
+									</button>
+								{:else if !s.done}
+									<button class="skip" type="button" onclick={() => void dismiss("first_day")}>
+										Don't wait for it here
+									</button>
+								{/if}
 							{:else if s.id === "further"}
 								<ul class="plain">
 									<li>
@@ -300,38 +329,28 @@
 										<span class="note">how all of this works</span>
 									</li>
 								</ul>
-								<button class="skip" type="button" onclick={() => void dismiss("further")}>
-									All set — take me to the app
-								</button>
+								{#if !s.done}
+									<button class="skip" type="button" onclick={() => void dismiss("further")}>
+										All set — take me to the app
+									</button>
+								{/if}
 							{/if}
 						</div>
 					{/if}
 				</li>
 			{/each}
 		</ol>
-
-		<button
-			class="door"
-			class:expanded={doorExpanded}
-			onclick={doorClick}
-			onblur={() => (doorExpanded = false)}
-			aria-label="Skip getting started"
-		>
-			{#if doorExpanded}
-				<span in:fade={{ duration: 120 }}>Skip getting started →</span>
-			{:else}
-				<Icon icon="ri:door-open-line" width="14" />
-			{/if}
-		</button>
 	</div>
 {/if}
 
 <style>
 	.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
-	.gs { position: relative; max-width: 640px; padding: clamp(4px, 1.5vh, 16px) 0 8px; }
+	/* Full width, so the door can sit at the page's right edge; the sequence
+	   itself keeps a reading measure. */
+	.gs { position: relative; padding: clamp(4px, 1.5vh, 16px) 0 8px; }
 
-	.steps { list-style: none; margin: 0; padding: 0; }
+	.steps { list-style: none; margin: 0; padding: 0; max-width: 640px; }
 
 	.step { border-top: 1px solid var(--color-border-subtle); }
 	.step:first-child { border-top: 0; }
@@ -387,9 +406,10 @@
 	.skip:hover { color: var(--color-foreground); }
 	.row .skip { margin-top: 0; }
 
-	/* The hidden door — same coat as the old dangerously-skip. */
+	/* The hidden door — same coat as the old dangerously-skip, top right and
+	   rightmost on the page, clear of the reading column. */
 	.door {
-		position: absolute; right: 0; bottom: -6px;
+		position: absolute; right: 0; top: clamp(4px, 1.5vh, 16px);
 		display: flex; align-items: center;
 		font-family: var(--font-mono); font-size: 11px;
 		color: var(--color-foreground-subtle); background: none; border: 0;
