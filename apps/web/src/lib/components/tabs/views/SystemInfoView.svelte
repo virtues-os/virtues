@@ -241,6 +241,31 @@
 			<Icon icon="ri:loader-4-line" width="20" class="spin" />
 		</div>
 	{:else}
+		<!-- The rest of the machine. Network and Display were sidebar rows until
+		     2026-08-31; they are the same subject as everything below — this
+		     server's own body — but each is a page rather than another chapter,
+		     because four chapters of screen settings appended to eight of
+		     telemetry is a scroll nobody reads to the end of. -->
+		<section class="chapter">
+			<h2 class="settings-label">Attached</h2>
+			<ul class="rounded-lg border border-border bg-surface divide-y divide-border">
+				<li>
+					<a class="door-row" href="/virtues/system/network">
+						<span class="door-label">Network</span>
+						<span class="door-hint">the network this server is on, and how to move it</span>
+						<Icon icon="ri:arrow-right-s-line" width="16" />
+					</a>
+				</li>
+				<li>
+					<a class="door-row" href="/virtues/system/display">
+						<span class="door-label">Display</span>
+						<span class="door-hint">the screen on this server, and what it shows</span>
+						<Icon icon="ri:arrow-right-s-line" width="16" />
+					</a>
+				</li>
+			</ul>
+		</section>
+
 		<!--
 		  ORDER IS THE NARRATIVE. Four questions, asked the way an operator asks
 		  them: is it healthy (vitals, thermal, service) · what is it doing
@@ -472,7 +497,7 @@
 				<div class="cols">
 					<div class="col">
 						{#if backup.state === "none"}
-							{@render ledger("Off-box copies", "none", false, "crit")}
+							{@render ledger("Off-server copies", "none", false, "crit")}
 						{:else}
 							{@render ledger(
 								"Last backup",
@@ -614,6 +639,26 @@
 	}
 
 	/* ─── Chapters ─────────────────────────────────────────────────────── */
+	.door-row {
+		display: flex;
+		align-items: baseline;
+		gap: 0.75rem;
+		padding: 0.875rem 1rem;
+		color: var(--color-foreground);
+		text-decoration: none;
+	}
+	.door-row:hover {
+		background: var(--color-surface-hover, transparent);
+	}
+	.door-label {
+		font-size: 0.875rem;
+	}
+	.door-hint {
+		flex: 1;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+	}
+
 	.chapter {
 		padding-top: 28px;
 		margin-top: 28px;

@@ -59,24 +59,19 @@ export const SETTINGS_MODE: SidebarMode = {
 		// console and a revoke-everything button on one scroll, and two of those
 		// duplicated chapters of the console below them. Three subjects, three
 		// doors — the machine, its connection, and the code it runs.
+		// System owns the machine itself and everything physically attached to
+		// it: its readings, the network it is on, the screen bolted to it.
+		// Network and Display were their own rows and are now pages UNDER this
+		// one (/virtues/system/network, /virtues/system/display) — one row in
+		// the sidebar, still a page each, because appending four chapters of
+		// screen settings to eight of telemetry makes a scroll nobody reads.
 		{ id: 'system', label: 'System', icon: 'ri:server-line', href: '/virtues/system' },
-		{ id: 'network', label: 'Network', icon: 'ri:wifi-line', href: '/virtues/network' },
-		{
-			id: 'software',
-			label: 'Software',
-			// A package, not a download. The point of naming this section
-			// "Software" rather than "Updates" was that it stays true when
-			// nothing is pending — a download-cloud glyph put the pending state
-			// back into the nav permanently, which is the thing the name avoids.
-			// (The remix icon is called `box-3`; unrelated to the old Box door.)
-			icon: 'ri:box-3-line',
-			href: '/virtues/software',
-		},
+		// Devices owns every participant, and the SERVER is the first of them.
+		// "Software" was its own row describing the release the server runs —
+		// which is a fact about a device, on a page that could not show you the
+		// device. Splitting them is what let a collector claim 1.0.0 next to an
+		// app claiming 1.0.25 with neither screen able to say which was wrong.
 		{ id: 'devices', label: 'Devices', icon: 'ri:device-line', href: '/virtues/devices' },
-		// The screen on the box itself. Under Devices but not IN it: the panel
-		// is part of the box's body, not a paired thing — it cannot be revoked,
-		// only tended.
-		{ id: 'display', label: 'Display', icon: 'ri:tv-2-line', href: '/virtues/display' },
 	],
 };
 
