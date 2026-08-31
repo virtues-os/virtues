@@ -1,34 +1,32 @@
 <!--
-	GettingStarted.svelte — Home's first-run state, as sections that retire.
+	GettingStarted.svelte — the page the app opens on until the record is set up.
 
-	Onboarding shrank to the founder's letter (2026-08-31); everything it used
-	to ask now lives here, because the payoff of connecting a life is
-	asynchronous — nothing kicks when a source connects, entities resolve on a
-	15-minute tick, the first narrated day lands the next morning. A flow the
-	person passes through once can only promise that; a page they return to
-	can show it. Design: agents/plan/getting-started-plan.md.
+	Onboarding shrank to the founder's letter (2026-08-31, /founders-letter);
+	everything it used to ask lives here, because the payoff of connecting a
+	life is asynchronous — nothing kicks when a source connects, entities
+	resolve on a 15-minute tick, the first narrated day lands the next morning.
+	A flow the person passes through once can only promise that; a page they
+	return to can show it. Design: agents/plan/getting-started-plan.md.
 
-	ONE RULE, NOT PER-SECTION JUDGMENT. Sections that ask (introductions,
-	connect, the interview, enrichment) retire when answered or when waved
-	away; sections that show (the schedule, the first day page) retire on
-	their own when their promise lands. There is no completion flag and no
-	mode switch — when every section here has retired, this component renders
-	nothing, and what remains is Home.
+	A NUMBERED SEQUENCE, ALL OF IT VISIBLE. The first build rendered floating
+	prose sections that individually vanished; on a half-finished box the
+	survivors read as disembodied fragments with no arc (struck 2026-08-31,
+	same day). Now the page is the whole list, 1 through N: done steps stay,
+	checked off; the first open step carries its body inline; any open step
+	can be brought forward by clicking its line. The page IS the progress
+	indicator, which is why it needs no other framing prose.
 
-	DISMISSED MEANS GONE, NOT COLLAPSED. No residue rows: the same asks stay
-	findable where they permanently live (Settings → Sources, the interview in
-	the sidebar). Dismissals persist on the profile so the page sheds
-	identically on every glass. The one escape hatch is the hidden door at the
-	block's foot — the same tucked-away gesture onboarding's skip used to be.
+	WHILE ANY STEP IS OPEN, THIS IS THE PAGE. HomeView renders nothing else —
+	no subtitle, no day stepper, no deck of silent tracks — until every step
+	is done or waved away; only then does Home exist. The `phase` binding
+	tells HomeView which page this is ("loading" holds until both ends have
+	answered once, so a first-run box never flashes Home's furniture).
 
-	WHILE ANY SECTION REMAINS, THIS IS THE PAGE. HomeView renders nothing
-	else — no subtitle, no day stepper, no deck — because a getting-started
-	block sharing a screen with a nine-track day chart of silence is a mess
-	wearing two costumes (seen live 2026-08-31; the "quiet residuals on top of
-	Home" middle state was built and struck the same day). The `phase` binding
-	tells HomeView which page this is: "focus" while anything here still
-	renders, "settled" once everything has retired and Home may exist,
-	"loading" while neither end has answered yet.
+	SKIPPED MEANS GONE FROM THE LIST'S DEMANDS, NOT FROM THE PRODUCT. A
+	skipped step counts as settled and shows as "skipped"; the same asks stay
+	findable where they permanently live (Settings → Sources, the interview
+	in the sidebar). Dismissals persist on the profile so the page reads the
+	same on every glass. The hidden door at the foot skips everything at once.
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
@@ -44,14 +42,13 @@
 	// Mirrors narrative_draft::INTERVIEW_CHAT_ID (and ChatView's copy).
 	const INTERVIEW_CHAT_ID = "chat_narrative_interview";
 
-	/** Every id the hidden door dismisses at once. `first_day` is a shower,
-	 *  but the door means "I want none of this" — so it goes too. */
-	const ALL_DISMISSIBLE = ["introductions", "connect", "interview", "applet", "learn", "first_day"];
+	/** What the hidden door skips at once — every step that can be. */
+	const ALL_DISMISSIBLE = ["introductions", "connect", "interview", "first_day", "further"];
 
 	let {
 		phase = $bindable("loading"),
 	}: {
-		/** Which dress the page wears — HomeView reads this, never sets it. */
+		/** Which page this is — HomeView reads this, never sets it. */
 		phase?: "loading" | "focus" | "settled";
 	} = $props();
 
@@ -59,7 +56,7 @@
 	let census = $state<Census | null>(null);
 	let dismissed = $state<string[]>([]);
 	/** Set even on failure — "couldn't read the profile" must not hold the
-	 *  whole of Home in the loading dress forever. */
+	 *  whole of Home in the loading state forever. */
 	let profileSettled = $state(false);
 	/** The Mac collector finishing fires before the next setup-state poll. */
 	let deviceReady = $state(false);
@@ -71,7 +68,7 @@
 			profile = await getProfile();
 			dismissed = profile.getting_started_dismissed ?? [];
 		} catch {
-			/* box briefly unreachable — sections that need the profile wait */
+			/* box briefly unreachable — steps that need the profile wait */
 		} finally {
 			profileSettled = true;
 		}
@@ -81,7 +78,7 @@
 		try {
 			census = await getCensus();
 		} catch {
-			/* same: the schedule simply doesn't advance this tick */
+			/* same: the first-day step simply doesn't advance this tick */
 		}
 	}
 
@@ -91,8 +88,8 @@
 
 	/**
 	 * Optimistic, but honest: revert on a failed write, so the page never
-	 * claims a dismissal the box doesn't hold — a section that reappears next
-	 * launch after being waved away reads as a nag with amnesia.
+	 * claims a skip the box doesn't hold — a step that reopens next launch
+	 * after being waved away reads as a nag with amnesia.
 	 */
 	async function dismiss(...ids: string[]) {
 		const before = dismissed;
@@ -107,68 +104,77 @@
 	// ---- the signals ----
 	const accountDone = $derived(store.setup.find((s) => s.id === "account")?.done ?? false);
 	const worldEnough = $derived(store.worldEnough || deviceReady);
-	const peopleLanded = $derived(
-		(census?.lines ?? []).some((l) => l.id === "people" || l.id === "places"),
-	);
 	const firstDay = $derived(census?.first_day ?? null);
 
-	// ---- the sections, each with its own "nothing left to say" ----
-	const showSignin = $derived(store.loaded && !store.accountSatisfied);
-	const showIntro = $derived(
-		profile !== null && !isDismissed("introductions") && !profile.preferred_name,
-	);
-	const showConnect = $derived(store.loaded && !isDismissed("connect") && !worldEnough);
-	/** Promises still out. Only speaks once something is connected — a box
-	 *  with nothing flowing has nothing arriving. */
-	const scheduleLines = $derived.by(() => {
-		if (!worldEnough || census === null) return [] as string[];
-		const lines: string[] = [];
-		if (!peopleLanded)
-			lines.push("People and places, worked out from the record — within the quarter hour.");
-		if (!firstDay)
-			lines.push("Your first day, written up — tomorrow morning. Every day after writes itself overnight.");
-		return lines;
+	// ---- the steps, in walking order ----
+	// `done` means settled: answered, arrived, or skipped. The sign-in step
+	// exists only where an account is the box's business at all — linked
+	// already (shown done), or an appliance still waiting on one. A DIY box
+	// that satisfies setup without an account never sees the line.
+	type StepId = "letter" | "introductions" | "connect" | "signin" | "interview" | "first_day" | "further";
+	const steps = $derived.by(() => {
+		const rows: { id: StepId; title: string; done: boolean; state: string }[] = [
+			{ id: "letter", title: "The founder's letter", done: true, state: "read" },
+			{
+				id: "introductions",
+				title: "Introductions",
+				done: !!profile?.preferred_name || isDismissed("introductions"),
+				state: isDismissed("introductions") && !profile?.preferred_name ? "skipped" : "done",
+			},
+			{
+				id: "connect",
+				title: "Connect your world",
+				done: worldEnough || isDismissed("connect"),
+				state: isDismissed("connect") && !worldEnough ? "skipped" : "done",
+			},
+		];
+		if (accountDone || !store.accountSatisfied) {
+			rows.push({ id: "signin", title: "Sign in to Virtues", done: accountDone, state: "done" });
+		}
+		rows.push(
+			{
+				id: "interview",
+				title: "Your first conversation",
+				done: store.done("narrative_identity_ready") || isDismissed("interview"),
+				state: isDismissed("interview") && !store.done("narrative_identity_ready") ? "skipped" : "done",
+			},
+			{
+				id: "first_day",
+				title: "Your first day, written up",
+				done: firstDay !== null || isDismissed("first_day"),
+				state: firstDay !== null ? "done" : "skipped",
+			},
+			{
+				id: "further",
+				title: "Go further",
+				done: isDismissed("further"),
+				state: "done",
+			},
+		);
+		return rows;
 	});
-	const showFirstDay = $derived(firstDay !== null && !isDismissed("first_day"));
-	const showInterview = $derived(
-		store.loaded && !isDismissed("interview") && !store.done("narrative_identity_ready"),
-	);
-	const enrichment = $derived(
-		[
-			{ id: "applet", label: "Create your first applet", note: "a small program your box runs for you", route: "/applets" },
-			{ id: "learn", label: "Read the manual", note: "how all of this works", href: "https://virtues.com/docs" },
-		].filter((r) => !isDismissed(r.id)),
-	);
 
-	const anything = $derived(
-		showSignin ||
-			showIntro ||
-			showConnect ||
-			scheduleLines.length > 0 ||
-			showFirstDay ||
-			showInterview ||
-			enrichment.length > 0,
-	);
+	/** A step the person clicked forward, overriding the default. */
+	let chosen = $state<StepId | null>(null);
+	/** The open step: chosen if still open, else the first not-done one. */
+	const active = $derived.by(() => {
+		if (chosen && steps.some((s) => s.id === chosen && !s.done)) return chosen;
+		return steps.find((s) => !s.done)?.id ?? null;
+	});
 
-	// Anything at all on this page and the page is this. The askers only
-	// steer the standfirst's copy. Loading holds until both ends have
-	// answered once, so a first-run box never flashes Home's furniture
-	// before the focus page lands.
-	const askersOpen = $derived(showSignin || showIntro || showConnect);
-	const focus = $derived(anything);
+	const anything = $derived(steps.some((s) => !s.done));
 	$effect(() => {
-		phase = !store.loaded || !profileSettled ? "loading" : focus ? "focus" : "settled";
+		phase = !store.loaded || !profileSettled ? "loading" : anything ? "focus" : "settled";
 	});
 
 	onMount(() => {
 		void loadProfile();
 		void loadCensus();
-		// The schedule's promises land on the box's own clock (entity resolver
-		// ~15 min, narration overnight); a 60s beat is plenty, and a hidden tab
-		// asks for nothing.
+		// The first day lands on the box's own clock (narration runs at the
+		// maintenance hour); a 60s beat is plenty, and a hidden tab asks for
+		// nothing.
 		const t = setInterval(() => {
-			if (document.hidden) return;
-			if (scheduleLines.length === 0 && (firstDay !== null || !worldEnough)) return;
+			if (document.hidden || firstDay !== null) return;
 			void loadCensus();
 		}, 60_000);
 		return () => clearInterval(t);
@@ -176,13 +182,12 @@
 
 	function openDay(date: string) {
 		windowShellStore.openTabFromRoute(`/day/day_${date}`, { label: "Your first day" });
-		void dismiss("first_day");
 	}
 	function openInterview() {
 		windowShellStore.openTabFromRoute(`/chat/${INTERVIEW_CHAT_ID}`, { label: "Interview" });
 	}
-	function openRoute(route: string) {
-		windowShellStore.openTabFromRoute(route);
+	function openApplets() {
+		windowShellStore.openTabFromRoute("/applets");
 	}
 
 	/** "YYYY-MM-DD" → "August 30". Split-and-construct, not `new Date(str)` —
@@ -192,9 +197,9 @@
 		return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "long", day: "numeric" });
 	}
 
-	// The hidden door: first click names it, second click acts. Same gesture
-	// onboarding's dangerously-skip used — devs and power users try the one
-	// unexplained icon; everyone else shouldn't read an invitation to leave.
+	// The hidden door: first click names it, second click acts. Devs and
+	// power users try the one unexplained icon; everyone else shouldn't read
+	// an invitation to leave.
 	let doorExpanded = $state(false);
 	function doorClick() {
 		if (doorExpanded) {
@@ -208,135 +213,112 @@
 
 {#if anything}
 	<div class="gs" in:fade={{ duration: 200 }}>
-		<!-- The Page heading already says "Getting started", so no kicker —
-		     that would stutter. The standfirst is the page's one line of
-		     framing, and it follows the work: setup left to do, or the record
-		     already under way. -->
-		<p class="stand">
-			{askersOpen
-				? "A few things to set up, then the record takes over."
-				: "The record is under way. What remains here retires on its own."}
-		</p>
+		<ol class="steps">
+			{#each steps as s, i (s.id)}
+				<li class="step" class:done={s.done} class:active={s.id === active}>
+					<div class="line">
+						<span class="n mono">{i + 1}</span>
+						{#if !s.done && s.id !== active}
+							<button class="t" type="button" onclick={() => (chosen = s.id)}>{s.title}</button>
+						{:else}
+							<span class="t">{s.title}</span>
+						{/if}
+						{#if s.done}
+							{#if s.id === "first_day" && firstDay !== null}
+								<button class="state link" type="button" onclick={() => openDay(firstDay)}>
+									Read {prettyDay(firstDay)} <span class="arw">→</span>
+								</button>
+							{:else}
+								<span class="state mono">{s.state}</span>
+							{/if}
+						{/if}
+					</div>
 
-		{#if showSignin}
-			<section class="sec">
-				<h3 class="q">Sign in to Virtues.</h3>
-				<p class="lede">
-					The models your box writes with are what the subscription pays for. Signing in is the
-					only part of Virtues that touches our servers — everything written stays here.
-				</p>
-				<div class="work">
-					<AccountGate done={accountDone} onLinked={() => void store.check()} />
-				</div>
-			</section>
-		{/if}
-
-		{#if showIntro}
-			<section class="sec">
-				<h3 class="q">Introductions — the few things it cannot learn by reading.</h3>
-				<div class="work">
-					<IntroductionsCard
-						ondone={() => {
-							void loadProfile();
-							void dismiss("introductions");
-						}}
-						ondismiss={() => void dismiss("introductions")}
-					/>
-				</div>
-			</section>
-		{/if}
-
-		{#if showConnect}
-			<section class="sec">
-				<h3 class="q">Connect what already holds your life.</h3>
-				<div class="work">
-					<ConnectWorld
-						onConnected={() => void store.check()}
-						onDeviceReady={() => (deviceReady = true)}
-						next="/"
-					/>
-				</div>
-				<button class="skip" type="button" onclick={() => void dismiss("connect")}>
-					Not now — I'll find this in Settings later
-				</button>
-			</section>
-		{/if}
-
-		{#if scheduleLines.length}
-			<section class="sec">
-				<h3 class="q">Your box is reading.</h3>
-				<ul class="plain">
-					{#each scheduleLines as line (line)}
-						<li>{line}</li>
-					{/each}
-				</ul>
-			</section>
-		{/if}
-
-		{#if showFirstDay && firstDay}
-			<section class="sec">
-				<h3 class="q">Your first day is written up.</h3>
-				<button class="link" type="button" onclick={() => openDay(firstDay)}>
-					Read {prettyDay(firstDay)} <span class="arw">→</span>
-				</button>
-			</section>
-		{/if}
-
-		{#if showInterview}
-			<section class="sec">
-				<h3 class="q">Your first conversation is waiting.</h3>
-				<p class="lede">
-					It will ask about your life — the chapters, the people, what you believe. Answer
-					plainly, skip anything, come back whenever; it becomes a document in your own words,
-					and it is never finished.
-				</p>
-				<div class="row">
-					<button class="link" type="button" onclick={openInterview}>
-						Open the conversation <span class="arw">→</span>
-					</button>
-					<button class="skip" type="button" onclick={() => void dismiss("interview")}>Not now</button>
-				</div>
-			</section>
-		{/if}
-
-		{#if enrichment.length}
-			<section class="sec">
-				<ul class="plain rows">
-					{#each enrichment as r (r.id)}
-						<li>
-							{#if r.href}
-								<a class="link" href={r.href} target="_blank" rel="noreferrer">
-									{r.label} <span class="arw">→</span>
-								</a>
-							{:else if r.route}
-								<button class="link" type="button" onclick={() => openRoute(r.route)}>
-									{r.label} <span class="arw">→</span>
+					{#if s.id === active && !s.done}
+						<div class="body" in:fade={{ duration: 150 }}>
+							{#if s.id === "introductions"}
+								<p class="lede">The few things it cannot learn by reading.</p>
+								<IntroductionsCard
+									ondone={() => {
+										void loadProfile();
+										void dismiss("introductions");
+									}}
+									ondismiss={() => void dismiss("introductions")}
+								/>
+							{:else if s.id === "connect"}
+								<p class="lede">What already holds your life — the box reads it from here on.</p>
+								<ConnectWorld
+									onConnected={() => void store.check()}
+									onDeviceReady={() => (deviceReady = true)}
+									next="/"
+								/>
+								<button class="skip" type="button" onclick={() => void dismiss("connect")}>
+									Skip — sources stay available in Settings
+								</button>
+							{:else if s.id === "signin"}
+								<p class="lede">
+									The models your box writes with are what the subscription pays for. Signing in
+									is the only part of Virtues that touches our servers — everything written
+									stays here.
+								</p>
+								<div class="work">
+									<AccountGate done={accountDone} onLinked={() => void store.check()} />
+								</div>
+							{:else if s.id === "interview"}
+								<p class="lede">
+									It will ask about your life — the chapters, the people, what you believe.
+									Answer plainly, skip anything, come back whenever; it becomes a document in
+									your own words, and it is never finished.
+								</p>
+								<div class="row">
+									<button class="link" type="button" onclick={openInterview}>
+										Open the conversation <span class="arw">→</span>
+									</button>
+									<button class="skip" type="button" onclick={() => void dismiss("interview")}>Skip</button>
+								</div>
+							{:else if s.id === "first_day"}
+								<p class="lede">
+									Overnight, the box writes yesterday down — where you went, who you spoke
+									with, what the day was. The first page arrives tomorrow morning, and every
+									day after writes itself.
+								</p>
+								<button class="skip" type="button" onclick={() => void dismiss("first_day")}>
+									Don't wait for it here
+								</button>
+							{:else if s.id === "further"}
+								<ul class="plain">
+									<li>
+										<button class="link" type="button" onclick={openApplets}>
+											Create your first applet <span class="arw">→</span>
+										</button>
+										<span class="note">a small program your box runs for you</span>
+									</li>
+									<li>
+										<a class="link" href="https://virtues.com/docs" target="_blank" rel="noreferrer">
+											Read the manual <span class="arw">→</span>
+										</a>
+										<span class="note">how all of this works</span>
+									</li>
+								</ul>
+								<button class="skip" type="button" onclick={() => void dismiss("further")}>
+									All set — take me to the app
 								</button>
 							{/if}
-							<span class="note">{r.note}</span>
-							<button
-								class="x"
-								type="button"
-								onclick={() => void dismiss(r.id)}
-								aria-label={`Dismiss "${r.label}"`}
-							>
-								<Icon icon="ri:close-line" width="14" />
-							</button>
-						</li>
-					{/each}
-				</ul>
-			</section>
-		{/if}
+						</div>
+					{/if}
+				</li>
+			{/each}
+		</ol>
 
 		<button
 			class="door"
 			class:expanded={doorExpanded}
 			onclick={doorClick}
 			onblur={() => (doorExpanded = false)}
-			aria-label="Dismiss getting started"
+			aria-label="Skip getting started"
 		>
 			{#if doorExpanded}
-				<span in:fade={{ duration: 120 }}>Dismiss getting started →</span>
+				<span in:fade={{ duration: 120 }}>Skip getting started →</span>
 			{:else}
 				<Icon icon="ri:door-open-line" width="14" />
 			{/if}
@@ -345,47 +327,47 @@
 {/if}
 
 <style>
-	/* This is the whole page whenever it renders at all, so the type and the
-	   air are set for a page, not a margin note. */
-	.gs { position: relative; max-width: 640px; padding: clamp(8px, 2vh, 24px) 0 8px; }
+	.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
-	.sec { margin-bottom: clamp(40px, 7vh, 72px); }
+	.gs { position: relative; max-width: 640px; padding: clamp(4px, 1.5vh, 16px) 0 8px; }
 
-	.stand {
-		font-family: var(--font-serif); font-size: 21px; line-height: 1.45;
-		color: var(--color-foreground); margin: 0 0 clamp(36px, 6vh, 64px); max-width: 34ch;
+	.steps { list-style: none; margin: 0; padding: 0; }
+
+	.step { border-top: 1px solid var(--color-border-subtle); }
+	.step:first-child { border-top: 0; }
+
+	.line { display: flex; align-items: baseline; gap: 16px; padding: 14px 0; }
+	.step.active .line { padding-bottom: 4px; }
+
+	.n { flex: none; width: 1.25em; font-size: 12px; color: var(--color-foreground-subtle); }
+
+	.t {
+		font-family: var(--font-serif); font-size: 19px; font-weight: 400;
+		line-height: 1.35; color: var(--color-foreground);
+		background: none; border: 0; padding: 0; text-align: left; min-width: 0;
 	}
+	button.t { cursor: pointer; }
+	button.t:hover { color: var(--color-primary); }
+	.step.done .t { color: var(--color-foreground-muted); }
+	.step.active .t { color: var(--color-foreground); }
 
-	/* The section's own line, in the voice the rest of the app speaks. */
-	.q {
-		font-family: var(--font-serif); font-size: 20px; font-weight: 400;
-		line-height: 1.4; color: var(--color-foreground); margin: 0 0 10px;
-	}
+	.state { margin-left: auto; flex: none; font-size: 11px; color: var(--color-foreground-subtle); }
+
+	/* The open step's body sits in the title's column, not under the number. */
+	.body { padding: 0 0 clamp(20px, 3vh, 32px) calc(1.25em + 16px); }
+
 	.lede {
 		font-family: var(--font-sans); font-size: 14px; line-height: 1.55;
-		color: var(--color-foreground-muted); margin: 0 0 4px; max-width: 56ch;
+		color: var(--color-foreground-muted); margin: 0 0 14px; max-width: 56ch;
 	}
 
-	.work { margin-top: 14px; }
+	.work { margin-top: 4px; }
 
-	.plain { list-style: none; margin: 4px 0 0; padding: 0; }
-	.plain li {
-		font-family: var(--font-sans); font-size: 13.5px; line-height: 1.55;
-		color: var(--color-foreground-muted); padding: 3px 0;
-	}
+	.plain { list-style: none; margin: 0 0 6px; padding: 0; }
+	.plain li { display: flex; align-items: baseline; gap: 10px; padding: 4px 0; }
+	.plain .note { color: var(--color-foreground-subtle); font-size: 12.5px; min-width: 0; }
 
-	.rows li { display: flex; align-items: baseline; gap: 10px; }
-	.rows .note { color: var(--color-foreground-subtle); font-size: 12.5px; min-width: 0; }
-	.rows .x {
-		margin-left: auto; flex: none; display: flex; align-items: center;
-		background: none; border: 0; padding: 3px; border-radius: 5px;
-		color: var(--color-foreground-subtle); cursor: pointer; opacity: 0;
-		transition: opacity 0.15s ease, color 0.15s ease;
-	}
-	.rows li:hover .x, .rows .x:focus-visible { opacity: 1; }
-	.rows .x:hover { color: var(--color-foreground); }
-
-	.row { display: flex; align-items: baseline; gap: 16px; margin-top: 6px; }
+	.row { display: flex; align-items: baseline; gap: 16px; }
 
 	.link {
 		font-family: var(--font-sans); font-size: 13.5px; font-weight: 500;
@@ -394,6 +376,7 @@
 	}
 	.link:hover { text-decoration: underline; text-underline-offset: 3px; }
 	.link .arw { opacity: 0.7; }
+	.state.link { margin-left: auto; font-size: 12.5px; }
 
 	.skip {
 		display: block; margin-top: 12px;
@@ -404,7 +387,7 @@
 	.skip:hover { color: var(--color-foreground); }
 	.row .skip { margin-top: 0; }
 
-	/* The hidden door — same coat as onboarding's old skip. */
+	/* The hidden door — same coat as the old dangerously-skip. */
 	.door {
 		position: absolute; right: 0; bottom: -6px;
 		display: flex; align-items: center;
