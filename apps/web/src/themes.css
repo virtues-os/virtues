@@ -8,9 +8,9 @@
    Themes (literary places) — sixteen, seven light and nine dark:
    Light:
    - Pemberley - Austen elegance, pristine. Occupies :root (see below).
-   - Caladan (default) - Atreides ocean world
+   - Caladan - Atreides ocean world
    - Rivendell - Elven refuge, warm light
-   - Oxford - Academic, studious
+   - Oxford (default) - Heritage ivory, navy & claret
    - Netherfield - Flat white, blue accent
    - Hogwarts - Warm parchment, candlelit
    - Tatooine - Twin suns, desert warmth
@@ -28,12 +28,13 @@
    - Agora - Greek marketplace purple
    - The Shire - Cozy hobbit pastels
 
-   NOTE ON :root — Pemberley is the base layer, but Caladan is the default
+   NOTE ON :root — Pemberley is the base layer, but Oxford is the default
    theme (virtues-registry DEFAULT_THEME). Those are two different jobs and
-   they no longer name the same theme: every other theme, Caladan included,
-   is an override on top of Pemberley's values. The practical consequence is
-   that app.html's pre-paint fallback must track *Caladan's* --background,
-   not :root's, or a new box flashes Pemberley cream before settling white.
+   they do not name the same theme: every other theme, Oxford included, is
+   an override on top of Pemberley's values. The practical consequence is
+   that app.html's pre-paint fallback must track *Oxford's* --background
+   (#FDFCF9), not :root's, or a new box flashes Pemberley white before
+   settling on ivory.
 
    IMPORTANT: @theme must be top-level, not nested.
    We define theme variables once, then override CSS variables per theme.

@@ -200,7 +200,7 @@
 		<div class="sign">
 			<!-- MASKED, NOT INVERTED. An earlier version inverted black ink assuming
 			     a dark ground, which would have painted white on white for the eight
-			     LIGHT themes — starting with pemberley, the one a new box actually
+			     LIGHT themes — starting with oxford, the one a new box actually
 			     opens on. Masking paints the ink in whatever the theme's foreground
 			     is, correct on all sixteen with no list to maintain. -->
 			<div class="sig" role="img" aria-label="Adam Jace"></div>
