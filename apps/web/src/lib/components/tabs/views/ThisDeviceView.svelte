@@ -1,5 +1,5 @@
 <!--
-  This device — the iOS/iPadOS half of `devices/this`, the way ThisMacView is
+  This device — the iOS/iPadOS half of `devices/this`, the way DeviceView is
   the macOS half.
 
   Exists because MobileDeviceScreen used not to be route-driven at all: it
