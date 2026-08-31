@@ -44,7 +44,7 @@ const THEME_BG_STORAGE_KEY = 'virtues-theme-bg';
  * on a different one would be a label that isn't true.
  */
 export const DEFAULT_THEMES = {
-	light: 'pemberley',
+	light: 'oxford',
 	dark: 'asgard'
 } as const satisfies Record<'light' | 'dark', Theme>;
 
@@ -255,7 +255,7 @@ export function getAvailableThemes(): Theme[] {
 	return [
 		DEFAULT_THEMES.light,
 		DEFAULT_THEMES.dark,
-		'oxford',
+		'pemberley',
 		'caladan',
 		'rivendell',
 		'netherfield',
