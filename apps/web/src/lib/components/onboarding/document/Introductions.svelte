@@ -192,7 +192,7 @@
 					<input class="ob-input" type="date" bind:value={born} />
 				</label>
 
-				<div class="field-group">
+				<div class="field-group tz-field">
 					<span class="label">What time zone is home?</span>
 					{#if ZONES.length}
 						<UniversalPicker
@@ -335,10 +335,24 @@
 	.tz-caret.open {
 		transform: rotate(180deg);
 	}
+	/* The picker delegates row padding to this snippet (see ModelSettings for
+	   the same convention) — without it the list sets solid. 0.5rem left plus
+	   the picker's own px-1 lands rows on the header's 12px indent. */
 	.tz-item {
+		display: block;
+		padding: 0.5rem 0.65rem;
 		font-size: 0.9rem;
 	}
 	.tz-item.selected {
 		font-weight: 500;
+	}
+
+	/* The wrapping button's default focus ring is the loudest blue on the
+	   page; focus speaks the same way the text inputs do instead. */
+	.tz-field :global(button:focus-visible) {
+		outline: none;
+	}
+	.tz-field :global(button:focus-visible .tz-trigger) {
+		border-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
 	}
 </style>
