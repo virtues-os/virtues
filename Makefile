@@ -59,7 +59,9 @@ CARGO_WATCH := $(shell command -v cargo-watch 2>/dev/null)
 DEV_CORE_RUN := cargo run -p virtues
 ifeq ($(WATCH),1)
 ifneq ($(CARGO_WATCH),)
-DEV_CORE_RUN := cargo watch -x 'run -p virtues'
+# Rebuild the applet binaries on every restart too, or an .rs edit under
+# applets/ restarts core against stale (or missing) siblings.
+DEV_CORE_RUN := cargo watch -x 'build -p virtues -p virtues-applets' -x 'run -p virtues'
 endif
 endif
 
@@ -262,6 +264,15 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 	@if [ "$(WATCH)" = "1" ] && [ -z "$(CARGO_WATCH)" ]; then \
 	  echo "→ WATCH=1 but cargo-watch not found — running once. Install: cargo install cargo-watch"; \
 	fi
+# Applet binaries (package `virtues-applets`) are spawned as siblings of the
+# running virtues binary in the shared target dir (resolve_program in
+# virtues-core/src/applet_runner/mod.rs). Nothing else in the dev loop builds
+# them, so on a fresh checkout every applet run fails instantly with "failed
+# to spawn action command: No such file or directory". Building both packages
+# in ONE cargo invocation shares the dependency graph, so this is one parallel
+# build rather than two serial ones, and the `cargo run` below starts with
+# nothing left to compile. Warm-tree cost: a freshness check, ~1s.
+	SQLX_OFFLINE="$(SQLX_OFFLINE)" cargo build -p virtues -p virtues-applets
 	RUST_LOG="$(RUST_LOG),noq_udp=error" \
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
 	VIRTUES_DEV_SKIP_SETUP="$(VIRTUES_DEV_SKIP_SETUP)" \

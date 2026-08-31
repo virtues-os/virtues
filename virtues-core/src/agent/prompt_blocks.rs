@@ -126,5 +126,5 @@ pub async fn assemble(blocks: Vec<Block<'_>>) -> (String, Vec<RenderedBlock>) {
 /// cite the ranking instead of inferring it. Keep in sync with the registry's
 /// `rung` values — the reorder slice's audit test asserts both exist.
 pub fn precedence_line() -> &'static str {
-    "\n\n<precedence>\nWhen sections of this prompt conflict: <rules> outrank everything and are absolute; <narrative_identity> outranks the machine's own <memory>; both outrank house guidance; <datetime> and <user_context> are situational fact, not instruction. Declarative sections describe — only <rules> command.\n</precedence>"
+    "\n\n<precedence>\nWhen sections of this prompt conflict: <rules> outrank everything and are absolute; <narrative_identity> outranks the machine's own <memory>; both outrank house guidance; <circumstances> is situational fact, not instruction. Declarative sections describe — only <rules> command.\n</precedence>"
 }
