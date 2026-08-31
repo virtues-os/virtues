@@ -55,8 +55,7 @@
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
 	import DisplayView from '$lib/components/tabs/views/DisplayView.svelte';
-	import DeviceDetailView from '$lib/components/tabs/views/DeviceDetailView.svelte';
-	import ThisMacView from '$lib/components/tabs/views/ThisMacView.svelte';
+	import DeviceView from '$lib/components/tabs/views/DeviceView.svelte';
 	import ThisDeviceView from '$lib/components/tabs/views/ThisDeviceView.svelte';
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
@@ -199,20 +198,21 @@
 			{#if !sub}
 				<DevicesView {tab} {active} />
 			{:else if sub === 'this' && isIOS}
-				<!-- iOS FIRST, because an iPad satisfies `isMacOS` too (it reports
-				     a desktop platform string; see utils/platform.ts) and would
-				     otherwise be handed the Mac collector panel. -->
+				<!-- iOS keeps its own instrument panel for now: MobileDeviceScreen
+				     is 900 lines of stream-by-stream local detail that has no
+				     box-side equivalent. iOS FIRST, because an iPad satisfies
+				     `isMacOS` too (it reports a desktop platform string; see
+				     utils/platform.ts) and would otherwise get the Mac panel. -->
 				<ThisDeviceView />
-			{:else if sub === 'this' && isMacOS}
-				<!-- The machine you're on is NOT rendered from its device row. Its
-				     panel — collector health, permissions, streams — is read from
-				     the local daemon over IPC, and knows things the box never
-				     receives. In a plain browser there is no local daemon to read,
-				     so `this` falls through to the box-side page, which is then
-				     genuinely all there is. -->
-				<ThisMacView {tab} {active} />
 			{:else}
-				<DeviceDetailView deviceId={sub} />
+				<!-- ONE page for every other device, including this Mac. It used
+				     to be three, split by vantage — what the box knows vs what the
+				     device knows — with nothing on screen saying that was the axis,
+				     so permissions and versions appeared twice and disagreed for
+				     reasons no reader could see. DeviceView states the vantage per
+				     section instead, and reads the local daemon when it is
+				     standing on the machine it describes. -->
+				<DeviceView deviceId={sub} {tab} {active} />
 			{/if}
 		{:else if section === 'display'}
 			<DisplayView />

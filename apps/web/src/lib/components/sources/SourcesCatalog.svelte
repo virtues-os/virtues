@@ -218,7 +218,7 @@
 	/**
 	 * Device sources are the one case where "connect" depends on where you're
 	 * reading. Inside the Mac app the Mac is already here — it needs turning on,
-	 * not pairing, and ThisMacView owns that. Handing the user a six-digit code
+	 * not pairing, and DeviceView owns that. Handing the user a six-digit code
 	 * to carry to the app they are currently *using* is the narrative break this
 	 * avoids.
 	 */
