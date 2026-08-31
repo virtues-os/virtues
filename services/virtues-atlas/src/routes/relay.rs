@@ -1,22 +1,24 @@
 //! Relay control plane for the iroh reach layer.
 //!
 //! - `POST /relay/config { api_key } -> { relay_url }` — the box learns which
-//!   relay to home on. Gated on an active subscription.
+//!   relay to home on. Any linked box; identity, not billing (0017 /
+//!   open-relay-plan §Work 1b).
 //! - `POST /iroh/register { api_key, endpoint_ids: [..] }` — the box reports its
-//!   own + its paired devices' EndpointIds; atlas maps each → the account so the
-//!   gate below can recognise them.
-//! - `POST /relay/authorize` — called **by iroh-relay** (service bearer) with a
-//!   header `X-Iroh-NodeId`; returns `200 "true"` iff that EndpointId belongs to
-//!   an active-subscription account, else a non-OK/`"false"` (iroh-relay admits
-//!   only on 200 + body `"true"`).
+//!   own + its paired devices' EndpointIds; atlas maps each → the account. Once
+//!   the relay admission gate this fed, now an informational registry (fleet
+//!   ops, future per-account tooling); kept because shipped boxes call it.
 //!
-//! This is an **anti-freeloading** gate only — the real security boundary is the
-//! box's own EndpointId allowlist. atlas never sees traffic, volume, or timing;
-//! relay use is flat (covered by the subscription), never per-byte metered.
+//! `POST /relay/authorize` — the per-connection admission callout iroh-relay
+//! used to make — is GONE (open-relay-plan, 2026-08-31). The relay admits
+//! everyone and defends itself with rate limits; the callout was both a paywall
+//! on the connectivity substrate and a live linkage between account state and
+//! connection metadata, which contradicted the blind-relay doctrine. The real
+//! security boundary always was the box's own EndpointId allowlist. atlas never
+//! sees traffic, volume, or timing.
 
 use axum::{
     extract::State,
-    http::{header::AUTHORIZATION, HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Json},
     routing::post,
     Router,
@@ -24,16 +26,37 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::routes::{credits::resolve_active_customer, AppState};
-
-/// Header iroh-relay sets to the hex EndpointId attempting to connect.
-const X_IROH_ENDPOINT_ID: &str = "X-Iroh-NodeId";
+use crate::routes::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/relay/config", post(relay_config))
         .route("/iroh/register", post(iroh_register))
-        .route("/relay/authorize", post(relay_authorize))
+}
+
+/// Resolve an api_key → owning account, with no subscription requirement —
+/// these doors need to know WHO, not whether they pay. The money paths keep
+/// [`crate::routes::credits::resolve_active_customer`].
+async fn resolve_account(
+    state: &AppState,
+    api_key: &str,
+) -> Result<String, axum::response::Response> {
+    let key_hash = super::claim::sha256(api_key.as_bytes());
+    match super::claim::account_id_by_key_hash(&state.pool, &key_hash).await {
+        Ok(Some(account_id)) => Ok(account_id),
+        Ok(None) => Err(err(StatusCode::UNAUTHORIZED, "invalid_api_key", "unknown api key")),
+        Err(e) => {
+            tracing::warn!("relay account lookup failed: {e:#}");
+            Err(err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "account lookup failed"))
+        }
+    }
+}
+
+/// The `{error:{code,message}}` envelope every atlas route speaks (and the
+/// airlock's `atlasPost` flattens) — same 3-line helper as the sibling route
+/// modules, so the shape can't drift per construction site.
+fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
+    (status, Json(json!({ "error": { "code": code, "message": message } }))).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,12 +64,13 @@ struct RelayConfigBody {
     api_key: String,
 }
 
-/// The box asks which relay to home on. Paid capability → active sub required.
+/// The box asks which relay to home on. Any linked box qualifies —
+/// reachability is part of ownership, not the subscription.
 async fn relay_config(
     State(state): State<AppState>,
     Json(body): Json<RelayConfigBody>,
 ) -> axum::response::Response {
-    if let Err(resp) = resolve_active_customer(&state, &body.api_key).await {
+    if let Err(resp) = resolve_account(&state, &body.api_key).await {
         return resp;
     }
     if state.relay.relay_url.is_empty() {
@@ -69,14 +93,13 @@ struct IrohRegisterBody {
     endpoint_ids: Vec<String>,
 }
 
-/// The box reports the EndpointIds that belong to its account, so the relay gate
-/// can recognise them. Idempotent upsert; a device that re-pairs to a different
-/// account moves with it.
+/// The box reports the EndpointIds that belong to its account. Idempotent
+/// upsert; a device that re-pairs to a different account moves with it.
 async fn iroh_register(
     State(state): State<AppState>,
     Json(body): Json<IrohRegisterBody>,
 ) -> axum::response::Response {
-    let (_customer_id, account_id) = match resolve_active_customer(&state, &body.api_key).await {
+    let account_id = match resolve_account(&state, &body.api_key).await {
         Ok(v) => v,
         Err(resp) => return resp,
     };
@@ -90,7 +113,7 @@ async fn iroh_register(
     // Guard the reconcile below: `endpoint_id <> ALL('{}')` is vacuously TRUE, so
     // an empty set would DELETE every one of this account's registrations. A box
     // always reports at least its own EndpointId, so an empty list is a malformed
-    // request — reject it rather than let it wipe the account's reach.
+    // request — reject it rather than let it wipe the account's registry.
     if ids.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -124,8 +147,8 @@ async fn iroh_register(
     }
 
     // Reconcile: drop this account's EndpointIds no longer in the reported set
-    // (revoked/unpaired devices) so the relay gate stops recognising them. The
-    // box always includes its own + all paired-device ids, so this is exact.
+    // (revoked/unpaired devices). The box always includes its own + all
+    // paired-device ids, so this is exact.
     if let Err(e) = sqlx::query(
         "DELETE FROM iroh_endpoints WHERE account_id = $1 AND endpoint_id <> ALL($2)",
     )
@@ -142,54 +165,4 @@ async fn iroh_register(
             .into_response();
     }
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
-}
-
-/// iroh-relay access-control callout. Admits only EndpointIds that map to an
-/// active-subscription account. iroh-relay treats **200 + body `"true"`** as
-/// allow and everything else as deny.
-async fn relay_authorize(State(state): State<AppState>, headers: HeaderMap) -> axum::response::Response {
-    // Fail CLOSED when unconfigured: with no shared secret this endpoint would be
-    // an unauthenticated subscription-enumeration oracle, so deny instead (the
-    // relay treats non-200 as "deny"). Configure VIRTUES_RELAY_AUTH_SECRET (and
-    // the relay's access.http.bearer_token to match) to enable the gate.
-    if state.relay.relay_auth_secret.is_empty() {
-        return (StatusCode::SERVICE_UNAVAILABLE, "false").into_response();
-    }
-    // Service-to-service bearer (shared with iroh-relay's access.http.bearer_token).
-    // Constant-time compare so the secret can't be recovered via a timing oracle.
-    let expected = format!("Bearer {}", state.relay.relay_auth_secret);
-    let ok = headers
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .map(|h| virtues_helpers::crypto::constant_time_eq(h.as_bytes(), expected.as_bytes()))
-        .unwrap_or(false);
-    if !ok {
-        return (StatusCode::UNAUTHORIZED, "false").into_response();
-    }
-    let Some(endpoint_id) = headers.get(X_IROH_ENDPOINT_ID).and_then(|v| v.to_str().ok()) else {
-        return (StatusCode::BAD_REQUEST, "false").into_response();
-    };
-    let active: bool = sqlx::query_scalar(
-        r#"
-        SELECT EXISTS(
-            SELECT 1 FROM iroh_endpoints e
-            JOIN customers c ON c.account_id = e.account_id
-            WHERE e.endpoint_id = $1
-              AND (SELECT s.status FROM subscriptions s
-                   WHERE s.stripe_customer_id = c.stripe_customer_id
-                   ORDER BY s.current_period_end DESC NULLS LAST
-                   LIMIT 1) = 'active'
-        )
-        "#,
-    )
-    .bind(endpoint_id)
-    .fetch_one(&state.pool)
-    .await
-    .unwrap_or(false);
-
-    if active {
-        (StatusCode::OK, "true").into_response()
-    } else {
-        (StatusCode::FORBIDDEN, "false").into_response()
-    }
 }
