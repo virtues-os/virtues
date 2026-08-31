@@ -59,7 +59,7 @@
 
 <Page
 	title="Software"
-	description="The release this box runs, and the track it follows."
+	description="The release this server runs, and the track it follows."
 	maxWidth="wide"
 >
 	<UpdateSection />

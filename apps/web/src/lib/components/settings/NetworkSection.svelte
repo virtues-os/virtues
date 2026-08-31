@@ -149,7 +149,7 @@
 
 <Page
 	title="Network"
-	description="The network this box is on, and how to move it to another."
+	description="The network this server is on, and how to move it to another."
 	maxWidth="wide"
 >
 	{#if status}

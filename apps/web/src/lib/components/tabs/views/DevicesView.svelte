@@ -265,7 +265,7 @@
 -->
 <Page
 	title="Devices"
-	description="Every browser, app, and sensor paired with this box."
+	description="Every browser, app, and sensor paired with this server."
 	maxWidth="wide"
 >
 	{#snippet actions()}
