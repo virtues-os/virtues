@@ -89,16 +89,19 @@ honest description:
   addresses they connect from, and how much traffic passes and when. That's
   unavoidable for anything that forwards packets — a relay that couldn't see
   volume and timing couldn't move the bytes.
-- **It checks your subscription by key** before carrying anything for you.
+- **It admits everyone.** The relay asks no one who you are: no account, no
+  subscription, no sign-in. It defends itself with rate limits, not identity.
+  Reachability is part of owning the server, not something you rent.
 
 We'd rather state that plainly than round it up to "blind." The strong claim —
 that we can't read your life — is true and rests on the encryption, not on
 promises about the relay's memory.
 
-Note the consequence: **remote reach requires an active subscription.** If it
-lapses, the relay stops carrying you, and your box keeps working normally on
-your own network and keeps collecting your data. Local access doesn't depend
-on us.
+Your server knows the relay's address out of the box, so it is reachable from
+your first boot with no account at all — the same way every connected product
+ships its rendezvous servers built in. It's a default, not a requirement:
+Settings → System → Network names the relay in use and carries the off switch,
+and a server with the relay off works normally on your own network.
 
 ## Checking the connection
 

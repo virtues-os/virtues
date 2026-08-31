@@ -70,3 +70,15 @@ pub async fn put_if_absent(
     .context("put-if-absent box secret")?;
     Ok(res.rows_affected() > 0)
 }
+
+/// Remove a box secret. Absent-is-fine by design: callers use this to clear
+/// an override (e.g. the relay off switch), and clearing what isn't set is a
+/// no-op, not an error.
+pub async fn delete(db: &PgPool, key: &str) -> Result<()> {
+    sqlx::query("DELETE FROM box_secrets WHERE key = $1")
+        .bind(key)
+        .execute(db)
+        .await
+        .context("delete box secret")?;
+    Ok(())
+}
