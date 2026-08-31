@@ -25,6 +25,7 @@ these are not promises.
 | [chat-ux-roadmap.md](chat-ux-roadmap.md) | Planned | The chat surface overhaul, in independently shippable tracks A–L, each ending in a verification gate. |
 | [cross-platform-apps-plan.md](cross-platform-apps-plan.md) | Planned | Shipping the viewer on Windows, Linux, and Android. Collectors deliberately out of scope, with the seams left in place for them. |
 | [display-plan.md](display-plan.md) | — | _Needs a line._ |
+| [getting-started-plan.md](getting-started-plan.md) | Planned | Onboarding shrinks to the founder's letter; Home is rebuilt as a lifeline-spined page whose getting-started sections individually retire. No mode switch, no completion flag — the page sheds. |
 | [linking-plan.md](linking-plan.md) | Partly built | Step 2 of 3 — the account link, in depth: why linking must precede pairing (reach rides the relay and the relay rides the account, discovered live at an office), the inline sign-in contract, and the persona branch. **Its header diagram still says pairing uses "the on-screen code";** `0x83` has been codeless since 2026-08-24. |
 | [mac-presence-plan.md](mac-presence-plan.md) | Planned | `data_activity_app_usage` is close to an inversion of the truth — real focused work is invisible while artifacts are the headline numbers. |
 | [mobile-ux-plan.md](mobile-ux-plan.md) | Partly built | Pragmatic mobile next steps: keep the tab strip on phone, block split view, keyboard work gets a spike first. Edge-to-edge safe-area theming already shipped. |
