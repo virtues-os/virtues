@@ -47,11 +47,13 @@ export const SETTINGS_MODE: SidebarMode = {
 		// Assistant keeps the per-slot pickers (the pinning control); this is
 		// the room for comparing ~240 models, which no dropdown can host.
 		{ id: 'models', label: 'Models', icon: 'ri:cpu-line', href: '/virtues/models' },
-		{ id: 'billing', label: 'Billing', icon: 'ri:bank-card-line', href: '/virtues/billing' },
-		// Was "Telemetry", filed under Developer. It is the user's own AI spend
-		// and what the box has been running — not something anyone sends
-		// anywhere, and not a developer console.
-		{ id: 'usage', label: 'Usage', icon: 'ri:pulse-line', href: '/virtues/usage' },
+		// Billing and Usage were two rows answering one question. The balance
+		// sat on one page and the calls that drew it down on another, so
+		// neither could answer "is that number going where I think it is?" —
+		// which is the only reason anyone opens either. (Usage was "Telemetry"
+		// under Developer before that: it is the owner's own AI spend, not a
+		// developer console, and nothing about it is sent anywhere.)
+		{ id: 'plan', label: 'Plan', icon: 'ri:bank-card-line', href: '/virtues/plan' },
 		// Was one door, "Box", which was a container rather than a subject: it
 		// stacked a Wi-Fi picker, an update installer, an 8-chapter telemetry
 		// console and a revoke-everything button on one scroll, and two of those

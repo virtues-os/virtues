@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { Page, Button, Input, Badge, SudoModal } from '$lib';
+	import { Button, Input, Badge, SudoModal } from '$lib';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatMicrosUSD, formatMicrosPrecise } from '$lib/utils/currency';
@@ -396,7 +396,8 @@
 	};
 </script>
 
-<Page title="Billing" description="Manage your subscription and payment method" maxWidth="wide">
+<!-- No <Page>: this is a SECTION of Plan now, not a page. See PlanView. -->
+<div class="space-y-8">
 
 		<!-- Subscription Status -->
 		<div class="border border-border rounded-lg p-6 mb-6">
@@ -726,7 +727,7 @@
 				{portalLoading ? 'Opening...' : 'Manage Subscription'}
 			</button>
 		</div>
-</Page>
+</div>
 
 <!--
 	Endpoint URL, not a provider picker. There is no provider taxonomy: we

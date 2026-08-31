@@ -241,6 +241,16 @@
 			<Icon icon="ri:loader-4-line" width="20" class="spin" />
 		</div>
 	{:else}
+		<!--
+		  ORDER IS THE NARRATIVE. Four questions, asked the way an operator asks
+		  them: is it healthy (vitals, thermal, service) · what is it doing
+		  (processes, inference) · what is it holding (storage, backup) · what is
+		  it (host, least consulted, so last).
+		
+		  It used to run vitals, inference, backup, storage, host, processes,
+		  thermal, service — which is not an order, and left thermal and service
+		  (both health) separated from vitals by five unrelated chapters.
+		-->
 		<!-- ─── VITALS ─────────────────────────────────────────────────── -->
 		<section class="chapter">
 			<h2 class="settings-label">Vitals</h2>
@@ -306,175 +316,6 @@
 			{/if}
 		</section>
 
-		<!-- ─── INFERENCE ──────────────────────────────────────────────── -->
-		{#if t?.inference}
-			<section class="chapter">
-				<h2 class="settings-label">Inference</h2>
-				<div class="cols">
-					<div class="col">
-						{@render ledger("Accelerator", t.inference.accelerator, true)}
-						{@render ledger("Precision", t.inference.precision, true)}
-						{@render ledger(
-							"Models",
-							t.inference.models_baked ? "all baked" : "incomplete",
-							false,
-							t.inference.models_baked ? "ok" : "warn",
-						)}
-						{#if t.gpu}
-							{@render ledger(
-								"Offload",
-								t.gpu.offload_active ? "GPU active" : "CPU fallback",
-								false,
-								t.gpu.offload_active ? "ok" : "crit",
-							)}
-						{/if}
-					</div>
-					<div class="col">
-						{#each t.inference.models as m}
-							{@render ledger(m.name, m.source === "baked" ? "● on disk" : "○ missing", true, m.source === "baked" ? "ok" : "warn")}
-						{/each}
-						{#each t.services as s}
-							{@render ledger(`${s.name} sidecar`, s.up ? "listening" : "down", true, s.up ? "ok" : "crit")}
-						{/each}
-					</div>
-				</div>
-			</section>
-		{/if}
-
-		<!-- ─── BACKUP ─────────────────────────────────────────────────── -->
-		<!--
-			Deliberately above Storage: "how much would I lose" is a more urgent
-			question than "how full is it", and this is the only place the answer
-			appears. There is no restore button — restore needs the service
-			stopped, so the box cannot do it to itself, and a button would imply
-			a capability that cannot exist.
-		-->
-		{#if backup}
-			<section class="chapter">
-				<h2 class="settings-label">Backup</h2>
-				<div class="cols">
-					<div class="col">
-						{#if backup.state === "none"}
-							{@render ledger("Off-box copies", "none", false, "crit")}
-						{:else}
-							{@render ledger(
-								"Last backup",
-								backupAge(backup.age_seconds),
-								false,
-								backup.state === "ok" ? "ok" : backup.state === "never" ? "crit" : "warn",
-							)}
-						{/if}
-					</div>
-					<div class="col">
-						{#each backup.volumes as v}
-							{@render ledger(
-								v.name,
-								v.last_error ? "failing" : v.attached ? "attached" : "not attached",
-								false,
-								v.last_error ? "crit" : v.attached ? "ok" : "warn",
-							)}
-						{/each}
-					</div>
-				</div>
-				{#if backup.state === "none"}
-					<p class="note">
-						This box holds one copy of its data. Register a drive with
-						<code>virtues volumes add &lt;path&gt;</code>.
-					</p>
-				{:else if backup.volumes.some((v) => v.last_error)}
-					<p class="note">
-						{backup.volumes.find((v) => v.last_error)?.last_error}
-					</p>
-				{/if}
-			</section>
-		{/if}
-
-		<!-- ─── STORAGE ────────────────────────────────────────────────── -->
-		{#if t?.disks?.length}
-			<section class="chapter">
-				<h2 class="settings-label">Storage</h2>
-				<div class="drives">
-					{#each t.disks as d}
-						{@const usedPct = d.total ? Math.round(((d.total - d.available) / d.total) * 100) : 0}
-						<div class="drive">
-							<div class="drive-head">
-								<span class="drive-mount mono">{d.mount}</span>
-								<span class="drive-meta">{d.fs}{d.removable ? " · removable" : ""}</span>
-							</div>
-							<div class="meter tall"><div class="meter-fill {pressure(usedPct)}" style="width:{usedPct}%"></div></div>
-							<div class="drive-foot">
-								<span class="mono">{bytesStr(d.total - d.available)}</span> used
-								<span class="leader"></span>
-								<span class="mono">{bytesStr(d.available)}</span> free of <span class="mono">{bytesStr(d.total)}</span>
-							</div>
-						</div>
-					{/each}
-				</div>
-			</section>
-		{/if}
-
-		<!-- ─── HOST ───────────────────────────────────────────────────── -->
-		<!-- Was "Network & Devices", which claimed two subjects this page no
-		     longer owns: which Wi-Fi the box is on is Settings → Network, and
-		     how many devices are paired is Settings → Devices, where you can
-		     also do something about it. What is left is the machine's own
-		     identity and the traffic crossing it — measurements, not settings. -->
-		<section class="chapter">
-			<h2 class="settings-label">Host</h2>
-			<div class="cols">
-				<div class="col">
-					{@render ledger("Hostname", t?.host?.hostname ?? "—", true)}
-					{@render ledger("Uptime", t?.host ? uptimeStr(t.host.uptime_secs) : "—", true)}
-					{@render ledger("Throughput", t?.network ? `↓ ${rateStr(t.network.rx_per_sec)}  ↑ ${rateStr(t.network.tx_per_sec)}` : "—", true)}
-				</div>
-				<div class="col">
-					{@render ledger("OS", t?.host?.os ?? "—")}
-					{@render ledger("Kernel", t?.host?.kernel ?? "—", true)}
-				</div>
-			</div>
-
-			{#if detail && t?.network?.interfaces?.length}
-				<table class="data-table mono">
-					<thead><tr><th>interface</th><th class="num">rx total</th><th class="num">tx total</th></tr></thead>
-					<tbody>
-						{#each t.network.interfaces as iface}
-							<tr><td>{iface.name}</td><td class="num">{bytesStr(iface.rx_total)}</td><td class="num">{bytesStr(iface.tx_total)}</td></tr>
-						{/each}
-					</tbody>
-				</table>
-			{/if}
-		</section>
-
-		<!-- ─── PROCESSES (detail) ─────────────────────────────────────── -->
-		{#if detail && t?.processes?.length}
-			<section class="chapter">
-				<h2 class="settings-label">Processes</h2>
-				<table class="data-table proc mono">
-					<thead>
-						<tr>
-							<th class="rank">#</th>
-							<th>process</th>
-							<th class="num">pid</th>
-							<th class="num">cpu</th>
-							<th class="num">memory</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each t.processes as p, i}
-							<tr>
-								<td class="rank">{i + 1}</td>
-								<td class="pname">{p.name}</td>
-								<td class="num dim">{p.pid}</td>
-								<td class="num {pressure(p.cpu_pct)}">{p.cpu_pct.toFixed(1)}%</td>
-								<td class="num">{bytesStr(p.mem)}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-				<div class="table-caption">top {t.processes.length} by memory</div>
-			</section>
-		{/if}
-
 		<!-- ─── THERMAL (detail) ───────────────────────────────────────── -->
 		{#if detail && t?.thermal?.length}
 			<section class="chapter">
@@ -528,6 +369,175 @@
 				{/if}
 			{/if}
 		</section>
+		<!-- ─── PROCESSES (detail) ─────────────────────────────────────── -->
+		{#if detail && t?.processes?.length}
+			<section class="chapter">
+				<h2 class="settings-label">Processes</h2>
+				<table class="data-table proc mono">
+					<thead>
+						<tr>
+							<th class="rank">#</th>
+							<th>process</th>
+							<th class="num">pid</th>
+							<th class="num">cpu</th>
+							<th class="num">memory</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each t.processes as p, i}
+							<tr>
+								<td class="rank">{i + 1}</td>
+								<td class="pname">{p.name}</td>
+								<td class="num dim">{p.pid}</td>
+								<td class="num {pressure(p.cpu_pct)}">{p.cpu_pct.toFixed(1)}%</td>
+								<td class="num">{bytesStr(p.mem)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+				<div class="table-caption">top {t.processes.length} by memory</div>
+			</section>
+		{/if}
+
+		<!-- ─── INFERENCE ──────────────────────────────────────────────── -->
+		{#if t?.inference}
+			<section class="chapter">
+				<h2 class="settings-label">Inference</h2>
+				<div class="cols">
+					<div class="col">
+						{@render ledger("Accelerator", t.inference.accelerator, true)}
+						{@render ledger("Precision", t.inference.precision, true)}
+						{@render ledger(
+							"Models",
+							t.inference.models_baked ? "all baked" : "incomplete",
+							false,
+							t.inference.models_baked ? "ok" : "warn",
+						)}
+						{#if t.gpu}
+							{@render ledger(
+								"Offload",
+								t.gpu.offload_active ? "GPU active" : "CPU fallback",
+								false,
+								t.gpu.offload_active ? "ok" : "crit",
+							)}
+						{/if}
+					</div>
+					<div class="col">
+						{#each t.inference.models as m}
+							{@render ledger(m.name, m.source === "baked" ? "● on disk" : "○ missing", true, m.source === "baked" ? "ok" : "warn")}
+						{/each}
+						{#each t.services as s}
+							{@render ledger(`${s.name} sidecar`, s.up ? "listening" : "down", true, s.up ? "ok" : "crit")}
+						{/each}
+					</div>
+				</div>
+			</section>
+		{/if}
+
+		<!-- ─── STORAGE ────────────────────────────────────────────────── -->
+		{#if t?.disks?.length}
+			<section class="chapter">
+				<h2 class="settings-label">Storage</h2>
+				<div class="drives">
+					{#each t.disks as d}
+						{@const usedPct = d.total ? Math.round(((d.total - d.available) / d.total) * 100) : 0}
+						<div class="drive">
+							<div class="drive-head">
+								<span class="drive-mount mono">{d.mount}</span>
+								<span class="drive-meta">{d.fs}{d.removable ? " · removable" : ""}</span>
+							</div>
+							<div class="meter tall"><div class="meter-fill {pressure(usedPct)}" style="width:{usedPct}%"></div></div>
+							<div class="drive-foot">
+								<span class="mono">{bytesStr(d.total - d.available)}</span> used
+								<span class="leader"></span>
+								<span class="mono">{bytesStr(d.available)}</span> free of <span class="mono">{bytesStr(d.total)}</span>
+							</div>
+						</div>
+					{/each}
+				</div>
+			</section>
+		{/if}
+
+		<!-- ─── BACKUP ─────────────────────────────────────────────────── -->
+		<!--
+			Deliberately above Storage: "how much would I lose" is a more urgent
+			question than "how full is it", and this is the only place the answer
+			appears. There is no restore button — restore needs the service
+			stopped, so the box cannot do it to itself, and a button would imply
+			a capability that cannot exist.
+		-->
+		{#if backup}
+			<section class="chapter">
+				<h2 class="settings-label">Backup</h2>
+				<div class="cols">
+					<div class="col">
+						{#if backup.state === "none"}
+							{@render ledger("Off-box copies", "none", false, "crit")}
+						{:else}
+							{@render ledger(
+								"Last backup",
+								backupAge(backup.age_seconds),
+								false,
+								backup.state === "ok" ? "ok" : backup.state === "never" ? "crit" : "warn",
+							)}
+						{/if}
+					</div>
+					<div class="col">
+						{#each backup.volumes as v}
+							{@render ledger(
+								v.name,
+								v.last_error ? "failing" : v.attached ? "attached" : "not attached",
+								false,
+								v.last_error ? "crit" : v.attached ? "ok" : "warn",
+							)}
+						{/each}
+					</div>
+				</div>
+				{#if backup.state === "none"}
+					<p class="note">
+						This box holds one copy of its data. Register a drive with
+						<code>virtues volumes add &lt;path&gt;</code>.
+					</p>
+				{:else if backup.volumes.some((v) => v.last_error)}
+					<p class="note">
+						{backup.volumes.find((v) => v.last_error)?.last_error}
+					</p>
+				{/if}
+			</section>
+		{/if}
+
+		<!-- ─── HOST ───────────────────────────────────────────────────── -->
+		<!-- Was "Network & Devices", which claimed two subjects this page no
+		     longer owns: which Wi-Fi the box is on is Settings → Network, and
+		     how many devices are paired is Settings → Devices, where you can
+		     also do something about it. What is left is the machine's own
+		     identity and the traffic crossing it — measurements, not settings. -->
+		<section class="chapter">
+			<h2 class="settings-label">Host</h2>
+			<div class="cols">
+				<div class="col">
+					{@render ledger("Hostname", t?.host?.hostname ?? "—", true)}
+					{@render ledger("Uptime", t?.host ? uptimeStr(t.host.uptime_secs) : "—", true)}
+					{@render ledger("Throughput", t?.network ? `↓ ${rateStr(t.network.rx_per_sec)}  ↑ ${rateStr(t.network.tx_per_sec)}` : "—", true)}
+				</div>
+				<div class="col">
+					{@render ledger("OS", t?.host?.os ?? "—")}
+					{@render ledger("Kernel", t?.host?.kernel ?? "—", true)}
+				</div>
+			</div>
+
+			{#if detail && t?.network?.interfaces?.length}
+				<table class="data-table mono">
+					<thead><tr><th>interface</th><th class="num">rx total</th><th class="num">tx total</th></tr></thead>
+					<tbody>
+						{#each t.network.interfaces as iface}
+							<tr><td>{iface.name}</td><td class="num">{bytesStr(iface.rx_total)}</td><td class="num">{bytesStr(iface.tx_total)}</td></tr>
+						{/each}
+					</tbody>
+				</table>
+			{/if}
+		</section>
+
 	{/if}
 </Page>
 
