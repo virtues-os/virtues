@@ -74,9 +74,10 @@ dismissible, but it is one small ask, not a form.
 
 **2. Connect your world.** `ConnectWorld.svelte` ports over nearly intact —
 sources, devices, the BLE choreography. Retires on the first source or device
-win (`setupState`). Dismissible: "later" collapses it to one quiet row for the
-chat-import-only or DIY-minimal user. It never nags. `MobileOnboarding.svelte`
-is deleted; phone renders the same section.
+win (`setupState`). Dismissible — "not now" removes it, never a nag; the same
+sources stay reachable in Settings. (`MobileOnboarding.svelte` stays: on
+reading it, it is the phone's *native OS-permission* flow — Tauri plugin
+invokes — not a duplicate of this section.)
 
 **3. The lifeline.** Never retires — it is the spine of the new Home. Drawn
 from `GET /api/wiki/lifeline`, which already buckets every timestamped
@@ -99,13 +100,18 @@ lands, and the section is gone within a day on its own. Not dismissible
 because it dismisses itself. This section is also the reason to come back
 tomorrow, which matters more than any single wow.
 
-**5. Your first conversation.** A deep link into the narrative interview chat
+**5. Your first day page.** Appears only once the first narrated day exists
+(`narrated_at`): "your first day is written up," pointing at the day page.
+Retires once opened — after that, days are just Home's normal content.
+Self-retiring; the celebratory twin of section 4's promise.
+
+**6. Your first conversation.** A deep link into the narrative interview chat
 (`chat_narrative_interview`) — the link that today does not exist: the old
 reveal *mentions* the waiting conversation but never points at it. Retires
 once the user has said anything in the interview (the same signal ChatView
 uses to grow "Write it up").
 
-**6. Enrichment.** Create your first applet; learn about notebooks; whatever
+**7. Enrichment.** Create your first applet; learn about notebooks; whatever
 we add next. Individually dismissible, never gating, additive forever — this
 is the extensible tail the page exists to carry. Start with two or three rows,
 not ten.
@@ -167,7 +173,8 @@ These are real defects the redesign will otherwise inherit:
    edges, accreting ink, marginalia from census. Design-heavy; prototype
    before polishing.
 4. **Port the askers.** Introductions and ConnectWorld into their sections;
-   wire retire/dismiss to `setupState`; delete `MobileOnboarding`.
+   wire retire/dismiss to `setupState`. (`MobileOnboarding` stays — it is the
+   phone's native OS-permission flow, not a duplicate.)
 5. **The schedule + the interview link.** Section 4's lines keyed to real
    signals (first transcription row, first `wiki_people` row, first
    `narrated_at`), section 5's deep link and retire signal.
@@ -176,14 +183,29 @@ These are real defects the redesign will otherwise inherit:
 
 Slices 1 and 2–3 can proceed in parallel; 4–5 depend on 2.
 
+## Dismissibility (settled 2026-08-31)
+
+Every asker (introductions, connect-your-world, interview, enrichment) is
+individually dismissible, including introductions — a checklist item you can't
+say no to is a nag by definition. Showers (schedule, first-day page) are
+self-retiring and need no dismissal. The lifeline is not dismissible because
+it is Home, not scaffolding. Two rules held firm:
+
+- **Dismissed means gone, not collapsed.** No residue rows; the features stay
+  findable where they permanently live (Settings → Sources, the interview in
+  the sidebar).
+- **No visible "skip getting started."** A user who dismisses the askers has
+  dismissed the entirety; everything else leaves on its own. The one escape
+  hatch is the same *hidden* dangerously-skip door onboarding has today —
+  tucked away, for people who know to look.
+
+Dismissal state lives server-side (per box), so the page sheds identically on
+every glass.
+
 ## Open questions
 
-- Where dismissed-section state lives (per-box server state vs. local). Server
-  feels right — the page should shed the same way on every glass.
 - Whether the letter also carries the "what is this thing" privacy posture
   currently spread across onboarding copy, or whether that's a docs link.
-- How loud section 5 should be for a user who never wants the interview —
-  retire-on-dismiss may need to apply there too.
 
 ## Death condition
 

@@ -228,8 +228,11 @@
 		</div>
 
 		<div class="exit">
+			<!-- The letter is the whole of onboarding now, so its close is the
+			     door itself — everything that used to follow lives on Home as
+			     getting-started sections. -->
 			<button class="ob-btn" onclick={onbegin}>
-				Begin
+				Enter Virtues
 				<Icon icon="ri:arrow-right-line" width="16" />
 			</button>
 		</div>
