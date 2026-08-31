@@ -15,6 +15,8 @@ const POLL_INTERVAL = 60_000; // 60 seconds
 
 class SetupStateStore {
 	onboarding = $state<SetupStep[]>([]);
+	/** The setup half too — Home's getting-started needs the account step. */
+	setup = $state<SetupStep[]>([]);
 	/** null = not loaded yet (distinct from a real false from the server). */
 	setupComplete = $state<boolean | null>(null);
 	loaded = $state(false);
@@ -53,6 +55,32 @@ class SetupStateStore {
 
 	get doneCount(): number {
 		return this.onboarding.filter((s) => s.done).length;
+	}
+
+	/** One onboarding win, by id. False while nothing has loaded. */
+	done(id: string): boolean {
+		return this.onboarding.find((s) => s.id === id)?.done ?? false;
+	}
+
+	/**
+	 * May this box call the models? Account linked, or setup complete without
+	 * one — the second arm is the DIY exemption (`compute_setup_state` requires
+	 * an account only on appliances), mirrored from the old onboarding route.
+	 */
+	get accountSatisfied(): boolean {
+		const linked = this.setup.find((s) => s.id === 'account')?.done ?? false;
+		return linked || this.setupComplete === true;
+	}
+
+	/** Anything connected at all — the signal that retires "connect your world". */
+	get worldEnough(): boolean {
+		return (
+			this.done('first_source') ||
+			this.done('living_source') ||
+			this.done('first_phone') ||
+			this.done('chat_imported') ||
+			this.done('first_device')
+		);
 	}
 
 	/** Start polling /api/setup/state */
@@ -100,6 +128,7 @@ class SetupStateStore {
 		try {
 			const data = await getSetupState();
 			this.onboarding = data.onboarding ?? [];
+			this.setup = data.setup ?? [];
 			this.setupComplete = data.setup_complete ?? null;
 			this.loaded = true;
 

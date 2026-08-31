@@ -53,6 +53,7 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import GettingStarted from "$lib/components/home/GettingStarted.svelte";
 	import DayDeck from "$lib/components/home/DayDeck.svelte";
 	import DayGround from "$lib/components/home/DayGround.svelte";
 	import DayNovelty from "$lib/components/home/DayNovelty.svelte";
@@ -338,6 +339,11 @@
 	{/snippet}
 
 	<div class="body">
+		<!-- First run: the getting-started sections, each retiring as it is
+		     answered or as its promise lands. Renders nothing on a settled box —
+		     see GettingStarted.svelte and agents/plan/getting-started-plan.md. -->
+		<div class="rv"><GettingStarted /></div>
+
 		<!-- The box speaks — today's rhythm against the trailing twelve weeks —
 		     then, if it wrote one, quotes itself. -->
 		<div class="rv">

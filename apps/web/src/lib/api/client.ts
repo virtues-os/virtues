@@ -331,6 +331,8 @@ export interface Census {
 	/** The record's first named senders, in the order it met them —
 	 *  chronology, never significance. Empty when none are presentable. */
 	earliest_names: string[];
+	/** `"YYYY-MM-DD"` of the first day the box narrated; null until one exists. */
+	first_day: string | null;
 }
 
 /** What the box actually holds, counted — the reveal's first movement. */
@@ -1284,6 +1286,9 @@ export interface Profile {
 	home_city?: string | null;
 	home_country?: string | null;
 	onboarding_status?: string | null;
+	/** Getting-started sections dismissed from Home. Send the whole array —
+	 *  the box remembers it verbatim; the client owns the merge. */
+	getting_started_dismissed?: string[];
 }
 
 export async function getProfile(): Promise<Profile> {
