@@ -150,7 +150,13 @@ The relay admits **any endpoint**. Specifically:
    remain only on spend paths (hosted-AI wallet in virtues-api, where the
    money actually is). Server-side deploy — benefits every existing app and
    box instantly, no client release needed for the server half.
-2. **Box: bake the default relay URL.** `resolve_relay_url` gains a shipped
+2. ✔ **BUILT 2026-08-31 (`6c56b6ce`, on wave; ships in the next box
+   release)** — baked `DEFAULT_RELAY_URL` as the last resolve step, gated on
+   the box-install marker (dev checkouts stay relay-less); explicit off word
+   (`VIRTUES_RELAY_URL=off` or the stored config) so empty-env ≠ disabled;
+   Settings → Network gains the Reach reading + toggle (`/api/network/relay`,
+   rebinds in-process); the manual's reach page drops the now-false
+   subscription-gate claim. Original: **bake the default relay URL** — `resolve_relay_url` gains a shipped
    default after the stored-config and env steps, so a never-linked box homes
    on the relay from first boot instead of `RelayMode::Disabled`. Surface the
    active relay in Settings with the off switch.
