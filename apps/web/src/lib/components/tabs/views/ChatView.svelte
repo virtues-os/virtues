@@ -22,12 +22,42 @@
 	// id — see chat_handler). Mirrors narrative_draft::INTERVIEW_CHAT_ID.
 	const INTERVIEW_CHAT_ID = "chat_narrative_interview";
 	const INTERVIEW_OPENING =
-		"Your box can keep your days from here on — but everything before it, and " +
-		"everything underneath it, only you can tell. I'd like to hear it plainly, " +
-		"the way you'd tell a friend. I won't interpret you, I won't press on " +
-		"anything you don't offer, and only your words end up in the document. " +
-		"Let's start at the beginning: where does your story start, and what were " +
-		"its chapters?";
+		"From here on your box keeps a record of your days. It cannot reach what " +
+		"came before it, and it cannot see what any of it meant — that part only " +
+		"you can tell.\n\n" +
+		"This is the interview where you tell it. It matters because everything a " +
+		"machine is not told, it assumes: left alone, it will fill you in as the " +
+		"average person. Your answers, never mine, are arranged afterwards into a " +
+		"document called \u201cIn your own words\u201d — yours to keep, and to " +
+		"correct.\n\n" +
+		"About twenty minutes, one question at a time. Answer at whatever length " +
+		"suits you, skip anything without explaining, and stop whenever you like; " +
+		"it saves as you go. It will never be finished, and it isn\u2019t meant to " +
+		"be — an honest start is all it needs.\n\n" +
+		"We\u2019ll begin with the chapters of your life. A chapter is a period " +
+		"that felt like one thing: a name only you would give it, roughly when it " +
+		"ran, and what ended it. Most people find four to eight.\n\n" +
+		"Where does yours start?";
+
+	/** The narrative interview opens ALREADY SPEAKING: an authored first line,
+	 *  shown free (never persisted, no model call). The interview prompt knows
+	 *  this opening was delivered and picks up from the reply.
+	 *
+	 *  Called from BOTH load paths — the tab-change effect and onMount. It
+	 *  lived inline in the first one only, so switching to an open interview
+	 *  tab greeted you and deep-linking to /chat/chat_narrative_interview
+	 *  (a fresh page load, a restored tab, the Home link) opened a blank room
+	 *  with no explanation of what it was for. */
+	function applyInterviewOpening(convId: string | null | undefined) {
+		if (convId !== INTERVIEW_CHAT_ID || chat.messages.length > 0) return;
+		chat.messages = [
+			{
+				id: "interview-opening",
+				role: "assistant",
+				parts: [{ type: "text", text: INTERVIEW_OPENING }],
+			},
+		] as unknown as typeof chat.messages;
+	}
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
 	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
@@ -934,22 +964,7 @@
 								role: msg.role as "user" | "assistant" | "checkpoint",
 								parts: convertMessageToParts(msg),
 							})) as unknown as typeof chat.messages;
-							// The narrative interview opens ALREADY SPEAKING: an
-							// authored first line, shown free (never persisted,
-							// no model call). The interview prompt knows this
-							// opening was delivered and picks up from the reply.
-							if (
-								currentTabConversationId === INTERVIEW_CHAT_ID &&
-								chat.messages.length === 0
-							) {
-								chat.messages = [
-									{
-										id: "interview-opening",
-										role: "assistant",
-										parts: [{ type: "text", text: INTERVIEW_OPENING }],
-									},
-								] as unknown as typeof chat.messages;
-							}
+							applyInterviewOpening(currentTabConversationId);
 							if (data.conversation?.model) {
 								initializeSelectedModel(
 									data.conversation.model,
@@ -1064,6 +1079,10 @@
 			})() : null;
 
 			await Promise.all([profilePromise, namePromise, conversationPromise]);
+
+			// After the load, not inside it: a failed fetch must still leave
+			// the interview speaking rather than showing a blank room.
+			applyInterviewOpening(tabConversationId);
 
 			// Stage 3: Post-load tasks (depend on conversation being loaded)
 			if (tabConversationId) {
@@ -1341,6 +1360,15 @@
 	// Generate title after first assistant response
 	async function generateTitle() {
 		if (titleGenerated || chat.messages.length < 2) return;
+		// The interview keeps the name it was seeded with. Its transcript is
+		// the most private text on the box, and a generated title puts a
+		// summary of it in the sidebar — this chat had renamed itself after
+		// the person's own childhood. The server refuses this too (the id
+		// decides, never the client); this only saves the round trip.
+		if (conversationId === INTERVIEW_CHAT_ID) {
+			titleGenerated = true;
+			return;
+		}
 
 		try {
 			const data = await setChatTitle<{ title?: string }>({

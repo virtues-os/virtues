@@ -142,7 +142,7 @@
 		rows.push(
 			{
 				id: "interview",
-				title: "Your first conversation",
+				title: "Fill in your past",
 				done: store.done("narrative_identity_ready") || isDismissed("interview"),
 				state: settled("interview", store.done("narrative_identity_ready")),
 			},
@@ -199,7 +199,7 @@
 		windowShellStore.openTabFromRoute(`/day/day_${date}`, { label: "Your first day" });
 	}
 	function openInterview() {
-		windowShellStore.openTabFromRoute(`/chat/${INTERVIEW_CHAT_ID}`, { label: "Interview" });
+		windowShellStore.openTabFromRoute(`/chat/${INTERVIEW_CHAT_ID}`, { label: "In your own words" });
 	}
 	function openApplets() {
 		windowShellStore.openTabFromRoute("/applets");
@@ -301,13 +301,13 @@
 								</div>
 							{:else if s.id === "interview"}
 								<p class="lede">
-									It will ask about your life — the chapters, the people, what you believe.
-									Answer plainly, skip anything, come back whenever; it becomes a document in
-									your own words, and it is never finished.
+									A narrative interview about your life: the chapters, the people, what
+									mattered and what didn't. About twenty minutes, one question at a time.
+									Skip anything, stop anywhere.
 								</p>
 								<div class="row">
 									<button class="link" type="button" onclick={openInterview}>
-										Open the conversation <span class="arw">→</span>
+										Start the interview <span class="arw">→</span>
 									</button>
 									{#if !s.done}
 										<button class="skip" type="button" onclick={() => void dismiss("interview")}>Skip</button>
