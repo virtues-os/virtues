@@ -24,7 +24,7 @@
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page, Button, Card, Section, LoadingState, ErrorState } from "$lib";
+	import { Page, Button, Card, Section, Field, LoadingState, ErrorState } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onDestroy, onMount } from "svelte";
 	import { createResource } from "$lib/utils/resource.svelte";
@@ -164,6 +164,11 @@
 	 */
 	const hasApp = $derived(device?.kind === "mobile_app" || device?.kind === "desktop_app");
 
+	/** The UI build in front of you: locally the one we compiled into, otherwise
+	 *  the bundle the device's requests came from — which for a paired desktop
+	 *  mirrors the server, since the server is what served it. */
+	const interfaceVersion = $derived(local ? buildLabel(BUILD) : (device?.version ?? null));
+
 	const reaching = $derived.by(() => {
 		if (local) return { text: "On this device", tone: "muted" as const };
 		if (!device?.last_seen_at) return { text: "Never reached your server", tone: "warning" as const };
@@ -246,63 +251,45 @@
 		<Section title="Software" note={local ? "measured here" : "as your server heard it"}>
 		<Card list>
 		<ul>
-			<li class="p-4 flex items-center gap-3">
-				<div class="flex-1 min-w-0">
-					<div class="text-sm text-foreground">App</div>
-					<div class="text-xs text-foreground-subtle mt-0.5">the shell, and what it can do</div>
-				</div>
-				<div class="text-right">
-					<div class="text-xs font-mono text-foreground-muted">
-						{appVersion ?? "—"}
-					</div>
-					{#if appFreshness.text}
-						<div
-							class="text-[11px] mt-0.5"
-							class:text-warning={appFreshness.tone === "warning"}
-							class:text-info={appFreshness.tone === "info"}
-							class:text-foreground-subtle={appFreshness.tone === "muted"}
-						>
-							{appFreshness.text}
-						</div>
+			<Field
+				label="App"
+				hint="the shell, and what it can do"
+				value={appVersion}
+				unknown={!appVersion}
+				note={appFreshness.text || undefined}
+				tone={appFreshness.tone}
+				mono
+			>
+				{#snippet action()}
+					{#if local && upd?.stagedVersion}
+						<Button variant="secondary" onclick={() => void applyAppUpdate()}>Relaunch</Button>
+					{:else if local}
+						<Button variant="ghost" onclick={() => void checkAppUpdate()}>Check</Button>
 					{/if}
-				</div>
-				{#if local && upd?.stagedVersion}
-					<Button variant="secondary" onclick={() => void applyAppUpdate()}>Relaunch</Button>
-				{:else if local}
-					<Button variant="ghost" onclick={() => void checkAppUpdate()}>Check</Button>
-				{/if}
-			</li>
+				{/snippet}
+			</Field>
 
-			<li class="p-4 flex items-center gap-3">
-				<div class="flex-1 min-w-0">
-					<div class="text-sm text-foreground">Interface</div>
-					<div class="text-xs text-foreground-subtle mt-0.5">
-						the screens you are looking at — served by your server
-					</div>
-				</div>
-				<div class="text-xs font-mono text-foreground-muted">
-					{local ? buildLabel(BUILD) : (device.version ?? "—")}
-				</div>
-			</li>
+			<Field
+				label="Interface"
+				hint="the screens you are looking at — served by your server"
+				value={interfaceVersion}
+				unknown={!interfaceVersion}
+				mono
+			/>
 
 			{#if collector}
 				<!-- Nested, not listed apart. The collector is a part of this
 				     machine, and showing it as its own device is what made one
 				     Mac read as two. -->
-				<li class="p-4 flex items-center gap-3">
-					<div class="flex-1 min-w-0">
-						<div class="text-sm text-foreground">Collector</div>
-						<div class="text-xs text-foreground-subtle mt-0.5">
-							the daemon that reads this machine and sends it on
-						</div>
-					</div>
-					<div class="text-right">
-						<div class="text-xs font-mono text-foreground-muted">{collector.version ?? "—"}</div>
-						{#if collectorBehind}
-							<div class="text-[11px] text-warning mt-0.5">behind the app — relaunch</div>
-						{/if}
-					</div>
-				</li>
+				<Field
+					label="Collector"
+					hint="the daemon that reads this machine and sends it on"
+					value={collector.version}
+					unknown={!collector.version}
+					note={collectorBehind ? "behind the app — relaunch" : undefined}
+					tone="warning"
+					mono
+				/>
 			{/if}
 		</ul>
 		</Card>
