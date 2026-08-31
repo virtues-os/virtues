@@ -12,8 +12,9 @@
 
 	  You          /virtues/you            — profile, theme
 	  Assistant    /virtues/assistant      — name, persona, model
-	  Billing      /virtues/billing        — plan and payment method
-	  Usage        /virtues/usage          — AI-call log, background runs, system
+	  Plan         /virtues/plan           — subscription, balance, and the
+	                                         AI calls and background runs that
+	                                         draw it down
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Network      /virtues/network        — which network the box is on
 	  Software     /virtues/software       — release, track, update, artifacts
@@ -50,8 +51,7 @@
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
 	import ModelsView from '$lib/components/tabs/views/ModelsView.svelte';
-	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
-	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
+	import PlanView from '$lib/components/tabs/views/PlanView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
 	import DisplayView from '$lib/components/tabs/views/DisplayView.svelte';
@@ -70,18 +70,21 @@
 		'/virtues/account': '/virtues/you',
 		'/virtues/profile': '/virtues/you',
 		'/virtues/account/assistant': '/virtues/assistant',
-		// Billing is plan + payment method. The usage panel that used to sit
-		// under it never loaded; Usage is now its own section, built from the
-		// box-local call log (the numbers that do load).
-		'/virtues/account/billing': '/virtues/billing',
-		'/virtues/byo-key': '/virtues/billing',
-		'/virtues/billing/plan': '/virtues/billing',
-		'/virtues/account/usage': '/virtues/usage',
-		'/virtues/billing/usage': '/virtues/usage',
+		// Billing and Usage merged into Plan (2026-08-31): one subject seen from
+		// two ends — what you are on, what is left, what drew it down. Both of
+		// their own doors redirect too, because they were live sections with
+		// bookmarks, not just historical paths.
+		'/virtues/billing': '/virtues/plan',
+		'/virtues/usage': '/virtues/plan',
+		'/virtues/account/billing': '/virtues/plan',
+		'/virtues/byo-key': '/virtues/plan',
+		'/virtues/billing/plan': '/virtues/plan',
+		'/virtues/account/usage': '/virtues/plan',
+		'/virtues/billing/usage': '/virtues/plan',
 		// Telemetry was this page under a word for something you send somewhere.
-		'/virtues/telemetry': '/virtues/usage',
-		'/virtues/developer/telemetry': '/virtues/usage',
-		'/virtues/system/history': '/virtues/usage',
+		'/virtues/telemetry': '/virtues/plan',
+		'/virtues/developer/telemetry': '/virtues/plan',
+		'/virtues/system/history': '/virtues/plan',
 		// Box split into System · Network · Software (2026-08-17). Its own door
 		// lands on System, the largest of the three and the one that kept the
 		// page's former title.
@@ -136,8 +139,7 @@
 		| 'you'
 		| 'assistant'
 		| 'models'
-		| 'billing'
-		| 'usage'
+		| 'plan'
 		| 'system'
 		| 'network'
 		| 'software'
@@ -148,8 +150,7 @@
 	const SECTIONS = [
 		'assistant',
 		'models',
-		'billing',
-		'usage',
+		'plan',
 		'system',
 		'network',
 		'software',
@@ -184,10 +185,8 @@
 			<AssistantView {tab} {active} />
 		{:else if section === 'models'}
 			<ModelsView {tab} {active} />
-		{:else if section === 'billing'}
-			<BillingView {tab} {active} />
-		{:else if section === 'usage'}
-			<UsageView {tab} {active} />
+		{:else if section === 'plan'}
+			<PlanView {tab} {active} />
 		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'network'}

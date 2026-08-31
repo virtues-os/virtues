@@ -17,7 +17,7 @@
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page } from "$lib";
+	// Page lives on PlanView now — this file is a section of it.
 	import UniversalDataGrid, {
 		type Column,
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
@@ -187,11 +187,8 @@
 	}
 </script>
 
-<Page
-	title="Usage"
-	description="What your server has been running, and what each AI call cost the wallet — server-local, nothing leaves your machine. Calls on your own key show tokens, not a price we'd be guessing at."
-	maxWidth="wide"
->
+<!-- No <Page>: a SECTION of Plan. See PlanView. -->
+<div class="space-y-8">
 	<!-- AI-call log. First, because it is the one thing here you'd come back
 	     for: every paid call, in order, with what it cost. -->
 	<section class="block">
@@ -311,7 +308,7 @@
 			{/if}
 		</div>
 	</section>
-</Page>
+</div>
 
 <style>
 	.block {
