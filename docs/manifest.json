@@ -33,7 +33,7 @@
 			"pages": [
 				{ "slug": "use/day", "title": "Your day", "planned": true },
 				{ "slug": "use/asking", "title": "Asking questions", "planned": true },
-				{ "slug": "use/wiki", "title": "People, places, and the record", "planned": true },
+				{ "slug": "use/wiki", "title": "People & places", "planned": true },
 				{ "slug": "use/pages-and-notebooks", "title": "Pages & notebooks", "planned": true },
 				{ "slug": "use/applets", "title": "Applets", "planned": true }
 			]
