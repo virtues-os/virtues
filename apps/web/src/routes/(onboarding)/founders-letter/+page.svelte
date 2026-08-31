@@ -1,33 +1,27 @@
 <!--
-  /onboarding — the founder's letter, and nothing else.
+  /founders-letter — the one screen before the app.
 
-  WAS A SEQUENCE, IS NOW A THRESHOLD (2026-08-31). The four-step flow —
-  letter, introductions, sources, reveal — asked its questions at the one
-  moment the box had nothing to show for them: nothing kicks when a source
-  connects, entities resolve on a 15-minute tick, and the first narrated day
-  lands the following morning. So the payoff of connecting a life could never
-  be delivered here, only promised. Everything except the letter moved into
-  the app as Home's getting-started sections, which retire individually as
-  they are answered or as their promises land — see
-  agents/plan/getting-started-plan.md, and GettingStarted.svelte for the
-  sections themselves.
+  WAS /onboarding, WAS A SEQUENCE, IS NOW A NAMED PAGE (2026-08-31). The
+  four-step flow — letter, introductions, sources, reveal — asked its
+  questions at the one moment the box had nothing to show for them: nothing
+  kicks when a source connects, entities resolve on a 15-minute tick, and the
+  first narrated day lands the following morning. Everything except the letter
+  moved into the app as the getting-started page (HomeView's first dress —
+  see GettingStarted.svelte and agents/plan/getting-started-plan.md), and
+  "onboarding" left the vocabulary with it: what remains is a letter, so the
+  route says so. /onboarding and /setup redirect here for old links and
+  OTA-skewed bundles.
 
   What stays is the one thing that must be read before the app and cannot
   retire: the letter. It sets the covenant; the button at its end is the door.
 
-  THE URL SPACE SHRANK WITH IT. `[[view]]` remains only so that old step URLs
-  (/onboarding/introductions, /sources, /you) land here instead of 404ing —
-  they normalize to /onboarding with replaceState, since a correction is not
-  somewhere the person navigated to.
-
   THE ACCOUNT GATE MOVED TOO. It was a toll booth on the reveal (the one
-  onboarding surface that called the models); with the reveal gone, the toll
-  booth stands where the models are actually called — Home's getting-started
-  renders AccountGate while the account is unsatisfied.
+  onboarding surface that called the models); now it stands where the models
+  are actually called — the getting-started page renders AccountGate while
+  the account is unsatisfied.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
-	import { page } from "$app/state";
 	import { onMount } from "svelte";
 	import { fade } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
@@ -53,15 +47,6 @@
 			loading = false;
 		}
 	}
-
-	// Old step URLs normalize to the letter. `replaceState` — a correction is
-	// not somewhere they navigated to, and leaving it in history would make
-	// Back bounce off it forever.
-	$effect(() => {
-		if (page.params.view) {
-			void goto("/onboarding", { replaceState: true });
-		}
-	});
 
 	// Cloud/onboarding cross-check for home_timezone (the box's location).
 	// The box normally seeds this from its own system clock; but a datacenter box
@@ -89,13 +74,16 @@
 	});
 
 	async function enterApp() {
-		// RECORD THE CHOICE FIRST. The app shell redirects back here while
-		// onboarding is unfinished, so leaving without saying "I'm leaving on
-		// purpose" would bounce straight back and read as the button being
-		// broken (2026-08-13).
+		// RECORD THE CHOICE FIRST. The app shell redirects back here while the
+		// letter is unread, so leaving without saying "I'm leaving on purpose"
+		// would bounce straight back and read as the button being broken
+		// (2026-08-13).
 		//
-		// Only when it is genuinely unfinished — a completed onboarding is not a
+		// Only when it is genuinely unfinished — a completed record is not a
 		// skipped one, and marking it skipped would lose that distinction.
+		// (`skipOnboarding` keeps its wire name: the flag on the box is still
+		// called onboarding_status, and renaming the protocol is a bigger sweep
+		// than a route.)
 		if (state_ && state_.onboarding_complete === false) {
 			try {
 				await skipOnboarding(true);
@@ -130,12 +118,12 @@
 {/if}
 
 <style>
-	/* Four levels, not three — this file sits one deeper than it used to, under
-	   `[[view]]`. svelte-check does not resolve `@reference`, so a stale path
-	   here typechecks clean and 500s only the style request, which the browser
+	/* svelte-check does not resolve `@reference`, so a stale path here
+	   typechecks clean and 500s only the style request, which the browser
 	   reports as "failed to fetch dynamically imported module" for the whole
-	   page. Blank screen, no error naming this line. */
-	@reference "../../../../app.css";
+	   page. Blank screen, no error naming this line. Three levels up from
+	   routes/(onboarding)/founders-letter/. */
+	@reference "../../../app.css";
 
 	/* The shell, type scale and controls come from onboarding.css — see that
 	   file for why they are not here. */

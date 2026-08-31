@@ -61,6 +61,17 @@ page never switches modes; it sheds.
 - **Graduation is not a state.** There is no `getting_started_complete` flag,
   no mode switch, nothing to migrate later. When the asking sections have
   retired, what remains is Home: the lifeline, the day, the record.
+- **"Onboarding" left the visible vocabulary (2026-08-31).** The letter lives
+  at `/founders-letter`; `/onboarding` (and its old step URLs) and `/setup`
+  redirect there. Wire names — `onboarding_status`, `skip-onboarding`, the
+  `(onboarding)` route group, the components directory — keep their spelling
+  until a protocol/rename sweep is worth doing on its own.
+- **While any section remains, getting started IS the page.** Home's
+  furniture — subtitle, day stepper, deck, recents, the keep — exists only
+  after every section has retired. A middle state with quiet residuals
+  rendered on top of Home was built and struck the same day: it read as Home
+  with getting started slapped on, which is the mess this plan exists to
+  prevent.
 
 ## The page, top to bottom
 
