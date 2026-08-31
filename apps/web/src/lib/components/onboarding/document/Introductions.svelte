@@ -33,6 +33,28 @@
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
+	// NAMES ON A PLATE. Naming something you met ninety seconds ago is the
+	// hardest ask on the page — a blank field demands invention, a tap does
+	// not. Three at a time plus a reroll, so it stays an offer, never a menu
+	// to exhaust. Short human names, none of them a product's.
+	const NAME_POOL = [
+		"Juno", "Wren", "Sage", "Iris", "Clio", "Milo",
+		"Vesper", "Lyra", "Atlas", "Fern", "Echo", "Basil",
+		"Thea", "Orin", "Sol", "Remy", "Nova", "Piper",
+		"Verity", "Ember", "Cass", "Rook", "Ada", "Alba",
+	];
+	let suggested = $state<string[]>([]);
+
+	/** Deal three fresh names — never the current value, never a repeat of the hand showing. */
+	function reroll() {
+		const pool = NAME_POOL.filter((n) => n !== assistant.trim() && !suggested.includes(n));
+		const next: string[] = [];
+		while (next.length < 3 && pool.length) {
+			next.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+		}
+		suggested = next;
+	}
+
 	onMount(async () => {
 		try {
 			const [p, a] = await Promise.all([
@@ -49,6 +71,8 @@
 		} catch {
 			// A failed read costs a pre-filled field, nothing more.
 		}
+		// After the reads, so the deal never offers the name it already has.
+		reroll();
 		loading = false;
 	});
 
@@ -93,10 +117,29 @@
 					/>
 				</label>
 
-				<label>
-					<span class="label">And what will you call it?</span>
-					<input class="ob-input" type="text" bind:value={assistant} placeholder={assistantDefault} />
-				</label>
+				<div class="field-group">
+					<label>
+						<span class="label">And what will you call it?</span>
+						<input class="ob-input" type="text" bind:value={assistant} placeholder={assistantDefault} />
+					</label>
+					{#if suggested.length}
+						<div class="names">
+							{#each suggested as name (name)}
+								<button
+									type="button"
+									class="chip"
+									class:chosen={assistant.trim() === name}
+									onclick={() => (assistant = name)}
+								>
+									{name}
+								</button>
+							{/each}
+							<button type="button" class="chip roll" onclick={reroll} aria-label="Deal three more names" title="More names">
+								<Icon icon="ri:shuffle-line" width="13" />
+							</button>
+						</div>
+					{/if}
+				</div>
 
 				<label>
 					<span class="label">When were you born?</span>
@@ -130,6 +173,57 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
+	}
+
+	.field-group {
+		display: flex;
+		flex-direction: column;
+		gap: 0.65rem;
+	}
+
+	/* The dealt names: quiet serif pills, an offer under the field rather than
+	   a control panel beside it. The shuffle sits in the row as one of them —
+	   rerolling is the same gesture as choosing. */
+	.names {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.chip {
+		padding: 0.28rem 0.85rem;
+		border: 1px solid var(--color-border);
+		border-radius: 999px;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 0.95rem;
+		color: var(--color-foreground-muted);
+		transition:
+			color 0.15s ease,
+			background 0.15s ease;
+	}
+
+	.chip:hover {
+		color: var(--color-foreground);
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+	}
+
+	.chip.chosen {
+		color: var(--color-foreground);
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+	}
+
+	/* The reroll is an icon, so it gets to be round. */
+	.chip.roll {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.34rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.chip.roll:hover {
+		color: var(--color-foreground);
 	}
 
 	/* The questions themselves are prose, so they are set as prose. */
