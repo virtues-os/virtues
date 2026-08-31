@@ -1680,7 +1680,7 @@ its devices apart — type its address.",
         renderGrantStep({ name: state.bleBox.name, origin, bleId: state.bleBox.id }, ssid);
       }
 
-      // ── ACCOUNT: sign in → (checkout) → grant ─────────────────────────────
+      // ── ACCOUNT: sign in → grant ──────────────────────────────────────────
       //
       // Sign-in comes BEFORE wifi (one-wire-plan Phase 2). It is a
       // conversation between THIS computer and atlas — the box is not
@@ -1693,14 +1693,23 @@ its devices apart — type its address.",
       // opcodes they orbited.
       //
       // SKIP STAYS EVERYWHERE (prescribe, never enforce): a skipped sign-in
-      // just means no grant is written — the box works LAN-only, linkable
-      // later from Settings or `virtues link` on its console.
+      // just means no grant is written — the box is linkable later from
+      // Settings or `virtues link` on its console.
+      //
+      // SETUP NEVER MENTIONS MONEY (open-relay-plan, 2026-08-31). A checkout
+      // screen used to sit between sign-in and the grant, gating the account
+      // attach on payment. That put the paywall on the connectivity substrate:
+      // an unpaid box got no account, so no relay, and on a client-isolating
+      // AP "unpaid" was indistinguishable from "broken" — a beta owner hit
+      // exactly that, then watched the checkout poll hang on a slow webhook.
+      // The subscription is offered where it's honest: the first time hosted
+      // AI is invoked, and in Settings. Setup's only questions are network
+      // and ownership.
       //
       // Atlas contract (routes/account.rs, routes/link.rs):
       //   POST /account/login          {email}       → {sent}
       //   POST /account/login/verify   {email, code} → {token, entitled}
       //   POST /account/session        (Bearer)      → {email, entitled}
-      //   POST /account/checkout       (Bearer)      → {url} | {entitled:true}
       //   POST /init/grant             (Bearer)      → {grant, expires_in}
       // Errors are HTTP 4xx/5xx with {error:{code,message}}; atlasPost
       // flattens them to {ok:false, code, error}. CORS: app_cors() — the
@@ -1755,12 +1764,8 @@ its devices apart — type its address.",
             <div class="wait"><span class="pip"></span><span>One moment</span></div>`;
           (async () => {
             const res = await atlasPost('/account/session', {}, state.linkToken);
-            if (res && res.ok) {
-              if (res.entitled) { state.entitled = true; return proceed(); }
-              return renderCheckout(box, proceed);
-            }
+            if (res && res.ok) return proceed();
             state.linkToken = null;
-            state.entitled = false;
             renderSignin(box, next, res && res.transport ? res.error : null);
           })();
           return;
@@ -1847,59 +1852,12 @@ its devices apart — type its address.",
           if (res && res.ok && res.token) {
             // Signed in for the whole setup — a screen bounce never re-OTPs.
             state.linkToken = res.token;
-            if (res.entitled) { state.entitled = true; return proceed(); }
-            return renderCheckout(box, proceed);
+            return proceed();
           }
           renderSigninCode(box, proceed, email,
             (res && res.error) || "That code didn't match.");
         });
         document.getElementById('code').focus();
-      }
-
-      /** Signed in, no subscription: the one deliberate browser hand-off.
-       *  Payment lives where Apple Pay and card autofill live; this screen
-       *  waits for atlas to see it land and then simply continues. */
-      function renderCheckout(box, proceed) {
-        const gen = ++searchGen;
-        setServer(box.name);
-        app.innerHTML = `
-          <p class="kicker">Your account</p>
-          <h1>Start your subscription</h1>
-          <p class="sub">Checkout opens in your browser — cards and Apple Pay live
-            there, not in this app. Come back here after; this screen notices on
-            its own.</p>
-          <button class="primary" id="open">Open checkout</button>
-          <div class="wait hidden" id="waiting"><span class="pip"></span><span>Waiting for the payment to land…</span></div>
-          <div class="msg" id="msg"></div>
-          <p class="escape"><button id="skip">Skip — run it without a subscription</button></p>`;
-        const say = (t, cls) => {
-          const m = document.getElementById('msg');
-          if (m) { m.className = 'msg ' + (cls || ''); m.textContent = t; }
-        };
-        document.getElementById('skip').addEventListener('click', () => { searchGen++; proceed(); });
-        document.getElementById('open').addEventListener('click', async () => {
-          const res = await atlasPost('/account/checkout', {}, state.linkToken);
-          if (gen !== searchGen) return;
-          if (res && res.ok && res.entitled) { state.entitled = true; searchGen++; return proceed(); }
-          if (!(res && res.ok && res.url)) {
-            return say((res && res.error) || "Couldn't open checkout — try again.", 'err');
-          }
-          openUrl(res.url);
-          document.getElementById('waiting').classList.remove('hidden');
-          // Poll until the webhook-and-done-page flip `entitled`. Gen-guarded;
-          // skip and back navigation retire it.
-          while (gen === searchGen) {
-            await new Promise((r) => setTimeout(r, 3000));
-            if (gen !== searchGen) return;
-            const s2 = await atlasPost('/account/session', {}, state.linkToken);
-            if (gen !== searchGen) return;
-            if (s2 && s2.ok && s2.entitled) {
-              state.entitled = true;
-              searchGen++;
-              return proceed();
-            }
-          }
-        });
       }
 
       // ── THE GRANT, written after the join ─────────────────────────────────
@@ -1910,9 +1868,10 @@ its devices apart — type its address.",
       // redeems outbound once online — nothing here polls for the redemption.
       // The codeless pair that follows waits box-side for the redeem + relay
       // bind, so the ticket it answers with is complete. Skipped sign-in
-      // writes nothing and goes straight to pairing: LAN-only by choice.
+      // writes nothing and goes straight to pairing; the account attaches
+      // later from Settings if wanted.
       async function renderGrantStep(server, ssid) {
-        if (!state.linkToken || !state.entitled || !server.bleId) {
+        if (!state.linkToken || !server.bleId) {
           return goToPairing(server, ssid);
         }
         const gen = ++searchGen;
@@ -2011,13 +1970,6 @@ its devices apart — type its address.",
         } finally {
           clearTimeout(t);
         }
-      }
-
-      /** Open a URL in the user's real browser — checkout belongs there. */
-      function openUrl(url) {
-        // The opener plugin is desktop-only; mobile falls back to the webview's
-        // own handler, which iOS routes to Safari.
-        invoke('plugin:opener|open_url', { url }).catch(() => window.open(url, '_blank'));
       }
 
       function renderSearching() {
@@ -2265,7 +2217,7 @@ its devices apart — type its address.",
 
       // Code entry for ONE chosen box. The code is the only thing left to
       // type, and mistyping the box is fail-closed anyway: a code only works
-      // on the box that displayed it.
+      // on the box that minted it.
       async function renderCodeEntry(server) {
         let autoErr = '';
         setServer(server.name);
@@ -2276,8 +2228,8 @@ its devices apart — type its address.",
         // answering, so this one call carries everything.
         //
         // The form below stays for the LAN route: a claimed box found on the
-        // network, where the panel's rotating 6-digit code is the only proof
-        // channel a codeless radio can't replace.
+        // network, where a code minted by `virtues pair` on the server is the
+        // only proof channel a codeless radio can't replace.
         if (server.bleId) {
           app.innerHTML = `
             <p class="kicker">Almost there</p>
@@ -2289,22 +2241,30 @@ its devices apart — type its address.",
           const done = await submitPairBle(server);
           if (done.ok) return;
           // Bluetooth failed. Carry the reason onto the LAN form: silence
-          // here reads as the app having ignored the tap, and the panel is
-          // showing the code the form asks for.
+          // here reads as the app having ignored the tap, and the form names
+          // the working path (`virtues pair`).
           autoErr = done.error;
         }
+        // The code comes from `virtues pair` on the server — nowhere else.
+        // This copy used to promise "the 6 digits on the display right now,"
+        // but the display deliberately never prints a pair code, and on a
+        // claimed box the standing code is retired at claim (pair_rotator.rs)
+        // — so the screen was asking for digits that did not exist anywhere.
+        // A beta owner with no shell on her server dead-ended here (2026-08-31).
         app.innerHTML = `
           <button class="backnav" id="back" aria-label="Back to servers">←</button>
           <p class="kicker">${esc(server.name)}${server.claimed === false ? ' · ready to set up' : ''}</p>
           <h1>Enter its code</h1>
-          <p class="sub">The 6 digits on ${esc(server.name)}'s display right now.</p>
+          <p class="sub">Run <b>virtues pair</b> in ${esc(server.name)}'s terminal —
+            it prints the six digits.</p>
           <form id="form">
             <input id="code" inputmode="numeric" maxlength="7" placeholder="123 456" autofocus />
             <button class="primary" id="go" type="submit">Pair</button>
           </form>
           <div class="msg err" id="msg">${autoErr ? esc(autoErr) : ''}</div>
-          <p class="hint">It rotates every few minutes — a fresh one always works. No display?
-            Run <b>virtues pair</b> on the server.</p>
+          <p class="hint">${server.claimed === false
+            ? 'The install printed one too, when it finished. Codes rotate — a fresh one always works.'
+            : 'Each code works once and lasts about 15 minutes.'}</p>
           ${server.bleId ? '<button class="back" id="blewifi">Set up its Wi-Fi instead</button>' : ''}`;
         document.getElementById('back').addEventListener('click', start);
         // The escape hatch for a stale "already online" advertisement: if the
