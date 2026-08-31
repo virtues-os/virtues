@@ -155,21 +155,6 @@
 		].filter(Boolean) as StepId[],
 	);
 
-	/**
-	 * Where a bare or unresolvable URL should land: the first thing left to do.
-	 *
-	 * No reachability gating remains — the account stopped being a step, and the
-	 * two leaves that need it render the gate themselves. A hand-typed
-	 * `/onboarding/you` on an unlinked box now opens the gate, not the reveal,
-	 * which is a better answer than a bounce.
-	 */
-	// A brand-new box starts at the letter — `onboarding_status` is the
-	// server-side memory of having read it (flipped by Begin), so a refresh or
-	// a second browser resumes past it instead of skipping it entirely.
-	const resolved = $derived<ViewId>(
-		state_?.onboarding_status === "new" ? "letter" : !worldEnough ? "sources" : "you",
-	);
-
 	/** Every step is offerable — the AI-needing leaves guard themselves. */
 	const open = $derived(STEPS.map((s) => s.id));
 
@@ -332,10 +317,12 @@
 							}}
 						/>
 					{:else if view === "introductions"}
-						<!-- Introductions is the hand-off from reading to working, so
-						     Continue goes wherever the box actually needs us — not
-						     blindly to the next slug. -->
-						<Introductions onnext={() => go(resolved)} />
+						<!-- Continue turns the page, always. It used to route to a
+						     `resolved` "first thing left to do", which on any box with
+						     a source already connected silently skipped "Your data" —
+						     a button that jumps is a button that can't be trusted. The
+						     strip is the instrument for skipping what's done. -->
+						<Introductions onnext={() => go("sources")} />
 					{:else if view === "sources"}
 						<h1 class="ob-h1">Your data</h1>
 
