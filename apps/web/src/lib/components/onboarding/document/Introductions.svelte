@@ -202,7 +202,7 @@
 							getValue={(z) => z}
 							onSelect={(z) => (tz = z)}
 							width="w-full"
-							maxHeight="max-h-64"
+							maxHeight="max-h-48"
 							searchable={true}
 							getSearchText={(z) => z.replace(/[_/]/g, " ")}
 							getGroup={regionOf}
