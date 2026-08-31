@@ -94,8 +94,6 @@ pub struct AssistantProfile {
     /// JSON blob storing persona definitions: { "items": [...], "hidden": [...] }
     /// Column is `jsonb` (migration 0003) — bind as `serde_json::Value`, not String.
     pub personas: Option<serde_json::Value>,
-    /// AI-managed persistent memory. Column is `jsonb` (migration 0003).
-    pub memory: Option<serde_json::Value>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
