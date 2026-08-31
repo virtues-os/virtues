@@ -21,13 +21,14 @@
 	identically on every glass. The one escape hatch is the hidden door at the
 	block's foot — the same tucked-away gesture onboarding's skip used to be.
 
-	TWO DRESSES, ONE COMPONENT. While the askers are open (sign-in,
-	introductions, connect) this IS the page — HomeView renders nothing else,
-	because a getting-started block sharing a screen with a nine-track day
-	chart of silence is a mess wearing two costumes. The `phase` binding tells
-	HomeView which dress is on: "focus" until the askers settle, "settled"
-	once only the quiet residuals (schedule, first day, interview, enrichment)
-	remain, "loading" while neither end has answered yet.
+	WHILE ANY SECTION REMAINS, THIS IS THE PAGE. HomeView renders nothing
+	else — no subtitle, no day stepper, no deck — because a getting-started
+	block sharing a screen with a nine-track day chart of silence is a mess
+	wearing two costumes (seen live 2026-08-31; the "quiet residuals on top of
+	Home" middle state was built and struck the same day). The `phase` binding
+	tells HomeView which page this is: "focus" while anything here still
+	renders, "settled" once everything has retired and Home may exist,
+	"loading" while neither end has answered yet.
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
@@ -149,11 +150,12 @@
 			enrichment.length > 0,
 	);
 
-	// The page's dress. Open askers own the whole screen; quiet residuals
-	// share it with Home. Loading holds until both ends have answered once,
-	// so a first-run box never flashes Home's furniture before the focus
-	// dress lands.
-	const focus = $derived(showSignin || showIntro || showConnect);
+	// Anything at all on this page and the page is this. The askers only
+	// steer the standfirst's copy. Loading holds until both ends have
+	// answered once, so a first-run box never flashes Home's furniture
+	// before the focus page lands.
+	const askersOpen = $derived(showSignin || showIntro || showConnect);
+	const focus = $derived(anything);
 	$effect(() => {
 		phase = !store.loaded || !profileSettled ? "loading" : focus ? "focus" : "settled";
 	});
@@ -205,15 +207,16 @@
 </script>
 
 {#if anything}
-	<div class="gs" class:focus in:fade={{ duration: 200 }}>
-		{#if focus}
-			<!-- The Page heading already says "Getting started", so no kicker —
-			     that would stutter. The standfirst is the page's one line of
-			     framing; it leaves with the focus dress. -->
-			<p class="stand">A few things to set up, then the record takes over.</p>
-		{:else}
-			<h2 class="kicker">getting started</h2>
-		{/if}
+	<div class="gs" in:fade={{ duration: 200 }}>
+		<!-- The Page heading already says "Getting started", so no kicker —
+		     that would stutter. The standfirst is the page's one line of
+		     framing, and it follows the work: setup left to do, or the record
+		     already under way. -->
+		<p class="stand">
+			{askersOpen
+				? "A few things to set up, then the record takes over."
+				: "The record is under way. What remains here retires on its own."}
+		</p>
 
 		{#if showSignin}
 			<section class="sec">
@@ -342,34 +345,24 @@
 {/if}
 
 <style>
-	.gs { position: relative; max-width: 640px; padding-bottom: 8px; }
+	/* This is the whole page whenever it renders at all, so the type and the
+	   air are set for a page, not a margin note. */
+	.gs { position: relative; max-width: 640px; padding: clamp(8px, 2vh, 24px) 0 8px; }
 
-	.kicker {
-		font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em;
-		color: var(--color-foreground-subtle); margin: 0 0 18px; font-weight: 400;
-	}
+	.sec { margin-bottom: clamp(40px, 7vh, 72px); }
 
-	.sec { margin-bottom: clamp(28px, 4vh, 44px); }
-
-	/* The focus dress: this is the whole page, so the type and the air both
-	   grow — a screen with three things on it should not be set like a margin
-	   note. */
 	.stand {
 		font-family: var(--font-serif); font-size: 21px; line-height: 1.45;
-		color: var(--color-foreground); margin: 0 0 clamp(36px, 6vh, 64px); max-width: 30ch;
+		color: var(--color-foreground); margin: 0 0 clamp(36px, 6vh, 64px); max-width: 34ch;
 	}
-	.gs.focus { padding-top: clamp(8px, 2vh, 24px); }
-	.gs.focus .sec { margin-bottom: clamp(40px, 7vh, 72px); }
-	.gs.focus .q { font-size: 20px; margin-bottom: 10px; }
-	.gs.focus .lede { font-size: 14px; }
 
-	/* The section's own line, in the voice the rest of Home speaks. */
+	/* The section's own line, in the voice the rest of the app speaks. */
 	.q {
-		font-family: var(--font-serif); font-size: 18px; font-weight: 400;
-		line-height: 1.4; color: var(--color-foreground); margin: 0 0 8px;
+		font-family: var(--font-serif); font-size: 20px; font-weight: 400;
+		line-height: 1.4; color: var(--color-foreground); margin: 0 0 10px;
 	}
 	.lede {
-		font-family: var(--font-sans); font-size: 13.5px; line-height: 1.55;
+		font-family: var(--font-sans); font-size: 14px; line-height: 1.55;
 		color: var(--color-foreground-muted); margin: 0 0 4px; max-width: 56ch;
 	}
 

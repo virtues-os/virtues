@@ -56,10 +56,11 @@
 	import GettingStarted from "$lib/components/home/GettingStarted.svelte";
 	import DayDeck from "$lib/components/home/DayDeck.svelte";
 
-	// Which dress the page wears — written by GettingStarted, read here. While
-	// the askers are open ("focus") the getting-started sections ARE the page:
-	// no subtitle, no day stepper, no deck of silent tracks sharing the screen
-	// with a setup question. Home's own furniture appears only at "settled".
+	// Which page this is — written by GettingStarted, read here. While any
+	// getting-started section remains ("focus"), those sections ARE the page:
+	// no subtitle, no day stepper, no deck of silent tracks sharing the
+	// screen with them. Home's own furniture exists only at "settled", when
+	// getting started has retired entirely.
 	let gsPhase = $state<"loading" | "focus" | "settled">("loading");
 	import DayGround from "$lib/components/home/DayGround.svelte";
 	import DayNovelty from "$lib/components/home/DayNovelty.svelte";
@@ -351,9 +352,10 @@
 	{/snippet}
 
 	<div class="body">
-		<!-- First run: the getting-started sections, each retiring as it is
-		     answered or as its promise lands. Renders nothing on a settled box —
-		     see GettingStarted.svelte and agents/plan/getting-started-plan.md. -->
+		<!-- First run: the getting-started page, whole and alone, each section
+		     retiring as it is answered or as its promise lands. Renders nothing
+		     on a settled box — see GettingStarted.svelte and
+		     agents/plan/getting-started-plan.md. -->
 		<div class="rv"><GettingStarted bind:phase={gsPhase} /></div>
 
 		{#if gsPhase === "settled"}
