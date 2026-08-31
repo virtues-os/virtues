@@ -19,23 +19,17 @@
   same measure.
 -->
 <script lang="ts">
-	import { Page, Button } from '$lib';
-	import Icon from '$lib/components/Icon.svelte';
+	import { Page } from '$lib';
 	import MobileDeviceScreen from '$lib/components/mobile/MobileDeviceScreen.svelte';
-	import { backToDevices } from '$lib/devices/shared';
 </script>
 
+<!-- No "← Devices" chrome: on the phone this page is entered from the drawer,
+     not the Devices list, so the link pointed somewhere the reader never was.
+     Swipe-back / the drawer are the ways out. -->
 <Page
 	title="This device"
 	description="What this phone collects, and whether it is reaching the box."
 	padding="compact"
 >
-	{#snippet actions()}
-		<Button variant="ghost" onclick={backToDevices}>
-			<Icon icon="ri:arrow-left-line" />
-			Devices
-		</Button>
-	{/snippet}
-
 	<MobileDeviceScreen />
 </Page>

@@ -1954,6 +1954,22 @@
 						</div>
 					</div>
 
+					{#if isEmpty && !isGhost && mobileLayout.isMobile}
+						<!-- The phone's opening image: the mark assembling itself in
+						     the space a conversation will fill. Desktop centers the
+						     composer instead; the phone docks it permanently, which
+						     left this expanse truly blank. Decorative, so hidden
+						     from the tree and transparent to touches. -->
+						<div class="init-hero" aria-hidden="true" out:fade={{ duration: 200 }}>
+							<svg class="init-mark" viewBox="0 0 12 10.5" width="30" height="26.25" fill="currentColor">
+								<circle class="init-dot init-dot-1" cx="6" cy="2.4" r="1.5" />
+								<circle class="init-dot init-dot-2" cx="2.6" cy="8.1" r="1.5" />
+								<circle class="init-dot init-dot-3" cx="9.4" cy="8.1" r="1.5" />
+							</svg>
+							<span class="init-word">Virtues</span>
+						</div>
+					{/if}
+
 					{#if isEmpty && isGhost}
 						<div
 							class="ghost-hero"
@@ -2438,6 +2454,77 @@
 		font-size: 1.75rem;
 		font-weight: 400;
 		color: var(--color-foreground);
+	}
+
+	/* ── The phone's opening image ──
+	   The ∴ mark and wordmark, seated in the upper half of the empty room —
+	   above center so the (bottom-docked) composer and rising keyboard never
+	   crowd it. The entrance is the mark ASSEMBLING: three dots settle into
+	   the trivet one by one, then the word surfaces under them. All
+	   keyframes are from-only with `backwards` fill — an explicit `to` with
+	   a fill-mode is what once pinned a disabled button solid ink (see the
+	   airlock's rise animation for the same rule). */
+	.init-hero {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: calc(50% + 72px);
+		z-index: 2;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.875rem;
+		text-align: center;
+		pointer-events: none;
+		color: var(--color-foreground);
+	}
+
+	.init-mark {
+		overflow: visible;
+	}
+
+	.init-word {
+		/* The masthead's register, verbatim: serif, never bold, hairline
+		   stroke for logo presence at text weight. */
+		font-family: var(--font-serif);
+		font-size: 1.375rem;
+		font-weight: 400;
+		letter-spacing: 0.03em;
+		-webkit-text-stroke: 0.2px currentColor;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.init-dot {
+			animation: init-dot-settle 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+			transform-origin: center;
+			transform-box: fill-box;
+		}
+		.init-dot-1 {
+			animation-delay: 0.15s;
+		}
+		.init-dot-2 {
+			animation-delay: 0.32s;
+		}
+		.init-dot-3 {
+			animation-delay: 0.49s;
+		}
+		.init-word {
+			animation: init-word-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.75s backwards;
+		}
+	}
+
+	@keyframes init-dot-settle {
+		from {
+			opacity: 0;
+			transform: scale(0.3) translateY(3px);
+		}
+	}
+
+	@keyframes init-word-rise {
+		from {
+			opacity: 0;
+			transform: translateY(8px);
+		}
 	}
 
 

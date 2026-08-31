@@ -1113,6 +1113,24 @@ export async function uploadChatImport(
 	return res.json();
 }
 
+/** What chat-import has already landed on the box (empty = never imported). */
+export interface ChatImportStatus {
+	messages: number;
+	conversations: number;
+	/** Distinct providers seen in the imported rows, e.g. ["claude"]. */
+	providers: string[];
+}
+
+/**
+ * GET /api/chat-import/status — connected-state for the chat-import source,
+ * which mints no credential; the imported rows themselves are the evidence.
+ */
+export async function getChatImportStatus(): Promise<ChatImportStatus> {
+	const res = await fetch(`${API_BASE}/chat-import/status`);
+	if (!res.ok) throw new Error(`Failed to read chat-import status: ${res.statusText}`);
+	return res.json();
+}
+
 export interface MintCollectorResponse {
 	token: string;
 	expires_at: string;

@@ -117,7 +117,6 @@
 1 virtues-core/src/tools/sql_query.rs	.ok();
 1 virtues-core/src/tools/sql_query.rs	let row_count: i64 = count_row.map(|r| r.get("cnt")).unwrap_or(0);
 1 virtues-core/src/virtues_api/client.rs	.ok()
-3 virtues-core/src/api/drive.rs	.ok();
 10 virtues-core/src/cli/commands/status_json.rs	.ok()
 12 virtues-core/src/api/day_summary.rs	.unwrap_or_default();
 2 applets/ios_ingest/contacts.rs	Ok(row.and_then(|r| r.try_get::<Option<String>, _>("id").ok().flatten()))

@@ -372,6 +372,21 @@ async fn update_usage_add(pool: &PgPool, size_bytes: i64, is_folder: bool) -> Re
     Ok(())
 }
 
+/// Remove a blob from storage.
+///
+/// absent-ok: a row can outlive its blob (deleted externally, or a retry
+/// after a partial failure), and the goal of a delete is that the blob not
+/// exist — so NotFound is success. Every other failure propagates: once the
+/// DB row is gone, a swallowed delete error is an orphaned blob that nothing
+/// will ever find again.
+async fn remove_blob(config: &DriveConfig, path: &str) -> Result<()> {
+    match config.storage.delete(path).await {
+        Ok(()) => Ok(()),
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Error::Storage(format!("Failed to delete blob {path}: {e}"))),
+    }
+}
+
 /// Update usage statistics after file deletion
 async fn update_usage_remove(pool: &PgPool, size_bytes: i64, is_folder: bool) -> Result<()> {
     let (file_delta, folder_delta): (i64, i64) = if is_folder { (0, 1) } else { (1, 0) };
@@ -1044,7 +1059,7 @@ async fn soft_delete_folder_recursive(pool: &PgPool, folder_id: &str) -> Result<
                 .bind(&child.id)
                 .execute(pool)
                 .await
-                .ok();
+                .map_err(|e| Error::Database(format!("Failed to soft delete file: {e}")))?;
             total_bytes += child.size_bytes;
             total_count += 1;
         }
@@ -1087,16 +1102,14 @@ async fn hard_delete_folder_recursive(
         if child.is_folder {
             Box::pin(hard_delete_folder_recursive(pool, config, &child)).await?;
         } else {
-            config.storage.delete(&child.path).await.ok();
+            remove_blob(config, &child.path).await?;
 
             sqlx::query("DELETE FROM app_drive_files WHERE id = $1")
                 .bind(&child.id)
                 .execute(pool)
                 .await
-                .ok();
-            update_usage_remove(pool, child.size_bytes, false)
-                .await
-                .ok();
+                .map_err(|e| Error::Database(format!("Failed to delete file record: {e}")))?;
+            update_usage_remove(pool, child.size_bytes, false).await?;
         }
     }
 
@@ -1245,8 +1258,7 @@ pub async fn purge_file(pool: &PgPool, config: &DriveConfig, file_id: &str) -> R
         // Recursively hard-delete folder contents
         hard_delete_folder_recursive(pool, config, &file).await?;
     } else {
-        // Ignore errors if file doesn't exist (may have been deleted externally)
-        config.storage.delete(&file.path).await.ok();
+        remove_blob(config, &file.path).await?;
 
         // Delete from database
         sqlx::query("DELETE FROM app_drive_files WHERE id = $1")
@@ -1500,8 +1512,9 @@ pub async fn move_file(
             .await
             .map_err(|e| Error::Storage(format!("Failed to write file to new location: {e}")))?;
 
-        // Delete from old path
-        config.storage.delete(&file.path).await.ok();
+        // The old blob is deleted below, only after the row names the new
+        // path — aborting between delete and UPDATE would leave the row
+        // pointing at a blob that no longer exists.
     }
 
     // Extract new filename
@@ -1538,6 +1551,13 @@ pub async fn move_file(
     .await
     .map_err(|e| Error::Database(format!("Failed to update file record: {e}")))?;
 
+    if !file.is_folder {
+        // Row now names the new path; the copy at the old path can go. A
+        // failure here leaks the old blob but says so; retrying the move is
+        // not possible (the row moved), so surfacing is all we can do.
+        remove_blob(config, &file.path).await?;
+    }
+
     // For folders: update all descendant paths and move files in storage
     if file.is_folder {
         let old_prefix = &file.path;
@@ -1556,17 +1576,30 @@ pub async fn move_file(
         .await
         .map_err(|e| Error::Database(format!("Failed to list folder contents: {e}")))?;
 
-        // Move each file in storage
+        // Copy each descendant blob to its new path; originals are deleted
+        // only after the path UPDATE below lands. Aborting anywhere before
+        // then leaves every blob at its old path — where the DB still points
+        // — and stray new-path copies are overwritten on a retry.
+        let mut old_blobs = Vec::with_capacity(descendants.len());
         for descendant in &descendants {
             let old_file_path = &descendant.path;
             let new_file_path = old_file_path.replacen(old_prefix, &new_path_str, 1);
 
-            // Download, upload, delete pattern
-            if let Ok(data) = config.storage.download(old_file_path).await {
-                if config.storage.upload(&new_file_path, data).await.is_ok() {
-                    config.storage.delete(old_file_path).await.ok();
+            let data = match config.storage.download(old_file_path).await {
+                Ok(data) => data,
+                // absent-ok: a row can outlive its blob; nothing to copy,
+                // and the path UPDATE below renames the row either way.
+                Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    return Err(Error::Storage(format!(
+                        "Failed to read {old_file_path} for move: {e}"
+                    )))
                 }
-            }
+            };
+            config.storage.upload(&new_file_path, data).await.map_err(|e| {
+                Error::Storage(format!("Failed to write {new_file_path} for move: {e}"))
+            })?;
+            old_blobs.push(old_file_path.clone());
         }
 
         // Update all descendant paths in database
@@ -1586,6 +1619,11 @@ pub async fn move_file(
         .execute(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to update descendant paths: {e}")))?;
+
+        // Rows now name the new paths; the copies at the old paths can go.
+        for old_blob in &old_blobs {
+            remove_blob(config, old_blob).await?;
+        }
     }
 
     get_file_metadata(pool, file_id).await
