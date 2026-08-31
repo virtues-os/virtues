@@ -36,12 +36,22 @@
 	// NAMES ON A PLATE. Naming something you met ninety seconds ago is the
 	// hardest ask on the page — a blank field demands invention, a tap does
 	// not. Three at a time plus a reroll, so it stays an offer, never a menu
-	// to exhaust. Short human names, none of them a product's.
+	// to exhaust. Every name is short and pronounceable on sight; none is a
+	// product's, an assistant's, or a figure with baggage. Four registers,
+	// mixed so a deal usually crosses them:
 	const NAME_POOL = [
-		"Juno", "Wren", "Sage", "Iris", "Clio", "Milo",
-		"Vesper", "Lyra", "Atlas", "Fern", "Echo", "Basil",
-		"Thea", "Orin", "Sol", "Remy", "Nova", "Piper",
-		"Verity", "Ember", "Cass", "Rook", "Ada", "Alba",
+		// virtue words — the house register
+		"Verity", "Honor", "Mercy", "Amity", "Merit", "Ever", "True", "Clem",
+		// mythological — old enough to be nobody's trademark
+		"Juno", "Iris", "Clio", "Echo", "Thea", "Atlas", "Lyra", "Vesper",
+		"Eos", "Rhea", "Selene", "Orion", "Nyx", "Vesta", "Freya", "Bran",
+		// plain human — for whoever finds the poetic ones twee
+		"Milo", "Remy", "Cass", "Piper", "Ada", "Otto", "Arlo", "Theo",
+		"Nico", "Nell", "Ivy", "Hazel", "Gus", "Ida", "Fay", "Ruby",
+		// word-names and near-inventions
+		"Wren", "Sage", "Fern", "Basil", "Sol", "Nova", "Ember", "Rook",
+		"Alba", "Orin", "Lumen", "Aster", "Calla", "Sorrel", "Larkin",
+		"Marlow", "Onyx", "Quill", "Moss", "Vale",
 	];
 	let suggested = $state<string[]>([]);
 
@@ -123,7 +133,13 @@
 						<input class="ob-input" type="text" bind:value={assistant} placeholder={assistantDefault} />
 					</label>
 					{#if suggested.length}
+						<!-- The reroll leads the row: it is the button clicked repeatedly,
+						     and leftmost is the one position the varying pill widths can
+						     never shift out from under the cursor. -->
 						<div class="names">
+							<button type="button" class="chip roll" onclick={reroll} aria-label="Deal three more names" title="More names">
+								<Icon icon="ri:shuffle-line" width="13" />
+							</button>
 							{#each suggested as name (name)}
 								<button
 									type="button"
@@ -134,9 +150,6 @@
 									{name}
 								</button>
 							{/each}
-							<button type="button" class="chip roll" onclick={reroll} aria-label="Deal three more names" title="More names">
-								<Icon icon="ri:shuffle-line" width="13" />
-							</button>
 						</div>
 					{/if}
 				</div>
