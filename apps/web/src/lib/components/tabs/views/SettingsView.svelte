@@ -85,15 +85,22 @@
 		'/virtues/telemetry': '/virtues/plan',
 		'/virtues/developer/telemetry': '/virtues/plan',
 		'/virtues/system/history': '/virtues/plan',
+		// Network, Display and Software stopped being top-level sections
+		// (2026-08-31). Network and Display are the machine's own connection and
+		// its own screen, so they live under System; Software described the
+		// release a DEVICE runs, so it became that device's page under Devices.
+		'/virtues/network': '/virtues/system/network',
+		'/virtues/display': '/virtues/system/display',
+		'/virtues/software': '/virtues/devices/server',
 		// Box split into System · Network · Software (2026-08-17). Its own door
 		// lands on System, the largest of the three and the one that kept the
 		// page's former title.
 		'/virtues/box': '/virtues/system',
 		'/virtues/box/health': '/virtues/system',
-		'/virtues/box/network': '/virtues/network',
-		'/virtues/box/updates': '/virtues/software',
-		'/virtues/updates': '/virtues/software',
-		'/virtues/version': '/virtues/software',
+		'/virtues/box/network': '/virtues/system/network',
+		'/virtues/box/updates': '/virtues/devices/server',
+		'/virtues/updates': '/virtues/devices/server',
+		'/virtues/version': '/virtues/devices/server',
 		// Devices absorbed both Start over (the split above) and This Mac, which
 		// was a top-level section for one instance of hardware. It is now
 		// `devices/this` — a device page like any other, and a stable word
@@ -141,10 +148,7 @@
 		| 'models'
 		| 'plan'
 		| 'system'
-		| 'network'
-		| 'software'
 		| 'devices'
-		| 'display'
 		| 'developer';
 
 	const SECTIONS = [
@@ -152,10 +156,7 @@
 		'models',
 		'plan',
 		'system',
-		'network',
-		'software',
 		'devices',
-		'display',
 		'developer',
 	];
 
@@ -188,14 +189,21 @@
 		{:else if section === 'plan'}
 			<PlanView {tab} {active} />
 		{:else if section === 'system'}
-			<SystemInfoView {tab} {active} />
-		{:else if section === 'network'}
-			<NetworkSection />
-		{:else if section === 'software'}
-			<SoftwareView />
+			{#if sub === 'network'}
+				<NetworkSection />
+			{:else if sub === 'display'}
+				<DisplayView />
+			{:else}
+				<SystemInfoView {tab} {active} />
+			{/if}
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />
+			{:else if sub === 'server'}
+				<!-- The server's own page. It is row zero of Devices, not a
+				     separate subject: "what release does this machine run" is a
+				     fact about a device. -->
+				<SoftwareView />
 			{:else if sub === 'this' && isIOS}
 				<!-- iOS keeps its own instrument panel for now: MobileDeviceScreen
 				     is 900 lines of stream-by-stream local detail that has no
@@ -213,8 +221,6 @@
 				     standing on the machine it describes. -->
 				<DeviceView deviceId={sub} {tab} {active} />
 			{/if}
-		{:else if section === 'display'}
-			<DisplayView />
 		{:else if section === 'developer'}
 			{#if sub === 'terminal'}
 				<DeveloperTerminalView {tab} {active} />

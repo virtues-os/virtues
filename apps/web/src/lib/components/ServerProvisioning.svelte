@@ -73,11 +73,11 @@
     function getStatusMessage(): string {
         switch (status) {
             case "provisioning":
-                return "Your box is finishing its first boot…";
+                return "Your server is finishing its first boot…";
             case "migrating":
                 return "Applying an update to your server…";
             case "error":
-                return "Your box is taking longer than expected";
+                return "Your server is taking longer than expected";
             default:
                 return "One moment…";
         }

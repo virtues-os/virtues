@@ -22,7 +22,7 @@
 	 *
 	 * VOICE: sysadmin, not poetic. `Vitals`, `Storage`, `Processes` — the words
 	 * an operator would use for the thing they are about to read. Settings is
-	 * an instrument panel; "The face" and "What the box made of it" belong to
+	 * an instrument panel; "The face" and "What your server made of it" belong to
 	 * surfaces that are telling you a story, and this is not one.
 	 */
 	let {

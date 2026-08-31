@@ -80,7 +80,7 @@
 				the same string "Running" shows above; repeated here so the three
 				can be read against each other in one column.
 			-->
-			<dt>Box</dt>
+			<dt>Server</dt>
 			<dd class="mono">
 				{version || '—'}
 				<span class="dim">
