@@ -243,7 +243,7 @@
 	{:else}
 		<!-- ─── VITALS ─────────────────────────────────────────────────── -->
 		<section class="chapter">
-			<h2 class="chapter-title">Vitals</h2>
+			<h2 class="settings-label">Vitals</h2>
 			<div class="vitals-grid">
 				{@render vital(
 					"Processor",
@@ -309,7 +309,7 @@
 		<!-- ─── INFERENCE ──────────────────────────────────────────────── -->
 		{#if t?.inference}
 			<section class="chapter">
-				<h2 class="chapter-title">Inference</h2>
+				<h2 class="settings-label">Inference</h2>
 				<div class="cols">
 					<div class="col">
 						{@render ledger("Accelerator", t.inference.accelerator, true)}
@@ -351,7 +351,7 @@
 		-->
 		{#if backup}
 			<section class="chapter">
-				<h2 class="chapter-title">Backup</h2>
+				<h2 class="settings-label">Backup</h2>
 				<div class="cols">
 					<div class="col">
 						{#if backup.state === "none"}
@@ -392,7 +392,7 @@
 		<!-- ─── STORAGE ────────────────────────────────────────────────── -->
 		{#if t?.disks?.length}
 			<section class="chapter">
-				<h2 class="chapter-title">Storage</h2>
+				<h2 class="settings-label">Storage</h2>
 				<div class="drives">
 					{#each t.disks as d}
 						{@const usedPct = d.total ? Math.round(((d.total - d.available) / d.total) * 100) : 0}
@@ -420,7 +420,7 @@
 		     also do something about it. What is left is the machine's own
 		     identity and the traffic crossing it — measurements, not settings. -->
 		<section class="chapter">
-			<h2 class="chapter-title">Host</h2>
+			<h2 class="settings-label">Host</h2>
 			<div class="cols">
 				<div class="col">
 					{@render ledger("Hostname", t?.host?.hostname ?? "—", true)}
@@ -448,7 +448,7 @@
 		<!-- ─── PROCESSES (detail) ─────────────────────────────────────── -->
 		{#if detail && t?.processes?.length}
 			<section class="chapter">
-				<h2 class="chapter-title">Processes</h2>
+				<h2 class="settings-label">Processes</h2>
 				<table class="data-table proc mono">
 					<thead>
 						<tr>
@@ -478,7 +478,7 @@
 		<!-- ─── THERMAL (detail) ───────────────────────────────────────── -->
 		{#if detail && t?.thermal?.length}
 			<section class="chapter">
-				<h2 class="chapter-title">Thermal</h2>
+				<h2 class="settings-label">Thermal</h2>
 				<div class="cols">
 					<div class="col">
 						{#each t.thermal as s}
@@ -504,7 +504,7 @@
 		     the channel and the build counter beside it, which is the version
 		     sentence that is actually true. -->
 		<section class="chapter">
-			<h2 class="chapter-title">Service</h2>
+			<h2 class="settings-label">Service</h2>
 			<!-- Three facts, so ONE column rather than the two-column grid the
 			     other chapters use: three splits 2/1 whichever way you cut it,
 			     and a lone ledger row across from a pair reads as something
@@ -610,14 +610,6 @@
 		border-top: 1px solid var(--border-subtle, var(--border));
 	}
 	.chapter:first-of-type { border-top: none; margin-top: 8px; padding-top: 8px; }
-	.chapter-title {
-		font-family: var(--font-serif);
-		font-size: 19px;
-		font-weight: 500;
-		letter-spacing: 0.01em;
-		color: var(--foreground);
-		margin-bottom: 18px;
-	}
 
 	/* ─── Vitals grid ──────────────────────────────────────────────────── */
 	.vitals-grid {

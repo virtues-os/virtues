@@ -177,7 +177,7 @@
 			type="button"
 			class="relaunch"
 			onclick={() => window.location.reload()}
-			title="Your box is serving a newer interface — reload to pick it up"
+			title="Your server is serving a newer interface — reload to pick it up"
 		>
 			<span class="relaunch-label">Reload for the latest</span>
 			<span class="relaunch-version">{boxCommit?.slice(0, 7)}</span>

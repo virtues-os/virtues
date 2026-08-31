@@ -189,13 +189,13 @@
 
 <Page
 	title="Usage"
-	description="What the box has been running, and what each AI call cost the wallet — box-local, nothing leaves your machine. Calls on your own key show tokens, not a price we'd be guessing at."
+	description="What your server has been running, and what each AI call cost the wallet — server-local, nothing leaves your machine. Calls on your own key show tokens, not a price we'd be guessing at."
 	maxWidth="wide"
 >
 	<!-- AI-call log. First, because it is the one thing here you'd come back
 	     for: every paid call, in order, with what it cost. -->
 	<section class="block">
-		<h2 class="block-title">AI calls</h2>
+		<h2 class="settings-label">AI calls</h2>
 		<UniversalDataGrid
 			items={[]}
 			columns={callColumns}
@@ -221,7 +221,7 @@
 	<!-- Background runs -->
 	{#if metrics}
 		<section class="block">
-			<h2 class="block-title">Background runs</h2>
+			<h2 class="settings-label">Background runs</h2>
 			<div class="border border-border rounded-lg p-6">
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
 					{#each [{ k: "Total", v: metrics.summary.total_jobs }, { k: "Succeeded", v: metrics.summary.succeeded }, { k: "Failed", v: metrics.summary.failed }, { k: "Records", v: metrics.summary.total_records_processed }] as stat (stat.k)}
@@ -259,7 +259,7 @@
 	<!-- Recent failures -->
 	{#if metrics && metrics.recent_errors.length > 0}
 		<section class="block">
-			<h2 class="block-title">Recent failures</h2>
+			<h2 class="settings-label">Recent failures</h2>
 			<div class="border border-border rounded-lg p-6 space-y-2">
 				{#each metrics.recent_errors as e (e.job_id)}
 					<div class="text-xs">
@@ -276,7 +276,7 @@
 
 	<!-- System history sparklines -->
 	<section class="block">
-		<h2 class="block-title">System (last 24h)</h2>
+		<h2 class="settings-label">System (last 24h)</h2>
 		<div class="border border-border rounded-lg p-6">
 			{#if loading && history.length === 0}
 				<div class="text-sm text-foreground-subtle">Loading…</div>
@@ -318,13 +318,6 @@
 		margin-bottom: 2rem;
 	}
 
-	.block-title {
-		margin: 0 0 0.625rem;
-		font-size: 0.9375rem;
-		font-weight: 600;
-		letter-spacing: -0.006em;
-		color: var(--color-foreground);
-	}
 
 	.cell {
 		padding: 0.625rem 0.75rem;

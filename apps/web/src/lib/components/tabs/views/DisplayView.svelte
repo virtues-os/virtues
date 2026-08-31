@@ -260,7 +260,7 @@
 
 			<section>
 				<header class="sec-head">
-					<h2 class="section-title">The screen right now</h2>
+					<h2 class="settings-label">The screen right now</h2>
 					{#if data.unit_state !== "not installed"}
 						<button
 							class="ghost-btn"
@@ -362,7 +362,7 @@
 			</section>
 
 			<section>
-				<h2 class="section-title">The face</h2>
+				<h2 class="settings-label">The face</h2>
 				<!-- A SELECT, NOT A ROW LIST — same reasoning as the channel
 				     picker: it has a default, it scales to any number of applet
 				     faces, and the miniature above is the preview. -->
@@ -395,7 +395,7 @@
 			</section>
 
 			<section>
-				<h2 class="section-title">Hours</h2>
+				<h2 class="settings-label">Hours</h2>
 				<!-- Two times ARE the whole data model; anything fancier is a
 				     considered-looking widget doing no extra work. What they
 				     control is real power — the backlight goes off with the
@@ -432,7 +432,7 @@
 			</section>
 
 			<section>
-				<h2 class="section-title">Other screens</h2>
+				<h2 class="settings-label">Other screens</h2>
 				<p class="sec-hint">
 					Any paired device can show the face: open <code>/display</code> in
 					its browser and go full screen.
@@ -470,12 +470,6 @@
 		justify-content: space-between;
 	}
 
-	.section-title {
-		font-size: 14px;
-		font-weight: 500;
-		color: var(--color-foreground-muted);
-		margin: 0;
-	}
 
 	.sec-hint {
 		margin: 0;
