@@ -23,7 +23,7 @@
 	 *    answers again, from whichever network we find it on.
 	 */
 	import { onDestroy } from 'svelte';
-	import { Page } from '$lib';
+
 	import { apiGet, apiSend } from '$lib/api/client';
 
 	type Net = { ssid: string; signal: number; secured: boolean; enterprise: boolean };
@@ -147,11 +147,12 @@
 	void refresh();
 </script>
 
-<Page
-	title="Network"
-	description="The network this server is on, and how to move it to another."
-	maxWidth="wide"
->
+<!-- No <Page>: this renders INSIDE System as a chapter. Which network the
+     machine is on is a reading about the machine, not a separate destination —
+     it was a sidebar row, then briefly a page under System, and both made you
+     leave the page you were already reading to learn one fact. -->
+<section class="chapter">
+	<h2 class="settings-label">Network</h2>
 	{#if status}
 		<div class="statusrow">
 			<span class="dot" class:warn={connectivityLabel.tone === 'warn'}></span>
@@ -229,7 +230,7 @@
 			</div>
 		{/if}
 	{/if}
-</Page>
+</section>
 
 <style>
 	.statusrow {

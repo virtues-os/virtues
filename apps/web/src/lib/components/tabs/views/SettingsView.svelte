@@ -45,7 +45,6 @@
 	import type { Tab } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { isMacOS, isIOS } from '$lib/utils/platform';
-	import NetworkSection from '$lib/components/settings/NetworkSection.svelte';
 	import SoftwareView from '$lib/components/tabs/views/SoftwareView.svelte';
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
@@ -89,15 +88,14 @@
 		// (2026-08-31). Network and Display are the machine's own connection and
 		// its own screen, so they live under System; Software described the
 		// release a DEVICE runs, so it became that device's page under Devices.
-		'/virtues/network': '/virtues/system/network',
-		'/virtues/display': '/virtues/system/display',
+		'/virtues/network': '/virtues/system',
 		'/virtues/software': '/virtues/devices/server',
 		// Box split into System · Network · Software (2026-08-17). Its own door
 		// lands on System, the largest of the three and the one that kept the
 		// page's former title.
 		'/virtues/box': '/virtues/system',
 		'/virtues/box/health': '/virtues/system',
-		'/virtues/box/network': '/virtues/system/network',
+		'/virtues/box/network': '/virtues/system',
 		'/virtues/box/updates': '/virtues/devices/server',
 		'/virtues/updates': '/virtues/devices/server',
 		'/virtues/version': '/virtues/devices/server',
@@ -149,6 +147,7 @@
 		| 'plan'
 		| 'system'
 		| 'devices'
+		| 'display'
 		| 'developer';
 
 	const SECTIONS = [
@@ -157,6 +156,7 @@
 		'plan',
 		'system',
 		'devices',
+		'display',
 		'developer',
 	];
 
@@ -189,13 +189,9 @@
 		{:else if section === 'plan'}
 			<PlanView {tab} {active} />
 		{:else if section === 'system'}
-			{#if sub === 'network'}
-				<NetworkSection />
-			{:else if sub === 'display'}
-				<DisplayView />
-			{:else}
-				<SystemInfoView {tab} {active} />
-			{/if}
+			<SystemInfoView {tab} {active} />
+		{:else if section === 'display'}
+			<DisplayView />
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />
