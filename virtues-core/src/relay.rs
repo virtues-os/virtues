@@ -447,8 +447,10 @@ async fn load_allowlist(db: &PgPool) -> Arc<dyn AllowPolicy> {
     Arc::new(allow)
 }
 
-/// Report this box's EndpointId + its paired devices' EndpointIds to atlas so the
-/// relay's active-sub gate (`/relay/authorize`) recognises them. Best-effort.
+/// Report this box's EndpointId + its paired devices' EndpointIds to atlas.
+/// Since the relay opened (open-relay-plan, 2026-08-31) nothing gates on this
+/// registry — the `/relay/authorize` callout it fed is deleted — so it is an
+/// informational fleet map, kept because shipped boxes call it. Best-effort.
 pub async fn report_endpoints(db: &PgPool) {
     report_endpoints_with(db, &allowed_ids(db).await).await;
 }
