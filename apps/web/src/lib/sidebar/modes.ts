@@ -72,6 +72,11 @@ export const SETTINGS_MODE: SidebarMode = {
 		// device. Splitting them is what let a collector claim 1.0.0 next to an
 		// app claiming 1.0.25 with neither screen able to say which was wrong.
 		{ id: 'devices', label: 'Devices', icon: 'ri:device-line', href: '/virtues/devices' },
+		// The screen on the server itself. Its own room, not a page under System:
+		// it is four chapters about a physical panel — what it shows, its hours,
+		// other screens — which is a subject someone comes to deliberately, not a
+		// reading they glance at while checking temperatures.
+		{ id: 'display', label: 'Display', icon: 'ri:tv-2-line', href: '/virtues/display' },
 	],
 };
 

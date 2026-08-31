@@ -281,7 +281,15 @@
 	     lifecycle is an upgrade rather than a pairing. "Software" was its own
 	     sidebar row until 2026-08-31, which meant the release a machine runs was
 	     described on a page that could not show you the machine. -->
-	<a class="server-row" href="/virtues/devices/server">
+	<a
+		class="server-row"
+		href="/virtues/devices/server"
+		onclick={(e) => {
+			if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+			e.preventDefault();
+			windowShellStore.navigate("/virtues/devices/server", { label: "Settings" });
+		}}
+	>
 		<Icon icon="ri:server-line" class="text-foreground-muted flex-none" />
 		<span class="flex-1 min-w-0">
 			<span class="block text-sm text-foreground">This server</span>
