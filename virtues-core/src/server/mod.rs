@@ -961,6 +961,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/network/status", get(crate::api::network::status_handler))
         .route("/api/network/scan",   get(crate::api::network::scan_handler))
         .route("/api/network/join",   post(crate::api::network::join_handler))
+        // The rendezvous, named and switchable (open-relay-plan §Work 2).
+        .route(
+            "/api/network/relay",
+            get(crate::api::network::relay_status_handler)
+                .put(crate::api::network::relay_toggle_handler),
+        )
         // Box updates (Settings → Box)
         .route("/api/system/update", get(api::update_status_handler))
         .route(
