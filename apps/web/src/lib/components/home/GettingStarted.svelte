@@ -111,44 +111,56 @@
 	// exists only where an account is the box's business at all — linked
 	// already (shown done), or an appliance still waiting on one. A DIY box
 	// that satisfies setup without an account never sees the line.
+	//
+	// `state` is the right-hand column, and it speaks the CLI's vocabulary
+	// (✓ · — see agents/build + cli/ui.rs): the terminal, the box, and this
+	// page report in one voice. It also tells TIME when it can — a pending
+	// first day says when it arrives, because a status column that only ever
+	// says "done" is decoration.
 	type StepId = "letter" | "introductions" | "connect" | "signin" | "interview" | "first_day" | "further";
 	const steps = $derived.by(() => {
+		const settled = (id: string, earned: boolean) =>
+			earned ? "✓ done" : isDismissed(id) ? "· skipped" : "";
 		const rows: { id: StepId; title: string; done: boolean; state: string }[] = [
-			{ id: "letter", title: "The founder's letter", done: true, state: "read" },
+			{ id: "letter", title: "The founder's letter", done: true, state: "✓ read" },
 			{
 				id: "introductions",
 				title: "Introductions",
 				done: !!profile?.preferred_name || isDismissed("introductions"),
-				state: isDismissed("introductions") && !profile?.preferred_name ? "skipped" : "done",
+				state: settled("introductions", !!profile?.preferred_name),
 			},
 			{
 				id: "connect",
 				title: "Connect your world",
 				done: worldEnough || isDismissed("connect"),
-				state: isDismissed("connect") && !worldEnough ? "skipped" : "done",
+				state: settled("connect", worldEnough),
 			},
 		];
 		if (accountDone || !store.accountSatisfied) {
-			rows.push({ id: "signin", title: "Sign in to Virtues", done: accountDone, state: "done" });
+			rows.push({ id: "signin", title: "Sign in to Virtues", done: accountDone, state: accountDone ? "✓ done" : "" });
 		}
 		rows.push(
 			{
 				id: "interview",
 				title: "Your first conversation",
 				done: store.done("narrative_identity_ready") || isDismissed("interview"),
-				state: isDismissed("interview") && !store.done("narrative_identity_ready") ? "skipped" : "done",
+				state: settled("interview", store.done("narrative_identity_ready")),
 			},
 			{
 				id: "first_day",
 				title: "Your first day, written up",
 				done: firstDay !== null || isDismissed("first_day"),
-				state: firstDay !== null ? "done" : "skipped",
+				// Pending, with sources flowing: the column says when. Nothing
+				// connected yet, no promise — the overnight write needs a day
+				// of record to write about.
+				state:
+					firstDay !== null ? "" : isDismissed("first_day") ? "· skipped" : worldEnough ? "· tomorrow morning" : "",
 			},
 			{
 				id: "further",
 				title: "Go further",
 				done: isDismissed("further"),
-				state: "done",
+				state: isDismissed("further") ? "✓ done" : "",
 			},
 		);
 		return rows;
@@ -162,8 +174,12 @@
 	const active = $derived(chosen ?? steps.find((s) => !s.done)?.id ?? null);
 
 	const anything = $derived(steps.some((s) => !s.done));
+	/** Both ends have answered once. Rendering waits for this too — before
+	 *  the profile lands, introductions counts as open and its card flashes
+	 *  in only to fold away a beat later. */
+	const ready = $derived(store.loaded && profileSettled);
 	$effect(() => {
-		phase = !store.loaded || !profileSettled ? "loading" : anything ? "focus" : "settled";
+		phase = !ready ? "loading" : anything ? "focus" : "settled";
 	});
 
 	onMount(() => {
@@ -210,7 +226,7 @@
 	}
 </script>
 
-{#if anything}
+{#if ready && anything}
 	<div class="gs" in:fade={{ duration: 200 }}>
 		<button
 			class="door"
@@ -236,14 +252,12 @@
 						{:else}
 							<span class="t">{s.title}</span>
 						{/if}
-						{#if s.done}
-							{#if s.id === "first_day" && firstDay !== null}
-								<button class="state link" type="button" onclick={() => openDay(firstDay)}>
-									Read {prettyDay(firstDay)} <span class="arw">→</span>
-								</button>
-							{:else}
-								<span class="state mono">{s.state}</span>
-							{/if}
+						{#if s.id === "first_day" && firstDay !== null}
+							<button class="state link" type="button" onclick={() => openDay(firstDay)}>
+								Read {prettyDay(firstDay)} <span class="arw">→</span>
+							</button>
+						{:else if s.state}
+							<span class="state mono">{s.state}</span>
 						{/if}
 					</div>
 
@@ -352,28 +366,48 @@
 
 	.steps { list-style: none; margin: 0; padding: 0; max-width: 640px; }
 
+	.steps { --gutter: 30px; }
+
 	.step { border-top: 1px solid var(--color-border-subtle); }
 	.step:first-child { border-top: 0; }
 
-	.line { display: flex; align-items: baseline; gap: 16px; padding: 14px 0; }
-	.step.active .line { padding-bottom: 4px; }
+	.line { display: flex; align-items: baseline; gap: 16px; padding: 16px 0; }
+	.step.active .line { padding-bottom: 6px; }
 
-	.n { flex: none; width: 1.25em; font-size: 12px; color: var(--color-foreground-subtle); }
+	/* Chapter numerals, not row ids: the titles' own serif, oldstyle figures,
+	   one size down. The open step's numeral is the "you are here" — full
+	   ink, and the only mark the active row gets. */
+	.n {
+		flex: none; width: var(--gutter);
+		font-family: var(--font-serif); font-size: 15px;
+		font-variant-numeric: oldstyle-nums;
+		color: var(--color-foreground-subtle);
+		transition: color 0.15s ease;
+	}
+	.step.active .n { color: var(--color-foreground); }
 
 	.t {
 		font-family: var(--font-serif); font-size: 19px; font-weight: 400;
 		line-height: 1.35; color: var(--color-foreground);
 		background: none; border: 0; padding: 0; text-align: left; min-width: 0;
+		transition: color 0.15s ease;
 	}
 	button.t { cursor: pointer; }
-	button.t:hover { color: var(--color-primary); }
 	.step.done .t { color: var(--color-foreground-muted); }
 	.step.active .t { color: var(--color-foreground); }
 
-	.state { margin-left: auto; flex: none; font-size: 11px; color: var(--color-foreground-subtle); }
+	/* Hover stays in the book's voice: ink, not link-blue. The whole line
+	   answers, so a row reads as pressable before the cursor finds the
+	   title's exact glyphs. */
+	.line:hover .n { color: var(--color-foreground-muted); }
+	.step.active .line:hover .n { color: var(--color-foreground); }
+	.line:hover button.t { color: var(--color-foreground); }
 
-	/* The open step's body sits in the title's column, not under the number. */
-	.body { padding: 0 0 clamp(20px, 3vh, 32px) calc(1.25em + 16px); }
+	.state { margin-left: auto; flex: none; font-size: 11.5px; color: var(--color-foreground-subtle); white-space: nowrap; }
+
+	/* The open step's body sits in the title's column, not under the number,
+	   on the same left edge as the ledes. */
+	.body { padding: 0 0 clamp(24px, 3.5vh, 40px) calc(var(--gutter) + 16px); }
 
 	.lede {
 		font-family: var(--font-sans); font-size: 14px; line-height: 1.55;
