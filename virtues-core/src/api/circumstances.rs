@@ -180,18 +180,19 @@ async fn build_section(
             .bind(now.with_timezone(&tz.unwrap_or(chrono_tz::UTC)).date_naive().to_string())
             .fetch_all(pool)
             .await?;
-            let items: Vec<String> = rows
-                .iter()
-                .filter_map(|r| {
-                    let label: Option<String> = r.try_get("label").ok().flatten();
-                    let start: DateTime<Utc> = r.try_get("started_at").ok()?;
-                    let local = match tz {
-                        Some(tz) => start.with_timezone(&tz).format("%H:%M").to_string(),
-                        None => start.format("%H:%M").to_string(),
-                    };
-                    Some(format!("- {} {}", local, clip(&label?, 64)))
-                })
-                .collect();
+            let mut items: Vec<String> = Vec::new();
+            for r in &rows {
+                let label: Option<String> = r.try_get("label")?;
+                let start: DateTime<Utc> = r.try_get("started_at")?;
+                // Both labels NULL is a real state (an unlabelled event) — skip
+                // the row, not the error.
+                let Some(label) = label else { continue };
+                let local = match tz {
+                    Some(tz) => start.with_timezone(&tz).format("%H:%M").to_string(),
+                    None => start.format("%H:%M").to_string(),
+                };
+                items.push(format!("- {} {}", local, clip(&label, 64)));
+            }
             Ok((!items.is_empty())
                 .then(|| format!("Today so far:\n{}", items.join("\n"))))
         }
@@ -207,26 +208,24 @@ async fn build_section(
             .bind(tomorrow_end)
             .fetch_all(pool)
             .await?;
-            let items: Vec<String> = rows
-                .iter()
-                .filter_map(|r| {
-                    let title: String = r.try_get("title").ok()?;
-                    let start: DateTime<Utc> = r.try_get("started_at").ok()?;
-                    let all_day: Option<bool> = r.try_get("is_all_day").ok();
-                    let when = if all_day.unwrap_or(false) {
-                        match tz {
-                            Some(tz) => start.with_timezone(&tz).format("%a (all day)").to_string(),
-                            None => start.format("%a (all day)").to_string(),
-                        }
-                    } else {
-                        match tz {
-                            Some(tz) => start.with_timezone(&tz).format("%a %H:%M").to_string(),
-                            None => start.format("%a %H:%M").to_string(),
-                        }
-                    };
-                    Some(format!("- {} {}", when, clip(&title, 64)))
-                })
-                .collect();
+            let mut items: Vec<String> = Vec::new();
+            for r in &rows {
+                let title: String = r.try_get("title")?;
+                let start: DateTime<Utc> = r.try_get("started_at")?;
+                let all_day: Option<bool> = r.try_get("is_all_day")?;
+                let when = if all_day.unwrap_or(false) {
+                    match tz {
+                        Some(tz) => start.with_timezone(&tz).format("%a (all day)").to_string(),
+                        None => start.format("%a (all day)").to_string(),
+                    }
+                } else {
+                    match tz {
+                        Some(tz) => start.with_timezone(&tz).format("%a %H:%M").to_string(),
+                        None => start.format("%a %H:%M").to_string(),
+                    }
+                };
+                items.push(format!("- {} {}", when, clip(&title, 64)));
+            }
             Ok((!items.is_empty())
                 .then(|| format!("Calendar (today and tomorrow):\n{}", items.join("\n"))))
         }
@@ -246,15 +245,13 @@ async fn build_section(
             .bind(now.to_rfc3339())
             .fetch_all(pool)
             .await?;
-            let items: Vec<String> = rows
-                .iter()
-                .filter_map(|r| {
-                    let id: String = r.try_get("id").ok()?;
-                    let name: String = r.try_get("name").ok()?;
-                    let refs: i64 = r.try_get("refs").ok()?;
-                    Some(format!("- {} ({}) — {} records", clip(&name, 40), id, refs))
-                })
-                .collect();
+            let mut items: Vec<String> = Vec::new();
+            for r in &rows {
+                let id: String = r.try_get("id")?;
+                let name: String = r.try_get("name")?;
+                let refs: i64 = r.try_get("refs")?;
+                items.push(format!("- {} ({}) — {} records", clip(&name, 40), id, refs));
+            }
             Ok((!items.is_empty()).then(|| {
                 format!("Around lately (last 14 days, by recency of contact):\n{}", items.join("\n"))
             }))
