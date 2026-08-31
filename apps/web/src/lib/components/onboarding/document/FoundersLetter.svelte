@@ -45,14 +45,19 @@
 	<div>
 		<h1 class="ob-h1 hero">A small correction to technology</h1>
 
-		<!-- A face carries an argument about trust in a way a paragraph cannot,
-		     which is exactly the job of this screen. -->
-		<div class="film" role="img" aria-label="A short film from the founder — coming soon">
+		<!-- THE FILM IS OUT UNTIL IT EXISTS. A face carries an argument about
+		     trust in a way a paragraph cannot — but a play button that plays
+		     nothing reads as broken, and real users arrive today. Restore this
+		     block (and its .film CSS below) when the film ships:
+
+		<div class="film" role="img" aria-label="A short film from the founder">
 			<div class="film-inner">
 				<Icon icon="ri:play-circle-line" width="30" />
 				<span>A word from the founder</span>
 			</div>
 		</div>
+		-->
+
 
 		<div class="body">
 			<!-- A BELIEF, THEN A QUESTION, in one breath. One continuous motion —
@@ -248,6 +253,7 @@
 		letter-spacing: -0.02em;
 	}
 
+	/* Commented out with the film block above — restore together.
 	.film {
 		margin: 2rem 0 0;
 		aspect-ratio: 16 / 9;
@@ -266,6 +272,7 @@
 		color: var(--color-foreground-subtle);
 		font-size: var(--t-small);
 	}
+	*/
 
 	/* A LETTER, SO IT IS SET LIKE ONE. Serif throughout at a single size — the
 	   old page reserved the serif for two "important" paragraphs, which made the
