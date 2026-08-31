@@ -538,6 +538,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::chat_import_upload_handler)
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
+        .route(
+            "/api/chat-import/status",
+            get(api::chat_import_status_handler),
+        )
         .route("/api/applets/:id/runs", get(api::list_applet_runs_handler))
         .route("/api/applets/:id/log", get(api::applet_log_handler))
         .route("/api/applets/runs/:id", get(api::get_applet_run_handler))

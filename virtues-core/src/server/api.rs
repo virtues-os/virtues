@@ -195,6 +195,44 @@ pub async fn chat_import_upload_handler(
     }
 }
 
+/// GET /api/chat-import/status — what chat-import has already landed, so the
+/// sources UI can show a real "connected" state for a source that mints no
+/// credential. Counts come from the ingested rows themselves, not from run
+/// summaries (the latest run of a re-import says "0 new", which is true of the
+/// run and misleading as a status).
+pub async fn chat_import_status_handler(State(state): State<AppState>) -> Response {
+    let row = sqlx::query(
+        r#"SELECT COUNT(*) AS messages,
+                  COUNT(DISTINCT conversation_id) AS conversations,
+                  COALESCE(ARRAY_AGG(DISTINCT provider) FILTER (WHERE provider IS NOT NULL), '{}') AS providers
+             FROM data_content_conversation
+            WHERE source_table = 'chat_import'"#,
+    )
+    .fetch_one(state.db.pool())
+    .await;
+
+    match row {
+        Ok(r) => {
+            use sqlx::Row;
+            let messages: i64 = r.get("messages");
+            let conversations: i64 = r.get("conversations");
+            let providers: Vec<String> = r.get("providers");
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "messages": messages,
+                    "conversations": conversations,
+                    "providers": providers,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => error_response(crate::error::Error::Database(format!(
+            "failed to read chat-import status: {e}"
+        ))),
+    }
+}
+
 /// List all actions with their latest run status.
 pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
     let pool = state.db.pool();
