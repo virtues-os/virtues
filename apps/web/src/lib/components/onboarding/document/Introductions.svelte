@@ -6,11 +6,14 @@
   is thirty seconds, and being asked your own name right after a letter about
   trust is a gentler on-ramp than a Full Disk Access prompt.
 
-  THREE FIELDS, ONE CRITERION: the record cannot reliably supply them. What you
-  like to be called, what you'll call it, and when you were born — everything
+  FOUR FIELDS, ONE CRITERION: the record cannot reliably supply them. What you
+  like to be called, what you'll call it, when you were born — everything
   else the profile could hold (occupation, employer, home city) the box infers
   from the record itself, and asking for it here would make the screen after
-  the privacy letter a form. The timezone is already captured silently.
+  the privacy letter a form. The timezone is the boundary case: the browser
+  supplies a GUESS (captured silently on mount by the route), and a guess made
+  while traveling records the wrong home for every daily rhythm after it — so
+  the guess is shown prefilled, and correcting it costs one tap.
 
   No field is required. A box that will not proceed until you have named it has
   misunderstood which of you is in charge.
@@ -27,6 +30,17 @@
 	let assistant = $state("");
 	/** "YYYY-MM-DD" — the date input's native value, and the wire form. */
 	let born = $state("");
+	/** IANA zone — prefilled from the profile, else this browser's guess. */
+	let tz = $state("");
+	/** Every zone the browser can name; empty on engines without the API,
+	 *  where the field degrades to a text input. */
+	const ZONES: string[] = (() => {
+		try {
+			return Intl.supportedValuesOf("timeZone");
+		} catch {
+			return [];
+		}
+	})();
 	/** What it is already called, so the field can suggest rather than demand. */
 	let assistantDefault = $state("Ari");
 	let loading = $state(true);
@@ -76,6 +90,11 @@
 			// past the API for it would be borrowing trouble for a placeholder.
 			you = p?.preferred_name || "";
 			born = p?.birth_date || "";
+			// The profile's zone when it's a real one; the browser's guess when
+			// the box has nothing or the datacenter default (same rule as the
+			// route's silent capture — see captureTimezone in +page.svelte).
+			const guess = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+			tz = p?.home_timezone && p.home_timezone !== "UTC" ? p.home_timezone : guess;
 			if (a?.assistant_name) assistantDefault = a.assistant_name;
 			assistant = a?.assistant_name ?? "";
 		} catch {
@@ -94,6 +113,9 @@
 			const profile: Record<string, string> = {};
 			if (you.trim()) profile.preferred_name = you.trim();
 			if (born) profile.birth_date = born;
+			// Written whenever shown: the person has seen the value, so what the
+			// field says IS the answer — including an untouched correct guess.
+			if (tz.trim()) profile.home_timezone = tz.trim();
 			if (Object.keys(profile).length) jobs.push(updateProfile(profile));
 			if (assistant.trim()) jobs.push(updateAssistantProfile({ assistant_name: assistant.trim() }));
 			await Promise.all(jobs);
@@ -157,6 +179,20 @@
 				<label>
 					<span class="label">When were you born?</span>
 					<input class="ob-input" type="date" bind:value={born} />
+				</label>
+
+				<label>
+					<span class="label">What time zone is home?</span>
+					{#if ZONES.length}
+						<select class="ob-input" bind:value={tz}>
+							{#each ZONES as z (z)}
+								<option value={z}>{z.replace(/_/g, " ")}</option>
+							{/each}
+						</select>
+					{:else}
+						<input class="ob-input" type="text" bind:value={tz} placeholder="America/Chicago" />
+					{/if}
+					<span class="hint">Guessed from this browser — correct it if home is elsewhere.</span>
 				</label>
 			</div>
 
@@ -248,6 +284,13 @@
 
 	.quiet {
 		font-size: 14px;
+		color: var(--color-foreground-subtle);
+	}
+
+	/* The admission under the timezone field: the value is a guess, not a
+	   reading. Quietest voice on the screen. */
+	.hint {
+		font-size: 0.8rem;
 		color: var(--color-foreground-subtle);
 	}
 </style>
