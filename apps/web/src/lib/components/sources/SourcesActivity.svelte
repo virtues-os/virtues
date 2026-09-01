@@ -19,6 +19,7 @@
 	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { listRuns, listApplets, type AppletRun, type Applet } from '$lib/api/client';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
+	import { explainRunError } from '$lib/sources/run-errors';
 	import { relativeTime } from '$lib/applets/palette';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
@@ -79,7 +80,13 @@
 		started: string;
 		started_at: string;
 		error: string | null;
+		/** The condition when we can name it ("Full Disk Access needed"),
+		 *  else the raw error's first line, else empty. */
+		problem: string;
 	};
+
+	/** Connection by its anchor id, for the collector's `denied` self-report. */
+	const connectionById = $derived(new Map(store.connections.map((c) => [c.id, c])));
 
 	function durationOf(r: AppletRun): string {
 		if (!r.completed_at) return r.status === 'running' ? 'running' : '—';
@@ -94,6 +101,13 @@
 		runs.map((r) => {
 			const applet = r.applet_id ? appletById.get(r.applet_id) : undefined;
 			const sourceId = r.applet_id ? sourceOfApplet.get(r.applet_id) : undefined;
+			// A permission failure reads as its condition, not as the OS's
+			// sentence — "Full Disk Access needed" is actionable in a way ten
+			// rows of "Permission denied (os error 13)" never were. The raw
+			// error stays one click away on the applet page.
+			const anchor = applet ? (applet.credential_id ?? applet.device_id) : null;
+			const denied = anchor ? (connectionById.get(anchor)?.denied ?? []) : [];
+			const why = explainRunError(r.error, denied);
 			return {
 				id: r.id,
 				// A run whose applet is gone keeps its history under a null
@@ -107,18 +121,19 @@
 				duration: durationOf(r),
 				started: relativeTime(r.started_at),
 				started_at: r.started_at,
-				error: r.error
+				error: r.error,
+				problem: why?.title ?? (r.error?.trim().split('\n')[0].slice(0, 120) ?? '')
 			};
 		})
 	);
 
 	const columns: Column<Row>[] = [
-		{ key: 'applet', label: 'Applet', icon: 'ri:flashlight-line', width: '28%', minWidth: '160px' },
+		{ key: 'applet', label: 'Applet', icon: 'ri:flashlight-line', width: '22%', minWidth: '160px' },
 		{
 			key: 'source',
 			label: 'Source',
 			icon: 'ri:plug-line',
-			width: '14%',
+			width: '12%',
 			minWidth: '110px',
 			groupable: true
 		},
@@ -126,7 +141,7 @@
 			key: 'status',
 			label: 'Status',
 			icon: 'ri:circle-line',
-			width: '12%',
+			width: '10%',
 			minWidth: '100px',
 			format: 'badge',
 			badgeColors: {
@@ -138,10 +153,22 @@
 			}
 		},
 		{
+			// Why a failed run failed — the named condition when the error
+			// classifies ("Full Disk Access needed"), the raw first line when
+			// it doesn't. The grid used to carry `error` on every row and
+			// display it nowhere.
+			key: 'problem',
+			label: 'Problem',
+			icon: 'ri:error-warning-line',
+			width: '20%',
+			minWidth: '140px',
+			hideOnMobile: true
+		},
+		{
 			key: 'trigger',
 			label: 'Trigger',
 			icon: 'ri:play-line',
-			width: '10%',
+			width: '8%',
 			minWidth: '90px',
 			groupable: true,
 			hideOnMobile: true
@@ -150,7 +177,7 @@
 			key: 'records',
 			label: 'Records',
 			icon: 'ri:database-2-line',
-			width: '10%',
+			width: '8%',
 			minWidth: '90px',
 			format: 'number',
 			hideOnMobile: true
@@ -159,7 +186,7 @@
 			key: 'duration',
 			label: 'Took',
 			icon: 'ri:timer-line',
-			width: '10%',
+			width: '8%',
 			minWidth: '80px',
 			hideOnMobile: true
 		},
@@ -167,7 +194,7 @@
 			key: 'started',
 			label: 'Started',
 			icon: 'ri:time-line',
-			width: '16%',
+			width: '12%',
 			minWidth: '110px',
 			// Sort on the timestamp, not on "3 minutes ago".
 			getValue: (r) => r.started

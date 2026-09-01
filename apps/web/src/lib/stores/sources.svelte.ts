@@ -18,6 +18,7 @@ import {
 	type Credential,
 	type SourceCatalogItem
 } from '$lib/api/client';
+import { PERMISSION_COPY } from '$lib/devices/shared';
 
 /** A device as `GET /api/devices` returns it. */
 export interface DeviceRow {
@@ -48,6 +49,20 @@ export interface Connection {
 	appletCount: number | null;
 	/** True when the provider has locked us out and only the user can fix it. */
 	broken: boolean;
+	/**
+	 * Devices only: capabilities the collector's most recent report lists as
+	 * denied (`full_disk_access`, …); always empty for credentials. This is
+	 * the health.json signal, and it is what lets a run's bare "Permission
+	 * denied" be pinned to a named permission (see sources/run-errors.ts).
+	 *
+	 * Deliberately NOT blanked when the report is stale, unlike `broken` and
+	 * `statusReason`: those assert the device's state NOW, which a frozen
+	 * snapshot cannot support — but explaining why a past run failed is a
+	 * claim about roughly when the report was written, and run-error
+	 * classification additionally requires the error itself to look like a
+	 * permission failure before it trusts this list.
+	 */
+	denied: string[];
 	/** Where clicking it goes, or null when the row has no detail surface. */
 	route: string | null;
 	/** Devices only: this is the device you're reading this on. */
@@ -76,6 +91,7 @@ function fromCredential(c: Credential): Connection {
 		lastSeenAt: c.last_seen_at,
 		appletCount: c.applet_count,
 		broken: isBrokenStatus(c.status),
+		denied: [],
 		route: `/sources/${c.id}`,
 		isCurrent: false
 	};
@@ -96,7 +112,14 @@ function fromDevice(d: DeviceRow): Connection {
 	// A denied macOS permission is the device equivalent of a dead credential:
 	// the pairing is fine, the data isn't coming. Surfaced as broken so it lands
 	// in the same attention list rather than looking merely quiet.
-	const denied = (d.permissions?.denied as string[] | undefined) ?? [];
+	// Union of the collector's own `denied[]` and boolean fields set to false,
+	// same as deniedPermissions() in devices/shared.ts and for the same reason:
+	// early builds write one without the other.
+	const deniedSet = new Set((d.permissions?.denied as string[] | undefined) ?? []);
+	for (const key of Object.keys(PERMISSION_COPY)) {
+		if (d.permissions?.[key] === false) deniedSet.add(key);
+	}
+	const denied = [...deniedSet];
 
 	// ...but only if the report is CURRENT. The device writes `stale` itself
 	// (the collector's record is older than it promises to refresh), and this
@@ -142,11 +165,15 @@ function fromDevice(d: DeviceRow): Connection {
 			lastSeenAt: d.last_seen_at,
 			appletCount: null,
 			broken: false,
+			denied,
 			route: null,
 			isCurrent: d.is_current
 		};
 	}
 
+	// The collector reports raw capability names; the reason line speaks the
+	// System Settings names, because that is where the reader is being sent.
+	const deniedLabels = denied.map((name) => PERMISSION_COPY[name]?.label ?? name);
 	return {
 		kind: 'device',
 		id: d.id,
@@ -155,10 +182,13 @@ function fromDevice(d: DeviceRow): Connection {
 		status: denied.length > 0 ? 'permission_denied' : 'active',
 		statusLabel: denied.length > 0 ? 'permission needed' : 'paired',
 		statusReason:
-			denied.length > 0 ? `Access denied: ${denied.join(', ')}. Grant it on the device.` : null,
+			denied.length > 0
+				? `${deniedLabels.join(' and ')} ${denied.length === 1 ? 'is' : 'are'} off — grant it in System Settings → Privacy & Security on that machine.`
+				: null,
 		lastSeenAt: d.last_seen_at,
 		appletCount: null,
 		broken: denied.length > 0,
+		denied,
 		// Devices have no per-connection page in this room yet; the current one
 		// has "This Mac" / "This device", the rest live under Settings → Devices.
 		route: null,
