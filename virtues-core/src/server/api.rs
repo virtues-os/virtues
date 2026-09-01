@@ -1406,7 +1406,19 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
     match crate::virtues_api::renew::fetch_portal_session(&http, &atlas_url, &api_key, "")
         .await
     {
-        Ok(url) => (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response(),
+        Ok(crate::virtues_api::renew::PortalSession::Url(url)) => {
+            (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response()
+        }
+        // A linked account with no active subscription (free, or lapsed):
+        // valid key, nothing to open. Permanent until they subscribe —
+        // "try again" would be a lie.
+        Ok(crate::virtues_api::renew::PortalSession::NoSubscription) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "error": "No active subscription on this account — start one and you can manage billing here."
+            })),
+        )
+            .into_response(),
         Err(e) => {
             tracing::warn!("billing portal session failed: {e}");
             (
