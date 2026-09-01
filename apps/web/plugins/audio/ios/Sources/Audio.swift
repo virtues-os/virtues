@@ -204,9 +204,16 @@ public final class AudioRecorder: NSObject {
   public func disable() {
     cachedEnabled = false
     UserDefaults.standard.set(false, forKey: enabledKey)
-    stopWatchdog()
     virtues_location_audio_state(0)
-    q.async { [weak self] in self?.stopEngine(finalize: true) }
+    // stopWatchdog runs on q: `watchdog` is written by startWatchdog on q (via
+    // startEngine), and stopping it from the caller's thread (Tauri's ipc
+    // queue) is an unsynchronized ARC assignment race. A tick that fires
+    // before this block lands no-ops — cachedEnabled is already false.
+    q.async { [weak self] in
+      guard let self = self else { return }
+      self.stopWatchdog()
+      self.stopEngine(finalize: true)
+    }
   }
 
   public func resume() {
@@ -670,7 +677,15 @@ public final class AudioRecorder: NSObject {
       let end = modified
       let start = end.addingTimeInterval(-chunkSeconds)
       NSLog("[Audio] retrying orphan chunk %@", url.lastPathComponent)
-      finalizeAndEnqueue(url: url, start: start, end: end, avgDb: -50, silent: false)
+      // Pool per chunk: this loop runs inside ONE dispatch block (startEngine
+      // on q, under armEngine's bg-task assertion), and the ~2.4MB of
+      // base64/JSON temporaries per chunk otherwise accumulate for the whole
+      // sweep — a serial queue's default pool drains at thread idle, not per
+      // block. After a long outbox outage that is jetsam bait at exactly the
+      // moment the background memory limit is tightest.
+      autoreleasepool {
+        finalizeAndEnqueue(url: url, start: start, end: end, avgDb: -50, silent: false)
+      }
     }
   }
 
