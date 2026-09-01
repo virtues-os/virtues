@@ -36,6 +36,11 @@ pub extern "C" fn virtues_enqueue(stream: *const c_char, record_json: *const c_c
     Ok(v) => v,
     Err(_) => return -3,
   };
+  // Records must be JSON objects: enqueue stamps `id` via index-insert, which
+  // panics on a non-object value — and a panic out of extern "C" is an abort.
+  if !record.is_object() {
+    return -3;
+  }
   // Silent chunks are ~1KB of metadata — not worth a dial of their own. Defer
   // them to a wall-clock 30-min grid (all chunks in a window batch onto one
   // dial) instead of nudging; overnight that's 2 dials/hour instead of 12.

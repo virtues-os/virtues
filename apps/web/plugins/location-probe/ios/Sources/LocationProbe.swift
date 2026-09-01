@@ -323,7 +323,13 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
         // Fresh transition into down restarts the heartbeat window; a repeated
         // state-1 push (audio retrying) does not — else the cap never lands.
         if old != 1 { self.audioDownSince = Date() }
-        if self.mode == .coarse { self.apply(.precise, reason: "audio=down") }
+        // Same gate as updateMotion's demotion. Without it, a repeated state-1
+        // push past the cap re-promotes on every audio retry (5-60s cadence)
+        // and the promote/demote GNSS cycling outspends the always-precise
+        // mode the cap was written to kill.
+        if self.mode == .coarse, self.heartbeatActive {
+          self.apply(.precise, reason: "audio=down")
+        }
       } else {
         self.audioDownSince = nil
         // No forced mode change: updateMotion relaxes to coarse once the
