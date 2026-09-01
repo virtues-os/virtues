@@ -351,8 +351,31 @@ public final class AudioRecorder: NSObject {
       if engine.isRunning { engine.stop() }
       if tapInstalled { input.removeTap(onBus: 0); tapInstalled = false }
       let hw = input.inputFormat(forBus: 0)
+      // A phone call (or any exclusive owner of the mic) can leave the input
+      // node at 0 Hz/0 ch even after setActive(true) succeeds — .mixWithOthers
+      // activates fine mid-call. installTap with that format throws an ObjC
+      // exception no Swift catch can see → SIGABRT (the 1.2.14 field crash).
+      // A nil converter is the sibling wedge: buffers would flow and stamp the
+      // health signals while zero bytes ever get written, invisible to the
+      // watchdog. Both take the catch-path bail. The guard sits BEFORE
+      // hwFormat is stored so a straggler tap callback can never divide by a
+      // 0 Hz rate in process().
+      guard hw.sampleRate > 0, hw.channelCount > 0,
+            let conv = AVAudioConverter(from: hw, to: targetFormat) else {
+        NSLog("[Audio] arm failed (%@): unusable input format %.0fHz/%dch — will retry on next wake/foreground",
+              reason, hw.sampleRate, hw.channelCount)
+        recording = false
+        virtues_location_audio_state(1)
+        // Mid-call a relaunched process has no .began hold (and foreground
+        // clears any hold), so without one the watchdog spins 5s bails against
+        // the call. Match the .began cadence for the call's remainder.
+        if callActive() {
+          interruptionHoldUntil = Date().addingTimeInterval(interruptedRetryInterval)
+        }
+        return
+      }
       hwFormat = hw
-      converter = AVAudioConverter(from: hw, to: targetFormat)
+      converter = conv
       input.installTap(onBus: 0, bufferSize: 4096, format: hw) { [weak self] buf, _ in
         self?.process(buf)
       }
@@ -490,6 +513,10 @@ public final class AudioRecorder: NSObject {
     if outFile == nil { try? openChunk() }
     guard let converter = converter else { return }
     let ratio = targetSampleRate / (hwFormat?.sampleRate ?? targetSampleRate)
+    // A 0 Hz hwFormat would make this infinite and the AVAudioFrameCount cast
+    // below traps on non-finite doubles. The arm guard keeps 0 Hz out of
+    // hwFormat; this covers any straggler buffer racing a teardown.
+    guard ratio.isFinite, ratio > 0 else { return }
     let cap = AVAudioFrameCount(Double(input.frameLength) * ratio) + 32
     guard let out = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: cap) else { return }
     var err: NSError?

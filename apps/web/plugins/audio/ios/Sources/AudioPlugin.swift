@@ -49,7 +49,13 @@ class AudioPlugin: Plugin {
   @objc public func setNotify(_ invoke: Invoke) throws {
     let on = (try? invoke.parseArgs(NotifyArgs.self))?.enabled ?? true
     AudioRecorder.shared.setNotifyEnabled(on)
-    invoke.resolve(["notify": on])
+    // Full status shape, like setQuietHours: the Rust AudioStatus requires
+    // authorized/recording, so a partial payload rejects the whole invoke.
+    invoke.resolve([
+      "authorized": AudioRecorder.shared.authorized(),
+      "recording": AudioRecorder.shared.recording,
+      "notify": on,
+    ])
   }
 
   /// Set the quiet-hours window (minutes since local midnight; -1/-1 = off).
