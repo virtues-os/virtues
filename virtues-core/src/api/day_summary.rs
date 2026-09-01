@@ -321,7 +321,16 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
 
     // Chat slot: fusing noisy witnesses into a gapless timeline is adjudication,
     // not extraction — a best-model job, run once nightly on a completed day.
-    let model = crate::api::assistant_profile::get_chat_model(pool).await?;
+    //
+    // The SLOT DEFAULT, never the profile's pinned chat model. virtues-api
+    // enforces ZDR on server-side calls, and a person may pin a chat model no
+    // ZDR provider serves (grok, notably) — their pin governs the chat they
+    // watch, not this background write. The slot map is Virtues-curated and
+    // stays ZDR-capable. Reading the pin here silently failed every nightly
+    // segmentation for anyone pinned to such a model — same class as the
+    // narrative_draft "Write it up" 500.
+    let model =
+        crate::api::model_catalog::model_for_slot(virtues_registry::models::ModelSlot::Chat);
     let raw_response = call_virtues_api(pool, SEGMENT_PROMPT, &model, &prompt).await?;
 
     // An empty parse is a FAILURE, not a day with nothing in it.
@@ -525,7 +534,13 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     }
 
     // Chat slot: this is the narrative call, and the only one left that earns it.
-    let model = crate::api::assistant_profile::get_chat_model(pool).await?;
+    //
+    // The SLOT DEFAULT, never the profile's pinned chat model — a ZDR-incapable
+    // pin (grok) fails this background write with `no_zdr_providers_available`;
+    // see the matching comment in segment_day_events and in
+    // narrative_draft::call_model_with for the class.
+    let model =
+        crate::api::model_catalog::model_for_slot(virtues_registry::models::ModelSlot::Chat);
     let raw = call_virtues_api(pool, NARRATE_PROMPT, &model, &prompt).await?;
     let mut parsed = parse_virtues_api_response(&raw);
     parsed.diary = strip_prompt_echo(&parsed.diary);

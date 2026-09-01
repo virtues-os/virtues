@@ -354,14 +354,22 @@ fn segmenting_is_not_narrating() {
     };
 
     // Both are best-model: the detective fuses noisy witnesses (adjudication), the
-    // day summary writes prose. Neither is a Lite job.
+    // day summary writes prose. Neither is a Lite job. The Chat SLOT DEFAULT,
+    // not the profile's pinned chat model (`get_chat_model`) — a ZDR-incapable
+    // pin fails these background writes; see the comments at the call sites.
     assert!(
-        after("pub async fn segment_day_events", "get_chat_model"),
+        after("pub async fn segment_day_events", "ModelSlot::Chat"),
         "the detective fuses noisy witnesses into a gapless timeline — a best-model job"
     );
     assert!(
-        after("pub async fn narrate_day", "get_chat_model"),
+        after("pub async fn narrate_day", "ModelSlot::Chat"),
         "narration is the narrative call; it earns the Chat slot"
+    );
+    assert!(
+        !after("pub async fn segment_day_events", "get_chat_model")
+            && !after("pub async fn narrate_day", "get_chat_model"),
+        "background writes must not read the user's chat pin — a ZDR-incapable \
+         pin (grok) makes virtues-api refuse with no_zdr_providers_available"
     );
 
     // They stay SEPARATE — two prompts, and neither function calls the other. A
