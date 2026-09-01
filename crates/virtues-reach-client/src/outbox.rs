@@ -47,6 +47,29 @@ static INGEST_KEY: Mutex<String> = Mutex::new(String::new());
 /// radio from ever idling while offline.
 const BACKOFF_SECS: [i64; 6] = [30, 60, 120, 240, 300, 300];
 
+/// Microphone enqueues are refused past this many bytes of LIVE outbox pages.
+/// ~1 GiB ≈ 3 days of continuous non-silent audio backlog against an
+/// unreachable box. Back-pressure, never eviction: once the producer deletes
+/// its .m4a on a 0 return, the row here is the ONLY copy of that recording, so
+/// rows must never be dropped to make room — instead new enqueues are refused
+/// and the producer keeps its source file (audio retries via its orphan sweep
+/// with a logged 7-day age-out). Only the microphone stream is gated: its rows
+/// are megabytes; every other stream writes bytes-to-KB rows from re-readable
+/// sources and cannot fill a disk at plausible rates.
+const MIC_CAP_BYTES: i64 = 1024 * 1024 * 1024;
+
+/// Marker error for [`MIC_CAP_BYTES`], so the FFI can surface back-pressure as
+/// its own return code instead of folding it into the generic failure bucket.
+#[derive(Debug)]
+pub struct CapacityReached;
+
+impl std::fmt::Display for CapacityReached {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "outbox microphone cap reached — enqueue refused, producer keeps its file")
+    }
+}
+impl std::error::Error for CapacityReached {}
+
 /// A batch claimed for delivery: the ids to ack/nack, and the box-shaped records.
 pub struct Claimed {
     pub ids: Vec<String>,
@@ -151,6 +174,25 @@ pub fn enqueue_deferred(stream: &str, mut record: Value, defer_secs: i64) -> Res
     };
 
     let conn = conn()?;
+    if stream == "microphone" && payload.len() > 65_536 {
+        // Live bytes = pages minus the freelist: a DELETE-drained queue frees
+        // pages without shrinking the file (no VACUUM runs here), so a raw
+        // file-size check would trip once and never recover. This un-trips as
+        // soon as acks free rows. O(1) pragmas, no table scan.
+        // Metadata-only silent rows (~300B) are exempt: they cannot fill a
+        // disk, and refusing them makes the producer's orphan sweep re-upload
+        // silence as full audio while the timeline loses its coverage rows.
+        let live_bytes: i64 = conn.query_row(
+            "SELECT (pragma_page_count.page_count - pragma_freelist_count.freelist_count)
+                    * pragma_page_size.page_size
+             FROM pragma_page_count, pragma_freelist_count, pragma_page_size",
+            [],
+            |r| r.get(0),
+        )?;
+        if live_bytes > MIC_CAP_BYTES {
+            return Err(anyhow::Error::new(CapacityReached));
+        }
+    }
     conn.execute(
         "INSERT OR IGNORE INTO outbox
            (source_stream_id, stream, applet_key, payload, created_at, attempts, next_attempt_at)
