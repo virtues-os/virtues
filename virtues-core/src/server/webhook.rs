@@ -163,12 +163,32 @@ pub async fn webhook(
     // action; an action with no device anchor (e.g. an OAuth action reachable
     // only from the owner's own devices) is likewise owner-level.
     if user.device_id != crate::middleware::auth::CONSOLE_DEVICE_ID {
+        // FAIL CLOSED. `.unwrap_or(None)` here meant a database error produced
+        // `None`, which the `if let Some` below reads as "this applet has no
+        // device anchor, so anyone may drive it" — the authorization check was
+        // skipped by the very thing that should have denied it. An ownership
+        // question we could not answer must never resolve to "allowed".
         let applet_device: Option<String> =
-            sqlx::query_scalar("SELECT device_id FROM app_applets WHERE id = $1")
+            match sqlx::query_scalar("SELECT device_id FROM app_applets WHERE id = $1")
                 .bind(&applet_id)
                 .fetch_one(state.db.pool())
                 .await
-                .unwrap_or(None);
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!(
+                        applet_id = %applet_id,
+                        proven_device = %user.device_id,
+                        error = %e,
+                        "webhook: could not resolve action ownership — denying"
+                    );
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": "could not verify action ownership" })),
+                    )
+                        .into_response();
+                }
+            };
         if let Some(owner_device) = applet_device {
             if owner_device != user.device_id {
                 tracing::warn!(

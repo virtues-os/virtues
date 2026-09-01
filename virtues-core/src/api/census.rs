@@ -52,15 +52,30 @@ pub struct Census {
     /// Whole days between the two. The span the record covers, not the number
     /// of days that have anything in them — a gap is still inside the span.
     pub span_days: i64,
+    /// The first named senders in the message record, in the order the record
+    /// met them. CHRONOLOGY, NEVER SIGNIFICANCE: ranking the people of a life
+    /// by frequency would be both wrong and insulting (the interview's own
+    /// doctrine), but "the earliest names in it" is the same honest motif as
+    /// the oldest date — a fact about the record, not a judgment about the
+    /// people. Empty when there are no messages or no presentable names.
+    pub earliest_names: Vec<String>,
+    /// The date of the first day the box actually narrated, so the client can
+    /// point at a real page ("your first day is written up") rather than guess.
+    /// None until SEGMENT→NARRATE has finished its first day.
+    pub first_day: Option<chrono::NaiveDate>,
 }
 
 /// What gets counted, in the order the reveal should read it.
 ///
 /// Ordered by how much a person cares, not by row count: messages before app
-/// sessions, always. Health samples are deliberately ABSENT — a heart-rate
-/// table with 8,814 rows in it would dominate every other number on the screen
-/// while meaning the least, and "8,814 heart rates" is a machine's idea of a
-/// biography.
+/// sessions, always.
+///
+/// THE LINE IS CONTINUOUS VS DISCRETE, not health vs everything else (refined
+/// 2026-08-26). A count is only meaningful when the thing counted is a thing
+/// a person could have counted themselves: a night of sleep, a workout, a
+/// place they went. Continuous samplings — heart rates, steps, HRV — stay
+/// out: "8,814 heart rates" is a machine's idea of a biography, and a
+/// sampled stream's row count measures the sampler, not the life.
 const SOURCES: &[(&str, &str, &str, &str)] = &[
     // (id, label, table, time column)
     //
@@ -72,10 +87,16 @@ const SOURCES: &[(&str, &str, &str, &str)] = &[
     ("emails", "emails", "data_communication_email", "occurred_at"),
     ("conversations", "conversations", "data_content_conversation", "occurred_at"),
     ("events", "calendar events", "data_calendar_event", "started_at"),
+    // Visits, not location points: a person went 462 places, a phone logged two
+    // million coordinates. The letter's first promise is "where you went", and
+    // this is the line that keeps it.
+    ("visits", "places you went", "data_location_visit", "started_at"),
     ("browsing", "pages read", "data_activity_web_browsing", "occurred_at"),
     ("bookmarks", "things saved", "data_content_bookmark", "occurred_at"),
     ("recordings", "recordings", "data_audio_recording", "started_at"),
     ("transactions", "transactions", "data_financial_transaction", "occurred_at"),
+    ("sleep", "nights of sleep", "data_health_sleep", "started_at"),
+    ("workouts", "workouts", "data_health_workout", "started_at"),
     ("sessions", "app sessions", "data_activity_app_session", "started_at"),
 ];
 
@@ -84,7 +105,11 @@ const SOURCES: &[(&str, &str, &str, &str)] = &[
 const DERIVED: &[(&str, &str, &str)] = &[
     ("people", "people", "wiki_people"),
     ("places", "places", "wiki_places"),
-    ("days", "days written up", "wiki_days"),
+    // Narrated days only. A bare `wiki_days` count lies: `get_or_create_day`
+    // inserts a stub row from merely VIEWING a day page, so "days written up"
+    // once counted days nobody wrote up. `narrated_at` is the marker the
+    // narration queue itself trusts (day_summary.rs).
+    ("days", "days written up", "wiki_days WHERE narrated_at IS NOT NULL"),
 ];
 
 /// Count one table, tolerating its absence but never hiding a failure.
@@ -134,6 +159,50 @@ async fn span_of(pool: &PgPool, table: &str, col: &str) -> Option<(chrono::DateT
     .and_then(|(lo, hi)| Some((lo?, hi?)))
 }
 
+/// The first few human-presentable sender names, ordered by when the record
+/// first heard from them. The filter drops raw identifiers (phone numbers,
+/// emails, empty strings) rather than showing "+15125550100" as a person.
+/// Table absence and any other failure both come back empty — this line is
+/// garnish, and garnish must never cost the census.
+async fn earliest_names(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT from_name FROM data_communication_message \
+         WHERE from_name IS NOT NULL AND from_name <> '' \
+           AND from_name ~ '[A-Za-z]' \
+           AND from_name !~ '^[+0-9 ().-]+$' \
+           AND position('@' in from_name) = 0 \
+         GROUP BY from_name \
+         ORDER BY min(occurred_at) ASC \
+         LIMIT 3",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_else(|e| {
+        // Absence is quiet, everything else is loud — same rule as count_of.
+        if !matches!(&e, sqlx::Error::Database(d) if d.code().as_deref() == Some("42P01")) {
+            tracing::warn!(error = %e, "census: earliest-names query failed; omitting names");
+        }
+        Vec::new()
+    })
+}
+
+/// The first narrated day's date. Absence quiet, failure loud — same rule as
+/// `count_of`, and same garnish status as `earliest_names`.
+async fn first_narrated_day(pool: &PgPool) -> Option<chrono::NaiveDate> {
+    sqlx::query_scalar::<_, Option<chrono::NaiveDate>>(
+        "SELECT min(date) FROM wiki_days WHERE narrated_at IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| {
+        if !matches!(&e, sqlx::Error::Database(d) if d.code().as_deref() == Some("42P01")) {
+            tracing::warn!(error = %e, "census: first-narrated-day query failed; omitting");
+        }
+    })
+    .ok()
+    .flatten()
+}
+
 pub async fn census(pool: &PgPool) -> Result<Census> {
     let mut lines: Vec<CensusLine> = Vec::new();
     let mut earliest: Option<chrono::DateTime<chrono::Utc>> = None;
@@ -179,6 +248,8 @@ pub async fn census(pool: &PgPool) -> Result<Census> {
         earliest,
         latest,
         span_days,
+        earliest_names: earliest_names(pool).await,
+        first_day: first_narrated_day(pool).await,
     })
 }
 

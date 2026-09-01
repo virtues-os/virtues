@@ -204,6 +204,65 @@ final class ImprovClient: NSObject {
     }
   }
 
+  /// RPC 0x82: hand the box an account grant so it can link itself.
+  ///
+  /// The inversion that made 0x84 unnecessary. Rather than the app reading a
+  /// user_code off the box and carrying it to atlas, the already-signed-in app
+  /// mints a short-lived grant and injects it here; the box redeems it on its
+  /// own outbound poll. The box stays outbound-only and atlas never gains a
+  /// path in.
+  ///
+  /// Session-authorized: 0x86 must have succeeded on this connection.
+  ///
+  /// The box ACKs with `0x82 ["accepted"]` as soon as it has STORED the grant,
+  /// deliberately before redeeming it — redemption may outlive this Bluetooth
+  /// session, and grant-then-join is as legal as join-then-grant. So this
+  /// completing means the box holds the grant, not that the account is linked.
+  ///
+  /// This did not exist until 2026-08-28. `improv_grant` was declared in
+  /// build.rs, permitted by the ACL, and forwarded by commands.rs to a Swift
+  /// method nobody had written — so iOS setup reached the account hand-off and
+  /// died on "No command improv_grant found for plugin reach". Lockstep diffs
+  /// Rust's generate_handler! against COMMANDS and cannot see this file.
+  func claimGrant(id: String, grant: String, completion: @escaping (String?) -> Void) {
+    queue.async {
+      self.ensureConnected(id: id) { err in
+        if let err { completion(err); return }
+        var done = false
+        let finish: (String?) -> Void = { e in
+          guard !done else { return }
+          done = true
+          self.onResult = nil
+          self.onImprovError = nil
+          completion(e)
+        }
+        self.onImprovError = { code in
+          // 0x04 NotAuthorized carries two meanings here and the box will not
+          // distinguish them: no setup session, or ALREADY LINKED. The second
+          // is the one a person actually meets — re-running setup against a box
+          // that kept its key — and it is not a failure of theirs, so say what
+          // is true of both without alarming.
+          if code == 0x04 {
+            finish("This server is already linked to an account. Skip this step.")
+            return
+          }
+          finish("The server couldn't take the account hand-off (error \(code)).")
+        }
+        self.onResult = { data in
+          if Self.parseResult(data, command: 0x82) != nil { finish(nil) }
+        }
+        var payload: [UInt8] = []
+        let bytes = Array(grant.utf8).prefix(255)
+        payload.append(UInt8(bytes.count))
+        payload.append(contentsOf: bytes)
+        self.write(rpc: Self.buildRPC(command: 0x82, data: payload))
+        self.queue.asyncAfter(deadline: .now() + 20) {
+          finish("The server didn't answer — try again.")
+        }
+      }
+    }
+  }
+
   /// RPC 0x04: ask the BOX what networks it can see. Streams one packet per
   /// network; an empty packet ends the list.
   func wifiScan(id: String, completion: @escaping ([[String: Any]]?, String?) -> Void) {
@@ -308,12 +367,26 @@ final class ImprovClient: NSObject {
   }
 
   /// RPC 0x83 (our extension): pair THROUGH the box's Bluetooth, for LANs
-  /// that block peer-to-peer (office client isolation — the box redeems the
-  /// code against its own consume endpoint and streams the response back).
+  /// that block peer-to-peer (office client isolation).
+  ///
+  /// CODELESS. The box fetches its OWN standing code and redeems it against
+  /// its own consume endpoint over loopback, then streams the response back.
+  /// This command is authorized by the setup SESSION — opened by the
+  /// four-word phrase on the box's panel (0x86) — so a code here would prove
+  /// nothing that has not already been proven.
+  ///
+  /// The wire is `[kind, source, label, endpoint_id]` — FOUR strings, and the
+  /// box rejects a fifth. It carried a leading 6-digit code until 2026-08-24;
+  /// this client kept sending it, so `parse_rpc` failed every packet on
+  /// `!rest.is_empty()` and Bluetooth pairing could not succeed at all. If you
+  /// change this list, change `Command::PairConsume` in
+  /// crates/virtues-improv/src/protocol.rs with it — nothing compiles the two
+  /// together, which is exactly how they drifted.
+  ///
   /// The response is chunked (Improv frames cap at 255 data bytes): JSON
   /// chunks until an empty terminator; a body starting `error:` is a refusal.
   func pair(
-    id: String, code: String, label: String, endpointId: String,
+    id: String, label: String, endpointId: String,
     completion: @escaping (String?, String?) -> Void
   ) {
     queue.async {
@@ -334,13 +407,18 @@ final class ImprovClient: NSObject {
             if body.hasPrefix("error:") {
               let code = String(body.dropFirst("error:".count))
               let msg: String
+              // No code is typed on this path any more, so none of these may
+              // tell the owner to check one — they'd be hunting a screen that
+              // shows nothing to hunt. The failures here are the BOX's own
+              // internal redemption, which the owner can only answer by
+              // starting setup again.
               switch code {
               case "invalid_or_expired_token":
-                msg = "That code didn't match — check the box's screen and try again."
+                msg = "The server's setup code expired before pairing finished — start setup again."
               case "too_many_attempts":
-                msg = "Too many tries — wait a bit and use the code on the box's screen."
+                msg = "Too many pairing attempts on the server — wait a few minutes and try again."
               default:
-                msg = "The box couldn't complete pairing (\(code))."
+                msg = "The server couldn't complete pairing (\(code))."
               }
               finish(nil, msg)
             } else {
@@ -356,7 +434,10 @@ final class ImprovClient: NSObject {
           payload.append(UInt8(bytes.count))
           payload.append(contentsOf: bytes)
         }
-        pushString(code)
+        // Exactly four, in this order. `source = "ios"` because the phone IS a
+        // collector (HealthKit, location, calendar), so it earns the ios ingest
+        // fan-out — unlike the desktop app, which sends "" deliberately and is
+        // filed as `__device__`.
         pushString("mobile_app")
         pushString("ios")
         pushString(label)

@@ -323,7 +323,7 @@ impl Database {
         // NOTE: `ignore_missing` below means BOOT does not enforce lineage —
         // deliberate (one dev DB serves many branches). The enforcement point
         // is `virtues migrate --check` (migration_check), which the upgrade
-        // path runs BEFORE swapping anything. See docs/update-paradigm.md.
+        // path runs BEFORE swapping anything. See agents/record/update-paradigm.md.
         // One dev database serves many branches: a migration applied on a
         // feature branch must not brick `make dev` on branches that don't
         // carry its file. Skip applied-but-unknown versions instead.

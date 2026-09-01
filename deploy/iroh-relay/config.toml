@@ -1,8 +1,25 @@
 # iroh-relay for relay.virtues.ch  (see README.md in this dir)
 #
 # Schema: iroh-relay 1.0.1 `Config` (src/main.rs). This replaces the hand-rolled
-# frp relay. The relay is blind — it moves QUIC/ciphertext, never sees content,
-# volume, or timing. Access is gated by an atlas active-subscription callout.
+# frp relay.
+#
+# What the relay can and cannot see, stated exactly. It moves QUIC ciphertext it
+# holds no key for, so it cannot read content. It DOES see which two EndpointIds
+# are talking, the addresses they connect from, and how many bytes pass when —
+# unavoidable for anything that forwards packets, and it keeps no promise about
+# not logging it.
+#
+# Do not describe this relay as "blind" or "RAM-only". Privacy wording in this
+# repo has a habit of being lifted verbatim into user-facing copy; the wording
+# that is true is in docs/operate/reach.md.
+#
+# ADMISSION IS OPEN (open-relay-plan, applied to the host 2026-08-31). There
+# used to be an [access.http] block here pointing at atlas /relay/authorize —
+# a per-connection callout that both paywalled the connectivity substrate and
+# reported every connection to atlas. Both endpoint and block are deleted;
+# access defaults to "everyone" and the [limits] below bound abuse. Do NOT
+# reintroduce an access block casually: iroh-relay treats a non-200 from a
+# dead callout URL as deny-everyone, which silently closes the relay.
 
 enable_relay = true
 # Plain-HTTP relay endpoint (also serves the LetsEncrypt HTTP path). HTTPS/QUIC
@@ -10,6 +27,23 @@ enable_relay = true
 http_bind_addr = "[::]:80"
 # Let clients discover their reflexive QUIC address through us (hole-punching).
 enable_quic_addr_discovery = true
+
+# Aggregate metrics only; loopback-bound so a firewall edit can never expose it.
+metrics_bind_addr = "127.0.0.1:9090"
+
+[limits]
+# New-connection admission rate, global (conns/sec + burst). Generous: the
+# legitimate worst case is a reconnect storm after a relay restart.
+accept_conn_limit = 20.0
+accept_conn_burst = 100
+
+[limits.client.rx]
+# Flat per-client token bucket, same for everyone (no tiers — tiering would
+# require the relay to know who subscribes, reinstating the account linkage
+# the open relay deleted). Steady 1 MB/s ≈ 30x the heaviest legitimate stream
+# (iOS audio ~35 KB/s); the 16 MB burst keeps remote page loads feeling direct.
+bytes_per_second = 1000000
+max_burst_bytes = 16000000
 
 [tls]
 # The relay's own hostname; LetsEncrypt issues this cert (TLS-ALPN-01). This is
@@ -20,13 +54,3 @@ contact = "ops@virtues.com"
 cert_dir = "/var/lib/iroh-relay/certs"
 prod_tls = true
 # https_bind_addr defaults to [::]:443; quic_bind_addr defaults to [::]:7842.
-
-# Anti-freeloading gate: for every EndpointId that connects, POST to atlas, which
-# returns 200 "true" iff that EndpointId maps to an active-subscription account.
-# The relay sends the EndpointId in the `X-Iroh-NodeId` header (atlas reads it)
-# plus `Authorization: Bearer <IROH_RELAY_HTTP_BEARER_TOKEN>`.
-[access.http]
-url = "https://atlas.virtues.com/relay/authorize"
-# bearer_token is supplied via the IROH_RELAY_HTTP_BEARER_TOKEN env var (see the
-# systemd EnvironmentFile) and MUST equal atlas's VIRTUES_RELAY_AUTH_SECRET.
-# Never hardcode the secret in this file.

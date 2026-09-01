@@ -337,7 +337,7 @@
 				class="show-system-btn"
 				class:active={showSystem}
 				onclick={() => (showSystem = !showSystem)}
-				title="Built-in applets keep the box running (syncs, indexing). Inspectable, just not in the way."
+				title="Built-in applets keep the server running (syncs, indexing). Inspectable, just not in the way."
 			>
 				{showSystem ? 'Hide' : 'Show'} built-in ({systemCount})
 			</button>

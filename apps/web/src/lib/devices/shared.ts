@@ -38,10 +38,20 @@ export type Device = {
 	last_seen_at: string | null;
 	paired_from_ip: string | null;
 	// Reported build identity (X-Virtues-Client header). Null until the device
-	// has checked in on a build that reports it.
+	// has checked in on a build that reports it. version/sha/channel describe
+	// the UI BUNDLE the device's requests come from — which for a paired
+	// desktop is the box-served SPA, i.e. it mirrors the box. `app_version` is
+	// the native shell's own release and is what a person means by "what
+	// version is that device on"; for a collector, `version` IS the binary's
+	// release and `app_version` stays null.
 	version: string | null;
 	sha: string | null;
 	channel: string | null;
+	app_version: string | null;
+	// Device id of the app that installed this collector (the minter of its
+	// pair token). The join that lets the list fold a machine's collector
+	// under its app instead of showing one Mac as two unrelated rows.
+	installed_by: string | null;
 	is_current: boolean;
 };
 

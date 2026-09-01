@@ -1,7 +1,7 @@
 //! The setup phrase — the box's one secret that proves ownership.
 //!
 //! Four words. It is the Bluetooth setup key **and** the recovery key, because
-//! those were never two things. See `docs/onboarding-paradigm.md` §1.
+//! those were never two things. See `agents/record/onboarding-paradigm.md` §1.
 //!
 //! The whole security argument is *where it is readable and when*:
 //!

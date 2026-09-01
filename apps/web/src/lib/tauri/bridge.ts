@@ -27,7 +27,7 @@ async function getInvoke() {
 // unknown command reject somewhere the user cannot interpret.
 //
 // The Rust side is `COMMAND_SURFACE_VERSION` in src-tauri/src/main.rs; the two
-// must move together. See docs/spa-delivery-plan.md.
+// must move together. See agents/plan/spa-delivery-plan.md.
 
 /** Surface version of a shell too old to answer the question at all. */
 const SURFACE_UNKNOWN = 0;
@@ -65,6 +65,65 @@ export async function shellSupports(min: number): Promise<boolean> {
 	return (await shellSurface()) >= min;
 }
 
+/** The app updater's state, mirrored from the shell. See `UpdateStateView` in
+ *  main.rs. `null` everywhere the self-updater doesn't exist — plain browsers,
+ *  mobile, Windows/Linux shells, and shells predating the command — which the
+ *  UI must treat as silence, never as up-to-date. */
+export interface AppUpdateState {
+	/** A downloaded release waiting for a relaunch, e.g. "1.0.24". */
+	stagedVersion: string | null;
+	lastCheck:
+		| { outcome: 'up_to_date' }
+		| { outcome: 'staged'; version: string }
+		| { outcome: 'failed'; error: string }
+		| null;
+}
+
+/**
+ * What the shell's self-updater knows. Until this command, a staged update was
+ * visible ONLY in the menu-bar tray — nothing the SPA rendered could see it,
+ * which is how "is my app current" became unanswerable from inside the app.
+ */
+export async function appUpdateState(): Promise<AppUpdateState | null> {
+	const invoke = await getInvoke();
+	if (!invoke) return null;
+	try {
+		const r = await invoke<{
+			staged_version: string | null;
+			last_check: AppUpdateState['lastCheck'];
+		} | null>('update_state_cmd');
+		if (!r) return null;
+		return { stagedVersion: r.staged_version ?? null, lastCheck: r.last_check ?? null };
+	} catch {
+		return null;
+	}
+}
+
+/** Ask the shell to run an update check now. Fire-and-forget: re-read
+ *  appUpdateState() for the verdict. Silently nothing in browsers/mobile/old
+ *  shells — same contract as every other addition. */
+export async function checkAppUpdate(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('check_app_update_cmd');
+	} catch {
+		// Shell predates the command — the caller's state read shows nothing new.
+	}
+}
+
+/** Restart into a staged app update. No-op when nothing is staged. */
+export async function applyAppUpdate(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('apply_update_cmd');
+	} catch {
+		// Shell too old for the command — the chip that calls this only renders
+		// when appUpdateState() answered, so this is belt-and-braces.
+	}
+}
+
 /** What the native shell reports about itself. See `ShellIdentity` in lib.rs. */
 export interface ShellIdentity {
 	/** The native app's version — `tauri.conf.json > version`. */
@@ -82,7 +141,8 @@ export type OtaCheck =
 	| { state: 'up_to_date' }
 	| { state: 'applied'; contentHash: string }
 	| { state: 'shell_too_old'; needs: number; have: number }
-	| { state: 'no_bundle_on_box' };
+	| { state: 'no_bundle_on_box' }
+	| { state: 'rolled_back'; contentHash: string };
 
 /**
  * One line describing an update check, or null when there is nothing worth
@@ -98,6 +158,11 @@ export function describeOtaCheck(c: OtaCheck | null): string | null {
 			return `Your box has newer UI that needs a newer app (needs ${c.needs}, this app has ${c.have}) — update from the App Store.`;
 		case 'applied':
 			return 'Newer UI downloaded — it will be used next time the app starts.';
+		case 'rolled_back':
+			// Also worth a word: the device is deliberately refusing the box's
+			// bundle after a failed boot, which otherwise looks like OTA
+			// silently not working.
+			return 'A newer UI failed to start on this device and was set aside — the next box update clears it.';
 		default:
 			return null;
 	}
@@ -207,6 +272,8 @@ export async function openExternal(url: string): Promise<void> {
  * Collector daemon status
  */
 export interface CollectorStatus {
+	/** The installed collector binary's release, or null from one too old to say. */
+	version: string | null;
 	running: boolean;
 	paused: boolean;
 	pendingEvents: number;
@@ -260,6 +327,7 @@ export async function probeCollectorStatus(): Promise<CollectorProbe> {
 
 	try {
 		const status = await invoke<{
+			version?: string | null;
 			running: boolean;
 			paused: boolean;
 			pending_events: number;
@@ -275,6 +343,7 @@ export async function probeCollectorStatus(): Promise<CollectorProbe> {
 		return {
 			kind: 'ok',
 			status: {
+				version: status.version ?? null,
 				running: status.running,
 				paused: status.paused,
 				pendingEvents: status.pending_events,
@@ -506,5 +575,129 @@ export async function onSummon(handler: () => void): Promise<() => void> {
 	} catch (e) {
 		console.error('[tauri] could not listen for summon:', e);
 		return () => {};
+	}
+}
+
+// ─── The pairing door ────────────────────────────────────────────────────────
+//
+// Pairing is structurally LAN-only (a device can't use iroh until it's
+// allowlisted, and allowlisting happens at pairing), so a phone away from home
+// can't enroll against the box — however reachable that box is to this
+// already-paired computer. The door lets THIS machine stand in for the box at
+// its own LAN address, for the length of one Add-device window: the phone
+// types this address into its pairing screen and consumes the code normally.
+// See crates/virtues-reach-client/src/pair_door.rs.
+
+/** `host:port` for the phone to type, plus the window it has. */
+export interface PairDoor {
+	origin: string;
+	ttlSecs: number;
+}
+
+/**
+ * Open the pairing door on this computer's LAN address. Desktop-only —
+ * resolves null in a browser, on a phone, or when this machine isn't paired
+ * and connected (a door onto an unreachable box would only fail later).
+ */
+export async function openPairDoor(ttlSecs?: number): Promise<PairDoor | null> {
+	const invoke = await getInvoke();
+	if (!invoke) return null;
+	try {
+		return await invoke<PairDoor>('plugin:reach|pair_door_open', { ttlSecs });
+	} catch (e) {
+		// Expected on a phone and in a browser; the caller falls back to the
+		// LAN-only QR rather than showing an error for a path that never applied.
+		console.warn('[Tauri] pair_door_open unavailable:', e);
+		return null;
+	}
+}
+
+/** Close the pairing door. Safe to call when none is open. */
+export async function closePairDoor(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('plugin:reach|pair_door_close');
+	} catch (e) {
+		console.warn('[Tauri] pair_door_close failed:', e);
+	}
+}
+
+/** The handoff QR a phone scans, plus the EndpointId it enrols. */
+export interface PairHandoff {
+	qrSvg: string;
+	nodeId: string;
+	/** The device row the box created. Poll this for a `last_seen_at` — it is
+	 *  the only honest "it worked" signal, because the handoff enrols directly
+	 *  and never consumes the pair token the sheet otherwise waits on. */
+	deviceId: string;
+}
+
+/**
+ * Mint an identity for a phone and enrol it with the box, returning the QR
+ * that hands it over.
+ *
+ * Works where the pairing door cannot: the door needs the phone to open a
+ * socket to this machine, which coworking wifi routinely forbids. This needs
+ * no network between them at all. Desktop-only; null in a browser or on a
+ * phone. The returned QR carries a private key — display it, never persist or
+ * transmit it. See crates/virtues-reach-client/src/handoff.rs.
+ */
+export type HandoffOutcome =
+	/** The QR is ready. */
+	| { kind: 'ok'; handoff: PairHandoff }
+	/** No native shell at all — a plain browser or the phone. Show nothing. */
+	| { kind: 'no-shell' }
+	/** The shell is here but has no such command: an app predating the handoff. */
+	| { kind: 'too-old' }
+	/** Our code ran and said why it couldn't. Show the reason verbatim. */
+	| { kind: 'failed'; error: string };
+
+/**
+ * Does this error read as "the command never reached our code"?
+ *
+ * Tauri rejects a command absent from the plugin ACL before any of our Rust
+ * runs, so the message is the framework's, not ours. Matching it is imprecise
+ * by nature — but the classification only picks the WORDING. Both branches
+ * surface something; neither returns to the silent null this replaces.
+ */
+function readsAsMissingCommand(message: string): boolean {
+	const m = message.toLowerCase();
+	return (
+		m.includes('not allowed') ||
+		m.includes('acl') ||
+		m.includes('not found') ||
+		m.includes('unknown command')
+	);
+}
+
+/**
+ * Mint an identity for a phone and enrol it with the box, returning the QR
+ * that hands it over.
+ *
+ * Works where the pairing door cannot: the door needs the phone to open a
+ * socket to this machine, which coworking wifi routinely forbids. This needs
+ * no network between them at all. Desktop-only. The returned QR carries a
+ * private key — display it, never persist or transmit it. See
+ * crates/virtues-reach-client/src/handoff.rs.
+ *
+ * Returns an OUTCOME rather than `PairHandoff | null`, because the null was a
+ * lie by omission. `mac-v1.0.25` shipped 2h before the handoff landed, so every
+ * released Mac app refuses this command — and this function used to swallow
+ * that into a `console.warn` and return null, leaving the sheet to render one
+ * fewer option. Indistinguishable from a deliberate design, on the machines
+ * that needed it most: someone on a coworking network got only the LAN QR,
+ * which is exactly the case the handoff exists to solve. An unavailable
+ * capability must say it is unavailable.
+ */
+export async function createPairHandoff(label?: string): Promise<HandoffOutcome> {
+	const invoke = await getInvoke();
+	if (!invoke) return { kind: 'no-shell' };
+	try {
+		return { kind: 'ok', handoff: await invoke<PairHandoff>('plugin:reach|pair_handoff_create', { label }) };
+	} catch (e) {
+		const error = e instanceof Error ? e.message : String(e);
+		console.warn('[Tauri] pair_handoff_create failed:', e);
+		return readsAsMissingCommand(error) ? { kind: 'too-old' } : { kind: 'failed', error };
 	}
 }

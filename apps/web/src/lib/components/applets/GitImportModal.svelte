@@ -108,7 +108,7 @@
 			<div class="warn">
 				<Icon icon="ri:alert-line" width="16" />
 				<div>
-					<strong>This runs someone else's code on your box.</strong>
+					<strong>This runs someone else's code on your server.</strong>
 					Imported applets are sandboxed and cannot gain root or read your
 					stored credentials, but they still run on a schedule and can read
 					and write your data. Import repositories you would be willing to

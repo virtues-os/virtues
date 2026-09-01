@@ -13,7 +13,32 @@ struct InstallCommand: ParsableCommand {
     @Flag(name: .long, help: "Read token from VIRTUES_TOKEN environment variable")
     var tokenFromEnv = false
 
+    @Flag(
+        name: .long,
+        help: "Install even if this binary is ad-hoc signed (its macOS permissions will not survive a rebuild)"
+    )
+    var force = false
+
     func run() throws {
+        // 0. Refuse an ad-hoc signed binary. See CodeIdentity for why: TCC pins
+        // an ad-hoc grant to the cdhash, so installing this build silently
+        // voids Full Disk Access and Accessibility the next time anyone
+        // rebuilds — and the settings UI goes on claiming both are granted.
+        // Blocking here is the only point where a person is present to read it.
+        let runningPath = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0])
+            .standardized.path
+        if CodeIdentity.isAdHocSigned(path: runningPath) == true {
+            guard force else { throw InstallError.adHocSigned(path: runningPath) }
+            print("\u{26A0}  Ad-hoc signed build installed with --force.")
+            print(
+                "   macOS permissions will be voided by the next rebuild. When that "
+                    + "happens, REMOVE and re-add virtues-collector in System Settings →")
+            print(
+                "   Privacy & Security → Full Disk Access and Accessibility. Toggling "
+                    + "them off and on does not repair the grant.")
+            print("")
+        }
+
         // 1. Validate token if provided (or check existing config)
         // Support reading from environment variable for security (avoids token in ps output)
         let effectiveToken: String?
@@ -60,17 +85,15 @@ struct InstallCommand: ParsableCommand {
             withIntermediateDirectories: true
         )
 
-        // Get current executable path
-        let currentPath = ProcessInfo.processInfo.arguments[0]
-        let resolvedCurrentPath = URL(fileURLWithPath: currentPath).standardized.path
-
         // Remove existing if present
         if FileManager.default.fileExists(atPath: installPath) {
             try FileManager.default.removeItem(atPath: installPath)
         }
 
         // Copy binary
-        try FileManager.default.copyItem(atPath: resolvedCurrentPath, toPath: installPath)
+        // The signature is embedded in the Mach-O, so a plain copy preserves
+        // it — a Developer ID grant follows the binary here and keeps matching.
+        try FileManager.default.copyItem(atPath: runningPath, toPath: installPath)
 
         // Make executable using FileManager
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: installPath)
@@ -188,6 +211,43 @@ struct InstallCommand: ParsableCommand {
             return value
         case .failure(let error):
             throw error
+        }
+    }
+}
+
+enum InstallError: LocalizedError {
+    /// Refusing to install an ad-hoc signed collector. Not a style objection:
+    /// macOS ties an ad-hoc TCC grant to the exact cdhash, so this binary's
+    /// permissions die at the next rebuild while System Settings keeps drawing
+    /// them as granted.
+    case adHocSigned(path: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .adHocSigned(let path):
+            return """
+                Refusing to install an ad-hoc signed collector.
+
+                  \(path)
+
+                This binary has no signing identity, so macOS pins its Full Disk
+                Access and Accessibility grants to this exact build. The next
+                rebuild invalidates them — and it does so silently: the switches
+                in System Settings stay on while every read fails, so iMessages,
+                Safari history and window titles stop arriving with no error
+                anywhere except the collector log.
+
+                Build it signed instead:
+
+                  APPLE_SIGNING_IDENTITY="Developer ID Application: … (TEAMID)" \\
+                    tools/build-mac-app.sh
+
+                To install anyway — accepting that permissions will need to be
+                removed and re-added in System Settings after every rebuild,
+                since toggling them off and on does not repair the grant:
+
+                  virtues-collector install --force
+                """
         }
     }
 }

@@ -19,7 +19,6 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use chrono_tz::Tz;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -587,121 +586,6 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
     }
 }
 
-/// Build user context block for system prompt enrichment.
-///
-/// Queries lightweight indexed data (~20ms total) to give the LLM personal context:
-/// - Identity: occupation, employer, home location
-/// - Recent days: last 3 autobiographies (truncated)
-/// - Connected sources: active data source names
-/// The DB-backed prompt sections inside `<user_context>`, by name. One list,
-/// so assembly, the error policy, and the audit test all iterate the same
-/// registry rather than each hand-maintaining its own idea of what exists.
-pub(crate) const USER_CONTEXT_SECTIONS: &[&str] = &["identity", "recent_days", "connected_sources"];
-
-/// Build one named context section. `Ok(None)` = no data, section legitimately
-/// absent; `Err` = the section HAS data it failed to deliver.
-///
-/// Every arm is total: it either renders or errors — never `if let Ok` — and
-/// the caller applies one uniform policy to errors. That policy exists because
-/// this file shipped two sections that never rendered once (`recent_days`, a
-/// DATE decoded as String; `memory`, JSONB decoded as String) and the swallow
-/// meant nothing anywhere said so. A section that fails to render costs no
-/// error the user sees — the model just quietly knows less — so the log line
-/// is the only witness this failure mode can have.
-pub(crate) async fn build_context_section(
-    pool: &PgPool,
-    name: &str,
-) -> Result<Option<String>, sqlx::Error> {
-    match name {
-        "identity" => {
-            let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
-                r#"SELECT p.occupation, p.employer, wp.name
-                 FROM app_user_profile p
-                 LEFT JOIN wiki_places wp ON p.home_place_id = wp.id
-                 WHERE p.id = '00000000-0000-0000-0000-000000000001'"#,
-            )
-            .fetch_optional(pool)
-            .await?;
-            let Some(row) = row else { return Ok(None) };
-            let mut parts = Vec::new();
-            if let (Some(occ), Some(emp)) = (&row.0, &row.1) {
-                parts.push(format!("{} at {}", occ, emp));
-            } else if let Some(occ) = &row.0 {
-                parts.push(occ.clone());
-            }
-            if let Some(place) = &row.2 {
-                parts.push(format!("Lives in {}", place));
-            }
-            Ok((!parts.is_empty())
-                .then(|| format!("<identity>{}</identity>", parts.join(". "))))
-        }
-        "recent_days" => {
-            // `date::text` because the column is a Postgres DATE and this
-            // decodes into String. Without the cast sqlx errors — which is the
-            // decode failure that kept this section out of every prompt from
-            // the day it shipped until 2026-08-01.
-            let rows = sqlx::query_as::<_, (String, Option<String>)>(
-                r#"SELECT date::text, prose FROM wiki_day_prose
-                 WHERE prose IS NOT NULL
-                 ORDER BY date DESC LIMIT 3"#,
-            )
-            .fetch_all(pool)
-            .await?;
-            let day_lines: Vec<String> = rows
-                .iter()
-                .filter_map(|(date, auto)| {
-                    let text = auto.as_deref()?;
-                    let truncated = if text.chars().count() > 300 {
-                        format!("{}...", text.chars().take(300).collect::<String>())
-                    } else {
-                        text.to_string()
-                    };
-                    Some(format!("{date}: {truncated}"))
-                })
-                .collect();
-            Ok((!day_lines.is_empty())
-                .then(|| format!("<recent_days>\n{}\n</recent_days>", day_lines.join("\n"))))
-        }
-        "connected_sources" => {
-            let rows = sqlx::query_as::<_, (String,)>(
-                "SELECT name FROM credentials WHERE status = 'active' ORDER BY name",
-            )
-            .fetch_all(pool)
-            .await?;
-            let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
-            Ok((!names.is_empty())
-                .then(|| format!("<connected_sources>{}</connected_sources>", names.join(", "))))
-        }
-        other => {
-            tracing::warn!("[chat] unknown context section requested: {other}");
-            Ok(None)
-        }
-    }
-}
-
-async fn build_user_context(pool: &PgPool, user_name: &str) -> Option<String> {
-    let mut sections = Vec::new();
-    for name in USER_CONTEXT_SECTIONS {
-        match build_context_section(pool, name).await {
-            Ok(Some(body)) => sections.push(body),
-            Ok(None) => {}
-            // One policy for every section, present and future: an error is a
-            // section with data it failed to deliver, and it must be audible.
-            Err(e) => tracing::warn!("[chat] {name} omitted from the prompt: {e}"),
-        }
-    }
-
-    if sections.is_empty() {
-        None
-    } else {
-        Some(format!(
-            "\n\n<user_context>\nBackground context about {}. Reference when relevant; do not recite unprompted.\n{}\n</user_context>",
-            user_name,
-            sections.join("\n")
-        ))
-    }
-}
-
 /// The rules block — `wiki_rules`, grouped by kind.
 ///
 /// THIS TABLE WAS WRITTEN AND NEVER READ. From 0101 until now, `wiki_rules` (and
@@ -783,153 +667,218 @@ async fn build_system_prompt(
     is_new_user: bool,
     notebook_id: Option<&str>,
 ) -> String {
-    use crate::agent::prompt::build_personalized_prompt;
     use crate::api::assistant_profile::get_assistant_name;
-    use crate::api::personas::get_persona_content;
     use crate::api::profile::get_display_name;
 
     // Load personalization from profiles (with fallbacks)
     let assistant_name = get_assistant_name(pool).await.unwrap_or_else(|_| "Ari".to_string());
     let user_name = get_display_name(pool).await.unwrap_or_else(|_| "there".to_string());
 
-    // Load persona content from database (or fallback to registry default)
-    let persona_content = get_persona_content(pool, persona_id).await.ok().flatten();
-
-    // Build narrative identity (user's present-orientation self-portrait)
-    let narrative_identity = build_narrative_identity(pool).await;
-
-    // Build personalized base prompt (identity → persona → narrative_identity → tools)
-    let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode, &narrative_identity);
-
-    // The enforceable half, right after the prose it governs. Skipped entirely
-    // when there are no rules: an empty <rules> block would teach the model that
-    // the section is usually noise.
-    let rules = build_rules(pool).await;
-    if !rules.is_empty() {
-        prompt.push_str(
-            &crate::agent::prompt::RULES_PROMPT
-                .replace("{user_name}", &user_name)
-                .replace("{rules}", &rules),
-        );
+    // The narrative interview is a different room entirely: no tools, no
+    // persona, no data context, no narrative-identity injection (the document
+    // this conversation exists to create). Its prompt stands alone.
+    if agent_mode == "interview" {
+        return crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name);
     }
 
-    // Inject onboarding prompt for new users (first conversation)
-    if is_new_user {
-        prompt.push_str(crate::agent::prompt::NEW_USER_PROMPT);
-    }
-
-    // Load AI persistent memory (if any).
-    //
-    // Read as JSON, because the column is JSONB — decoding straight into String
-    // failed on type, and `if let Ok` dropped the error, so this block never
-    // rendered. Paired with the write in `update_memory`, which was storing a
-    // bare string into the same JSONB column and being rejected: the tool
-    // reported saving nothing and the prompt read back nothing, and neither end
-    // said so.
-    match sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT memory FROM app_assistant_profile WHERE memory IS NOT NULL LIMIT 1"
+    build_system_prompt_blocks(
+        pool,
+        active_page,
+        timezone,
+        agent_mode,
+        persona_id,
+        is_new_user,
+        notebook_id,
+        &assistant_name,
+        &user_name,
     )
-    .fetch_optional(pool)
     .await
-    {
-        Ok(Some(value)) => {
-            // A JSON string is the shape `update_memory` writes; anything else
-            // is older or hand-written, and rendering it verbatim beats
-            // dropping it.
-            let memory = value
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| value.to_string());
-            if !memory.trim().is_empty() {
-                prompt.push_str(&format!(
-                    "\n\n<memory>\nYour persistent memory (saved via update_memory tool). Reference when relevant:\n{}\n</memory>",
-                    memory
-                ));
-            }
-        }
-        Ok(None) => {}
-        Err(e) => tracing::warn!("[chat] persistent memory omitted from the prompt: {e}"),
-    }
+    .0
+}
 
-    // Add current date/time for temporal awareness
-    let now = Utc::now();
+/// The registry: every prompt section as a named block, rendered in list
+/// order by `prompt_blocks::assemble`. This is the current order verbatim —
+/// the formula's reorder (rules last, quantized clock, cache breakpoint) is
+/// a deliberate later slice, and it happens by editing THIS list.
+#[allow(clippy::too_many_arguments)]
+async fn build_system_prompt_blocks(
+    pool: &PgPool,
+    active_page: Option<&ActivePageContext>,
+    timezone: Option<&str>,
+    agent_mode: &str,
+    persona_id: &str,
+    is_new_user: bool,
+    notebook_id: Option<&str>,
+    assistant_name: &str,
+    user_name: &str,
+) -> (String, Vec<crate::agent::prompt_blocks::RenderedBlock>) {
+    use crate::agent::prompt::build_personalized_prompt;
+    use crate::agent::prompt_blocks::{assemble, Author, Block, BlockMeta, Cadence, Mood};
+    use crate::api::personas::get_persona_content;
 
-    if let Some(tz_str) = timezone {
-        // Try to parse the IANA timezone and convert
-        if let Ok(tz) = tz_str.parse::<Tz>() {
-            let local = now.with_timezone(&tz);
-            let date_str = local.format("%A, %B %d, %Y").to_string();
-            let time_str = local.format("%I:%M %p %Z").to_string(); // e.g., "7:20 PM EST"
-            prompt.push_str(&format!(
-                "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
-                date_str, time_str
-            ));
-        } else {
-            // Fallback to UTC if timezone parsing fails
-            let date_str = now.format("%A, %B %d, %Y").to_string();
-            let time_str = now.format("%H:%M UTC").to_string();
-            prompt.push_str(&format!(
-                "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
-                date_str, time_str
-            ));
-        }
-    } else {
-        let date_str = now.format("%A, %B %d, %Y").to_string();
-        let time_str = now.format("%H:%M UTC").to_string();
-        prompt.push_str(&format!(
-            "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
-            date_str, time_str
-        ));
-    }
-
-    // Add user context (identity, recent days, connected sources)
-    if let Some(user_context) = build_user_context(pool, &user_name).await {
-        prompt.push_str(&user_context);
-    }
-
-    // Inline the active Notebook (room) as a salience lens: its name, catch-up
-    // memo, and member URLs. This is the room the chat lives in.
-    if let Some(notebook_id) = notebook_id {
-        if let Some(block) = build_notebook_context(pool, notebook_id).await {
-            prompt.push_str(&block);
-        }
-    }
-
-    if let Some(ctx) = active_page {
-        if let Some(page_id) = &ctx.page_id {
-            let title = ctx.page_title.as_deref().unwrap_or("Untitled");
-
-            // Include the current content from Yjs if available
-            // This is the source of truth - use this for edits, not the database content
-            if let Some(content) = &ctx.content {
-                // Truncate large content to avoid consuming too much context
-                let (content_display, truncation_note) = if content.chars().count() > MAX_PAGE_CONTENT_CHARS {
-                    let truncated_content: String = content.chars().take(MAX_PAGE_CONTENT_CHARS).collect();
-                    let remaining = content.chars().count() - MAX_PAGE_CONTENT_CHARS;
-                    let truncated = format!(
-                        "{}...\n\n[Content truncated - {} more characters]",
-                        truncated_content,
-                        remaining
-                    );
-                    (truncated, " The content shown is truncated. Call get_page_content for the complete document before making edits.")
-                } else {
-                    (content.clone(), "")
+    let blocks: Vec<Block<'_>> = vec![
+        // The fused head: base identity + persona + narrative identity + tool
+        // guidance + mode, still one string from build_personalized_prompt.
+        // Splits into <character>/<narrative_identity>/<tools> in the reorder
+        // slice.
+        Block {
+            meta: BlockMeta { tag: "base", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Slow },
+            body: Box::pin(async move {
+                let persona_content = get_persona_content(pool, persona_id).await.ok().flatten();
+                let narrative_identity = build_narrative_identity(pool).await;
+                Some(build_personalized_prompt(
+                    assistant_name,
+                    user_name,
+                    persona_id,
+                    persona_content.as_deref(),
+                    agent_mode,
+                    &narrative_identity,
+                ))
+            }),
+        },
+        // The precedence ladder, stated once. GPT-5-era guidance and our own
+        // formula doc agree: unresolved hierarchy ambiguity measurably
+        // degrades compliance, so the ranking is text the model can cite,
+        // not an emergent property of ordering.
+        Block {
+            meta: BlockMeta { tag: "precedence", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Static },
+            body: Box::pin(async move {
+                Some(crate::agent::prompt_blocks::precedence_line().to_string())
+            }),
+        },
+        // Onboarding guidance for a first conversation.
+        Block {
+            meta: BlockMeta { tag: "new_user", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Slow },
+            body: Box::pin(async move {
+                is_new_user.then(|| crate::agent::prompt::NEW_USER_PROMPT.to_string())
+            }),
+        },
+        // The machine's memory: per-note rows the person can read and edit
+        // (Settings), rendered with ids so the update_memory ops can name
+        // them. Three lanes per docs/narrative-identity.md: facts of their
+        // world, their preferred manner, their practices.
+        Block {
+            meta: BlockMeta { tag: "memory", author: Author::Machine, mood: Mood::Declarative, rung: 50, cadence: Cadence::Session },
+            body: Box::pin(async move {
+                let memories = match crate::api::assistant_memories::list_memories(pool).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::warn!("[chat] memory omitted from the prompt: {e}");
+                        return None;
+                    }
                 };
+                if memories.is_empty() {
+                    return None;
+                }
+                let mut out = String::from(
+                    "\n\n<memory>\nWhat you have learned alongside {user}, in notes you keep (they can read and edit these in Settings; a note marked [theirs] is in their words — never revise or retire it). Use silently: reference when relevant, never recite unprompted.\n",
+                );
+                out = out.replace("{user}", user_name);
+                for lane in ["facts", "manner", "practices"] {
+                    let in_lane: Vec<_> = memories.iter().filter(|m| m.lane == lane).collect();
+                    if in_lane.is_empty() {
+                        continue;
+                    }
+                    out.push_str(&format!("<{lane}>\n"));
+                    for m in in_lane {
+                        let theirs = if m.author == "human" { " [theirs]" } else { "" };
+                        out.push_str(&format!("- (#{}){} {}\n", m.id, theirs, m.body));
+                    }
+                    out.push_str(&format!("</{lane}>\n"));
+                }
+                out.push_str("</memory>");
+                Some(out)
+            }),
+        },
+        // The computed present — clock, place, today's spine, calendar,
+        // recent people (with entity ids), live threads, last night's sleep,
+        // narrated recent days, connected sources. Deterministic, SQL-only,
+        // budgeted by fixed caps; the quarter-hour clock is computed ONCE and
+        // every line derives from the same instant. Replaces the old
+        // <datetime> + <user_context> pair (formula slice 4).
+        Block {
+            meta: BlockMeta { tag: "circumstances", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Quantized },
+            body: Box::pin(async move {
+                let now = Utc::now();
+                let floored = now
+                    - chrono::Duration::minutes(i64::from(
+                        now.format("%M").to_string().parse::<u32>().unwrap_or(0) % 15,
+                    ));
+                crate::api::circumstances::build_circumstances(pool, timezone, floored).await
+            }),
+        },
+        // The active Notebook (room) as a salience lens: its name, catch-up
+        // memo, and member URLs. This is the room the chat lives in.
+        Block {
+            meta: BlockMeta { tag: "active_notebook", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::Session },
+            body: Box::pin(async move {
+                match notebook_id {
+                    Some(id) => build_notebook_context(pool, id).await,
+                    None => None,
+                }
+            }),
+        },
+        // The open page's live content (Yjs is the source of truth).
+        Block {
+            meta: BlockMeta { tag: "active_context", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::PerTurn },
+            body: Box::pin(async move { build_active_page_block(active_page) }),
+        },
+        // The enforceable half — LAST, nearest the conversation (moved
+        // 2026-08-28; RULES_PROMPT's own placement note predicted exactly
+        // this lever). Constraint adherence tracks recency, and rules are
+        // the one block that must hold at 1-in-1000. Sitting after the
+        // volatile tail also means they are never cached and never bust
+        // anything — a few hundred deliberately re-sent tokens. Absent
+        // entirely when there are no rules: an empty <rules> block would
+        // teach the model that the section is usually noise.
+        Block {
+            meta: BlockMeta { tag: "rules", author: Author::User, mood: Mood::Imperative, rung: 100, cadence: Cadence::Slow },
+            body: Box::pin(async move {
+                let rules = build_rules(pool).await;
+                (!rules.is_empty()).then(|| {
+                    crate::agent::prompt::RULES_PROMPT
+                        .replace("{user_name}", user_name)
+                        .replace("{rules}", &rules)
+                })
+            }),
+        },
+    ];
 
-                prompt.push_str(&format!(
-                    "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing.\n\n<current_content>\n{}\n</current_content>\n\nUse the edit_page tool to make changes. The 'find' parameter locates text, 'replace' provides the new text. For a full rewrite, set find to empty string. Edits are applied immediately via real-time sync.{}\n</active_context>",
-                    title, page_id, content_display, truncation_note
-                ));
+    assemble(blocks).await
+}
+
+/// Render the open-page section, if a page is open.
+fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<String> {
+    let ctx = active_page?;
+    let page_id = ctx.page_id.as_ref()?;
+    let title = ctx.page_title.as_deref().unwrap_or("Untitled");
+
+    Some(match &ctx.content {
+        Some(content) => {
+            // Truncate large content to avoid consuming too much context
+            let (content_display, truncation_note) = if content.chars().count() > MAX_PAGE_CONTENT_CHARS {
+                let truncated_content: String = content.chars().take(MAX_PAGE_CONTENT_CHARS).collect();
+                let remaining = content.chars().count() - MAX_PAGE_CONTENT_CHARS;
+                let truncated = format!(
+                    "{}...\n\n[Content truncated - {} more characters]",
+                    truncated_content,
+                    remaining
+                );
+                (truncated, " The content shown is truncated. Call get_page_content for the complete document before making edits.")
             } else {
-                prompt.push_str(&format!(
-                    "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing. Use get_page_content to read it first, then edit_page to make changes.\n</active_context>",
-                    title, page_id
-                ));
-            }
-        }
-    }
+                (content.clone(), "")
+            };
 
-    prompt
+            format!(
+                "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing.\n\n<current_content>\n{}\n</current_content>\n\nUse the edit_page tool to make changes. The 'find' parameter locates text, 'replace' provides the new text. For a full rewrite, set find to empty string. Edits are applied immediately via real-time sync.{}\n</active_context>",
+                title, page_id, content_display, truncation_note
+            )
+        }
+        None => format!(
+            "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing. Use get_page_content to read it first, then edit_page to make changes.\n</active_context>",
+            title, page_id
+        ),
+    })
 }
 
 /// Test-only view of the assembled prompt, so audits in other modules can
@@ -1043,8 +992,16 @@ pub async fn chat_handler(
     State(yjs_state): State<YjsState>,
     State(cancel_state): State<ChatCancellationState>,
     _user: AuthUser,
-    Json(request): Json<ChatRequest>,
+    Json(mut request): Json<ChatRequest>,
 ) -> Response {
+    // The narrative interview is a MODE OF THE CHAT, decided by the chat id —
+    // never by what the client sent. Any surface that opens this conversation
+    // gets the interviewer (its standalone prompt, zero tools); no client can
+    // opt the interview into tools by sending a different agentMode.
+    if request.chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID {
+        request.agent_mode = "interview".to_string();
+    }
+
     // Validate model against registry
     let valid_models = match crate::api::models::list_models().await {
         Ok(models) => models,
@@ -1824,7 +1781,6 @@ fn create_agent_stream(
                     } else {
                         crate::api::ai_calls::Route::Wallet
                     },
-                    chat_id: Some(chat_id.clone()),
                     applet_run_id: None,
                 },
             )
@@ -1962,7 +1918,46 @@ mod tests {
     #[sqlx::test]
     async fn empty_rules_leave_no_block(pool: PgPool) {
         let prompt = build_system_prompt_for_audit(&pool).await;
-        assert!(!prompt.contains("<rules>"), "empty rules block was rendered");
+        // The <precedence> block legitimately NAMES <rules>; what must be
+        // absent is the rules block's own body.
+        assert!(
+            !prompt.contains("has marked some things as rules"),
+            "empty rules block was rendered"
+        );
+    }
+
+    /// The registry IS the render order. This pins the current order so a
+    /// future edit to the block list is a deliberate, test-visible act — the
+    /// reorder slice (rules last, per the formula doc) flips this assertion
+    /// on purpose, and nothing reorders by accident.
+    #[sqlx::test]
+    async fn prompt_blocks_render_in_registry_order(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_rules (id, kind, rule) VALUES ('rule_t1', 'avoid', 'x')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (prompt, rendered) = build_system_prompt_blocks(
+            &pool, None, Some("America/Chicago"), "default", "default", false, None, "Ari",
+            "Adam",
+        )
+        .await;
+
+        let tags: Vec<&str> = rendered.iter().map(|r| r.tag).collect();
+        // Blocks with no data render nothing; the ones that DO render must
+        // appear in registry order, with the fused head first.
+        assert_eq!(tags.first(), Some(&"base"), "the fused head must render first");
+        assert_eq!(tags.last(), Some(&"rules"), "rules must render last — nearest the conversation");
+        assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
+        assert!(tags.contains(&"circumstances"));
+        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "active_notebook", "active_context", "rules"];
+        let mut last = 0usize;
+        for t in &tags {
+            let pos = expected.iter().position(|e| e == t).expect("unknown block tag");
+            assert!(pos >= last, "block {t} rendered out of registry order: {tags:?}");
+            last = pos;
+        }
+        // And the assembly is still one contiguous prompt, not fragments.
+        assert!(prompt.contains("<rules>") && prompt.contains("<circumstances>"));
     }
 
     #[test]
@@ -2117,66 +2112,3 @@ mod live_prompt_audit {
     }
 }
 
-/// Regression guard for the prompt sections that are assembled from database
-/// queries whose errors are non-fatal by design.
-///
-/// A section that fails to render costs nothing visible — no error reaches the
-/// user, the model simply knows less — so nothing catches it but a test that
-/// checks the section against the data it was built from. `<recent_days>` was
-/// absent from every prompt ever built, for a DATE/String decode mismatch, and
-/// went unnoticed exactly this way.
-///   cargo test -p virtues --lib api::chat::live_context_sections -- --ignored --nocapture
-#[cfg(test)]
-mod live_context_sections {
-    use sqlx::PgPool;
-
-    /// Per-section "has data" predicate — the ground truth each section's
-    /// rendering is checked against. Adding a section to
-    /// [`super::USER_CONTEXT_SECTIONS`] without adding its predicate here
-    /// fails the test, which is the point: the registry and the audit can't
-    /// drift apart silently.
-    async fn section_has_data(pool: &PgPool, name: &str) -> bool {
-        let sql = match name {
-            "identity" => {
-                "SELECT EXISTS(SELECT 1 FROM app_user_profile \
-                 WHERE COALESCE(occupation, '') <> '' OR home_place_id IS NOT NULL)"
-            }
-            "recent_days" => {
-                "SELECT EXISTS(SELECT 1 FROM wiki_day_prose WHERE prose IS NOT NULL)"
-            }
-            "connected_sources" => {
-                "SELECT EXISTS(SELECT 1 FROM credentials WHERE status = 'active')"
-            }
-            other => panic!("section {other} has no data predicate — add one here"),
-        };
-        sqlx::query_scalar(sql).fetch_one(pool).await.expect("predicate")
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn every_registered_section_renders_whenever_its_data_exists() {
-        let url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
-        let pool = PgPool::connect(&url).await.expect("dev database");
-
-        let ctx = super::build_user_context(&pool, "Tester").await.unwrap_or_default();
-        println!("user_context:\n{ctx}");
-
-        for name in super::USER_CONTEXT_SECTIONS {
-            let has_data = section_has_data(&pool, name).await;
-            let rendered = ctx.contains(&format!("<{name}>"));
-            println!("  {name:<20} data={has_data} rendered={rendered}");
-            if has_data {
-                assert!(
-                    rendered,
-                    "section {name} has data but did not reach the prompt \
-                     — the silent-section disease, again"
-                );
-            }
-            // A section rendering WITHOUT data is the inverse lie.
-            if !has_data {
-                assert!(!rendered, "section {name} rendered with no underlying data");
-            }
-        }
-    }
-}

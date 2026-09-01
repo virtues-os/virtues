@@ -69,21 +69,20 @@ pub async fn mint_pending_credential(
 }
 
 /// Finalize a `via_proxy` credential — encrypts secrets, stores metadata +
-/// scopes + expiry, transitions `pending → active`. Idempotent on second
-/// callback (no-ops if already active).
+/// expiry, transitions `pending → active`. Idempotent on second callback
+/// (no-ops if already active). (OAuth scopes were once stored here too —
+/// written, read by nothing, dropped 2026-08-28.)
 pub async fn finalize_credential(
     db: &PgPool,
     credential_id: &str,
     secrets: &serde_json::Value,
     metadata: &serde_json::Value,
     expires_in: Option<i64>,
-    scopes: Option<&[String]>,
 ) -> Result<()> {
     let encryptor = TokenEncryptor::from_env()?;
     let secrets_str = serde_json::to_string(secrets)?;
     let secrets_ct = encryptor.encrypt(&secrets_str)?;
     let metadata_json = metadata.clone();
-    let scopes_json = scopes.map(|s| serde_json::to_value(s)).transpose()?;
 
     let (expires_at, next_refresh_at): (Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
         match expires_in {
@@ -101,15 +100,13 @@ pub async fn finalize_credential(
                   status_reason = NULL,
                   secrets_ciphertext = $1,
                   metadata = $2,
-                  scopes = $3,
-                  expires_at = $4,
-                  next_refresh_at = $5,
+                  expires_at = $3,
+                  next_refresh_at = $4,
                   last_seen_at = now()
-            WHERE id = $6 AND status = 'pending'"#,
+            WHERE id = $5 AND status = 'pending'"#,
     )
     .bind(&secrets_ct)
     .bind(&metadata_json)
-    .bind(&scopes_json)
     .bind(expires_at)
     .bind(next_refresh_at)
     .bind(credential_id)
@@ -229,6 +226,21 @@ pub async fn read_credential_secrets(
             .fetch_optional(db)
             .await?;
     let (ciphertext,) = row.ok_or_else(|| AuthError::NotFound(credential_id.to_string()))?;
+
+    // `last_seen_at` means "last USED", and this decrypt is the one gate every
+    // use passes through. It used to be bumped only by token refresh, so an
+    // api-key or Plaid credential in daily service rendered as "never seen" in
+    // Settings forever. Throttled to once a minute (the app_device pattern) and
+    // best-effort: a failed bump must never fail the read.
+    let _ = sqlx::query(
+        "UPDATE credentials SET last_seen_at = now() \
+         WHERE id = $1 AND (last_seen_at IS NULL \
+            OR last_seen_at < now() - interval '60 seconds')",
+    )
+    .bind(credential_id)
+    .execute(db)
+    .await;
+
     let encryptor = TokenEncryptor::from_env()?;
     let plaintext = encryptor.decrypt(&ciphertext)?;
     Ok(serde_json::from_str(&plaintext)?)

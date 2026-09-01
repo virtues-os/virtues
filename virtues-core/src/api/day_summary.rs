@@ -95,7 +95,7 @@ RULES:
 /// This deliberately dropped the old "elevated moves" (fabricated behavioural
 /// fingerprints, forced quantified closers), the literary epigraph, and the W6H
 /// data-quality block — all of which pushed the model to invent meaning the day did
-/// not carry. See docs/event-timeline.md and the essay "A Day, Well Written": the
+/// not carry. See agents/record/event-timeline.md and the essay "A Day, Well Written": the
 /// machine records what happened and hands the meaning back.
 const NARRATE_PROMPT: &str = r#"You write the ARTICLE OF THE DAY for a personal wiki — the day's page, in the sense a wikipedia gives that word. It is NOT a log (the event timeline beneath the article already lists what happened, when) and it is not a summary squeezed into a sentence quota. It is prose about the day, written from the record, that read back weeks later drops the reader straight into it.
 
@@ -146,7 +146,7 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
 
     // Fallback: a true 24h UTC day when no/invalid timezone is available. (This
     // should rarely execute — home_timezone is seeded from the server's own
-    // system clock; see docs/timezone-model.md.)
+    // system clock; see agents/record/timezone-model.md.)
     let start = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
     let end = date
         .succ_opt()
@@ -200,7 +200,7 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
 
     // 2. Compute date boundaries using the per-day "where the owner was" timezone
     //    (fixed at the day's start), falling back to the box's home_timezone.
-    //    See docs/timezone-model.md.
+    //    See agents/record/timezone-model.md.
     let home_tz = super::profile::get_timezone(pool)
         .await
         .unwrap_or(None)
@@ -357,7 +357,7 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events).await;
 
     sqlx::query(
-        "UPDATE wiki_days SET sources_fingerprint = $1, segmented_at = now(), \
+        "UPDATE wiki_days SET sources_fingerprint = $1, \
          start_timezone = COALESCE(start_timezone, $2) WHERE date = $3",
     )
     .bind(&fingerprint)
@@ -417,7 +417,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         // `COALESCE(..., '(unlabeled)')` so a NULL label can never fail the String
         // decode and abort narration for the whole day.
         "SELECT COALESCE(user_label, auto_label, '(unlabeled)') AS label, event_summary, \
-                start_time, ended_at, novelty_z \
+                started_at, ended_at, novelty_z \
          FROM wiki_events \
          WHERE day_id = $1 AND NOT is_unknown AND NOT user_hidden \
          ORDER BY started_at",
@@ -2388,7 +2388,7 @@ mod dossier_tests {
     /// bare card transaction next to an unnamed conversation, because the
     /// detective was handed `- 14 with <name>` and nothing else. Messages must
     /// arrive PLACED IN TIME and CARRYING THEIR TEXT, or no prompt wording can
-    /// rescue the cut. See docs/attention-plan.md.
+    /// rescue the cut. See agents/plan/attention-plan.md.
     ///
     /// Also pins the two properties that make that safe: bursts split on a real
     /// gap rather than smearing a day into one line, and a thread whose
@@ -2480,5 +2480,23 @@ mod dossier_tests {
             "the whole-day aggregate block is gone; a count off the spine taught \
              the detective nothing it could place"
         );
+    }
+
+    /// Runs narration's SQL against the schema the migrations actually build.
+    ///
+    /// `sqlx::query_as` is untyped, so a renamed column dies at RUNTIME, not
+    /// build time — and it did: after the 2026-08-17 renames, the events query
+    /// here still selected `start_time`, so `narrate_day` errored every night
+    /// and no day was ever narrated (the door's "a page will be waiting for
+    /// you" was silently false). An empty day exercises both statements — the
+    /// events SELECT and the `narrated_at` read — and must come back `None`
+    /// (below MIN_EVENTS_TO_NARRATE), never `Err`.
+    #[sqlx::test]
+    async fn narrate_day_sql_matches_schema(pool: sqlx::PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 25).unwrap();
+        let out = narrate_day(&pool, date)
+            .await
+            .expect("narration must not die on its own SQL");
+        assert!(out.is_none(), "an empty day earns no story");
     }
 }

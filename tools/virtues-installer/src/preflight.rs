@@ -76,7 +76,7 @@ pub async fn run() -> Result<()> {
     // work), it just tells the user up front instead of letting them discover a
     // walled network the hard way after pairing. Not treated as a warning
     // (a home box behind IPv4 NAT is normal, not an install problem).
-    // Remote access is the blind relay: the box dials OUT over TCP/443, so
+    // Remote access goes through the relay: the box dials OUT over TCP/443, so
     // there is no inbound port to open and nothing about the local network
     // class (public IPv4, NAT, IPv6) gates it — the port-forward advice this
     // block used to print was left over from the WireGuard era and contradicted

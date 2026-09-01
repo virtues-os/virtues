@@ -152,13 +152,6 @@ pub struct MoveFileRequest {
     pub new_path: String,
 }
 
-/// Quota warning levels
-#[derive(Debug, Clone, Serialize)]
-pub struct QuotaWarnings {
-    pub warnings: Vec<String>,
-    pub usage_percent: f64,
-}
-
 // =============================================================================
 // Path Security
 // =============================================================================
@@ -359,11 +352,10 @@ async fn update_usage_add(pool: &PgPool, size_bytes: i64, is_folder: bool) -> Re
 
     sqlx::query(
         r#"
-        INSERT INTO app_drive_usage (id, drive_bytes, total_bytes, file_count, folder_count)
-        VALUES ($4, GREATEST(0, $1), GREATEST(0, $1), GREATEST(0, $2), GREATEST(0, $3))
+        INSERT INTO app_drive_usage (id, drive_bytes, file_count, folder_count)
+        VALUES ($4, GREATEST(0, $1), GREATEST(0, $2), GREATEST(0, $3))
         ON CONFLICT (id) DO UPDATE
         SET drive_bytes = app_drive_usage.drive_bytes + $1,
-            total_bytes = app_drive_usage.total_bytes + $1,
             file_count = app_drive_usage.file_count + $2,
             folder_count = app_drive_usage.folder_count + $3,
             updated_at = now()
@@ -380,6 +372,21 @@ async fn update_usage_add(pool: &PgPool, size_bytes: i64, is_folder: bool) -> Re
     Ok(())
 }
 
+/// Remove a blob from storage.
+///
+/// absent-ok: a row can outlive its blob (deleted externally, or a retry
+/// after a partial failure), and the goal of a delete is that the blob not
+/// exist — so NotFound is success. Every other failure propagates: once the
+/// DB row is gone, a swallowed delete error is an orphaned blob that nothing
+/// will ever find again.
+async fn remove_blob(config: &DriveConfig, path: &str) -> Result<()> {
+    match config.storage.delete(path).await {
+        Ok(()) => Ok(()),
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Error::Storage(format!("Failed to delete blob {path}: {e}"))),
+    }
+}
+
 /// Update usage statistics after file deletion
 async fn update_usage_remove(pool: &PgPool, size_bytes: i64, is_folder: bool) -> Result<()> {
     let (file_delta, folder_delta): (i64, i64) = if is_folder { (0, 1) } else { (1, 0) };
@@ -388,7 +395,6 @@ async fn update_usage_remove(pool: &PgPool, size_bytes: i64, is_folder: bool) ->
         r#"
         UPDATE app_drive_usage
         SET drive_bytes = GREATEST(0, drive_bytes - $1),
-            total_bytes = GREATEST(0, total_bytes - $1),
             file_count = GREATEST(0, file_count - $2),
             folder_count = GREATEST(0, folder_count - $3),
             updated_at = now()
@@ -404,73 +410,6 @@ async fn update_usage_remove(pool: &PgPool, size_bytes: i64, is_folder: bool) ->
     .map_err(|e| Error::Database(format!("Failed to update drive usage: {e}")))?;
 
     Ok(())
-}
-
-// =============================================================================
-// Quota Warnings
-// =============================================================================
-
-/// Check usage and return any warnings
-pub async fn check_usage_warnings(pool: &PgPool, config: &DriveConfig) -> Result<QuotaWarnings> {
-    let usage = get_drive_usage(pool, config).await?;
-    let mut warnings = Vec::new();
-
-    // Get current warning state
-    let (w80, w90, w100): (bool, bool, bool) = sqlx::query_as(
-        r#"
-        SELECT warning_80_sent, warning_90_sent, warning_100_sent
-        FROM app_drive_usage
-        WHERE id = $1
-        "#,
-    )
-    .bind(USAGE_SINGLETON_ID)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get warning state: {e}")))?;
-
-    let percent = usage.usage_percent;
-
-    if percent >= 100.0 && !w100 {
-        warnings.push("The box's disk is full. Delete files to continue uploading.".into());
-        sqlx::query("UPDATE app_drive_usage SET warning_100_sent = TRUE WHERE id = $1")
-            .bind(USAGE_SINGLETON_ID)
-            .execute(pool)
-            .await
-            .ok();
-    } else if percent >= 90.0 && !w90 {
-        warnings.push(format!(
-            "Disk usage at {:.1}%. Consider cleaning up.",
-            percent
-        ));
-        sqlx::query("UPDATE app_drive_usage SET warning_90_sent = TRUE WHERE id = $1")
-            .bind(USAGE_SINGLETON_ID)
-            .execute(pool)
-            .await
-            .ok();
-    } else if percent >= 80.0 && !w80 {
-        warnings.push(format!("Storage usage at {:.1}%.", percent));
-        sqlx::query("UPDATE app_drive_usage SET warning_80_sent = TRUE WHERE id = $1")
-            .bind(USAGE_SINGLETON_ID)
-            .execute(pool)
-            .await
-            .ok();
-    }
-
-    // Reset warnings if usage drops below thresholds
-    if percent < 80.0 && (w80 || w90 || w100) {
-        sqlx::query(
-            "UPDATE app_drive_usage SET warning_80_sent = FALSE, warning_90_sent = FALSE, warning_100_sent = FALSE WHERE id = $1",
-        )
-        .bind(USAGE_SINGLETON_ID)
-        .execute(pool)
-        .await
-        .ok();
-    }
-
-    Ok(QuotaWarnings {
-        warnings,
-        usage_percent: percent,
-    })
 }
 
 // =============================================================================
@@ -1070,9 +1009,12 @@ pub async fn delete_file(pool: &PgPool, _config: &DriveConfig, file_id: &str) ->
         return Err(Error::InvalidInput("File is already in trash".into()));
     }
 
-    let (trash_bytes, trash_count) = if file.is_folder {
+    // No usage tally here: the old trash_bytes/trash_count columns were
+    // written on every path and read by nothing (dropped 2026-08-28) —
+    // anything that wants trash totals computes from app_drive_files.
+    if file.is_folder {
         // Recursively soft-delete folder contents
-        soft_delete_folder_recursive(pool, &file.id).await?
+        soft_delete_folder_recursive(pool, &file.id).await?;
     } else {
         // Soft delete single file (mark as deleted, keep on disk)
         sqlx::query("UPDATE app_drive_files SET deleted_at = now() WHERE id = $1")
@@ -1080,25 +1022,7 @@ pub async fn delete_file(pool: &PgPool, _config: &DriveConfig, file_id: &str) ->
             .execute(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to soft delete file: {e}")))?;
-        (file.size_bytes, 1i64)
-    };
-
-    // Update trash tracking with actual bytes and count
-    sqlx::query(
-        r#"
-        UPDATE app_drive_usage
-        SET trash_bytes = trash_bytes + $1,
-            trash_count = trash_count + $2,
-            updated_at = now()
-        WHERE id = $3
-        "#,
-    )
-    .bind(trash_bytes)
-    .bind(trash_count)
-    .bind(USAGE_SINGLETON_ID)
-    .execute(pool)
-    .await
-    .ok();
+    }
 
     Ok(())
 }
@@ -1135,7 +1059,7 @@ async fn soft_delete_folder_recursive(pool: &PgPool, folder_id: &str) -> Result<
                 .bind(&child.id)
                 .execute(pool)
                 .await
-                .ok();
+                .map_err(|e| Error::Database(format!("Failed to soft delete file: {e}")))?;
             total_bytes += child.size_bytes;
             total_count += 1;
         }
@@ -1178,16 +1102,14 @@ async fn hard_delete_folder_recursive(
         if child.is_folder {
             Box::pin(hard_delete_folder_recursive(pool, config, &child)).await?;
         } else {
-            config.storage.delete(&child.path).await.ok();
+            remove_blob(config, &child.path).await?;
 
             sqlx::query("DELETE FROM app_drive_files WHERE id = $1")
                 .bind(&child.id)
                 .execute(pool)
                 .await
-                .ok();
-            update_usage_remove(pool, child.size_bytes, false)
-                .await
-                .ok();
+                .map_err(|e| Error::Database(format!("Failed to delete file record: {e}")))?;
+            update_usage_remove(pool, child.size_bytes, false).await?;
         }
     }
 
@@ -1325,22 +1247,6 @@ pub async fn restore_file(pool: &PgPool, file_id: &str) -> Result<DriveFile> {
         .map_err(|e| Error::Database(format!("Failed to restore file: {e}")))?;
     }
 
-    // Update trash tracking
-    sqlx::query(
-        r#"
-        UPDATE app_drive_usage
-        SET trash_bytes = GREATEST(0, trash_bytes - $1),
-            trash_count = GREATEST(0, trash_count - 1),
-            updated_at = now()
-        WHERE id = $2
-        "#,
-    )
-    .bind(file.size_bytes)
-    .bind(USAGE_SINGLETON_ID)
-    .execute(pool)
-    .await
-    .ok();
-
     get_file_metadata(pool, file_id).await
 }
 
@@ -1352,8 +1258,7 @@ pub async fn purge_file(pool: &PgPool, config: &DriveConfig, file_id: &str) -> R
         // Recursively hard-delete folder contents
         hard_delete_folder_recursive(pool, config, &file).await?;
     } else {
-        // Ignore errors if file doesn't exist (may have been deleted externally)
-        config.storage.delete(&file.path).await.ok();
+        remove_blob(config, &file.path).await?;
 
         // Delete from database
         sqlx::query("DELETE FROM app_drive_files WHERE id = $1")
@@ -1364,24 +1269,6 @@ pub async fn purge_file(pool: &PgPool, config: &DriveConfig, file_id: &str) -> R
 
         // Update usage
         update_usage_remove(pool, file.size_bytes, false).await?;
-    }
-
-    // Update trash tracking if file was in trash
-    if file.deleted_at.is_some() {
-        sqlx::query(
-            r#"
-            UPDATE app_drive_usage
-            SET trash_bytes = GREATEST(0, trash_bytes - $1),
-                trash_count = GREATEST(0, trash_count - 1),
-                updated_at = now()
-            WHERE id = $2
-            "#,
-        )
-        .bind(file.size_bytes)
-        .bind(USAGE_SINGLETON_ID)
-        .execute(pool)
-        .await
-        .ok();
     }
 
     Ok(())
@@ -1625,8 +1512,9 @@ pub async fn move_file(
             .await
             .map_err(|e| Error::Storage(format!("Failed to write file to new location: {e}")))?;
 
-        // Delete from old path
-        config.storage.delete(&file.path).await.ok();
+        // The old blob is deleted below, only after the row names the new
+        // path — aborting between delete and UPDATE would leave the row
+        // pointing at a blob that no longer exists.
     }
 
     // Extract new filename
@@ -1663,6 +1551,13 @@ pub async fn move_file(
     .await
     .map_err(|e| Error::Database(format!("Failed to update file record: {e}")))?;
 
+    if !file.is_folder {
+        // Row now names the new path; the copy at the old path can go. A
+        // failure here leaks the old blob but says so; retrying the move is
+        // not possible (the row moved), so surfacing is all we can do.
+        remove_blob(config, &file.path).await?;
+    }
+
     // For folders: update all descendant paths and move files in storage
     if file.is_folder {
         let old_prefix = &file.path;
@@ -1681,17 +1576,30 @@ pub async fn move_file(
         .await
         .map_err(|e| Error::Database(format!("Failed to list folder contents: {e}")))?;
 
-        // Move each file in storage
+        // Copy each descendant blob to its new path; originals are deleted
+        // only after the path UPDATE below lands. Aborting anywhere before
+        // then leaves every blob at its old path — where the DB still points
+        // — and stray new-path copies are overwritten on a retry.
+        let mut old_blobs = Vec::with_capacity(descendants.len());
         for descendant in &descendants {
             let old_file_path = &descendant.path;
             let new_file_path = old_file_path.replacen(old_prefix, &new_path_str, 1);
 
-            // Download, upload, delete pattern
-            if let Ok(data) = config.storage.download(old_file_path).await {
-                if config.storage.upload(&new_file_path, data).await.is_ok() {
-                    config.storage.delete(old_file_path).await.ok();
+            let data = match config.storage.download(old_file_path).await {
+                Ok(data) => data,
+                // absent-ok: a row can outlive its blob; nothing to copy,
+                // and the path UPDATE below renames the row either way.
+                Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    return Err(Error::Storage(format!(
+                        "Failed to read {old_file_path} for move: {e}"
+                    )))
                 }
-            }
+            };
+            config.storage.upload(&new_file_path, data).await.map_err(|e| {
+                Error::Storage(format!("Failed to write {new_file_path} for move: {e}"))
+            })?;
+            old_blobs.push(old_file_path.clone());
         }
 
         // Update all descendant paths in database
@@ -1711,6 +1619,11 @@ pub async fn move_file(
         .execute(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to update descendant paths: {e}")))?;
+
+        // Rows now name the new paths; the copies at the old paths can go.
+        for old_blob in &old_blobs {
+            remove_blob(config, old_blob).await?;
+        }
     }
 
     get_file_metadata(pool, file_id).await
@@ -1806,18 +1719,19 @@ pub async fn reconcile_usage(pool: &PgPool, config: &DriveConfig) -> Result<Driv
     .await
     .map_err(|e| Error::Database(format!("Failed to calculate usage: {e}")))?;
 
-    // Update usage table (drive_bytes and total_bytes for backwards compat)
+    // Upsert, same reason as update_usage_add: the singleton is born on first
+    // write, and a reconcile is exactly the path that runs on a box where the
+    // row never got born — as an UPDATE it silently repaired nothing there.
     sqlx::query(
         r#"
-        UPDATE app_drive_usage
+        INSERT INTO app_drive_usage
+            (id, drive_bytes, file_count, folder_count)
+        VALUES ($4, $1, $2, $3)
+        ON CONFLICT (id) DO UPDATE
         SET drive_bytes = $1,
-            total_bytes = $1,
             file_count = $2,
             folder_count = $3,
-            last_scan_at = now(),
-            last_scan_bytes = $1,
             updated_at = now()
-        WHERE id = $4
         "#,
     )
     .bind(drive_bytes)

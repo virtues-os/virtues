@@ -13,7 +13,7 @@
 //! job is to stop nav menus and cookie banners from eating the token budget and
 //! showing up as "subjects" — not to reconstruct the author's paragraphs
 //! faithfully. Tag-level furniture removal gets most of that, and when it isn't
-//! enough the answer is the Parallel Extract tier (docs/bookmarks-plan.md step
+//! enough the answer is the Parallel Extract tier (agents/plan/bookmarks-plan.md step
 //! 2), not a fragile dependency.
 //!
 //! `extraction/html.rs` stays as it is: it serves .html files a user drops into

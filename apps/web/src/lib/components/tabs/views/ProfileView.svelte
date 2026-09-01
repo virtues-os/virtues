@@ -95,7 +95,7 @@
 			<div class="space-y-8">
 				<!-- Appearance -->
 				<section>
-					<h2 class="section-title">Appearance</h2>
+					<h2 class="settings-label">Appearance</h2>
 					<ThemePicker
 						value={currentTheme}
 						onchange={handleThemeChange}
@@ -104,7 +104,7 @@
 
 				<!-- Identity -->
 				<section>
-					<h2 class="section-title">Identity</h2>
+					<h2 class="settings-label">Identity</h2>
 					<div class="fields">
 						<div class="field">
 							<label for="fullName">Full Name</label>
@@ -148,7 +148,7 @@
 
 				<!-- Physical Details -->
 				<section>
-					<h2 class="section-title">Physical Details</h2>
+					<h2 class="settings-label">Physical Details</h2>
 					<div class="fields">
 						<div class="field-row">
 							<div class="field">
@@ -211,7 +211,7 @@
 
 				<!-- Work -->
 				<section>
-					<h2 class="section-title">Work</h2>
+					<h2 class="settings-label">Work</h2>
 					<div class="fields">
 						<div class="field">
 							<label for="occupation">Occupation</label>
@@ -246,7 +246,7 @@
 
 				<!-- Regional -->
 				<section>
-					<h2 class="section-title">Regional</h2>
+					<h2 class="settings-label">Regional</h2>
 					<div class="fields">
 						<div class="field">
 							<label for="timezone">Home timezone</label>
@@ -271,12 +271,6 @@
 </Page>
 
 <style>
-	.section-title {
-		font-size: 14px;
-		font-weight: 500;
-		color: var(--foreground-muted);
-		margin-bottom: 12px;
-	}
 
 	.fields {
 		display: flex;

@@ -66,14 +66,12 @@ pub struct UserProfile {
     // Preferences
     pub theme: Option<String>,
     /// Timezone of the box's physical home location (IANA). Stable anchor +
-    /// fallback floor — NOT the owner's current location. See docs/timezone-model.md.
+    /// fallback floor — NOT the owner's current location. See agents/record/timezone-model.md.
     pub home_timezone: Option<String>,
-    // Discovery context
-    pub crux: Option<String>,
-    pub technology_vision: Option<String>,
-    pub pain_point_primary: Option<String>,
-    pub pain_point_secondary: Option<String>,
-    pub excited_features: Option<serde_json::Value>,
+    /// Getting-started sections the owner dismissed from Home (section ids).
+    /// Dismissed means gone, not collapsed — the features stay reachable where
+    /// they permanently live. See agents/plan/getting-started-plan.md.
+    pub getting_started_dismissed: Vec<String>,
     // Audit
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -95,14 +93,11 @@ pub struct AssistantProfile {
     pub image_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
-    pub embedding_model_id: Option<String>,
     /// AI persona/tone: selected persona ID
     pub persona: Option<String>,
     /// JSON blob storing persona definitions: { "items": [...], "hidden": [...] }
     /// Column is `jsonb` (migration 0003) — bind as `serde_json::Value`, not String.
     pub personas: Option<serde_json::Value>,
-    /// AI-managed persistent memory. Column is `jsonb` (migration 0003).
-    pub memory: Option<serde_json::Value>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }

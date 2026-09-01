@@ -25,7 +25,7 @@
 //! generation and transcription quietly billed the wallet while the UI said
 //! "BYO active". Non-AI routes (`/v1/places/*`, `/v1/parallel/*`, `/v1/unsplash/*`)
 //! are per-user vendor bills that BYO says nothing about, so they keep going
-//! through the wallet. Plan of record: `docs/byo-ai-plan.md`.
+//! through the wallet. Plan of record: `agents/plan/byo-ai-plan.md`.
 //!
 //! ## Purpose tagging (vestige — no-op)
 //!
@@ -528,7 +528,7 @@ impl BearerClient {
         // reports `usage.cost` — and 0 is the honest number here, since
         // `app_ai_calls` measures what the *wallet* spent, which for a BYO call
         // is nothing. Presenting that as the user's total AI cost would be the
-        // lie; showing tokens instead is `docs/byo-ai-plan.md` phase 5.
+        // lie; showing tokens instead is `agents/plan/byo-ai-plan.md` phase 5.
         self.record_ai_usage(path, &body, &resp, crate::api::ai_calls::Route::Byo)
             .await;
         Ok(resp)
@@ -574,7 +574,6 @@ impl BearerClient {
             reasoning_tokens: reasoning,
             cost_micros,
             route,
-            chat_id: None,
             applet_run_id: None,
         };
         if let Err(e) = crate::api::ai_calls::record_ai_call(&self.pool, &call).await {
@@ -587,6 +586,28 @@ impl BearerClient {
         let bearer = self.ensure_bearer().await?;
         let resp = self.send_get(path, &bearer).await?;
         self.handle_402_and_retry_get(path, resp).await
+    }
+
+    /// GET a virtues-api route that must work before linking (the model
+    /// catalog). Attaches the api_key when the box has one, sends bare
+    /// otherwise — `get_json` refuses outright when unlinked, which is
+    /// exactly right for billable routes and wrong for public ones. No 402
+    /// recovery: public routes never charge.
+    pub async fn get_json_public(&self, path: &str) -> Result<ApiResponse> {
+        let mut req = self
+            .http
+            .get(format!("{}{}", self.api_url.trim_end_matches('/'), path))
+            .header("X-Virtues-Purpose", self.purpose.as_str());
+        if let Ok(bearer) = self.ensure_bearer().await {
+            req = req.header("Authorization", format!("Bearer {}", bearer));
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| anyhow!("virtues-api request failed: {e}"))?;
+        let status = resp.status().as_u16();
+        let body = resp.json::<Value>().await.unwrap_or_else(|_| json!({}));
+        Ok(ApiResponse { status, body })
     }
 
     async fn handle_402_and_retry_post(

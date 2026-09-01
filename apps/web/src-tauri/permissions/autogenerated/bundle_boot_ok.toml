@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-bundle-boot-ok"
+description = "Enables the bundle_boot_ok command without any pre-configured scope."
+commands.allow = ["bundle_boot_ok"]
+
+[[permission]]
+identifier = "deny-bundle-boot-ok"
+description = "Denies the bundle_boot_ok command without any pre-configured scope."
+commands.deny = ["bundle_boot_ok"]

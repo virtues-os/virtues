@@ -157,6 +157,12 @@ async fn chat_completions(
             }
         }
     }
+    // Pin the call to zero-retention endpoints wherever the model has any.
+    // See Catalog::enforce_zdr — this is per-request and derived from the
+    // model, never a global switch someone can leave flipped.
+    if state.catalog.enforce_zdr(&model) {
+        body["providerOptions"] = json!({ "gateway": { "zeroDataRetention": true } });
+    }
 
     let upstream = state
         .http_client
@@ -218,6 +224,19 @@ async fn completions(
     let provider = get_provider_config(&model, &state.config);
     let _ = &headers;
 
+    // Same zero-retention enforcement as the chat paths. This route forwards
+    // the caller's body verbatim, so the option is merged in rather than set
+    // on a body we built.
+    let mut request = request;
+    if state.catalog.enforce_zdr(&model) {
+        if let Some(obj) = request.as_object_mut() {
+            obj.insert(
+                "providerOptions".to_string(),
+                json!({ "gateway": { "zeroDataRetention": true } }),
+            );
+        }
+    }
+
     let upstream = state
         .http_client
         .post(provider.endpoint.replace("/chat/completions", "/completions"))
@@ -246,11 +265,11 @@ async fn completions(
 ///
 /// That middle layer is the point: model ids churn faster than we ship boxes.
 ///
-/// Open to any authenticated bearer (free OR paid). No charge.
-async fn list_models(
-    State(state): State<Arc<AppState>>,
-    BearerAuth(_): BearerAuth,
-) -> Response {
+/// Open to ALL callers — no bearer. The list is public data (the gateway
+/// serves the same catalog unauthenticated) plus our slot picks; requiring a
+/// key here left every unlinked box on its 2-model compiled floor, because the
+/// box-side fetch 401'd forever. Completions stay gated; this never charges.
+async fn list_models(State(state): State<Arc<AppState>>) -> Response {
     use virtues_registry::models::{default_model_for_slot, ModelSlot};
 
     let payload = json!({

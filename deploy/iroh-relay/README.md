@@ -1,8 +1,12 @@
 # Virtues iroh-relay — OVH deploy runbook
 
-Replaces the hand-rolled frp blind relay with **iroh-relay 1.0** on the existing
-your relay host (`ssh virtues-relay`, `203.0.113.10`). The relay is blind (moves
-QUIC/ciphertext only); access is gated by an atlas active-subscription callout.
+Replaces the hand-rolled frp relay with **iroh-relay 1.0** on the existing
+your relay host (`ssh virtues-relay`, `203.0.113.10`). The relay moves QUIC
+ciphertext it cannot read; it does see which EndpointIds are talking, from which
+addresses, and how much traffic passes (see the comment in `config.toml` before
+writing any copy about it). **Admission is open** (open-relay-plan, 2026-08-31):
+the atlas active-subscription callout is deleted; per-client rate limits in
+`config.toml` bound abuse.
 Boxes home on it and are reached by EndpointId — LAN-direct → hole-punched →
 relayed. This is the only public cert in the system (per-box ACME is gone).
 
@@ -13,11 +17,11 @@ Files here:
 
 > **Note — the OVH host is already live** (deployed 2026-07-01). It runs the
 > binary under a slightly different unit than the reference here: `iroh-relay.service`
-> with `DynamicUser=yes` + a drop-in `iroh-relay.service.d/10-access.conf` that
-> sets `EnvironmentFile=/etc/iroh-relay/relay.env`, and the bearer comes from that
-> env (not from `config.toml`). These files are the **clean-install reference**
-> for a fresh host; on the existing host, edit `/etc/iroh-relay/config.toml` +
-> `/etc/iroh-relay/relay.env` in place and `systemctl restart iroh-relay`.
+> with `DynamicUser=yes` (a leftover `10-access.conf` drop-in from the retired
+> access gate is inert). These files are the **clean-install reference** for a
+> fresh host; on the existing host, edit `/etc/iroh-relay/config.toml` in place
+> and `systemctl restart iroh-relay`. The open-admission config was applied to
+> the live host 2026-08-31.
 
 ## 0. DNS (Route53)
 
@@ -42,15 +46,10 @@ cargo install iroh-relay --version ^1 --features server --root /usr/local
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin iroh-relay
 sudo install -d -m 0750 -o iroh-relay -g iroh-relay /etc/iroh-relay
 sudo cp config.toml /etc/iroh-relay/config.toml
-
-# Shared secret for the atlas gate. MUST equal atlas VIRTUES_RELAY_AUTH_SECRET.
-SECRET=$(openssl rand -hex 32)
-printf 'IROH_RELAY_HTTP_BEARER_TOKEN=%s\n' "$SECRET" | \
-  sudo tee /etc/iroh-relay/relay.env >/dev/null
-sudo chmod 0640 /etc/iroh-relay/relay.env
-sudo chown root:iroh-relay /etc/iroh-relay/relay.env
-echo "SET atlas VIRTUES_RELAY_AUTH_SECRET to: $SECRET"
 ```
+(No shared secret: the access gate is gone — the relay admits any endpoint and
+rate-limits per client. See the warning in `config.toml` before ever adding an
+`[access]` block back.)
 
 ## 3. Firewall (ufw)
 
@@ -70,24 +69,19 @@ sudo systemctl enable --now virtues-iroh-relay
 journalctl -u virtues-iroh-relay -f    # watch for LetsEncrypt cert issuance
 ```
 
-## 5. Wire atlas (the gate's other half)
+## 5. Wire atlas
 
-atlas already reads these (services/virtues-atlas/src/config.rs). Set on the
-atlas host/env and redeploy:
+atlas hands the URL to linked boxes (services/virtues-atlas/src/config.rs):
 ```
 VIRTUES_RELAY_URL=https://relay.virtues.ch
-VIRTUES_RELAY_AUTH_SECRET=<the $SECRET from step 2>
 ```
-- `VIRTUES_RELAY_URL` is handed to boxes at `/relay/config`.
-- `VIRTUES_RELAY_AUTH_SECRET` is the bearer atlas requires on `/relay/authorize`
-  (constant-time compared). If unset, atlas fails **closed** (denies all).
+(`VIRTUES_RELAY_AUTH_SECRET` is retired with the `/relay/authorize` gate.)
 
 ## 6. Verify end-to-end
 
 1. **Cert**: `curl -sI https://relay.virtues.ch` returns a valid LE cert.
-2. **Gate deny**: a POST to atlas `/relay/authorize` with the right bearer but a
-   random `X-Iroh-NodeId` returns `403 "false"`; with no/blank secret configured
-   atlas returns `503 "false"` (fail-closed).
+2. **Open admission**: any iroh endpoint connects with no atlas callout (check
+   metrics on the host: `curl -s localhost:9090/metrics | grep accepts`).
 3. **Box homes on it**: a box with `VIRTUES_RELAY_URL` set (via `/relay/config`)
    binds its endpoint and registers via atlas `/iroh/register`; `virtues doctor`
    / box_status shows `endpoint_up`.

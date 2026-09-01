@@ -7,7 +7,7 @@
 	than by reading two charts and doing the join in your head.
 
 	Tiles come from the box's own atlas (`/api/map/tiles`, see
-	docs/map-atlas-plan.md): cached on the box after first fetch, so the
+	agents/record/map-atlas-plan.md): cached on the box after first fetch, so the
 	browser never hands the day's coordinates to a third-party tile server and
 	areas you actually live in keep working offline. The panel is display-only
 	— no drag, no zoom — because it answers the deck's scrub, not the mouse.

@@ -1,6 +1,0 @@
-name = "Biscuit"
-description = "A small dog who lives on your box."
-owner = "user"
-triggers = []
-default_enabled = true
-

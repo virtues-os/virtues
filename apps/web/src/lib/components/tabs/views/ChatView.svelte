@@ -16,6 +16,48 @@
 	import SelectionPopover from "$lib/components/SelectionPopover.svelte";
 	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
 	import { fetchModels, type ModelOption } from "$lib/config/models";
+
+	// ── the narrative interview ────────────────────────────────────────────
+	// One fixed chat (seeded at boot; the server forces interview mode by this
+	// id — see chat_handler). Mirrors narrative_draft::INTERVIEW_CHAT_ID.
+	const INTERVIEW_CHAT_ID = "chat_narrative_interview";
+	const INTERVIEW_OPENING =
+		"From here on your box keeps a record of your days. It cannot reach what " +
+		"came before it, and it cannot see what any of it meant — that part only " +
+		"you can tell.\n\n" +
+		"This is the interview where you tell it. It matters because everything a " +
+		"machine is not told, it assumes: left alone, it will fill you in as the " +
+		"average person. Your answers, never mine, are arranged afterwards into a " +
+		"document called \u201cIn your own words\u201d — yours to keep, and to " +
+		"correct.\n\n" +
+		"About twenty minutes, one question at a time. Answer at whatever length " +
+		"suits you, skip anything without explaining, and stop whenever you like; " +
+		"it saves as you go. It will never be finished, and it isn\u2019t meant to " +
+		"be — an honest start is all it needs.\n\n" +
+		"We\u2019ll begin with the chapters of your life. A chapter is a period " +
+		"that felt like one thing: a name only you would give it, roughly when it " +
+		"ran, and what ended it. Most people find four to eight.\n\n" +
+		"Where does yours start?";
+
+	/** The narrative interview opens ALREADY SPEAKING: an authored first line,
+	 *  shown free (never persisted, no model call). The interview prompt knows
+	 *  this opening was delivered and picks up from the reply.
+	 *
+	 *  Called from BOTH load paths — the tab-change effect and onMount. It
+	 *  lived inline in the first one only, so switching to an open interview
+	 *  tab greeted you and deep-linking to /chat/chat_narrative_interview
+	 *  (a fresh page load, a restored tab, the Home link) opened a blank room
+	 *  with no explanation of what it was for. */
+	function applyInterviewOpening(convId: string | null | undefined) {
+		if (convId !== INTERVIEW_CHAT_ID || chat.messages.length > 0) return;
+		chat.messages = [
+			{
+				id: "interview-opening",
+				role: "assistant",
+				parts: [{ type: "text", text: INTERVIEW_OPENING }],
+			},
+		] as unknown as typeof chat.messages;
+	}
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
 	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
@@ -27,6 +69,7 @@
 	import { fade, fly } from "svelte/transition";
 	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { animateChatEdit } from "$lib/ai/aiPresence";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
@@ -40,6 +83,7 @@
 		getProfile,
 		setChatTitle,
 		cancelChat,
+		draftNarrative,
 	} from "$lib/api/client";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
@@ -124,7 +168,15 @@
 	let messagesContainer: HTMLDivElement | null = $state(null);
 	let scrollContainer: HTMLDivElement | null = $state(null);
 	let enableTransitions = $state(false);
-	let isLoading = $state(true);
+	// A NEW chat has nothing to load. Starting this at a blanket `true` meant
+	// the composer painted docked at the bottom for one frame and then jumped
+	// to its centered empty-state position once the tab effect flipped it —
+	// with transitions still disabled, that jump was the launch flicker. The
+	// route is known synchronously, so loading starts true only when there is
+	// actually a conversation to fetch. Initial value only, on purpose — the
+	// tab-change effect below owns every later transition.
+	// svelte-ignore state_referenced_locally
+	let isLoading = $state(!isNewChat(tab.route));
 	let isAwaitingResponse = $state(false);
 	// Track C: messages typed while the assistant is still streaming are queued
 	// and sent automatically when the turn finishes (Cursor-style chips above the
@@ -912,6 +964,7 @@
 								role: msg.role as "user" | "assistant" | "checkpoint",
 								parts: convertMessageToParts(msg),
 							})) as unknown as typeof chat.messages;
+							applyInterviewOpening(currentTabConversationId);
 							if (data.conversation?.model) {
 								initializeSelectedModel(
 									data.conversation.model,
@@ -1026,6 +1079,10 @@
 			})() : null;
 
 			await Promise.all([profilePromise, namePromise, conversationPromise]);
+
+			// After the load, not inside it: a failed fetch must still leave
+			// the interview speaking rather than showing a blank room.
+			applyInterviewOpening(tabConversationId);
 
 			// Stage 3: Post-load tasks (depend on conversation being loaded)
 			if (tabConversationId) {
@@ -1203,6 +1260,33 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
+	// "Write it up" appears in the interview once the person has said anything:
+	// the drafter reads this chat's whole transcript and arranges THEIR words
+	// into the narrative-identity document (one writer, once — see
+	// narrative_draft.rs). The finished page opens beside the conversation.
+	const interviewSpoke = $derived(
+		currentChatConversationId === INTERVIEW_CHAT_ID &&
+			uniqueMessages.some((m) => m.role === "user"),
+	);
+	let interviewDrafting = $state(false);
+	let interviewDraftError = $state<string | null>(null);
+
+	async function writeItUp() {
+		interviewDrafting = true;
+		interviewDraftError = null;
+		try {
+			await draftNarrative();
+			const res = await fetch("/api/wiki/articles/narrative_identity/nar_identity_001");
+			const article = res.ok ? await res.json() : null;
+			if (article?.page_id) {
+				windowShellStore.openRouteBeside(`/page/${article.page_id}`);
+			}
+		} catch (e) {
+			interviewDraftError = e instanceof Error ? e.message : String(e);
+		}
+		interviewDrafting = false;
+	}
+
 	// The chat's title, from the persisted session so it stays in step with the
 	// sidebar. It is no longer DRAWN here: a title fixed to the top-left of the
 	// pane restated what the tab above it already said, and doubled as a rename
@@ -1276,6 +1360,15 @@
 	// Generate title after first assistant response
 	async function generateTitle() {
 		if (titleGenerated || chat.messages.length < 2) return;
+		// The interview keeps the name it was seeded with. Its transcript is
+		// the most private text on the box, and a generated title puts a
+		// summary of it in the sidebar — this chat had renamed itself after
+		// the person's own childhood. The server refuses this too (the id
+		// decides, never the client); this only saves the round trip.
+		if (conversationId === INTERVIEW_CHAT_ID) {
+			titleGenerated = true;
+			return;
+		}
 
 		try {
 			const data = await setChatTitle<{ title?: string }>({
@@ -1475,6 +1568,16 @@
 		if (!isEmpty) return;
 		isGhost = !isGhost;
 	}
+
+	// Publish this chat's state to the phone shell, whose top-right button is
+	// modal: ghost toggle while the chat is empty (compose would be a no-op),
+	// compose once a conversation exists. Only the active view speaks; the
+	// cleanup keeps a stale claim from surviving a view swap.
+	$effect(() => {
+		if (!mobileLayout.isMobile || !active) return;
+		mobileLayout.setChatChrome({ empty: isEmpty, ghost: isGhost, toggleGhost });
+		return () => mobileLayout.setChatChrome(null);
+	});
 </script>
 
 <svelte:window onmouseup={handleWindowMouseup} />
@@ -1558,7 +1661,9 @@
 							onclick={handleContextClick}
 						/>
 					{/if}
-					{#if isEmpty || isGhost}
+					<!-- On the phone the ghost toggle lives in the shell's top bar
+					     (the modal top-right slot), not here. -->
+					{#if (isEmpty || isGhost) && !mobileLayout.isMobile}
 						<button
 							type="button"
 							class="ghost-toggle"
@@ -1877,15 +1982,46 @@
 						</div>
 					</div>
 
+					{#if isEmpty && !isGhost && mobileLayout.isMobile}
+						<!-- The phone's opening image: the mark assembling itself in
+						     the space a conversation will fill. Desktop centers the
+						     composer instead; the phone docks it permanently, which
+						     left this expanse truly blank. Decorative, so hidden
+						     from the tree and transparent to touches. -->
+						<div class="init-hero" aria-hidden="true" out:fade={{ duration: 200 }}>
+							<svg class="init-mark" viewBox="0 0 12 10.5" width="30" height="26.25" fill="currentColor">
+								<circle class="init-dot init-dot-1" cx="6" cy="2.4" r="1.5" />
+								<circle class="init-dot init-dot-2" cx="2.6" cy="8.1" r="1.5" />
+								<circle class="init-dot init-dot-3" cx="9.4" cy="8.1" r="1.5" />
+							</svg>
+							<span class="init-word">Virtues</span>
+						</div>
+					{/if}
+
 					{#if isEmpty && isGhost}
 						<div
 							class="ghost-hero"
 							in:fade={{ duration: 300 }}
 							out:fly={{ y: -14, duration: 300, easing: cubicInOut }}
 						>
-							<Icon icon="ri:ghost-line" width="30" class="ghost-hero-icon" />
+							<!-- The title alone: the tiled ghost field and the inverted
+							     composer already say what this mode is — an icon and an
+							     explainer on top of them was the same fact three times. -->
 							<h1 class="ghost-hero-title">Temporary Chat</h1>
-							<p class="ghost-hero-sub">This chat won't be saved to your history.</p>
+						</div>
+					{/if}
+
+					{#if interviewSpoke}
+						<!-- The interview's one affordance: the conversation
+						     becomes the document whenever they're ready. -->
+						<div class="interview-writeup">
+							<button onclick={writeItUp} disabled={interviewDrafting}>
+								{interviewDrafting ? "Writing it up…" : "Write it up"}
+								<Icon icon="ri:quill-pen-line" width="14" />
+							</button>
+							{#if interviewDraftError}
+								<span class="err">{interviewDraftError}</span>
+							{/if}
 						</div>
 					{/if}
 
@@ -2148,6 +2284,42 @@
 	   small and floats over the transcript, so the target grows around it
 	   rather than under it. */
 	@media (max-width: 768px), (pointer: coarse) {
+		.interview-writeup {
+			display: flex;
+			align-items: center;
+			gap: 0.75rem;
+			padding: 0 1rem 0.5rem;
+			justify-content: center;
+		}
+
+		.interview-writeup button {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.4rem;
+			background: none;
+			border: 1px solid var(--color-border);
+			border-radius: 999px;
+			padding: 0.4rem 1rem;
+			font-family: var(--font-serif, Georgia, serif);
+			font-size: 0.9rem;
+			color: var(--color-foreground-muted);
+			cursor: pointer;
+		}
+
+		.interview-writeup button:hover {
+			color: var(--color-foreground);
+			border-color: var(--color-foreground-subtle);
+		}
+
+		.interview-writeup .err {
+			font-size: 12px;
+			color: var(--color-error, #c00);
+		}
+
+		/* (The composer's phone padding lives in the docked-composer block at
+		   the end of these styles — it must follow the base rules to win the
+		   cascade.) */
+
 		.ghost-toggle {
 			position: relative;
 		}
@@ -2245,6 +2417,40 @@
 		}
 	}
 
+	/* Ghost mode inverts the composer: the pill you type into flips to the
+	   theme's ink, so the mode is a material change under your fingers, not a
+	   label you have to remember reading. Done by remapping the pill's tokens
+	   — everything inside (placeholder, buttons, the model pill) follows on
+	   its own. The originals are captured one scope up because a custom
+	   property cannot swap with itself in place. */
+	.chat-area.ghost {
+		--ghost-pill-bg: var(--color-foreground);
+		--ghost-pill-ink: var(--color-surface);
+	}
+	.chat-area.ghost :global(.chat-input-wrapper.bg-surface) {
+		/* Both token families: the Tailwind theme tokens (--foreground, used
+		   by text-foreground et al.) and the component tokens (--color-*). */
+		--surface: var(--ghost-pill-bg);
+		--foreground: var(--ghost-pill-ink);
+		--color-surface: var(--ghost-pill-bg);
+		--color-foreground: var(--ghost-pill-ink);
+		--color-foreground-muted: color-mix(in srgb, var(--ghost-pill-ink) 65%, transparent);
+		--color-foreground-subtle: color-mix(in srgb, var(--ghost-pill-ink) 45%, transparent);
+		--color-border-strong: transparent;
+		--color-border: color-mix(in srgb, var(--ghost-pill-ink) 18%, transparent);
+		--hover-bg: color-mix(in srgb, var(--ghost-pill-ink) 12%, transparent);
+		background: var(--ghost-pill-bg);
+		color: var(--ghost-pill-ink);
+	}
+
+	/* The send control flips with the pill: ink circle, pill-colored glyph —
+	   otherwise `.btn-primary` (secondary bg, surface ink) lands dark-on-dark
+	   inside the inverted pill. */
+	.chat-area.ghost :global(.chat-input-wrapper .btn-primary) {
+		background-color: var(--ghost-pill-ink);
+		color: var(--ghost-pill-bg);
+	}
+
 	@media (prefers-reduced-motion: reduce) {
 		.chat-area.ghost::before,
 		.chat-topbar-right > :global(*) {
@@ -2271,11 +2477,6 @@
 		pointer-events: none;
 	}
 
-	.ghost-hero :global(.ghost-hero-icon) {
-		color: var(--color-foreground-subtle);
-		margin-bottom: 0.125rem;
-	}
-
 	.ghost-hero-title {
 		font-family: var(--font-serif);
 		font-size: 1.75rem;
@@ -2283,11 +2484,77 @@
 		color: var(--color-foreground);
 	}
 
-	.ghost-hero-sub {
-		font-size: 0.875rem;
-		color: var(--color-foreground-muted);
-		max-width: 30rem;
+	/* ── The phone's opening image ──
+	   The ∴ mark and wordmark, seated in the upper half of the empty room —
+	   above center so the (bottom-docked) composer and rising keyboard never
+	   crowd it. The entrance is the mark ASSEMBLING: three dots settle into
+	   the trivet one by one, then the word surfaces under them. All
+	   keyframes are from-only with `backwards` fill — an explicit `to` with
+	   a fill-mode is what once pinned a disabled button solid ink (see the
+	   airlock's rise animation for the same rule). */
+	.init-hero {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: calc(50% + 72px);
+		z-index: 2;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.875rem;
+		text-align: center;
+		pointer-events: none;
+		color: var(--color-foreground);
 	}
+
+	.init-mark {
+		overflow: visible;
+	}
+
+	.init-word {
+		/* The masthead's register, verbatim: serif, never bold, hairline
+		   stroke for logo presence at text weight. */
+		font-family: var(--font-serif);
+		font-size: 1.375rem;
+		font-weight: 400;
+		letter-spacing: 0.03em;
+		-webkit-text-stroke: 0.2px currentColor;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.init-dot {
+			animation: init-dot-settle 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+			transform-origin: center;
+			transform-box: fill-box;
+		}
+		.init-dot-1 {
+			animation-delay: 0.15s;
+		}
+		.init-dot-2 {
+			animation-delay: 0.32s;
+		}
+		.init-dot-3 {
+			animation-delay: 0.49s;
+		}
+		.init-word {
+			animation: init-word-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.75s backwards;
+		}
+	}
+
+	@keyframes init-dot-settle {
+		from {
+			opacity: 0;
+			transform: scale(0.3) translateY(3px);
+		}
+	}
+
+	@keyframes init-word-rise {
+		from {
+			opacity: 0;
+			transform: translateY(8px);
+		}
+	}
+
 
 	.page-container {
 		height: 100%;
@@ -2344,11 +2611,13 @@
 		width: 100%;
 		max-width: 48rem;
 		padding: 0 2rem 2rem 2rem;
-		/* The composer is the one piece of bottom chrome that must stay ABOVE
-		   the floating bar rather than pass behind it — glass over the field you
-		   are typing into is not a nice effect, it is a covered input. The
-		   messages behind it still scroll under the bar. */
-		padding-bottom: calc(1rem + var(--tabbar-reserve) + env(safe-area-inset-bottom));
+		/* 78px is what this measured when it was written as "1rem plus the
+		   floating tab bar's reserve": the bar is gone, but on desktop — where
+		   no bar ever rendered — that sum had become the composer's resting
+		   inset off the window edge, so the number stays and the derivation
+		   goes. The phone override below is where the bar's room actually
+		   came out. */
+		padding-bottom: 78px;
 		background-color: var(--color-surface);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
@@ -2625,6 +2894,26 @@
 		   show through instead of a solid surface block around the composer. */
 		background-color: transparent;
 		background-image: none;
+	}
+
+	/* Phones dock the composer PERMANENTLY — no centered empty state, no
+	   center→dock travel to animate, nothing to snap. The input rests on the
+	   bottom and the keyboard pushes it up (main's content box shrinks under
+	   it via --keyboard-inset). This block sits after the base rules on
+	   purpose: it ties them on specificity, and cascade order is what lets it
+	   win — an earlier version lived above them and silently lost. */
+	@media (max-width: 768px), (pointer: coarse) {
+		.chat-input-wrapper,
+		.chat-input-wrapper.is-empty {
+			bottom: 0;
+			transform: translateY(0);
+			/* Snug above the keys: the home-indicator gap collapses as the
+			   keyboard inset grows, so the pill hugs the keyboard when it's up
+			   and clears the indicator when it's not. */
+			padding-bottom: calc(
+				1rem + max(env(safe-area-inset-bottom) - var(--keyboard-inset, 0px), 0px)
+			);
+		}
 	}
 
 	.hero-section {

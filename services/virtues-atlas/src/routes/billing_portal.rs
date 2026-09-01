@@ -76,23 +76,33 @@ async fn resolve_active_customer(
 ) -> Result<String, axum::response::Response> {
     let token_hash = sha256(api_key.as_bytes());
 
-    // Per-box keys first, legacy column fallback — via the shared lookup.
-    let cid = super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..])
-        .await
-        .map_err(|e| {
+    // Per-box keys first, legacy column fallback — via the shared owner
+    // resolution (claim::KeyOwner): a free account's valid key gets 402,
+    // never a "revoked key" 401.
+    let cid = match super::claim::key_owner(&state.pool, &token_hash[..]).await {
+        Ok(super::claim::KeyOwner::Customer(cid)) => cid,
+        Ok(super::claim::KeyOwner::FreeAccount) => {
+            return Err(err(
+                StatusCode::PAYMENT_REQUIRED,
+                "no_subscription",
+                "no subscription on this account yet",
+            ));
+        }
+        Ok(super::claim::KeyOwner::Unknown) => {
+            return Err(err(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "unknown api key",
+            ));
+        }
+        Err(e) => {
             tracing::warn!("key lookup failed: {e:#}");
-            err(
+            return Err(err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
                 "customer lookup failed",
-            )
-        })?;
-    let Some(cid) = cid else {
-        return Err(err(
-            StatusCode::UNAUTHORIZED,
-            "invalid_api_key",
-            "unknown api key",
-        ));
+            ));
+        }
     };
 
     let row: Option<(String, Option<String>)> = sqlx::query_as(

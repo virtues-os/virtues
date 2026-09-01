@@ -261,15 +261,19 @@ async fn extract_one(
         sqlx::query(
             r#"
             INSERT INTO extracted_document_chunks
-                (id, file_id, chunk_index, page_num, char_start, char_end, quote_head, text)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                (id, file_id, chunk_index, page_num, char_start, char_end, quote_head, text,
+                 occurred_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                    -- Event time = when the document entered the record, not
+                    -- when this parser ran. The FK guarantees the file row.
+                    (SELECT f.created_at FROM app_drive_files f WHERE f.id = $2))
             ON CONFLICT (file_id, chunk_index) DO UPDATE
             SET page_num = EXCLUDED.page_num,
                 char_start = EXCLUDED.char_start,
                 char_end = EXCLUDED.char_end,
                 quote_head = EXCLUDED.quote_head,
                 text = EXCLUDED.text,
-                id = EXCLUDED.id
+                occurred_at = EXCLUDED.occurred_at
             "#,
         )
         .bind(chunk_id(file_id, idx))

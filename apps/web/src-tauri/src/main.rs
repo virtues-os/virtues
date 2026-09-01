@@ -15,6 +15,11 @@ use tauri_plugin_shell::ShellExt;
 /// Collector status returned from CLI
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CollectorStatus {
+    /// The installed collector binary's release, from its own status output.
+    /// `None` from a collector predating the field — same rule as the
+    /// permission flags below: absence means "cannot tell", never a value.
+    #[serde(default)]
+    pub version: Option<String>,
     pub running: bool,
     pub paused: bool,
     pub pending_events: i64,
@@ -65,9 +70,9 @@ pub struct FoundServer {
 /// A bare existence check (not a full parse) — enough for the tray / launch
 /// decision; the reach plugin does the authoritative load when it serves.
 fn is_paired() -> bool {
-    dirs::data_dir()
-        .map(|d| d.join("virtues").join("box.json").exists())
-        .unwrap_or(false)
+    // Through the plugin's path fn, so a dev profile (VIRTUES_PROFILE) checks
+    // ITS store, not the machine's real one.
+    tauri_plugin_reach::virtues_dir().join("box.json").exists()
 }
 
 
@@ -102,7 +107,9 @@ fn probe_box_session_blocking(attempts: u8) -> Option<bool> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
-    let addr = "127.0.0.1:7117".parse().ok()?;
+    let addr = format!("127.0.0.1:{}", tauri_plugin_reach::loopback_port())
+        .parse()
+        .ok()?;
     for i in 0..attempts {
         if let Ok(mut s) = TcpStream::connect_timeout(&addr, PROBE_CONNECT_TIMEOUT) {
             let _ = s.set_read_timeout(Some(PROBE_READ_TIMEOUT));
@@ -287,7 +294,13 @@ fn shell_identity_cmd(app: AppHandle) -> virtues_lib::ShellIdentity {
 #[tauri::command]
 fn bundle_boot_ok(app: AppHandle) {
     if let Ok(dir) = app.path().app_data_dir() {
-        virtues_lib::web_bundle::mark_boot_ok(&dir);
+        // Desktop has no OTA overlay store, so `booted_bundle_id()` is always
+        // None here and this is a guaranteed no-op — kept registered so the
+        // SPA's unconditional boot-ok call has somewhere harmless to land.
+        virtues_lib::web_bundle::mark_boot_ok(
+            &dir,
+            virtues_lib::web_bundle::booted_bundle_id().as_deref(),
+        );
     }
 }
 
@@ -410,9 +423,26 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
     }
 }
 
+/// Refuse collector mutations from a dev profile. The collector — its
+/// LaunchAgent, its persisted endpoint, its TCC grants — is machine-global
+/// state belonging to the machine's REAL pairing. A profiled instance exists
+/// precisely so that pairing keeps collecting undisturbed while UI/pairing
+/// work happens beside it; the one way to break that contract is a profile
+/// reaching launchd. Reads (`get_collector_status`) stay allowed.
+fn deny_collector_in_profile() -> Result<(), String> {
+    match tauri_plugin_reach::profile() {
+        None => Ok(()),
+        Some(p) => Err(format!(
+            "dev profile '{p}': the collector belongs to the machine's real \
+             pairing; this instance never touches it"
+        )),
+    }
+}
+
 /// Install the collector as a LaunchAgent
 #[tauri::command]
 async fn install_collector(app: AppHandle, token: String) -> Result<(), String> {
+    deny_collector_in_profile()?;
     let shell = app.shell();
 
     // Point the collector at the LOCAL PROXY (:7117), not its built-in
@@ -426,7 +456,10 @@ async fn install_collector(app: AppHandle, token: String) -> Result<(), String> 
         .sidecar("virtues-collector")
         .map_err(|e| e.to_string())?
         .env("VIRTUES_TOKEN", &token)
-        .env("VIRTUES_API_URL", "http://localhost:7117")
+        .env(
+            "VIRTUES_API_URL",
+            format!("http://localhost:{}", tauri_plugin_reach::loopback_port()),
+        )
         .args(["install", "--token-from-env"])
         .output()
         .await
@@ -442,6 +475,7 @@ async fn install_collector(app: AppHandle, token: String) -> Result<(), String> 
 /// Uninstall the collector LaunchAgent
 #[tauri::command]
 async fn uninstall_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
     let installed_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
@@ -470,6 +504,7 @@ async fn uninstall_collector(app: AppHandle) -> Result<(), String> {
 /// Pause collector
 #[tauri::command]
 async fn pause_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
     let installed_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
@@ -498,6 +533,7 @@ async fn pause_collector(app: AppHandle) -> Result<(), String> {
 /// Resume collector
 #[tauri::command]
 async fn resume_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
     let installed_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
@@ -526,6 +562,7 @@ async fn resume_collector(app: AppHandle) -> Result<(), String> {
 /// Stop collector daemon
 #[tauri::command]
 async fn stop_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
     let installed_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
@@ -668,20 +705,56 @@ async fn set_summon_shortcut(app: AppHandle, accelerator: String) -> Result<Stri
 #[derive(Default)]
 struct UpdateState {
     ready: Option<ReadyUpdate>,
-    /// Consecutive staging failures. We say nothing about the first: a download
-    /// interrupted by a closing laptop lid is not news, and the next tick
-    /// retries. Two in a row is a real problem worth one line.
+    /// Consecutive failures — check failures AND staging failures. We say
+    /// nothing about the first: a download interrupted by a closing laptop lid
+    /// is not news, and the next tick retries. Two in a row is a real problem
+    /// worth one line. (The counter used to see only staging failures, which
+    /// made a dead manifest URL structurally silent forever — the notification
+    /// could never fire for the failure mode actually observed in production.)
     failures: u8,
+    /// What the most recent check concluded. The tray label and the SPA (over
+    /// `update_state_cmd`) both read this. `Failed` is a first-class outcome:
+    /// the box-side update UI refuses to render "couldn't check" as "up to
+    /// date", and the tray used to commit exactly that lie on a failed manual
+    /// check.
+    last_check: Option<CheckOutcome>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "outcome")]
+enum CheckOutcome {
+    UpToDate,
+    Staged { version: String },
+    Failed { error: String },
 }
 
 struct ReadyUpdate {
     version: String,
 }
 
-/// Check the followed channel for a newer version and, on a hit, STAGE it —
-/// download and install silently, so the next launch is already the new
-/// version. No notification, no "Restart to update" prompt, nothing the user
-/// has to decide.
+/// Record a failed check or stage: bump the shared counter, remember the
+/// verdict, and speak exactly once at two consecutive failures.
+fn record_update_failure(app: &AppHandle, err: String) {
+    use tauri_plugin_notification::NotificationExt;
+    let state = app.state::<std::sync::Mutex<UpdateState>>();
+    let mut g = state.lock().unwrap();
+    g.failures = g.failures.saturating_add(1);
+    g.last_check = Some(CheckOutcome::Failed { error: err.clone() });
+    if g.failures == 2 {
+        drop(g);
+        let _ = app
+            .notification()
+            .builder()
+            .title("Virtues could not update itself")
+            .body(format!("{err}\n\nIt will keep trying."))
+            .show();
+    }
+}
+
+/// Check for a newer app release and, on a hit, STAGE it — download and
+/// install silently, so the next launch is already the new version. No
+/// notification, no "Restart to update" prompt, nothing the user has to
+/// decide.
 ///
 /// The old flow asked. That is a question the user has no basis to answer —
 /// they cannot know what is in the release or whether it matters — and the
@@ -690,105 +763,51 @@ struct ReadyUpdate {
 /// "apply on quit" costs nothing: whenever they next start Virtues, it is
 /// current.
 ///
-/// Silent best-effort. Up-to-date and offline are both no-ops, retried next
-/// tick. Only a SECOND consecutive staging failure is worth a word.
-/// Which release channel this install follows. Stored beside the app's other
-/// config; absent means Main, so an existing install keeps its behaviour.
-///
-/// Read at check time rather than cached, so flipping the channel takes effect
-/// on the next poll instead of on the next launch.
-/// Ask the box who it is: `(version, channel)` from `/health` via the local
-/// proxy. `None` when the box can't be reached — which is not the same as any
-/// particular answer, and callers must treat it that way.
-///
-/// BLOCKING, same std-only shape as the session probe above.
-fn box_identity_blocking() -> Option<(String, String)> {
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
-
-    let addr = "127.0.0.1:7117".parse().ok()?;
-    let mut s = TcpStream::connect_timeout(&addr, PROBE_CONNECT_TIMEOUT).ok()?;
-    let _ = s.set_read_timeout(Some(PROBE_READ_TIMEOUT));
-    s.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-        .ok()?;
-    let mut raw = String::new();
-    let _ = s.read_to_string(&mut raw);
-    parse_box_identity(&raw)
-}
-
-/// Pull `version` + `channel` out of a raw `/health` response.
-///
-/// Body only, so header text can never false-match — same discipline as
-/// `classify_session_response`, and the same reason for not pulling in a JSON
-/// dep: the shape is small, known, and ours.
-fn parse_box_identity(raw: &str) -> Option<(String, String)> {
-    let body = raw.split("\r\n\r\n").nth(1)?;
-    let field = |key: &str| -> Option<String> {
-        let at = body.find(&format!("\"{key}\""))?;
-        let rest = &body[at + key.len() + 2..];
-        let open = rest.find('"')?;
-        let close = rest[open + 1..].find('"')?;
-        Some(rest[open + 1..open + 1 + close].to_string())
-    };
-    Some((field("version")?, field("channel")?))
-}
-
-async fn box_identity() -> Option<(String, String)> {
-    tauri::async_runtime::spawn_blocking(box_identity_blocking)
-        .await
-        .unwrap_or(None)
-}
-
-/// Which release channel this install follows — **the box's**, not its own.
-///
-/// This used to read a per-device file, which is how you get a fleet that
-/// disagrees with itself: the box updates on one channel while the Mac paired
-/// to it follows another, and every support conversation starts with an extra
-/// unknown. The box already owns channel selection for its own updates, so it
-/// is the one place worth asking.
-///
-/// `None` means "use the configured stable endpoint": either the box says
-/// stable, or we could not reach it. Preferring stable on an unreachable box is
-/// deliberate — the alternative is silently pulling a prerelease onto a machine
-/// whose owner never chose one.
-async fn updater_endpoint() -> Option<String> {
-    let (_, channel) = box_identity().await?;
-    match channel.trim().to_ascii_lowercase().as_str() {
-        "prerelease" | "pre" | "edge" | "nightly" => Some(
-            "https://github.com/virtues-os/virtues/releases/download/mac-edge/latest.json"
-                .to_string(),
-        ),
-        _ => None,
-    }
-}
-
+/// Best-effort, but never silent about failure: every outcome — up to date,
+/// staged, couldn't check, couldn't download — lands in `last_check`, and two
+/// consecutive failures of either kind earn the one notification.
 async fn check_for_update(app: &AppHandle) {
-    use tauri_plugin_notification::NotificationExt;
     use tauri_plugin_updater::UpdaterExt;
 
-    // Point the updater at the followed channel's manifest. `mac-edge` only
-    // started publishing one alongside the channel selector — before that,
-    // anyone on an edge build had no update path at all.
-    let updater = match updater_endpoint().await {
-        Some(url) => match url::Url::parse(&url) {
-            Ok(parsed) => match app.updater_builder().endpoints(vec![parsed]) {
-                Ok(b) => match b.build() {
-                    Ok(u) => u,
-                    Err(_) => return,
-                },
-                Err(_) => return,
-            },
-            Err(_) => return,
-        },
-        None => match app.updater() {
-            Ok(u) => u,
-            Err(_) => return,
-        },
+    // ONE channel: the configured `mac-latest` manifest. This used to route by
+    // the box's channel toward `mac-edge` — an endpoint that stopped
+    // publishing a manifest (a Mac sent there would never update again, and
+    // the error was swallowed), reached through a match arm ("prerelease")
+    // that the box's /health vocabulary ("staging") never produced anyway. A
+    // staging box's Mac follows stable app releases: the UI it renders is
+    // box-served and already tracks the box, and the gap a newer box may open
+    // against an older shell is the ShellTooOld gate's job — not a parallel
+    // signed-release channel. See agents/record/device-version-update-audit.md (U1-U5).
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            record_update_failure(app, format!("updater unavailable: {e}"));
+            return;
+        }
     };
 
     let update = match updater.check().await {
         Ok(Some(u)) => u,
-        _ => return,
+        Ok(None) => {
+            let state = app.state::<std::sync::Mutex<UpdateState>>();
+            let mut g = state.lock().unwrap();
+            g.failures = 0;
+            // "Nothing newer than what you have" includes "you already staged
+            // it" — keep the staged verdict visible rather than downgrading it
+            // to a bare up-to-date.
+            g.last_check = Some(match &g.ready {
+                Some(r) => CheckOutcome::Staged { version: r.version.clone() },
+                None => CheckOutcome::UpToDate,
+            });
+            return;
+        }
+        // A failed CHECK (404 manifest, DNS, TLS, bad signature) is a verdict,
+        // not a no-op — collapsing it into silence is how a dead endpoint
+        // stayed invisible while the tray said "Up to date ✓".
+        Err(e) => {
+            record_update_failure(app, e.to_string());
+            return;
+        }
     };
     let version = update.version.clone();
     let note = update
@@ -803,35 +822,25 @@ async fn check_for_update(app: &AppHandle) {
     // would be a deadlock waiting for a slow download.
     {
         let state = app.state::<std::sync::Mutex<UpdateState>>();
-        let g = state.lock().unwrap();
+        let mut g = state.lock().unwrap();
         if g.ready.as_ref().map(|r| r.version.as_str()) == Some(version.as_str()) {
+            g.failures = 0;
+            g.last_check = Some(CheckOutcome::Staged { version });
             return;
         }
     }
 
     let staged = update.download_and_install(|_, _| {}, || {}).await;
 
-    let state = app.state::<std::sync::Mutex<UpdateState>>();
-    let mut g = state.lock().unwrap();
     match staged {
         Ok(()) => {
+            let state = app.state::<std::sync::Mutex<UpdateState>>();
+            let mut g = state.lock().unwrap();
             g.failures = 0;
             g.ready = Some(ReadyUpdate { version: version.clone() });
+            g.last_check = Some(CheckOutcome::Staged { version });
         }
-        Err(e) => {
-            g.failures = g.failures.saturating_add(1);
-            // Exactly at two: report once, then go quiet again rather than
-            // nagging every six hours about something the user cannot fix.
-            if g.failures == 2 {
-                drop(g);
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("Virtues could not update itself")
-                    .body(format!("{e}\n\nIt will keep trying."))
-                    .show();
-            }
-        }
+        Err(e) => record_update_failure(app, e.to_string()),
     }
     // `note` is read only for the tray line now; the release body is not
     // pushed at the user unasked.
@@ -845,14 +854,55 @@ async fn check_for_update(app: &AppHandle) {
 /// On relaunch the helper-reconcile redeploys the new sidecars — loop closed.
 /// `app.restart()` never returns.
 fn apply_update(app: AppHandle) {
-    let staged = {
-        let state = app.state::<std::sync::Mutex<UpdateState>>();
-        let g = state.lock().unwrap();
-        g.ready.is_some()
-    };
+    // try_state: only macOS manages UpdateState (Windows/Linux ship without a
+    // self-updater), and this is now reachable from the SPA on every platform.
+    let staged = app
+        .try_state::<std::sync::Mutex<UpdateState>>()
+        .is_some_and(|state| state.lock().unwrap().ready.is_some());
     if staged {
         app.restart();
     }
+}
+
+/// The updater's state for the SPA — drives the sidebar's "Relaunch to X"
+/// chip, and is the first time anything outside the tray can see a staged
+/// update at all. `None` means "no self-updater on this platform", which the
+/// UI must treat as silence, not as up-to-date.
+#[derive(serde::Serialize)]
+struct UpdateStateView {
+    staged_version: Option<String>,
+    last_check: Option<CheckOutcome>,
+}
+
+#[tauri::command]
+fn update_state_cmd(app: AppHandle) -> Option<UpdateStateView> {
+    let state = app.try_state::<std::sync::Mutex<UpdateState>>()?;
+    let g = state.lock().unwrap();
+    Some(UpdateStateView {
+        staged_version: g.ready.as_ref().map(|r| r.version.clone()),
+        last_check: g.last_check.clone(),
+    })
+}
+
+/// Restart into a staged update, from the SPA chip. No-op when nothing is
+/// staged — the chip only renders when `staged_version` says so, but a stale
+/// click after a background apply must not restart an already-current app.
+#[tauri::command]
+fn apply_update_cmd(app: AppHandle) {
+    apply_update(app);
+}
+
+/// Run an update check now, at the UI's request (This Mac's "Check now").
+/// Fire-and-forget: the UI re-reads `update_state_cmd` for the verdict, which
+/// is the same state the tray and the chip read — one fact, three doors.
+/// Also the practical answer to the 6h loop having no wake/foreground recheck:
+/// opening the page that shows update state IS the foreground moment.
+#[tauri::command]
+fn check_app_update_cmd(app: AppHandle) {
+    if app.try_state::<std::sync::Mutex<UpdateState>>().is_none() {
+        return; // no self-updater on this platform
+    }
+    tauri::async_runtime::spawn(async move { check_for_update(&app).await });
 }
 
 // ============================================================================
@@ -893,100 +943,73 @@ fn dot_image(dot: Dot) -> Option<tauri::image::Image<'static>> {
 }
 
 /// First line of the tray menu: where this device stands with the box. Returns
-/// (status dot, label).
-fn box_label() -> (Dot, &'static str) {
+/// The tray's ONE line. Worst thing first: an unreachable box outranks a
+/// paused collector outranks all-quiet.
+///
+/// The tray stopped being a control panel in the 2026-08-27 surface diet:
+/// it had grown seven lines in three vocabularies (box, collector, sync,
+/// version, update ×3), duplicating — and disagreeing with — the in-app
+/// surfaces. Every action and every detail now lives in Devices → This Mac,
+/// the one place; this line exists only because a closed window cannot render
+/// that page, and its words match This Mac's exactly.
+fn tray_summary(installed: bool, status: &CollectorStatus) -> (Dot, &'static str) {
     if !is_paired() {
-        return (Dot::Grey, "Box: not connected");
+        return (Dot::Grey, "Not set up — open Virtues");
     }
     match probe_box_session_blocking(1) {
-        Some(true) => (Dot::Green, "Box: connected"),
-        Some(false) => (Dot::Red, "Box: needs re-pairing"),
-        None => (Dot::Amber, "Box: unreachable"),
+        Some(false) => return (Dot::Red, "Box needs re-pairing — open Virtues"),
+        None => return (Dot::Amber, "Box unreachable"),
+        Some(true) => {}
     }
-}
-
-/// Second line: the collector daemon's state, with the same dot vocabulary.
-fn collector_label(installed: bool, status: &CollectorStatus) -> (Dot, &'static str) {
     if !installed {
-        (Dot::Grey, "Collector: off")
+        (Dot::Grey, "Not collecting — open Virtues to set up")
     } else if status.paused {
-        (Dot::Amber, "Collector: paused")
+        (Dot::Amber, "Paused")
+    } else if status.running && !permissions_ok(status) {
+        // A running collector with a revoked grant is the worst case this line
+        // has, because every other symptom of it looks like a quiet week: the
+        // process is up, uploads succeed, and only the TCC-gated streams
+        // (iMessage, Safari history, window titles) go dark. This tray said
+        // "Collecting" in green for three days while exactly that was true.
+        //
+        // Worst-thing-first, per this function's contract: a permission gap
+        // outranks "Collecting" because it is the thing the user must act on,
+        // and the tray sits on the machine that owns the permission — the fix
+        // is seconds away from here, rather than a trip to another device.
+        (Dot::Amber, "Permission needed — open Virtues")
     } else if status.running {
-        (Dot::Green, "Collector: collecting")
+        (Dot::Green, "Collecting")
     } else {
-        (Dot::Red, "Collector: stopped")
+        (Dot::Red, "Collector stopped — open Virtues")
     }
 }
 
-/// Third line (a dim subtitle): when the collector last flushed to the box, plus
-/// any backlog. `—` when there's no collector, `never` when it has one but has
-/// not synced yet.
-fn last_sync_label(installed: bool, status: &CollectorStatus) -> String {
-    if !installed {
-        return "Last sync: —".to_string();
+/// Does the daemon report every permission it needs?
+///
+/// Only the DAEMON's own fresh self-report counts. `permissions_reported_by_daemon`
+/// false means the flags describe nothing trustworthy — no record has ever been
+/// written, or the one on disk is stale — and an unknown is not a denial. Saying
+/// "permission needed" on a stale record is how this tray previously named the
+/// wrong permission for six days; silence is the honest answer when we cannot
+/// observe, and the collector re-probes every five minutes anyway.
+fn permissions_ok(status: &CollectorStatus) -> bool {
+    if !status.permissions_reported_by_daemon {
+        return true;
     }
-    let when = match status.last_sync.as_deref() {
-        Some(iso) => format_clock(iso).unwrap_or_else(|| "unknown".to_string()),
-        None => "never".to_string(),
-    };
-    let pending = status.pending_events + status.pending_messages;
-    if pending > 0 {
-        format!("Last sync: {when} · {pending} queued")
-    } else {
-        format!("Last sync: {when}")
-    }
-}
-
-/// Format an RFC3339 timestamp (the workspace's wire format for `DateTime<Utc>`)
-/// as a local clock time — bare "2:34 PM" for today, "Jun 22, 2:34 PM" otherwise.
-/// `None` if it doesn't parse, so the caller can fall back rather than show junk.
-fn format_clock(iso: &str) -> Option<String> {
-    use chrono::{DateTime, Local};
-    let dt = DateTime::parse_from_rfc3339(iso).ok()?.with_timezone(&Local);
-    if dt.date_naive() == Local::now().date_naive() {
-        Some(dt.format("%-I:%M %p").to_string())
-    } else {
-        Some(dt.format("%b %-d, %-I:%M %p").to_string())
-    }
+    status.has_full_disk_access && status.has_accessibility
 }
 
 /// The tray's mutable menu items, bundled so the poll loop and the menu-event
-/// handler can each hold a clone and refresh the same lines.
+/// handler can each hold a clone and refresh the same line.
 #[derive(Clone)]
 struct TrayItems {
-    box_status: tauri::menu::IconMenuItem<tauri::Wry>,
-    collector_status: tauri::menu::IconMenuItem<tauri::Wry>,
-    last_sync: tauri::menu::MenuItem<tauri::Wry>,
-    toggle: tauri::menu::MenuItem<tauri::Wry>,
-    /// "Restart to update (vX)" when an update is staged, else a disabled
-    /// "Virtues is up to date". Driven by [`UpdateState`] on each poll.
-    update: tauri::menu::IconMenuItem<tauri::Wry>,
-    /// "Check for Updates…" — a manual trigger for [`check_for_update`]. Its
-    /// label flips to "Checking…" then "Up to date ✓" for transient feedback.
-    check_now: tauri::menu::MenuItem<tauri::Wry>,
-    /// The RELEASE the user is on — the box's version, refreshed each poll.
-    /// Not this bundle's `package_info().version`, which is a build counter
-    /// for the updater and means nothing to a person.
-    version_label: tauri::menu::MenuItem<tauri::Wry>,
+    status: tauri::menu::IconMenuItem<tauri::Wry>,
 }
 
-/// Set the "Check for Updates…" item's label + enabled state on the main
-/// thread (AppKit requires UI mutation there). Used for the transient
-/// "Checking…" / "Up to date ✓" feedback on a manual check.
-fn set_check_label(app: &AppHandle, item: &tauri::menu::MenuItem<tauri::Wry>, text: &str, enabled: bool) {
-    let item = item.clone();
-    let text = text.to_string();
-    let _ = app.run_on_main_thread(move || {
-        let _ = item.set_text(&text);
-        let _ = item.set_enabled(enabled);
-    });
-}
-
-/// Recompute the status lines + toggle and apply them. Spawns its OWN thread
-/// because computing the state BLOCKS (probing the box over TCP, and shelling
-/// out to the collector CLI when installed), then hops to the main thread for
-/// the actual menu mutation — AppKit requires UI changes on the main thread.
-/// Safe to call from anywhere, including the (main-thread) menu-event handler.
+/// Recompute the status line and apply it. Spawns its OWN thread because
+/// computing the state BLOCKS (probing the box over TCP, and shelling out to
+/// the collector CLI when installed), then hops to the main thread for the
+/// actual menu mutation — AppKit requires UI changes on the main thread.
 fn refresh_tray(app: &AppHandle, items: TrayItems) {
     let app = app.clone();
     std::thread::spawn(move || {
@@ -998,137 +1021,48 @@ fn refresh_tray(app: &AppHandle, items: TrayItems) {
         } else {
             CollectorStatus::default()
         };
-        // The release line. `None` (box unreachable) leaves it as the bare
-        // product name rather than falling back to the build counter: showing
-        // a number the user cannot find anywhere else is worse than showing
-        // none. See `box_identity_blocking`.
-        let version_text = match box_identity_blocking() {
-            Some((version, channel)) => {
-                let ch = channel.trim().to_ascii_lowercase();
-                if ch.is_empty() || ch == "stable" || ch == "main" || ch == version {
-                    format!("Virtues {version}")
-                } else {
-                    format!("Virtues {version} ({ch})")
-                }
-            }
-            None => "Virtues".to_string(),
-        };
-        let (box_dot, box_text) = box_label();
-        let (coll_dot, coll_text) = collector_label(installed, &status);
-        let sync_text = last_sync_label(installed, &status);
-        let toggle_text = if status.paused { "Resume collecting" } else { "Pause collecting" };
-
-        // Update line: a staged update is INFORMATION, not a task. It applies
-        // on the next launch on its own, so the escalating amber→red nudge that
-        // used to live here would be pressuring the user about something that
-        // needs nothing from them. Green, stated once; clicking is a shortcut
-        // for the impatient, not a chore.
-        let update = {
-            let st = app.state::<std::sync::Mutex<UpdateState>>();
-            let g = st.lock().unwrap();
-            g.ready
-                .as_ref()
-                .map(|r| (Dot::Green, format!("Virtues {} installs on next launch", r.version)))
-        };
-
+        let (dot, text) = tray_summary(installed, &status);
         let _ = app.run_on_main_thread(move || {
-            let _ = items.box_status.set_text(box_text);
-            let _ = items.box_status.set_icon(dot_image(box_dot));
-            let _ = items.collector_status.set_text(coll_text);
-            let _ = items.collector_status.set_icon(dot_image(coll_dot));
-            let _ = items.last_sync.set_text(sync_text);
-            let _ = items.toggle.set_text(toggle_text);
-            let _ = items.version_label.set_text(&version_text);
-            // Disabled when not installed so pause/resume can't be invoked in a
-            // state where the CLI would just error — keeps the user from a
-            // no-op foot-gun.
-            let _ = items.toggle.set_enabled(installed);
-            match &update {
-                Some((dot, text)) => {
-                    let _ = items.update.set_text(text);
-                    let _ = items.update.set_icon(dot_image(*dot));
-                    let _ = items.update.set_enabled(true);
-                }
-                None => {
-                    let _ = items.update.set_text("Virtues is up to date");
-                    let _ = items.update.set_icon(dot_image(Dot::Grey));
-                    let _ = items.update.set_enabled(false);
-                }
-            }
+            let _ = items.status.set_text(text);
+            let _ = items.status.set_icon(dot_image(dot));
         });
     });
 }
 
-/// Build the macOS menu-bar item: two colored status lines, a dim last-sync
-/// subtitle, a pause/resume toggle, show, and a real Quit (the window close
-/// button only HIDES — see `on_window_event` — so this is the only way to exit).
+/// Build the macOS menu-bar item: ONE colored status line, "Open Virtues",
+/// and a real Quit (the window close button only HIDES — see
+/// `on_window_event` — so Quit is the only way to exit).
+///
+/// This menu was a seven-line control panel — two status lines, last-sync,
+/// pause/resume, a version line, check-for-updates, and an update line — a
+/// second UI speaking its own dialect of facts the app also showed. The
+/// surface diet moved every action and every detail into Devices → This Mac;
+/// what remains is exactly what a closed window cannot provide: the dot, the
+/// door, and the exit.
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     use tauri::menu::{IconMenuItem, Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::TrayIconBuilder;
 
-    // Status lines are ENABLED (so the text reads at full strength, not greyed),
-    // carry a colored status dot, and clicking either one opens the app — handy
-    // when it says "needs re-pairing"/"unreachable" and the fix lives in-window.
-    let status_box = IconMenuItem::with_id(
-        app, "status_box", "Box: checking…", true, dot_image(Dot::Grey), None::<&str>,
+    // Enabled (so the text reads at full strength, not greyed), and clicking
+    // it opens the app — the line often names a problem whose fix lives
+    // in-window.
+    let status = IconMenuItem::with_id(
+        app, "status", "Checking…", true, dot_image(Dot::Grey), None::<&str>,
     )?;
-    let status_collector = IconMenuItem::with_id(
-        app, "status_collector", "Collector: checking…", true, dot_image(Dot::Grey), None::<&str>,
-    )?;
-    // A dim, non-interactive subtitle (disabled = greyed, which is what we want
-    // for secondary info).
-    let last_sync = MenuItem::with_id(app, "last_sync", "Last sync: —", false, None::<&str>)?;
-    // Starts disabled; the first poll enables it iff the collector is installed.
-    let toggle = MenuItem::with_id(app, "toggle_collector", "Pause collecting", false, None::<&str>)?;
-    let show = MenuItem::with_id(app, "show", "Show Virtues", true, None::<&str>)?;
-    // Update line: disabled "up to date" until the check loop stages one, then
-    // the poll flips it to an enabled amber "Restart to update (vX)".
-    let update = IconMenuItem::with_id(
-        app, "update_item", "Virtues is up to date", false, dot_image(Dot::Grey), None::<&str>,
-    )?;
-    // A dim, non-interactive line showing the running version — so a glance at
-    // the menu answers "am I current?" without opening anything.
-    let version_label = MenuItem::with_id(
-        app,
-        "version_label",
-        // Placeholder only — `refresh_tray` replaces this with the box's
-        // release version on the first poll.
-        "Virtues",
-        false,
-        None::<&str>,
-    )?;
-    // Manual "check now" — runs the same check the 6h poll runs, for the
-    // impatient/debugging case. Its label gives transient feedback on click.
-    let check_now = MenuItem::with_id(app, "check_now", "Check for Updates…", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Open Virtues", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Virtues", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
         &[
-            &status_box,
-            &status_collector,
-            &last_sync,
+            &status,
             &PredefinedMenuItem::separator(app)?,
-            &toggle,
             &show,
-            &PredefinedMenuItem::separator(app)?,
-            &version_label,
-            &check_now,
-            &update,
-            &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
     )?;
 
-    let items = TrayItems {
-        box_status: status_box,
-        collector_status: status_collector,
-        last_sync,
-        toggle,
-        update,
-        check_now,
-        version_label,
-    };
+    let items = TrayItems { status };
 
     // The ∴ mark as a TEMPLATE image: monochrome black+alpha that AppKit recolors
     // to fit light/dark menu bars. The full-color app icon would not adapt and
@@ -1136,89 +1070,59 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
         .expect("decode bundled tray icon");
 
-    // Cloned into the menu-event handler so a pause/resume can refresh the menu
-    // at once instead of waiting out the ~10s poll.
-    let event_items = items.clone();
-
     TrayIconBuilder::with_id("main-tray")
         .icon(icon)
         .icon_as_template(true)
         .tooltip("Virtues")
         .menu(&menu)
         .on_menu_event(move |app, event| match event.id.as_ref() {
-            // The two status lines double as a shortcut into the app.
-            "show" | "status_box" | "status_collector" => {
+            // The status line doubles as the door — it often names a problem
+            // whose fix lives in-window (Devices → This Mac).
+            "show" | "status" => {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
             }
             "quit" => app.exit(0),
-            // "Restart to update" — re-check, download+install, relaunch. The
-            // item is only enabled once an update is staged, so a click here
-            // always has something to apply.
-            "update_item" => {
-                let app = app.clone();
-                apply_update(app);
-            }
-            // Manual update check. Flip the label to "Checking…" while it runs,
-            // then either let the staged-update path take over (refresh_tray
-            // surfaces the amber "Restart to update" line) or flash "Up to date
-            // ✓" for a couple seconds before reverting.
-            "check_now" => {
-                let app = app.clone();
-                let items = event_items.clone();
-                tauri::async_runtime::spawn(async move {
-                    set_check_label(&app, &items.check_now, "Checking…", false);
-                    check_for_update(&app).await;
-                    let staged = {
-                        let st = app.state::<std::sync::Mutex<UpdateState>>();
-                        let staged = st.lock().unwrap().ready.is_some();
-                        staged
-                    };
-                    refresh_tray(&app, items.clone());
-                    if staged {
-                        // Amber "Restart to update" line now carries the signal;
-                        // just restore the trigger label.
-                        set_check_label(&app, &items.check_now, "Check for Updates…", true);
-                    } else {
-                        set_check_label(&app, &items.check_now, "Up to date ✓", false);
-                        let app = app.clone();
-                        let item = items.check_now.clone();
-                        // Revert to the actionable label after a brief beat.
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_secs(3));
-                            set_check_label(&app, &item, "Check for Updates…", true);
-                        });
-                    }
-                });
-            }
-            "toggle_collector" => {
-                // Flip based on the LIVE state, not the (possibly stale) label,
-                // then refresh immediately so the menu shows the new state.
-                let app = app.clone();
-                let items = event_items.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Ok(status) = get_collector_status(app.clone()).await {
-                        let _ = if status.paused {
-                            resume_collector(app.clone()).await
-                        } else {
-                            pause_collector(app.clone()).await
-                        };
-                    }
-                    refresh_tray(&app, items);
-                });
-            }
             _ => {}
         })
         .build(app)?;
 
     // Keep the labels honest. A poll (not an event subscription) because the
     // collector is a separate daemon with no push channel back to this app.
+    //
+    // The same tick decides the auto-apply: a staged update self-applies once
+    // the window has been hidden for two hours. Chrome stages-and-waits
+    // because a browser is full of your tabs and gets relaunched daily; this
+    // app is a picture frame over the box-served SPA (no state to lose) that
+    // is DESIGNED never to relaunch — so "applies on next launch" rounded to
+    // never, and the collector rode the stale app for weeks. Restarting while
+    // hidden is invisible; the collector is a separate LaunchAgent and keeps
+    // running through it, and the post-restart reconcile brings it to the new
+    // build. Never while a window is visible — the chip and the tray line
+    // stay the only interruptions a present user sees.
     let app = app.clone();
-    std::thread::spawn(move || loop {
-        refresh_tray(&app, items.clone());
-        std::thread::sleep(std::time::Duration::from_secs(10));
+    std::thread::spawn(move || {
+        let mut last_visible = std::time::Instant::now();
+        const HIDDEN_APPLY_AFTER: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+        loop {
+            refresh_tray(&app, items.clone());
+            let any_visible = app
+                .webview_windows()
+                .values()
+                .any(|w| w.is_visible().unwrap_or(false));
+            if any_visible {
+                last_visible = std::time::Instant::now();
+            }
+            let staged = app
+                .try_state::<std::sync::Mutex<UpdateState>>()
+                .is_some_and(|st| st.lock().unwrap().ready.is_some());
+            if staged && !any_visible && last_visible.elapsed() > HIDDEN_APPLY_AFTER {
+                apply_update(app.clone()); // restarts; never returns
+            }
+            std::thread::sleep(std::time::Duration::from_secs(10));
+        }
     });
 
     Ok(())
@@ -1274,15 +1178,48 @@ fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
         .parent()
         .ok_or("no exe dir")?
         .join(name);
+    // A marker left by a failed kickstart below. Without it, a failed restart
+    // was UNRECOVERABLE: the copy had already made the byte-compare read "in
+    // sync", so every later launch no-op'd while the old process kept running
+    // from its held inode until logout. The marker keeps "binary replaced" and
+    // "process restarted" as separate facts.
+    let restart_pending = installed.with_file_name(format!(".{name}-restart-pending"));
     // Dev build / sidecar not alongside → nothing we can reconcile against.
-    if !bundled.exists() || !files_differ(&bundled, &installed) {
+    if !bundled.exists() {
         return Ok(false);
     }
-    copy_executable(&bundled, &installed).map_err(|e| e.to_string())?;
+    if !files_differ(&bundled, &installed) && !restart_pending.exists() {
+        return Ok(false);
+    }
+    if files_differ(&bundled, &installed) {
+        // An ad-hoc signed collector has no signing identity for macOS to
+        // recognise it by, so TCC pins its Full Disk Access and Accessibility
+        // grants to that exact build — and this copy voids them. Silently: the
+        // switches in System Settings stay on while every read fails, so
+        // iMessages, Safari history and window titles simply stop arriving.
+        //
+        // This path, not `virtues-collector install`, is how it actually
+        // happens — an app rebuild relaunches, reconciles, and blinds the
+        // collector with nobody having typed anything. Say so HERE, where the
+        // cause is still known; five minutes later the collector's own health
+        // report says only "denied", with no hint of what did it.
+        //
+        // We still copy: a stale collector is the worse failure, and this is
+        // recoverable by removing and re-adding the entries (toggling them off
+        // and on does not repair the grant).
+        if is_adhoc_signed(&bundled) {
+            eprintln!(
+                "[reconcile] {name}: bundled helper is AD-HOC SIGNED — this redeploy \
+                 voids its macOS permissions. Remove and re-add virtues-collector in \
+                 System Settings → Privacy & Security → Full Disk Access and \
+                 Accessibility. Build with APPLE_SIGNING_IDENTITY set to stop this."
+            );
+        }
+        copy_executable(&bundled, &installed).map_err(|e| e.to_string())?;
+    }
     // Kick the LaunchAgent so launchd drops the old process and runs the new
     // binary now (rename-over-running is fine on macOS; the live process holds
-    // the old inode until this restart). Best-effort: if the agent isn't loaded
-    // the next login / install picks it up.
+    // the old inode until this restart).
     let uid = std::process::Command::new("id")
         .arg("-u")
         .output()
@@ -1290,12 +1227,41 @@ fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    if !uid.is_empty() {
-        let _ = std::process::Command::new("/bin/launchctl")
+    let kicked = !uid.is_empty()
+        && std::process::Command::new("/bin/launchctl")
             .args(["kickstart", "-k", &format!("gui/{uid}/{agent}")])
-            .output();
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    if kicked {
+        let _ = std::fs::remove_file(&restart_pending);
+    } else {
+        // Remember that the running process is still the old binary; the next
+        // launch retries the kickstart even though the files now match. (An
+        // agent that simply isn't loaded also lands here — the next login
+        // starts the new binary and the retry then clears the marker.)
+        let _ = std::fs::write(&restart_pending, b"");
+        eprintln!("[reconcile] {name}: kickstart failed — will retry next launch");
     }
     Ok(true)
+}
+
+/// Is this binary ad-hoc signed (no signing identity, so TCC pins its grants to
+/// the exact build)? Shells out to `codesign` because this runs only on the
+/// redeploy path — rare by construction — and linking the Security framework to
+/// read one flag is not worth it.
+///
+/// Failure reads as `false`: this only decides whether to print a warning, and
+/// a probe that could not run is not evidence that a build is unsigned.
+fn is_adhoc_signed(path: &std::path::Path) -> bool {
+    std::process::Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=2"])
+        .arg(path)
+        .output()
+        .ok()
+        // codesign writes its report to stderr.
+        .map(|o| String::from_utf8_lossy(&o.stderr).contains("adhoc"))
+        .unwrap_or(false)
 }
 
 /// Byte-equal? Cheap size check first, content compare only if sizes match (the
@@ -1428,6 +1394,9 @@ fn main() {
             command_surface_version,
             shell_identity_cmd,
             bundle_boot_ok,
+            update_state_cmd,
+            apply_update_cmd,
+            check_app_update_cmd,
             get_client_status,
             discover_servers,
             pair_with_code,
@@ -1478,8 +1447,14 @@ fn main() {
             // been onboarded, so there is nothing to keep in sync yet; the
             // "Turn on this Mac" flow installs the collector and this reconcile
             // takes over from the next launch on.
+            // ... and never from a dev profile: reconcile kickstarts the
+            // machine's real collector, which is exactly the cross-profile
+            // side effect profiles exist to prevent.
             #[cfg(target_os = "macos")]
-            if app.reach().is_paired() && reconcile_helpers() {
+            if tauri_plugin_reach::profile().is_none()
+                && app.reach().is_paired()
+                && reconcile_helpers()
+            {
                 std::thread::sleep(std::time::Duration::from_millis(300));
             }
 
@@ -1518,7 +1493,7 @@ fn main() {
             // none of the documents that were the entire point. Offline needs
             // ONE origin across all four states (box up, box down, baked
             // bundle, OTA bundle) — see "The origin problem" in
-            // docs/spa-delivery-plan.md. Do not re-add the fallback alone;
+            // agents/plan/spa-delivery-plan.md. Do not re-add the fallback alone;
             // it looks like it works and does not.
             // A SINGLE fast probe (not the multi-retry loop): reachable boxes
             // reconnect silently with no connect-screen flash (the
@@ -1542,14 +1517,27 @@ fn main() {
                 WebviewUrl::App("connect.html".into())
             } else {
                 match probe_box_session_blocking(1) {
-                    Some(true) => WebviewUrl::External("http://localhost:7117".parse().unwrap()),
+                    Some(true) => WebviewUrl::External(
+                        format!("http://localhost:{}", tauri_plugin_reach::loopback_port())
+                            .parse()
+                            .unwrap(),
+                    ),
                     Some(false) => WebviewUrl::App("connect.html#reset".into()),
                     None => WebviewUrl::App("connect.html#unreachable".into()),
                 }
             };
 
+            // Tell the airlock (connect.html) which loopback this instance
+            // serves. Its fallback is the default :7117, so this only matters
+            // for dev profiles — but injecting unconditionally keeps one path.
+            let box_url_js = format!(
+                "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
+                tauri_plugin_reach::loopback_port()
+            );
+
             let window = WebviewWindowBuilder::new(app, "main", url)
                 .title("Virtues")
+                .initialization_script(&box_url_js)
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(800.0, 600.0)
                 .center()
@@ -1607,10 +1595,11 @@ fn main() {
                 setup_tray(app.handle())?;
 
                 // Self-update check loop: first pass ~5s after launch (off the
-                // critical path, after reconcile), then every 6h. The stable
-                // channel (mac-latest latest.json) is the source; download is
-                // deferred to the user's "Restart to update" click. The tray's
-                // own poll surfaces the staged state within its interval.
+                // critical path, after reconcile), then every 6h. The
+                // mac-latest manifest is the one source; a hit downloads and
+                // stages silently. The tray's own poll surfaces the staged
+                // state within its interval — and applies it after two hidden
+                // hours (see the poll loop).
                 let updater_handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(5));
@@ -1654,50 +1643,3 @@ fn main() {
         });
 }
 
-#[cfg(test)]
-mod box_identity_tests {
-    use super::parse_box_identity;
-
-    fn resp(body: &str) -> String {
-        format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}")
-    }
-
-    #[test]
-    fn reads_version_and_channel() {
-        // Verbatim shape from a live box (dragon, 2026-08-05), field order and all.
-        let body = r#"{"status":"healthy","version":"0.3.0","channel":"stable","commit":"abc1234"}"#;
-        assert_eq!(
-            parse_box_identity(&resp(body)),
-            Some(("0.3.0".to_string(), "stable".to_string()))
-        );
-    }
-
-    #[test]
-    fn edge_box_reports_edge() {
-        let body = r#"{"status":"healthy","version":"edge","channel":"edge"}"#;
-        assert_eq!(
-            parse_box_identity(&resp(body)),
-            Some(("edge".to_string(), "edge".to_string()))
-        );
-    }
-
-    #[test]
-    fn header_text_cannot_false_match() {
-        // A header naming the field must not be mistaken for the body value.
-        let raw = "HTTP/1.1 200 OK\r\nX-Note: \"version\":\"9.9.9\"\r\n\r\n{\"version\":\"0.3.0\",\"channel\":\"stable\"}";
-        assert_eq!(
-            parse_box_identity(raw),
-            Some(("0.3.0".to_string(), "stable".to_string()))
-        );
-    }
-
-    #[test]
-    fn missing_field_is_none() {
-        assert_eq!(parse_box_identity(&resp(r#"{"status":"healthy"}"#)), None);
-    }
-
-    #[test]
-    fn no_body_is_none() {
-        assert_eq!(parse_box_identity("HTTP/1.1 500 Internal Server Error"), None);
-    }
-}

@@ -1814,7 +1814,25 @@ Environment=GDK_BACKEND=wayland
 # (file presence only, never contents), so it needs to know where it is.
 Environment=VIRTUES_DATA_DIR=__DATA_DIR__
 EnvironmentFile=-__DATA_DIR__/virtues.env
-ExecStartPre=/bin/sh -c "mkdir -p /run/user/0; chmod 700 /run/user/0; grep -qx connected /sys/class/drm/*/status"
+# Pin the panel's EDID for every re-probe, when the image ships a blob. The
+# panel's DDC wire reproducibly fails on forced re-detect (Hours' wake), which
+# would fall the connector back to VESA modes and stretch the glass; the
+# pinned blob makes every wake deterministic. RUNTIME module param, not kernel
+# cmdline: on the Q6A the boot chain bakes bootargs into the device tree and
+# /boot/extlinux is decorative (verified 2026-08-26 — /etc/kernel/cmdline +
+# u-boot-update regenerate an append line nothing reads), and Hours' re-detects
+# are post-boot by definition, so the param set here is always in time.
+# `-` prefix: a missing blob or read-only sysfs must not stop the kiosk.
+ExecStartPre=-/bin/sh -c "[ -f /usr/lib/firmware/edid/virtues-panel-1080.bin ] && echo HDMI-A-1:edid/virtues-panel-1080.bin > /sys/module/drm/parameters/edid_firmware"
+# The connected-connector guard keeps a headless board from crash-looping
+# cage. The marker-file escape is Hours: while the sleep engine holds the
+# panel's connector forced off (api::system_display::sleep_engine), a restart
+# of this unit — an upgrade's restart_display fires one — must still start,
+# or the unit parks in --failed against a connector the box darkened on
+# purpose. Cage survives losing its outputs AND starts with zero outputs
+# (both hardware-verified 2026-08-26); the page draws to nobody until wake
+# re-detects the connector and wlroots hotplugs it back.
+ExecStartPre=/bin/sh -c "mkdir -p /run/user/0; chmod 700 /run/user/0; grep -qx connected /sys/class/drm/*/status || [ -e /run/virtues-display-asleep ]"
 ExecStart=/usr/bin/cage -s -- /usr/bin/python3 /usr/local/lib/virtues/display.py
 # The box's own server may still be starting; the shim retries, and a crash
 # should put the display back rather than leave a black screen.
@@ -2652,8 +2670,14 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ ! -e "$DATA_DIR/.claim-complete" ]
         [ -d "$DATA_DIR/models" ] || cp -a "$CARD/models" "$DATA_DIR/models" 2>/dev/null || true
         # The env file is LOAD-BEARING — no DATABASE_URL, no server — so unlike
         # the models its copy failure is logged, not swallowed, and the
-        # sentinel below stays unwritten without it.
-        if [ ! -e "$DATA_DIR/virtues.env" ]; then
+        # sentinel below stays unwritten without it. An env that exists but
+        # carries no DATABASE_URL is the same failure as no env (the v0.1.4
+        # first press seeded a zero-length one) and is replaced the same way —
+        # but NEVER over a minted key: an env holding VIRTUES_ENCRYPTION_KEY
+        # is the owner's, whatever else it lost, and clobbering it strands
+        # everything already encrypted.
+        if ! grep -q '^DATABASE_URL=' "$DATA_DIR/virtues.env" 2>/dev/null && \
+           ! grep -q '^VIRTUES_ENCRYPTION_KEY=' "$DATA_DIR/virtues.env" 2>/dev/null; then
             cp -a "$CARD/virtues.env" "$DATA_DIR/virtues.env" 2>/dev/null || \
                 logger -t virtues-firstboot "FAILED to copy virtues.env from the card seed"
         fi
@@ -2785,6 +2809,12 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 mkdir -p /run/virtues-seed/journal /run/virtues-seed/lake
                 chown root:systemd-journal /run/virtues-seed/journal 2>/dev/null || true
                 chmod 2755 /run/virtues-seed/journal 2>/dev/null || true
+                # The lake needs an owner too. It sat directly beside the two
+                # journal lines above with nothing of its own, so a seeded box
+                # booted with a root-owned lake and its ingest applet failed
+                # with EACCES every five minutes — indistinguishable, from the
+                # outside, from a source with nothing to say.
+                chown -R virtues:virtues /run/virtues-seed/lake 2>/dev/null || true
                 umount /run/virtues-seed
                 # The seed is complete — only now may the real label exist,
                 # which is what lets the fstab line (and the mount below) find
@@ -2871,6 +2901,11 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 # root:root 755 here means no journal ever lands, silently.
                 chown root:systemd-journal /run/virtues-seed/journal 2>/dev/null || true
                 chmod 2755 /run/virtues-seed/journal 2>/dev/null || true
+                # Same for the lake, whose owner is the service user. The
+                # comment above explains why journal needs this; the lake sat
+                # beside it with nothing, and a root-owned lake fails the ingest
+                # applet with EACCES on every run while looking merely idle.
+                chown -R virtues:virtues /run/virtues-seed/lake 2>/dev/null || true
                 umount /run/virtues-seed
                 logger -t virtues-firstboot "seeded new disk from the card-side $DATA_DIR"
             fi
@@ -2973,6 +3008,39 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ -L /var/log/journal ] && [ ! -e /r
     rmdir /run/virtues-cardshadow 2>/dev/null || true
     systemctl try-restart systemd-journald 2>/dev/null || true
     touch /run/virtues-journal-rehomed
+fi
+
+# ── 1b'' state ownership, every boot ────────────────────────────────────────
+# Every directory under the data dir is written by the `virtues` service user
+# and must be owned by it. The installer establishes that (see the `find`
+# with -prune at install time) but only on the machine it runs on — a disk
+# seeded afterwards by firstboot never passes through it, so a box cloned from
+# a card can boot with root-owned state that nothing ever repairs.
+#
+# That is not hypothetical: `lake` shipped that way, and the ingest applet
+# failed with `Permission denied (os error 13)` on every run, for days, while
+# every surface reported the source as merely idle.
+#
+# `-prune` on the Postgres cluster and a list-free sweep, deliberately copying
+# the installer's shape rather than naming `lake`: the reason that form was
+# chosen there is that enumerating siblings means the NEXT one added gets
+# forgotten, which is exactly how this bug happened. `-print` so the repair is
+# never silent — a boot that had to fix something says which paths.
+if mountpoint -q "$DATA_DIR" 2>/dev/null; then
+    FIXED="$(find "$DATA_DIR" -path "$DATA_DIR/postgresql" -prune -o \
+                  \( -path "$DATA_DIR/journal" -o -path "$DATA_DIR/journal/*" \) -prune -o \
+                  ! -user virtues -print 2>/dev/null | head -20)"
+    if [ -n "$FIXED" ]; then
+        # Repair separately from the listing above, and WITHOUT `head`: piping
+        # the repairing find into head lets SIGPIPE kill it once 20 paths have
+        # been printed, which would silently fix a prefix and leave the rest —
+        # the same shape of half-truth this block exists to end. The cap is for
+        # the log line only.
+        find "$DATA_DIR" -path "$DATA_DIR/postgresql" -prune -o \
+             \( -path "$DATA_DIR/journal" -o -path "$DATA_DIR/journal/*" \) -prune -o \
+             ! -user virtues -exec chown virtues:virtues {} + 2>/dev/null || true
+        logger -t virtues-firstboot "repaired state ownership (was not virtues): $(echo "$FIXED" | tr '\n' ' ')"
+    fi
 fi
 
 # sudo resolves the hostname on every invocation; without a hosts entry each

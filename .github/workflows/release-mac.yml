@@ -167,20 +167,16 @@ jobs:
         run: crates/virtues-iroh-ffi/build-macos.sh
 
       # Bake the real build identity into the collector so `--version` reports
-      # the release + commit instead of the "unknown" placeholder (update
-      # manifold Phase 1). BSD sed (macOS runner) needs the empty -i arg.
+      # the release + commit instead of a placeholder (update manifold Phase 1).
+      #
+      # Shares one generator with tools/build-mac-app.sh. It used to be an
+      # inline `sed` living only here, so the local build stamped nothing and
+      # shipped a collector that claimed 1.0.0 forever — the divergence is the
+      # reason this is a script and not three substitutions.
       - name: Stamp collector version + commit
-        working-directory: apps/mac-source
         run: |
-          V="${{ steps.version.outputs.VERSION }}"
-          SHA="${GITHUB_SHA:0:7}"
-          DATE="$(date -u +%Y-%m-%d)"
-          sed -i '' \
-            -e "s/static let current = \".*\"/static let current = \"$V\"/" \
-            -e "s/static let buildDate = \".*\"/static let buildDate = \"$DATE\"/" \
-            -e "s/static let gitCommit = \"unknown\"/static let gitCommit = \"$SHA\"/" \
-            Sources/Version.swift
-          grep -E 'current|buildDate|gitCommit' Sources/Version.swift
+          tools/stamp-mac-version.sh "${{ steps.version.outputs.VERSION }}"
+          grep -E 'current|buildDate|gitCommit' apps/mac-source/Sources/Version.swift
 
       - name: Build virtues-collector sidecar (Swift)
         working-directory: apps/mac-source

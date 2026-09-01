@@ -138,6 +138,15 @@ tmp/*
 /.pnpm-store
 /apps/web/.pnpm-store
 /apps/mac-source/.build
+# Generated per build by tools/stamp-mac-version.sh. Tracked until 2026-08-28,
+# when it was a literal 1.0.0 that only CI rewrote — so every locally built
+# collector claimed to be behind the app forever. Stamping a TRACKED file would
+# instead dirty a checkout several agents share.
+/apps/mac-source/Sources/Version.swift
+# Same for the Tauri iOS plugins: building one locally (e.g. to check a change
+# compiles against the iOS SDK) leaves a .build tree that is otherwise untracked
+# and can be swept into someone else's commit — this repo has lost work that way.
+/apps/web/plugins/*/ios/.build
 /crates/virtues-registry/target
 /virtues-core/core/
 /virtues-core/.sqlx

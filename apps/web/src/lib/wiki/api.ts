@@ -90,10 +90,6 @@ export interface WikiDayApi {
 	epigraph: string | null;
 	last_edited_by: string | null;
 	cover_image: string | null;
-	act_id: string | null;
-	chapter_id: string | null;
-	morning_baseline: number | null;
-	battery_curve: string | null;
 	data_quality: {
 		coverage: { who: number; whom: number; what: number; when: number; where: number; why: number; how: number };
 		overall: number;
@@ -1018,12 +1014,10 @@ export interface TemporalEventApi {
 	agent_action: string | null;
 	is_sleep: boolean | null;
 	user_hidden: boolean | null;
-	user_created: boolean | null;
 	// Autonomic scoring
 	avg_hr: number | null;
 	autonomic_z: number | null;
 	hr_z: number | null;
-	hrv_z: number | null;
 	// Entity/topic novelty
 	entities: string[] | null;
 	topic_novelty: Record<string, number> | null;
@@ -1213,7 +1207,7 @@ export async function getDaySources(
 	fetchFn: FetchFn = fetch
 ): Promise<DaySourceApi[]> {
 	// Pass the viewing device's IANA zone so an in-progress "today" is anchored to
-	// where the owner currently is (see docs/timezone-model.md). Harmless for past
+	// where the owner currently is (see agents/record/timezone-model.md). Harmless for past
 	// days — the server prefers the day's locked start_timezone.
 	const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 	const qs = tz ? `?tz=${encodeURIComponent(tz)}` : "";

@@ -141,6 +141,9 @@ importers:
       '@types/leaflet':
         specifier: ^1.9.21
         version: 1.9.21
+      jsqr:
+        specifier: ^1.4.0
+        version: 1.4.0
       svelte:
         specifier: ^5.56.4
         version: 5.56.4
@@ -1510,6 +1513,9 @@ packages:
 
   json-schema@0.4.0:
     resolution: {integrity: sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==}
+
+  jsqr@1.4.0:
+    resolution: {integrity: sha512-dxLob7q65Xg2DvstYkRpkYtmKm2sPJ9oFhrhmudT1dZvNFFTlroai3AWSpLey/w5vMcLBXRgOJsbXpdN9HzU/A==}
 
   katex@0.16.47:
     resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
@@ -3434,6 +3440,8 @@ snapshots:
   jiti@2.7.0: {}
 
   json-schema@0.4.0: {}
+
+  jsqr@1.4.0: {}
 
   katex@0.16.47:
     dependencies:

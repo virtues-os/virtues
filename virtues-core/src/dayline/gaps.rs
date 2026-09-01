@@ -11,7 +11,7 @@
 //!     between two places, mislabeled "insufficient data".
 //!
 //! This deterministic pass (no LLM) walks the stored blocks and applies the shape
-//! rules from `docs/event-timeline.md`:
+//! rules from `agents/record/event-timeline.md`:
 //!
 //!   > A block earns 15 minutes; a seam earns 3; a moment earns a mention, not a row.
 //!

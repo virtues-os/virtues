@@ -62,4 +62,12 @@ impl<R: Runtime> Audio<R> {
       .run_mobile_plugin("setNotify", SetNotifyRequest { enabled })
       .map_err(Into::into)
   }
+
+  /// Set the quiet-hours window (minutes since local midnight; -1/-1 = off).
+  pub fn set_quiet_hours(&self, start: i32, end: i32) -> crate::Result<AudioStatus> {
+    self
+      .0
+      .run_mobile_plugin("setQuietHours", SetQuietHoursRequest { start, end })
+      .map_err(Into::into)
+  }
 }

@@ -1,0 +1,69 @@
+{
+	"sections": [
+		{
+			"title": "Start here",
+			"pages": [{ "slug": "index", "title": "What Virtues is" }]
+		},
+		{
+			"title": "Set up",
+			"pages": [
+				{ "slug": "setup/requirements", "title": "What to run it on", "planned": true },
+				{ "slug": "setup/install", "title": "Installing" },
+				{ "slug": "setup/first-boot", "title": "First boot", "planned": true },
+				{
+					"title": "Connecting your devices",
+					"pages": [
+						{ "slug": "setup/devices/iphone", "title": "iPhone", "planned": true },
+						{ "slug": "setup/devices/mac", "title": "Mac", "planned": true }
+					]
+				},
+				{
+					"title": "Connecting your sources",
+					"pages": [
+						{ "slug": "setup/sources", "title": "How sources work", "planned": true },
+						{ "slug": "setup/sources/google", "title": "Google", "planned": true },
+						{ "slug": "setup/sources/apple-health", "title": "Apple Health", "planned": true },
+						{ "slug": "setup/sources/finance", "title": "Banks & cards", "planned": true }
+					]
+				}
+			]
+		},
+		{
+			"title": "Living with it",
+			"pages": [
+				{ "slug": "use/day", "title": "Your day", "planned": true },
+				{ "slug": "use/asking", "title": "Asking questions", "planned": true },
+				{ "slug": "use/wiki", "title": "People & places", "planned": true },
+				{ "slug": "use/pages-and-notebooks", "title": "Pages & notebooks", "planned": true },
+				{ "slug": "use/applets", "title": "Applets", "planned": true }
+			]
+		},
+		{
+			"title": "Operate",
+			"pages": [
+				{ "slug": "operate/reach", "title": "Reaching your server" },
+				{ "slug": "operate/upgrading", "title": "Upgrading" },
+				{ "slug": "operate/backup-and-restore", "title": "Backup & restore" },
+				{ "slug": "operate/recovery", "title": "When something breaks" },
+				{ "slug": "operate/access", "title": "Devices & access", "planned": true },
+				{ "slug": "operate/cli", "title": "The CLI" }
+			]
+		},
+		{
+			"title": "Build on it",
+			"pages": [
+				{ "slug": "build/applets", "title": "Writing an applet", "planned": true },
+				{ "slug": "build/api", "title": "The API", "planned": true },
+				{ "slug": "build/schema", "title": "Schema & ontology", "planned": true }
+			]
+		},
+		{
+			"title": "Understand",
+			"pages": [
+				{ "slug": "understand/privacy", "title": "What leaves the box", "planned": true },
+				{ "slug": "understand/byo-ai", "title": "Bring your own AI", "planned": true },
+				{ "slug": "understand/glossary", "title": "Glossary" }
+			]
+		}
+	]
+}

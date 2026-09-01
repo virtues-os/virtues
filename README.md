@@ -81,7 +81,7 @@ the trade is quality and speed, and it is yours to make.
 We will not tell you this is private by construction. The relay genuinely cannot
 read your data — that is physics. The inference boundary rests on a contract with
 a provider, which is a different kind of promise, and
-[the privacy model](docs/privacy-model.md#the-inference-boundary-where-your-data-does-leave)
+[the privacy model](agents/record/privacy-model.md#the-inference-boundary-where-your-data-does-leave)
 says exactly what crosses it and what never does.
 
 <a id="architecture"></a>
@@ -114,7 +114,7 @@ says exactly what crosses it and what never does.
 
 **Core** handles data ingestion, entity resolution, the wiki, pages, chat, and serves the web UI. **virtues-api** is a sidecar proxy that mediates all external API calls — LLM requests, web search, bank connections — with budget tracking and key isolation. Core never touches API keys directly.
 
-**Remote access** has no public surface at all. The box is an iroh endpoint whose Ed25519 key *is* its identity, so a paired device reaches it by key — LAN-direct, hole-punched, or bounced off a blind relay — with no inbound port opened at home and no hostname anyone can type. The relay forwards only sealed, end-to-end-encrypted bytes it has no key to read. See **[Privacy &amp; security model](docs/privacy-model.md)** (who holds which secret, and who deliberately doesn't) and the [visual walkthrough](docs/relay-walkthrough.html).
+**Remote access** has no public surface at all. The box is an iroh endpoint whose Ed25519 key *is* its identity, so a paired device reaches it by key — LAN-direct, hole-punched, or bounced off our relay — with no inbound port opened at home and no hostname anyone can type. The relay forwards sealed, end-to-end-encrypted bytes it has no key to read; it does see which two keys are talking, the addresses they connect from, and how much traffic passes. See **[Privacy &amp; security model](agents/record/privacy-model.md)** (who holds which secret, and who deliberately doesn't) and the [visual walkthrough](agents/archive/relay-walkthrough.html).
 
 <a id="data-sources"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-data-sources-dark.svg"><img alt="Data Sources" src=".github/images/headings/h2-data-sources-light.svg" height="28"></picture>
@@ -198,7 +198,7 @@ sudo -u virtues virtues pair   # prints the code again, any time
 
 Enter that code in the desktop or mobile app ([virtues.com/downloads](https://virtues.com/downloads)). **A browser cannot pair** — authentication is a held Ed25519 key and a browser tab has none, so `/pair` in a browser only explains itself. The one exception is a browser running *on the box*, which is trusted as the loopback console and lands straight in the UI at `http://localhost:8000`.
 
-Then connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](docs/auth-model.md) under Settings).
+Then connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](agents/record/auth-model.md) under Settings).
 
 | Command | What it does |
 |---|---|
@@ -212,7 +212,7 @@ Then connect a source, and optionally `sudo -u virtues virtues subscribe` to ena
 | `virtues backup` / `virtues restore` | Snapshot + restore the box state |
 | `virtues upgrade` | Self-update from the latest GitHub Release |
 
-**When something breaks:** see [docs/recovery.md](docs/recovery.md) — covers
+**When something breaks:** see [agents/build/recovery.md](agents/build/recovery.md) — covers
 unreachable-box, lost-session, last-device-revoked, Postgres won't start,
 restore from backup, BYO key reset, and more.
 
@@ -226,12 +226,14 @@ Ed25519 key, not knowing an address.
 Your box is an **iroh endpoint**, and its Ed25519 `EndpointId` *is* its identity —
 mutual-key auth, no certificate authority. A paired device dials that identity
 and iroh finds a path: direct on your LAN, hole-punched across NATs, or bounced
-off our blind relay when neither works. The box holds an outbound connection to
+off our relay when neither works. The box holds an outbound connection to
 the relay, so nothing inbound is ever opened at home. It works behind CGNAT,
 coworking/café wifi, and IPv6-only ISPs — anywhere outbound 443 reaches, which is
-everywhere. The relay moves sealed bytes it has no key to read. See
-**[Privacy &amp; security model](docs/privacy-model.md)** and the
-[visual walkthrough](docs/relay-walkthrough.html).
+everywhere. The relay moves sealed bytes it has no key to read — it does see
+which two keys are talking and how much passes between them, which is why we
+describe it as encrypted end-to-end rather than as blind. See
+**[Privacy &amp; security model](agents/record/privacy-model.md)** and the
+[visual walkthrough](agents/archive/relay-walkthrough.html).
 
 Pairing is **local-first**: you walk to the box, run `virtues pair` (or
 `virtues device add`), and it prints a one-time code that puts the new device's
@@ -313,7 +315,7 @@ virtues-api runs on port 9002. Core connects to it via `VIRTUES_API_URL=http://l
 <a id="ios-app"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-ios-app-dark.svg"><img alt="iOS App" src=".github/images/headings/h2-ios-app-light.svg" height="28"></picture>
 
-The companion app pairs with your box from `/virtues/devices → Add device` (scan the QR with the camera). See [docs/auth-model.md](docs/auth-model.md) for the pairing model. Source: the cross-platform Tauri app in `apps/web/src-tauri/` (macOS/Windows/Linux/iOS/Android), with on-device collection provided by the native plugins in `apps/web/plugins/`.
+The companion app pairs with your box from `/virtues/devices → Add device` (scan the QR with the camera). See [agents/record/auth-model.md](agents/record/auth-model.md) for the pairing model. Source: the cross-platform Tauri app in `apps/web/src-tauri/` (macOS/Windows/Linux/iOS/Android), with on-device collection provided by the native plugins in `apps/web/plugins/`.
 
 <a id="project-structure"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-project-structure-dark.svg"><img alt="Project Structure" src=".github/images/headings/h2-project-structure-light.svg" height="28"></picture>
@@ -369,7 +371,7 @@ virtues/
 <a id="the-day-pipeline"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-the-day-pipeline-dark.svg"><img alt="The Day Pipeline" src=".github/images/headings/h2-the-day-pipeline-light.svg" height="28"></picture>
 
-After a day ends, the box reconstructs it — nightly, on the completed day. Two LLM passes build the record; three scoring passes measure how unusual it was, each against the owner's own history rather than any population norm. Every embedding involved is computed **on the box** by the local embedding sidecar (`virtues-embed.service`, a llama-server speaking OpenAI-compatible `/v1/embeddings` on localhost — currently EmbeddingGemma-300M). Nothing is sent anywhere to be embedded. The full design doc is [docs/the-day.md](docs/the-day.md).
+After a day ends, the box reconstructs it — nightly, on the completed day. Two LLM passes build the record; three scoring passes measure how unusual it was, each against the owner's own history rather than any population norm. Every embedding involved is computed **on the box** by the local embedding sidecar (`virtues-embed.service`, a llama-server speaking OpenAI-compatible `/v1/embeddings` on localhost — currently EmbeddingGemma-300M). Nothing is sent anywhere to be embedded. The full design doc is [agents/record/the-day.md](agents/record/the-day.md).
 
 <a id="segmentation--narration"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-segmentation-narration-dark.svg"><img alt="Segmentation & Narration" src=".github/images/headings/h3-segmentation-narration-light.svg" height="22"></picture>

@@ -162,7 +162,7 @@ pub struct UnnamedPlace {
 
 /// The unnamed places worth asking about, busiest first.
 ///
-/// `wiki_places.ref_count` is not the count to sort on: it is maintained for
+/// `wiki_places.seen_count` is not the count to sort on: it is maintained for
 /// named places and sits at 0 for every `Location %` row on both a dev box and
 /// a nine-year one — which is exactly the set this returns, so ordering by it
 /// ranked the backlog at random and reported every place as never visited.

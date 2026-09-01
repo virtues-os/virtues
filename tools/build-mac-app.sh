@@ -64,6 +64,12 @@ CLIENT_BIN="$(target_dir_for "$REPO_ROOT/Cargo.toml")/release/virtues-client"
 echo "→ building iroh FFI xcframework (macOS)…"
 "$REPO_ROOT/crates/virtues-iroh-ffi/build-macos.sh"
 
+# Stamp the collector's release BEFORE compiling it — it is a separate binary
+# from the app that ships it, so this is the only way it can know. Skipping it
+# locally is what made every dev build report 1.0.0 and trip the permanent
+# "behind the app — relaunch Virtues" chip in Settings → This Mac.
+"$REPO_ROOT/tools/stamp-mac-version.sh"
+
 echo "→ building virtues-collector (release)…"
 ( cd "$SWIFT_DIR" && swift build -c release )
 COLLECTOR_BIN="$(cd "$SWIFT_DIR" && swift build -c release --show-bin-path)/virtues-collector"
@@ -83,7 +89,20 @@ TAURI_BIN="$REPO_ROOT/apps/web/node_modules/.bin/tauri"
 if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
   echo "→ signed build as: $APPLE_SIGNING_IDENTITY"
 else
-  echo "⚠ APPLE_SIGNING_IDENTITY unset — building UNSIGNED (Gatekeeper will warn)"
+  # Gatekeeper is the least of it. Without a signing identity the collector is
+  # ad-hoc signed, and macOS pins its TCC grants to that build's cdhash — so
+  # the NEXT rebuild silently voids Full Disk Access and Accessibility while
+  # System Settings goes on showing both as granted. iMessages, Safari history
+  # and window titles then stop arriving with no error anywhere. It cost three
+  # days once; say so plainly rather than mentioning only Gatekeeper.
+  cat >&2 <<'WARN'
+⚠ APPLE_SIGNING_IDENTITY unset — building UNSIGNED.
+  Gatekeeper will warn, and — the expensive part — the collector will be ad-hoc
+  signed. macOS ties its Full Disk Access and Accessibility grants to this exact
+  build, so the next rebuild voids them SILENTLY: the switches stay on while
+  every read fails. `virtues-collector install` refuses such a build unless you
+  pass --force.
+WARN
 fi
 
 ( cd "$REPO_ROOT/apps/web" && "$TAURI_BIN" build )

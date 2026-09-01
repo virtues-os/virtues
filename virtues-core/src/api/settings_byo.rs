@@ -10,7 +10,7 @@
 //! predicate, so all seven AI callers are covered without opting in:
 //! `agent/stream.rs`, `api/compaction.rs`, `api/day_summary.rs`,
 //! `api/image_gen.rs`, `api/entity_article_gen.rs`,
-//! `api/narrative_identity_gen.rs`, `api/chats.rs`, plus the
+//! `api/narrative_draft.rs`, `api/chats.rs`, plus the
 //! `transcription_resolution` applet.
 //!
 //! Until 2026-08-05 only `stream()` honored the key and the other seven
@@ -41,8 +41,8 @@
 //! another gateway may spell differently, and audio rides as an `image_url`
 //! data-URI, which is a Vercel quirk that OpenRouter will reject. Per-slot
 //! model ids and a per-route audio encoder fix them —
-//! `docs/byo-ai-plan.md` phases 2 and 3. The Billing UI and
-//! `docs/virtues-api.md` are now true as written.
+//! `agents/plan/byo-ai-plan.md` phases 2 and 3. The Billing UI and
+//! `agents/record/virtues-api.md` are now true as written.
 //!
 //! The key is stored as a `credentials` row with `source_id = "__byo_ai_key__"`,
 //! encrypted at rest via the same `TokenEncryptor` that protects every other

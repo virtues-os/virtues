@@ -221,11 +221,14 @@ pub async fn build_hourly_context(
     }
 
     // Web browsing
+    // Ordered by recency: `visit_duration_seconds` was the old sort key, but
+    // no collector has ever written it, so every row was NULL and the "top 5"
+    // was arbitrary. The mac collector records visit instants, not dwell.
     if let Ok(rows) = sqlx::query(
-        r#"SELECT url, page_title, visit_duration_seconds
+        r#"SELECT url, page_title
            FROM data_activity_web_browsing
            WHERE occurred_at >= $1 AND occurred_at < $2
-           ORDER BY visit_duration_seconds DESC
+           ORDER BY occurred_at DESC
            LIMIT 5"#,
     )
     .bind(window_start)
@@ -235,44 +238,25 @@ pub async fn build_hourly_context(
     {
         let items: Vec<String> = rows.iter().filter_map(|r| {
             let title: Option<String> = r.try_get("page_title").ok().flatten();
-            let dur: Option<i32> = r.try_get("visit_duration_seconds").ok().flatten();
-            let display = title.unwrap_or_else(|| {
-                r.try_get::<Option<String>, _>("url").ok().flatten().unwrap_or_default()
-            });
+            let display = match title {
+                Some(t) => t,
+                // `url` is NOT NULL, so a failed read is a rename/decode bug,
+                // never an empty page — defaulting it to "" would silently
+                // drop every row and the WEB section with them.
+                None => match r.try_get::<String, _>("url") {
+                    Ok(u) => u,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "web-browsing url failed to decode — row dropped from context");
+                        return None;
+                    }
+                },
+            };
             if display.is_empty() { return None; }
-            let mut s = format!("- {}", truncate(&display, 60));
-            if let Some(d) = dur { s.push_str(&format!(" ({}s)", d)); }
+            let s = format!("- {}", truncate(&display, 60));
             Some(s)
         }).collect();
         if !items.is_empty() {
             sections.push(format!("WEB:\n{}", items.join("\n")));
-        }
-    }
-
-    // Listening (Spotify etc)
-    if let Ok(rows) = sqlx::query(
-        r#"SELECT track_name, artist_name
-           FROM data_activity_listening
-           WHERE occurred_at >= $1 AND occurred_at < $2
-           ORDER BY occurred_at
-           LIMIT 5"#,
-    )
-    .bind(window_start)
-    .bind(window_end)
-    .fetch_all(pool)
-    .await
-    {
-        let items: Vec<String> = rows.iter().filter_map(|r| {
-            let track: String = r.try_get("track_name").ok()?;
-            let artist: Option<String> = r.try_get("artist_name").ok().flatten();
-            if let Some(a) = artist {
-                Some(format!("- {} by {}", track, a))
-            } else {
-                Some(format!("- {}", track))
-            }
-        }).collect();
-        if !items.is_empty() {
-            sections.push(format!("LISTENING:\n{}", items.join("\n")));
         }
     }
 
