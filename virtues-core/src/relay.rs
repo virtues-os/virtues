@@ -209,21 +209,10 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
                 return;
             }
         };
-        // Tell atlas our EndpointId BEFORE binding. The relay authorizes by
-        // endpoint id (atlas `relay_authorize` joins `iroh_endpoints` against an
-        // active subscription), and iroh's relay actor starts connecting the
-        // instant the endpoint binds — so registering afterwards loses a race it
-        // cannot win. Measured on hardware 2026-08-12, on the very first link:
-        // bind at :50.598, six "the relay denied our authentication" at
-        // :53.8–:55.6, and our registration only at :55.6 — by which time iroh
-        // had exhausted its initial retries and the box sat relay-less until a
-        // restart. It bit exactly once per box, on the first link, which is the
-        // moment the whole account step exists to make work.
-        //
-        // The id is derivable without binding (it is the secret's public half),
-        // so there is no chicken-and-egg here — only an ordering mistake.
+        // The EndpointId is the secret's public half, so it is known without
+        // binding. Set it now: pairing advertises this box's reach ticket from
+        // it, and should not have to wait for the endpoint to come up.
         set_box_endpoint_id(&secret.public().to_string());
-        report_endpoints(&db).await;
 
         let mut bind_backoff: u64 = 1;
         loop {
@@ -271,10 +260,6 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
             let ep_handle = endpoint.clone();
 
             let allow = load_allowlist(&db).await;
-            // Register this box + its paired devices with atlas BEFORE homing on the
-            // relay, so the relay's active-sub gate already recognises the box when it
-            // connects (best-effort; the periodic reconcile below retries).
-            report_endpoints(&db).await;
             // Serve the existing axum app over iroh. Hold the router handle until a
             // rebind (dropping it aborts the accept loop).
             let router = serve(endpoint, app.clone(), allow);
@@ -483,37 +468,6 @@ async fn load_allowlist(db: &PgPool) -> Arc<dyn AllowPolicy> {
     Arc::new(allow)
 }
 
-/// Report this box's EndpointId + its paired devices' EndpointIds to atlas.
-/// Since the relay opened (open-relay-plan, 2026-08-31) nothing gates on this
-/// registry — the `/relay/authorize` callout it fed is deleted — so it is an
-/// informational fleet map, kept because shipped boxes call it. Best-effort.
-pub async fn report_endpoints(db: &PgPool) {
-    report_endpoints_with(db, &allowed_ids(db).await).await;
-}
-
-/// As [`report_endpoints`], but reusing an allowlist already read from the DB so
-/// callers that just fetched it (e.g. [`after_pairing_change`]) don't query twice.
-async fn report_endpoints_with(db: &PgPool, device_ids: &[EndpointId]) {
-    let Some(box_id) = box_endpoint_id() else { return };
-    let Ok(Some(api_key)) = crate::virtues_api::renew::read_api_key(db).await else { return };
-    let mut endpoint_ids = vec![box_id];
-    for id in device_ids {
-        endpoint_ids.push(id.to_string());
-    }
-    let http = crate::http_client::virtues_api_client();
-    let atlas = crate::virtues_api::atlas_url();
-    let resp = http
-        .post(format!("{}/iroh/register", atlas.trim_end_matches('/')))
-        .json(&serde_json::json!({ "api_key": api_key, "endpoint_ids": endpoint_ids }))
-        .send()
-        .await;
-    match resp {
-        Ok(r) if r.status().is_success() => tracing::debug!("iroh endpoints registered with atlas"),
-        Ok(r) => tracing::debug!(status = %r.status(), "iroh endpoint register non-success"),
-        Err(e) => tracing::debug!(error = %e, "iroh endpoint register skipped"),
-    }
-}
-
 /// Fire-and-forget reconcile after a pairing or revocation. Non-blocking so the
 /// pairing handlers don't wait on the atlas round-trip.
 pub fn after_pairing_change(db: PgPool) {
@@ -527,19 +481,15 @@ pub fn after_pairing_change(db: PgPool) {
 /// revocation:
 ///   1. relay config present (self-heal a late / failed claim-time fetch)
 ///   2. iroh allowlist == non-revoked device keys (hot-swapped into `serve`)
-///   3. atlas knows our box + device EndpointIds (the relay active-sub gate)
-///   4. model files present (health signal only — the installer owns fetching)
+///   3. model files present (health signal only — the installer owns fetching)
 pub async fn reconcile(db: &PgPool) {
     ensure_relay_config(db).await;
 
-    // Read the allowlist once, use it for BOTH the local hot-swap and the atlas
-    // report (same set — no reason to query twice).
     let ids = allowed_ids(db).await;
     if let Some(allow) = ALLOW.get() {
         tracing::debug!(count = ids.len(), "iroh allowlist refreshed");
-        allow.replace(ids.clone());
+        allow.replace(ids);
     }
-    report_endpoints_with(db, &ids).await;
 
     let report = crate::inference_report::resolution_report();
     let missing = report.missing();

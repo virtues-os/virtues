@@ -36,6 +36,11 @@ What remains true, and is the part worth defending:
   It never stores prompts, completions, or any personal data.
 - **The proxy knows nothing about people** on its own. It needs Atlas to turn an
   account into a person.
+- **No map from a network identity to an account.** Atlas once held
+  `iroh_endpoints` — every box's and every paired device's EndpointId, keyed to
+  the account, refreshed on each pairing change — to answer the relay's
+  admission callout. Callout and table are both deleted (migration 0018), so
+  relay metadata no longer joins to a customer at all.
 
 What is *not* true today, and must not be claimed:
 
@@ -187,8 +192,13 @@ v2 is written down rather than dropped.
 - `POST /webhooks/stripe` — maintains subscription status; drives renewal
   crediting (signature-verified, idempotent)
 - `POST /init/*`, `GET /init/poll` — box link/login session dance
-- `POST /iroh/register`, `GET /relay/config`, `POST /relay/authorize` — reach
-  control plane (see [`relay-control-plane.md`](relay-control-plane.md))
+- `POST /relay/config` — the box learns which relay to home on. Reach is NOT
+  entitlement-gated: the relay admits everyone and defends itself with rate
+  limits, so any linked box may ask (open-relay-plan, 2026-08-31).
+  `POST /relay/authorize` and `POST /iroh/register` are deleted — the
+  admission callout and the EndpointId→account registry that fed it. Design
+  reasoning, superseded by the iroh pivot, in
+  [`../archive/relay-control-plane.md`](../archive/relay-control-plane.md)
 - `POST /diag/install`, `POST /diag/crash` — diagnostic beacons
 - `GET /health`
 
