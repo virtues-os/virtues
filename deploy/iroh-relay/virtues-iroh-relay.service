@@ -5,9 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Bearer for the atlas access callout — must equal atlas VIRTUES_RELAY_AUTH_SECRET.
-# File holds: IROH_RELAY_HTTP_BEARER_TOKEN=<secret>
-EnvironmentFile=/etc/iroh-relay/relay.env
+# Optional env overrides. This used to be REQUIRED, to carry
+# IROH_RELAY_HTTP_BEARER_TOKEN for the atlas access callout — that callout is
+# gone (open admission; see config.toml), so a clean install needs no secret
+# here and usually no file at all. Leading `-` so a missing file is not a
+# startup failure.
+EnvironmentFile=-/etc/iroh-relay/relay.env
 ExecStart=/usr/local/bin/iroh-relay --config-path /etc/iroh-relay/config.toml
 Restart=on-failure
 RestartSec=3
