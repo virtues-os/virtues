@@ -16,6 +16,27 @@ use crate::auth::error::{AuthError, Result};
 
 const DEFAULT_PROXY_URL: &str = "https://auth.virtues.com";
 
+/// Client for proxy calls, self-sufficient about the rustls CryptoProvider:
+/// reqwest here is `rustls-tls-no-provider`, and this crate is linked into
+/// standalone applet binaries whose `main` installs no provider — a bare
+/// `Client::new()` panics "No provider set" there. Install ring ourselves
+/// (idempotent; a second install errors harmlessly) instead of relying on
+/// the host process having done it.
+///
+/// The timeout matters beyond the cron: `ensure_fresh` is also the
+/// just-in-time path the action runner takes before every dispatch, so a
+/// hung proxy call without one would wedge a sync forever.
+fn client() -> reqwest::Client {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .expect("failed to build reqwest client")
+}
+
 /// Resolve the OAuth proxy base URL. Reads `VIRTUES_OAUTH_PROXY_URL` if set
 /// (with any trailing slash trimmed), otherwise falls back to the first-party
 /// proxy at `https://auth.virtues.com`.
@@ -67,7 +88,7 @@ pub async fn proxy_exchange(
     exchange_token: &str,
 ) -> Result<ProxyExchangeResponse> {
     let url = format!("{}/{source_id}/exchange/{exchange_token}", proxy_url());
-    let resp = reqwest::Client::new()
+    let resp = client()
         .post(&url)
         .send()
         .await
@@ -98,7 +119,7 @@ pub async fn proxy_refresh(
     refresh_token: &str,
 ) -> Result<ProxyExchangeResponse> {
     let url = format!("{}/{source_id}/refresh", proxy_url());
-    let resp = reqwest::Client::new()
+    let resp = client()
         .post(&url)
         .json(&serde_json::json!({ "refresh_token": refresh_token }))
         .send()
