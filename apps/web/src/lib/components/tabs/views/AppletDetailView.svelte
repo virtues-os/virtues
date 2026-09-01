@@ -22,6 +22,9 @@
 		type PatchAppletBody
 	} from '$lib/api/client';
 	import { relativeTime, describeSchedule } from '$lib/applets/palette';
+	import { sourcesStore } from '$lib/stores/sources.svelte';
+	import { explainRunError } from '$lib/sources/run-errors';
+	import { isTauri } from '$lib/utils/platform';
 
 	let { tab }: { tab: Tab; active: boolean } = $props();
 
@@ -92,6 +95,24 @@
 	});
 
 	const triggers = $derived(action?.triggers ?? []);
+
+	// The collector's current self-report, for pinning a failed run's bare
+	// "Permission denied" to a named macOS permission (sources/run-errors.ts).
+	// Only device-anchored applets have a collector; the store already blanks
+	// `denied` when the report is stale, so this never asserts from a frozen
+	// snapshot.
+	$effect(() => {
+		if (action?.device_id) void sourcesStore.load();
+	});
+	const collectorDenied = $derived(
+		action?.device_id
+			? (sourcesStore.connections.find((c) => c.id === action?.device_id)?.denied ?? [])
+			: []
+	);
+	// Same relaxation DevicesView chose for its fix button: the deep link opens
+	// THIS machine's settings, so it appears only in the native app and the
+	// label says "this Mac" rather than pretending to reach the device.
+	const canFix = $derived(isTauri);
 
 	// Lifecycle, in words rather than a raw SQL string.
 	const lifecycle = $derived.by(() => {
@@ -688,7 +709,30 @@
 									<p class="run-summary">{e.summary}</p>
 								{/if}
 								{#if e.error}
-									<p class="run-error">{e.error}</p>
+									<!-- A permission failure is a checkbox in System Settings,
+									     not a stack trace: name the condition and the fix, and
+									     keep the OS's sentence beneath it as evidence rather
+									     than as the whole message. Unclassified errors still
+									     print raw — a wrong remedy is worse than none. -->
+									{@const why = explainRunError(e.error, collectorDenied)}
+									{#if why}
+										<div class="run-why">
+											<p class="run-why-title">
+												<Icon icon="ri:lock-line" width="12" />
+												{why.title}
+											</p>
+											<p class="run-why-remedy">{why.remedy}</p>
+											{#if canFix && why.open}
+												<button class="run-why-fix" onclick={() => why.open?.()}>
+													<Icon icon="ri:external-link-line" width="12" />
+													Open {why.label} on this Mac
+												</button>
+											{/if}
+											<p class="run-error run-why-detail">{e.error}</p>
+										</div>
+									{:else}
+										<p class="run-error">{e.error}</p>
+									{/if}
 								{/if}
 								{#if e.occurrences > 1 && e.first_at}
 									<p class="run-span">
@@ -1118,6 +1162,45 @@
 		font-size: 0.75rem;
 		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-family: var(--font-mono, monospace);
+	}
+	.run-why {
+		margin: 0.375rem 0 0;
+		padding: 0.375rem 0.5rem;
+		border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+		background: var(--color-warning-subtle);
+		border-radius: 6px;
+	}
+	.run-why-title {
+		margin: 0;
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--color-foreground);
+	}
+	.run-why-remedy {
+		margin: 0.125rem 0 0;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted, #4b5563);
+	}
+	.run-why-fix {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		margin-top: 0.375rem;
+		padding: 0.2rem 0.5rem;
+		font: inherit;
+		font-size: 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface);
+		color: var(--color-foreground);
+		cursor: pointer;
+	}
+	/* The OS's own sentence, demoted to evidence under the named condition. */
+	.run-why-detail {
+		opacity: 0.65;
 	}
 
 	.muted {
