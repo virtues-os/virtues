@@ -32,14 +32,11 @@ pub struct UpdateProfileRequest {
     pub onboarding_status: Option<String>,
     // Preferences
     pub theme: Option<String>,
-    /// Timezone of the box's physical home location (IANA). See docs/timezone-model.md.
+    /// Timezone of the box's physical home location (IANA). See agents/record/timezone-model.md.
     pub home_timezone: Option<String>,
-    // Discovery context
-    pub crux: Option<String>,
-    pub technology_vision: Option<String>,
-    pub pain_point_primary: Option<String>,
-    pub pain_point_secondary: Option<String>,
-    pub excited_features: Option<serde_json::Value>,
+    /// Getting-started sections dismissed from Home. The full array each time —
+    /// the client owns the merge, the box just remembers it.
+    pub getting_started_dismissed: Option<Vec<String>>,
 }
 
 /// Get the user's profile (singleton row)
@@ -86,11 +83,7 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     if request.onboarding_status.is_some()     { push("onboarding_status", &mut set_clauses, &mut next); }
     if request.theme.is_some()                 { push("theme", &mut set_clauses, &mut next); }
     if request.home_timezone.is_some()         { push("home_timezone", &mut set_clauses, &mut next); }
-    if request.crux.is_some()                  { push("crux", &mut set_clauses, &mut next); }
-    if request.technology_vision.is_some()     { push("technology_vision", &mut set_clauses, &mut next); }
-    if request.pain_point_primary.is_some()    { push("pain_point_primary", &mut set_clauses, &mut next); }
-    if request.pain_point_secondary.is_some()  { push("pain_point_secondary", &mut set_clauses, &mut next); }
-    if request.excited_features.is_some()      { push("excited_features", &mut set_clauses, &mut next); }
+    if request.getting_started_dismissed.is_some() { push("getting_started_dismissed", &mut set_clauses, &mut next); }
 
     if set_clauses.is_empty() {
         // No updates requested, just return current profile
@@ -148,19 +141,7 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     if let Some(ref v) = request.home_timezone {
         query_builder = query_builder.bind(v);
     }
-    if let Some(ref v) = request.crux {
-        query_builder = query_builder.bind(v);
-    }
-    if let Some(ref v) = request.technology_vision {
-        query_builder = query_builder.bind(v);
-    }
-    if let Some(ref v) = request.pain_point_primary {
-        query_builder = query_builder.bind(v);
-    }
-    if let Some(ref v) = request.pain_point_secondary {
-        query_builder = query_builder.bind(v);
-    }
-    if let Some(ref v) = request.excited_features {
+    if let Some(ref v) = request.getting_started_dismissed {
         query_builder = query_builder.bind(v);
     }
 
@@ -190,7 +171,7 @@ pub async fn get_display_name(db: &PgPool) -> Result<String> {
 /// `home_timezone` is the timezone of the box's physical location — a stable
 /// anchor + fallback floor, NOT the owner's current location. The per-day
 /// "where the owner was" timezone lives on `wiki_days.start_timezone`.
-/// See docs/timezone-model.md.
+/// See agents/record/timezone-model.md.
 ///
 /// Returns `None` until [`ensure_home_timezone`] has seeded it (run once at
 /// startup); callers fall back to UTC at the boundary in the meantime.

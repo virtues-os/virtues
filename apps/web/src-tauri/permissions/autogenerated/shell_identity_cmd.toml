@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-shell-identity-cmd"
+description = "Enables the shell_identity_cmd command without any pre-configured scope."
+commands.allow = ["shell_identity_cmd"]
+
+[[permission]]
+identifier = "deny-shell-identity-cmd"
+description = "Denies the shell_identity_cmd command without any pre-configured scope."
+commands.deny = ["shell_identity_cmd"]

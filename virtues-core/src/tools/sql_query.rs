@@ -98,7 +98,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_calendar_event", TableMetadata {
         description: "Calendar events with attendees and location",
         category: "calendar",
-        key_columns: &["title", "description", "calendar_name", "event_type", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "conference_url", "started_at", "ended_at", "is_all_day", "timezone"],
+        key_columns: &["title", "description", "calendar_name", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "started_at", "ended_at", "is_all_day"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_calendar_event' AND er.source_id = data_calendar_event.id"),
     });
 
@@ -108,7 +108,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_financial_account", TableMetadata {
         description: "Bank, credit, and investment accounts",
         category: "financial",
-        key_columns: &["account_name", "account_type", "institution_name", "mask", "currency", "current_balance", "available_balance", "credit_limit", "is_active"],
+        key_columns: &["account_name", "account_type", "institution_name", "mask", "currency", "current_balance", "available_balance"],
         join_hint: None,
     });
     m.insert("data_financial_transaction", TableMetadata {
@@ -136,13 +136,13 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_activity_app_session", TableMetadata {
         description: "Desktop/mobile app usage sessions",
         category: "activity",
-        key_columns: &["app_name", "app_bundle_id", "app_category", "started_at", "ended_at", "window_title", "url"],
+        key_columns: &["app_name", "app_bundle_id", "started_at", "ended_at", "window_title"],
         join_hint: None,
     });
     m.insert("data_activity_web_browsing", TableMetadata {
         description: "Web browsing history",
         category: "activity",
-        key_columns: &["url", "domain", "page_title", "visit_duration_seconds", "occurred_at"],
+        key_columns: &["url", "domain", "page_title", "occurred_at"],
         join_hint: None,
     });
 
@@ -152,19 +152,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_content_document", TableMetadata {
         description: "Saved documents and notes",
         category: "content",
-        key_columns: &["title", "content", "content_summary", "document_type", "tags", "is_authored", "occurred_at", "last_modified_time"],
+        key_columns: &["title", "content", "document_type", "tags", "is_authored", "occurred_at", "last_modified_time"],
         join_hint: None,
     });
     m.insert("data_content_conversation", TableMetadata {
         description: "Past AI chat conversation history",
         category: "content",
-        key_columns: &["conversation_id", "message_id", "role", "content", "model", "provider", "occurred_at"],
+        key_columns: &["conversation_id", "message_id", "role", "content", "provider", "occurred_at"],
         join_hint: None,
     });
     m.insert("data_content_bookmark", TableMetadata {
         description: "Saved/starred content (GitHub stars, browser bookmarks, etc.)",
         category: "content",
-        key_columns: &["url", "title", "description", "source_platform", "bookmark_type", "content_type", "author", "tags", "occurred_at"],
+        key_columns: &["url", "title", "description", "source_platform", "bookmark_type", "author", "tags", "occurred_at"],
         join_hint: None,
     });
 
@@ -226,9 +226,9 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         join_hint: None,
     });
     m.insert("wiki_narrative_identity", TableMetadata {
-        description: "The owner's own account of who they are, drafted from the narrative interview",
+        description: "The distilled core of the owner's own account of who they are — the few lines carried into every chat. The full document is a wiki article (subject_type 'narrative_identity') whose prose lives in its page",
         category: "wiki",
-        key_columns: &["content", "active", "drafted_at"],
+        key_columns: &["content", "drafted_at"],
         join_hint: None,
     });
     m.insert("wiki_rules", TableMetadata {
@@ -237,31 +237,25 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         key_columns: &["rule", "kind", "active"],
         join_hint: None,
     });
-    m.insert("wiki_narrative_interview", TableMetadata {
-        description: "The owner's answers to the narrative interview questions",
-        category: "wiki",
-        key_columns: &["question_id", "answer", "word_count", "completed_at"],
-        join_hint: None,
-    });
     // ============================================================================
     // WIKI TABLES - Entities (resolved nouns)
     // ============================================================================
     m.insert("wiki_people", TableMetadata {
         description: "Resolved people in user's life",
         category: "wiki_entity",
-        key_columns: &["name", "emails", "phones", "relationship_category", "nickname", "notes", "first_seen", "last_seen", "ref_count", "birthday"],
+        key_columns: &["name", "emails", "phones", "relationship_category", "nickname", "notes", "first_seen", "last_seen", "seen_count", "birthday"],
         join_hint: None,
     });
     m.insert("wiki_places", TableMetadata {
         description: "Resolved places in user's life",
         category: "wiki_entity",
-        key_columns: &["name", "category", "address", "latitude", "longitude", "radius_m", "ref_count", "first_seen", "last_seen"],
+        key_columns: &["name", "category", "address", "latitude", "longitude", "radius_m", "seen_count", "first_seen", "last_seen"],
         join_hint: None,
     });
     m.insert("wiki_orgs", TableMetadata {
         description: "Organizations in user's life",
         category: "wiki_entity",
-        key_columns: &["name", "organization_type", "relationship_type", "role_title", "start_date", "end_date", "ref_count", "first_seen", "last_seen"],
+        key_columns: &["name", "organization_type", "relationship_type", "role_title", "start_date", "end_date", "seen_count", "first_seen", "last_seen"],
         join_hint: None,
     });
 
@@ -273,6 +267,17 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "wiki_temporal",
         key_columns: &["date", "start_timezone", "last_edited_by"],
         join_hint: Some("JOIN wiki_day_prose ON wiki_day_prose.day_id = wiki_days.id"),
+    });
+    // A VIEW, not a table — and cataloged on purpose. The wiki_days entry
+    // above instructs a JOIN on it, and the fence in get_schema refuses
+    // anything outside this catalog, so omitting it meant the model was told
+    // to join a relation it was then refused a schema for. list_tables
+    // includes views for the same reason.
+    m.insert("wiki_day_prose", TableMetadata {
+        description: "VIEW: each day's narrated prose (day_id, date, prose). The text of a day page.",
+        category: "wiki_temporal",
+        key_columns: &["day_id", "date", "prose"],
+        join_hint: Some("JOIN wiki_days ON wiki_days.id = wiki_day_prose.day_id"),
     });
     m.insert("wiki_events", TableMetadata {
         description: "Timeline events within a day",
@@ -364,17 +369,22 @@ impl SqlQueryTool {
         // Get all queryable tables: data_*, wiki_*
         let rows = sqlx::query(
             r#"
-            SELECT tablename AS name FROM pg_tables
-            WHERE schemaname = 'public' AND (
-                tablename LIKE 'data_%'
-                OR tablename LIKE 'wiki_%'
-            )
+            SELECT name FROM (
+                SELECT tablename AS name FROM pg_tables
+                WHERE schemaname = 'public'
+                UNION ALL
+                -- Views too: wiki_day_prose is where a day's text lives, and a
+                -- relation the catalog instructs a JOIN on must be listable.
+                SELECT viewname AS name FROM pg_views
+                WHERE schemaname = 'public'
+            ) rels
+            WHERE name LIKE 'data_%' OR name LIKE 'wiki_%'
             ORDER BY
                 CASE
-                    WHEN tablename LIKE 'data_%' THEN 1
-                    WHEN tablename LIKE 'wiki_%' THEN 2
+                    WHEN name LIKE 'data_%' THEN 1
+                    WHEN name LIKE 'wiki_%' THEN 2
                 END,
-                tablename
+                name
             "#,
         )
         .fetch_all(self.pool.as_ref())
@@ -854,6 +864,93 @@ mod tests {
         ids.iter()
             .map(|id| serde_json::json!({ "id": id, "body": "hi" }))
             .collect()
+    }
+
+    /// The repo has TWO hand-maintained lists of what the model can see:
+    /// `registered_ontologies()` (drives search, lifeline, day sources) and
+    /// this file's `get_table_metadata()` (the SQL catalog the model reads at
+    /// runtime). They were maintained independently and disagreed in both
+    /// directions — `data_activity_listening` was a registry citizen the SQL
+    /// tool had never heard of, while five catalog tables were invisible to
+    /// the registry. Every divergence is now a named decision, in the mold of
+    /// `entities.rs::every_data_table_participates_or_is_exempted`.
+    #[test]
+    fn registry_and_sql_catalog_agree_or_divergence_is_named() {
+        use std::collections::BTreeSet;
+
+        /// In the registry, deliberately NOT in the SQL catalog. Reason required.
+        /// (Empty since R4 removed data_activity_listening with its table.)
+        const REGISTRY_ONLY: &[(&str, &str)] = &[];
+        /// In the SQL catalog, deliberately NOT in the registry. Reason required.
+        const CATALOG_ONLY: &[(&str, &str)] = &[
+            (
+                "data_audio_recording",
+                "the audio blob itself — indexed via its transcription; \
+                 cataloged so the agent can count/join recordings",
+            ),
+            (
+                "data_financial_asset",
+                "GAP: collected, no lane/measure; cataloged so SQL can reach it",
+            ),
+            (
+                "data_financial_liability",
+                "GAP: collected, no lane/measure; cataloged so SQL can reach it",
+            ),
+            (
+                "data_health_active_energy",
+                "GAP: collected, no lane/measure; cataloged so SQL can reach it",
+            ),
+            (
+                "data_health_distance",
+                "GAP: collected, no lane/measure; cataloged so SQL can reach it",
+            ),
+        ];
+
+        let registry: BTreeSet<&str> = virtues_registry::ontologies::registered_ontologies()
+            .iter()
+            .map(|d| d.table_name)
+            .filter(|t| t.starts_with("data_"))
+            .collect();
+        let catalog: BTreeSet<&str> = get_table_metadata()
+            .keys()
+            .copied()
+            .filter(|t| t.starts_with("data_"))
+            .collect();
+
+        let mut unexplained: Vec<String> = Vec::new();
+        for t in registry.difference(&catalog) {
+            if !REGISTRY_ONLY.iter().any(|(name, _)| name == t) {
+                unexplained.push(format!(
+                    "{t}: in the registry but not the SQL catalog — add a \
+                     get_table_metadata entry or a named REGISTRY_ONLY reason"
+                ));
+            }
+        }
+        for t in catalog.difference(&registry) {
+            if !CATALOG_ONLY.iter().any(|(name, _)| name == t) {
+                unexplained.push(format!(
+                    "{t}: in the SQL catalog but not the registry — add a \
+                     descriptor or a named CATALOG_ONLY reason"
+                ));
+            }
+        }
+        // Stale allowlist entries are drift too: an explanation for a
+        // divergence that no longer exists reads as if it still does.
+        for (t, _) in REGISTRY_ONLY {
+            if !registry.contains(t) || catalog.contains(t) {
+                unexplained.push(format!("stale REGISTRY_ONLY entry: {t}"));
+            }
+        }
+        for (t, _) in CATALOG_ONLY {
+            if !catalog.contains(t) || registry.contains(t) {
+                unexplained.push(format!("stale CATALOG_ONLY entry: {t}"));
+            }
+        }
+        assert!(
+            unexplained.is_empty(),
+            "the two model-facing table lists disagree without explanation:\n  {}",
+            unexplained.join("\n  ")
+        );
     }
 
     fn ref_of(row: &serde_json::Value) -> Option<&str> {

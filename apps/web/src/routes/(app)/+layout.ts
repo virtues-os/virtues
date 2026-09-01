@@ -64,8 +64,8 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// the second gate must be a door, not a wall — and a door that asks
 		// again every launch is a wall with extra steps.
 		//
-		// /onboarding lives in the (onboarding) route group with its own layout,
-		// so neither redirect can loop.
+		// /founders-letter lives in the (onboarding) route group with its own
+		// layout, so neither redirect can loop.
 		// RETRY, because "couldn't ask" is not "nothing to do".
 		//
 		// This runs the instant the desktop app hands over after pairing, when
@@ -95,12 +95,12 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 			}
 			if (setup) {
 				if (setup.setup_complete === false) {
-					throw redirect(303, '/onboarding');
+					throw redirect(303, '/founders-letter');
 				}
 				// `active` covers both finished and dismissed, which is the whole
 				// reason it replaced a separate skipped flag.
 				if (setup.onboarding_complete === false && setup.onboarding_status !== 'active') {
-					throw redirect(303, '/onboarding');
+					throw redirect(303, '/founders-letter');
 				}
 			}
 		} catch (e) {

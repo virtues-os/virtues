@@ -10,8 +10,10 @@
 //!
 //! Context-gated HR/HRV composite:
 //!   Physical events (HR > resting + 2σ):  autonomic_z = hr_z
-//!   Sedentary events:                     autonomic_z = 0.3*hr_z + 0.7*(-hrv_z)
-//!   Sleep events:                         autonomic_z = -hrv_z
+//!   Sedentary events:                     autonomic_z = hr_z (an -hrv_z term
+//!       was intended but never computed; its column was dropped 2026-08-28 —
+//!       if HRV scoring ever lands, the column returns WITH its writer)
+//!   Sleep events:                         autonomic_z = -hr_z
 //!
 //! See /DAYLINE_AUTONOMIC_DESIGN.md for full design rationale.
 
@@ -166,7 +168,8 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
         // When HRV data is available in the future, this will be enhanced
         let is_physical = *avg_hr > physical_threshold;
         let autonomic_z = if *is_sleep {
-            // Sleep: would use -hrv_z, but for now use -hr_z (inverted — lower HR = more recovery)
+            // Sleep: -hr_z, inverted — lower HR = more recovery. (An HRV-based
+            // score was intended; its never-written column was dropped 2026-08-28.)
             (-hr_z).max(-Z_MAX).min(Z_MAX)
         } else if is_physical {
             // Physical activity: HR tells the whole story

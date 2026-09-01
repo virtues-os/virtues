@@ -276,9 +276,9 @@ pub async fn archive(
     let inserted: Option<(String,)> = sqlx::query_as(
         "INSERT INTO lake_objects (
              id, kind, storage_key, provider, source_id, stream_name,
-             record_count, size_bytes, sha256, content_encoding,
+             record_count, size_bytes, sha256,
              min_timestamp, max_timestamp, metadata
-         ) VALUES ($1, 'raw_stream', $2, $3, $4, $5, $6, $7, $8, 'none', $9, $10, $11)
+         ) VALUES ($1, 'raw_stream', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (sha256) WHERE kind = 'raw_stream' DO NOTHING
          RETURNING id",
     )
@@ -406,8 +406,8 @@ pub async fn put_media(
     sqlx::query(
         "INSERT INTO lake_objects (
              id, kind, storage_key, provider, source_id, stream_name,
-             record_count, size_bytes, sha256, content_encoding
-         ) VALUES ($1, 'media', $2, $3, $3, $4, 0, $5, $6, 'none')
+             record_count, size_bytes, sha256
+         ) VALUES ($1, 'media', $2, $3, $3, $4, 0, $5, $6)
          ON CONFLICT (storage_key) DO NOTHING",
     )
     .bind(Uuid::new_v4().to_string())

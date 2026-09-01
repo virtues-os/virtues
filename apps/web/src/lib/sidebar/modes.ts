@@ -43,30 +43,40 @@ export const SETTINGS_MODE: SidebarMode = {
 			icon: 'ri:sparkling-line',
 			href: '/virtues/assistant',
 		},
-		{ id: 'billing', label: 'Billing', icon: 'ri:bank-card-line', href: '/virtues/billing' },
-		// Was "Telemetry", filed under Developer. It is the user's own AI spend
-		// and what the box has been running — not something anyone sends
-		// anywhere, and not a developer console.
-		{ id: 'usage', label: 'Usage', icon: 'ri:pulse-line', href: '/virtues/usage' },
+		// The full gateway catalog as a table — prices, capabilities, retention.
+		// Assistant keeps the per-slot pickers (the pinning control); this is
+		// the room for comparing ~240 models, which no dropdown can host.
+		{ id: 'models', label: 'Models', icon: 'ri:cpu-line', href: '/virtues/models' },
+		// Billing and Usage were two rows answering one question. The balance
+		// sat on one page and the calls that drew it down on another, so
+		// neither could answer "is that number going where I think it is?" —
+		// which is the only reason anyone opens either. (Usage was "Telemetry"
+		// under Developer before that: it is the owner's own AI spend, not a
+		// developer console, and nothing about it is sent anywhere.)
+		{ id: 'plan', label: 'Plan', icon: 'ri:bank-card-line', href: '/virtues/plan' },
 		// Was one door, "Box", which was a container rather than a subject: it
 		// stacked a Wi-Fi picker, an update installer, an 8-chapter telemetry
 		// console and a revoke-everything button on one scroll, and two of those
 		// duplicated chapters of the console below them. Three subjects, three
 		// doors — the machine, its connection, and the code it runs.
+		// System owns the machine itself and everything physically attached to
+		// it: its readings, the network it is on, the screen bolted to it.
+		// Network and Display were their own rows and are now pages UNDER this
+		// one (/virtues/system/network, /virtues/system/display) — one row in
+		// the sidebar, still a page each, because appending four chapters of
+		// screen settings to eight of telemetry makes a scroll nobody reads.
 		{ id: 'system', label: 'System', icon: 'ri:server-line', href: '/virtues/system' },
-		{ id: 'network', label: 'Network', icon: 'ri:wifi-line', href: '/virtues/network' },
-		{
-			id: 'software',
-			label: 'Software',
-			// A package, not a download. The point of naming this section
-			// "Software" rather than "Updates" was that it stays true when
-			// nothing is pending — a download-cloud glyph put the pending state
-			// back into the nav permanently, which is the thing the name avoids.
-			// (The remix icon is called `box-3`; unrelated to the old Box door.)
-			icon: 'ri:box-3-line',
-			href: '/virtues/software',
-		},
+		// Devices owns every participant, and the SERVER is the first of them.
+		// "Software" was its own row describing the release the server runs —
+		// which is a fact about a device, on a page that could not show you the
+		// device. Splitting them is what let a collector claim 1.0.0 next to an
+		// app claiming 1.0.25 with neither screen able to say which was wrong.
 		{ id: 'devices', label: 'Devices', icon: 'ri:device-line', href: '/virtues/devices' },
+		// The screen on the server itself. Its own room, not a page under System:
+		// it is four chapters about a physical panel — what it shows, its hours,
+		// other screens — which is a subject someone comes to deliberately, not a
+		// reading they glance at while checking temperatures.
+		{ id: 'display', label: 'Display', icon: 'ri:tv-2-line', href: '/virtues/display' },
 	],
 };
 

@@ -330,26 +330,62 @@ fn set_box_endpoint_id(eid: &str) {
     }
 }
 
+/// The relay every box homes on unless told otherwise. A compiled-in default,
+/// not a fetched one, because the alternative is the bootstrap problem: a box
+/// cannot fetch the address of the thing it needs in order to be reachable,
+/// and requiring an account link to learn it is the coupling the open-relay
+/// work deleted (open-relay-plan §Work 2). This is the industry-normal shape —
+/// Tailscale bakes its DERP list, Syncthing its relay pool, iroh its n0
+/// relays. What it reveals is only "this pubkey is online at this IP": the
+/// relay is open-admission, e2e-blind, and reports to no one.
+pub const DEFAULT_RELAY_URL: &str = "https://relay.virtues.ch";
+
+/// `VIRTUES_RELAY_URL=off` (or `none`/`disabled`): run relay-less. The off
+/// switch must be an explicit word — an *empty* env var falls through to the
+/// baked default, so "unset" and "off" stay different states.
+fn relay_disabled_by_env(raw: &str) -> bool {
+    matches!(raw.to_ascii_lowercase().as_str(), "off" | "none" | "disabled")
+}
+
 /// Resolve our relay URL: the atlas-provisioned config (stored at claim/link)
-/// first, then the `VIRTUES_RELAY_URL` env fallback (dev/manual). `None` → dev
-/// mode (n0 relays + discovery).
+/// first, then the `VIRTUES_RELAY_URL` env override (or off switch), then —
+/// on a box install only — [`DEFAULT_RELAY_URL`], so a box that never signs
+/// in is still reachable from its first boot. `None` → relay-less.
+///
+/// The default is gated on the box-install marker: a dev checkout on a
+/// laptop must not home on the production relay just because someone ran
+/// `make dev` (same guard, same reasoning as the sudo re-exec in main.rs).
 async fn resolve_relay_url(db: &PgPool) -> Option<RelayUrl> {
     // Self-heal a missing relay config (box claimed before the relay existed, or
     // a claim-time fetch that 503'd) before we bind.
     ensure_relay_config(db).await;
     if let Ok(Some(rc)) = crate::virtues_api::relay::load(db).await {
+        if relay_disabled_by_env(&rc.relay_url) {
+            // The stored config can also carry the off word (Settings writes
+            // it there so the choice survives upgrades and env rewrites).
+            tracing::info!("iroh: relay disabled by stored config");
+            return None;
+        }
         if let Ok(u) = RelayUrl::from_str(&rc.relay_url) {
             return Some(u);
         }
     }
-    let raw = std::env::var("VIRTUES_RELAY_URL").ok().filter(|s| !s.is_empty())?;
-    match RelayUrl::from_str(&raw) {
-        Ok(u) => Some(u),
-        Err(e) => {
-            tracing::warn!(error = %e, url = %raw, "VIRTUES_RELAY_URL is not a valid relay URL — dev mode");
-            None
+    if let Some(raw) = std::env::var("VIRTUES_RELAY_URL").ok().filter(|s| !s.is_empty()) {
+        if relay_disabled_by_env(&raw) {
+            tracing::info!("iroh: relay disabled by VIRTUES_RELAY_URL");
+            return None;
+        }
+        match RelayUrl::from_str(&raw) {
+            Ok(u) => return Some(u),
+            Err(e) => {
+                tracing::warn!(error = %e, url = %raw, "VIRTUES_RELAY_URL is not a valid relay URL — ignoring");
+            }
         }
     }
+    if std::path::Path::new("/var/lib/virtues/virtues.env").exists() {
+        return RelayUrl::from_str(DEFAULT_RELAY_URL).ok();
+    }
+    None
 }
 
 /// Fetch + store this box's relay config from atlas if it isn't stored yet.
@@ -447,8 +483,10 @@ async fn load_allowlist(db: &PgPool) -> Arc<dyn AllowPolicy> {
     Arc::new(allow)
 }
 
-/// Report this box's EndpointId + its paired devices' EndpointIds to atlas so the
-/// relay's active-sub gate (`/relay/authorize`) recognises them. Best-effort.
+/// Report this box's EndpointId + its paired devices' EndpointIds to atlas.
+/// Since the relay opened (open-relay-plan, 2026-08-31) nothing gates on this
+/// registry — the `/relay/authorize` callout it fed is deleted — so it is an
+/// informational fleet map, kept because shipped boxes call it. Best-effort.
 pub async fn report_endpoints(db: &PgPool) {
     report_endpoints_with(db, &allowed_ids(db).await).await;
 }

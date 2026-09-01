@@ -61,9 +61,18 @@ async fn get_settings(
     // Per-box keys first, legacy fallback — via the shared lookup (claim.rs).
     // A DB error is 500, never 401: telling a box its key is dead because a
     // query blipped is the wrong lie (review finding, 2026-08-24).
-    let cid = match super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..]).await {
-        Ok(Some(cid)) => cid,
-        Ok(None) => {
+    let cid = match super::claim::key_owner(&state.pool, &token_hash[..]).await {
+        Ok(super::claim::KeyOwner::Customer(cid)) => cid,
+        // A free account's key is valid; billing state just doesn't exist
+        // yet. 402, never a "revoked key" 401 (claim::KeyOwner).
+        Ok(super::claim::KeyOwner::FreeAccount) => {
+            return err(
+                StatusCode::PAYMENT_REQUIRED,
+                "no_subscription",
+                "no subscription on this account yet",
+            );
+        }
+        Ok(super::claim::KeyOwner::Unknown) => {
             return err(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
@@ -129,9 +138,18 @@ async fn put_settings(
     // Per-box keys first, legacy fallback — via the shared lookup (claim.rs).
     // A DB error is 500, never 401: telling a box its key is dead because a
     // query blipped is the wrong lie (review finding, 2026-08-24).
-    let cid = match super::claim::customer_id_by_key_hash(&state.pool, &token_hash[..]).await {
-        Ok(Some(cid)) => cid,
-        Ok(None) => {
+    let cid = match super::claim::key_owner(&state.pool, &token_hash[..]).await {
+        Ok(super::claim::KeyOwner::Customer(cid)) => cid,
+        // A free account's key is valid; billing state just doesn't exist
+        // yet. 402, never a "revoked key" 401 (claim::KeyOwner).
+        Ok(super::claim::KeyOwner::FreeAccount) => {
+            return err(
+                StatusCode::PAYMENT_REQUIRED,
+                "no_subscription",
+                "no subscription on this account yet",
+            );
+        }
+        Ok(super::claim::KeyOwner::Unknown) => {
             return err(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",

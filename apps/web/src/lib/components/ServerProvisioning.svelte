@@ -73,11 +73,11 @@
     function getStatusMessage(): string {
         switch (status) {
             case "provisioning":
-                return "Your box is finishing its first boot…";
+                return "Your server is finishing its first boot…";
             case "migrating":
-                return "Applying an update to your box…";
+                return "Applying an update to your server…";
             case "error":
-                return "Your box is taking longer than expected";
+                return "Your server is taking longer than expected";
             default:
                 return "One moment…";
         }
@@ -134,8 +134,18 @@
                     >
                         Refresh
                     </button>
+                    <!--
+                        The manual, not the repo. This pointed at
+                        github.com/jaces/virtues/blob/main/docs/troubleshooting.md
+                        — wrong org, and a file deleted long ago, so it had been
+                        a 404 for anyone who clicked it while their box was
+                        already unreachable. The recovery page covers exactly
+                        what the link text promises, `virtues doctor` included,
+                        and lives on the website deliberately: a box that cannot
+                        be reached cannot serve its own troubleshooting.
+                    -->
                     <a
-                        href="https://github.com/jaces/virtues/blob/main/docs/troubleshooting.md"
+                        href="https://virtues.com/docs/operate/recovery"
                         target="_blank"
                         rel="noopener noreferrer"
                         class="support-link"

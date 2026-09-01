@@ -63,7 +63,12 @@ export function installFetchProxy(): void {
   // /_app assets, bundled html, client route data) stays on the local origin.
   // NB: `/auth/session` is the session gate — miss it and the app thinks it's
   // unpaired and bounces to the connect screen.
-  const BACKEND_PREFIXES = ['/api', '/auth', '/webhook', '/mcp'];
+  // NB: `/health` missing from this list was audit defect U16: on the phone it
+  // fell through to the OTA scheme handler, which serves index.html with a 200
+  // for any extension-less path — so the box-upgrade watcher never saw the box
+  // go down and reported every successful phone-initiated upgrade as a
+  // ten-minute failure, and the Software page's Box row rendered "—" on iOS.
+  const BACKEND_PREFIXES = ['/api', '/auth', '/webhook', '/mcp', '/health'];
   const route = (p: string) => BACKEND_PREFIXES.some((pre) => p === pre || p.startsWith(pre + '/'));
 
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {

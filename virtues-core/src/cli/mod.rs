@@ -17,6 +17,7 @@ pub mod report_crash;
 pub mod reset;
 pub mod restore;
 pub mod slots;
+pub mod system_repairs;
 pub mod types;
 pub mod ui;
 pub mod uninstall;
@@ -189,6 +190,14 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 println!("Running database migrations...");
                 virtues.database.initialize().await?;
                 println!("Migrations completed successfully");
+                // The box's own migrations, after the schema's: `virtues
+                // upgrade` runs this as root right after the flip, which is
+                // what lets a release repair the filesystem of a box that
+                // only ever upgrades in place. AFTER initialize(), so a
+                // schema refusal rolls the release back without a half-run
+                // repair muddying the picture; the repairs themselves never
+                // fail this command (see the module doc).
+                crate::cli::system_repairs::run();
             }
         }
 

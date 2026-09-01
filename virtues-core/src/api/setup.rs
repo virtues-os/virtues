@@ -1,4 +1,4 @@
-//! Setup-wizard endpoints (docs/onboarding.md) — the web ports of the CLI's
+//! Setup-wizard endpoints (agents/build/onboarding.md) — the web ports of the CLI's
 //! account flows.
 //!
 //! The wizard runs in a phone/laptop browser after the pair-token claim, so

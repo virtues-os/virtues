@@ -198,7 +198,7 @@ pub struct OntologyDescriptor {
     /// How continuous ontologies produce aggregated summaries (None for discrete ontologies)
     pub continuous_agg: Option<ContinuousAggConfig>,
     /// Whether this ontology represents active behavioral signal (for action activation gates).
-    /// True for: app_usage, location_visit, calendar, outbound messages, transcription, web_browsing, listening, workout.
+    /// True for: app_usage, location_visit, calendar, outbound messages, transcription, web_browsing, workout.
     /// False for passive data: heart_rate, hrv, steps, sleep, inbound email, financial records.
     pub is_activation_signal: bool,
 }
@@ -322,9 +322,6 @@ pub fn lane_measures() -> &'static [LaneMeasure] {
         LaneMeasure { id: "browsing", lane: "activity", table: "data_activity_web_browsing",
             timestamp_column: "occurred_at", label: "pages visited", unit: "",
             agg: "count(*)", filter: None, kind: Total },
-        LaneMeasure { id: "listening", lane: "activity", table: "data_activity_listening",
-            timestamp_column: "occurred_at", label: "listening", unit: "h",
-            agg: "sum(duration_ms) / 3600000.0", filter: None, kind: Total },
     ];
     M
 }
@@ -348,7 +345,7 @@ pub struct ActivitySource {
 /// The raster's whole value is that SLEEP shows up as a dark band, and that
 /// only works if every mark means a person was awake. `is_activation_signal`
 /// already draws that line — it is documented as true for app usage, visits,
-/// outbound messages, transcription, browsing, listening and workouts, and
+/// outbound messages, transcription, browsing and workouts, and
 /// false for heart rate, HRV, steps and sleep. A watch samples a pulse all
 /// night; including it would fill the exact rows the band is made of.
 ///
@@ -840,32 +837,6 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             is_activation_signal: true,
         },
         OntologyDescriptor {
-            name: "activity_listening",
-            display_name: "Listening History",
-            description: "Music and audio listening history from Spotify",
-            domain: "activity",
-            lane: Some("activity"),
-            table_name: "data_activity_listening",
-            source_streams: vec!["stream_spotify_recently_played"],
-            timestamp_column: "occurred_at",
-            end_timestamp_column: None,
-            embedding: None,
-            extraction: None,
-            temporal_type: TemporalType::Discrete,
-            day_source: Some(DaySourceConfig {
-                source_type: "listening",
-                source_type_sql: None,
-                label_sql: "COALESCE(t.artist_name, 'Unknown') || ' — ' || t.track_name",
-                preview_sql: "CASE WHEN t.duration_ms IS NOT NULL THEN CAST(t.duration_ms / 60000 AS TEXT) || ' min' ELSE NULL END",
-                id_sql: "t.id",
-                extra_where: None,
-                use_date_filter: false,
-            }),
-            continuous_agg: None,
-            //                    who  whom what when where why  how
-            is_activation_signal: true,
-        },
-        OntologyDescriptor {
             name: "communication_transcription",
             display_name: "Voice Transcriptions",
             description: "Transcribed audio from microphone recordings",
@@ -926,7 +897,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
         // from the 5-minute chunks by `sessionize::audio`. This is the "visit" of
         // audio: raw recording → chunk transcript → session, mirroring
         // point → visit. No embedding/extraction here yet — those stay on the chunk
-        // ontology until search is repurposed (docs/event-timeline.md).
+        // ontology until search is repurposed (agents/record/event-timeline.md).
         OntologyDescriptor {
             name: "audio_session",
             display_name: "Audio Sessions",
@@ -1385,7 +1356,10 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             lane: None,
             table_name: "extracted_document_chunks",
             source_streams: vec![],
-            timestamp_column: "created_at",
+            // Event time (the file's arrival in the record), not parse time —
+            // `created_at` here is when the extractor ran, and using it made
+            // every date-scoped document search chronologically wrong.
+            timestamp_column: "occurred_at",
             end_timestamp_column: None,
             embedding: Some(EmbeddingConfig {
                 embed_text_sql: "t.text",
@@ -1398,7 +1372,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 ),
                 preview_sql: "SUBSTR(t.text, 1, 200)",
                 author_sql: None,
-                timestamp_sql: "t.created_at",
+                timestamp_sql: "t.occurred_at",
                 embed_where: None,
             }),
             extraction: None,

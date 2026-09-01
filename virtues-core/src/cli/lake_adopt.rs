@@ -103,8 +103,8 @@ pub async fn run(dry_run: bool) -> Result<()> {
         sqlx::query(
             "INSERT INTO lake_objects (
                  id, kind, storage_key, provider, source_id, stream_name,
-                 record_count, size_bytes, sha256, content_encoding
-             ) VALUES ($1, 'media', $2, 'ios', 'ios', 'microphone', 0, $3, $4, 'none')
+                 record_count, size_bytes, sha256
+             ) VALUES ($1, 'media', $2, 'ios', 'ios', 'microphone', 0, $3, $4)
              ON CONFLICT (storage_key) DO NOTHING",
         )
         .bind(Uuid::new_v4().to_string())

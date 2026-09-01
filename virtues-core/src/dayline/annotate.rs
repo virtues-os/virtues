@@ -20,7 +20,7 @@
 //! forever, and `hr_z` / `autonomic_z` were permanently NULL. The demo seeds
 //! hand-populate `avg_hr`, which is why the day page looked alive.
 //!
-//! `docs/the-day.md:464` describes this exact step ("annotate wiki_events.avg_hr
+//! `agents/record/the-day.md:464` describes this exact step ("annotate wiki_events.avg_hr
 //! from HR data in event window"). It was never implemented.
 //!
 //! Same class of gap for `entities` (only the chat-agent tool ever wrote it, so
@@ -73,7 +73,7 @@ pub async fn annotate_events_for_day(pool: &PgPool, date: NaiveDate) -> Result<u
         let ontologies = window_ontologies(pool, start, end).await;
 
         // Confidence — how sure we are of the block. Deterministic, per the model in
-        // docs/event-timeline.md: `unknown` is low by definition (no signal); `sleep`
+        // agents/record/event-timeline.md: `unknown` is low by definition (no signal); `sleep`
         // is high (authoritative sleep data); `transit` is medium (a deterministic
         // place-change, but thin); a `stay` scores by WITNESS AGREEMENT — how many
         // independent source types corroborate its window (3+ high, 2 medium, else low).

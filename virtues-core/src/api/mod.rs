@@ -40,9 +40,9 @@ pub mod metrics;
 pub mod model_catalog;
 pub mod models;
 pub mod entity_article_gen;
-pub mod narrative_identity_gen;
+pub mod assistant_memories;
+pub mod circumstances;
 pub mod narrative_draft;
-pub mod narrative_interview;
 pub mod bookmarks;
 pub mod pages;
 pub mod personas;
@@ -62,12 +62,12 @@ pub mod refs;
 pub mod source_auth;
 pub mod subscription;
 pub mod stream_health;
+pub mod system_display;
 pub mod system_telemetry;
 pub mod system_update;
 pub mod terminal;
 pub mod token_estimation;
 pub mod unsplash;
-pub mod usage;
 pub mod wiki;
 pub mod lifeline;
 pub mod link_session;
@@ -88,7 +88,6 @@ pub use credentials::{
 };
 pub use drive::{
     check_quota as check_drive_quota,
-    check_usage_warnings as check_drive_warnings,
     create_folder as create_drive_folder,
     delete_file as delete_drive_file,
     download_file as download_drive_file,
@@ -115,7 +114,6 @@ pub use drive::{
     StagedUpload,
     DriveUsage,
     MoveFileRequest as DriveMoveFileRequest,
-    QuotaWarnings,
     UploadRequest as DriveUploadRequest,
 };
 pub use entities::{
@@ -160,7 +158,6 @@ pub use pages::{
     create_version,
     delete_page,
     delete_page_share,
-    get_reflections_for_date,
     get_page,
     get_page_backlinks,
     get_page_share,
@@ -232,11 +229,6 @@ pub use system_update::CURRENT_COMMIT;
 pub use token_estimation::{
     estimate_message_tokens, estimate_session_context, estimate_tokens, ContextEstimate,
     ContextStatus,
-};
-pub use usage::{
-    check_limit, get_all_usage, init_limits_from_tier,
-    record_usage as record_service_usage, LimitType, RemainingUsage, Service, ServiceUsage,
-    UsageLimitError, UsageSummary,
 };
 pub use home::{get_calendar_upcoming, get_current_weather, get_unnamed_places};
 pub use wiki::{

@@ -4602,6 +4602,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0c5ccf5294c6ccd63a74f1565028353830a9c2f5eb0c682c355c471726a6e3f"
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quick-xml"
 version = "0.37.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6011,6 +6017,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6021,6 +6028,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6031,6 +6039,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6041,6 +6050,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6066,6 +6076,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6076,6 +6087,7 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",
+ "virtues-plugin-lockstep",
 ]
 
 [[package]]
@@ -6125,6 +6137,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
+ "qrcode",
  "rusqlite",
  "serde",
  "serde_json",
@@ -6134,6 +6147,7 @@ dependencies = [
  "tokio",
  "tracing",
  "virtues-improv",
+ "virtues-plugin-lockstep",
  "virtues-reach-client",
 ]
 
@@ -7022,7 +7036,7 @@ dependencies = [
 
 [[package]]
 name = "virtues-iroh"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -7034,6 +7048,10 @@ dependencies = [
  "tower",
  "tracing",
 ]
+
+[[package]]
+name = "virtues-plugin-lockstep"
+version = "0.1.0"
 
 [[package]]
 name = "virtues-reach-client"

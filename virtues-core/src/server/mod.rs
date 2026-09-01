@@ -31,10 +31,27 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Validate required environment variables early
     validate_environment()?;
 
-    // Initialize usage limits from TIER env var
-    if let Err(e) = crate::api::init_limits_from_tier(client.database.pool()).await {
-        tracing::warn!("Failed to initialize usage limits: {}", e);
+    // Prove the lake is writable before serving. Every applet that ingests
+    // anything writes here as the `virtues` user, and when the directory was
+    // root-owned the only symptom was each applet failing with EACCES on its
+    // own schedule — a 500 every five minutes, forever, that no health surface
+    // asked about and no human saw. One probe at boot turns days of silent
+    // failure into a line in the log at the moment it becomes true.
+    //
+    // A warning, not a refusal: the box still serves chat, search and the UI
+    // without ingest, and refusing to boot would take away the surfaces someone
+    // needs in order to FIX this. `is_healthy` carries the remedy.
+    match crate::storage::Storage::file(
+        crate::storage::lake::lake_root().display().to_string(),
+    ) {
+        Ok(storage) => match storage.health_check().await {
+            Ok(h) if h.is_healthy => tracing::info!("{}", h.message),
+            Ok(h) => tracing::error!("{}", h.message),
+            Err(e) => tracing::error!(error = %e, "could not probe the lake for writability"),
+        },
+        Err(e) => tracing::error!(error = %e, "could not open the lake for a write probe"),
     }
+
 
     // Reap runs left in `running` by a crash/restart mid-execution, so a stale
     // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
@@ -51,7 +68,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     }
 
     // Seed home_timezone from the box's own system clock once, before the
-    // scheduler resolves cron timezones. Idempotent. See docs/timezone-model.md.
+    // scheduler resolves cron timezones. Idempotent. See agents/record/timezone-model.md.
     if let Err(e) = crate::api::profile::ensure_home_timezone(client.database.pool()).await {
         tracing::warn!("Failed to seed home_timezone: {}", e);
     }
@@ -241,7 +258,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/box/health",
             get(crate::api::box_status::box_health_handler),
         )
-        // Setup/onboarding state machine (docs/onboarding.md) — public-on-LAN
+        // Setup/onboarding state machine (agents/build/onboarding.md) — public-on-LAN
         // for the same reason as /api/box/health: the wizard + panel render it
         // pre-auth, and it carries only booleans + step copy.
         // Who is this box — name + claimed, for discovery chips. Public like
@@ -273,11 +290,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .post(crate::api::narrative_draft::save_rules_handler),
         )
         .route(
-            "/api/narrative/interview",
-            get(crate::api::narrative_interview::list_handler)
-                .post(crate::api::narrative_interview::save_handler),
-        )
-        .route(
             "/api/setup/skip-onboarding",
             post(crate::api::box_status::skip_onboarding_handler),
         )
@@ -297,6 +309,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/display/updating",
             get(crate::api::display::display_updating_handler),
+        )
+        // The case button at 1s cadence — the 30s ambient poll cannot see a
+        // 3s hold. See api/display.rs.
+        .route(
+            "/api/display/button",
+            get(crate::api::display::display_button_handler),
         )
         // `/api/display/qr` and `/api/display/link-qr` are gone — the panel is
         // one screen now and renders no QR at all. See api/display.rs.
@@ -416,7 +434,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
         // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
         .route("/api/today/:date/streams", get(api::today_streams_handler))
-        // Map tiles — the Atlas: box-cached tiles (private + offline). docs/map-atlas-plan.md
+        // Map tiles — the Atlas: box-cached tiles (private + offline). agents/record/map-atlas-plan.md
         .route("/api/map/tiles/:style/:z/:x/:y", get(api::map_tile_handler))
         // Home-page loops — weather · upcoming calendar · unnamed-place backlog
         .route("/api/weather/current", get(api::weather_now_handler))
@@ -454,7 +472,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // ─── Billing-state aggregator (local view) ────────────────────
         .route("/api/billing/state",           get(crate::api::billing_state::state_handler))
         .route("/api/billing/auto-topup",      post(crate::api::billing_state::set_auto_topup_handler))
-        // Setup wizard transitions (docs/onboarding.md) — session-authed; the
+        // Setup wizard transitions (agents/build/onboarding.md) — session-authed; the
         // wizard reads progress from the public /api/setup/state.
         .route("/api/setup/subscribe/start",   post(crate::api::setup::subscribe_start_handler))
         .route("/api/setup/login/start",       post(crate::api::setup::login_start_handler))
@@ -520,6 +538,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::chat_import_upload_handler)
                 .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
         )
+        .route(
+            "/api/chat-import/status",
+            get(api::chat_import_status_handler),
+        )
         .route("/api/applets/:id/runs", get(api::list_applet_runs_handler))
         .route("/api/applets/:id/log", get(api::applet_log_handler))
         .route("/api/applets/runs/:id", get(api::get_applet_run_handler))
@@ -545,6 +567,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_place_handler)
                 .put(api::update_place_handler)
                 .delete(api::delete_place_handler),
+        )
+        .route(
+            "/api/assistant/memories",
+            axum::routing::get(api::list_assistant_memories_handler),
+        )
+        .route(
+            "/api/assistant/memories/:id",
+            axum::routing::put(api::edit_assistant_memory_handler)
+                .delete(api::retire_assistant_memory_handler),
         )
         .route(
             "/api/wiki/notes/:subject_type/:subject_id",
@@ -721,7 +752,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         .route("/api/drive/usage", get(api::get_drive_usage_handler))
         .route("/api/backup/status", get(api::get_backup_status_handler))
-        .route("/api/drive/warnings", get(api::get_drive_warnings_handler))
         .route("/api/drive/files", get(api::list_drive_files_handler))
         .route(
             "/api/drive/files/:id",
@@ -889,10 +919,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::search_refs_handler),
         )
         .route(
-            "/api/pages/reflections/:date",
-            get(api::get_reflections_handler),
-        )
-        .route(
             "/api/pages/:id",
             get(api::get_page_handler)
                 .put(api::update_page_handler)
@@ -935,6 +961,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/network/status", get(crate::api::network::status_handler))
         .route("/api/network/scan",   get(crate::api::network::scan_handler))
         .route("/api/network/join",   post(crate::api::network::join_handler))
+        // The rendezvous, named and switchable (open-relay-plan §Work 2).
+        .route(
+            "/api/network/relay",
+            get(crate::api::network::relay_status_handler)
+                .put(crate::api::network::relay_toggle_handler),
+        )
         // Box updates (Settings → Box)
         .route("/api/system/update", get(api::update_status_handler))
         .route(
@@ -944,6 +976,27 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/system/update/apply",
             post(api::apply_update_handler),
+        )
+        // The box's attached screen (Settings → Display). Deliberately NOT in
+        // the loopback-only /api/display/* family: that module's uniform
+        // box-local rule is its security argument, and these are the paired
+        // device's side of the glass — panel facts, the ambient face choice,
+        // and the restart verb. Nothing here carries the setup phrase.
+        .route(
+            "/api/system/display",
+            get(crate::api::system_display::get_display_settings_handler),
+        )
+        .route(
+            "/api/system/display/face",
+            put(crate::api::system_display::set_display_face_handler),
+        )
+        .route(
+            "/api/system/display/hours",
+            put(crate::api::system_display::set_display_hours_handler),
+        )
+        .route(
+            "/api/system/display/restart",
+            post(crate::api::system_display::restart_display_handler),
         )
         // Re-open onboarding: revoke every device, keep the data. Sits beside
         // the update routes because it is the same kind of thing — a box-wide
@@ -1157,14 +1210,28 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             ))
             .allow_credentials(false)
             .allow_methods(tower_http::cors::Any)
-            .allow_headers(tower_http::cors::Any),
+            .allow_headers(tower_http::cors::Any)
+            // Cross-origin callers (the app's own tauri:// origin) may READ the
+            // build stamp — it's how a page notices the box moved under it.
+            .expose_headers([axum::http::HeaderName::from_static(
+                "x-virtues-box-build",
+            )]),
     );
+
+    // Outermost, so every response — API, static, fallback — carries the build
+    // stamp the SPA's staleness watcher compares.
+    let app = app.layer(axum::middleware::from_fn(stamp_box_build));
 
     // iroh reach: the box is an iroh Endpoint that serves this same axum app
     // (LAN-direct → hole-punch → our relay), reachable by EndpointId with no
     // public inbound port. Serves a clone of `app`; the :8000 TCP listener below
     // keeps serving LAN/loopback + the desktop :7117 helper. See `crate::relay`.
     crate::relay::maybe_spawn(client.database.pool().clone(), app.clone());
+
+    // Hours — the screen's sleep schedule, enforced server-side because sleep
+    // is a precedence state (a held button must wake dark glass). No-op off
+    // an appliance. See api::system_display::sleep_engine.
+    crate::api::system_display::sleep_engine::spawn(client.database.pool().clone());
 
     let transport = build_transport(host, port);
     let listener = transport.bind().await?;
@@ -1286,6 +1353,34 @@ async fn no_store_for_documents(
     res
 }
 
+/// Stamp every response with the running build identity, so an open page can
+/// notice the box changed underneath it.
+///
+/// After an upgrade the flipped `web/` slot no longer contains the OLD page's
+/// content-hashed `/_app/immutable/*` chunks, so that page's first lazy
+/// navigation 404s — and nothing told any connected surface to reload: only
+/// the tab that pressed the update button (`location.reload()`) and the kiosk
+/// (`restart_display`) recovered. Browsers on other machines and the Mac
+/// webview kept a page whose chunks were gone. The SPA watches this header
+/// across its own requests and soft-reloads from the background when it moves
+/// (see `$lib/build.ts`).
+async fn stamp_box_build(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    static VALUE: std::sync::OnceLock<axum::http::HeaderValue> = std::sync::OnceLock::new();
+    let value = VALUE.get_or_init(|| {
+        let commit: &str = env!("GIT_COMMIT");
+        let short = &commit[..commit.len().min(7)];
+        axum::http::HeaderValue::from_str(&format!("{} {}", crate::codename::version(), short))
+            .unwrap_or(axum::http::HeaderValue::from_static("unknown"))
+    });
+    let mut res = next.run(req).await;
+    res.headers_mut()
+        .insert("x-virtues-box-build", value.clone());
+    res
+}
+
 async fn api_not_found_handler(uri: axum::http::Uri) -> impl IntoResponse {
     (
         axum::http::StatusCode::NOT_FOUND,
@@ -1356,8 +1451,24 @@ async fn server_info() -> impl IntoResponse {
 /// name. A page served from a remote host has none of these origins.
 fn origin_is_ours(origin: &str) -> bool {
     // The app's own origin: `tauri://localhost` on macOS/iOS,
-    // `https://tauri.localhost` on Windows.
-    if origin.starts_with("tauri://") || origin == "https://tauri.localhost" {
+    // `https://tauri.localhost` on Windows — and `virtues://` on the phone,
+    // which registers its OWN scheme so an OTA bundle can answer requests
+    // (see apps/web/src-tauri/src/lib.rs; the window opens at
+    // `virtues://localhost/connect.html`).
+    //
+    // Missing `virtues://` here silently broke every data request the iOS app
+    // made from 2026-08-18 until 2026-08-28: the box answered 200 and omitted
+    // `Access-Control-Allow-Origin`, so WebKit discarded the response and the
+    // app reported "Load failed" while the box's own logs showed the device
+    // authenticating perfectly. Ten days, because the symptom looks like a
+    // network fault and every trace says the network is fine.
+    //
+    // Safe for the same reason `tauri://` is: a custom scheme can only be
+    // claimed by an installed app, so no remote page can present this origin.
+    if origin.starts_with("tauri://")
+        || origin.starts_with("virtues://")
+        || origin == "https://tauri.localhost"
+    {
         return true;
     }
 
@@ -1405,6 +1516,10 @@ mod cors_tests {
             "http://localhost.evil.example",
             "https://tauri.localhost.evil.example",
             "http://notvirtues",
+            // Near-misses on the scheme itself: only the exact `virtues://`
+            // prefix is ours, never a host or path that merely contains it.
+            "https://virtues.evil.example",
+            "http://evil.example/virtues://",
             "http://evil.example/localhost",
             // Non-http schemes and the opaque origin.
             "null",
@@ -1421,6 +1536,10 @@ mod cors_tests {
     fn our_own_origins_are_allowed() {
         for o in [
             "tauri://localhost",
+            // The iOS app's own scheme. Absent from this list until
+            // 2026-08-28, which is exactly how the phone lost every data
+            // request for ten days without a single test going red.
+            "virtues://localhost",
             "https://tauri.localhost",
             "http://localhost:5173",
             "http://127.0.0.1:7117",

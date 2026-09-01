@@ -5,8 +5,6 @@
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
 	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
-	import MobileTabBar from "$lib/components/mobile/MobileTabBar.svelte";
-	import MobileSettingsView from "$lib/components/mobile/MobileSettingsView.svelte";
 	import MobileOnboarding from "$lib/components/mobile/MobileOnboarding.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
@@ -35,8 +33,8 @@
 	import { page } from "$app/stores";
 	import type { Snippet } from "svelte";
 
-	import { installClientHeader } from "$lib/build";
-	import { reportBootOk, otaCheckNow } from "$lib/tauri/bridge";
+	import { installClientHeader, setShellAppVersion } from "$lib/build";
+	import { reportBootOk, otaCheckNow, shellIdentity } from "$lib/tauri/bridge";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 
@@ -46,6 +44,15 @@
 	// Stamp X-Virtues-Client on box requests so this browser's build shows up on
 	// the Devices page (update-manifold Phase 1). Idempotent, SSR-safe.
 	installClientHeader();
+
+	// Then enrich it with the native shell's own release (`app=1.0.23`) once
+	// the bridge answers. The bundle identity above mirrors the box for a
+	// paired desktop, so without this field the Devices page cannot say which
+	// APP a device runs — the confusion the version audit traced. Resolves to
+	// null in a plain browser; header simply stays app-less there.
+	void shellIdentity().then((s) => {
+		if (s?.appVersion) setShellAppVersion(s.appVersion);
+	});
 
 	// Foreground OTA check — hoisted to component scope so onDestroy can remove
 	// it. `onMount` is async here, so a returned cleanup would never run.
@@ -90,10 +97,10 @@
 		// without this a phone could sit on a stale bundle indefinitely. The
 		// check is cheap when there is nothing new (one small GET) and never
 		// swaps the bundle underneath the running session; anything it applies
-		// takes effect at the next launch.
-		function checkForNewUi() {
-			if (!document.hidden) void otaCheckNow();
-		}
+		// takes effect at the next launch. Registers the COMPONENT-SCOPE
+		// function above — an identical inner copy used to shadow it here, so
+		// onDestroy removed a function that was never registered and the
+		// listener leaked per layout mount (audit, minor).
 		document.addEventListener("visibilitychange", checkForNewUi);
 
 		// Global dragover handler: Allow drops on document by preventing default
@@ -213,7 +220,7 @@
 		}
 
 		// NOTE: home_timezone (the box's location) is server-sourced and NOT
-		// browser-tracked — see docs/timezone-model.md. The browser's zone is sent
+		// browser-tracked — see agents/record/timezone-model.md. The browser's zone is sent
 		// per-request via ?tz= for the live "today" view (getDaySources), so there
 		// is no profile write-through here.
 
@@ -409,10 +416,9 @@
 	</main>
 </div>
 
-<!-- Mobile bottom-tab chrome (phone shell only) -->
+<!-- First-run stream setup (phone shell only). The shell itself carries all
+     other mobile chrome — the drawer and the top bar live inside it. -->
 {#if mobileLayout.isMobile}
-	<MobileTabBar />
-	<MobileSettingsView />
 	<MobileOnboarding />
 {/if}
 
@@ -527,6 +533,12 @@
 	   difference between seeing what you are typing and not. */
 	main.is-mobile {
 		padding-top: env(safe-area-inset-top);
+		/* The inset ANIMATES: stores/keyboard.svelte.ts drives the custom
+		   property frame-by-frame on the keyboard's own clock (the native
+		   bridge hands it UIKit's duration before the keys move). Deliberately
+		   not a CSS transition here — a transition keyed on a var()-derived
+		   value simply never ran in testing, the padding sat at its old value
+		   for the whole duration. The rAF writes are the transition. */
 		padding-bottom: var(--keyboard-inset, 0px);
 	}
 

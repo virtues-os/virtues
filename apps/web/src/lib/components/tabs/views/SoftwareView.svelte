@@ -59,7 +59,7 @@
 
 <Page
 	title="Software"
-	description="The release this box runs, and the track it follows."
+	description="The release this server runs, and the track it follows."
 	maxWidth="wide"
 >
 	<UpdateSection />
@@ -80,7 +80,7 @@
 				the same string "Running" shows above; repeated here so the three
 				can be read against each other in one column.
 			-->
-			<dt>Box</dt>
+			<dt>Server</dt>
 			<dd class="mono">
 				{version || '—'}
 				<span class="dim">

@@ -115,8 +115,6 @@ export interface AppletRun {
 	records_processed: number;
 	error: string | null;
 	trigger: AppletTrigger;
-	parent_run_id: string | null;
-	transform_stage: string | null;
 	result_summary: string | null;
 	/** What the user said, for `message` runs. This plus `result_summary` is
 	 *  the exchange — the conversation lives on the run, not in a thread. */
@@ -330,6 +328,11 @@ export interface Census {
 	earliest: string | null;
 	latest: string | null;
 	span_days: number;
+	/** The record's first named senders, in the order it met them —
+	 *  chronology, never significance. Empty when none are presentable. */
+	earliest_names: string[];
+	/** `"YYYY-MM-DD"` of the first day the box narrated; null until one exists. */
+	first_day: string | null;
 }
 
 /** What the box actually holds, counted — the reveal's first movement. */
@@ -375,40 +378,6 @@ export async function saveNarrativeRules(rules: string[]): Promise<void> {
 		body: JSON.stringify({ rules }),
 	});
 	if (!res.ok) throw new Error(`Couldn't save your rules: ${res.statusText}`);
-}
-
-export interface InterviewAnswer {
-	question_id: string;
-	answer: string;
-	word_count: number;
-	completed_at: string | null;
-}
-
-export async function getInterviewAnswers(): Promise<InterviewAnswer[]> {
-	const res = await fetch(`${API_BASE}/narrative/interview`);
-	if (!res.ok) throw new Error(`Failed to load your answers: ${res.statusText}`);
-	return (await res.json()).answers ?? [];
-}
-
-/**
- * Save one answer. Called while the person is still typing, because this is an
- * hour of writing about grief, vice and family and losing it to a reload is a
- * betrayal rather than an inconvenience.
- *
- * Throws on failure so the caller can SAY so — a save that fails quietly is the
- * worst outcome available here.
- */
-export async function saveInterviewAnswer(
-	question_id: string,
-	answer: string,
-	completed = false,
-): Promise<void> {
-	const res = await fetch(`${API_BASE}/narrative/interview`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ question_id, answer, completed }),
-	});
-	if (!res.ok) throw new Error(`Couldn't save: ${res.statusText}`);
 }
 
 export interface ReopenOnboardingResponse {
@@ -468,6 +437,85 @@ export async function applyUpdate(): Promise<ApplyUpdateResponse> {
 		throw new Error(detail);
 	}
 	return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Display — the box's attached screen (Settings → Display)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The face the panel wears in its ambient slot. */
+export interface DisplayFaceConfig {
+	kind: 'builtin' | 'applet';
+	/** Which built-in, when kind is 'builtin': 'record' | 'matte'. */
+	builtin: string;
+	applet_id?: string | null;
+}
+
+export interface DisplayPanelInfo {
+	/** DRM connector name, e.g. `card0-HDMI-A-1`. */
+	connector: string;
+	mode_width?: number;
+	mode_height?: number;
+}
+
+/**
+ * What the glass is showing, redacted for the LAN: the mirror may say THAT
+ * the panel is on its setup screen, never what the words are.
+ */
+export interface DisplayGlassState {
+	claimed: boolean;
+	online: boolean;
+	connectivity: string;
+	devices: number;
+	box_name: string;
+	data_disk_fault?: string | null;
+	record?: Array<{ label: string; count: number }>;
+	record_since?: string | null;
+	updating: boolean;
+	/** Hours is holding the glass dark right now (backlight off). */
+	asleep: boolean;
+}
+
+/** The screen's hours. Times are box-local "HH:MM:SS"; absent = never sleeps. */
+export interface DisplayHours {
+	sleep_start?: string | null;
+	sleep_end?: string | null;
+}
+
+export interface DisplaySettings {
+	/** This box has the kiosk stack installed at all. */
+	attached: boolean;
+	unit_state: 'active' | 'installed but not running' | 'not installed';
+	panel?: DisplayPanelInfo | null;
+	zoom_derived?: number | null;
+	zoom_override?: number | null;
+	face: DisplayFaceConfig;
+	hours: DisplayHours;
+	state: DisplayGlassState;
+}
+
+export function getDisplaySettings(): Promise<DisplaySettings> {
+	return apiGet('/system/display');
+}
+
+export function setDisplayFace(face: {
+	kind: 'builtin' | 'applet';
+	builtin?: string;
+	applet_id?: string;
+}): Promise<DisplayFaceConfig> {
+	return apiSend('PUT', '/system/display/face', face);
+}
+
+export function restartDisplay(): Promise<{ restarted: boolean }> {
+	return apiSend('POST', '/system/display/restart');
+}
+
+/** Set the sleep schedule ("HH:MM" box-local), or both null for never. */
+export function setDisplayHours(hours: {
+	sleep_start: string | null;
+	sleep_end: string | null;
+}): Promise<DisplayHours> {
+	return apiSend('PUT', '/system/display/hours', hours);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -903,8 +951,10 @@ export interface StreamHealth {
 	name: string;
 	display_name: string;
 	/** never = source never connected · live = data in last 24h ·
-	 *  stalled = was flowing this week, silent for a day · idle = nothing in 7d */
-	status: 'never' | 'live' | 'stalled' | 'idle';
+	 *  stalled = was flowing this week, silent for a day · idle = nothing in 7d ·
+	 *  blocked = the applet writing this stream is failing, so the emptiness has
+	 *  a known cause and must not be drawn as quiet. */
+	status: 'never' | 'live' | 'stalled' | 'idle' | 'blocked';
 	total: number;
 	count_24h: number;
 	count_7d: number;
@@ -915,6 +965,8 @@ export interface StreamHealth {
 	/** At least one of those sources is connected. Distinguishes "nothing
 	 *  provides this" from "provided, but switched off or not yet delivering". */
 	connected: boolean;
+	/** Why the stream is `blocked`, from the failing applet's last run. */
+	blocked_reason?: string | null;
 	/** No source writes it, yet rows exist — the box computes it from other
 	 *  streams, so "connect something" is the wrong advice. */
 	derived: boolean;
@@ -988,6 +1040,20 @@ export async function pairMint(intendedKind?: string): Promise<PairMintResponse>
 	return res.json();
 }
 
+/** DELETE /api/devices/:id — best-effort, no confirmation.
+ *
+ *  For rows WE created that the user never completed — the handoff enrolls a
+ *  device before the phone has scanned anything, so an abandoned sheet would
+ *  otherwise leave a live allowlisted key on the box. The interactive path is
+ *  `revokeDeviceFlow`, which confirms and reports; this one is cleanup and
+ *  stays quiet (409 on a last-remaining device is a legitimate refusal here,
+ *  not something to surface). */
+export async function revokeDevice(id: string): Promise<void> {
+	await fetch(`${API_BASE}/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {
+		/* benign — the row may already be gone */
+	});
+}
+
 /** POST /api/pair/deny/:id — auth'd. Cancel an outstanding token (e.g. modal close). */
 export async function pairDeny(id: string): Promise<void> {
 	await fetch(`${API_BASE}/pair/deny/${encodeURIComponent(id)}`, { method: 'POST' }).catch(
@@ -1046,6 +1112,24 @@ export async function uploadChatImport(
 		const err = await res.json().catch(() => ({ error: res.statusText }));
 		throw new Error(err.error || `chat_import upload failed: ${res.statusText}`);
 	}
+	return res.json();
+}
+
+/** What chat-import has already landed on the box (empty = never imported). */
+export interface ChatImportStatus {
+	messages: number;
+	conversations: number;
+	/** Distinct providers seen in the imported rows, e.g. ["claude"]. */
+	providers: string[];
+}
+
+/**
+ * GET /api/chat-import/status — connected-state for the chat-import source,
+ * which mints no credential; the imported rows themselves are the evidence.
+ */
+export async function getChatImportStatus(): Promise<ChatImportStatus> {
+	const res = await fetch(`${API_BASE}/chat-import/status`);
+	if (!res.ok) throw new Error(`Failed to read chat-import status: ${res.statusText}`);
 	return res.json();
 }
 
@@ -1202,6 +1286,9 @@ export interface Profile {
 	home_city?: string | null;
 	home_country?: string | null;
 	onboarding_status?: string | null;
+	/** Getting-started sections dismissed from Home. Send the whole array —
+	 *  the box remembers it verbatim; the client owns the merge. */
+	getting_started_dismissed?: string[];
 }
 
 export async function getProfile(): Promise<Profile> {
@@ -2228,18 +2315,6 @@ export async function getSharedPage(token: string): Promise<SharedPage> {
 }
 
 // ============================================================================
-// Reflections API (legacy pages linked to a day — read only; the primitive
-// is retired: writing about a day belongs to the day's article or a note)
-// ============================================================================
-
-/** Legacy reflections for a date. Nothing creates new ones. */
-export async function getReflectionsForDate(date: string): Promise<Page[]> {
-	const res = await fetch(`${API_BASE}/pages/reflections/${date}`);
-	if (!res.ok) throw new Error(`Failed to get reflections: ${res.statusText}`);
-	return res.json();
-}
-
-// ============================================================================
 // Backlinks / References API
 // ============================================================================
 
@@ -2387,6 +2462,44 @@ export async function getSetupState(): Promise<SetupState> {
 // ============================================================================
 
 // ── Assistant profile ────────────────────────────────────────────────────────
+// ── Assistant memories (What I've learned) ──
+// The machine's per-note memory, visible and editable. Every live note rides
+// in the system prompt of every conversation.
+
+export interface AssistantMemory {
+	id: number;
+	/** facts | manner | practices */
+	lane: string;
+	/** 'ai' until the person edits — then 'human', and the machine can no longer revise it. */
+	author: string;
+	body: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export async function listAssistantMemories(): Promise<AssistantMemory[]> {
+	const res = await fetch(`${API_BASE}/assistant/memories`);
+	if (!res.ok) throw new Error(`Failed to load memories: ${res.statusText}`);
+	return res.json();
+}
+
+/** Rewrite one memory in your own words. It becomes yours. */
+export async function editAssistantMemory(id: number, body: string): Promise<AssistantMemory> {
+	const res = await fetch(`${API_BASE}/assistant/memories/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ body }),
+	});
+	if (!res.ok) throw new Error(`Failed to edit memory: ${res.statusText}`);
+	return res.json();
+}
+
+/** Remove a memory from every future conversation (soft-retired with provenance). */
+export async function retireAssistantMemory(id: number): Promise<void> {
+	const res = await fetch(`${API_BASE}/assistant/memories/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to remove memory: ${res.statusText}`);
+}
+
 export function getAssistantProfile<T = unknown>(): Promise<T> {
 	return apiGet<T>('/assistant-profile');
 }
@@ -2579,7 +2692,6 @@ export interface AiCallRow {
 	cost_micros: number;
 	/** `wallet` | `byo` — which purse paid. */
 	route: string;
-	status: string;
 }
 
 /** GET /api/telemetry/ai-calls — one page of the call log, newest first. */
@@ -2631,9 +2743,6 @@ export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Prom
 }
 export function getServerInfo<T = unknown>(): Promise<T> {
 	return apiGet<T>('/app/server-info');
-}
-export function triggerApplet<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/applets/${encodeURIComponent(id)}/trigger`);
 }
 export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {
 	return apiSend<T>('POST', '/ai/complete', req);

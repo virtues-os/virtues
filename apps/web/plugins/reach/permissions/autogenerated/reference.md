@@ -13,14 +13,19 @@ Default permissions for the reach plugin
 - `allow-provision-join`
 - `allow-improv-discover`
 - `allow-improv-claim`
+- `allow-improv-grant`
 - `allow-improv-wifi-scan`
 - `allow-improv-provision`
 - `allow-improv-pair`
-- `allow-improv-grant`
 - `allow-improv-disconnect`
 - `allow-outbox-stats`
 - `allow-drain-now`
 - `allow-radio-stats`
+- `allow-pair-door-open`
+- `allow-pair-door-close`
+- `allow-pair-door-status`
+- `allow-pair-handoff-create`
+- `allow-pair-handoff-accept`
 
 ## Permission Table
 
@@ -339,6 +344,136 @@ Enables the pair command without any pre-configured scope.
 <td>
 
 Denies the pair command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-pair-door-close`
+
+</td>
+<td>
+
+Enables the pair_door_close command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-pair-door-close`
+
+</td>
+<td>
+
+Denies the pair_door_close command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-pair-door-open`
+
+</td>
+<td>
+
+Enables the pair_door_open command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-pair-door-open`
+
+</td>
+<td>
+
+Denies the pair_door_open command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-pair-door-status`
+
+</td>
+<td>
+
+Enables the pair_door_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-pair-door-status`
+
+</td>
+<td>
+
+Denies the pair_door_status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-pair-handoff-accept`
+
+</td>
+<td>
+
+Enables the pair_handoff_accept command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-pair-handoff-accept`
+
+</td>
+<td>
+
+Denies the pair_handoff_accept command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-pair-handoff-create`
+
+</td>
+<td>
+
+Enables the pair_handoff_create command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-pair-handoff-create`
+
+</td>
+<td>
+
+Denies the pair_handoff_create command without any pre-configured scope.
 
 </td>
 </tr>

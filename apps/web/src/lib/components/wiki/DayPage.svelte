@@ -30,7 +30,6 @@
 	import DaylineChart from "./DaylineChart.svelte";
 	import DayToolbar from "./DayToolbar.svelte";
 	import DataQualityCoverage from "./DataQualityCoverage.svelte";
-	import JournalCard from "./JournalCard.svelte";
 	import NotesRail from "./NotesRail.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import TableOfContents, { type TocHeading } from "$lib/components/TableOfContents.svelte";
@@ -82,7 +81,7 @@
 	// Render timestamps in the SAME zone the server windowed this day in: the
 	// locked per-day start_timezone, else the viewing device's zone (which is
 	// also what get_day_sources used for an in-progress today). Keeps the Time
-	// column consistent with which records appear. See docs/timezone-model.md.
+	// column consistent with which records appear. See agents/record/timezone-model.md.
 	const rowTz = $derived(page.startTimezone ?? undefined);
 
 
@@ -602,11 +601,6 @@
 					<!-- Notes: the day's margin — where the examen line lands, and
 					     where a machine note about this day would wait. -->
 					<NotesRail subjectType="day" subjectId={page.id} />
-
-					<!-- Legacy reflections, read-only; renders nothing when the
-					     day has none. The primitive is retired — writing about a
-					     day belongs to the day's article or a note on it. -->
-					<JournalCard date={currentDateSlug} />
 
 					<!-- Movement is now in the Dayline chart's "Location" pill -->
 

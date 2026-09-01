@@ -12,14 +12,16 @@
 
 	  You          /virtues/you            — profile, theme
 	  Assistant    /virtues/assistant      — name, persona, model
-	  Billing      /virtues/billing        — plan and payment method
-	  Usage        /virtues/usage          — AI-call log, background runs, system
+	  Plan         /virtues/plan           — subscription, balance, and the
+	                                         AI calls and background runs that
+	                                         draw it down
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Network      /virtues/network        — which network the box is on
 	  Software     /virtues/software       — release, track, update, artifacts
 	  Devices      /virtues/devices        — paired devices (Unpair, Start over)
 	               /virtues/devices/this   — the machine you're on (local panel)
 	               /virtues/devices/:id    — another device, as the box knows it
+	  Display      /virtues/display        — the screen on the box, and what it shows
 	  Developer    /virtues/developer      — SQL · Terminal · Lake
 
 	"Box" was three of those in one door (2026-08-17). It stacked a Wi-Fi
@@ -43,17 +45,16 @@
 	import type { Tab } from '$lib/tabs/types';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { isMacOS, isIOS } from '$lib/utils/platform';
-	import NetworkSection from '$lib/components/settings/NetworkSection.svelte';
 	import SoftwareView from '$lib/components/tabs/views/SoftwareView.svelte';
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
-	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
-	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
+	import ModelsView from '$lib/components/tabs/views/ModelsView.svelte';
+	import PlanView from '$lib/components/tabs/views/PlanView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
-	import DeviceDetailView from '$lib/components/tabs/views/DeviceDetailView.svelte';
-	import ThisMacView from '$lib/components/tabs/views/ThisMacView.svelte';
+	import DisplayView from '$lib/components/tabs/views/DisplayView.svelte';
+	import DeviceView from '$lib/components/tabs/views/DeviceView.svelte';
 	import ThisDeviceView from '$lib/components/tabs/views/ThisDeviceView.svelte';
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
@@ -68,27 +69,36 @@
 		'/virtues/account': '/virtues/you',
 		'/virtues/profile': '/virtues/you',
 		'/virtues/account/assistant': '/virtues/assistant',
-		// Billing is plan + payment method. The usage panel that used to sit
-		// under it never loaded; Usage is now its own section, built from the
-		// box-local call log (the numbers that do load).
-		'/virtues/account/billing': '/virtues/billing',
-		'/virtues/byo-key': '/virtues/billing',
-		'/virtues/billing/plan': '/virtues/billing',
-		'/virtues/account/usage': '/virtues/usage',
-		'/virtues/billing/usage': '/virtues/usage',
+		// Billing and Usage merged into Plan (2026-08-31): one subject seen from
+		// two ends — what you are on, what is left, what drew it down. Both of
+		// their own doors redirect too, because they were live sections with
+		// bookmarks, not just historical paths.
+		'/virtues/billing': '/virtues/plan',
+		'/virtues/usage': '/virtues/plan',
+		'/virtues/account/billing': '/virtues/plan',
+		'/virtues/byo-key': '/virtues/plan',
+		'/virtues/billing/plan': '/virtues/plan',
+		'/virtues/account/usage': '/virtues/plan',
+		'/virtues/billing/usage': '/virtues/plan',
 		// Telemetry was this page under a word for something you send somewhere.
-		'/virtues/telemetry': '/virtues/usage',
-		'/virtues/developer/telemetry': '/virtues/usage',
-		'/virtues/system/history': '/virtues/usage',
+		'/virtues/telemetry': '/virtues/plan',
+		'/virtues/developer/telemetry': '/virtues/plan',
+		'/virtues/system/history': '/virtues/plan',
+		// Network, Display and Software stopped being top-level sections
+		// (2026-08-31). Network and Display are the machine's own connection and
+		// its own screen, so they live under System; Software described the
+		// release a DEVICE runs, so it became that device's page under Devices.
+		'/virtues/network': '/virtues/system',
+		'/virtues/software': '/virtues/devices/server',
 		// Box split into System · Network · Software (2026-08-17). Its own door
 		// lands on System, the largest of the three and the one that kept the
 		// page's former title.
 		'/virtues/box': '/virtues/system',
 		'/virtues/box/health': '/virtues/system',
-		'/virtues/box/network': '/virtues/network',
-		'/virtues/box/updates': '/virtues/software',
-		'/virtues/updates': '/virtues/software',
-		'/virtues/version': '/virtues/software',
+		'/virtues/box/network': '/virtues/system',
+		'/virtues/box/updates': '/virtues/devices/server',
+		'/virtues/updates': '/virtues/devices/server',
+		'/virtues/version': '/virtues/devices/server',
 		// Devices absorbed both Start over (the split above) and This Mac, which
 		// was a top-level section for one instance of hardware. It is now
 		// `devices/this` — a device page like any other, and a stable word
@@ -133,22 +143,20 @@
 	type Section =
 		| 'you'
 		| 'assistant'
-		| 'billing'
-		| 'usage'
+		| 'models'
+		| 'plan'
 		| 'system'
-		| 'network'
-		| 'software'
 		| 'devices'
+		| 'display'
 		| 'developer';
 
 	const SECTIONS = [
 		'assistant',
-		'billing',
-		'usage',
+		'models',
+		'plan',
 		'system',
-		'network',
-		'software',
 		'devices',
+		'display',
 		'developer',
 	];
 
@@ -176,34 +184,38 @@
 			<ProfileView {tab} {active} />
 		{:else if section === 'assistant'}
 			<AssistantView {tab} {active} />
-		{:else if section === 'billing'}
-			<BillingView {tab} {active} />
-		{:else if section === 'usage'}
-			<UsageView {tab} {active} />
+		{:else if section === 'models'}
+			<ModelsView {tab} {active} />
+		{:else if section === 'plan'}
+			<PlanView {tab} {active} />
 		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
-		{:else if section === 'network'}
-			<NetworkSection />
-		{:else if section === 'software'}
-			<SoftwareView />
+		{:else if section === 'display'}
+			<DisplayView />
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />
+			{:else if sub === 'server'}
+				<!-- The server's own page. It is row zero of Devices, not a
+				     separate subject: "what release does this machine run" is a
+				     fact about a device. -->
+				<SoftwareView />
 			{:else if sub === 'this' && isIOS}
-				<!-- iOS FIRST, because an iPad satisfies `isMacOS` too (it reports
-				     a desktop platform string; see utils/platform.ts) and would
-				     otherwise be handed the Mac collector panel. -->
+				<!-- iOS keeps its own instrument panel for now: MobileDeviceScreen
+				     is 900 lines of stream-by-stream local detail that has no
+				     box-side equivalent. iOS FIRST, because an iPad satisfies
+				     `isMacOS` too (it reports a desktop platform string; see
+				     utils/platform.ts) and would otherwise get the Mac panel. -->
 				<ThisDeviceView />
-			{:else if sub === 'this' && isMacOS}
-				<!-- The machine you're on is NOT rendered from its device row. Its
-				     panel — collector health, permissions, streams — is read from
-				     the local daemon over IPC, and knows things the box never
-				     receives. In a plain browser there is no local daemon to read,
-				     so `this` falls through to the box-side page, which is then
-				     genuinely all there is. -->
-				<ThisMacView {tab} {active} />
 			{:else}
-				<DeviceDetailView deviceId={sub} />
+				<!-- ONE page for every other device, including this Mac. It used
+				     to be three, split by vantage — what the box knows vs what the
+				     device knows — with nothing on screen saying that was the axis,
+				     so permissions and versions appeared twice and disagreed for
+				     reasons no reader could see. DeviceView states the vantage per
+				     section instead, and reads the local daemon when it is
+				     standing on the machine it describes. -->
+				<DeviceView deviceId={sub} {tab} {active} />
 			{/if}
 		{:else if section === 'developer'}
 			{#if sub === 'terminal'}

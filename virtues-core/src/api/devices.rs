@@ -44,9 +44,21 @@ pub struct DeviceListItem {
     /// The client's reported build identity (from the `X-Virtues-Client`
     /// header, stored under `device_info.build`). Null until the device has
     /// made a request on a build that sends it.
+    ///
+    /// CAREFUL what these mean: for an app device, `version`/`sha`/`channel`
+    /// describe the UI BUNDLE its requests come from — which for a paired
+    /// desktop is the box-served SPA, so it mirrors the box. `app_version` is
+    /// the native shell's own release (`1.0.23`) and is the field that answers
+    /// "which app is that device on". For a collector (which sends its own
+    /// header), `version` IS the binary's release and `app_version` is null.
     pub version: Option<String>,
     pub sha: Option<String>,
     pub channel: Option<String>,
+    pub app_version: Option<String>,
+    /// The device id of the app that installed this collector (the minter of
+    /// its pair token, recorded at consume). Null for standalone devices; the
+    /// UI uses it to fold a machine's collector under its app row.
+    pub installed_by: Option<String>,
     /// What a collector device reports it is currently allowed to read
     /// (`device_info.permissions`, written by its ingest action from the
     /// collector's own self-report). Null for devices that don't collect, or
@@ -63,46 +75,26 @@ pub struct DeviceListItem {
 
 /// `GET /api/devices` — list all active paired devices for the current user.
 pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl IntoResponse {
-    #[allow(clippy::type_complexity)]
-    let rows: Result<Vec<(String, String, Option<String>, String, DateTime<Utc>, Option<DateTime<Utc>>, Option<String>, Option<String>, Option<String>, Option<String>, Option<Value>)>, _> =
-        sqlx::query_as(
-            "SELECT id, kind, source_id, label, paired_at, last_seen_at, paired_from_ip, \
-                    device_info->'build'->>'version' AS version, \
-                    device_info->'build'->>'sha'     AS sha, \
-                    device_info->'build'->>'channel' AS channel, \
-                    device_info->'permissions'       AS permissions \
-             FROM app_device \
-             WHERE user_id = $1 AND revoked_at IS NULL \
-             ORDER BY last_seen_at DESC NULLS LAST, paired_at DESC",
-        )
-        .bind(&user.id)
-        .fetch_all(&pool)
-        .await;
+    let rows: Result<Vec<DeviceListItem>, _> = sqlx::query_as(
+        "SELECT id, kind, source_id, label, paired_at, last_seen_at, paired_from_ip, \
+                device_info->'build'->>'version' AS version, \
+                device_info->'build'->>'sha'     AS sha, \
+                device_info->'build'->>'channel' AS channel, \
+                device_info->'build'->>'app'     AS app_version, \
+                device_info->>'installed_by'     AS installed_by, \
+                device_info->'permissions'       AS permissions, \
+                (id = $2)                        AS is_current \
+         FROM app_device \
+         WHERE user_id = $1 AND revoked_at IS NULL \
+         ORDER BY last_seen_at DESC NULLS LAST, paired_at DESC",
+    )
+    .bind(&user.id)
+    .bind(&user.device_id)
+    .fetch_all(&pool)
+    .await;
 
     match rows {
-        Ok(rows) => {
-            let items: Vec<DeviceListItem> = rows
-                .into_iter()
-                .map(|(id, kind, source_id, label, paired_at, last_seen_at, ip, version, sha, channel, permissions)| {
-                    let is_current = id == user.device_id;
-                    DeviceListItem {
-                        id,
-                        kind,
-                        source_id,
-                        label,
-                        paired_at,
-                        last_seen_at,
-                        paired_from_ip: ip,
-                        version,
-                        sha,
-                        channel,
-                        permissions,
-                        is_current,
-                    }
-                })
-                .collect();
-            (StatusCode::OK, Json(json!({"devices": items}))).into_response()
-        }
+        Ok(items) => (StatusCode::OK, Json(json!({"devices": items}))).into_response(),
         Err(e) => {
             tracing::warn!("devices list failed: {e:#}");
             (
@@ -116,12 +108,18 @@ pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl In
 
 /// Bare-pool device list for the `virtues device ls` CLI. No `AuthUser` — the
 /// on-box operator is the owner (physical access = you). Non-revoked devices,
-/// newest-active first. Returns `(id, kind, label, node_id, last_seen_at)`.
+/// newest-active first. Returns `(id, kind, label, node_id, last_seen_at,
+/// version)` — version prefers the native app's release over the UI bundle's
+/// (same preference the web Devices list renders; the bundle identity mirrors
+/// the box for app devices and is only the headline for a collector).
 pub async fn list_devices_cli(
     pool: &PgPool,
-) -> Result<Vec<(String, String, String, Option<String>, Option<DateTime<Utc>>)>, sqlx::Error> {
+) -> Result<Vec<(String, String, String, Option<String>, Option<DateTime<Utc>>, Option<String>)>, sqlx::Error>
+{
     sqlx::query_as(
-        "SELECT id, kind, label, node_id, last_seen_at \
+        "SELECT id, kind, label, node_id, last_seen_at, \
+                COALESCE(device_info->'build'->>'app', \
+                         device_info->'build'->>'version') AS version \
          FROM app_device \
          WHERE revoked_at IS NULL \
          ORDER BY last_seen_at DESC NULLS LAST, paired_at DESC",
@@ -166,9 +164,11 @@ pub async fn revoke_handler(
     //
     //   1. `SELECT … FOR UPDATE` the target device row — takes the row lock so
     //      concurrent revokes can't interleave under the count guard.
-    //   2. `SELECT COUNT(*) … FOR UPDATE` the other active devices — also locked
-    //      so a parallel revoke can't drop the active count between our count
-    //      and our update.
+    //   2. `SELECT id … FOR UPDATE` the other active devices and count the rows
+    //      here — also locked, so a parallel revoke can't drop the active count
+    //      between our count and our update. NOT an aggregate: see the note at
+    //      the query itself for why `COUNT(*) … FOR UPDATE` made this handler
+    //      return 500 on every call.
     //   3. If we'd be revoking the only active device → bail with 409.
     //   4. Capture the WG pubkey from credentials before the credential row's
     //      lookup_hash gets cleared.
@@ -210,17 +210,32 @@ pub async fn revoke_handler(
     // Bubble DB errors as 500 — eating them would conflate "database down"
     // with "actually the only device" and surface a spurious last_device 409
     // to the user.
-    let other_active: Result<Option<(i64,)>, sqlx::Error> = sqlx::query_as(
-        "SELECT COUNT(*) FROM app_device \
+    //
+    // Select the ROWS and count them here — never `SELECT COUNT(*) … FOR
+    // UPDATE`, which Postgres refuses outright:
+    //
+    //     ERROR: FOR UPDATE is not allowed with aggregate functions
+    //
+    // That was this handler's shape until 2026-08-27, so the query failed on
+    // every call and revoking a device returned 500 unconditionally — the
+    // "prod revoke 500" open since the 2026-08-18 master build. It is also why
+    // no amount of reading the transaction logic found it: the bug was in the
+    // one line whose comment explained why it had to be there.
+    //
+    // Counting rows in Rust is not a workaround, it is the thing the comment
+    // above always meant: an aggregate locks nothing even where it is legal,
+    // while this locks each row a concurrent revoke would have to take.
+    let other_active: Result<Vec<(String,)>, sqlx::Error> = sqlx::query_as(
+        "SELECT id FROM app_device \
          WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2 \
          FOR UPDATE",
     )
     .bind(&user.id)
     .bind(&device_id)
-    .fetch_optional(&mut *tx)
+    .fetch_all(&mut *tx)
     .await;
     let other_count = match other_active {
-        Ok(opt) => opt.map(|(n,)| n).unwrap_or(0),
+        Ok(rows) => rows.len(),
         Err(e) => {
             tracing::warn!("devices revoke: count query failed: {e:#}");
             return (
@@ -486,6 +501,10 @@ pub(crate) async fn enroll_peer_core(
         None,
         Some(peer_node_id),
         Some(source_id.as_str()),
+        // A vouched peer has NEVER connected — the voucher speaks for it. Its
+        // first authenticated request is what sets `last_seen_at`, which is
+        // what makes that column usable as "the device actually arrived".
+        false,
     )
     .await
     .map_err(|e| {
@@ -515,3 +534,112 @@ pub(crate) async fn enroll_peer_core(
 // active peer set (see virtues_wg::reconcile + signal). Revoke marks the row
 // and fires `NOTIFY wg_reconcile`; the daemon drops the peer. This removes the
 // previous dual-writer (a direct `remove_peer` here racing the daemon's poll).
+
+#[cfg(test)]
+mod tests {
+    /// The exact shape `revoke_handler` uses to count the OTHER active devices
+    /// while holding their row locks.
+    ///
+    /// This is a regression guard for a query that could never run. Until
+    /// 2026-08-27 the handler asked for `SELECT COUNT(*) … FOR UPDATE`, which
+    /// Postgres refuses:
+    ///
+    ///     ERROR: FOR UPDATE is not allowed with aggregate functions
+    ///
+    /// So the count failed on every call and revoking a device returned 500
+    /// unconditionally — device revocation had NEVER worked through the API.
+    /// Nothing caught it because nothing exercised this handler against a real
+    /// database; the transaction logic around it reads perfectly.
+    ///
+    /// The assertion is deliberately about the SQL being ACCEPTED, not about
+    /// the number: a count is easy to get right and impossible to run.
+    #[sqlx::test]
+    async fn the_active_device_count_query_is_legal_sql(pool: sqlx::PgPool) {
+        let mut tx = pool.begin().await.expect("begin");
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM app_device \
+             WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2 \
+             FOR UPDATE",
+        )
+        .bind("user_nobody")
+        .bind("dev_nobody")
+        .fetch_all(&mut *tx)
+        .await
+        .expect("row-locking count must be legal SQL — see the doc comment");
+        assert!(rows.is_empty(), "no devices exist in a scratch database");
+
+        // And prove the old shape is genuinely rejected, so this test fails
+        // loudly if someone 'simplifies' it back into an aggregate.
+        let bad = sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM app_device \
+             WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2 \
+             FOR UPDATE",
+        )
+        .bind("user_nobody")
+        .bind("dev_nobody")
+        .fetch_one(&mut *tx)
+        .await;
+        assert!(
+            bad.is_err(),
+            "COUNT(*) with FOR UPDATE must be rejected by Postgres — if this \
+             passes, the guard above has stopped meaning anything"
+        );
+    }
+
+    /// A vouched peer has never connected, so its row must start with a NULL
+    /// `last_seen_at`.
+    ///
+    /// The Add-device sheet waits for that column to go non-NULL as proof the
+    /// phone arrived. While enrollment stamped `now()` at insert, the proof was
+    /// true the instant it was created: the sheet's first poll (which fires
+    /// immediately) closed it green about half a second after it opened, having
+    /// watched nothing happen. Opening it again enrolled a second live device,
+    /// and a third — each one an allowlisted key for a phone that had never
+    /// seen the QR.
+    ///
+    /// The consume path is the opposite case and is asserted alongside it: that
+    /// device IS the other end of the request, so `now()` there is the truth.
+    #[sqlx::test]
+    async fn a_vouched_peer_is_not_marked_seen_until_it_connects(pool: sqlx::PgPool) {
+        let seen_at = |id: &'static str, seen_now: bool| {
+            let pool = pool.clone();
+            async move {
+                let mut tx = pool.begin().await.expect("begin");
+                let device_id = crate::api::pair::insert_device_row(
+                    &mut tx,
+                    id,
+                    "mobile_app",
+                    "test phone",
+                    &serde_json::json!({}),
+                    None,
+                    Some(id), // node_id — distinct per case, so neither conflicts
+                    None,
+                    seen_now,
+                )
+                .await
+                .expect("insert");
+                tx.commit().await.expect("commit");
+
+                sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+                    "SELECT last_seen_at FROM app_device WHERE id = $1",
+                )
+                .bind(&device_id)
+                .fetch_one(&pool)
+                .await
+                .expect("read back last_seen_at")
+            }
+        };
+
+        assert!(
+            seen_at("dev_vouched", false).await.is_none(),
+            "a peer enrolled on someone else's word has not connected — a \
+             non-NULL last_seen_at here is a connection that never happened, \
+             and it is what the Add-device sheet mistakes for the phone arriving"
+        );
+        assert!(
+            seen_at("dev_consumed", true).await.is_some(),
+            "the consume path's device is the other end of that request, so it \
+             genuinely has been seen"
+        );
+    }
+}

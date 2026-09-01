@@ -208,13 +208,18 @@ async fn verify(
         .await;
 
     // A session may exist before any payment does — sign in, then buy, then
-    // link. So a missing customer is not an error here.
-    let customer: Option<(String,)> =
-        sqlx::query_as("SELECT stripe_customer_id FROM customers WHERE email = $1 LIMIT 1")
-            .bind(&email)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
+    // link. So a missing customer is not an error here. lower(): customers
+    // rows store the email as Stripe reported it, which is whatever case the
+    // payer typed at checkout; the newest row wins for determinism under
+    // duplicate-email customers.
+    let customer: Option<(String,)> = sqlx::query_as(
+        "SELECT stripe_customer_id FROM customers WHERE lower(email) = $1 \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&email)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
     let customer_id = customer.map(|c| c.0);
 
     let token = random_hex(32);
@@ -240,10 +245,15 @@ async fn verify(
         return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not sign in");
     }
 
-    // Advisory here — the app re-checks entitlement server-side at /init/approve
-    // before anything is granted, so a read error at sign-in defaulting to
-    // `false` costs at most a needless "you have no subscription" glance, never
-    // a wrong grant. Named explicitly rather than swallowed silently.
+    // The account exists from the first sign-in (0017) — identity needs no
+    // payment. Best-effort here: the grant/approve paths ensure it again, so
+    // a transient failure costs nothing but this log line.
+    if let Err(e) = ensure_account(&state.pool, &email).await {
+        tracing::warn!("ensure_account at sign-in failed (grant path will retry): {e:#}");
+    }
+
+    // Advisory: `entitled` still reports subscription state (Settings and
+    // billing surfaces read it) but no linking door is gated on it anymore.
     let entitled = is_entitled(&state, customer_id.as_deref()).await.unwrap_or_else(|e| {
         tracing::warn!("entitlement check at sign-in failed (defaulting to not-entitled): {e:#}");
         false
@@ -337,18 +347,28 @@ async fn account_checkout_done(
         }
     };
 
-    let candidate_account_id = super::claim::new_account_id();
+    // Identity first (0017): the payer very likely signed in from the airlock
+    // moments ago, so an accounts row exists — reuse its id for the customer
+    // so the wallet key never forks between "free me" and "paying me".
+    let ensured_account_id = match ensure_account(&state.pool, &paid.email).await {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!("account checkout ensure_account failed: {e:#}");
+            super::claim::release_session_claim(&state, &session_id).await;
+            return page("Something went wrong", "Payment went through but we couldn't finish. Refresh this page to retry.");
+        }
+    };
     let account_id: Result<(String,), _> = sqlx::query_as(
         r#"
         INSERT INTO customers (stripe_customer_id, email, account_id)
         VALUES ($1, $2, $3)
-        ON CONFLICT (stripe_customer_id) DO UPDATE SET email = $2
+        ON CONFLICT (stripe_customer_id) DO UPDATE SET email = $2, account_id = $3
         RETURNING account_id
         "#,
     )
     .bind(&paid.stripe_customer_id)
     .bind(&paid.email)
-    .bind(&candidate_account_id)
+    .bind(&ensured_account_id)
     .fetch_one(&state.pool)
     .await;
     let (account_id,) = match account_id {
@@ -359,6 +379,14 @@ async fn account_checkout_done(
             return page("Something went wrong", "Payment went through but we couldn't finish. Refresh this page to retry.");
         }
     };
+    // Best-effort by design: the payment is captured and the subscription row
+    // lands below regardless; a transient failure here heals on the next
+    // attach-touching call, and the warn is the operator's signal.
+    if let Err(e) =
+        attach_stripe_to_account(&state.pool, &paid.email, &paid.stripe_customer_id).await
+    {
+        tracing::warn!("account checkout stripe attach failed: {e:#}");
+    }
     if let Err(e) = sqlx::query(
         r#"
         INSERT INTO subscriptions (stripe_subscription_id, stripe_customer_id, status, current_period_end)
@@ -377,20 +405,7 @@ async fn account_checkout_done(
         super::claim::release_session_claim(&state, &session_id).await;
         return page("Something went wrong", "Payment went through but we couldn't finish. Refresh this page to retry.");
     }
-    // The sessions minted before payment carry no customer — this is the write
-    // that flips `entitled` for the app's /account/session poll. Scoped to
-    // keyless sessions so a session already on another customer is untouched.
-    if let Err(e) = sqlx::query(
-        "UPDATE account_session SET stripe_customer_id = $1 \
-         WHERE email = $2 AND stripe_customer_id IS NULL",
-    )
-    .bind(&paid.stripe_customer_id)
-    .bind(&paid.email)
-    .execute(&state.pool)
-    .await
-    {
-        tracing::warn!("account checkout session repoint failed: {e:#}");
-    }
+    // (Session repoint rides in attach_stripe_to_account above.)
     // First month's wallet. Best-effort: `invoice.paid` re-sets it monthly,
     // and virtues-api's credit upserts the account row itself.
     if let Err(e) = state
@@ -414,8 +429,9 @@ async fn account_checkout_done(
 
 // ─── POST /account/session ──────────────────────────────────────────────────
 
-/// Who am I, and do I owe money? The app calls this at launch to decide whether
-/// the link step needs a payment sheet at all.
+/// Who am I, and is a subscription active? `entitled` is advisory billing
+/// state for Settings/billing surfaces — since 0017 no linking or setup step
+/// is gated on it, and the airlock ignores it.
 async fn session_info(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     let Some(sess) = authed(&state, &headers).await else {
         return err(StatusCode::UNAUTHORIZED, "unauthorized", "sign in again");
@@ -442,7 +458,7 @@ async fn session_info(State(state): State<AppState>, headers: HeaderMap) -> impl
 // That blocker fell 2026-08-24: migration 0015 introduced per-box keys
 // (`box_key`, scoped by the box's self-reported endpoint_id;
 // claim.rs::mint_box_key / customer_id_by_key_hash). What remains is the
-// grant itself — see docs/one-wire-plan.md, Phase 2.
+// grant itself — see agents/record/one-wire-plan.md, Phase 2.
 //
 // `POST /init/approve` (link.rs) is NOT this endpoint, though it looks
 // adjacent: it approves the box's own in-flight link — the same attach
@@ -455,6 +471,109 @@ async fn session_info(State(state): State<AppState>, headers: HeaderMap) -> impl
 pub(super) struct Session {
     pub(super) email: String,
     pub(super) customer_id: Option<String>,
+}
+
+/// Mint-or-fetch the account for an email — the identity root since 0017.
+///
+/// Read-first: this runs on every authed linking call, and the upsert's
+/// conflict arm is a WRITE (row version + row lock) even when nothing
+/// changes — a per-request churn the plain SELECT avoids. The upsert only
+/// runs on a genuine first sign-in (or the read/insert race, which the
+/// conflict arm absorbs). No Stripe anywhere in it — that is the point.
+pub(crate) async fn ensure_account(
+    pool: &sqlx::PgPool,
+    email: &str,
+) -> Result<String, sqlx::Error> {
+    if let Some(id) = sqlx::query_scalar::<_, String>(
+        "SELECT account_id FROM accounts WHERE email = lower($1)",
+    )
+    .bind(email)
+    .fetch_optional(pool)
+    .await?
+    {
+        return Ok(id);
+    }
+    let candidate = super::claim::new_account_id();
+    sqlx::query_scalar(
+        r#"
+        INSERT INTO accounts (account_id, email)
+        VALUES ($1, lower($2))
+        ON CONFLICT (email) DO UPDATE SET email = excluded.email
+        RETURNING account_id
+        "#,
+    )
+    .bind(&candidate)
+    .bind(email)
+    .fetch_one(pool)
+    .await
+}
+
+/// First payment: attach the Stripe customer to the account, and heal
+/// everything that was minted while the account was free. One helper because
+/// the "first payment only" semantics (the `IS NULL` guard — a re-subscribe
+/// under a NEW Stripe customer keeps the original attachment; subscriptions
+/// still resolve through `customers`) must not fork between the checkout and
+/// claim doors.
+///
+/// The healing matters as much as the attach: a box linked before payment
+/// carries `box_key.stripe_customer_id = NULL` and no `customers.api_key_hash`
+/// mirror, so without this the now-paying customer's box answers
+/// `invalid_api_key` on every billing door until a manual re-link.
+pub(crate) async fn attach_stripe_to_account(
+    pool: &sqlx::PgPool,
+    email: &str,
+    stripe_customer_id: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE accounts SET stripe_customer_id = $1 \
+         WHERE email = lower($2) AND stripe_customer_id IS NULL",
+    )
+    .bind(stripe_customer_id)
+    .bind(email)
+    .execute(pool)
+    .await?;
+    // Label the free-era keys with their customer so customer-keyed doors
+    // (credits, settings, billing portal) resolve them.
+    sqlx::query(
+        "UPDATE box_key bk SET stripe_customer_id = $1 \
+         FROM accounts a \
+         WHERE a.email = lower($2) AND bk.account_id = a.account_id \
+           AND bk.stripe_customer_id IS NULL",
+    )
+    .bind(stripe_customer_id)
+    .bind(email)
+    .execute(pool)
+    .await?;
+    // Mirror the newest key into customers.api_key_hash (most-recent-key
+    // semantics, matching mint_box_key) so a rolled-back binary authenticates
+    // boxes that linked while the account was free.
+    let newest: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT bk.api_key_hash FROM box_key bk \
+         JOIN accounts a ON a.account_id = bk.account_id \
+         WHERE a.email = lower($1) \
+         ORDER BY bk.created_at DESC LIMIT 1",
+    )
+    .bind(email)
+    .fetch_optional(pool)
+    .await?;
+    if let Some(hash) = newest {
+        sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
+            .bind(stripe_customer_id)
+            .bind(&hash)
+            .execute(pool)
+            .await?;
+    }
+    // Re-point keyless sessions (account_session stores lowercased emails) —
+    // this is what flips `entitled` for billing surfaces.
+    sqlx::query(
+        "UPDATE account_session SET stripe_customer_id = $1 \
+         WHERE email = lower($2) AND stripe_customer_id IS NULL",
+    )
+    .bind(stripe_customer_id)
+    .bind(email)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Resolve a `Authorization: Bearer <token>` into a live session, refreshing

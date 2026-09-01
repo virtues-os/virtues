@@ -20,7 +20,7 @@
       panel while it is unclaimed; typing it here claims the setup session, and
       that one Bluetooth connection then carries everything: the wifi
       credentials, the account grant, and the pairing. Nothing else is read off
-      a screen and retyped. See docs/onboarding-paradigm.md.
+      a screen and retyped. See agents/record/onboarding-paradigm.md.
 
       The phrase is the gate because an unclaimed box advertises to anything in
       radio range, and radio range passes through walls. Four words printed on
@@ -170,6 +170,21 @@
       .box .boxstate { display: block; font-size: 12px; font-weight: 400;
                        color: var(--ink-subtle); }
       .scan { font-size: 12px; color: var(--ink-subtle); margin-bottom: 14px; }
+
+      /* The entry fork's two doors: title + situation, one card each. The
+         caption is the disambiguator — "is this me?" answered under the verb
+         instead of inferred from it — so the card construction is the point,
+         not decoration. Same hairline language as .box/.net. */
+      .choice { display: block; width: 100%; text-align: left; background: var(--paper);
+                border: 1px solid var(--line); border-radius: 12px; padding: 15px 16px;
+                margin-bottom: 10px; color: var(--ink);
+                transition: border-color .15s var(--ease), box-shadow .2s var(--ease); }
+      .choice:hover { border-color: var(--line-strong); box-shadow: 0 1px 4px rgba(23,23,26,.06); }
+      .choice:active { border-color: var(--ink-faint); }
+      .choice b { display: block; font-family: var(--serif); font-size: 17px;
+                  font-weight: 400; margin-bottom: 3px; }
+      .choice span { display: block; font-size: 13px; line-height: 1.45;
+                     color: var(--ink-subtle); }
 
       /* ── setup mode ── */
       .net { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
@@ -346,7 +361,7 @@
           .trim() || 'Your server';
       // Where step 2 actually happens. Atlas directly, NOT the memorable
       // `virtues.com/link` this once said: that redirect is still an open
-      // decision in docs/linking-plan.md and 404s today, which is exactly what
+      // decision in agents/plan/linking-plan.md and 404s today, which is exactly what
       // it did to the first person who followed this button. Ship the URL that
       // answers; swap it the day the pretty one exists.
       //
@@ -511,11 +526,11 @@
          */
         boxStep({ identity, hasBle }) {
           if (identity && identity.linked) return 'pair';
-          // RPC 0x84 is session-gated, so the link code needs the same proof of
-          // line-of-sight the wifi step does. A box that was ALREADY online
-          // reached this step with no session and sat forever on "getting your
-          // box's code…" while every ask was refused — invisibly, because a
-          // refusal and "no code yet" are the same empty answer.
+          // The account grant (RPC 0x82) is session-gated, so linking needs the
+          // same proof of line-of-sight the wifi step does. A box that was
+          // ALREADY online reached this step with no session and sat forever
+          // while every ask was refused — invisibly, because a refusal and
+          // "nothing yet" are the same empty answer.
           if (hasBle) return 'phrase-then-link';
           return 'link';
         },
@@ -946,14 +961,165 @@
       function renderEntry(note) {
         searchGen++; // nothing should be scanning while we ask
         setServer('');
+        // TWO CARDS, each carrying its own situation — "first time" vs
+        // "already running" as bare buttons made people stop and work out
+        // which sentence described them. The caption under each title does
+        // that work instead. On a phone, "existing" leads with the camera
+        // (renderScan) because a QR on a computer's screen is the one path
+        // that works on any network; the LAN search and typed address live
+        // behind its "can't scan" escape. The old third door — a separate
+        // "Scan it" hint link — collapsed into that flow: it was the same
+        // destination wearing a different name.
         app.innerHTML = `
           <h1>Connect this ${IS_MOBILE ? 'Phone' : 'Computer'}</h1>
-          <p class="sub">${note ? esc(note) + ' ' : ''}Is this a server you're setting up for the
-            first time, or one that's already running?</p>
-          <button class="primary" id="fresh">Set up a new server</button>
-          <button class="secondary" id="existing">Connect to a server that's running</button>`;
+          <p class="sub">${note ? esc(note) + ' ' : ''}Where is your server in its life?</p>
+          <button class="choice" id="fresh">
+            <b>Set up a new server</b>
+            <span>Just unboxed — nothing has connected to it yet</span>
+          </button>
+          <button class="choice" id="existing">
+            <b>Connect to an existing server</b>
+            <span>Already running — add ${THIS_DEVICE} to it</span>
+          </button>`;
         document.getElementById('fresh').addEventListener('click', () => start());
-        document.getElementById('existing').addEventListener('click', () => startExisting());
+        document.getElementById('existing').addEventListener('click', () =>
+          IS_MOBILE ? renderScan() : startExisting());
+      }
+
+      // ── SCAN A PAIRING CODE ───────────────────────────────────────────────
+      //
+      // The way in when the phone can reach neither the box nor the computer:
+      // the box is elsewhere, and coworking wifi isolates clients so the two
+      // devices in your hands cannot see each other either. A paired computer
+      // mints this phone's identity, enrols its public half with the box over
+      // the relay it already has, and shows the result as a QR. Nothing
+      // crosses a network here — only a camera pointed at a screen.
+      //
+      // Decoding is jsQR (vendored beside this file; the airlock has no
+      // bundler). NOT `BarcodeDetector`: that is a Chrome API and WebKit has
+      // never shipped it, so the first version of this screen feature-detected
+      // it, told every iPhone it was "too old to scan", and returned before
+      // even starting the camera — a black rectangle under a false sentence.
+      // A decoder that runs everywhere costs 251K and removes the whole class.
+      let scanStream = null;
+      let scanRaf = 0;
+
+      function stopScan() {
+        if (scanRaf) { cancelAnimationFrame(scanRaf); scanRaf = 0; }
+        if (scanStream) {
+          scanStream.getTracks().forEach((t) => t.stop());
+          scanStream = null;
+        }
+      }
+
+      /// Load the decoder once, on demand. Kept out of the boot path: the
+      /// airlock's first paint must not wait on 251K nobody has asked for yet.
+      function loadDecoder() {
+        if (window.jsQR) return Promise.resolve(true);
+        return new Promise((resolve) => {
+          const s = document.createElement('script');
+          s.src = 'jsqr.js';
+          s.onload = () => resolve(!!window.jsQR);
+          s.onerror = () => resolve(false);
+          document.head.appendChild(s);
+        });
+      }
+
+      async function renderScan() {
+        searchGen++;
+        setServer('');
+        app.innerHTML = `
+          <button class="backnav" id="back" aria-label="Back">←</button>
+          <h1>Scan the QR code</h1>
+          <p class="sub">On a computer that's already connected: Settings → Devices →
+            Add device. Point this phone at the code it shows.</p>
+          <video id="cam" playsinline muted
+                 style="width:100%;max-width:340px;border-radius:14px;background:#000"></video>
+          <p class="hint err" id="scanerr"></p>
+          <p class="hint" style="margin-top:18px">No computer, or can't scan?
+            <a href="#" id="lanpath">Find your server on this network</a>.</p>`;
+        document.getElementById('back').addEventListener('click', () => { stopScan(); renderEntry(); });
+        // The escape into the LAN/typed-address path — the pre-scanner flow,
+        // still the only one that works with no second computer around.
+        document.getElementById('lanpath').addEventListener('click', (e) => {
+          e.preventDefault(); stopScan(); startExisting();
+        });
+
+        const err = document.getElementById('scanerr');
+        if (!(await loadDecoder())) {
+          err.textContent =
+            'The scanner failed to load. Use “Find your server on this network” below instead.';
+          return;
+        }
+
+        let stream;
+        try {
+          // `environment` = the back camera. A phone pointed at a laptop screen
+          // is always using the back one; asking for it by name avoids opening
+          // the selfie camera and looking broken.
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment' },
+          });
+        } catch (e) {
+          err.textContent =
+            'The camera is unavailable — allow camera access for Virtues in Settings, then try again. (' + String(e && e.name || e) + ')';
+          return;
+        }
+        scanStream = stream;
+        const video = document.getElementById('cam');
+        if (!video) { stopScan(); return; } // navigated away mid-permission
+        video.srcObject = stream;
+        await video.play().catch(() => {});
+
+        // jsQR reads pixels, so frames go through a canvas. Sized once from the
+        // stream rather than per frame — a reallocation per frame is what makes
+        // a scanner feel sluggish on a phone.
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const gen = searchGen;
+        let handled = false;
+
+        function tick() {
+          // Bail the moment the screen changes underneath us — the back button
+          // and a successful pair both bump searchGen.
+          if (handled || gen !== searchGen || !scanStream) return;
+          const w = video.videoWidth, h = video.videoHeight;
+          if (w && h) {
+            if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
+            ctx.drawImage(video, 0, 0, w, h);
+            try {
+              const img = ctx.getImageData(0, 0, w, h);
+              // `dontInvert`: our code is dark-on-light, and asking jsQR to also
+              // try the inverted reading doubles the per-frame cost for nothing.
+              const found = window.jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' });
+              if (found && found.data) {
+                handled = true;
+                stopScan();
+                return acceptScanned(found.data);
+              }
+            } catch { /* a frame that won't decode is not an error */ }
+          }
+          scanRaf = requestAnimationFrame(tick);
+        }
+        scanRaf = requestAnimationFrame(tick);
+      }
+
+      async function acceptScanned(payload) {
+        searchGen++;
+        app.innerHTML = `
+          <h1>Pairing</h1>
+          <div class="wait"><span class="pip"></span><span>Setting this phone up</span></div>`;
+        try {
+          await invoke('plugin:reach|pair_handoff_accept', { payload });
+          return finishPairing('Paired');
+        } catch (e) {
+          // Straight back to the scanner carrying the reason — a wrong or
+          // expired code is the common case and deserves another try, not a
+          // dead end.
+          await renderScan();
+          const err = document.getElementById('scanerr');
+          if (err) err.textContent = String(e && e.message ? e.message : e);
+        }
       }
 
       // The "already running" half: look on the LAN, and fall to typing an
@@ -1164,7 +1330,7 @@ its devices apart — type its address.",
       // command. An unclaimed box advertises to anything in radio range, and
       // radio range passes through walls — the four words are printed on the
       // box's own panel, so having them proves LINE OF SIGHT, which is the bar
-      // we actually want. See docs/onboarding-paradigm.md §1.
+      // we actually want. See agents/record/onboarding-paradigm.md §1.
       //
       // Comes before the wifi picker because a session must exist before the
       // box will accept credentials at all.
@@ -1498,7 +1664,7 @@ its devices apart — type its address.",
         // Do NOT disconnect here. This used to tear the link down on every
         // outcome, and both branches below need it moments later: a failed join
         // returns to the picker (which rescans), and a successful one goes on to
-        // fetch the link code over RPC 0x84. Redialing that fast loses the race
+        // hand over the account grant (RPC 0x82). Redialing that fast loses the race
         // against CoreBluetooth and the box's own radio, so `ensure_connected`
         // times out — and the user is told "couldn't connect to the box over
         // Bluetooth" when what actually happened was a wrong Wi-Fi password
@@ -1514,7 +1680,7 @@ its devices apart — type its address.",
         renderGrantStep({ name: state.bleBox.name, origin, bleId: state.bleBox.id }, ssid);
       }
 
-      // ── ACCOUNT: sign in → (checkout) → grant ─────────────────────────────
+      // ── ACCOUNT: sign in → grant ──────────────────────────────────────────
       //
       // Sign-in comes BEFORE wifi (one-wire-plan Phase 2). It is a
       // conversation between THIS computer and atlas — the box is not
@@ -1527,14 +1693,23 @@ its devices apart — type its address.",
       // opcodes they orbited.
       //
       // SKIP STAYS EVERYWHERE (prescribe, never enforce): a skipped sign-in
-      // just means no grant is written — the box works LAN-only, linkable
-      // later from Settings or `virtues link` on its console.
+      // just means no grant is written — the box is linkable later from
+      // Settings or `virtues link` on its console.
+      //
+      // SETUP NEVER MENTIONS MONEY (open-relay-plan, 2026-08-31). A checkout
+      // screen used to sit between sign-in and the grant, gating the account
+      // attach on payment. That put the paywall on the connectivity substrate:
+      // an unpaid box got no account, so no relay, and on a client-isolating
+      // AP "unpaid" was indistinguishable from "broken" — a beta owner hit
+      // exactly that, then watched the checkout poll hang on a slow webhook.
+      // The subscription is offered where it's honest: the first time hosted
+      // AI is invoked, and in Settings. Setup's only questions are network
+      // and ownership.
       //
       // Atlas contract (routes/account.rs, routes/link.rs):
       //   POST /account/login          {email}       → {sent}
       //   POST /account/login/verify   {email, code} → {token, entitled}
       //   POST /account/session        (Bearer)      → {email, entitled}
-      //   POST /account/checkout       (Bearer)      → {url} | {entitled:true}
       //   POST /init/grant             (Bearer)      → {grant, expires_in}
       // Errors are HTTP 4xx/5xx with {error:{code,message}}; atlasPost
       // flattens them to {ok:false, code, error}. CORS: app_cors() — the
@@ -1589,12 +1764,8 @@ its devices apart — type its address.",
             <div class="wait"><span class="pip"></span><span>One moment</span></div>`;
           (async () => {
             const res = await atlasPost('/account/session', {}, state.linkToken);
-            if (res && res.ok) {
-              if (res.entitled) { state.entitled = true; return proceed(); }
-              return renderCheckout(box, proceed);
-            }
+            if (res && res.ok) return proceed();
             state.linkToken = null;
-            state.entitled = false;
             renderSignin(box, next, res && res.transport ? res.error : null);
           })();
           return;
@@ -1681,59 +1852,12 @@ its devices apart — type its address.",
           if (res && res.ok && res.token) {
             // Signed in for the whole setup — a screen bounce never re-OTPs.
             state.linkToken = res.token;
-            if (res.entitled) { state.entitled = true; return proceed(); }
-            return renderCheckout(box, proceed);
+            return proceed();
           }
           renderSigninCode(box, proceed, email,
             (res && res.error) || "That code didn't match.");
         });
         document.getElementById('code').focus();
-      }
-
-      /** Signed in, no subscription: the one deliberate browser hand-off.
-       *  Payment lives where Apple Pay and card autofill live; this screen
-       *  waits for atlas to see it land and then simply continues. */
-      function renderCheckout(box, proceed) {
-        const gen = ++searchGen;
-        setServer(box.name);
-        app.innerHTML = `
-          <p class="kicker">Your account</p>
-          <h1>Start your subscription</h1>
-          <p class="sub">Checkout opens in your browser — cards and Apple Pay live
-            there, not in this app. Come back here after; this screen notices on
-            its own.</p>
-          <button class="primary" id="open">Open checkout</button>
-          <div class="wait hidden" id="waiting"><span class="pip"></span><span>Waiting for the payment to land…</span></div>
-          <div class="msg" id="msg"></div>
-          <p class="escape"><button id="skip">Skip — run it without a subscription</button></p>`;
-        const say = (t, cls) => {
-          const m = document.getElementById('msg');
-          if (m) { m.className = 'msg ' + (cls || ''); m.textContent = t; }
-        };
-        document.getElementById('skip').addEventListener('click', () => { searchGen++; proceed(); });
-        document.getElementById('open').addEventListener('click', async () => {
-          const res = await atlasPost('/account/checkout', {}, state.linkToken);
-          if (gen !== searchGen) return;
-          if (res && res.ok && res.entitled) { state.entitled = true; searchGen++; return proceed(); }
-          if (!(res && res.ok && res.url)) {
-            return say((res && res.error) || "Couldn't open checkout — try again.", 'err');
-          }
-          openUrl(res.url);
-          document.getElementById('waiting').classList.remove('hidden');
-          // Poll until the webhook-and-done-page flip `entitled`. Gen-guarded;
-          // skip and back navigation retire it.
-          while (gen === searchGen) {
-            await new Promise((r) => setTimeout(r, 3000));
-            if (gen !== searchGen) return;
-            const s2 = await atlasPost('/account/session', {}, state.linkToken);
-            if (gen !== searchGen) return;
-            if (s2 && s2.ok && s2.entitled) {
-              state.entitled = true;
-              searchGen++;
-              return proceed();
-            }
-          }
-        });
       }
 
       // ── THE GRANT, written after the join ─────────────────────────────────
@@ -1744,9 +1868,10 @@ its devices apart — type its address.",
       // redeems outbound once online — nothing here polls for the redemption.
       // The codeless pair that follows waits box-side for the redeem + relay
       // bind, so the ticket it answers with is complete. Skipped sign-in
-      // writes nothing and goes straight to pairing: LAN-only by choice.
+      // writes nothing and goes straight to pairing; the account attaches
+      // later from Settings if wanted.
       async function renderGrantStep(server, ssid) {
-        if (!state.linkToken || !state.entitled || !server.bleId) {
+        if (!state.linkToken || !server.bleId) {
           return goToPairing(server, ssid);
         }
         const gen = ++searchGen;
@@ -1845,13 +1970,6 @@ its devices apart — type its address.",
         } finally {
           clearTimeout(t);
         }
-      }
-
-      /** Open a URL in the user's real browser — checkout belongs there. */
-      function openUrl(url) {
-        // The opener plugin is desktop-only; mobile falls back to the webview's
-        // own handler, which iOS routes to Safari.
-        invoke('plugin:opener|open_url', { url }).catch(() => window.open(url, '_blank'));
       }
 
       function renderSearching() {
@@ -2099,7 +2217,7 @@ its devices apart — type its address.",
 
       // Code entry for ONE chosen box. The code is the only thing left to
       // type, and mistyping the box is fail-closed anyway: a code only works
-      // on the box that displayed it.
+      // on the box that minted it.
       async function renderCodeEntry(server) {
         let autoErr = '';
         setServer(server.name);
@@ -2110,8 +2228,8 @@ its devices apart — type its address.",
         // answering, so this one call carries everything.
         //
         // The form below stays for the LAN route: a claimed box found on the
-        // network, where the panel's rotating 6-digit code is the only proof
-        // channel a codeless radio can't replace.
+        // network, where a code minted by `virtues pair` on the server is the
+        // only proof channel a codeless radio can't replace.
         if (server.bleId) {
           app.innerHTML = `
             <p class="kicker">Almost there</p>
@@ -2123,22 +2241,30 @@ its devices apart — type its address.",
           const done = await submitPairBle(server);
           if (done.ok) return;
           // Bluetooth failed. Carry the reason onto the LAN form: silence
-          // here reads as the app having ignored the tap, and the panel is
-          // showing the code the form asks for.
+          // here reads as the app having ignored the tap, and the form names
+          // the working path (`virtues pair`).
           autoErr = done.error;
         }
+        // The code comes from `virtues pair` on the server — nowhere else.
+        // This copy used to promise "the 6 digits on the display right now,"
+        // but the display deliberately never prints a pair code, and on a
+        // claimed box the standing code is retired at claim (pair_rotator.rs)
+        // — so the screen was asking for digits that did not exist anywhere.
+        // A beta owner with no shell on her server dead-ended here (2026-08-31).
         app.innerHTML = `
           <button class="backnav" id="back" aria-label="Back to servers">←</button>
           <p class="kicker">${esc(server.name)}${server.claimed === false ? ' · ready to set up' : ''}</p>
           <h1>Enter its code</h1>
-          <p class="sub">The 6 digits on ${esc(server.name)}'s display right now.</p>
+          <p class="sub">Run <b>virtues pair</b> in ${esc(server.name)}'s terminal —
+            it prints the six digits.</p>
           <form id="form">
             <input id="code" inputmode="numeric" maxlength="7" placeholder="123 456" autofocus />
             <button class="primary" id="go" type="submit">Pair</button>
           </form>
           <div class="msg err" id="msg">${autoErr ? esc(autoErr) : ''}</div>
-          <p class="hint">It rotates every few minutes — a fresh one always works. No display?
-            Run <b>virtues pair</b> on the server.</p>
+          <p class="hint">${server.claimed === false
+            ? 'The install printed one too, when it finished. Codes rotate — a fresh one always works.'
+            : 'Each code works once and lasts about 15 minutes.'}</p>
           ${server.bleId ? '<button class="back" id="blewifi">Set up its Wi-Fi instead</button>' : ''}`;
         document.getElementById('back').addEventListener('click', start);
         // The escape hatch for a stale "already online" advertisement: if the

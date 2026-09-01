@@ -52,6 +52,10 @@ struct ResetCommand: ParsableCommand {
             }
         }
         
+        // The queue is gone, so every cursor pointing past it is now a lie.
+        SyncCursors.clearAll()
+        print("✓ Sync cursors cleared")
+
         print("\nReset complete. Run 'virtues-collector init <token>' to reconfigure.")
     }
 }

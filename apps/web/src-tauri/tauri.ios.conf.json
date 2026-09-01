@@ -1,13 +1,14 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "identifier": "com.virtues.app",
-  "version": "1.2.6",
+  "version": "1.2.14",
   "build": {
     "beforeBuildCommand": "pnpm build && cp build/200.html build/index.html",
     "frontendDist": "../build"
   },
   "bundle": {
     "externalBin": [],
+    "resources": [],
     "iOS": {
       "developmentTeam": "4YV9K677RY"
     }

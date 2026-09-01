@@ -85,6 +85,16 @@ pub struct GatewayModel {
     /// e.g. `tools`, `tool_choice`, `reasoning`. A second signal for tool use.
     #[serde(default)]
     pub supported_parameters: Vec<String>,
+    /// Zero-data-retention posture across the endpoints that can serve this
+    /// model: `"all"` (every route is ZDR), `"some"` (depends on which
+    /// endpoint the gateway picks per request), `"none"`. The gateway's
+    /// attestation about its providers, passed through verbatim — only
+    /// `"all"` is a promise a model-level badge can honestly make.
+    #[serde(default)]
+    pub zdr: Option<String>,
+    /// Same tri-state for "providers do not train on request data".
+    #[serde(default)]
+    pub no_training: Option<String>,
 }
 
 /// Input/output modality lists as the gateway reports them (`text`, `image`,
@@ -201,6 +211,33 @@ impl Catalog {
         self.inner.read().ok()?.get(model_id).cloned()
     }
 
+    /// Should we ask the gateway to enforce zero data retention for this call?
+    ///
+    /// Yes for everything except the models the gateway says have no ZDR route
+    /// at all (`zdr: "none"`), which would fail closed with
+    /// `no_zdr_providers_available` rather than answer. So a `some` model — one
+    /// whose retention depends on which endpoint the gateway picks — is pinned
+    /// to its ZDR endpoints here rather than left to chance, and an `all` model
+    /// is unaffected.
+    ///
+    /// This is deliberately NOT a user setting. A global "ZDR off" switch would
+    /// silently downgrade every background job — bookmark extraction,
+    /// summaries, search queries — for as long as it stayed flipped, in service
+    /// of one deliberate model choice. Instead the choice IS the scope: pick a
+    /// no-ZDR model for a slot and only that slot's calls go unenforced, which
+    /// the catalog UI states plainly at the moment of picking.
+    ///
+    /// An unknown id enforces. The catalog refreshes hourly, so "unknown" means
+    /// a typo or a model newer than our last refresh; a loud 400 is the right
+    /// answer to both, and strictly better than quietly shipping a user's
+    /// record to an endpoint we cannot vouch for.
+    pub fn enforce_zdr(&self, model_id: &str) -> bool {
+        match self.get(model_id) {
+            Some(m) => m.zdr.as_deref() != Some("none"),
+            None => true,
+        }
+    }
+
     pub fn is_cold(&self) -> bool {
         self.inner.read().map(|g| g.is_empty()).unwrap_or(true)
     }
@@ -266,6 +303,8 @@ impl Catalog {
                     input_cost_per_1k: Some(input),
                     output_cost_per_1k: Some(output),
                     recommended,
+                    zdr: m.zdr.clone(),
+                    no_training: m.no_training.clone(),
                 })
             })
             .collect();
@@ -379,6 +418,10 @@ pub struct CuratedModel {
     /// declaration. The picker sections on this.
     #[serde(default)]
     pub recommended: bool,
+    /// Retention tri-state from the gateway (`"all" | "some" | "none"`), or
+    /// `None` when it didn't say. `None` is unknown, not `"none"`.
+    pub zdr: Option<String>,
+    pub no_training: Option<String>,
 }
 
 /// Split a bare model name into its family stem and version, e.g. `grok-4.5`
@@ -464,6 +507,8 @@ mod tests {
                 output: vec!["text".to_string()],
             }),
             supported_parameters: vec![],
+            zdr: None,
+            no_training: None,
         }
     }
 
@@ -533,6 +578,55 @@ mod tests {
             "the Omni transcription model must not be recommended for chat"
         );
         assert!(!entry.is_default);
+    }
+
+    /// The retention tri-state is the gateway's attestation, passed through
+    /// verbatim — the picker must not collapse it to a bool or invent a value
+    /// when the gateway sent none.
+    #[test]
+    fn retention_tristate_passes_through_untouched() {
+        let c = Catalog::new();
+        c.store(vec![
+            GatewayModel {
+                zdr: Some("all".to_string()),
+                no_training: Some("some".to_string()),
+                ..gw("anthropic/claude-sonnet-5", "0.000002", &["tool-use"], &["text"])
+            },
+            gw("meta/llama-3.3-70b", "0.000001", &[], &["text"]),
+        ]);
+        let picker = c.picker();
+        let claude = picker.iter().find(|m| m.model_id.contains("sonnet")).unwrap();
+        assert_eq!(claude.zdr.as_deref(), Some("all"));
+        assert_eq!(claude.no_training.as_deref(), Some("some"));
+        let llama = picker.iter().find(|m| m.model_id.contains("llama")).unwrap();
+        assert!(llama.zdr.is_none(), "absent stays absent — unknown is not a value");
+    }
+
+    /// The whole retention guarantee reduces to this function, so it is worth
+    /// asserting rather than trusting: enforce for `all` and `some`, skip only
+    /// for `none` (which would 400 instead of answering), and enforce when we
+    /// have never heard of the model.
+    #[test]
+    fn zdr_is_enforced_for_every_model_that_has_a_zdr_route() {
+        let c = Catalog::new();
+        c.store(vec![
+            GatewayModel { zdr: Some("all".into()), ..gw("a/all", "0.000001", &[], &["text"]) },
+            GatewayModel { zdr: Some("some".into()), ..gw("a/some", "0.000001", &[], &["text"]) },
+            GatewayModel { zdr: Some("none".into()), ..gw("a/none", "0.000001", &[], &["text"]) },
+            GatewayModel { zdr: None, ..gw("a/silent", "0.000001", &[], &["text"]) },
+        ]);
+        // `some` is the load-bearing case: retention depends on which endpoint
+        // the gateway picks, and enforcing is what removes the coin flip.
+        assert!(c.enforce_zdr("a/some"));
+        assert!(c.enforce_zdr("a/all"));
+        // The only skip. Enforcing here fails the call outright rather than
+        // answering, so the user's deliberate choice is honored instead.
+        assert!(!c.enforce_zdr("a/none"));
+        // Unknown, and a model that told us nothing, both fail toward privacy.
+        assert!(c.enforce_zdr("a/silent"));
+        assert!(c.enforce_zdr("nobody/has-heard-of-this"));
+        // A cold catalog knows nothing about anything — still enforces.
+        assert!(Catalog::new().enforce_zdr("a/all"));
     }
 
     #[test]

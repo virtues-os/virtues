@@ -122,7 +122,7 @@
 				restart = {
 					phase: 'going',
 					error:
-						"The box hasn't come back after ten minutes. It may have rolled " +
+						"Your server hasn't come back after ten minutes. It may have rolled " +
 						'itself back — check `journalctl -u virtues-upgrade` on the box.'
 				};
 				return;
@@ -296,7 +296,7 @@
 						<Icon icon="ri:error-warning-line" width="14" />
 						{applyError}
 					</p>
-					<p class="how">You can always run it on the box yourself:</p>
+					<p class="how">You can always run it on the server yourself:</p>
 					<code>sudo virtues upgrade</code>
 				{/if}
 			</div>
@@ -315,7 +315,7 @@
 			</p>
 		{/if}
 	{:else if !loading}
-		<p class="state error">Couldn't reach the box for update status.</p>
+		<p class="state error">Couldn't reach your server for update status.</p>
 	{/if}
 </section>
 

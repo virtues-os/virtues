@@ -23,7 +23,7 @@
 	 *    answers again, from whichever network we find it on.
 	 */
 	import { onDestroy } from 'svelte';
-	import { Page } from '$lib';
+
 	import { apiGet, apiSend } from '$lib/api/client';
 
 	type Net = { ssid: string; signal: number; secured: boolean; enterprise: boolean };
@@ -129,6 +129,38 @@
 		return '▂';
 	}
 
+	// ── The rendezvous, named out loud ────────────────────────────────────
+	// The relay is a baked default (relay.rs::DEFAULT_RELAY_URL) — disclosure
+	// plus a real off switch is what separates a default from a secret.
+	type Relay = { enabled: boolean; relay_url: string | null; default_url: string; homed: boolean };
+	let relay = $state<Relay | null>(null);
+	let relayBusy = $state(false);
+	let relayError = $state<string | null>(null);
+
+	async function refreshRelay() {
+		try {
+			relay = await apiGet<Relay>('/network/relay');
+		} catch {
+			relay = null;
+		}
+	}
+
+	async function toggleRelay() {
+		if (!relay || relayBusy) return;
+		relayBusy = true;
+		relayError = null;
+		try {
+			await apiSend('PUT', '/network/relay', { enabled: !relay.enabled });
+			// The rebind takes a moment; read back after it settles.
+			setTimeout(() => void refreshRelay(), 2500);
+			await refreshRelay();
+		} catch (e) {
+			relayError = String(e);
+		} finally {
+			relayBusy = false;
+		}
+	}
+
 	const connectivityLabel = $derived.by(() => {
 		switch (status?.connectivity) {
 			case 'full':
@@ -145,13 +177,15 @@
 	});
 
 	void refresh();
+	void refreshRelay();
 </script>
 
-<Page
-	title="Network"
-	description="The network this box is on, and how to move it to another."
-	maxWidth="wide"
->
+<!-- No <Page>: this renders INSIDE System as a chapter. Which network the
+     machine is on is a reading about the machine, not a separate destination —
+     it was a sidebar row, then briefly a page under System, and both made you
+     leave the page you were already reading to learn one fact. -->
+<section class="chapter">
+	<h2 class="settings-label">Network</h2>
 	{#if status}
 		<div class="statusrow">
 			<span class="dot" class:warn={connectivityLabel.tone === 'warn'}></span>
@@ -163,6 +197,36 @@
 				<div class="text-xs" class:text-foreground-subtle={connectivityLabel.tone === 'ok'} class:warntext={connectivityLabel.tone === 'warn'}>
 					{connectivityLabel.text}
 				</div>
+			</div>
+		</div>
+	{/if}
+
+	{#if relay}
+		<div class="statusrow">
+			<span class="dot" class:warn={relay.enabled && !relay.homed} class:off={!relay.enabled}></span>
+			<div>
+				<div class="text-sm text-foreground">
+					Reach
+					{#if relay.enabled}
+						<span class="ml-2 font-mono text-xs text-foreground-subtle"
+							>{(relay.relay_url ?? relay.default_url).replace('https://', '')}</span
+						>
+					{/if}
+				</div>
+				<div class="text-xs text-foreground-subtle">
+					{#if !relay.enabled}
+						Off — your devices reach this server on the local network only.
+					{:else if relay.homed}
+						Your devices find this server from anywhere through this relay. It moves
+						encrypted traffic it cannot read, and keeps no account of who connects.
+					{:else}
+						Connecting to the relay…
+					{/if}
+				</div>
+				{#if relayError}<p class="mt-1 text-xs warntext">{relayError}</p>{/if}
+				<button class="relaybtn" disabled={relayBusy} onclick={toggleRelay}>
+					{relay.enabled ? 'Turn off' : 'Turn on'}
+				</button>
 			</div>
 		</div>
 	{/if}
@@ -229,7 +293,7 @@
 			</div>
 		{/if}
 	{/if}
-</Page>
+</section>
 
 <style>
 	.statusrow {
@@ -248,6 +312,22 @@
 	}
 	.dot.warn {
 		background: var(--color-warning, #c92);
+	}
+	.dot.off {
+		background: var(--color-foreground-subtle, #999);
+	}
+	.relaybtn {
+		margin-top: 0.35rem;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+	.relaybtn:disabled {
+		opacity: 0.45;
+	}
+	.relaybtn:hover:not(:disabled) {
+		color: var(--color-foreground);
 	}
 	.warntext {
 		color: var(--color-warning, #c92);

@@ -461,9 +461,16 @@ pub(crate) async fn improv_pair<R: Runtime>(
 
   #[cfg(not(any(target_os = "ios", target_os = "android")))]
   let body: String = {
-    // `source` distinguishes a collector from a plain device on the box: a
-    // Mac collects, so it declares "mac" and earns its ingest fan-out.
-    match desktop::client().pair(&id, kind, "mac", label, &identity.node_id).await {
+    // NO source: the desktop APP is a viewer, not a collector. It used to
+    // declare "mac" here ("a Mac collects…"), which conflated the two — the
+    // COLLECTOR is a separate daemon with its own pairing (mint-collector →
+    // `virtues-collector init`), and that pairing is what earns the
+    // mac_ingest fan-out. The app declaring "mac" gave every BLE-set-up box a
+    // second mac_ingest applet wired to a device that never posts webhooks —
+    // a phantom that sat at zero runs forever and made one Mac read as two
+    // collectors (found live on a fresh box, 2026-08-27). Empty string →
+    // `resolve_source_id` files it as `__device__`: paired, no fan-out.
+    match desktop::client().pair(&id, kind, "", label, &identity.node_id).await {
       Ok(b) => b,
       Err(e) => return Ok(serde_json::json!({ "ok": false, "error": format!("{e:#}") })),
     }
@@ -541,4 +548,92 @@ pub(crate) async fn radio_stats<R: Runtime>(_app: AppHandle<R>) -> Result<serde_
     obj.insert("parked".into(), serde_json::Value::Bool(crate::warm_client().is_none()));
   }
   Ok(v)
+}
+
+// ─── The pairing door ────────────────────────────────────────────────────────
+//
+// Lets an already-paired computer stand in for the box while a phone that
+// cannot reach it enrolls — see `virtues_reach_client::pair_door` for why this
+// exists and why it is not the loopback proxy. Mobile-hosted doors are refused:
+// a phone is not a stable address for another device to type, and the phone
+// shells have no "Add device" surface.
+
+/// Open the door on this machine's LAN address. Returns `{origin, ttlSecs}`;
+/// `origin` is the `host:port` to show the user.
+#[command]
+pub(crate) async fn pair_door_open<R: Runtime>(
+  app: AppHandle<R>,
+  ttl_secs: Option<u64>,
+) -> Result<serde_json::Value> {
+  #[cfg(any(target_os = "ios", target_os = "android"))]
+  {
+    let _ = (&app, ttl_secs);
+    return Err(crate::Error::Reach(
+      "the pairing door is opened from a computer, not a phone".into(),
+    ));
+  }
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    // Ten minutes matches the countdown the Add-device sheet already shows.
+    let ttl = ttl_secs.unwrap_or(600).clamp(60, 1800);
+    let (origin, secs) = app.reach().open_pair_door(ttl).await?;
+    Ok(serde_json::json!({ "origin": origin, "ttlSecs": secs }))
+  }
+}
+
+#[command]
+pub(crate) async fn pair_door_close<R: Runtime>(app: AppHandle<R>) -> Result<()> {
+  app.reach().close_pair_door();
+  Ok(())
+}
+
+/// `{open, origin?, attemptsUsed?}` — lets the sheet show the address and
+/// notice a door that closed itself when its window ran out.
+#[command]
+pub(crate) async fn pair_door_status<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value> {
+  Ok(match app.reach().pair_door_status() {
+    Some((origin, used)) => {
+      serde_json::json!({ "open": true, "origin": origin, "attemptsUsed": used })
+    }
+    None => serde_json::json!({ "open": false }),
+  })
+}
+
+// ─── The pairing handoff ─────────────────────────────────────────────────────
+//
+// The door's sibling, for the network the door cannot survive (coworking wifi
+// that isolates clients). The laptop mints the phone's identity, enrolls its
+// public half with the box over the relay, and hands the result over as one QR
+// the phone scans — no network between the two devices at all.
+
+/// LAPTOP: returns `{qrSvg, nodeId}`. Desktop-only — a phone has no second
+/// device to enroll and no Add-device surface.
+#[command]
+pub(crate) async fn pair_handoff_create<R: Runtime>(
+  app: AppHandle<R>,
+  label: Option<String>,
+) -> Result<serde_json::Value> {
+  #[cfg(any(target_os = "ios", target_os = "android"))]
+  {
+    let _ = (&app, label);
+    return Err(crate::Error::Reach(
+      "a pairing code is created on a computer, not a phone".into(),
+    ));
+  }
+  #[cfg(not(any(target_os = "ios", target_os = "android")))]
+  {
+    let (qr_svg, node_id, device_id) = app.reach().create_handoff(label).await?;
+    Ok(serde_json::json!({ "qrSvg": qr_svg, "nodeId": node_id, "deviceId": device_id }))
+  }
+}
+
+/// PHONE: adopt a scanned handoff payload. Returns the same ReachStatus every
+/// other pairing path returns, so the airlock's existing success handling works
+/// unchanged.
+#[command]
+pub(crate) async fn pair_handoff_accept<R: Runtime>(
+  app: AppHandle<R>,
+  payload: String,
+) -> Result<ReachStatus> {
+  app.reach().accept_handoff(&payload).await
 }

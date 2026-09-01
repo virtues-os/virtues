@@ -82,7 +82,7 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
 }
 
 /// The explicit allowlist for a headless applet run — the runtime capability
-/// table from docs/applet-authoring-plan.md §B, enforced. What an applet's
+/// table from agents/plan/applet-authoring-plan.md §B, enforced. What an applet's
 /// agent may do: think, read (sql_query/semantic_search/web_search), write
 /// its own applet_* tables (sql_write), keep notes (update_applet_memory),
 /// write pages, compute in the jail, and introspect applets read-only. Its
@@ -227,6 +227,9 @@ pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
     let allowlist = match agent_mode {
         "deep_research" => Some(DEEP_RESEARCH_TOOLS),
         "council" => Some(COUNCIL_TOOLS),
+        // The narrative interview: a listener, not an agent. No tools at all —
+        // it must not read the record mid-confession or claim capabilities.
+        "interview" => Some(&[] as &[&str]),
         _ => None,
     };
     match allowlist {
@@ -388,9 +391,15 @@ mod slot_model_smoke {
         };
         let _ = rustls::crypto::ring::default_provider().install_default();
 
-        let model = crate::api::model_catalog::model_for_slot(
-            virtues_registry::models::ModelSlot::Chat,
-        );
+        // Defaults to whatever fills the Chat slot today; set SMOKE_MODEL to
+        // drive a CANDIDATE through the same gate before promoting it. The
+        // registry tells you to run this first, and "first" means before the
+        // id is in the registry at all.
+        let model = std::env::var("SMOKE_MODEL").unwrap_or_else(|_| {
+            crate::api::model_catalog::model_for_slot(
+                virtues_registry::models::ModelSlot::Chat,
+            )
+        });
         let tools = get_tool_definitions_for_llm();
         assert!(
             tools.len() > 10,

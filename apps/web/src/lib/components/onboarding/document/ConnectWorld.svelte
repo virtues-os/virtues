@@ -11,13 +11,19 @@
 -->
 <script lang="ts">
 	import Modal from "$lib/components/Modal.svelte";
-	import Icon from "$lib/components/Icon.svelte";
 	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
 	import ApiKeyConnectModal from "$lib/components/sources/ApiKeyConnectModal.svelte";
 	import ChatImportCard from "$lib/components/onboarding/ChatImportCard.svelte";
 	import CollectorPermissionCard from "$lib/components/onboarding/CollectorPermissionCard.svelte";
 	import { connectIntent, reloadOnReturn } from "$lib/components/sources/connectDispatch";
-	import { listSourceCatalog, listCredentials, type SourceCatalogItem } from "$lib/api/client";
+	import {
+		listSourceCatalog,
+		listCredentials,
+		getChatImportStatus,
+		type SourceCatalogItem,
+		type Credential,
+		type ChatImportStatus,
+	} from "$lib/api/client";
 	import { isTauri, isMacOS, isWindows, isLinux, thisComputerLabel } from "$lib/utils/platform";
 	import { copyFor, PROMINENCE_ORDER, type Prominence } from "./sources-copy";
 	import SourceRow from "./SourceRow.svelte";
@@ -27,22 +33,70 @@
 		onConnected: () => void;
 		/** Called the moment the local Mac collector finishes (optimistic). */
 		onDeviceReady?: () => void;
+		/** Where an OAuth round-trip lands back. Home mounts this now, so the
+		 *  default is the app; the onboarding route no longer exists to return to. */
+		next?: string;
 	}
 
-	let { onConnected, onDeviceReady }: Props = $props();
+	let { onConnected, onDeviceReady, next = "/" }: Props = $props();
 
 	let catalog = $state<SourceCatalogItem[]>([]);
+	let credentials = $state<Credential[]>([]);
+	let chatImport = $state<ChatImportStatus | null>(null);
 	let err = $state<string | null>(null);
 
 	const localMac = $derived(isTauri && isMacOS);
 
 	async function load() {
 		try {
-			const [src] = await Promise.all([listSourceCatalog(), listCredentials()]);
+			const [src, creds] = await Promise.all([listSourceCatalog(), listCredentials()]);
 			catalog = src;
+			credentials = creds;
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		}
+		// Best-effort: chat-import mints no credential, so its connected state
+		// comes from the imported rows. Absence of the endpoint (older box)
+		// just means the row keeps its Connect button.
+		try {
+			chatImport = await getChatImportStatus();
+		} catch {
+			chatImport = null;
+		}
+	}
+
+	const PROVIDER_NAMES: Record<string, string> = {
+		claude: "Claude",
+		chatgpt: "ChatGPT",
+		gemini: "Gemini",
+	};
+
+	/** Is this source connected, and what is the receipt line under it? */
+	function statusFor(source: SourceCatalogItem): { connected: boolean; detail: string | null } {
+		if (source.id === "chat_import") {
+			if (!chatImport || chatImport.messages === 0) return { connected: false, detail: null };
+			const from = chatImport.providers.map((p) => PROVIDER_NAMES[p] ?? p).join(", ");
+			return {
+				connected: true,
+				detail: `${chatImport.messages.toLocaleString()} messages across ${chatImport.conversations.toLocaleString()} conversations${from ? ` · ${from}` : ""}`,
+			};
+		}
+		if (source.credential_count > 0) {
+			// The receipt: which accounts. The credential name is the account's
+			// email when the provider gave us one (see source_auth.rs). When the
+			// provider gave us nothing, every credential shares the generic
+			// fallback name — a count reads better than a stutter.
+			const names = credentials
+				.filter((c) => c.provider === source.id && c.is_active)
+				.map((c) => c.name);
+			const unique = [...new Set(names)];
+			const detail =
+				unique.length < names.length
+					? `${names.length} accounts`
+					: unique.join(" · ") || null;
+			return { connected: true, detail };
+		}
+		return { connected: false, detail: null };
 	}
 	$effect(() => {
 		void load();
@@ -75,9 +129,9 @@
 
 	async function connect(source: SourceCatalogItem) {
 		err = null;
-		// A connect started here must land back here — the callback's default
-		// 302 into /sources dumps the person into the app mid-onboarding.
-		const intent = await connectIntent(source, { next: "/onboarding/sources" });
+		// A connect started here must land back where it started — the
+		// callback's default 302 into /sources loses the person's place.
+		const intent = await connectIntent(source, { next });
 		switch (intent.kind) {
 			case "pair":
 				pairDeviceType = intent.deviceType;
@@ -126,14 +180,20 @@
 			{#if source.id === "mac" && localMac}
 				<div class="device-block">
 					<div class="device-head">
-						<span class="device-icon"><Icon icon="ri:macbook-line" width="20" /></span>
 						<span class="device-name">Set up {thisComputerLabel}</span>
 					</div>
 					<p class="device-why">{copy.why}</p>
 					<CollectorPermissionCard onComplete={deviceDone} />
 				</div>
 			{:else}
-				<SourceRow {source} {copy} connected={source.credential_count > 0} onConnect={() => connect(source)} />
+				{@const status = statusFor(source)}
+				<SourceRow
+					{source}
+					{copy}
+					connected={status.connected}
+					detail={status.detail}
+					onConnect={() => connect(source)}
+				/>
 			{/if}
 		{/each}
 	</div>
@@ -185,16 +245,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.6rem;
-	}
-	.device-icon {
-		display: flex;
-		height: 2.25rem;
-		width: 2.25rem;
-		align-items: center;
-		justify-content: center;
-		border-radius: 0.6rem;
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
 	}
 	.device-name {
 		font-family: var(--font-serif);

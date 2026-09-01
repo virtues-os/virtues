@@ -36,6 +36,12 @@ use crate::virtues_api::client::BearerClient;
 /// *box* lags a cloud-side model swap.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// While the cache has never been filled, retry much sooner. A fixed 6h
+/// interval meant one failed boot fetch (cloud briefly unreachable, dev api
+/// not yet listening) parked the picker on the 2-model compiled floor for a
+/// quarter of a day.
+const COLD_RETRY_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
 /// One picker entry, as virtues-api derived it from the gateway. Every field
 /// here is the gateway's, not ours. Prices are `None` only when virtues-api's
 /// own catalog is cold.
@@ -66,6 +72,16 @@ pub struct CatalogModel {
     /// claim. The picker sections on this. Absent on older responses → `false`.
     #[serde(default)]
     pub recommended: bool,
+    /// Zero-data-retention posture, the gateway's attestation about the
+    /// endpoints that can serve this model: `"all"` | `"some"`
+    /// (routing-dependent) | `"none"`. `None` is *unknown* — the compiled
+    /// floor and older virtues-api responses — and must render blank, never
+    /// as a claim in either direction.
+    #[serde(default)]
+    pub zdr: Option<String>,
+    /// Same tri-state for "providers do not train on request data".
+    #[serde(default)]
+    pub no_training: Option<String>,
 }
 
 /// Which model fills each slot, per the cloud. Ids only — the models
@@ -164,9 +180,17 @@ pub fn models() -> Vec<CatalogModel> {
                 output_cost_per_1k: None,
                 // These are the slot models, which is what `recommended` means.
                 recommended: true,
+                zdr: None,
+                no_training: None,
             }
         })
         .collect()
+}
+
+/// Whether we have never seen a catalog — the picker is the compiled floor.
+/// The UI uses this to say so instead of presenting two models as the world.
+pub fn is_cold() -> bool {
+    cache().read().map(|s| s.models.is_empty()).unwrap_or(true)
 }
 
 /// The slot map — cloud-served if we have it, compiled floor otherwise.
@@ -241,7 +265,16 @@ pub fn pricing(model_id: &str) -> Option<(f64, f64)> {
 
 async fn fetch(pool: &PgPool) -> crate::Result<CatalogResponse> {
     let client = BearerClient::from_env(pool.clone());
-    let resp = client.get_json("/v1/ai/models").await?;
+    // Public on purpose: `get_json` refuses to send at all when the box is
+    // unlinked, and an unlinked box still deserves the catalog — the route
+    // serves public data and never charges.
+    let resp = client.get_json_public("/v1/ai/models").await?;
+    if resp.status != 200 {
+        return Err(crate::Error::Configuration(format!(
+            "model catalog: HTTP {}",
+            resp.status
+        )));
+    }
     serde_json::from_value(resp.body)
         .map_err(|e| crate::Error::Configuration(format!("model catalog parse: {e}")))
 }
@@ -256,7 +289,8 @@ fn store(resp: CatalogResponse) {
     }
 }
 
-/// Boot-time fetch + 6-hourly refresh.
+/// Boot-time fetch, then refresh — 6-hourly once warm, every 5 minutes while
+/// cold, so a bad first minute doesn't cost a quarter-day of the floor list.
 ///
 /// A failed fetch is never fatal and never clears the cache: an unreachable
 /// cloud must not empty the model picker. The box keeps the last snapshot it
@@ -264,11 +298,7 @@ fn store(resp: CatalogResponse) {
 /// one at all.
 pub fn spawn(pool: PgPool) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(REFRESH_INTERVAL);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            // First tick fires immediately — that's the boot fetch.
-            interval.tick().await;
             match fetch(&pool).await {
                 Ok(resp) => {
                     tracing::debug!(count = resp.data.len(), "model catalog refreshed");
@@ -279,6 +309,8 @@ pub fn spawn(pool: PgPool) {
                      (picker falls back to the compiled list if we've never fetched)"
                 ),
             }
+            let delay = if is_cold() { COLD_RETRY_INTERVAL } else { REFRESH_INTERVAL };
+            tokio::time::sleep(delay).await;
         }
     });
 }
@@ -294,6 +326,23 @@ mod tests {
         let s = slots();
         assert!(!s.chat.is_empty() && !s.lite.is_empty());
         assert!(!s.coding.is_empty() && !s.image.is_empty());
+    }
+
+    /// A virtues-api that predates the retention fields must still parse —
+    /// and the absence must read as unknown, not as "none".
+    #[test]
+    fn responses_without_retention_fields_parse_as_unknown() {
+        let json = serde_json::json!({
+            "model_id": "example/model",
+            "display_name": "Model",
+            "provider": "Example",
+            "sort_order": 0,
+            "context_window": 0,
+            "max_output_tokens": 0,
+            "supports_tools": false
+        });
+        let m: CatalogModel = serde_json::from_value(json).expect("older response parses");
+        assert!(m.zdr.is_none() && m.no_training.is_none());
     }
 
     #[test]

@@ -122,11 +122,10 @@ INSERT INTO data_location_visit (
 
 -- Primary day: Feb 13 (the detailed one)
 INSERT INTO wiki_days (
-    id, date, start_timezone, morning_baseline, epigraph
+    id, date, start_timezone, epigraph
 ) VALUES
 (
     'day_2026-02-13', '2026-02-13', 'America/Chicago',
-    0.52,
     'The Trader Joe''s detour'
 ) ON CONFLICT DO NOTHING;
 
@@ -140,20 +139,18 @@ UPDATE wiki_days SET readiness_score = 59, readiness_details = '{"hrv":50,"rhr":
 
 -- Adjacent day: Feb 12 (routine Thursday — for cross-day comparison)
 INSERT INTO wiki_days (
-    id, date, start_timezone, morning_baseline
+    id, date, start_timezone
 ) VALUES
 (
-    'day_2026-02-12', '2026-02-12', 'America/Chicago',
-    0.48
+    'day_2026-02-12', '2026-02-12', 'America/Chicago'
 ) ON CONFLICT DO NOTHING;
 
 -- Adjacent day: Feb 14 (Valentine's Saturday — slightly different texture)
 INSERT INTO wiki_days (
-    id, date, start_timezone, morning_baseline
+    id, date, start_timezone
 ) VALUES
 (
-    'day_2026-02-14', '2026-02-14', 'America/Chicago',
-    0.55
+    'day_2026-02-14', '2026-02-14', 'America/Chicago'
 ) ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -557,79 +554,77 @@ INSERT INTO data_health_sleep (
 
 -- Feb 13: Design standup (08:15-09:00 CST = 14:15-15:00 UTC)
 INSERT INTO data_calendar_event (
-    id, title, description, calendar_name, event_type, status,
+    id, title, description, calendar_name, status,
     organizer_identifier, attendee_identifiers,
-    location_name, conference_url, conference_platform,
-    started_at, ended_at, timezone,
+    location_name,
+    started_at, ended_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'cal_demo_standup', 'Design Team Standup', 'Daily sync — blockers, progress, plan for the day',
-    'Work', 'meeting', 'confirmed',
+    'Work', 'confirmed',
     'maya.chen@company.com', '["maya.chen@company.com", "david.okafor@company.com", "demo-user@company.com"]',
-    NULL, 'https://meet.google.com/abc-defg-hij', 'Google Meet',
-    '2026-02-13T14:15:00Z', '2026-02-13T15:00:00Z', 'America/Chicago',
+    NULL,
+    '2026-02-13T14:15:00Z', '2026-02-13T15:00:00Z',
     'demo_cal_001', 'data_calendar_event', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Feb 13: Lunch with Maya (11:30-12:30 CST = 17:30-18:30 UTC)
 INSERT INTO data_calendar_event (
-    id, title, description, calendar_name, event_type, status,
+    id, title, description, calendar_name, status,
     organizer_identifier, attendee_identifiers,
     location_name,
-    started_at, ended_at, timezone,
+    started_at, ended_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'cal_demo_lunch', 'Lunch', NULL,
-    'Personal', 'event', 'confirmed',
+    'Personal', 'confirmed',
     'demo-user@company.com', '["maya.chen@company.com"]',
     'Ramen Tatsu-ya',
-    '2026-02-13T17:30:00Z', '2026-02-13T18:30:00Z', 'America/Chicago',
+    '2026-02-13T17:30:00Z', '2026-02-13T18:30:00Z',
     'demo_cal_002', 'data_calendar_event', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Feb 13: User Research Session (12:30-14:15 CST = 18:30-20:15 UTC)
 INSERT INTO data_calendar_event (
-    id, title, description, calendar_name, event_type, status,
+    id, title, description, calendar_name, status,
     organizer_identifier, attendee_identifiers,
-    location_name, conference_url, conference_platform,
-    started_at, ended_at, timezone,
+    location_name,
+    started_at, ended_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'cal_demo_research', 'User Research: Navigation Redesign', 'Moderated usability testing with 3 participants. Focus: main nav patterns and settings discoverability.',
-    'Work', 'meeting', 'confirmed',
+    'Work', 'confirmed',
     'demo-user@company.com', '["participant-1@external.com", "participant-2@external.com", "participant-3@external.com"]',
-    'Conference Room B', NULL, NULL,
-    '2026-02-13T18:30:00Z', '2026-02-13T20:15:00Z', 'America/Chicago',
+    'Conference Room B',
+    '2026-02-13T18:30:00Z', '2026-02-13T20:15:00Z',
     'demo_cal_003', 'data_calendar_event', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Feb 12: Settings page review (for adjacent day)
 INSERT INTO data_calendar_event (
-    id, title, description, calendar_name, event_type, status,
+    id, title, description, calendar_name, status,
     organizer_identifier, attendee_identifiers,
-    started_at, ended_at, timezone,
+    started_at, ended_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'cal_demo_feb12', 'Settings Page Review', 'Async design review of settings iteration',
-    'Work', 'meeting', 'confirmed',
+    'Work', 'confirmed',
     'demo-user@company.com', '["david.okafor@company.com"]',
-    '2026-02-12T19:00:00Z', '2026-02-12T20:00:00Z', 'America/Chicago',
+    '2026-02-12T19:00:00Z', '2026-02-12T20:00:00Z',
     'demo_cal_004', 'data_calendar_event', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Feb 14: Sprint Demo (for adjacent day)
 INSERT INTO data_calendar_event (
-    id, title, description, calendar_name, event_type, status,
+    id, title, description, calendar_name, status,
     organizer_identifier, attendee_identifiers,
-    conference_url, conference_platform,
-    started_at, ended_at, timezone,
+    started_at, ended_at,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'cal_demo_feb14', 'Sprint Demo', 'Biweekly sprint demo — show navigation redesign progress',
-    'Work', 'meeting', 'confirmed',
+    'Work', 'confirmed',
     'maya.chen@company.com', '["maya.chen@company.com", "david.okafor@company.com", "demo-user@company.com"]',
-    'https://meet.google.com/abc-defg-hij', 'Google Meet',
-    '2026-02-14T14:00:00Z', '2026-02-14T15:00:00Z', 'America/Chicago',
+    '2026-02-14T14:00:00Z', '2026-02-14T15:00:00Z',
     'demo_cal_005', 'data_calendar_event', 'demo'
 ) ON CONFLICT DO NOTHING;
 
@@ -729,57 +724,57 @@ INSERT INTO data_communication_message (
 
 -- Morning: Instagram scroll (06:35-06:50 CST = 12:35-12:50 UTC)
 INSERT INTO data_activity_app_session (
-    id, app_name, app_bundle_id, app_category,
+    id, app_name, app_bundle_id,
     started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
-    'app_demo_01', 'Instagram', 'com.burbn.instagram', 'Social',
+    'app_demo_01', 'Instagram', 'com.burbn.instagram',
     '2026-02-13T12:35:00Z', '2026-02-13T12:50:00Z', NULL,
     'demo_app_001', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Morning: Apple News (06:50-07:05 CST = 12:50-13:05 UTC)
 INSERT INTO data_activity_app_session (
-    id, app_name, app_bundle_id, app_category,
+    id, app_name, app_bundle_id,
     started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
-    'app_demo_02', 'Apple News', 'com.apple.news', 'News',
+    'app_demo_02', 'Apple News', 'com.apple.news',
     '2026-02-13T12:50:00Z', '2026-02-13T13:05:00Z', NULL,
     'demo_app_002', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Pre-standup: Slack desktop (07:45-08:15 CST = 13:45-14:15 UTC)
 INSERT INTO data_activity_app_session (
-    id, app_name, app_bundle_id, app_category,
+    id, app_name, app_bundle_id,
     started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
-    'app_demo_03', 'Slack', 'com.tinyspeck.slackmacgap', 'Productivity',
+    'app_demo_03', 'Slack', 'com.tinyspeck.slackmacgap',
     '2026-02-13T13:45:00Z', '2026-02-13T14:15:00Z', '#design-team',
     'demo_app_003', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Deep work: Figma (09:05-11:25 CST = 15:05-17:25 UTC)
 INSERT INTO data_activity_app_session (
-    id, app_name, app_bundle_id, app_category,
+    id, app_name, app_bundle_id,
     started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
-    'app_demo_04', 'Figma', 'com.figma.desktop', 'Design',
+    'app_demo_04', 'Figma', 'com.figma.desktop',
     '2026-02-13T15:05:00Z', '2026-02-13T17:25:00Z', 'Navigation Redesign v3 — Figma',
     'demo_app_004', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Post-standup: Notion docs (09:00-09:05 CST = 15:00-15:05 UTC)
 INSERT INTO data_activity_app_session (
-    id, app_name, app_bundle_id, app_category,
-    started_at, ended_at, window_title, url,
+    id, app_name, app_bundle_id,
+    started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
-    'app_demo_05', 'Notion', 'notion.id', 'Productivity',
+    'app_demo_05', 'Notion', 'notion.id',
     '2026-02-13T15:00:00Z', '2026-02-13T15:05:00Z',
-    'Standup Notes — Feb 13', 'https://notion.so/standup-feb-13',
+    'Standup Notes — Feb 13',
     'demo_app_005', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
@@ -787,22 +782,22 @@ INSERT INTO data_activity_app_session (
 
 -- Feb 12: Figma (adjacent day)
 INSERT INTO data_activity_app_session (
-    id, app_name, app_bundle_id, app_category,
+    id, app_name, app_bundle_id,
     started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
-    'app_demo_08', 'Figma', 'com.figma.desktop', 'Design',
+    'app_demo_08', 'Figma', 'com.figma.desktop',
     '2026-02-12T15:00:00Z', '2026-02-12T17:30:00Z', 'Settings Page v2 — Figma',
     'demo_app_008', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
 
 -- Feb 12: Slack (adjacent day)
 INSERT INTO data_activity_app_session (
-    id, app_name, app_bundle_id, app_category,
+    id, app_name, app_bundle_id,
     started_at, ended_at, window_title,
     source_stream_id, source_table, source_provider
 ) VALUES (
-    'app_demo_09', 'Slack', 'com.tinyspeck.slackmacgap', 'Productivity',
+    'app_demo_09', 'Slack', 'com.tinyspeck.slackmacgap',
     '2026-02-12T18:00:00Z', '2026-02-12T22:30:00Z', '#design-team',
     'demo_app_009', 'data_activity_app_session', 'demo'
 ) ON CONFLICT DO NOTHING;
@@ -930,7 +925,7 @@ INSERT INTO data_communication_transcription (
     id, text, language, duration_seconds,
     started_at, ended_at,
     speaker_count, title, summary, confidence,
-    tags, entities, speaker_segments,
+    tags, entities,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'txn_demo_standup',
@@ -964,7 +959,6 @@ Maya: Perfect. Let''s regroup tomorrow morning with the results.',
     0.92,
     '["standup", "design-team", "onboarding"]',
     '{"people": ["Maya Chen", "David Okafor"], "topics": ["onboarding funnel", "form validation", "step 3 drop-off"], "products": ["Figma"]}',
-    '[{"speaker": "Maya Chen", "start": 0.0, "end": 15.2}, {"speaker": "David Okafor", "start": 15.2, "end": 28.5}, {"speaker": "Maya Chen", "start": 28.5, "end": 33.1}, {"speaker": "User", "start": 33.1, "end": 58.4}, {"speaker": "David Okafor", "start": 58.4, "end": 74.0}, {"speaker": "Maya Chen", "start": 74.0, "end": 88.3}, {"speaker": "User", "start": 88.3, "end": 112.0}, {"speaker": "Maya Chen", "start": 112.0, "end": 135.6}, {"speaker": "David Okafor", "start": 135.6, "end": 142.8}, {"speaker": "Maya Chen", "start": 142.8, "end": 150.1}, {"speaker": "User", "start": 150.1, "end": 168.0}, {"speaker": "Maya Chen", "start": 168.0, "end": 172.5}]',
     'demo_txn_003', 'data_communication_transcription', 'demo'
 ) ON CONFLICT DO NOTHING;
 

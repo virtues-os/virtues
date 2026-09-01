@@ -261,29 +261,45 @@ pub(crate) async fn finalize_paid_session(
         message: what.to_string(),
     };
 
+    // The account is the identity root (0017): mint-or-fetch it by email
+    // FIRST, so a customer created by this paid checkout lands on the same
+    // account_id a free sign-in already minted — the wallet key never forks.
+    let ensured_account_id = super::account::ensure_account(&state.pool, &email)
+        .await
+        .map_err(|e| {
+            tracing::warn!("claim ensure_account failed: {e:#}");
+            internal("account upsert failed")
+        })?;
+
     // Upsert customer with the new api_key hash (rotate on re-claim). The
-    // opaque `account_id` is assigned once and kept on conflict, so re-claiming
-    // re-points the device to the SAME account — the wallet is preserved.
-    let candidate_account_id = new_account_id();
+    // account_id CONVERGES on the email's account (0017) even on conflict —
+    // customers.account_id is what webhooks credit, and any divergence from
+    // the accounts-table id the box registered under sends a subscription's
+    // renewal to a wallet nothing reads.
     let (account_id,): (String,) = sqlx::query_as(
         r#"
         INSERT INTO customers (stripe_customer_id, email, api_key_hash, account_id)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (stripe_customer_id)
-        DO UPDATE SET api_key_hash = $3, email = $2
+        DO UPDATE SET api_key_hash = $3, email = $2, account_id = $4
         RETURNING account_id
         "#,
     )
     .bind(&stripe_customer_id)
     .bind(&email)
     .bind(&api_key_hash[..])
-    .bind(&candidate_account_id)
+    .bind(&ensured_account_id)
     .fetch_one(&state.pool)
     .await
     .map_err(|e| {
         tracing::warn!("claim upsert customer failed: {e:#}");
         internal("customer upsert failed")
     })?;
+    if let Err(e) =
+        super::account::attach_stripe_to_account(&state.pool, &email, &stripe_customer_id).await
+    {
+        tracing::warn!("claim stripe attach failed: {e:#}");
+    }
 
     // Upsert subscription.
     sqlx::query(
@@ -355,7 +371,7 @@ pub(crate) async fn finalize_paid_session(
         // box (register-before-record, same ordering doctrine as link.rs).
         mint_box_key(
             &state.pool,
-            &stripe_customer_id,
+            &account_id,
             endpoint_id.as_deref(),
             &api_key_hash[..],
         )
@@ -407,6 +423,61 @@ pub(crate) async fn customer_id_by_key_hash(
             UNION ALL
             SELECT stripe_customer_id, 1 AS pri FROM customers WHERE api_key_hash = $1
         ) t
+        WHERE stripe_customer_id IS NOT NULL
+        ORDER BY pri
+        LIMIT 1
+        "#,
+    )
+    .bind(key_hash)
+    .fetch_optional(pool)
+    .await
+}
+
+/// What a key-authed door learned about the key's owner. `Customer` carries
+/// the `stripe_customer_id` for billing work; `FreeAccount` means the key is
+/// VALID but its account has never paid — billing doors answer that with 402
+/// `no_subscription`, never 401 `invalid_api_key` (a 401 reads box-side as
+/// "key revoked, re-link", sending a legitimate free owner through a
+/// needless re-pair).
+pub(crate) enum KeyOwner {
+    Customer(String),
+    FreeAccount,
+    Unknown,
+}
+
+/// The one owner-resolution behind every key-authed billing door (credits,
+/// settings, billing portal) — so "valid but unpaid" and "unknown" cannot
+/// drift into different answers per door.
+pub(crate) async fn key_owner(
+    pool: &sqlx::PgPool,
+    key_hash: &[u8],
+) -> Result<KeyOwner, sqlx::Error> {
+    if let Some(cid) = customer_id_by_key_hash(pool, key_hash).await? {
+        return Ok(KeyOwner::Customer(cid));
+    }
+    if account_id_by_key_hash(pool, key_hash).await?.is_some() {
+        return Ok(KeyOwner::FreeAccount);
+    }
+    Ok(KeyOwner::Unknown)
+}
+
+/// Resolve an api_key hash → owning `account_id` — identity without billing
+/// (open-relay-plan §Work 1b). The sibling of [`customer_id_by_key_hash`] for
+/// doors that need to know WHO, not whether they pay: relay config, endpoint
+/// registration. `box_key.account_id` is authoritative; the legacy
+/// `customers.api_key_hash` mirror covers keys minted before 0017.
+pub(crate) async fn account_id_by_key_hash(
+    pool: &sqlx::PgPool,
+    key_hash: &[u8],
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT account_id FROM (
+            SELECT account_id, 0 AS pri FROM box_key
+             WHERE api_key_hash = $1 AND account_id IS NOT NULL
+            UNION ALL
+            SELECT account_id, 1 AS pri FROM customers WHERE api_key_hash = $1
+        ) t
         ORDER BY pri
         LIMIT 1
         "#,
@@ -426,13 +497,31 @@ pub(crate) async fn customer_id_by_key_hash(
 /// about which keys are alive.
 ///
 /// Also mirrors the hash into `customers.api_key_hash` (most-recent-key
-/// semantics) so a rolled-back atlas binary keeps authenticating.
+/// semantics, when the account has a Stripe customer) so a rolled-back atlas
+/// binary keeps authenticating.
+///
+/// Rotation scope is the ACCOUNT (0017): a free account's box has no
+/// `stripe_customer_id`, and two customers sharing an email collapsed into
+/// one account at backfill — so scoping deletes by customer would miss keys.
+///
+/// The mirror customer is DERIVED here from `accounts`, never passed in: a
+/// session frozen before payment carries no customer, so threading the
+/// session's value through would silently skip the mirror for everyone who
+/// signed in free and paid later — the exact cohort 0017 creates.
 pub(crate) async fn mint_box_key(
     pool: &sqlx::PgPool,
-    stripe_customer_id: &str,
+    account_id: &str,
     endpoint_id: Option<&str>,
     api_key_hash: &[u8],
 ) -> Result<(), sqlx::Error> {
+    let stripe_customer_id: Option<String> = sqlx::query_scalar(
+        "SELECT stripe_customer_id FROM accounts WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    let stripe_customer_id = stripe_customer_id.as_deref();
     match endpoint_id {
         Some(ep) => {
             // `OR endpoint_id IS NULL` is load-bearing: SQL `=` never matches
@@ -442,34 +531,38 @@ pub(crate) async fn mint_box_key(
             // shared single key; the first labeled attach retires it, exactly
             // as the legacy whole-account rotation would have.
             sqlx::query(
-                "DELETE FROM box_key WHERE stripe_customer_id = $1 \
+                "DELETE FROM box_key WHERE account_id = $1 \
                  AND (endpoint_id = $2 OR endpoint_id IS NULL)",
             )
-            .bind(stripe_customer_id)
+            .bind(account_id)
             .bind(ep)
             .execute(pool)
             .await?;
         }
         None => {
-            sqlx::query("DELETE FROM box_key WHERE stripe_customer_id = $1")
-                .bind(stripe_customer_id)
+            sqlx::query("DELETE FROM box_key WHERE account_id = $1")
+                .bind(account_id)
                 .execute(pool)
                 .await?;
         }
     }
     sqlx::query(
-        "INSERT INTO box_key (api_key_hash, stripe_customer_id, endpoint_id) VALUES ($1, $2, $3)",
+        "INSERT INTO box_key (api_key_hash, account_id, stripe_customer_id, endpoint_id) \
+         VALUES ($1, $2, $3, $4)",
     )
     .bind(api_key_hash)
+    .bind(account_id)
     .bind(stripe_customer_id)
     .bind(endpoint_id)
     .execute(pool)
     .await?;
-    sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
-        .bind(stripe_customer_id)
-        .bind(api_key_hash)
-        .execute(pool)
-        .await?;
+    if let Some(cid) = stripe_customer_id {
+        sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
+            .bind(cid)
+            .bind(api_key_hash)
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 

@@ -912,11 +912,9 @@
 		flex: 1;
 		overflow-y: auto;
 		min-height: 0;
-		/* The bottom value is the floating tab bar's room. The shell does not
-		   reserve it — the view runs under the bar so content passes behind the
-		   glass — so this scroller is what ends above it. Same reasoning, and
-		   same measure, as `Page.svelte`. */
-		padding: 2rem 1.25rem calc(1.5rem + var(--tabbar-reserve) + env(safe-area-inset-bottom));
+		/* Bottom room is the home indicator's safe-area only — the phone has no
+		   bottom chrome anymore. Same measure as `Page.svelte`. */
+		padding: 2rem 1.25rem calc(1.5rem + env(safe-area-inset-bottom));
 	}
 
 	@media (min-width: 768px) {

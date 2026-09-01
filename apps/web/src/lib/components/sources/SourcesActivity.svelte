@@ -208,7 +208,7 @@
 
 <Page
 	title="Activity"
-	description="Every applet run on this box, newest first. Filter to just your sources, or to what failed."
+	description="Every applet run on this server, newest first. Filter to just your sources, or to what failed."
 	maxWidth="wide"
 >
 	{#if err}

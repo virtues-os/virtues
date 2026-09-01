@@ -19,6 +19,7 @@ Exits non-zero with a one-line reason on the first failure.
 import json
 import plistlib
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -102,6 +103,56 @@ def check_signing(build_dir: Path) -> None:
     print(f"  signed {cert_type}, TestFlight-eligible")
 
 
+def check_nested_platforms(app: Path) -> None:
+    """No macOS artifact may ride along inside the iOS app.
+
+    App Store validation rejects this as
+
+        90562: Invalid Bundle. One of the nested bundles is built for a
+        platform which is different from the main bundle platform.
+
+    which happened on 2026-08-27: `tauri.conf.json` ships the compiled macOS
+    icon set as bundle `resources`, platform configs MERGE over the base, and
+    `tauri.ios.conf.json` did not override the key — so a macOS `Assets.car`
+    landed in the iOS app at `assets/`. Every other check here passed it,
+    because version, icon opacity and signing were all genuinely fine.
+
+    Two reads, because the failure has two visible faces: any compiled asset
+    catalog whose own Platform is not iOS, and any `.icns` at all (a macOS-only
+    icon format — iOS carries its icons in the catalog Xcode compiles).
+    """
+    strays = sorted(app.rglob("*.icns"))
+    if strays:
+        names = ", ".join(str(p.relative_to(app)) for p in strays[:3])
+        fail(f"macOS .icns inside the iOS app: {names}")
+
+    catalogs = sorted(app.rglob("Assets.car"))
+    for car in catalogs:
+        out = subprocess.run(
+            ["xcrun", "assetutil", "--info", str(car)],
+            capture_output=True,
+            text=True,
+        )
+        if out.returncode != 0:
+            # Unreadable catalog is not this check's business to adjudicate.
+            continue
+        try:
+            entries = json.loads(out.stdout)
+        except json.JSONDecodeError:
+            continue
+        platforms = {
+            e.get("Platform")
+            for e in entries
+            if isinstance(e, dict) and e.get("Platform")
+        }
+        bad = {p for p in platforms if p and p != "ios"}
+        if bad:
+            rel = car.relative_to(app)
+            fail(f"{rel} is built for {sorted(bad)}, not ios (App Store 90562)")
+
+    print(f"  {len(catalogs)} asset catalog(s), all ios, no .icns")
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         fail("usage: verify-ios-archive.py <build-dir> <expected-version>")
@@ -114,7 +165,29 @@ def main() -> int:
 
     check_version(app, expected)
     check_icons(app)
+    check_nested_platforms(app)
     check_signing(build_dir)
+
+    # And again on the IPA, because the IPA is what gets uploaded and it is
+    # EXPORTED from the archive rather than being the archive. On 2026-08-27 a
+    # run whose archive was clean still shipped a stale IPA, because a failed
+    # verification had left the previous attempt's file sitting at this exact
+    # path for Transporter to pick up. Checking the payload closes the gap
+    # between "what we inspected" and "what Apple receives".
+    ipa = build_dir / "arm64/Virtues.ipa"
+    if ipa.is_file():
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(
+                ["unzip", "-q", str(ipa), "-d", tmp],
+                check=True,
+                capture_output=True,
+            )
+            payload = sorted(Path(tmp).glob("Payload/*.app"))
+            if not payload:
+                fail(f"{ipa.name} has no Payload/*.app")
+            print("  — and the exported IPA:")
+            check_version(payload[0], expected)
+            check_nested_platforms(payload[0])
     return 0
 
 

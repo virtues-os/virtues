@@ -258,7 +258,17 @@
 	// since bedtime leaves five tracks blank — and drawing it as a flat zero
 	// says "you did nothing", which is a lie about the person rather than a
 	// fact about the box.
-	type Cover = { kind: "ok" } | { kind: "never" } | { kind: "silent"; since: number };
+	// `blocked` is the fourth case, and the one this taxonomy was missing: the
+	// stream has a writer, the writer is failing, and the lane is empty BECAUSE
+	// of that. It used to fall through to `silent` — "last 5:22pm yesterday" —
+	// which describes the symptom while withholding the cause the box already
+	// knew. A named cause is the difference between a lane you wonder about and
+	// one you can fix.
+	type Cover =
+		| { kind: "ok" }
+		| { kind: "never" }
+		| { kind: "silent"; since: number }
+		| { kind: "blocked"; why: string };
 
 	function hasToday(t: Track): boolean {
 		if (t.kind === "clips") return t.clips.length > 0;
@@ -271,6 +281,8 @@
 		const hh = health[t.stream];
 		// Health not loaded yet: claim nothing rather than guess.
 		if (!hh) return { kind: "ok" };
+		if (hh.status === "blocked")
+			return { kind: "blocked", why: hh.blocked_reason || "the source is blocked" };
 		if (hh.status === "never" || hh.total === 0) return { kind: "never" };
 		const last = hh.last_event ? Date.parse(hh.last_event) : NaN;
 		// Reported today but this lane is empty — the stream is healthy and the
@@ -451,8 +463,11 @@
 	const anyData = $derived(laid.some(hasToday));
 	const nSilent = $derived(laid.filter((t) => t.cover.kind === "silent").length);
 	const nNever = $derived(laid.filter((t) => t.cover.kind === "never").length);
+	const nBlocked = $derived(laid.filter((t) => t.cover.kind === "blocked").length);
 	const coverageNote = $derived.by(() => {
 		const bits: string[] = [];
+		// Blocked leads: it is the only one of the three the reader can act on.
+		if (nBlocked) bits.push(`${nBlocked} blocked`);
 		if (nSilent) bits.push(`${nSilent} silent today`);
 		if (nNever) bits.push(`${nNever} with no source`);
 		return bits.length ? bits.join(" · ") : null;
@@ -491,11 +506,16 @@
 						class="name"
 						class:off={t.cover.kind === "never"}
 						class:dim={t.cover.kind === "silent"}
+						class:blocked={t.cover.kind === "blocked"}
 						x={GUTTER - 10}
 						y={t.y + t.h - Math.max(2, (t.h - 8) / 2)}>{t.name}</text
 					>
 
-					{#if t.cover.kind === "never"}
+					{#if t.cover.kind === "blocked"}
+						<text class="none blocked" x={GUTTER + 6} y={t.y + t.h - 1}>
+							{t.cover.why}
+						</text>
+					{:else if t.cover.kind === "never"}
 						<text class="none" x={GUTTER + 6} y={t.y + t.h - 1}>no source</text>
 					{:else if t.cover.kind === "silent"}
 						<text class="none stale" x={GUTTER + 6} y={t.y + t.h - 1}>{sinceLabel(t.cover.since)}</text>
@@ -607,6 +627,12 @@
 		fill: var(--color-foreground-disabled); opacity: 0.8;
 	}
 	.none.stale { fill: var(--color-foreground-subtle); opacity: 0.72; }
+	/* Blocked is the one state here the reader can act on, so it is the one
+	   state that does not recede. Full opacity, warning hue — deliberately
+	   unlike `never` and `silent`, which are both varieties of "nothing to
+	   report" and are drawn to fade. */
+	.none.blocked { fill: var(--color-warning); opacity: 1; }
+	.name.blocked { fill: var(--color-warning); opacity: 0.9; }
 
 	.axis { stroke: var(--color-foreground); stroke-opacity: 0.16; stroke-width: 1; }
 	.axis.future { stroke-opacity: 0.11; stroke-dasharray: 1 3; }

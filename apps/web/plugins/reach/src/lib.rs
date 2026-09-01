@@ -29,8 +29,66 @@ mod upload;
 pub use error::{Error, Result};
 use models::ReachStatus;
 
-/// The loopback port the webview loads (parity with the desktop `:7117` helper).
-const LOOPBACK_PORT: u16 = 7117;
+// ─── Dev profiles ────────────────────────────────────────────────────────────
+//
+// `VIRTUES_PROFILE=<name>` isolates a SECOND app identity on the same machine:
+// its own store dir (`virtues-<name>/` — fresh iroh key, fresh pairing, own
+// outbox) and its own loopback port, derived from the name so any number of
+// profiles coexist without a registry. Unset = today's behavior, bit for bit.
+//
+// This is a dev instrument, not a feature: env-only, no UI, launched via
+// `make mac-dev PROFILE=<name>`. It exists so the box on a desk can be paired
+// against for UI/pairing work while the machine's REAL pairing — and the
+// collector LaunchAgent shipping the real record home — stays untouched. The
+// desktop shell enforces the other half of that contract: a profiled instance
+// never installs, reconciles, or kickstarts the collector (see main.rs).
+//
+// Mobile never sets the env, so this is inert there by construction.
+
+/// The active dev profile name, if any. Sanitized to `[a-z0-9_-]` — a name
+/// that reaches paths and ports must not carry surprises.
+pub fn profile() -> Option<&'static str> {
+  static P: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+  P.get_or_init(|| {
+    std::env::var("VIRTUES_PROFILE").ok().and_then(|v| {
+      let v = v.trim().to_ascii_lowercase();
+      let ok = !v.is_empty()
+        && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+      ok.then_some(v)
+    })
+  })
+  .as_deref()
+}
+
+/// The loopback port the webview loads. The default profile is `7117` forever —
+/// that number is persisted in every installed collector's endpoint and must
+/// never move. A named profile hashes into a private range (7120–7199) so the
+/// same name always gets the same port and profiles never fight each other or
+/// prod. `VIRTUES_PROXY_PORT` overrides either, for the rare collision.
+pub fn loopback_port() -> u16 {
+  static PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+  *PORT.get_or_init(|| {
+    if let Some(p) = std::env::var("VIRTUES_PROXY_PORT")
+      .ok()
+      .and_then(|v| v.parse::<u16>().ok())
+    {
+      return p;
+    }
+    match profile() {
+      None => 7117,
+      Some(name) => {
+        // FNV-1a; any stable spread works, stability across launches is the
+        // requirement (the persisted reach endpoint must find the same port).
+        let mut h: u32 = 0x811c_9dc5;
+        for b in name.bytes() {
+          h ^= u32::from(b);
+          h = h.wrapping_mul(0x0100_0193);
+        }
+        7120 + (h % 80) as u16
+      }
+    }
+  })
+}
 
 // ─── Process-global warm iroh client ─────────────────────────────────────────
 //
@@ -84,6 +142,54 @@ pub(crate) fn app_backgrounded() -> bool {
   APP_BACKGROUNDED.load(Ordering::SeqCst)
 }
 
+/// True while the radio is expensive (cellular / Low Power Mode, not charging).
+/// Fed by Swift (ReachMonitor) via `virtues_radio_constrained`. While set AND
+/// backgrounded, background drains batch: hold until `CONSTRAINED_DRAIN_SECS`
+/// since the last drain so ~3 audio chunks share one dial instead of one each —
+/// the LTE promotion + high-power tail per dial dwarfs the payload cost.
+/// Defaults false, so a build without the Swift feed behaves exactly as before.
+static RADIO_CONSTRAINED: AtomicBool = AtomicBool::new(false);
+const CONSTRAINED_DRAIN_SECS: u64 = 900;
+
+pub(crate) fn set_radio_constrained(c: bool) {
+  RADIO_CONSTRAINED.store(c, Ordering::SeqCst);
+}
+
+pub(crate) fn radio_constrained() -> bool {
+  RADIO_CONSTRAINED.load(Ordering::SeqCst)
+}
+
+/// Instant of the last background drain attempt, for the constrained holdoff.
+static LAST_BG_DRAIN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Should a BACKGROUNDED drain run now, given radio cost? Cheap radio: always.
+/// Constrained: only once per `CONSTRAINED_DRAIN_SECS`; first drain after
+/// launch always runs (a cold wake may not live long enough to wait). Stamps
+/// the clock when it answers yes.
+pub(crate) fn bg_drain_due() -> bool {
+  if !radio_constrained() {
+    stamp_bg_drain();
+    return true;
+  }
+  let mut g = match LAST_BG_DRAIN.lock() {
+    Ok(g) => g,
+    Err(_) => return true, // poisoned — never let bookkeeping block delivery
+  };
+  match *g {
+    Some(t) if t.elapsed().as_secs() < CONSTRAINED_DRAIN_SECS => false,
+    _ => {
+      *g = Some(std::time::Instant::now());
+      true
+    }
+  }
+}
+
+fn stamp_bg_drain() {
+  if let Ok(mut g) = LAST_BG_DRAIN.lock() {
+    *g = Some(std::time::Instant::now());
+  }
+}
+
 pub(crate) fn nudge_drain() {
   DRAIN_NUDGE.notify_one();
 }
@@ -124,7 +230,7 @@ pub(crate) async fn ensure_client(rec: &PairedBox) -> Option<Arc<VirtuesIrohClie
 static RECOVERING: AtomicBool = AtomicBool::new(false);
 
 /// Recover the box connection after an iOS network change / foreground.
-/// Two layers (docs/reach-reliability-plan.md):
+/// Two layers (agents/plan/reach-reliability-plan.md):
 ///   • **L1 poke** — `Endpoint::network_change()` (rebind sockets / re-STUN /
 ///     relay reconnect). Heals the common case.
 ///   • **L2 rebuild** — if a bounded probe still fails, the iOS UDP socket is
@@ -214,14 +320,21 @@ async fn recover_inner() -> i32 {
 static BASE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// `<AppSupport>/virtues/` — the app container dir holding creds + the outbox.
-fn virtues_dir() -> PathBuf {
+/// A dev profile gets `virtues-<name>/` instead: its own key, pairing, and
+/// outbox, hermetically beside the real one. `pub` so the desktop shell's
+/// pre-window paired check reads the same path this store writes.
+pub fn virtues_dir() -> PathBuf {
+  let leaf = match profile() {
+    None => "virtues".to_string(),
+    Some(p) => format!("virtues-{p}"),
+  };
   if let Some(base) = BASE_DIR.get() {
-    return base.join("virtues");
+    return base.join(leaf);
   }
   let base = dirs::data_dir()
     .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support")))
     .unwrap_or_else(|| PathBuf::from("."));
-  base.join("virtues")
+  base.join(leaf)
 }
 
 /// Initialize the shared outbox and clear any stale in-flight claims. Idempotent
@@ -374,6 +487,51 @@ impl BoxStore for FileStore {
 
 // ─── Plugin state ────────────────────────────────────────────────────────────
 
+/// The address a phone on the same network would actually reach this machine at.
+///
+/// NOT simply the first private IPv4 the box enumerates. A laptop's list is
+/// unordered and full of addresses no other device can route to — this one
+/// carries two virtualization bridges (192.168.139.x, 192.168.215.x) and a VPN
+/// (100.x) beside the real Wi-Fi. Offering the wrong one hands the phone an
+/// address that answers nothing, and the only symptom is
+/// `tcp connect error: Host is down`, which reads as "the door is broken"
+/// rather than "you were given the wrong door".
+///
+/// So ask the routing table instead: open a UDP socket toward a public address
+/// and read back the local address the kernel selected for it. `connect` on a
+/// UDP socket only fixes the peer — **no packet is sent** — so this costs
+/// nothing, contacts no one, and names the interface that actually carries
+/// traffic. Falls back to the enumeration when there is no default route.
+fn lan_address() -> Option<std::net::Ipv4Addr> {
+  use std::net::{IpAddr, UdpSocket};
+  let probe = UdpSocket::bind("0.0.0.0:0")
+    .ok()
+    .and_then(|s| s.connect("8.8.8.8:53").ok().and_then(|_| s.local_addr().ok()))
+    .map(|a| a.ip());
+  if let Some(IpAddr::V4(v4)) = probe {
+    if !v4.is_loopback() && !v4.is_unspecified() {
+      return Some(v4);
+    }
+  }
+  virtues_reach_client::local_private_ipv4s()
+    .into_iter()
+    .find_map(|s| s.parse().ok())
+}
+
+/// A pairing door held open for one "Add device" window.
+///
+/// Kept whole so `close()` is one swap: dropping the sender shuts the task
+/// down, and the counter dies with it (a new door gets a fresh budget, which
+/// is correct — a human who mistyped twice and closed the sheet should not
+/// meet a spent limit on their next honest attempt).
+struct PairDoor {
+  addr: std::net::SocketAddr,
+  /// Dropped to signal shutdown; the task selects on its closure.
+  _shutdown: tokio::sync::oneshot::Sender<()>,
+  attempts: Arc<std::sync::atomic::AtomicU32>,
+  task: tauri::async_runtime::JoinHandle<()>,
+}
+
 pub struct ReachState {
   store: Arc<FileStore>,
   serving: AtomicBool,
@@ -381,6 +539,10 @@ pub struct ReachState {
   /// them (freeing the loopback port + dropping the old client) and let a re-pair
   /// serve fresh without an app restart.
   tasks: std::sync::Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
+  /// The pairing door, when one is open. At most one at a time — a second
+  /// "Add device" sheet replaces the first rather than leaving an orphan
+  /// listener bound to the LAN with nobody watching it.
+  pair_door: std::sync::Mutex<Option<PairDoor>>,
 }
 
 impl ReachState {
@@ -389,7 +551,91 @@ impl ReachState {
       store: Arc::new(FileStore::new()),
       serving: AtomicBool::new(false),
       tasks: std::sync::Mutex::new(Vec::new()),
+      pair_door: std::sync::Mutex::new(None),
     }
+  }
+
+  /// Open the pairing door on this machine's LAN address for `ttl_secs`.
+  ///
+  /// Returns `(origin, seconds)` — the `host:port` the phone types into its
+  /// pairing screen, and the window it has to do it in. Requires this device
+  /// to be paired and serving: the door forwards over the same warm iroh
+  /// client the loopback uses, which is what lets it work from a café while
+  /// the box sits at home.
+  pub async fn open_pair_door(&self, ttl_secs: u64) -> Result<(String, u64)> {
+    // A door onto a box we cannot reach would accept the phone's attempt and
+    // then fail it — better to refuse before anything is displayed.
+    self.ensure_serving().await?;
+    let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
+
+    let ip = lan_address().ok_or_else(|| {
+      Error::Reach("this computer has no network address a phone could reach".into())
+    })?;
+
+    // Port 0: the OS picks a free one. Deliberately NOT the loopback port —
+    // that one is persisted in every installed collector's endpoint and must
+    // never be exposed off-machine.
+    let listener = tokio::net::TcpListener::bind((ip, 0))
+      .await
+      .map_err(|e| Error::Reach(format!("bind {ip}:0: {e}")))?;
+    let addr = listener
+      .local_addr()
+      .map_err(|e| Error::Reach(e.to_string()))?;
+
+    let attempts = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let ttl = std::time::Duration::from_secs(ttl_secs);
+    let door_attempts = attempts.clone();
+    let task = tauri::async_runtime::spawn(async move {
+      // Two ways to close, whichever comes first: the sheet closing (sender
+      // dropped) or the window expiring. The timer is the one that matters —
+      // a crashed or forgotten UI must not leave the LAN listener up.
+      let shutdown = async move {
+        let _ = tokio::time::timeout(ttl, rx).await;
+      };
+      // `Arc<VirtuesIrohClient>` is itself the Forwarder impl, so the outer
+      // Arc is just the trait-object box.
+      let forwarder: Arc<dyn virtues_reach_client::pair_door::Forwarder> = Arc::new(client);
+      if let Err(e) =
+        virtues_reach_client::serve_pair_door(listener, forwarder, door_attempts, shutdown).await
+      {
+        tracing::warn!(error = %format!("{e:#}"), "pair door ended");
+      }
+    });
+
+    // Replaces (and thereby closes) any door already open.
+    if let Ok(mut g) = self.pair_door.lock() {
+      *g = Some(PairDoor {
+        addr,
+        _shutdown: tx,
+        attempts,
+        task,
+      });
+    }
+    Ok((addr.to_string(), ttl_secs))
+  }
+
+  /// Close the pairing door, if one is open.
+  pub fn close_pair_door(&self) {
+    let door = self.pair_door.lock().ok().and_then(|mut g| g.take());
+    if let Some(d) = door {
+      // Dropping `_shutdown` signals the task; abort covers a task already
+      // parked inside a forwarded request.
+      d.task.abort();
+      tracing::info!(addr = %d.addr, "pair door: closed by request");
+    }
+  }
+
+  /// `(origin, attempts_used)` for an open door, else `None`.
+  pub fn pair_door_status(&self) -> Option<(String, u32)> {
+    self.pair_door.lock().ok().and_then(|g| {
+      g.as_ref().map(|d| {
+        (
+          d.addr.to_string(),
+          d.attempts.load(std::sync::atomic::Ordering::SeqCst),
+        )
+      })
+    })
   }
 
   pub fn is_paired(&self) -> bool {
@@ -397,7 +643,7 @@ impl ReachState {
   }
 
   pub fn loopback_url(&self) -> String {
-    format!("http://127.0.0.1:{LOOPBACK_PORT}")
+    format!("http://127.0.0.1:{}", loopback_port())
   }
 
   /// The warm iroh client, if serving. Reads the process-global source of truth
@@ -421,8 +667,9 @@ impl ReachState {
       }
     };
 
-    let std_listener = StdTcpListener::bind(("127.0.0.1", LOOPBACK_PORT))
-      .map_err(|e| Error::Reach(format!("bind 127.0.0.1:{LOOPBACK_PORT}: {e}")))?;
+    let port = loopback_port();
+    let std_listener = StdTcpListener::bind(("127.0.0.1", port))
+      .map_err(|e| Error::Reach(format!("bind 127.0.0.1:{port}: {e}")))?;
     std_listener.set_nonblocking(true)?;
 
     // Refresh the outbox's device id now that we're definitely paired (setup()
@@ -475,6 +722,16 @@ impl ReachState {
           if cfg!(target_os = "ios") && app_backgrounded() {
             park_endpoint("idle").await;
           }
+          continue;
+        }
+        // Constrained-radio holdoff (backgrounded only): batch chunks onto one
+        // dial per CONSTRAINED_DRAIN_SECS instead of one per chunk. Rows are
+        // durable in the outbox — this trades latency, never data. Foreground
+        // drains (user watching) are never held. Park any leftover warm client
+        // (e.g. the user just backgrounded): skipping the drain must not skip
+        // the park, or the endpoint chatters through the whole holdoff.
+        if cfg!(target_os = "ios") && app_backgrounded() && !bg_drain_due() {
+          park_endpoint("held").await;
           continue;
         }
         // Warm client if present (foreground), else a cold build (parked). Reading
@@ -596,11 +853,15 @@ impl ReachState {
     } else {
       ("desktop_app", "Virtues Desktop", "virtues-desktop")
     };
+    // No version field here: this crate's own version was a never-bumped 0.1.0
+    // that identified nothing, written to a key nothing read. The device's
+    // real build identity arrives on its first request — the SPA stamps
+    // X-Virtues-Client (with the shell's `app=` release) and the box records
+    // it under `device_info.build`, the key the Devices page actually reads.
     let device_info = serde_json::json!({
       "device_name": device_name,
       "os": std::env::consts::OS,
       "client": client_id,
-      "version": env!("CARGO_PKG_VERSION"),
     });
     virtues_reach_client::pair::consume(self.store.as_ref(), &origin, code, client_kind, device_info)
       .await?;
@@ -621,6 +882,85 @@ impl ReachState {
     Ok(self.status().await)
   }
 
+  /// LAPTOP SIDE of the pairing handoff: mint an identity for a phone that
+  /// cannot reach the box, enroll its public half, and return the QR that
+  /// carries the result. See `virtues_reach_client::handoff` for the shape and
+  /// for the one security trade this makes.
+  ///
+  /// The seed exists only in the returned payload — never written to disk here,
+  /// never logged. This machine is a courier, not a second home for it.
+  pub async fn create_handoff(&self, label: Option<String>) -> Result<(String, String, String)> {
+    self.ensure_serving().await?;
+    let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
+
+    let identity = virtues_reach_client::pair::mint_identity();
+    let raw = virtues_reach_client::handoff::enroll_request(
+      &identity.node_id,
+      "mobile_app",
+      label.as_deref(),
+    )
+    .map_err(|e| Error::Reach(e.to_string()))?;
+
+    let resp = client
+      .request(&raw)
+      .await
+      .map_err(|e| Error::Reach(format!("enroll failed: {e:#}")))?;
+    let (status, body) =
+      virtues_reach_client::handoff::split_response(&resp).map_err(|e| Error::Reach(e.to_string()))?;
+    if status != 200 {
+      // The box's own words, not a paraphrase — it distinguishes an unknown
+      // kind from a malformed key, and the operator can act on that.
+      return Err(Error::Reach(format!("box refused the enrollment ({status}): {body}")));
+    }
+
+    // The device row the box just created. The Add-device sheet polls for THIS
+    // id to start reporting a `last_seen_at`, which is the only honest signal
+    // that the handoff worked: the sheet's usual signal is the pair token being
+    // consumed, and the handoff never consumes one — it enrols directly — so
+    // without this the sheet sits on "Waiting for your device…" forever while
+    // the phone is already paired and talking.
+    let device_id = serde_json::from_str::<serde_json::Value>(&body)
+      .ok()
+      .and_then(|v| v.get("device_id").and_then(|d| d.as_str().map(str::to_string)))
+      .unwrap_or_default();
+
+    let payload = virtues_reach_client::HandoffPayload::new(&identity, body);
+    let json = payload.encode().map_err(|e| Error::Reach(e.to_string()))?;
+    let qr = render_handoff_qr(&json);
+    Ok((qr, identity.node_id, device_id))
+  }
+
+  /// PHONE SIDE: adopt an identity a paired laptop minted and enrolled.
+  ///
+  /// The same landing as every other pairing — `finish_consume` writes the
+  /// record and `ensure_serving` brings the loopback up — so a handed-off
+  /// pairing is indistinguishable from one the phone negotiated itself.
+  pub async fn accept_handoff(&self, payload_json: &str) -> Result<ReachStatus> {
+    let payload = virtues_reach_client::HandoffPayload::decode(payload_json)
+      .map_err(|e| Error::Reach(e.to_string()))?;
+    let identity = payload.identity().map_err(|e| Error::Reach(e.to_string()))?;
+    virtues_reach_client::pair::finish_consume(self.store.as_ref(), &payload.box_json, identity)?;
+
+    // Tear the old serving state down BEFORE bringing the new one up.
+    // `ensure_serving` early-returns when `serving` is already set, so on a
+    // phone that was already paired it would store the new record and keep
+    // running the previous identity's client and loopback — the pairing
+    // "succeeds", the box shows a device, and every request from the webview
+    // fails. This mirrors what `forget` does for exactly this reason ("so a
+    // re-pair, even to a different box, serves fresh WITHOUT an app restart"),
+    // minus deleting the credentials we just wrote.
+    if let Ok(mut t) = self.tasks.lock() {
+      for h in t.drain(..) {
+        h.abort();
+      }
+    }
+    clear_warm_client();
+    self.serving.store(false, Ordering::SeqCst);
+
+    self.ensure_serving().await?;
+    Ok(self.status().await)
+  }
+
   pub fn forget(&self) -> Result<()> {
     // Full teardown so a re-pair (even to a different box) serves fresh WITHOUT an
     // app restart: abort the loopback + drain tasks (frees the loopback port),
@@ -632,6 +972,9 @@ impl ReachState {
         h.abort();
       }
     }
+    // A door onto a box we are no longer paired with can only mislead — and it
+    // is bound to the LAN, so leaving it up is the worst of the two.
+    self.close_pair_door();
     clear_warm_client();
     self.serving.store(false, Ordering::SeqCst);
     self.store.delete()?;
@@ -703,7 +1046,12 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::improv_disconnect,
       commands::outbox_stats,
       commands::drain_now,
-      commands::radio_stats
+      commands::radio_stats,
+      commands::pair_door_open,
+      commands::pair_door_close,
+      commands::pair_door_status,
+      commands::pair_handoff_create,
+      commands::pair_handoff_accept
     ])
     .setup(|app, _api| {
       #[cfg(target_os = "ios")]
@@ -737,4 +1085,29 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       Ok(())
     })
     .build()
+}
+
+/// Render the handoff payload as an SVG QR.
+///
+/// Rendered here rather than by the box for the reason that defines this whole
+/// flow: the box never learns the seed, so it cannot draw the code that carries
+/// one. The laptop mints, enrolls the public half, and draws the rest itself.
+fn render_handoff_qr(data: &str) -> String {
+  use qrcode::{render::svg, QrCode};
+  match QrCode::new(data.as_bytes()) {
+    Ok(code) => code
+      .render::<svg::Color<'_>>()
+      .min_dimensions(280, 280)
+      .quiet_zone(true)
+      .dark_color(svg::Color("#000000"))
+      .light_color(svg::Color("#ffffff"))
+      .build(),
+    Err(e) => {
+      // A payload too large for a QR is the realistic failure (seed + reach
+      // info + addrs). Say so plainly; the caller surfaces it rather than
+      // showing an empty frame that reads as "scan me".
+      tracing::warn!(error = %e, len = data.len(), "handoff qr render failed");
+      String::new()
+    }
+  }
 }

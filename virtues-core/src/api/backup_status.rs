@@ -43,7 +43,6 @@ pub async fn get_backup_status(pool: &PgPool) -> Result<BackupStatus, crate::Err
         "SELECT id, name, fs_uuid, last_ok_at, last_error, \
                 EXTRACT(EPOCH FROM (NOW() - last_ok_at))::BIGINT AS age_secs \
          FROM storage_volume \
-         WHERE 'backup' = ANY(roles) \
          ORDER BY name",
     )
     .fetch_all(pool)

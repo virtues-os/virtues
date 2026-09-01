@@ -1,11 +1,13 @@
 //! Drafting "In your own words" from the interview answers.
 //!
-//! Distinct from `narrative_identity_gen`, which drafts a short paragraph from
-//! OBSERVED data — recurring people, places, recent days. This one reads only
-//! what the person wrote themselves, and the difference is the whole point:
-//! values, wounds and direction cannot be derived from behaviour. A machine
-//! guessing at someone's telos from their message volume would be both wrong
-//! and, on the subjects this covers, insulting.
+//! THE ONLY WRITER of narrative identity. There used to be a second —
+//! `narrative_identity_gen`, which drafted a portrait from OBSERVED data
+//! (recurring people, places, recent days) and overwrote this one's work.
+//! Deleted 2026-08-26 as a doctrine violation, not just a race: values,
+//! wounds and direction cannot be derived from behaviour. A machine guessing
+//! at someone's telos from their message volume would be both wrong and, on
+//! the subjects this covers, insulting. This module reads only what the
+//! person wrote themselves.
 //!
 //! TWO ARTIFACTS FROM ONE CALL:
 //!
@@ -25,9 +27,9 @@ use sqlx::PgPool;
 
 use crate::error::{Error, Result};
 
-const SYSTEM_PROMPT: &str = r#"You are arranging a person's own answers into a document they will read and correct. It is called "In your own words", and that is the standard: their words, ordered — not your reading of them.
+const SYSTEM_PROMPT: &str = r#"You are arranging a person's own words into a document they will read and correct. It is called "In your own words", and that is the standard: their words, ordered — not your reading of them.
 
-You are given answers to an interview about their life: chapters, a high point, a low point, the people in it, what they have lost, who they admire, what they are proud of, what makes them unusual, which pull is strongest, what they believe, what is live now, what they want, and what they fear becoming.
+You are given the transcript of an interview about their life — the chapters of it, what makes them unlike others, who they admire, what pulls at them, what they believe, and whatever else they offered. THE INTERVIEWER'S WORDS ARE SCAFFOLDING, NEVER MATERIAL: nothing the interviewer said may appear in the document, be paraphrased into it, or shape a claim the person did not themselves make. Only the person's own turns are material.
 
 WRITE TWO THINGS, separated by a line containing only ---CORE---.
 
@@ -49,7 +51,7 @@ Rules for the document:
 
 SECOND, after the ---CORE--- line: 80-120 words, plain text, no heading. This is what an assistant carries into every conversation, so it holds only what would change how to speak to them: what they are working toward, what they are up against, what they believe, and anything they are sensitive about. Not biography. Not their history. What a thoughtful friend keeps in mind, not what they could recite.
 
-THIRD, after a line containing only ---RULES---: any instruction they gave about what NOT to raise, one per line, as a short imperative in their own terms ("never suggest bars", "do not mention my father unless I do"). These are drawn ONLY from what they explicitly asked for — usually the last answer. Never invent one, never infer one from a sad story, never turn an observation into a rule. If they asked for nothing, write nothing after this line. Being told about a loss is not the same as being asked never to mention it.
+THIRD, after a line containing only ---RULES---: any instruction they gave about what NOT to raise, one per line, as a short imperative in their own terms ("never suggest bars", "do not mention my father unless I do"). These are drawn ONLY from what they explicitly asked for, anywhere in the transcript. Never invent one, never infer one from a sad story, never turn an observation into a rule. If they asked for nothing, write nothing after this line. Being told about a loss is not the same as being asked never to mention it.
 
 Output the document, then ---CORE---, then the core, then ---RULES---, then the rules. Nothing else."#;
 
@@ -63,30 +65,73 @@ pub struct Draft {
     pub proposed_rules: Vec<String>,
 }
 
+/// The singleton subject id — the one narrative-identity article a box has.
+const NAR_IDENTITY_ID: &str = "nar_identity_001";
+
+/// The one interview chat. A fixed id, shared with the frontend, so the
+/// conversation resumes forever and the drafter knows where to read.
+pub const INTERVIEW_CHAT_ID: &str = "chat_narrative_interview";
+
 /// Read the answers, write the document.
 ///
 /// Refuses on an empty interview rather than producing a document about
 /// nobody — an invented identity handed to someone as their own would be the
 /// worst single output this product could generate.
+///
+/// ONE WRITER, ONCE. The document lands as a wiki article (a real page: the
+/// editor, history, marginalia), and from that moment the person owns it —
+/// this function never runs the model again while the article exists. That is
+/// the entire ownership model: the machine may write this document only while
+/// it is empty. (The platform enforces it too: a pool-only write to a
+/// CRDT-backed page is silently discarded.) A repeat call hands back what
+/// stands, so a lost response or a retry cannot double-spend or overwrite.
 pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
-    let answers = crate::api::narrative_interview::list_answers(pool).await?;
-    let written: Vec<_> = answers
-        .into_iter()
-        .filter(|a| !a.answer.trim().is_empty())
-        .collect();
+    if let Some(prose) = crate::api::wiki_articles::get_article_prose(
+        pool,
+        "narrative_identity",
+        NAR_IDENTITY_ID,
+    )
+    .await?
+    {
+        let core: String =
+            sqlx::query_scalar("SELECT content FROM wiki_narrative_identity LIMIT 1")
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| Error::Database(format!("read narrative core: {e}")))?
+                .unwrap_or_default();
+        return Ok(Draft {
+            document: prose.content,
+            core,
+            proposed_rules: Vec::new(),
+        });
+    }
 
-    if written.is_empty() {
+    // The interview CHAT is the source — the whole transcript, in order. The
+    // drafter's prompt firewalls the interviewer's turns (scaffolding, never
+    // material), but they stay in the input because a person's answer often
+    // only makes sense against the question it answered.
+    let turns: Vec<(String, String)> = sqlx::query_as(
+        "SELECT role, content FROM app_chat_messages \
+         WHERE chat_id = $1 AND role IN ('user', 'assistant') \
+           AND content <> '' \
+         ORDER BY sequence_num ASC",
+    )
+    .bind(INTERVIEW_CHAT_ID)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("read interview transcript: {e}")))?;
+
+    let they_spoke = turns.iter().any(|(role, _)| role == "user");
+    if !they_spoke {
         return Err(Error::Other(
-            "nothing written yet — answer a question or two first".into(),
+            "nothing said yet — talk for a bit first".into(),
         ));
     }
 
-    let mut prompt = String::from("Their answers:\n");
-    for a in &written {
-        // The question text stays on the client, which owns the set; the id is
-        // enough for the model to know what was asked, and keeping the wording
-        // out of here means rewording a question never invalidates a draft.
-        prompt.push_str(&format!("\n## {}\n{}\n", a.question_id, a.answer.trim()));
+    let mut prompt = String::from("The transcript:\n");
+    for (role, content) in &turns {
+        let speaker = if role == "user" { "THEM" } else { "INTERVIEWER" };
+        prompt.push_str(&format!("\n{speaker}: {}\n", content.trim()));
     }
 
     let raw = call_model(pool, &prompt).await?;
@@ -96,26 +141,39 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
         return Err(Error::ExternalApi("draft came back empty".into()));
     }
 
+    // The document becomes the singleton narrative-identity article — a page
+    // seeded with this markdown, which the person edits from here on.
+    // (`create_article` is idempotent: a concurrent first draft cannot strand
+    // a second page.)
+    crate::api::wiki_articles::create_article(
+        pool,
+        "narrative_identity",
+        NAR_IDENTITY_ID,
+        "In your own words",
+        &document,
+    )
+    .await?;
+
+    // The core stays apparatus, not article: it is what rides into every chat.
     sqlx::query(
-        "INSERT INTO wiki_narrative_identity (id, content, document, drafted_at) \
-         VALUES ('nar_identity_001', $2, $1, now()) \
+        "INSERT INTO wiki_narrative_identity (id, content, drafted_at) \
+         VALUES ($2, $1, now()) \
          ON CONFLICT (id) DO UPDATE SET \
-           document = EXCLUDED.document, \
            -- The core is only replaced when we have one. A short version that
            -- failed to parse must never blank the paragraph the assistant is
            -- already carrying.
-           content = CASE WHEN $2 <> '' THEN EXCLUDED.content ELSE wiki_narrative_identity.content END, \
+           content = CASE WHEN $1 <> '' THEN EXCLUDED.content ELSE wiki_narrative_identity.content END, \
            drafted_at = now(), \
            updated_at = now()",
     )
-    .bind(&document)
     .bind(&core)
+    .bind(NAR_IDENTITY_ID)
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("save narrative draft: {e}")))?;
 
     tracing::info!(
-        answers = written.len(),
+        turns = turns.len(),
         document_chars = document.len(),
         core_chars = core.len(),
         "narrative draft written from the interview"
@@ -185,7 +243,7 @@ async fn call_model(pool: &PgPool, user_prompt: &str) -> Result<String> {
     }
 
     // `body` is already parsed JSON on this client — the same shape
-    // narrative_identity_gen reads.
+    // entity_article_gen reads.
     Ok(response.body["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or_default()

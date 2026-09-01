@@ -155,7 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle Init command early (doesn't need Virtues client).
     //
-    // `virtues init` is PLUMBING, not a wizard (docs/onboarding.md): resolve
+    // `virtues init` is PLUMBING, not a wizard (agents/build/onboarding.md): resolve
     // config from the env the installer wrote, run migrations, mint a pair
     // token, print the handoff. The account/subscribe conversation lives in
     // the web setup wizard (/setup) — a TTY is the worst possible medium for
@@ -271,7 +271,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ─── `virtues pair` (aliases: `login`, `link`) ──────────────────────────
-    // THE human verb for connecting a device to the box (docs/onboarding.md). Mints a
+    // THE human verb for connecting a device to the box (agents/build/onboarding.md). Mints a
     // CLI-origin pair token (authorized immediately because typing this
     // command IS proof of physical access), prints the one-time URL + QR,
     // then waits until the link is opened — the wait is also the
@@ -334,12 +334,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!(
                     "  {}",
                     console::style(format!(
-                        "{:<30}  {:<12}  {:<22}  {:<14}  {}",
-                        "ID", "KIND", "LABEL", "KEY", "LAST SEEN"
+                        "{:<30}  {:<12}  {:<22}  {:<14}  {:<14}  {}",
+                        "ID", "KIND", "LABEL", "KEY", "VERSION", "LAST SEEN"
                     ))
                     .dim()
                 );
-                for (id, kind, label, node_id, last_seen) in &devices {
+                for (id, kind, label, node_id, last_seen, version) in &devices {
                     let key = node_id
                         .as_deref()
                         .map(|n| ui::ellipsize_middle(n, 14))
@@ -356,7 +356,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         label.clone()
                     };
-                    println!("  {id:<30}  {kind:<12}  {label:<22}  {key:<14}  {seen}");
+                    let version = version.as_deref().unwrap_or("—");
+                    println!("  {id:<30}  {kind:<12}  {label:<22}  {key:<14}  {version:<14}  {seen}");
                 }
                 println!();
                 return Ok(());
@@ -897,6 +898,24 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
 /// and exit — never fall through to the misleading Postgres timeout.
 #[cfg(unix)]
 fn maybe_reexec_as_service_user() {
+    // Every command that opens a Postgres pool or reads the `virtues`-owned env
+    // file. Miss one and it runs as the login user, whose role does not exist in
+    // the cluster: `virtues reindex` died with `role "root" does not exist`
+    // after an hour-long restore (2026-08-27), which is a confusing way to say
+    // "wrong user".
+    //
+    // THIS LIST DRIFTED FROM THE ONE AT THE TOP OF `main()`. That one decides
+    // the log level for "interactive" commands and already knew about
+    // `reindex`, `configure-inference`, `restore` and `warm-models`; this one
+    // decides who they run AS, and had never been updated. Two hand-synced
+    // lists, one true — the same shape as the ACL lattice (`plugins/lockstep`)
+    // and the applet env allowlist. When you add a subcommand that touches the
+    // database, add it to BOTH.
+    //
+    // Deliberately absent: the root-only lifecycle verbs — `upgrade`,
+    // `prepare`, `activate`, `rollback`, `deprovision`, `uninstall`,
+    // `image-check`, `bringup` — which drive systemd and must NOT drop
+    // privilege.
     const DB_COMMANDS: &[&str] = &[
         "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
         "migrate", "seed",
@@ -905,6 +924,13 @@ fn maybe_reexec_as_service_user() {
         // would render the default llama-server guess + "DB unknown" — a
         // confident, wrong report. Re-exec so it reports this box's real config.
         "doctor",
+        // Each of these opens its own pool before the app path (main.rs) or
+        // rides the shared one in `cli::run`.
+        "device",
+        "reindex",
+        "configure-inference",
+        "lake-adopt",
+        "volumes",
     ];
     let Some(cmd) = std::env::args().nth(1) else { return };
     if !DB_COMMANDS.contains(&cmd.as_str()) {
@@ -921,6 +947,20 @@ fn maybe_reexec_as_service_user() {
         .unwrap_or_default();
     if user.is_empty() || user == "virtues" {
         return;
+    }
+    // The one root moment the NEW binary gets during an upgrade, and the last
+    // instruction before it is given away: the orchestrator (the OLD binary)
+    // spawns `virtues migrate` as root, and this guard is about to demote it
+    // to `virtues` — which can never chown root-owned state back to itself.
+    // System repairs run HERE, before the drop. Putting them after the demotion
+    // (in the Migrate arm of cli/mod.rs, where they also sit) is exactly the
+    // mistake that shipped in v0.1.5-staging.72: the repair was present,
+    // root-gated, and skipped silently on every box because this re-exec had
+    // already stripped root by the time it ran. run() gates on euid 0 itself,
+    // so a non-root login user passing through this demotion skips repairs
+    // rather than half-running them.
+    if cmd == "migrate" {
+        virtues::cli::system_repairs::run();
     }
     eprintln!("(running as '{user}' — switching to the 'virtues' service user)");
     use std::os::unix::process::CommandExt;

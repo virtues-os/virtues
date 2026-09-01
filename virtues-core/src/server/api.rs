@@ -195,6 +195,44 @@ pub async fn chat_import_upload_handler(
     }
 }
 
+/// GET /api/chat-import/status — what chat-import has already landed, so the
+/// sources UI can show a real "connected" state for a source that mints no
+/// credential. Counts come from the ingested rows themselves, not from run
+/// summaries (the latest run of a re-import says "0 new", which is true of the
+/// run and misleading as a status).
+pub async fn chat_import_status_handler(State(state): State<AppState>) -> Response {
+    let row = sqlx::query(
+        r#"SELECT COUNT(*) AS messages,
+                  COUNT(DISTINCT conversation_id) AS conversations,
+                  COALESCE(ARRAY_AGG(DISTINCT provider) FILTER (WHERE provider IS NOT NULL), '{}') AS providers
+             FROM data_content_conversation
+            WHERE source_table = 'chat_import'"#,
+    )
+    .fetch_one(state.db.pool())
+    .await;
+
+    match row {
+        Ok(r) => {
+            use sqlx::Row;
+            let messages: i64 = r.get("messages");
+            let conversations: i64 = r.get("conversations");
+            let providers: Vec<String> = r.get("providers");
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "messages": messages,
+                    "conversations": conversations,
+                    "providers": providers,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => error_response(crate::error::Error::Database(format!(
+            "failed to read chat-import status: {e}"
+        ))),
+    }
+}
+
 /// List all actions with their latest run status.
 pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
     let pool = state.db.pool();
@@ -1279,42 +1317,8 @@ pub async fn places_autocomplete_handler(
     State(state): State<AppState>,
     Query(request): Query<crate::api::AutocompleteRequest>,
 ) -> Response {
-    // Check usage limit first
-    if let Err(e) =
-        crate::api::check_limit(state.db.pool(), crate::api::Service::GooglePlaces).await
-    {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": "usage_limit_exceeded",
-                "service": e.service,
-                "used": e.used,
-                "limit": e.limit,
-                "unit": e.unit,
-                "resets_at": e.resets_at,
-                "message": format!("Monthly Google Places limit reached. Resets at {}", e.resets_at)
-            })),
-        )
-            .into_response();
-    }
-
     match crate::api::autocomplete(state.db.pool(), request).await {
         Ok(response) => {
-            // Record usage on success - warn but don't fail if recording fails
-            // The user already received their response, so this is a billing/tracking issue only
-            if let Err(e) = crate::api::record_service_usage(
-                state.db.pool(),
-                crate::api::Service::GooglePlaces,
-                1,
-            )
-            .await
-            {
-                tracing::warn!(
-                    service = "google_places",
-                    error = %e,
-                    "Usage recording failed - request succeeded but usage may be undercounted"
-                );
-            }
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(e) => error_response(e),
@@ -1326,41 +1330,8 @@ pub async fn places_details_handler(
     State(state): State<AppState>,
     Query(request): Query<crate::api::PlaceDetailsRequest>,
 ) -> Response {
-    // Check usage limit first
-    if let Err(e) =
-        crate::api::check_limit(state.db.pool(), crate::api::Service::GooglePlaces).await
-    {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": "usage_limit_exceeded",
-                "service": e.service,
-                "used": e.used,
-                "limit": e.limit,
-                "unit": e.unit,
-                "resets_at": e.resets_at,
-                "message": format!("Monthly Google Places limit reached. Resets at {}", e.resets_at)
-            })),
-        )
-            .into_response();
-    }
-
     match crate::api::get_place_details(state.db.pool(), request).await {
         Ok(response) => {
-            // Record usage on success - warn but don't fail if recording fails
-            if let Err(e) = crate::api::record_service_usage(
-                state.db.pool(),
-                crate::api::Service::GooglePlaces,
-                1,
-            )
-            .await
-            {
-                tracing::warn!(
-                    service = "google_places",
-                    error = %e,
-                    "Usage recording failed - request succeeded but usage may be undercounted"
-                );
-            }
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(e) => error_response(e),
@@ -1643,22 +1614,6 @@ pub async fn web_search_handler(
     State(state): State<AppState>,
     Json(request): Json<WebSearchRequest>,
 ) -> Response {
-    if let Err(e) = crate::api::check_limit(state.db.pool(), crate::api::Service::Parallel).await {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": "usage_limit_exceeded",
-                "service": e.service,
-                "used": e.used,
-                "limit": e.limit,
-                "unit": e.unit,
-                "resets_at": e.resets_at,
-                "message": format!("Monthly web search limit reached. Resets at {}", e.resets_at)
-            })),
-        )
-            .into_response();
-    }
-
     let search = crate::api::web_search::SearchRequest {
         objective: request.objective,
         query: request.query,
@@ -1668,16 +1623,6 @@ pub async fn web_search_handler(
 
     match crate::api::web_search::search(state.db.pool(), search).await {
         Ok(response) => {
-            if let Err(e) =
-                crate::api::record_service_usage(state.db.pool(), crate::api::Service::Parallel, 1)
-                    .await
-            {
-                tracing::warn!(
-                    service = "parallel",
-                    error = %e,
-                    "Usage recording failed - request succeeded but usage may be undercounted"
-                );
-            }
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(e) => error_response(e),
@@ -1990,6 +1935,32 @@ pub async fn lifeline_processed_handler(
 }
 
 /// Notes on a subject.
+/// GET /api/assistant/memories — the live memories, lane-grouped.
+pub async fn list_assistant_memories_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::assistant_memories::list_memories(state.db.pool()).await)
+}
+
+/// PUT /api/assistant/memories/:id — the person rewrites one in their words.
+pub async fn edit_assistant_memory_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<crate::api::assistant_memories::EditMemoryRequest>,
+) -> Response {
+    api_response(crate::api::assistant_memories::edit_memory(state.db.pool(), id, &req.body).await)
+}
+
+/// DELETE /api/assistant/memories/:id — soft-retire with provenance.
+pub async fn retire_assistant_memory_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Response {
+    api_response(
+        crate::api::assistant_memories::retire_memory(state.db.pool(), id)
+            .await
+            .map(|_| serde_json::json!({ "retired": true })),
+    )
+}
+
 pub async fn list_notes_handler(
     State(state): State<AppState>,
     Path((subject_type, subject_id)): Path<(String, String)>,
@@ -2538,7 +2509,7 @@ pub async fn timeline_get_day_handler(
 }
 
 /// Optional `?tz=` query — the viewing device's IANA zone, used to anchor an
-/// in-progress "today" to where the owner currently is. See docs/timezone-model.md.
+/// in-progress "today" to where the owner currently is. See agents/record/timezone-model.md.
 #[derive(Debug, Deserialize, Default)]
 pub struct DaySourcesQuery {
     pub tz: Option<String>,
@@ -2583,7 +2554,7 @@ pub async fn today_streams_handler(
 // ============================================================================
 // Map tile cache (the Atlas) — serve map tiles from the box, caching upstream
 // tiles on first request so the browser never talks to a third-party tile
-// provider and cached areas keep working offline. See docs/map-atlas-plan.md.
+// provider and cached areas keep working offline. See agents/record/map-atlas-plan.md.
 // ============================================================================
 
 /// Allowed styles → upstream tile URL template. The ONLY place the upstream
@@ -2950,11 +2921,6 @@ pub async fn get_drive_usage_handler(State(state): State<AppState>) -> Response 
 /// GET /api/backup/status - age of the newest good backup, per volume
 pub async fn get_backup_status_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::get_backup_status(state.db.pool()).await)
-}
-
-/// GET /api/drive/warnings - Get quota warnings
-pub async fn get_drive_warnings_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::check_drive_warnings(state.db.pool(), &state.drive_config).await)
 }
 
 /// Query params for listing drive files
@@ -3751,16 +3717,6 @@ pub async fn get_page_backlinks_handler(
     Path(id): Path<String>,
 ) -> Response {
     api_response(crate::api::get_page_backlinks(state.db.pool(), &id).await)
-}
-
-/// GET /api/pages/reflections/:date — legacy reflections for a date, read
-/// only. The POST that minted them is retired: writing about a day belongs
-/// to the day's article or a note on the day.
-pub async fn get_reflections_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    api_response(crate::api::get_reflections_for_date(state.db.pool(), &date).await)
 }
 
 /// Query params for entity search

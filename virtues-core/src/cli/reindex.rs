@@ -109,13 +109,13 @@ async fn wipe(pool: &PgPool) -> Result<()> {
         // the wipe would be blocked by the very guard it exists to clear.
         "DO $$ BEGIN IF to_regclass('search_index_meta') IS NOT NULL THEN \
              UPDATE search_index_meta SET n_docs = 0, sum_len = 0, \
-                 model = NULL, dim = NULL, fingerprint = NULL, built_at = NULL; \
+                 model = NULL, dim = NULL; \
            END IF; END $$",
         // wiki_events carries its own embedding blob + derived scores; null them
         // so each scoring pass recomputes with the current model.
         "UPDATE wiki_events SET \
-             embedding = NULL, novelty_z = NULL, local_novelty_z = NULL, lof_raw = NULL, \
-             hr_z = NULL, hrv_z = NULL, autonomic_z = NULL, topic_novelty = NULL, \
+             embedding = NULL, novelty_z = NULL, local_novelty_z = NULL, \
+             hr_z = NULL, autonomic_z = NULL, topic_novelty = NULL, \
              entity_novelty = NULL",
     ] {
         sqlx::query(stmt)

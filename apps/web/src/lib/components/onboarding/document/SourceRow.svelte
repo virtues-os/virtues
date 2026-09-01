@@ -1,16 +1,21 @@
 <!--
   SourceRow — one connectable source inside "Your data".
 
-  Icon + name + the WHY (why it's worth connecting), and a Connect button or a
-  connected checkmark. Prominence ('anchor' | 'prominent' | 'quiet') tunes the
-  emphasis through the icon tint and name size ONLY — every Connect button is
-  the same quiet secondary, because the screen has exactly one primary action
-  (Continue) and a column of mixed button weights read as a bug, not a
-  hierarchy (2026-08-21).
+  Name + the WHY (why it's worth connecting), and a Connect pill or a connected
+  state with a receipt line. Prominence ('anchor' | 'prominent' | 'quiet')
+  tunes emphasis through name size ONLY — every Connect is the same quiet
+  outlined pill, because the screen has exactly one filled action (Continue)
+  and a column of mixed button weights read as a bug, not a hierarchy
+  (2026-08-21). The pill shape matches `.ob-btn` so the screen speaks one
+  radius vocabulary.
+
+  The icon column was removed 2026-08-31: two rows carried tinted squares and
+  two carried bare glyphs, which read as inconsistency rather than hierarchy —
+  and brand logos would put four corporate marks on the quietest screen in the
+  product. The serif names carry the list.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import { Button } from "$lib";
 	import type { SourceCopy } from "./sources-copy";
 	import type { SourceCatalogItem } from "$lib/api/client";
 
@@ -18,15 +23,17 @@
 		source: SourceCatalogItem;
 		copy: SourceCopy;
 		connected: boolean;
+		/** The receipt: WHAT is connected — account names for credentialed
+		 *  sources, message counts for imports. One quiet line, not a table. */
+		detail?: string | null;
 		busy?: boolean;
 		onConnect: () => void;
 	}
 
-	let { source, copy, connected, busy = false, onConnect }: Props = $props();
+	let { source, copy, connected, detail = null, busy = false, onConnect }: Props = $props();
 </script>
 
 <div class="row" class:anchor={copy.prominence === "anchor"} class:connected>
-	<span class="icon"><Icon icon={source.icon ?? "ri:plug-line"} width={copy.prominence === "anchor" ? 24 : 20} /></span>
 	<div class="text">
 		<div class="name-line">
 			<span class="name">{source.name}</span>
@@ -35,14 +42,17 @@
 			{/if}
 		</div>
 		<p class="why">{copy.why}</p>
+		{#if connected && detail}
+			<p class="detail">{detail}</p>
+		{/if}
 	</div>
 	<div class="cta">
 		{#if connected}
 			<button class="add-more" onclick={onConnect} disabled={busy}>Add another</button>
 		{:else}
-			<Button variant="secondary" size="sm" onclick={onConnect} disabled={busy}>
+			<button class="connect" onclick={onConnect} disabled={busy}>
 				{busy ? "…" : "Connect"}
-			</Button>
+			</button>
 		{/if}
 	</div>
 </div>
@@ -53,7 +63,7 @@
 	.row {
 		position: relative;
 		display: grid;
-		grid-template-columns: auto 1fr auto;
+		grid-template-columns: 1fr auto;
 		align-items: start;
 		gap: 0.9rem;
 		padding: 1.1rem 0;
@@ -62,29 +72,13 @@
 		border-top: 1px solid var(--color-border-subtle);
 	}
 
-	.icon {
-		display: flex;
-		height: 2.25rem;
-		width: 2.25rem;
-		flex-shrink: 0;
-		align-items: center;
-		justify-content: center;
-		border-radius: 0.6rem;
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
-	}
-	.anchor .icon {
-		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-		color: var(--color-primary);
-	}
-
 	.text {
 		min-width: 0;
 	}
 	.name-line {
 		display: flex;
-		align-items: center;
-		gap: 0.5rem;
+		align-items: baseline;
+		gap: 0.6rem;
 	}
 	.name {
 		font-family: var(--font-serif);
@@ -100,6 +94,14 @@
 		line-height: 1.5;
 		color: var(--color-foreground-muted);
 	}
+	/* The receipt: what is actually connected, in the quietest voice on the
+	   row — it is evidence, not persuasion. */
+	.detail {
+		margin: 0.35rem 0 0;
+		font-size: 0.8rem;
+		line-height: 1.4;
+		color: var(--color-foreground-subtle);
+	}
 
 	.badge {
 		display: inline-flex;
@@ -113,6 +115,29 @@
 	.cta {
 		flex-shrink: 0;
 		padding-top: 0.15rem;
+	}
+	/* Same pill as .ob-btn, outlined instead of filled — one radius vocabulary
+	   on the screen, one filled control (Continue). */
+	.connect {
+		font: inherit;
+		font-size: 0.85rem;
+		padding: 0.45rem 1.1rem;
+		border: 1px solid var(--color-border);
+		border-radius: 999px;
+		background: transparent;
+		color: var(--color-foreground);
+		cursor: pointer;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease;
+	}
+	.connect:hover:not(:disabled) {
+		border-color: var(--color-foreground-subtle);
+		background: var(--color-surface-elevated);
+	}
+	.connect:disabled {
+		opacity: 0.45;
+		cursor: default;
 	}
 	.add-more {
 		font-size: 0.8rem;

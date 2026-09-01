@@ -1,17 +1,17 @@
 /**
  * Mobile layout state.
  *
- * "Mobile" means the phone shell (Tauri iOS/Android), which renders a
- * bottom-tab bar instead of the desktop sidebar. Two signals decide it:
+ * "Mobile" means the phone shell (Tauri iOS/Android), which is chat-first: one
+ * window opening on the chat, with a left-edge drawer as the only navigation
+ * chrome. Two signals decide it:
  *  - the shell injects `window.__VIRTUES_MOBILE__ = true` (authoritative), and
  *  - a viewport-width fallback (< 768px) so the mobile chrome can be exercised
  *    in a desktop browser during development without the native shell.
  *
- * The Settings menu (a directory of every page/route not in the bottom bar) is
- * a full-height overlay owned here so the tab bar and any deep link can open
- * it. It has no sub-screens: it used to carry a `menuView` toggle for the
- * native "This device" dashboard, but that is a route now
- * (/virtues/devices/this), so the menu is a directory and nothing else.
+ * The drawer's open state lives here rather than in MobileShell because more
+ * than the shell has an interest in it: the shell drives it from the edge
+ * gesture, rows inside the drawer close it after navigating, and anything that
+ * raises the keyboard needs to know the drawer is in the way.
  */
 
 const MOBILE_BREAKPOINT = 768;
@@ -54,12 +54,29 @@ function detectPaired(): boolean {
 	}
 }
 
+/**
+ * What the active chat wants the shell's top-right button to be.
+ *
+ * The button is modal: on an EMPTY chat "new chat" is a no-op (it is already
+ * new), so the slot carries the temporary-chat (ghost) toggle instead; once a
+ * conversation exists the mode is settled, the toggle would be dead weight,
+ * and the slot goes back to compose. Only ChatView knows emptiness and owns
+ * the ghost state, so it publishes this while it is the active mobile view and
+ * the shell renders it. `null` (any non-chat view) means compose.
+ */
+export interface ChatChrome {
+	empty: boolean;
+	ghost: boolean;
+	toggleGhost: () => void;
+}
+
 const ONBOARDING_KEY = "virtues-onboarding-done";
 
 const shellMobile = detectShellFlag();
 const shellPaired = detectPaired();
 let viewportMobile = $state(detectViewport());
-let menuOpen = $state(false);
+let drawerOpen = $state(false);
+let chatChrome = $state<ChatChrome | null>(null);
 // First-run "Set up your streams" flow — shown once on the paired phone shell.
 let onboardingOpen = $state(
 	shellMobile &&
@@ -75,7 +92,7 @@ if (typeof window !== "undefined" && !shellMobile) {
 }
 
 export const mobileLayout = {
-	/** True when the bottom-tab mobile chrome should render. */
+	/** True when the chat-first mobile chrome should render. */
 	get isMobile(): boolean {
 		return shellMobile || viewportMobile;
 	},
@@ -83,15 +100,28 @@ export const mobileLayout = {
 	get isNativeShell(): boolean {
 		return shellMobile;
 	},
-	get menuOpen(): boolean {
-		return menuOpen;
+	get drawerOpen(): boolean {
+		return drawerOpen;
 	},
-	/** Open the Settings menu — the route directory, its only screen. */
-	openMenu() {
-		menuOpen = true;
+	openDrawer() {
+		drawerOpen = true;
+		// The drawer and the keyboard cannot share the screen: the drawer slides
+		// out over a half-height viewport otherwise. Blurring here (rather than
+		// in the shell's gesture handler) covers every way the drawer opens —
+		// the hamburger, the edge swipe, a deep link.
+		if (typeof document !== "undefined") {
+			const el = document.activeElement;
+			if (el instanceof HTMLElement) el.blur();
+		}
 	},
-	closeMenu() {
-		menuOpen = false;
+	closeDrawer() {
+		drawerOpen = false;
+	},
+	get chatChrome(): ChatChrome | null {
+		return chatChrome;
+	},
+	setChatChrome(chrome: ChatChrome | null) {
+		chatChrome = chrome;
 	},
 	/** First-run stream-setup flow (paired native shell, once). */
 	get onboardingOpen(): boolean {

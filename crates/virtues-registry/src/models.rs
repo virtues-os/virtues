@@ -110,8 +110,12 @@ impl ModelSlot {
 /// describes the model, not the shim it is reached through. Run:
 ///
 /// ```text
-/// cargo test -p virtues --lib slot_model_smoke -- --ignored
+/// SMOKE_MODEL=<candidate> cargo test -p virtues --lib slot_model_smoke -- --ignored
 /// ```
+///
+/// `SMOKE_MODEL` is what lets you run it on a model that is not in this file
+/// yet — without it the gate could only ever test the id already promoted,
+/// which is the one moment the answer is not in question.
 ///
 /// which drives the candidate with our real tool set: tool selection, valid
 /// tool names, parseable arguments, and parallel calls in one turn.
@@ -125,30 +129,159 @@ impl ModelSlot {
 /// here, and wants re-evaluating before the next slot decision.
 pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
     match slot {
-        // Verified against the shim on 2026-07-28: all four legs pass, and it
-        // beat Opus 4.8 on every one (2.1s vs 2.3s on the parallel-call turn).
+        // Took the slot from `spacexai/grok-4.5` on 2026-08-27, when the
+        // gateway's retention posture became visible to us: grok-4.5 is
+        // `zdr: none`, and the chat slot is the one every unpinned user rides.
         //
-        // Accepted cost: Grok reasons on every turn (~180-200 tokens, measured
-        // over 3 runs) and NO reasoning_effort value reduces it — none/minimal/
-        // low/high all land in the same range. A fixed per-round tax we cannot
-        // tune, taken because it is small and Grok is ~4x cheaper on output
-        // than Opus. GLM-5.1 is the counterexample and why it is never a slot
-        // default: ~300-460 reasoning tokens per turn, equally uncontrollable,
-        // which stacks across an agent's tool rounds into 20s+ stalls in chat.
+        // The swap costs nothing it was supposed to cost. Measured on the same
+        // turn, uncapped, against the model it replaced:
         //
-        // Same model, new address since 2026-08-24: the gateway renamed the
-        // provider slug `xai/` -> `spacexai/`, and the old id vanished from
-        // the catalog rather than aliasing — requests to it 404.
-        ModelSlot::Chat => "spacexai/grok-4.5",
-        ModelSlot::Coding => "spacexai/grok-4.5",
-        // Titles, summaries, background jobs. Measured 0 reasoning tokens at
-        // every effort level — no thinking tax on the high-volume slot.
+        //   grok-4.5      13-23s   42-92 reasoning tokens   $5.90/mo
+        //   sonnet-5       7-9s        0 reasoning tokens   $7.33/mo
+        //
+        // (per month at 50 turns/day). It is FASTER than the model it replaced
+        // in every sample, not slower — the higher sticker price per token is
+        // mostly absorbed by being terser and paying no thinking tax.
+        //
+        // And the tax is the real reversal. The note this replaces called
+        // Grok's per-turn reasoning an "accepted cost... NO reasoning_effort
+        // value reduces it" — the gateway confirms grok-4.5 exposes only
+        // `effort`, which is inert on it. Sonnet 5 exposes a toggle AND
+        // effort (low/medium/high/xhigh), so thinking is ours to spend rather
+        // than a fixed levy.
+        //
+        // Passed the tool gate below on 2026-08-27, including parallel calls.
+        // Tool-call COUNT is not stable run to run (the same prompt drew one
+        // sql_query on one run and three on the next), so do not read a tidy
+        // number here as a property of the model — the gate asserts that
+        // calls are well-formed and that parallel works, which is what the
+        // agent loop actually depends on.
+        //
+        // Rejected for this slot the same day, all `zdr: all`, all measured:
+        //   opus-5              824 reasoning tokens, UNTUNABLE (no
+        //                       reasoning_options at all), $55.01/mo — 9.3x
+        //                       the incumbent, more than the subscription
+        //                       itself. A fine thing to PIN, never a default.
+        //   kimi-k3-fast        leaked its own scratchpad into the answer
+        //                       ("The person is describing..."), $18.49/mo.
+        //   qwen3.7-plus        1,077 reasoning tokens over 33s.
+        //   nova-2-lite         rambled straight into the length cap.
+        //   grok-4.1-fast       `zdr: all` and 10x cheaper, but fired FIVE
+        //                       duplicate sql_query calls for one question.
+        //   haiku-4.5           passed everything and costs $1.97/mo — a
+        //                       third of the incumbent. Held back only
+        //                       because it is a smaller model and this slot
+        //                       answers the hard turns; revisit if per-user
+        //                       cost ever becomes the binding constraint.
+        ModelSlot::Chat => "anthropic/claude-sonnet-5",
+        // Also off grok-4.5 (`zdr: none`), and onto a model that is both
+        // cheaper and cleaner here. Benched 2026-08-27 by EXECUTING what each
+        // model wrote against six cases rather than reading it:
+        //
+        //   qwen3-coder-plus   4.0s     0 reasoning   6/6   $0.0011/turn
+        //   grok-4.5           3.8s    85 reasoning   6/6   $0.0021/turn
+        //
+        // 1M context is why this beats its own cheaper sibling
+        // `qwen3-coder-next` ($0.0003/turn, 6/6, but 256K): the slot that
+        // writes applets reads a lot of schema first.
+        //
+        // The Chinese "thinking" coders are the trap here, and the prices do
+        // not warn you:
+        //   kimi-k2-thinking   39.1s   3,042 reasoning tokens — and 0/6.
+        //                      It thought for half a minute and got it wrong.
+        //   glm-5.2-fast       137.1s  29,585 reasoning tokens, $0.196 for a
+        //                      SINGLE question — 50x this slot's model, for
+        //                      the same correct answer, from a model with
+        //                      "fast" in its name.
+        //   kimi-k2.7-code     correct, but 1,290 reasoning tokens over 23.2s.
+        //
+        // Minor, known: it wraps output in markdown fences even when told not
+        // to. Callers that paste this straight into a file must strip them.
+        ModelSlot::Coding => "alibaba/qwen3-coder-plus",
+        // Titles, summaries, bookmark extraction, and the query the web-search
+        // tool composes. High volume, and the only slot whose output the user
+        // reads as a bare string, so output HYGIENE matters here more than
+        // model weight.
+        //
+        // Took the slot from `zai/glm-4.7-flash` on 2026-08-27. Retention was
+        // the reason to look — glm-4.7-flash is the weakest posture we shipped,
+        // `zdr: some` AND `no_training: some`, on the slot that reads bookmarked
+        // articles and summarizes the user's own record — but it only moved
+        // once a candidate beat it on the actual work:
+        //
+        //   llama-4-scout   0.8s  0 reasoning  5/5 extraction  6/6 clean titles
+        //   glm-4.7-flash   1.6s  0 reasoning  5/5 extraction  6/6 clean titles
+        //
+        // Costs ~60% more per call and is still $0.00007 — noise at this slot's
+        // absolute volume. 128K context (down from 200K) is comfortably above
+        // the longest thing this slot reads, one article.
+        //
+        // Hygiene is what eliminated the cheaper candidates, and it does not
+        // track price or size at all — this slot writes strings that land in
+        // the UI verbatim:
+        //   nova-lite       leaked "Title: ..." into a title, and writes
+        //                   comma-salad ("Note: landlord, boiler, issue,
+        //                   urgent.") — cheaper than the incumbent and the
+        //                   worst of the three at the visible job.
+        //   ministral-14b   wrapped 5 of 6 titles in **markdown bold**.
+        //   qwen3.8-flash   the best titles measured, but pays 126 reasoning
+        //                   tokens per call for them. The runner-up, and the
+        //                   pick if title quality ever outranks the tax.
+        //   qwen3.7-flash   1,114 reasoning tokens to write FOUR WORDS, with
+        //                   no reasoning_options to turn it off. Three times
+        //                   worse than the GLM-5.1 tax this file already
+        //                   rejects, from the cheapest model on the shelf.
+        //                   Per-token price is not per-call price.
+        // Back to glm-4.7-flash on 2026-08-27, hours after llama-4-scout took
+        // the slot from it. The swap was made to escape `zdr: some`, and that
+        // turned out to be the wrong layer to solve it at: the gateway takes
+        // `zeroDataRetention: true` per request and PINS a `some` model to its
+        // zero-retention endpoints, which virtues-api now sets on every call it
+        // can (see Catalog::enforce_zdr). glm-4.7-flash is therefore
+        // zero-retention in practice, and it was the better model for the job
+        // on the measurements that picked scout — 6/6 clean titles like scout,
+        // but visibly better ones ("Running Shoe Recommendation" against
+        // "Shoe Change for Relief"), and cheaper.
+        //
+        // Keeping the record straight about what it is: glm-4.7-flash is the
+        // weakest posture we ship, `zdr: some` AND `no_training: some`, and it
+        // is fine here ONLY because enforcement is on. If the enforcement is
+        // ever removed, this slot goes back to being the leaky one and
+        // llama-4-scout (`all`/`all`, 0.8s, 5/5 extraction) is the drop-in.
+        //
+        // Measured 0 reasoning tokens at every effort level — no thinking tax
+        // on the high-volume slot, which is what put it here originally and is
+        // still the reason it belongs here.
         ModelSlot::Lite => "zai/glm-4.7-flash",
         ModelSlot::Image => "google/gemini-3-pro-image",
         // The audio-native model that won a controlled 5-clip bench. Stays out
         // of the Gemini-3 parallel-tool-call problem entirely: transcription
         // uses no tools. Every audio-in model besides Gemini rejects audio on
         // the gateway, so this slot is effectively Gemini-only.
+        //
+        // RE-VALIDATED 2026-08-27 on four real 5-minute recordings pulled from
+        // a box, using the applet's own prompt and `reasoning_effort: "low"`.
+        // It stays, and the freshness report will keep saying it is nine
+        // versions behind, which is the wrong reading of these numbers:
+        //
+        //   gemini-3-flash    8.5s   0 reasoning    348 words   json 4/4
+        //   gemini-3.5-flash  8.3s   0 reasoning    336 words   json 4/4
+        //   gemini-3.6-flash 20.5s  1869 reasoning  340 words   json 4/4
+        //   gemini-3.7-flash  8.2s    19 reasoning  241 words   json 4/4
+        //
+        // 3.6 is the one to keep out, and the gateway says why before you spend
+        // a cent: its `reasoning_options` is null, so the `reasoning_effort`
+        // the applet sends is silently ignored and it thinks 1,869 tokens per
+        // clip at 2.4x the latency. That is the "only tier whose thinking
+        // budget the gateway honors" line from the original bench, still true —
+        // check `reasoning_options` before benching an Omni candidate.
+        //
+        // 3.7 honors the budget but transcribed ~30% FEWER words off the same
+        // audio. The prompt says omissions are safe and fabrications are not,
+        // which is right about the danger but does not make dropped speech
+        // free: this slot is the sole record of a moment nobody re-listens to.
+        //
+        // 3.5 is a lateral move — no reason to churn the slot for it.
         ModelSlot::Omni => "google/gemini-3-flash",
     }
 }

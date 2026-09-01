@@ -14,7 +14,7 @@ icon = "ri:smartphone-line"
 description = "Pair an iPhone to ingest HealthKit, Location, EventKit, FinanceKit, Contacts, and Microphone streams."
 auth = { kind = "self_issued_bearer" }
 # Read-the-code pointer, not an install path: the app arrives through the App
-# Store and updates itself. See docs/sources-packages-plan.md P1.
+# Store and updates itself. See agents/plan/sources-packages-plan.md P1.
 repo = "https://github.com/virtues-os/virtues"
 repo_ref = "apps/web/src-tauri"
 

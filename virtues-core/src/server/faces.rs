@@ -389,6 +389,11 @@ const VIRTUES_JS: &str = r#"// virtues.js — the face runtime bridge (read-only
   const token = params.get('vt') || '';
   const theme = params.get('theme') || 'light';
   document.documentElement.dataset.theme = theme;
+  // Where this face is hanging: '' in the app's pane, 'panel' on the box's
+  // 585x329 non-interactive screen. Exposed so a face MAY adapt; nothing
+  // requires it to.
+  const surface = params.get('surface') || '';
+  if (surface) document.documentElement.dataset.surface = surface;
 
   async function query(sql) {
     const res = await fetch(`/api/face/query?vt=${encodeURIComponent(token)}`, {
@@ -401,7 +406,7 @@ const VIRTUES_JS: &str = r#"// virtues.js — the face runtime bridge (read-only
     return body;
   }
 
-  window.virtues = { query, theme };
+  window.virtues = { query, theme, surface };
 })();
 "#;
 

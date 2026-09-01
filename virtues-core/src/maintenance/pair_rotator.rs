@@ -19,8 +19,8 @@ use crate::api::pair::{
 };
 
 /// Spawn the rotator as a background tokio task. Keeps a fresh standing code
-/// alive ONLY WHILE THE BOX IS UNCLAIMED — that is the setup window, where the
-/// panel and the BLE `0x85` fetch need one. Once claimed, the standing code is
+/// alive ONLY WHILE THE BOX IS UNCLAIMED — that is the setup window, where
+/// `virtues pair` and the box's own codeless `0x83` redemption need one. Once claimed, the standing code is
 /// retired (an always-live multi-use code on a claimed box is a permanent
 /// brute-forceable password; see `api::pair::expire_standing_codes`); the loop
 /// keeps running so a reset back to unclaimed re-arms it. Errors are logged and

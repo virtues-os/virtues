@@ -43,6 +43,11 @@ struct UninstallCommand: ParsableCommand {
                 print("\u{2713} Deleted activity database")
             }
 
+            // …and the cursors that point past it. Keeping them would make a
+            // later re-pair silently skip everything the queue still held.
+            SyncCursors.clearAll()
+            print("\u{2713} Cleared sync cursors")
+
             // Delete config file
             let configPath = "~/.virtues/config.json".expandingTildeInPath
             if FileManager.default.fileExists(atPath: configPath) {

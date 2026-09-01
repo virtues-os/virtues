@@ -280,6 +280,24 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     seed_card_side(&env_path)?;
     write_firstboot_marker()?;
 
+    // FLUSH BEFORE CLAIMING SUCCESS. The operator's next act is pulling power,
+    // and everything above sits in the page cache until the kernel gets around
+    // to it. The v0.1.4 first press (2026-08-25) shipped a ZERO-LENGTH seed
+    // env and marker exactly this way: image-check re-read the cache and
+    // passed truthfully, the NVMe was unplugged, and ext4's delayed
+    // allocation surrendered the data blocks — every clone then failed §1d
+    // ("no DATABASE_URL") on its first boot. `sync` is the whole fix; it
+    // costs a second and makes the ✓ below mean what it says.
+    let synced = std::process::Command::new("sync")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !synced {
+        return Err(crate::Error::Other(
+            "final sync failed — what deprovision wrote may not be on disk; NOT safe to image".into(),
+        ));
+    }
+
     println!();
     println!("✓ deprovisioned — per-unit identity stripped.");
     println!("  NOT safe to image yet: this cannot re-read its own disk. Confirm");
@@ -536,9 +554,22 @@ fn seed_card_side(env_path: &Path) -> Result<(), crate::Error> {
             std::fs::copy(env_path, card.join("virtues.env"))
                 .map_err(|e| crate::Error::Other(format!("seed env: {e}")))?;
         }
+        // `deprovision` runs as root, so these land root-owned — and `cp -a` in
+        // firstboot then PRESERVES that onto the fresh data partition, where
+        // the `mkdir -p` meant to create them is a no-op because they already
+        // exist. Nothing chowns them afterwards, so every box cloned from this
+        // card boots with a lake the `virtues` service user cannot write, and
+        // its ingest applet fails with `Permission denied (os error 13)` every
+        // five minutes forever while looking merely idle.
+        //
+        // `journal` is deliberately left to firstboot, which chowns it to
+        // `root:systemd-journal` — a different owner, and the reason the
+        // asymmetry here went unnoticed: the line right beside `lake` was
+        // already correct for its own reasons.
         for d in ["journal", "lake"] {
             let _ = std::fs::create_dir_all(card.join(d));
         }
+        crate::cli::restore::give_to_service_user(&card.join("lake"));
         std::fs::write(
             card.join(".needs-firstboot"),
             "# Written by `virtues deprovision` (card-side seed).\n\

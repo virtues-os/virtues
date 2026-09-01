@@ -219,11 +219,30 @@ pub(crate) async fn resolve_active_customer(
             )
         })?;
     let Some(cid) = cid else {
-        return Err(err(
-            StatusCode::UNAUTHORIZED,
-            "invalid_api_key",
-            "unknown api key",
-        ));
+        // Free-vs-unknown (0017): see claim::KeyOwner — a free account's key
+        // is valid, so it gets the honest 402, not a "revoked key" 401.
+        return Err(
+            match super::claim::key_owner(&state.pool, &key_hash[..]).await {
+                Ok(super::claim::KeyOwner::FreeAccount) => err(
+                    StatusCode::PAYMENT_REQUIRED,
+                    "no_subscription",
+                    "no subscription on this account yet",
+                ),
+                Ok(_) => err(
+                    StatusCode::UNAUTHORIZED,
+                    "invalid_api_key",
+                    "unknown api key",
+                ),
+                Err(e) => {
+                    tracing::warn!("account lookup failed: {e:#}");
+                    err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal",
+                        "account lookup failed",
+                    )
+                }
+            },
+        );
     };
 
     let row: Option<(String, String, Option<String>)> = sqlx::query_as(

@@ -116,7 +116,7 @@ pub fn compute_net_status() -> NetStatus {
 }
 
 /// Headline + guidance per class. The split is a copy doctrine
-/// (docs/onboarding.md): the **headline is a weather report** — it reaches
+/// (agents/build/onboarding.md): the **headline is a weather report** — it reaches
 /// the setup handoff and `/api/setup/state`, so it states a fact about the
 /// network and never instructs, never blames, never says "wait". The
 /// **guidance carries the instructions** and only renders in `virtues
@@ -211,7 +211,7 @@ fn is_cgnat_v4(v: Ipv4Addr) -> bool {
 
 // ─── BYO transport auto-notice ──────────────────────────────────────────────
 //
-// "Auto-enable nothing, auto-notice everything" (docs/onboarding.md): Virtues
+// "Auto-enable nothing, auto-notice everything" (agents/build/onboarding.md): Virtues
 // never runs, configures, or recommends an overlay — but the box answers on
 // every interface it has ([::]:8000), so a user-run Tailscale/WireGuard IS a
 // working path to it, and pretending otherwise would make the verdict a lie.

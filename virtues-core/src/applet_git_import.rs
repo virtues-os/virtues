@@ -22,7 +22,7 @@
 //! with the same privileges as built-ins. `command` is argv and the authoring
 //! docs teach `["python3", "main.py"]`, so an import is arbitrary code
 //! execution as the box user — which has passwordless sudo. There is no
-//! sandbox yet. Until P4 of `docs/sources-packages-plan.md` lands (argv policy
+//! sandbox yet. Until P4 of `agents/plan/sources-packages-plan.md` lands (argv policy
 //! by provenance, sudo-gating, and the `systemd-run` jail that
 //! `code_interpreter` already proves out), this endpoint should not be put in
 //! front of anyone who would not audit the repo themselves.
@@ -106,24 +106,10 @@ pub async fn import(db: &PgPool, req: ImportRequest) -> Result<ImportOutcome> {
         )));
     }
 
-    // Record where this came from. Without the resolved SHA persisted, "is
-    // there a newer version" is unanswerable — which is most of why packages
-    // are worth having as a unit at all.
-    sqlx::query(
-        r#"INSERT INTO app_applet_package (slug, repo_url, git_ref, commit_sha)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (slug) DO UPDATE
-             SET repo_url = EXCLUDED.repo_url,
-                 git_ref = EXCLUDED.git_ref,
-                 commit_sha = EXCLUDED.commit_sha,
-                 updated_at = now()"#,
-    )
-    .bind(&slug)
-    .bind(url)
-    .bind(git_ref)
-    .bind(commit.as_deref())
-    .execute(db)
-    .await?;
+    // Provenance (repo/ref/SHA) used to be persisted to app_applet_package
+    // here — written once, read by nothing, table dropped 2026-08-28. If an
+    // update check for git-imported applets is ever built, the table returns
+    // WITH its reader.
 
     let after: HashSet<String> = ids_under_slug(db, &slug).await?;
 
@@ -189,7 +175,7 @@ fn validate_url(url: &str) -> Result<()> {
 /// check, not full SSRF protection — a hostname that *resolves* to a private
 /// address still passes, and DNS rebinding is not addressed. It stops the
 /// obvious and the accidental; the real containment for what an import can do
-/// once fetched is the jail (P4 in docs/sources-packages-plan.md).
+/// once fetched is the jail (P4 in agents/plan/sources-packages-plan.md).
 fn deny_internal_host(url: &str) -> Result<()> {
     let no_scheme = url
         .split_once("://")

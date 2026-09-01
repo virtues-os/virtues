@@ -64,7 +64,7 @@ pub enum Commands {
     /// (it holds no iroh key) and the desktop app has no camera, so the code is
     /// typed by hand. No `.env` touching, no prompts. Idempotent — run as often
     /// as needed. THE one human verb for connecting a device to the box
-    /// (docs/onboarding.md). `login` and `link` survive as aliases (this used
+    /// (agents/build/onboarding.md). `login` and `link` survive as aliases (this used
     /// to be `virtues login`).
     #[command(alias = "login", alias = "link")]
     Pair {
@@ -77,11 +77,12 @@ pub enum Commands {
     /// Approve a pending sudo request from the box.
     ///
     /// A "sudo request" is the confirmation step a paired web client triggers
-    /// when it wants to do one of the 4 high-sensitivity actions (export all
+    /// when it wants to do one of the 5 high-sensitivity actions (export all
     /// data, swap BYO AI key, wipe the box, revoke the last remaining other
-    /// device). Running `virtues sudo` proves physical access — a thief with
-    /// your laptop can't do it from outside, but you can sit at the box and
-    /// approve.
+    /// device, install a third party's applet package — that last one runs
+    /// their code on this box). Running `virtues sudo` proves physical access
+    /// — a thief with your laptop can't do it from outside, but you can sit
+    /// at the box and approve.
     ///
     /// With no args: lists open requests and prompts for each.
     /// With `--id <REQ>`: targets one specific request id (scripting hook).
@@ -128,7 +129,9 @@ pub enum Commands {
     /// Because the env file is included, the tarball is **as sensitive as
     /// the box itself**. Store backups with the same care.
     Backup {
-        /// Output path. Defaults to `/var/lib/virtues/backups/virtues-<utc-iso>.tar.gz`.
+        /// Output path. Defaults to
+        /// `/var/lib/virtues/backups/virtues-<utc-iso>.tar.gz.age` — the
+        /// archive is `tar -> gzip -> age`, so the `.age` is not decoration.
         #[arg(long)]
         output: Option<std::path::PathBuf>,
 
@@ -298,7 +301,7 @@ pub enum Commands {
     /// encryption key decrypts every unit ever shipped.
     ///
     /// Exits non-zero on any finding, so it can be the last line of a
-    /// manufacturing script. See docs/appliance-image.md.
+    /// manufacturing script. See agents/build/appliance-image.md.
     #[command(name = "image-check")]
     ImageCheck,
 
@@ -425,8 +428,9 @@ pub enum Commands {
     /// Invoked by systemd's `ExecStopPost=` hook. Reads `$EXIT_STATUS` and
     /// `$EXIT_CODE` from the unit environment, tails the last 50 journal
     /// lines, and POSTs JSON to `https://atlas.virtues.com/diag/crash`.
-    /// Honors `VIRTUES_DIAG=off` in `/etc/virtues/env` — when disabled,
-    /// exits silently with code 0 so systemd doesn't log a failed
+    /// Honors `VIRTUES_DIAG=off` in the env file systemd loads
+    /// (`/var/lib/virtues/virtues.env` on installer-built boxes) — when
+    /// disabled, exits silently with code 0 so systemd doesn't log a failed
     /// post-stop.
     ///
     /// Never run this by hand. Service-internal hook.
@@ -456,7 +460,7 @@ pub enum Commands {
     /// Hidden power-user command, and the distinction it turns on is worth
     /// keeping straight: `virtues pair` attaches a DEVICE to this box, this
     /// attaches this box to an ACCOUNT. In the normal flow the app carries the
-    /// account grant over Bluetooth (docs/onboarding-paradigm.md §7) and
+    /// account grant over Bluetooth (agents/record/onboarding-paradigm.md §7) and
     /// neither is typed.
     ///
     /// (It used to describe itself as pairing with `virtues init`'s "[1] Log

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-diagnose-box"
+description = "Enables the diagnose_box command without any pre-configured scope."
+commands.allow = ["diagnose_box"]
+
+[[permission]]
+identifier = "deny-diagnose-box"
+description = "Denies the diagnose_box command without any pre-configured scope."
+commands.deny = ["diagnose_box"]
