@@ -149,12 +149,22 @@ pub async fn auto_topup(
 
 /// `POST {atlas}/billing/portal/sessions` — exchange the api_key for a
 /// Stripe-hosted Customer Portal URL (card, invoices, cancellation).
+/// What atlas said when asked for a portal session. `NoSubscription` is a
+/// real, expected state since the accounts decoupling (2026-08-31): a linked
+/// free account holds a perfectly valid key and simply has no Stripe customer
+/// to open a portal for — the UI must say that, not "try again" (a beta owner
+/// read the generic copy as a transient failure and retried a permanent one).
+pub enum PortalSession {
+    Url(String),
+    NoSubscription,
+}
+
 pub async fn fetch_portal_session(
     http: &reqwest::Client,
     atlas_url: &str,
     api_key: &str,
     return_url: &str,
-) -> Result<String> {
+) -> Result<PortalSession> {
     let resp = http
         .post(format!(
             "{}/billing/portal/sessions",
@@ -167,6 +177,9 @@ pub async fn fetch_portal_session(
         .send()
         .await
         .context("POST /billing/portal/sessions")?;
+    if resp.status() == reqwest::StatusCode::PAYMENT_REQUIRED {
+        return Ok(PortalSession::NoSubscription);
+    }
     if !resp.status().is_success() {
         let s = resp.status();
         let b = resp.text().await.unwrap_or_default();
@@ -175,7 +188,7 @@ pub async fn fetch_portal_session(
     let v: serde_json::Value = resp.json().await?;
     v["url"]
         .as_str()
-        .map(|s| s.to_string())
+        .map(|s| PortalSession::Url(s.to_string()))
         .ok_or_else(|| anyhow!("portal response missing url"))
 }
 
