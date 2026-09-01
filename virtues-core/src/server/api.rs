@@ -1471,9 +1471,13 @@ pub async fn claim_billing_handler(
             .into_response();
     }
 
-    // Provision relay reachability (best-effort): atlas mints this box's per-SNI
-    // token; the box stores it for the relay subsystem. A failure (e.g. relay
-    // disabled → 503) just leaves the box reachable on LAN.
+    // Provision relay reachability (best-effort): atlas answers with a relay
+    // URL and nothing else — no token, no per-box secret. (The per-SNI HMAC
+    // this comment used to describe belonged to the superseded relay control
+    // plane, `agents/archive/relay-control-plane.md`, and was never built.)
+    // A failure (e.g. relay disabled → 503) just leaves the box on LAN, and
+    // since the relay opened, a box that never links still homes on the baked
+    // default — so this is a shortcut, not the only road.
     if let Err(e) =
         crate::virtues_api::relay::fetch_and_store(&pool, &http, &atlas_url, &claim.api_key).await
     {
@@ -2272,13 +2276,6 @@ pub async fn wiki_get_narrative_identity_handler(State(state): State<AppState>) 
     api_response(crate::api::get_narrative_identity(state.db.pool()).await)
 }
 
-/// Update narrative identity
-pub async fn wiki_update_narrative_identity_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::UpdateNarrativeIdentityRequest>,
-) -> Response {
-    api_response(crate::api::update_narrative_identity(state.db.pool(), request).await)
-}
 
 // --- Telos ---
 
