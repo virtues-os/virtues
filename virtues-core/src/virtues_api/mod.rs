@@ -7,6 +7,7 @@
 //! card). No vouchers, no bearer rotation, no client-side renewal.
 
 pub mod client;
+pub mod completion;
 pub mod link;
 pub mod relay;
 pub mod renew;

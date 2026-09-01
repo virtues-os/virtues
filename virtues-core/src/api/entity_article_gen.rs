@@ -453,47 +453,19 @@ fn cap(s: &str, n: usize) -> String {
 /// more without anyone deciding that. There is also no per-day spend ceiling
 /// anywhere in the system, so the model slot is the actual cost control.
 ///
-/// `Purpose::System` is telemetry only; billing collapsed to a single wallet
-/// and the server ignores the header, so this debits what a chat message
-/// debits either way.
+/// The shared completion helper resolves the Lite slot through the owner's
+/// background pin — that pin exists exactly for jobs like this one.
 async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
-    let model = crate::api::assistant_profile::get_background_model(pool).await?;
-
-    let client = crate::virtues_api::client::BearerClient::from_env(pool.clone())
-        .with_purpose(crate::virtues_api::client::Purpose::System)
-        .with_feature("entity_article");
-    let response = client
-        .post_json(
-            "/v1/ai/chat/completions",
-            &serde_json::json!({
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "max_tokens": 900,
-                "temperature": 0.4
-            }),
-        )
-        .await
-        .map_err(|e| Error::Network(format!("virtues-api request failed: {e}")))?;
-
-    if !response.is_success() {
-        let error_msg = match response.status {
-            402 => "Usage limit reached for entity summaries".to_string(),
-            429 => "Rate limited. Please try again later.".to_string(),
-            _ => format!("virtues-api error {}: {}", response.status, response.body),
-        };
-        return Err(Error::ExternalApi(error_msg));
-    }
-
-    let content = response.body["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
-    Ok(content)
+    crate::virtues_api::completion::system_completion(
+        pool,
+        virtues_registry::models::ModelSlot::Lite,
+        "entity_article",
+        SYSTEM_PROMPT,
+        user_prompt,
+        900,
+        0.4,
+    )
+    .await
 }
 
 /// Strip code fences and return the article prose.
