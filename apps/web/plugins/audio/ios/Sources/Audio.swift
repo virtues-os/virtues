@@ -217,6 +217,11 @@ public final class AudioRecorder: NSObject {
       guard let self = self else { return }
       self.stopWatchdog()
       self.stopEngine(finalize: true)
+      // Re-assert state 0 now the engine is provably down: an arm block that
+      // interleaved AHEAD of this one pushed state 2 after disable's
+      // synchronous 0, and stopEngine pushes nothing — location would be left
+      // believing audio is healthy while it is off.
+      virtues_location_audio_state(0)
     }
   }
 
@@ -343,7 +348,14 @@ public final class AudioRecorder: NSObject {
     }
     q.async { [weak self] in
       guard let self = self else { return }
-      if !self.recording {
+      // Re-check the desire flag ON q: a tick can pass ensureRecording's guard
+      // on main, then disable() clears the flag and enqueues its stop block
+      // ahead of this one — without this check the stale arm restarts the
+      // engine after the user said stop, and nothing ever stops it again
+      // (ensureRecording bails on the flag without tearing down). The q block
+      // that ran disable's stop has acquired the flag write, so this read is
+      // ordered.
+      if self.cachedEnabled, !self.recording {
         self.startEngine(reason: reason)
       }
       if bg != .invalid { UIApplication.shared.endBackgroundTask(bg); bg = .invalid }
