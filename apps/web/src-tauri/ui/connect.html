@@ -936,18 +936,9 @@
         return null;
       }
 
-      // start(), but the pair screen leads with an explanation of why the user
-      // was brought here. For handoffs out of flows that decided there is
-      // nothing for them to do.
-      async function startWithBanner(text) {
-        renderSearching();
-        const [lan, ble] = await Promise.all([
-          discoverBoxes(),
-          discoverBle(4).then((r) => r.boxes, () => []),
-        ]);
-        state.bleBoxes = ble;
-        renderPair(lan.servers, lan.debug, text);
-      }
+      // (startWithBanner — start() with an explanatory banner into the pair
+      // list — was deleted with its last caller: the already-online branch
+      // now routes through routeToBox instead of the code list.)
 
       // THE FORK, asked before anything scans.
       //
@@ -1294,9 +1285,25 @@ its devices apart — type its address.",
         const lanServers = Router.needsLanCheck(boxes) ? (await discoverBoxes()).servers : [];
         const next = Router.bleSetup({ bleBoxes: boxes, lanServers });
         switch (next.screen) {
-          case 'already-online':
-            return startWithBanner(
-              `${next.box.name} is already online — select it below and enter its code.`);
+          case 'already-online': {
+            // THROUGH routeToBox, NOT the code list. This used to banner into
+            // "select it below and enter its code" — but an unclaimed box's
+            // display deliberately never shows a code, so a RESET box that was
+            // online and LAN-visible dead-ended on digits that exist nowhere
+            // (the first call's failure, reachable through the new-server
+            // door). routeToBox asks the box who it is: unclaimed/unlinked →
+            // the phrase path (codeless, works with no shell); genuinely
+            // claimed → the pair path, same as before. The LAN origin rides
+            // along so the identity probe has something to ask.
+            const lanMatch =
+              lanServers.find((s) => s.name === next.box.name) ||
+              (lanServers.length === 1 ? lanServers[0] : null);
+            return routeToBox({
+              name: next.box.name,
+              bleId: next.box.id,
+              origin: lanMatch ? lanMatch.origin : undefined,
+            });
+          }
           case 'route':        return routeToBox({ name: next.box.name, bleId: next.box.id });
           case 'keep-looking': return bleSearchLoop();
           case 'choose':       return bleBoxChooser(next.boxes);
@@ -1369,9 +1376,9 @@ its devices apart — type its address.",
         app.innerHTML = `
           <button class="backnav" id="back" aria-label="Back">←</button>
           <p class="kicker">Setting up</p>
-          <h1>Type the four words from your server's display</h1>
-          <p class="sub">They prove you're standing in front of it — and they're how
-            you get back in later.</p>
+          <h1>Type your server's four words</h1>
+          <p class="sub">A brand-new server shows them on its display. After a reset
+            they're the ones you saved — the display stays quiet on purpose.</p>
           ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
           <form id="form">
             <input id="phrase" type="text" placeholder="mango-burly-skull-dough"
