@@ -166,6 +166,23 @@ row must produce a 429.
    to run must be `demo_reanchor.sql`, which is what puts the instrumented day
    on today — check it: `select occurred_at::date from data_location_point
    group by 1 order by count(*) desc limit 1` should return today's date.
+7a. **Install the re-anchor timer.** `demo_reanchor.sql` only runs when
+   something runs it, so a box seeded once ages a day at a time and a reviewer
+   opening the app two weeks after submission meets the empty Home the pass
+   exists to prevent — a review cycle is measured in weeks, and a rejection
+   round adds more. Copy the SQL to `/usr/local/share/virtues/demo-reanchor.sql`
+   and add a `virtues-demo-reanchor` oneshot unit (`User=postgres`,
+   `psql -v ON_ERROR_STOP=1 -d virtues -f <that file>`) behind an `OnCalendar=hourly`
+   timer with `Persistent=true` and `OnBootSec=2min` — persistent and on-boot
+   because this box is stopped between rounds and must catch up when it comes
+   back. Hourly is free: the pass reads its anchor out of the data, so a run
+   with nothing to do is one SELECT.
+
+   The residual edge, worth knowing rather than fixing: the box anchors on its
+   own `current_date` (UTC here) while Home asks for the *browser's* today. A
+   reviewer in Pacific time after 5pm is a calendar day behind the box, so they
+   land on the day before the instrumented one — which still carries
+   `wiki_events`, just no raw streams. Every other direction lines up.
 8. ~~Subscribe the box's account.~~ **No longer a step** — kept at its old
    number because it is the one everybody's notes still say to do. Atlas used to
    issue a `relay_url` only to a subscribed box, so without it the reviewer
