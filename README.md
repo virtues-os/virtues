@@ -87,9 +87,13 @@ anywhere, and a fresh code is one command away:
 sudo virtues pair
 ```
 
-**3. Give it a model.** Search runs locally, but writing your day and
-answering questions need a model the server can reach — a subscription, or
-your own provider key under Settings:
+**3. Connect an account.** The app asks for one after pairing. Search runs
+locally, but everything that reaches outside goes through the account: the
+model that writes your days and answers questions, web search, the sign-in
+flows for Google, Strava and the rest, bank data, and the relay that lets your
+devices reach the server from outside your home network. Bringing your own
+model key replaces only the first of those. From the server itself, the same
+step is:
 
 ```bash
 sudo virtues subscribe
