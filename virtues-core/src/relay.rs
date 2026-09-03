@@ -26,16 +26,29 @@ use std::sync::{Arc, OnceLock, RwLock};
 use tokio::sync::Notify;
 use virtues_iroh::{
     build_endpoint, iroh_port, serve, AllowPolicy, Endpoint, EndpointId, RelayUrl, SecretKey,
-    StaticAllow,
+    StaticAllow, Watcher,
 };
 
 /// `box_secrets` key holding this box's persistent iroh secret key (hex of the
 /// 32-byte seed) — so the box keeps a stable `EndpointId` across restarts.
 const BOX_IROH_SECRET: &str = "iroh_secret_key";
 
-/// Process-wide "iroh endpoint is bound and homed on the relay" flag. Read by
-/// pairing to advertise the box's reach ticket only when it's actually up.
+/// Process-wide "the iroh endpoint is bound" flag — LAN-direct reach works.
+/// Says nothing about the relay; see [`RELAY_HOMED`].
 static ENDPOINT_UP: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+/// Process-wide "the relay leg is connected right now" flag, driven by
+/// `Endpoint::home_relay_status()` for the life of each bind.
+///
+/// Bound and homed are different facts and this used to conflate them: the
+/// single flag was set the instant `build_endpoint` returned and cleared only
+/// at the next rebind, so it meant "bind returned" while every reader asked it
+/// "is remote reach working?" — and `remote_access_step`'s own comment already
+/// defined the answer as "bound AND homed on our relay". Two consequences,
+/// both silent: right after boot a box claimed remote reach it did not yet
+/// have, and **if the relay host went away the box went on reporting itself
+/// reachable forever**, which is what made a single-relay outage invisible
+/// from the fleet side.
+static RELAY_HOMED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 /// Set when `maybe_spawn` gives up (secret load or endpoint bind failed) so
 /// `/api/setup/state` can report an honest failure instead of leaving the
 /// `remote_access` step reading "Connecting…" forever — the endpoint task
@@ -77,10 +90,27 @@ fn endpoint_up_flag() -> Arc<AtomicBool> {
     ENDPOINT_UP.get_or_init(|| Arc::new(AtomicBool::new(false))).clone()
 }
 
-/// Whether the box's iroh endpoint is bound (and reachable). Kept under the old
-/// name so pairing call sites are unchanged; Step 7 renames to `endpoint_up`.
+fn relay_homed_flag() -> Arc<AtomicBool> {
+    RELAY_HOMED.get_or_init(|| Arc::new(AtomicBool::new(false))).clone()
+}
+
+/// Whether this box is reachable the way its own configuration promises:
+/// bound, and — when a relay is configured — actually homed on it.
+///
+/// A deliberately relay-less box (reach switched off, or a dev checkout) is
+/// reachable once bound, because LAN-direct is the whole promise there; it must
+/// not read as "still connecting" forever. A box that *has* a relay is only
+/// reachable-from-anywhere once the relay leg is up, and stops being so the
+/// moment that leg drops.
 pub fn is_relay_registered() -> bool {
-    ENDPOINT_UP.get().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false)
+    let bound = ENDPOINT_UP.get().is_some_and(|f| f.load(Ordering::Relaxed));
+    if !bound {
+        return false;
+    }
+    if box_relay_url().is_none() {
+        return true; // LAN-direct only, by configuration — bound is the promise
+    }
+    RELAY_HOMED.get().is_some_and(|f| f.load(Ordering::Relaxed))
 }
 
 /// The reason the reach loop last failed, if it has not since recovered.
@@ -267,6 +297,33 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
             set_box_endpoint_id(&eid);
             endpoint_up_flag().store(true, Ordering::Relaxed);
             clear_endpoint_error();
+
+            // Track the relay leg for the life of this bind. iroh already
+            // maintains the connection and reports it; we only mirror it into a
+            // flag the HTTP surfaces can read synchronously. The transition is
+            // logged both ways because "the relay went away and came back" is
+            // otherwise invisible in the journal — and a relay outage is the
+            // one failure this box cannot fix by itself.
+            let homed_task = {
+                let mut status = endpoint.home_relay_status();
+                tokio::spawn(async move {
+                    loop {
+                        let connected = status.get().iter().any(|s| s.is_connected());
+                        if relay_homed_flag().swap(connected, Ordering::Relaxed) != connected {
+                            if connected {
+                                tracing::info!("iroh: homed on the relay — reachable from anywhere");
+                            } else {
+                                tracing::warn!("iroh: relay leg lost — remote reach is down until it returns (LAN-direct is unaffected)");
+                            }
+                        }
+                        // Err = the endpoint dropped its watchable, i.e. this
+                        // bind is over; the teardown below owns the flag then.
+                        if status.updated().await.is_err() {
+                            break;
+                        }
+                    }
+                })
+            };
             match &relay_url {
                 Some(u) => tracing::info!(endpoint_id = %eid, relay = %u, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId via our relay (+ LAN-direct)"),
                 None => tracing::info!(endpoint_id = %eid, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId LAN-direct (no relay)"),
@@ -314,6 +371,8 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
             // Tear down for rebind. The next bind reuses the same pinned UDP port,
             // so the endpoint must be closed (not just dropped) to release it.
             endpoint_up_flag().store(false, Ordering::Relaxed);
+            relay_homed_flag().store(false, Ordering::Relaxed);
+            homed_task.abort();
             tracing::info!("iroh: relay config changed — rebinding endpoint");
             router.shutdown().await.ok();
             ep_handle.close().await;
