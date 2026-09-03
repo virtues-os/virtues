@@ -68,23 +68,42 @@ installed with one command — the path this README covers.
 **[The Virtues Server](https://virtues.com/pre-order)**: the same software on a
 board we build, open for pre-order. Either way you can leave with your data.
 
-On a spare Linux machine — a VM is fine:
+Five steps on a spare Linux machine — a VM is fine.
+
+**1. Install.** Choose **Quick trial** when it asks about inference: a
+CPU-only model server and two small models, no configuration.
 
 ```bash
 curl -sSL https://virtues.com/sh | sudo sh
 ```
 
-Choose **Quick trial** when it asks about inference: a CPU-only model server
-and two small models, no configuration. It ends with a 6-digit code; enter it
-in the desktop app from [virtues.com/downloads](https://virtues.com/downloads).
-Chat and day-writing need a model the server can reach:
-`sudo -u virtues virtues subscribe`, or your own provider key in Settings.
+**2. Pair a device.** The installer ends by printing a 6-digit code — a
+browser cannot pair, so enter it in the desktop or phone app from
+[virtues.com/downloads](https://virtues.com/downloads). Pairing puts your
+device's key on the server's allowlist; that key is how you reach it from
+anywhere, and a fresh code is one command away:
 
-The trial is slow and not a deployment. For real use, run the embedder and
-reranker yourself and give the installer their URLs — **embeddinggemma-300m**
-or **gte-small** for embedding, **gte-reranker-modernbert-base** for reranking,
-a few hundred megabytes each under `llama-server`.
-[The full install](#the-full-install) has the commands.
+```bash
+sudo -u virtues virtues pair
+```
+
+**3. Give it a model.** Search runs locally, but writing your day and
+answering questions need a model the server can reach — a subscription, or
+your own provider key under Settings:
+
+```bash
+sudo -u virtues virtues subscribe
+```
+
+**4. Connect a source** in the app: Google, Plaid, Strava, or the phone app
+for HealthKit and location. The record starts filling from there.
+
+**5. Wait a day.** Each day is written after it ends, so the first page worth
+reading arrives tomorrow. `virtues status` shows what is flowing in the
+meantime; `virtues doctor` explains anything that isn't.
+
+The trial is slow by design. For real use, run your own embedding and rerank
+endpoints — [the full install](#the-full-install) has the commands and models.
 
 <a id="what-it-does"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-what-it-does-dark.svg"><img alt="What it does" src=".github/images/headings/h2-what-it-does-light.svg" height="28"></picture>
