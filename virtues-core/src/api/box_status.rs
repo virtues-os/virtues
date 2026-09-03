@@ -39,9 +39,12 @@ pub struct IdentityStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubscriptionStatus {
-    /// Linked to a subscription: a device `api_key` is present (box↔atlas↔
-    /// virtues-api). In the linked model this is the only signal — the same key
-    /// authenticates the proxy, and the wallet is credited server-side.
+    /// Linked to a Virtues ACCOUNT: a device `api_key` is present. Identity,
+    /// not billing — since 0017 (2026-08-31) a free account links exactly like
+    /// a paying one, and whether a subscription stands behind the key is a
+    /// separate question the box asks atlas (`api::subscription`). Do not read
+    /// this as "AI works"; a linked free box holds a valid key and an empty
+    /// wallet.
     pub linked: bool,
 }
 
@@ -213,9 +216,9 @@ pub struct ReadinessGates {
     /// in the relay model via the self-signed bootstrap cert; `identity.tls_cert`
     /// carries the finer "ACME cert issued" signal.
     pub identity: bool,
-    /// Linked to a Virtues subscription: a device `api_key` is present. This is
-    /// "claimed" — ownership is the billing relationship, and the same key makes
-    /// AI ready immediately (the wallet is funded server-side at link).
+    /// Linked to a Virtues account: a device `api_key` is present. Ownership
+    /// and reach, not payment — the key is minted at sign-in regardless of
+    /// subscription (0017), and the wallet is funded only when one is bought.
     pub linked: bool,
     /// At least one device has paired.
     pub paired: bool,

@@ -1338,8 +1338,14 @@ pub async fn places_details_handler(
 /// Derived from the credential vault: reports whether an api_key has
 /// been claimed on this box. Gating itself is by bearer expiry, not this
 /// endpoint — see `crate::api::subscription`.
-pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Response {
-    match crate::api::subscription::get_subscription_status(&pool).await {
+pub async fn get_subscription_handler(
+    State(pool): State<sqlx::PgPool>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    // `?fresh=1` bypasses the entitlement cache — the UI polls with it while
+    // a checkout the owner just opened is in flight.
+    let fresh = q.get("fresh").is_some_and(|v| v == "1" || v == "true");
+    match crate::api::subscription::get_subscription_status(&pool, fresh).await {
         Ok(data) => (StatusCode::OK, Json(data)).into_response(),
         Err(e) => {
             // NOT a fallback to `active`. It was one, and that turned a blipped
@@ -1355,9 +1361,7 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
                     "linked": false,
                     "subscribed": false,
                     "entitlement_known": false,
-                    "is_active": false,
-                    "trial_expires_at": null,
-                    "days_remaining": null
+                    "is_active": false
                 })),
             )
                 .into_response()
@@ -1436,6 +1440,48 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
         // Never got an answer: DNS, TLS, timeout, or a body we couldn't read.
         Err(e) => {
             tracing::warn!("billing portal [atlas_unreachable]: {e}");
+            refuse("atlas_unreachable", TRY_AGAIN)
+        }
+    }
+}
+
+/// POST /api/billing/subscribe — a Stripe Checkout URL for the account this
+/// box is linked to. The door for a linked FREE account (0017): the connect
+/// flow would start a new device link and mint a second account, and the
+/// portal has nothing to open. Same `{url}` / `{error, code}` contract as the
+/// portal, for the same reason.
+pub async fn subscribe_billing_handler(State(pool): State<sqlx::PgPool>) -> Response {
+    fn refuse(code: &str, message: &str) -> Response {
+        (StatusCode::OK, Json(serde_json::json!({ "error": message, "code": code }))).into_response()
+    }
+    const TRY_AGAIN: &str = "Couldn't open checkout. Try again.";
+
+    let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return refuse("not_linked", "Connect your Virtues account first."),
+        Err(e) => {
+            tracing::warn!("billing subscribe [vault_unreadable]: {e}");
+            return refuse("vault_unreadable", TRY_AGAIN);
+        }
+    };
+    let atlas_url = crate::virtues_api::atlas_url();
+    let http = crate::http_client::virtues_api_client();
+    match crate::virtues_api::renew::fetch_checkout_session(&http, &atlas_url, &api_key).await {
+        Ok(crate::virtues_api::renew::CheckoutSession::Url(url)) => {
+            // Whatever we cached is about to be stale; the UI polls fresh.
+            crate::api::subscription::invalidate();
+            (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response()
+        }
+        Ok(crate::virtues_api::renew::CheckoutSession::AlreadySubscribed) => {
+            crate::api::subscription::invalidate();
+            refuse("already_subscribed", "This account already has an active subscription.")
+        }
+        Ok(crate::virtues_api::renew::CheckoutSession::Failed { code, status }) => {
+            tracing::warn!("billing subscribe [{code}]: atlas answered {status}");
+            refuse(&code, TRY_AGAIN)
+        }
+        Err(e) => {
+            tracing::warn!("billing subscribe [atlas_unreachable]: {e}");
             refuse("atlas_unreachable", TRY_AGAIN)
         }
     }
