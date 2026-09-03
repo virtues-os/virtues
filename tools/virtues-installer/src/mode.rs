@@ -12,7 +12,7 @@
 //!     the URL, probes it (auto-detecting the embedding dimension), and pins
 //!     a model fingerprint so the runtime can detect a silently-swapped model
 //!     at boot (see `virtues-core/src/search/embedder.rs`).
-//!   · **Bundled (throwaway trial only)** — a portable CPU-only llama-server
+//!   · **Bundled (quick trial only)** — a portable CPU-only llama-server
 //!     we build+test in CI, dropped in with our two models and no config. It
 //!     is honestly slow and not a deployment; it exists so someone can watch
 //!     the product move in five minutes before standing up a real endpoint.
@@ -37,8 +37,8 @@ pub enum InferenceMode {
     Dragon,
     /// User opted into the bundled local engine on non-Dragon hardware: a
     /// portable **CPU-only** llama-server (the one we build + test in CI — no
-    /// GPU/driver babysitting), our two models, zero config. A throwaway
-    /// tire-kicking path, honestly slow and NOT a deployment; for anything real
+    /// GPU/driver babysitting), our two models, zero config. A quick-trial
+    /// path, honestly slow and NOT a deployment; for anything real
     /// the user runs their own endpoint (Manual), which is the recommended
     /// generic path.
     Bundled,
@@ -148,7 +148,7 @@ impl InferenceMode {
             )
             .item(
                 "bundled",
-                "Just kick the tires  (bundled CPU, throwaway)",
+                "Quick trial  (bundled CPU, not for real data)",
                 "we drop in a local CPU engine + our two models, zero config — but it's SLOW and \
                  NOT a deployment; stand up your own endpoint before loading real data",
             )

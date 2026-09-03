@@ -50,7 +50,7 @@ The installer offers three answers:
 - **Our hardware** — detected from the device tree. Inference is built in.
 - **Bring your own endpoint** *(recommended for everything else)* — you run
   the servers; the installer probes them, records what it found, and pins it.
-- **Kick the tires** — a bundled CPU-only model server with our two models
+- **Quick trial** — a bundled CPU-only model server with our two models
   and no configuration. Honestly slow, explicitly not a deployment. It
   exists so you can watch the product move in five minutes; stand up real
   endpoints before you load real data.
