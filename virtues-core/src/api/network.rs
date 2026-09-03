@@ -104,7 +104,10 @@ pub async fn join_handler(
 /// default from a secret.
 ///
 /// `relay_url` is what resolution currently decides (None = relay-less);
-/// `homed` is whether the endpoint is actually bound right now; `enabled`
+/// `homed` is whether the box is reachable as configured — bound, and actually
+/// connected to the relay when one is configured. It goes false on its own if
+/// the relay leg drops, so this is a live reading rather than a record that a
+/// bind once succeeded; `enabled`
 /// is the switch state (false only when the stored config carries the off
 /// word — the env override is operator territory and reads as its value).
 pub async fn relay_status_handler(State(state): State<AppState>) -> impl IntoResponse {
