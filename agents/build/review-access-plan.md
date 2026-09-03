@@ -27,14 +27,21 @@ resubmissions add rounds.
 
 ## The mechanism
 
-`VIRTUES_REVIEW_PAIR_CODE` in `/etc/virtues/env`. At startup
-`api::pair::ensure_review_code` installs one `app_pair_token` row with
-`kind = 'review'`, `status = 'authorized'`, and a nominal 10-year expiry.
+`VIRTUES_REVIEW_PAIR_CODE` in **`/var/lib/virtues/virtues.env`** — the file
+the unit actually reads (`EnvironmentFile=-/var/lib/virtues/virtues.env`), and
+the one the installer writes. This doc said `/etc/virtues/env` until 2026-09-03;
+on a real box that directory exists and is **empty**, so the variable goes into
+a file nothing loads, no row is installed, and the only symptom is a reviewer
+who cannot pair. At startup `api::pair::ensure_review_code` installs one
+`app_pair_token` row with `kind = 'review'`, `status = 'authorized'`, and a
+nominal 10-year expiry.
 
 Nothing else changes. `claim_pair_token` already accepts any authorized,
 unexpired row and only consumes `kind = 'oneoff'`, so a review code is
-multi-use and permanent for free. Migration `0058_review_pair_code.sql` only
-widens a CHECK constraint; it creates no row.
+multi-use and permanent for free. The `'review'` value in the `kind` CHECK
+constraint arrived as `0058_review_pair_code.sql`, which folded into
+`0001_initial.sql` in the 2026-08-18 squash — there is no separate migration to
+look for any more, and no release since carries the one without the other.
 
 The code stays **6 digits** because the mobile pairing input is
 `inputmode="numeric"` with `maxlength="7"` (`src-tauri/ui/connect.html`). A
@@ -96,15 +103,39 @@ the synthetic seed data, and the box's disposability.
 4. 4 GB swap. 4 GB RAM is enough at rest (Postgres + `virtues` + two Q8_0 CPU
    sidecars ≈ 2.5–3 GB) but the seed index build wants headroom. Slow is fine
    here; OOM is not.
-5. Install `virtues` from a release that contains migration 0058.
-6. `/etc/virtues/env`: `VIRTUES_PUBLIC_URL` + `VIRTUES_REVIEW_PAIR_CODE`. Draw
-   the code randomly per round (`shuf -i 100000-999999 -n 1`) and record it in
-   the private ops note — never in this repo, a commit message, or an issue.
+5. Install `virtues` from any current release (`gh release list`), pinning it
+   with `VIRTUES_VERSION=vX.Y.Z`. Over SSM there is no TTY, and the installer
+   asks two questions — so both answers have to arrive as environment:
+
+   ```sh
+   curl -fsSL https://virtues.com/sh \
+     | VIRTUES_VERSION=vX.Y.Z VIRTUES_INFERENCE=bundled sh -s -- --no-init
+   ```
+
+   `--no-init` skips only the interactive pairing handoff; the service is
+   enabled and started before that step regardless. `VIRTUES_INFERENCE=bundled`
+   is the one that is easy to miss: without it the installer reaches the
+   Inference step, finds neither our hardware nor a terminal to ask on, and
+   **exits 0** having installed nothing — a failure that reads as success in a
+   log you are only skimming.
+6. `/var/lib/virtues/virtues.env` (NOT `/etc/virtues/env` — see above):
+   `VIRTUES_PUBLIC_URL` + `VIRTUES_REVIEW_PAIR_CODE`. Draw the code randomly
+   per round (`shuf -i 100000-999999 -n 1`, on the box, so it never rides in as
+   a command parameter) and record it in the private ops note — never in this
+   repo, a commit message, or an issue. Then `systemctl restart virtues`.
 7. `virtues seed` — the 12-week narrative plus the instrumented demo day, so
    the reviewer sees a life rather than an empty shell.
-8. **Subscribe the box's account.** Atlas only issues a `relay_url` to a
-   subscribed box, so without it the reviewer pairs and then loses the box the
-   moment they leave the network they paired from.
+8. ~~Subscribe the box's account.~~ **No longer a step** — kept at its old
+   number because it is the one everybody's notes still say to do. Atlas used to
+   issue a `relay_url` only to a subscribed box, so without it the reviewer
+   paired and then lost the box the moment they left the network they paired
+   from. The open-relay work deleted that coupling on both sides:
+   `relay::DEFAULT_RELAY_URL` is compiled into the box ("so a box that never
+   signs in is still reachable from its first boot", gated only on the
+   box-install marker), and `services/virtues-atlas/src/routes/relay.rs`
+   resolves the config "with no subscription requirement — reachability is part
+   of ownership, not the subscription". A review box needs no atlas account, no
+   claim, and no card.
 9. Confirm `REVIEW PAIR CODE ACTIVE` in the boot log — that is the proof the
    row installed. A missing env var fails silently and looks like success.
 10. Test-pair a real phone **over cellular**, not Wi-Fi. Wi-Fi would pass via
@@ -112,6 +143,33 @@ the synthetic seed data, and the box's disposability.
 
 Models: chat routes to `virtues-api`, so no local LLM is needed. Embeddings and
 the reranker do run locally, CPU-only, and slowness is acceptable.
+
+## What the first real run found (2026-09-03)
+
+The box described above was launched 2026-07-21 and **never actually brought
+up** — Caddy and the binary were installed, then it was stopped the same day.
+`/etc/virtues/` was empty, there was no systemd unit, and the `virtues`
+database had no tables at all, not even `_sqlx_migrations`. So no review round
+has ever exercised this path, and every iOS submission since July went out with
+review notes pointing at a box that was switched off. Assume nothing here has
+been tested until you have tested it.
+
+Three things broke on the way to a working box, all of them fixed in the same
+change as this note:
+
+- **`virtues seed` was dead.** `demo_narrative.sql` still inserted
+  `wiki_days.morning_baseline`, a column migration 0011 dropped. `raw_sql` runs
+  a file as one unit, so the whole 12-week narrative and the bookmarks silently
+  failed and only `demo_day.sql` landed. Every developer who seeded since that
+  migration got a third of the data.
+- **The bundled inference sidecars could not start.** `llama-server` links
+  `libgomp`, which a minimal Ubuntu does not carry; the installer never
+  installed it, and the install still reported success.
+- **The seed was frozen in February** — see `seeds/demo_reanchor.sql`, which now
+  moves the instrumented day onto today at seed time.
+
+None of these are visible from a green CI run, and two of them present as
+success. Budget for a full bring-up, not a checklist tick.
 
 ## Between review rounds
 
