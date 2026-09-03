@@ -25,6 +25,7 @@ use axum::{
 };
 use base64::Engine;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -112,37 +113,23 @@ fn exchange_secret() -> Result<String, String> {
 // Helpers: state, return-url validation, redirects, errors
 // ─────────────────────────────────────────────────────────────────────────
 
-/// `base64(json({return_url, rust_state}))` — round-trips through the provider's
-/// `state` param so the callback can recover where to bounce the browser back to.
-fn encode_state(return_url: &str, rust_state: &str) -> String {
-    let j = json!({ "return_url": return_url, "rust_state": rust_state });
-    base64::engine::general_purpose::STANDARD.encode(j.to_string())
-}
-fn decode_state(s: &str) -> Option<(String, String)> {
-    let bytes = base64::engine::general_purpose::STANDARD.decode(s).ok()?;
-    let v: Value = serde_json::from_slice(&bytes).ok()?;
-    let return_url = v.get("return_url")?.as_str()?.to_string();
-    let rust_state = v
-        .get("rust_state")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string();
-    Some((return_url, rust_state))
-}
-
 /// Open-redirect guard (port of url-validator.ts).
 ///
-/// This is the only control deciding where an `exchange_token` gets delivered,
-/// and `/exchange/{token}` has no auth — whoever receives that redirect can
-/// trade it for the user's provider tokens. So the guard is load-bearing.
+/// Checked once, at `/start`, on the address the browser asked us to return
+/// to. It used to be the ONLY control on where an `exchange_token` got
+/// delivered: the address rode inside the provider's `state` parameter as
+/// base64(json), which anyone can craft, and the callback trusted it back. Now
+/// `state` is an opaque session id and the callback reads `return_url` from
+/// `oauth_session` — so this guard decides what may be *stored*, and nothing
+/// the browser says later can change where the token goes.
 ///
-/// It matches on the *shape* of an address rather than on the identity of the
-/// box that started the flow, which is a weaker thing than it looks: the box
-/// signs `state` with a key the proxy doesn't have, so the proxy cannot bind a
-/// return_url to whoever asked for it. The durable fix is a session row keyed to
-/// an authenticated box (the shape `plaid_link_session` already has, for a
-/// different reason). Until then this list is what we have — so it should be
-/// exactly as wide as the deployments we actually ship, and no wider.
+/// It still matches on the *shape* of an address rather than on the identity
+/// of the box that started the flow: `/start` is a browser navigation, so the
+/// box cannot put its api_key on it without exposing the key. Binding the
+/// session to a box (the box registers it server-to-server first, then sends
+/// the browser) is the remaining step, and needs a box release. Until then
+/// this list should be exactly as wide as the deployments we actually ship,
+/// and no wider.
 ///
 /// Private IPv4/IPv6 is in the list because the box hands those out itself:
 /// `qr_pair_url` puts the raw LAN IP in the onboarding QR on purpose (phones
@@ -362,7 +349,25 @@ async fn start(
     if provider == "plaid" {
         return plaid_start(&state, &cfg, return_url, rust_state).await;
     }
-    let proxy_state = encode_state(return_url, rust_state);
+    // The session row IS the state. The provider echoes `session_id` back
+    // verbatim; everything else — where to return, the box's own signed
+    // state, the PKCE verifier — waits here where the browser cannot touch it.
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let pkce = supports_pkce(&provider).then(pkce_pair);
+    if let Err(e) = put_oauth_session(
+        &state.db,
+        &session_id,
+        &provider,
+        return_url,
+        rust_state,
+        pkce.as_ref().map(|(v, _)| v.as_str()),
+    )
+    .await
+    {
+        tracing::error!(error = %e, "oauth session store failed");
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "could not start oauth session");
+    }
+    let proxy_state = session_id;
 
     // Standard OAuth authorize redirect.
     let mut url = match reqwest::Url::parse(&cfg.auth_url) {
@@ -377,6 +382,14 @@ async fn start(
             .append_pair("state", &proxy_state);
         if !cfg.scopes.is_empty() {
             qp.append_pair("scope", &cfg.scopes.join(" "));
+        }
+        // PKCE (RFC 7636): the S256 challenge goes out here, the verifier at
+        // the token exchange. RFC 9700 asks for it on every authorization-code
+        // flow, confidential clients included — an intercepted code is
+        // worthless without the verifier that only `oauth_session` holds.
+        if let Some((_, challenge)) = &pkce {
+            qp.append_pair("code_challenge", challenge)
+                .append_pair("code_challenge_method", "S256");
         }
         match provider.as_str() {
             "google" => {
@@ -570,6 +583,138 @@ async fn take_link_session(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// oauth_session — server-side state for the authorize-code providers
+// ─────────────────────────────────────────────────────────────────────────
+
+/// How long an authorize round-trip may take. Google's consent screen plus a
+/// 2FA prompt fits comfortably; a link left open overnight does not, and
+/// should not.
+const OAUTH_SESSION_TTL_SECS: i64 = 600;
+
+/// Providers whose token endpoint honors `code_verifier`. Google documents
+/// PKCE for web-server clients; Strava's authorize endpoint accepts it.
+/// Notion's does not, and sending an unknown parameter is not free — an
+/// authorize URL it rejects is a connect that fails on a screen we do not
+/// own. Add a provider here only after a successful round-trip against it.
+fn supports_pkce(provider: &str) -> bool {
+    matches!(provider, "google" | "strava")
+}
+
+/// A PKCE `(verifier, S256 challenge)` pair. The verifier is 64 hex chars from
+/// two v4 UUIDs — 244 bits of entropy, inside RFC 7636's 43–128 unreserved-
+/// character window. The challenge is base64url(sha256(verifier)), unpadded,
+/// as the RFC specifies.
+fn pkce_pair() -> (String, String) {
+    let verifier = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let digest = Sha256::digest(verifier.as_bytes());
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
+    (verifier, challenge)
+}
+
+async fn put_oauth_session(
+    db: &sqlx::PgPool,
+    session_id: &str,
+    provider: &str,
+    return_url: &str,
+    rust_state: &str,
+    code_verifier: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    // Opportunistic sweep, as for plaid_link_session: this is the table's
+    // only inserter, so expired rows are collected here instead of by a cron
+    // nobody would own. Consumed rows go with them once they age out.
+    let _ = sqlx::query("DELETE FROM oauth_session WHERE expires_at < now()")
+        .execute(db)
+        .await;
+    sqlx::query(
+        "INSERT INTO oauth_session
+            (session_id, provider, return_url, rust_state, code_verifier, expires_at)
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
+    )
+    .bind(session_id)
+    .bind(provider)
+    .bind(return_url)
+    .bind(rust_state)
+    .bind(code_verifier)
+    .bind(OAUTH_SESSION_TTL_SECS as f64)
+    .execute(db)
+    .await
+    .map(|_| ())
+}
+
+/// The row a callback may act on: this provider's, unexpired, and not yet
+/// past the callback (`exchange_sig IS NULL`). A second callback for the same
+/// session — a refreshed success page, a replayed URL — finds nothing.
+async fn oauth_session_for_callback(
+    db: &sqlx::PgPool,
+    session_id: &str,
+    provider: &str,
+) -> Result<Option<(String, String, Option<String>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT return_url, rust_state, code_verifier FROM oauth_session
+          WHERE session_id = $1 AND provider = $2
+            AND expires_at > now() AND exchange_sig IS NULL",
+    )
+    .bind(session_id)
+    .bind(provider)
+    .fetch_optional(db)
+    .await
+}
+
+/// Record which exchange_token this session minted, so `/exchange` can burn
+/// it. Guarded on `exchange_sig IS NULL` so two callbacks racing on one
+/// session cannot both mint — the loser's token was never bound to anything
+/// and will fail at exchange.
+async fn bind_exchange_sig(
+    db: &sqlx::PgPool,
+    session_id: &str,
+    sig: &str,
+) -> Result<bool, sqlx::Error> {
+    let n = sqlx::query(
+        "UPDATE oauth_session SET exchange_sig = $2
+          WHERE session_id = $1 AND exchange_sig IS NULL",
+    )
+    .bind(session_id)
+    .bind(sig)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(n == 1)
+}
+
+/// Single-use: mark the session consumed by the token's signature. `false`
+/// means the token was already spent, never bound, or its session expired —
+/// all of which read the same to the caller, and should.
+async fn consume_exchange(db: &sqlx::PgPool, sig: &str) -> Result<bool, sqlx::Error> {
+    let n = sqlx::query(
+        "UPDATE oauth_session SET consumed_at = now()
+          WHERE exchange_sig = $1 AND consumed_at IS NULL AND expires_at > now()",
+    )
+    .bind(sig)
+    .execute(db)
+    .await?
+    .rows_affected();
+    Ok(n == 1)
+}
+
+/// The caller's box key, if it sent one. Nothing is enforced on it yet: this
+/// header ships in the next box release, and boxes update only when their
+/// owner types `virtues upgrade`, so requiring it today would break every
+/// box that has not. The log line is how we learn when the fleet has moved —
+/// flip `/refresh` to required first (worst exposure, one known caller), then
+/// the rest.
+fn caller_api_key(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-virtues-api-key")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // GET /{provider}/callback
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -589,12 +734,22 @@ async fn callback(
         return plaid_callback(&state, &cfg, &headers).await;
     }
 
-    let Some((return_url, rust_state)) = q.get("state").and_then(|s| decode_state(s)) else {
-        return err(StatusCode::BAD_REQUEST, "missing or invalid state");
+    // `state` is our session id and nothing else. Where to return, and the
+    // box's own signed state, come from the row we wrote at `/start` — the
+    // browser carried an opaque handle and gets no say in the destination.
+    let Some(session_id) = q.get("state").filter(|s| !s.is_empty()) else {
+        return err(StatusCode::BAD_REQUEST, "missing state");
     };
-    if !is_valid_return_url(&return_url) {
-        return err(StatusCode::BAD_REQUEST, "invalid return_url in state");
-    }
+    let session = match oauth_session_for_callback(&state.db, session_id, &provider).await {
+        Ok(Some(row)) => row,
+        Ok(None) => return err(StatusCode::BAD_REQUEST, "unknown or expired oauth session"),
+        Err(e) => {
+            tracing::error!(error = %e, "oauth session lookup failed");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "oauth session lookup failed");
+        }
+    };
+    let (return_url, rust_state, code_verifier) = session;
+
     if q.get("error").is_some() {
         return redirect_back(&return_url, &rust_state, "error", "provider_error");
     }
@@ -602,7 +757,9 @@ async fn callback(
     // Exchange the provider's code → {secrets, metadata, expires_in, scopes}.
     // (Plaid returned above; it has no authorization code to exchange.)
     let exchanged = match provider.as_str() {
-        "google" | "strava" | "notion" => exchange_oauth_code(&state, &provider, &cfg, &q).await,
+        "google" | "strava" | "notion" => {
+            exchange_oauth_code(&state, &provider, &cfg, &q, code_verifier.as_deref()).await
+        }
         _ => Err("unknown provider".into()),
     };
     let payload = match exchanged {
@@ -617,7 +774,7 @@ async fn callback(
         Ok(s) => s,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
-    match virtues_helpers::crypto::sign_exchange_token(
+    let token = match virtues_helpers::crypto::sign_exchange_token(
         &secret,
         &provider,
         payload.secrets,
@@ -625,9 +782,21 @@ async fn callback(
         payload.expires_in,
         payload.scopes,
     ) {
-        Ok(token) => redirect_back(&return_url, &rust_state, "exchange_token", &token),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &format!("sign failed: {e}")),
+        Ok(t) => t,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("sign failed: {e}")),
+    };
+    // Bind the token to its session before the browser ever sees it, so the
+    // box's `/exchange` can spend it exactly once.
+    let sig = token.rsplit('.').next().unwrap_or_default();
+    match bind_exchange_sig(&state.db, session_id, sig).await {
+        Ok(true) => {}
+        Ok(false) => return err(StatusCode::BAD_REQUEST, "oauth session already completed"),
+        Err(e) => {
+            tracing::error!(error = %e, "oauth session bind failed");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "oauth session bind failed");
+        }
     }
+    redirect_back(&return_url, &rust_state, "exchange_token", &token)
 }
 
 /// Normalized payload before signing / on exchange-out.
@@ -643,12 +812,18 @@ async fn exchange_oauth_code(
     provider: &str,
     cfg: &ProviderCfg,
     q: &HashMap<String, String>,
+    code_verifier: Option<&str>,
 ) -> Result<Normalized, String> {
     let code = q.get("code").ok_or("missing code")?;
 
     // Build the token request (Notion uses Basic auth + omits client creds in body;
     // Google includes redirect_uri; Strava omits it).
     let mut form: Vec<(&str, &str)> = vec![("grant_type", "authorization_code"), ("code", code)];
+    // The PKCE half the session held back. Only present for providers we
+    // sent a challenge to (`supports_pkce`).
+    if let Some(v) = code_verifier {
+        form.push(("code_verifier", v));
+    }
     let mut req = state.http_client.post(&cfg.token_url);
     if provider == "notion" {
         let basic = base64::engine::general_purpose::STANDARD
@@ -1051,24 +1226,44 @@ fn plaid_session_lost_page() -> axum::response::Response {
 // POST /{provider}/exchange/{token}
 // ─────────────────────────────────────────────────────────────────────────
 
-async fn exchange(Path((provider, token)): Path<(String, String)>) -> axum::response::Response {
+async fn exchange(
+    State(state): State<Arc<AppState>>,
+    Path((provider, token)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> axum::response::Response {
     if provider_cfg(&provider).is_none() {
         return err(StatusCode::NOT_FOUND, "unknown provider");
+    }
+    if caller_api_key(&headers).is_none() {
+        tracing::info!(provider = %provider, "oauth exchange without box key (pre-upgrade box)");
     }
     let secret = match exchange_secret() {
         Ok(s) => s,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
-    match virtues_helpers::crypto::verify_exchange_token(&secret, &token, &provider) {
-        Ok(c) => Json(json!({
-            "secrets": c.secrets,
-            "metadata": c.metadata,
-            "expires_in": c.expires_in,
-            "scopes": c.scopes,
-        }))
-        .into_response(),
-        Err(e) => err(StatusCode::BAD_REQUEST, &format!("invalid exchange_token: {e}")),
+    let claims = match virtues_helpers::crypto::verify_exchange_token(&secret, &token, &provider) {
+        Ok(c) => c,
+        Err(e) => return err(StatusCode::BAD_REQUEST, &format!("invalid exchange_token: {e}")),
+    };
+    // Signature verified; now spend it. The HMAC alone made a token
+    // *unforgeable*; this makes it *single-use* — the five-minute window was
+    // wide enough for anything that saw the redirect URL to replay it.
+    let sig = token.rsplit('.').next().unwrap_or_default();
+    match consume_exchange(&state.db, sig).await {
+        Ok(true) => {}
+        Ok(false) => return err(StatusCode::BAD_REQUEST, "exchange_token already used or unknown"),
+        Err(e) => {
+            tracing::error!(error = %e, "oauth exchange consume failed");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "exchange bookkeeping failed");
+        }
     }
+    Json(json!({
+        "secrets": claims.secrets,
+        "metadata": claims.metadata,
+        "expires_in": claims.expires_in,
+        "scopes": claims.scopes,
+    }))
+    .into_response()
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1083,11 +1278,20 @@ struct RefreshBody {
 async fn refresh(
     State(state): State<Arc<AppState>>,
     Path(provider): Path<String>,
+    headers: HeaderMap,
     Json(body): Json<RefreshBody>,
 ) -> axum::response::Response {
     let Some(cfg) = provider_cfg(&provider) else {
         return err(StatusCode::NOT_FOUND, "unknown provider");
     };
+    // This is the door to flip to required FIRST. Unauthenticated, it performs
+    // the refresh grant with OUR client_secret for anyone holding a refresh
+    // token — the secret is exactly what is supposed to make a stolen refresh
+    // token useless to a third party. Its only legitimate caller is the box's
+    // credential-refresh cron, which sends the key from the next release on.
+    if caller_api_key(&headers).is_none() {
+        tracing::info!(provider = %provider, "oauth refresh without box key (pre-upgrade box)");
+    }
     let Some(refresh_token) = body.refresh_token.filter(|s| !s.is_empty()) else {
         return err(StatusCode::BAD_REQUEST, "missing refresh_token");
     };
