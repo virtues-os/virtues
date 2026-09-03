@@ -199,10 +199,32 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         let pool = client.database.pool().clone();
         tokio::spawn(async move {
             match crate::api::pair::ensure_review_code(&pool).await {
-                Ok(Some(_)) => tracing::warn!(
-                    "REVIEW PAIR CODE ACTIVE — this box accepts a permanent pairing code. \
-                     Only ever correct on a disposable box holding synthetic data."
-                ),
+                Ok(Some(_)) => {
+                    tracing::warn!(
+                        "REVIEW PAIR CODE ACTIVE — this box accepts a permanent pairing code. \
+                         Only ever correct on a disposable box holding synthetic data."
+                    );
+                    // A review box is public and therefore behind a reverse
+                    // proxy, and that combination silently disarms the only
+                    // thing standing between a 6-digit code and a permanent
+                    // allowlisted device. `rate_limit_ip` believes
+                    // `X-Forwarded-For` only when VIRTUES_TRUSTED_PROXY is set;
+                    // otherwise `consume_handler` falls back to the socket peer,
+                    // which behind a proxy is loopback — and loopback is exempt
+                    // from the limiter by design. Net effect: unlimited guesses
+                    // at a 1M keyspace, with nothing logged and nothing to see.
+                    // Measured on the review box on 2026-09-03: twelve straight
+                    // attempts, twelve 401s, no 429.
+                    if !crate::middleware::trusted_proxy_configured() {
+                        tracing::error!(
+                            "REVIEW PAIR CODE IS UNRATE-LIMITED — VIRTUES_TRUSTED_PROXY is not \
+                             set. If this box is public behind a reverse proxy, /api/pair/consume \
+                             sees every request as loopback and the 10-per-IP-per-30-min limit \
+                             never runs, so the code can be brute-forced. Set \
+                             VIRTUES_TRUSTED_PROXY=1 and restart."
+                        );
+                    }
+                }
                 Ok(None) => {}
                 Err(e) => tracing::error!("review pair code not installed: {e:#}"),
             }
