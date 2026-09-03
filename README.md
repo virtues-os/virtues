@@ -38,44 +38,35 @@
 
 # <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h1-virtues-dark.svg"><img alt="Virtues" src=".github/images/headings/h1-virtues-light.svg" height="40"></picture>
 
-The trouble with data is not that it is collected, but that it is collected by
-everyone except its owner. Ads, algorithms and addictions all run on the
-difference.
-
-**∴ Owning the data of your own life is a virtue of our age.**
-
-Virtues is what that ownership looks like in practice. Your days come back
-written down, the people and places in them linked, the whole record
-searchable — on a server you own, reachable only with a key you hold.
-
-<img src=".github/images/shots/day-page.png" alt="The day page for Wednesday 2 September, open beside a sidebar of notebooks: a first-person account of the day — a call that ran past two, a slow morning, a short errand, six hours at the desk — with the people and organizations in it rendered as links into their own pages." width="100%">
-
-Two ways to run it. **Do it yourself** is the software on your own Linux
-machine, installed with one command — the path you can take today, and the one
-this README is written for. **[The Virtues Server](https://virtues.com/pre-order)**
-is the same binary on a board we build and flash, with a screen on the front,
-and it is open for pre-order. Same software either way, and you can always
-leave with your data.
+Self-hosted personal AI over the record of your own life.
 
 [![CI](https://github.com/virtues-os/virtues/actions/workflows/ci.yml/badge.svg)](https://github.com/virtues-os/virtues/actions/workflows/ci.yml)
 [![License: BUSL-1.1 + MIT](https://img.shields.io/badge/License-BUSL--1.1%20%2B%20MIT-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/sSQKzDWqgv)
 
-**[DIY quickstart](#diy-quickstart)** · [What it does](#what-it-does) ·
-[Why it's shaped this way](#why-its-shaped-this-way) ·
-[The ontology](#the-ontology) · [Architecture](#architecture) ·
-[The full install](#the-full-install) ·
-[Reaching your server](#reaching-your-server)
-· [Build on it](#build-on-it) · [Development](#development) ·
-[Docs](https://virtues.com/docs)
+[Website](https://virtues.com) · [Docs](https://virtues.com/docs) · [Pre-order the server](https://virtues.com/pre-order) · [Discord](https://discord.gg/sSQKzDWqgv)
 
-> **Early, and honestly so** — the
-> [releases page](https://github.com/virtues-os/virtues/releases) is the only
-> current statement of what exists; expect rough edges, and expect us to say
-> where they are.
+Virtues is a server you run at home. It pulls in what you already generate —
+messages, calendar, health, location, transactions, recordings, files — keeps
+it in one Postgres database on your own disk, and turns it into three things: a
+written account of each day, a wiki of the people and places in it, and an
+assistant that answers from your actual data. The two retrieval models run on
+your hardware. The model that writes is the only thing that leaves, through a
+metered proxy that keeps nothing. No inbound port, no hostname: your devices
+reach the server by key.
+
+*Early software. The [releases page](https://github.com/virtues-os/virtues/releases)
+says what exists; expect rough edges, and expect us to say where they are.*
+
+<img src=".github/images/shots/day-page.png" alt="The day page for Wednesday 2 September, open beside a sidebar of notebooks: a first-person account of the day — a call that ran past two, a slow morning, a short errand, six hours at the desk — with the people and organizations in it rendered as links into their own pages." width="100%">
 
 <a id="diy-quickstart"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-diy-quickstart-dark.svg"><img alt="DIY quickstart" src=".github/images/headings/h2-diy-quickstart-light.svg" height="28"></picture>
+
+Two ways to run it. **Do it yourself**: the software on your own Linux machine,
+installed with one command — the path this README covers.
+**[The Virtues Server](https://virtues.com/pre-order)**: the same software on a
+board we build, open for pre-order. Either way you can leave with your data.
 
 On a spare Linux machine — a VM is fine:
 
@@ -83,91 +74,72 @@ On a spare Linux machine — a VM is fine:
 curl -sSL https://virtues.com/sh | sudo sh
 ```
 
-When it asks about inference, choose **"Quick trial"**. It drops in a
-CPU-only model server and two small models, no configuration. At the end it
-prints a 6-digit code; type that into the desktop app from
-[virtues.com/downloads](https://virtues.com/downloads) and you're in. Chat and
-day-writing need a model the server can reach, so run
-`sudo -u virtues virtues subscribe` or put your own provider key in Settings.
+Choose **Quick trial** when it asks about inference: a CPU-only model server
+and two small models, no configuration. It ends with a 6-digit code; enter it
+in the desktop app from [virtues.com/downloads](https://virtues.com/downloads).
+Chat and day-writing need a model the server can reach:
+`sudo -u virtues virtues subscribe`, or your own provider key in Settings.
 
-That path is honestly slow and is not a deployment: for real use you run the
-two small retrieval models yourself — an embedder and a reranker — on whatever
-silicon the machine has, and hand the installer their two URLs. Good pairs to
-start from are **embeddinggemma-300m** (768-d, or 256 truncated) or
-**gte-small** (384-d) for embedding, with **gte-reranker-modernbert-base** for
-reranking — Q8_0 GGUFs of a few hundred megabytes each, served by
-`llama-server`, and [The full install](#the-full-install) has the commands.
+The trial is slow and not a deployment. For real use, run the embedder and
+reranker yourself and give the installer their URLs — **embeddinggemma-300m**
+or **gte-small** for embedding, **gte-reranker-modernbert-base** for reranking,
+a few hundred megabytes each under `llama-server`.
+[The full install](#the-full-install) has the commands.
 
 <a id="what-it-does"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-what-it-does-dark.svg"><img alt="What it does" src=".github/images/headings/h2-what-it-does-light.svg" height="28"></picture>
 
-**It writes your days.** After a day ends, your server reconstructs it from the
-evidence — visits, movement, device presence, audio, messages, purchases,
-sleep — into a gapless timeline, then writes the diary and epigraph. Its
-central doctrine is that **plans are not evidence**: a calendar entry never
-names a stretch of your day without a physical trace to corroborate it, so an
-uncorroborated plan yields an honest "Unknown" rather than a confident memory
-of a day that didn't happen. Each event is then scored for novelty against your
-*own* recent life, never a population norm.
-[The full design](agents/record/the-day.md).
+**It writes your days.** After a day ends, the server rebuilds it from evidence
+— visits, movement, device presence, audio, messages, purchases, sleep — into a
+timeline, then writes the diary. Plans are not evidence: a calendar entry with
+no physical trace behind it becomes an honest *Unknown*, not a confident
+memory. Each event is scored for novelty against your own history, never a
+population norm. [Design notes](agents/record/the-day.md).
 
 **It keeps a wiki of the people and places in them.** The Sarah in your
-calendar, your contacts, and your messages resolve to one person, with a page
-of her own.
+calendar, contacts and messages resolves to one person with a page of her own.
 
 <img src=".github/images/shots/wiki.png" alt="The wiki index: a record of 592 people, 46 places and 204 organizations with entries since December 2017, above a sparkline of the whole record and an activity grid showing which days are dense and which are sparse." width="100%">
 
-**It answers questions with your actual data**, not a generic profile. The
-agent gets read-only SQL over your ontology tables, semantic search across the
-whole record, a Python sandbox, web research, and the ability to write pages.
-Multi-model — Claude, GPT, Gemini — in three modes: full tools, conversation
-only, and read-only research.
+**It answers from your data.** The agent has read-only SQL over your tables,
+semantic search over the record, a Python sandbox, web research, and page
+editing. Claude, GPT or Gemini; three modes — full tools, conversation only,
+read-only research.
 
 <img src=".github/images/shots/chat.png" alt="A chat: the question — how much of last week does the record actually account for — with the agent's sql_query step against the events table above the answer: 92.4 hours placed as stays, 16.5 in transit, and 59.1 it will not claim to know, because those hours have no visit, movement, audio or purchase to corroborate them." width="100%">
 
-**Where your data goes, stated plainly.** It is stored on your server and it
-stays there. Search runs on your side of the wire — the embedding and reranking
-endpoints must be local, and the installer refuses a public address for either.
-GPS is reduced to distance and pace before anything is sent anywhere.
-
-The exception is the assistant, and it is not a leak, it is the feature: asking
-a question, or letting the server write your day, sends the relevant part of your
-record to a model provider — and a voice recording is sent as **audio**, not as
-a transcript, to be transcribed. Point Virtues at a local model and that stops
-too; the trade is quality and speed, and it is yours to make.
-
-We will not tell you this is private by construction. The relay genuinely
-cannot read your data — that is physics; the inference boundary rests on a
-contract with a provider, which is a different kind of promise.
+**Where the data goes.** It stays on your server. Embedding and reranking must
+run on a local address; the installer refuses a public one. GPS is reduced to
+distance and pace before anything is sent. The assistant is the exception and
+the point: a question, or the nightly day-writing, sends the relevant part of
+your record to a model provider — voice as audio, not as transcript. Point it
+at a local model and that stops too. The relay cannot read your traffic; that
+is physics. The inference boundary is a contract with a provider, which is a
+different kind of promise.
 [The privacy model](agents/record/privacy-model.md#the-inference-boundary-where-your-data-does-leave)
-says exactly what crosses it and what never does.
+says exactly what crosses and what never does.
 
 <a id="why-its-shaped-this-way"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-why-it-s-shaped-this-way-dark.svg"><img alt="Why it's shaped this way" src=".github/images/headings/h2-why-it-s-shaped-this-way-light.svg" height="28"></picture>
 
-**The virtues of the digital age.** The name does not mean *use technology to
-live virtuously*. Virtues change prudently over time — in both their mores and
-their requirements — and our age asks for ones the old lists never had to name.
-Owning the data of your own life is the first of them, and it stands where
-thrift and temperance stood in theirs: what is held about you is what can be
-used to move you, and a person who cannot read their own record cannot notice
-being moved.
+**Virtues of the digital age.** The name does not mean *use technology to live
+virtuously*. Virtues change with the age, and ours asks for ones the old lists
+never named. Owning the data of your own life is the first: what is held about
+you is what can be used to move you, and someone who cannot read their own
+record cannot notice being moved.
 
-**Digital subsidiarity is the shape that virtue takes in software.** The old
-principle that a matter belongs to the smallest competent authority able to
-handle it — the household before the city, the city before the state — applied
-to the record of a life: *it belongs where the life is lived.* Not in a
-datacenter that can read it; not with a company that will outlive its own
-interest in keeping it.
+**Digital subsidiarity** is that virtue as software. A matter belongs to the
+smallest authority competent to handle it, so the record of a life belongs
+where the life is lived — not in a datacenter that can read it, not with a
+company that will outlive its interest in keeping it.
 
-Every structural decision here follows from that one, and each is an
-incapability rather than a promise: the record is written to your own disk;
-retrieval runs against endpoints that must be local, and the installer refuses
-a public address for either; nothing inbound is ever opened at home; the relay
-moves sealed bytes it has no key to read; and we are not on your allowlist.
+Every structural decision follows, and each is an incapability rather than a
+promise: the record is on your disk; retrieval runs against local endpoints
+only; nothing inbound is opened at home; the relay moves sealed bytes it has no
+key to read; we are not on your allowlist.
 
-The essays are in [the Library](https://virtues.com/library). The engineering
-record is in [`agents/`](agents/).
+Essays in [the Library](https://virtues.com/library). Engineering record in
+[`agents/`](agents/).
 
 <a id="the-ontology"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-the-ontology-dark.svg"><img alt="The ontology" src=".github/images/headings/h2-the-ontology-light.svg" height="28"></picture>
