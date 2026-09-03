@@ -33,6 +33,12 @@ WHAT IT DOES
 
 WHAT IT DOES NOT DO
 
+  ORDER MATTERS: it substitutes names through prose, so any hand-written demo
+  content must be installed AFTER the last run of this script. Re-running it
+  over invented prose rewrites any name that happens to be a real person's in
+  the snapshot — harmless, but it desynchronises the text from the entity it
+  links to.
+
   It cannot read prose for meaning. A diary entry naming an employer, a medical
   detail or an unusual address will survive step 4 if that string is not an
   entity in the graph. READ EVERY FRAME BEFORE IT LEAVES THE MACHINE — this
@@ -87,6 +93,8 @@ PROSE_COLUMNS = [
     ("wiki_events", "event_summary"),
     ("wiki_days", "epigraph"),
     ("wiki_people", "notes"),
+    ("data_calendar_event", "title"),
+    ("data_calendar_event", "description"),
 ]
 # JSON columns holding name-ish arrays.
 PROSE_JSON = [("wiki_events", "topics"), ("wiki_events", "entities")]
@@ -124,7 +132,11 @@ def psql(db, sql, *, tuples=True):
         raise SystemExit(f"psql failed:\n{safe}\n--- while running: {head}…")
     if not tuples:
         return r.stdout
-    return [rec.split("\x1f") for rec in r.stdout.split("\x1e") if rec.strip()]
+    # Strip the newline psql leaves between records: with -R set it still ends
+    # each row with one, so a value read and written back grows a newline every
+    # run — invisible in most columns and very visible in a sidebar label.
+    return [[f.strip("\n") for f in rec.split("\x1f")]
+            for rec in r.stdout.split("\x1e") if rec.strip()]
 
 
 def q(s):
@@ -175,10 +187,24 @@ def main():
     maps = {}
     if int(have):
         print(f"  reusing the stored mapping ({have} entities)")
-        for kind in ("person", "place", "org"):
+        for kind, table in [("person", "wiki_people"), ("place", "wiki_places"),
+                            ("org", "wiki_orgs")]:
             rows = psql(db, f"select id, real_name, fake_name from anon_map "
                             f"where kind={q(kind)} order by id")
             maps[kind] = {r[0]: (r[1], r[2]) for r in rows}
+            # Anything the graph grew since the mapping was written. Entity
+            # resolution runs whenever core is pointed at this copy, so a real
+            # calendar attendee becomes a real wiki_people row mid-session and
+            # a reused mapping would never see it.
+            fresh = psql(db, f"select id, coalesce(name,'') from {table} p where "
+                             f"not exists (select 1 from anon_map m where m.id = p.id)")
+            for j, (rid, real) in enumerate(fresh):
+                fake = pseudonym(kind, len(maps[kind]) + j + 331)
+                maps[kind][rid] = (real, fake)
+                psql(db, f"insert into anon_map values ({q(kind)}, {q(rid)}, "
+                         f"{q(real)}, {q(fake)})", tuples=False)
+            if fresh:
+                print(f"    + {len(fresh)} new {kind}(s) since the last run")
     else:
         ins = []
         for kind, table in [("person", "wiki_people"), ("place", "wiki_places"),
@@ -360,6 +386,17 @@ def main():
              "from_identifier='anon:' || substr(md5(id), 1, 12), "
              "from_handle=null, to_identifiers='[]'::jsonb, metadata='{}'::jsonb",
          tuples=False)
+
+    # Calendar attendees: raw identifiers, usually email addresses, and the
+    # source entity resolution reads to invent people from. Left alone, they
+    # both leak directly and regenerate real names into the graph.
+    psql(db, "update data_calendar_event set "
+             "organizer_identifier = case when organizer_identifier is null then null "
+             "else 'organizer@example.com' end, "
+             "attendee_identifiers = case when attendee_identifiers is null then null "
+             "else '[\"attendee@example.com\"]'::jsonb end",
+         tuples=False)
+    print("  data_calendar_event: attendee and organizer identifiers replaced")
 
     # Derived copies. The search index stores its own title/preview/content, so
     # a scrub of the source tables leaves every original string sitting in the
