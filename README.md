@@ -212,8 +212,10 @@ gte-small (384), bge-small-en-v1.5 (384), e5-small-v2 (384),
 nomic-embed-text-v1.5 (768). Known-good rerankers:
 **gte-reranker-modernbert-base**, bge-reranker-v2-m3, jina-reranker-v2. Any
 server will do — Ollama, vLLM, a vendor's NPU runtime — provided it answers
-the two POST routes *and* `GET /health`, which the box probes at startup and
-which is the requirement people trip over.
+the two POST routes. `GET /health` is a readiness shortcut Virtues uses when
+the server has it and treats as *unknown* when it doesn't (Ollama answers 404
+there and embeds perfectly), so the only fatal condition is nothing accepting
+a connection at all.
 
 [Setting up inference](docs/inference.md) is the full page: the exact contract,
 the prompt-prefix and dimension rules, what the fingerprint pin protects you
