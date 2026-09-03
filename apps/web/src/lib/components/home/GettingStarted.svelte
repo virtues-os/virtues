@@ -128,10 +128,13 @@
 	// says "done" is decoration.
 	type StepId = "letter" | "introductions" | "connect" | "signin" | "interview" | "first_day" | "further";
 	const steps = $derived.by(() => {
+		// One vocabulary: a settled step is ✓, full stop. The column spends
+		// words only when they inform — "· skipped", "· underway", "⚠ needs…",
+		// "· tomorrow morning" — never to restate the mark.
 		const settled = (id: string, earned: boolean) =>
-			earned ? "✓ done" : isDismissed(id) ? "· skipped" : "";
+			earned ? "✓" : isDismissed(id) ? "· skipped" : "";
 		const rows: { id: StepId; title: string; done: boolean; state: string }[] = [
-			{ id: "letter", title: "The founder's letter", done: true, state: "✓ read" },
+			{ id: "letter", title: "The founder's letter", done: true, state: "✓" },
 			{
 				id: "introductions",
 				title: "Introductions",
@@ -149,7 +152,7 @@
 			},
 		];
 		if (accountDone || !store.accountSatisfied) {
-			rows.push({ id: "signin", title: "Connect your Virtues account", done: accountDone, state: accountDone ? "✓ done" : "" });
+			rows.push({ id: "signin", title: "Connect your Virtues account", done: accountDone, state: accountDone ? "✓" : "" });
 		}
 		rows.push(
 			{
@@ -261,6 +264,8 @@
 				<Icon icon="ri:door-open-line" width="14" />
 			{/if}
 		</button>
+
+		<div class="mark serif" aria-hidden="true">∴</div>
 
 		<ol class="steps">
 			{#each steps as s, i (s.id)}
@@ -433,6 +438,13 @@
 
 	.steps { --gutter: 30px; }
 
+	.mark {
+		font-family: var(--font-serif);
+		font-size: 15px;
+		color: var(--color-foreground-subtle);
+		padding: 0 0 6px 1px;
+	}
+
 	.census {
 		max-width: 640px;
 		margin: 14px 0 0;
@@ -459,7 +471,7 @@
 		color: var(--color-foreground-subtle);
 		transition: color 0.15s ease;
 	}
-	.step.active .n { color: var(--color-foreground); }
+	.step.active .n { color: #9a2b2e; }
 
 	.t {
 		font-family: var(--font-serif); font-size: 19px; font-weight: 400;
@@ -468,7 +480,10 @@
 		transition: color 0.15s ease;
 	}
 	button.t { cursor: pointer; }
-	.step.done .t { color: var(--color-foreground-muted); }
+	/* The past recedes, the present is full ink, the future waits in
+	   between — three weights, read at a glance. */
+	.step.done .t { color: var(--color-foreground-subtle); }
+	.step.done .n { color: color-mix(in srgb, var(--color-foreground-subtle) 55%, transparent); }
 	.step.active .t { color: var(--color-foreground); }
 
 	/* Hover stays in the book's voice: ink, not link-blue. The whole line

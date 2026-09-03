@@ -129,10 +129,27 @@
 
 <style>
 	.plate {
+		position: relative;
 		margin: 0;
 		border: 1px solid var(--color-border);
 		background: var(--color-surface-elevated);
 		padding: 10px;
+	}
+
+	/* Paper grain: ink-colored noise at a whisper, masked from turbulence —
+	   theme-correct (it grains dark paper too) and never louder than the
+	   figure. pointer-events off; it is texture, not surface. */
+	.plate::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		background: var(--color-foreground);
+		opacity: 0.05;
+		pointer-events: none;
+		mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+		-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+		mask-size: 240px 240px;
+		-webkit-mask-size: 240px 240px;
 	}
 
 	.plate-in {
