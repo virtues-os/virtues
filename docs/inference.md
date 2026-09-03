@@ -113,8 +113,8 @@ up visibly `failed` rather than restarting forever.
 
 Other servers work too, as long as they speak the contract below —
 [Ollama](https://ollama.com), vLLM, or a vendor's NPU runtime. Read
-[the contract](#the-contract-in-full) before you commit to one; the
-requirement people trip over is `GET /health`.
+[the contract](#the-contract-in-full) before you commit to one; there is
+exactly one required route per endpoint, and it is the obvious one.
 
 You do not need to build llama.cpp to try it: every Virtues release ships a
 portable **CPU-only** `llama-server` and puts it at
@@ -239,14 +239,17 @@ model change: the fingerprint matches and nothing is rebuilt.
 If you're bringing a server we haven't named, this is exactly what it must
 do.
 
-**`GET /health` must return 2xx.** This one is not optional and is not part
-of the OpenAI shape. Virtues probes it when the embedder and reranker start,
-so it can fail with a clear message instead of a transport error on every
-call, and `virtues doctor` probes it again on the running box.
-`llama-server` answers it once the model is loaded. A server that doesn't
-implement the route at all will read as *not serving* even when its
-embeddings work perfectly — verify with a real embedding call before you
-believe the row.
+**`GET /health` is optional.** It isn't part of the OpenAI shape, and plenty
+of good servers don't have it — Ollama answers 404 there while serving
+embeddings perfectly. Virtues asks for it when the embedder and reranker
+start, purely as a shortcut: a 2xx means "ready" without paying for an
+inference, and `llama-server` answers it once the model is loaded. Any other
+answer is treated as *unknown*, not as failure, and the endpoint is then
+verified by asking it to embed — which the runtime does immediately
+afterwards regardless. What is fatal is nothing accepting a connection at all.
+
+`virtues doctor` follows the same ladder, so a server without the route reads
+as `✓ serving (no /health)` rather than being condemned.
 
 **`POST /v1/embeddings`** takes `{"input": [...], "model": "..."}` — always an
 array, `model` always present — and must return:
@@ -265,10 +268,11 @@ and must return:
 { "results": [ { "index": 0, "relevance_score": 0.87 } ] }
 ```
 
-The score field must be `relevance_score` — llama.cpp's and Jina's spelling.
-A Cohere-style server that returns `score` instead passes the installer's
-probe and then fails at search time, which is a sharp enough edge to be worth
-naming.
+The score field may be spelled `relevance_score` (llama.cpp's and Jina's
+spelling, above) or `score` (Cohere-style); both are accepted, at setup and at
+search time alike. The number is read as an ordering only — Virtues sorts by
+it and then normalizes — so any strictly increasing scale works, bounded or
+not.
 
 **`GET /v1/models`** is optional. When a server offers it, Virtues records
 what it says it is serving and stamps that on every indexed row.

@@ -41,9 +41,19 @@ struct RerankResponse {
     results: Vec<RerankRow>,
 }
 
+/// One scored row from `/v1/rerank`.
+///
+/// The score field has two spellings in the wild: `relevance_score`
+/// (llama.cpp, Jina) and `score` (Cohere-style). The installer's setup probe
+/// has always accepted either, so a Cohere-shaped server passed validation and
+/// then failed at every search against a runtime that demanded the first
+/// spelling. The alias closes that gap at the end that was wrong — being
+/// stricter at runtime than at setup buys nothing, since the number means the
+/// same thing under either name.
 #[derive(Deserialize)]
 struct RerankRow {
     index: usize,
+    #[serde(alias = "score")]
     relevance_score: f32,
 }
 
@@ -70,19 +80,37 @@ impl LocalReranker {
 
         // Liveness check at init only — per-search rerank calls surface
         // their own errors and query.rs falls back to cosine ranking.
+        //
+        // ADVISORY on the status code, for the reason spelled out in
+        // embedder.rs: `/health` is llama-server's route, not part of the
+        // OpenAI/Jina shape, and a server that simply doesn't implement it
+        // (404) can still rerank perfectly. Taking such an endpoint out of
+        // service costs precision on every search for a route that was never
+        // in the contract. A transport failure stays fatal — nothing is
+        // listening, and `get_reranker()` retries on the next search.
         let health = format!("{base_url}/health");
-        client
+        match client
             .get(&health)
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
-            .and_then(|r| r.error_for_status())
-            .with_context(|| {
-                format!(
-                    "rerank sidecar unreachable at {base_url} — \
-                     check: systemctl status virtues-rerank"
-                )
-            })?;
+        {
+            Ok(r) if r.status().is_success() => {}
+            Ok(r) => tracing::info!(
+                "rerank endpoint {health} answered {} — no /health route, which is fine; \
+                 the first rerank call is the real verdict",
+                r.status()
+            ),
+            Err(e) => {
+                return Err(anyhow!(e)).with_context(|| {
+                    format!(
+                        "rerank endpoint unreachable at {base_url} — \
+                         nothing accepted a connection; \
+                         check: systemctl status virtues-rerank"
+                    )
+                })
+            }
+        }
 
         Ok(Self { client, base_url })
     }
@@ -157,3 +185,4 @@ pub async fn get_reranker() -> Result<Arc<LocalReranker>> {
         .await?;
     Ok(reranker.clone())
 }
+

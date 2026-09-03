@@ -526,8 +526,26 @@ pub async fn validate_manual(
         },
     };
 
+    // `/health` — reported, never enforced. llama-server and `virtues-qnnd`
+    // answer it and the box uses it as a fast startup signal, but it is not
+    // part of the OpenAI shape and Ollama (recommended first in the guide
+    // above, for NVIDIA and x86 CPU) returns 404 while embedding perfectly.
+    // The runtime treats a non-2xx as unknown and verifies with a real embed,
+    // so saying so here is information, not a warning: it explains the
+    // `(no /health)` that `virtues doctor` will print for this endpoint.
+    let health_ok = matches!(
+        client.get(format!("{embed_url}/health")).send().await,
+        Ok(r) if r.status().is_success()
+    );
+
     // Verdict.
     ui::ok(&format!("Embedding endpoint OK — {dims}-dim vectors"));
+    if !health_ok {
+        ui::skip(
+            "No /health route on this endpoint — fine; the box verifies it with a real \
+             embed instead, and `virtues doctor` will show it as \"serving (no /health)\"",
+        );
+    }
     if p50_ms < 100 {
         ui::ok(&format!("embeds at {p50_ms} ms — searches will feel instant"));
     } else if p50_ms <= 400 {
