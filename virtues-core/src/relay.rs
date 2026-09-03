@@ -234,6 +234,11 @@ pub async fn reach_report(db: &PgPool) -> ReachReport {
 /// How often the background reconcile runs to catch drift (15 min).
 const RECONCILE_INTERVAL_SECS: u64 = 900;
 
+/// How long the pre-bind relay-config self-heal may spend talking to atlas.
+/// Short on purpose: being reachable now on the LAN beats being reachable
+/// remotely a minute later, and the reconcile retries the same call forever.
+const RELAY_CONFIG_BIND_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Spawn the iroh reach subsystem: bind the endpoint and serve `app` over it.
 /// `app` is the box's fully-built axum `Router` (cloned from the one served on
 /// `:8000`). No-op-safe: logs and exits on fatal setup errors (box stays LAN-only).
@@ -417,13 +422,32 @@ fn relay_disabled_by_env(raw: &str) -> bool {
 /// on a box install only — [`DEFAULT_RELAY_URL`], so a box that never signs
 /// in is still reachable from its first boot. `None` → relay-less.
 ///
+/// **Stored beats env, and that order is deliberate** — Settings writes the
+/// off word into the stored slot so the owner's choice survives an upgrade
+/// that rewrites `/etc/virtues/env`. The consequence to know before debugging
+/// it: on a box that has ever been linked (so a stored config exists),
+/// `VIRTUES_RELAY_URL` is never consulted, and setting it there — including
+/// setting it to `off` — does nothing at all, silently. The env var is the
+/// override for a box with no stored config; the switch for every other box is
+/// `PUT /api/network/relay`.
+///
 /// The default is gated on the box-install marker: a dev checkout on a
 /// laptop must not home on the production relay just because someone ran
 /// `make dev` (same guard, same reasoning as the sudo re-exec in main.rs).
 async fn resolve_relay_url(db: &PgPool) -> Option<RelayUrl> {
     // Self-heal a missing relay config (box claimed before the relay existed, or
-    // a claim-time fetch that 503'd) before we bind.
-    ensure_relay_config(db).await;
+    // a claim-time fetch that 503'd) before we bind — but on a BUDGET. This
+    // call reaches atlas over HTTP with a 10s connect / 60s request timeout,
+    // and it sits on the path to binding, inside the bind-retry loop: an
+    // unreachable atlas therefore delayed the box becoming reachable at all,
+    // which is precisely backwards. Bind LAN-only now; the 15-minute reconcile
+    // runs the same self-heal and calls `request_rebind` when it lands.
+    if tokio::time::timeout(RELAY_CONFIG_BIND_BUDGET, ensure_relay_config(db))
+        .await
+        .is_err()
+    {
+        tracing::warn!("iroh: relay-config self-heal timed out — binding without it");
+    }
     if let Ok(Some(rc)) = crate::virtues_api::relay::load(db).await {
         if relay_disabled_by_env(&rc.relay_url) {
             // The stored config can also carry the off word (Settings writes
