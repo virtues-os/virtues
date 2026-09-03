@@ -1,7 +1,8 @@
 <!--
-	Plan → the call log. Every paid AI call, in order, with what it cost.
+	Billing → the call log. Every paid AI call, in order, with what it cost.
 
-	This is a SECTION of Plan (see PlanView), not a page. It answers exactly one
+	This is the last chapter of Billing (see BillingView), not a page. It
+	answers exactly one
 	question — "where did the balance above go?" — and nothing else belongs in
 	it. Three things that had accumulated here were removed on 2026-09-03:
 
@@ -96,7 +97,7 @@
 	}
 </script>
 
-<!-- No <Page>: the last chapter of Plan. See PlanView. -->
+<!-- No <Page>: the last chapter of Billing. See BillingView. -->
 <section class="chapter">
 	<h2 class="settings-label">AI calls</h2>
 	<!-- Names its relation to the wallet ledger above it. Two lists of

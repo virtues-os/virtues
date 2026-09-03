@@ -631,9 +631,7 @@
 	}
 
 	.door-label {
-		font-size: 11px;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
+		font-size: 12px;
 		color: var(--color-foreground-muted);
 	}
 

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { Button, Input, Badge, SudoModal } from '$lib';
+	import { Button, Input, Badge, SudoModal, Page } from '$lib';
+	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatMicrosUSD, formatMicrosPrecise } from '$lib/utils/currency';
@@ -454,21 +455,29 @@
 </script>
 
 <!--
-	No <Page>: this is a SECTION of Plan now, not a page. See PlanView.
+	Billing — the room. There was a `PlanView.svelte` between this and
+	SettingsView whose whole body was a <Page> wrapper and two child tags; it
+	existed only to hold a title, and the title turned out to be wrong. Gone,
+	and the wrapper lives here, where the chapters are.
 
 	CHAPTERS, not cards. This was five identical `border rounded-lg p-6` boxes
 	stacked down the page, which gave a two-line Subscription panel exactly the
 	same weight as a BYO essay and made the balance — the one number anyone
 	opens this page for — the third thing in the third box. The rest of the
 	app (System especially) separates subjects with a hairline rule under a
-	small-caps eyebrow and reserves a bordered surface for places you ACT.
-	That reads as hierarchy; five borders read as a list of equals.
+	heading and reserves a bordered surface for places you ACT. That reads as
+	hierarchy; five borders read as a list of equals.
 
 	Order follows the account, not the code: what you are ON, what is LEFT
 	(with the rule that refills it, and the ledger that moved it), where calls
 	go INSTEAD, and the door out to the processor. The itemized call log is
 	last, in UsageView — a statement puts the itemization at the end.
 -->
+<Page
+	title="Billing"
+	description="What AI costs you, and how it's paid for."
+	maxWidth="wide"
+>
 <div class="plan-sections">
 	<!-- ─── STANDING ──────────────────────────────────────────────────────
 	     When there is no subscription, this slot is the connect flow instead:
@@ -655,7 +664,7 @@
 			<!-- Money in and out. The itemized AI calls that make up the
 			     `Usage` lines are the last chapter of the page; this is the
 			     account statement, not the receipt. -->
-			<div class="subhead">Wallet activity</div>
+			<h3 class="subhead">Wallet activity</h3>
 			{#if usage.entries.length > 0}
 				<div class="entries">
 					{#each usage.entries.slice(0, 15) as e (e.ts + e.kind + e.micros)}
@@ -818,7 +827,11 @@
 			<p class="note note-error">{portalError}</p>
 		{/if}
 	</section>
+
+	<!-- The itemization, last. -->
+	<UsageView />
 </div>
+</Page>
 
 <!--
 	Endpoint URL, not a provider picker. There is no provider taxonomy: we
@@ -942,12 +955,13 @@
 		margin: 0;
 		max-width: 60ch;
 	}
+	/* A step below `.settings-label`: still a heading, still roman serif, just
+	   smaller — this names a part of Balance, not a chapter of the page. */
 	.subhead {
-		font-size: 11px;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--color-foreground-subtle);
-		margin: 22px 0 2px;
+		font-size: 0.875rem;
+		font-weight: 400;
+		color: var(--color-foreground);
+		margin: 22px 0 4px;
 	}
 
 	.mono {

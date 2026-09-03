@@ -12,8 +12,8 @@
 
 	  You          /virtues/you            — profile, theme
 	  Assistant    /virtues/assistant      — name, persona, model
-	  Plan         /virtues/plan           — subscription, balance, and the AI
-	                                         calls that draw it down
+	  Billing      /virtues/billing        — subscription, balance, routing, and
+	                                         the AI calls that draw it down
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Network      /virtues/network        — which network the box is on
 	  Software     /virtues/software       — release, track, update, artifacts
@@ -49,7 +49,7 @@
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
 	import ModelsView from '$lib/components/tabs/views/ModelsView.svelte';
-	import PlanView from '$lib/components/tabs/views/PlanView.svelte';
+	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
 	import DisplayView from '$lib/components/tabs/views/DisplayView.svelte';
@@ -72,16 +72,19 @@
 		// two ends — what you are on, what is left, what drew it down. Both of
 		// their own doors redirect too, because they were live sections with
 		// bookmarks, not just historical paths.
-		'/virtues/billing': '/virtues/plan',
-		'/virtues/usage': '/virtues/plan',
-		'/virtues/account/billing': '/virtues/plan',
-		'/virtues/byo-key': '/virtues/plan',
-		'/virtues/billing/plan': '/virtues/plan',
-		'/virtues/account/usage': '/virtues/plan',
-		'/virtues/billing/usage': '/virtues/plan',
+		'/virtues/usage': '/virtues/billing',
+		'/virtues/account/billing': '/virtues/billing',
+		'/virtues/byo-key': '/virtues/billing',
+		'/virtues/billing/plan': '/virtues/billing',
+		'/virtues/account/usage': '/virtues/billing',
+		'/virtues/billing/usage': '/virtues/billing',
 		// Telemetry was this page under a word for something you send somewhere.
-		'/virtues/telemetry': '/virtues/plan',
-		'/virtues/developer/telemetry': '/virtues/plan',
+		'/virtues/telemetry': '/virtues/billing',
+		'/virtues/developer/telemetry': '/virtues/billing',
+		// "Plan" named a choice that does not exist — one subscription, one
+		// price. Short-lived (2026-08-31 → 09-03), but it was a live row with
+		// bookmarks, so its door stays open.
+		'/virtues/plan': '/virtues/billing',
 		// The 24h readings went back to System (2026-09-03): they are the
 		// machine measured, and had no business under a wallet balance.
 		'/virtues/system/history': '/virtues/system',
@@ -145,7 +148,7 @@
 		| 'you'
 		| 'assistant'
 		| 'models'
-		| 'plan'
+		| 'billing'
 		| 'system'
 		| 'devices'
 		| 'display'
@@ -154,7 +157,7 @@
 	const SECTIONS = [
 		'assistant',
 		'models',
-		'plan',
+		'billing',
 		'system',
 		'devices',
 		'display',
@@ -187,8 +190,8 @@
 			<AssistantView {tab} {active} />
 		{:else if section === 'models'}
 			<ModelsView {tab} {active} />
-		{:else if section === 'plan'}
-			<PlanView {tab} {active} />
+		{:else if section === 'billing'}
+			<BillingView {tab} {active} />
 		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'display'}

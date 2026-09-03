@@ -53,7 +53,14 @@ export const SETTINGS_MODE: SidebarMode = {
 		// which is the only reason anyone opens either. (Usage was "Telemetry"
 		// under Developer before that: it is the owner's own AI spend, not a
 		// developer console, and nothing about it is sent anywhere.)
-		{ id: 'plan', label: 'Plan', icon: 'ri:bank-card-line', href: '/virtues/plan' },
+		//
+		// The merged room was called "Plan" for three days, which named a
+		// choice that does not exist: there is one subscription at one price,
+		// so "Plan" invited a reader to go looking for the other plans. What
+		// the room actually holds is what AI costs and how it gets paid for —
+		// standing, balance, the endpoint you can route around us to, the
+		// Stripe door, and the call log. That is billing.
+		{ id: 'billing', label: 'Billing', icon: 'ri:bank-card-line', href: '/virtues/billing' },
 		// Was one door, "Box", which was a container rather than a subject: it
 		// stacked a Wi-Fi picker, an update installer, an 8-chapter telemetry
 		// console and a revoke-everything button on one scroll, and two of those
