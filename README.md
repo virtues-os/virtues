@@ -123,7 +123,7 @@ whole record, a Python sandbox, web research, and the ability to write pages.
 Multi-model — Claude, GPT, Gemini — in three modes: full tools, conversation
 only, and read-only research.
 
-<img src=".github/images/shots/chat.png" alt="A chat: the question "How much of last week does the record actually account for?", the agent's sql_query step against the events table, and an answer — 92.4 hours placed as stays, 16.5 in transit, and 59.1 it will not claim to know, because those hours have no visit, movement, audio or purchase to corroborate them." width="100%">
+<img src=".github/images/shots/chat.png" alt="A chat: the question — how much of last week does the record actually account for — with the agent's sql_query step against the events table above the answer: 92.4 hours placed as stays, 16.5 in transit, and 59.1 it will not claim to know, because those hours have no visit, movement, audio or purchase to corroborate them." width="100%">
 
 **Where your data goes, stated plainly.** It is stored on your server and it
 stays there. Search runs on your side of the wire — the embedding and reranking
