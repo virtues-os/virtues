@@ -1272,15 +1272,6 @@ pub async fn reset_personas_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::reset_personas(state.db.pool()).await)
 }
 
-// ============================================================================
-// Metrics handlers
-// ============================================================================
-
-/// Get activity metrics (job statistics, time windows, recent errors)
-pub async fn get_activity_metrics_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_activity_metrics(&state.db).await)
-}
-
 /// Per-stream ingest freshness, worst-first. The signal that was missing when
 /// messages, the calendar sync, and finance each went dark unnoticed.
 pub async fn stream_health_handler(State(state): State<AppState>) -> Response {
