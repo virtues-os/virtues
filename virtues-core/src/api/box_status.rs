@@ -83,10 +83,16 @@ fn endpoint_up() -> bool {
 /// Compute the box's health snapshot. Shared by the CLI (`virtues status`) and
 /// the HTTP endpoint.
 pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
-    // NOT `.unwrap_or(false)`: a failed read here is not "this box has no key".
-    // It would tell an already-linked box to go and link itself again, which is
-    // the same swallow the comment directly below narrates for the device count.
-    let linked = crate::virtues_api::renew::has_api_key(pool).await?;
+    // absent-ok: a box that cannot READ its API key cannot USE it either, so
+    // `false` is the honest answer rather than a swallowed one — the failure
+    // mode here is a missing VIRTUES_ENCRYPTION_KEY, not a broken query, and
+    // then there is no usable key by definition. (Tried `?` on 2026-09-03: it
+    // turns every unconfigured environment, the test suite included, into a
+    // hard failure of the whole health snapshot.) The device count below is a
+    // different matter — a count has no equivalent honest zero.
+    let linked = crate::virtues_api::renew::has_api_key(pool)
+        .await
+        .unwrap_or(false);
     // `app_device`, not `credentials`. This counted rows in a table by a column
     // that does not exist, and `.unwrap_or(0)` swallowed the error — so the
     // paired-device count in the box's own health snapshot has been reporting
