@@ -50,6 +50,15 @@ async fn install_deps_apt(target: &Target) -> Result<()> {
     // connection detaches instead of killing whatever is running. Without tmux
     // it degrades to a bare shell that dies with the websocket.
     apt_install("tmux (terminal sessions)", &["tmux"]).await?;
+    // `llama-server` (from our own tarball) links libgomp, and a minimal Ubuntu
+    // has no reason to carry it — a cloud image, a container base, a netboot
+    // install. Missing, both inference sidecars die at exec with
+    //   error while loading shared libraries: libgomp.so.1
+    // which systemd reports as status=127 and then buries under its own restart
+    // spam. The install itself still reports success: `install_inference` only
+    // checks that the binary EXISTS, and the health probe's miss is a warning.
+    // Found on a fresh 24.04 arm64 box on 2026-09-03, restart counter at 54.
+    apt_install("libgomp (llama-server runtime)", &["libgomp1"]).await?;
 
     systemctl(&["enable", "--now", "postgresql"], "Enable postgresql").await?;
     systemctl(&["enable", "--now", "avahi-daemon"], "Enable avahi-daemon").await?;
@@ -73,6 +82,10 @@ async fn install_deps_dnf() -> Result<()> {
     // See the apt path: tmux is what makes web-terminal sessions survive a
     // dropped connection.
     dnf_install("tmux (terminal sessions)", &["tmux"]).await?;
+    // See the apt path: llama-server links libgomp, and its absence kills both
+    // inference sidecars at exec while the install still reports success.
+    // Fedora spells the package without the soname suffix.
+    dnf_install("libgomp (llama-server runtime)", &["libgomp"]).await?;
 
     if !Path::new("/var/lib/pgsql/data/base").exists() {
         let mut cmd = Command::new("postgresql-setup");
@@ -1415,7 +1428,7 @@ pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
     // the panel and cage takes the VT over when it starts; the shim's
     // diagnostic page covers everything after that.
     //
-    // The Dragon boots SYSTEMD-BOOT, not GRUB (docs/appliance-image.md) — the
+    // The Dragon boots SYSTEMD-BOOT, not GRUB (agents/build/appliance-image.md) — the
     // cmdline lives in the `options` line of each loader entry, so that is the
     // real edit. An earlier version only touched /etc/default/grub, which the
     // product has none of, so the step reported success while changing nothing.
@@ -1736,7 +1749,7 @@ const LOGIND_POWER_KEY: &str = r#"# Installed by virtues-installer (appliance pr
 # The button behind the case forgets this box's paired devices when it is held
 # for three seconds. It does NOT power the box off, and it does not erase
 # anything: the record, the network, the account and the four-word phrase all
-# survive. See maintenance::reset_button and docs/onboarding-paradigm.md.
+# survive. See maintenance::reset_button and agents/record/onboarding-paradigm.md.
 #
 # HandlePowerKeyLongPress is set too, or logind claims the long press even
 # while ignoring the short one - which is exactly the gesture we need.
@@ -2715,7 +2728,7 @@ fi
 # unit boots with a fresh blank disk and no UUID or LABEL that fstab could have
 # been written against. The disk has to be claimed here, on the unit, or Postgres
 # and the lake land on the card — which has modest write endurance and is exactly
-# what we're trying to keep writes off. See docs/appliance-image.md.
+# what we're trying to keep writes off. See agents/build/appliance-image.md.
 #
 # TWO layouts, told apart by where root is mounted from. If root is on the NVMe
 # (NVMe-both, no SD in the unit) the data partition lives on the SAME disk,
