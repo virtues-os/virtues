@@ -11,11 +11,11 @@ sudo virtues upgrade
 ```
 
 It needs root — the upgrade replaces the installed binary and restarts the
-service — and it's deliberately safe to run on a box you care about: the new
+service — and it's deliberately safe to run on a server you care about: the new
 release is downloaded and staged completely before anything changes, then
 activated in one atomic flip. The binary, the web app, and the actions runtime
 move together, so you can't end up with a UI newer than the server underneath
-it. A failure before the flip leaves the box exactly as it was; a failure
+it. A failure before the flip leaves the server exactly as it was; a failure
 after the flip rolls straight back.
 
 ## Channels

@@ -63,7 +63,7 @@ leave with your data.
 **[DIY quickstart](#diy-quickstart)** · [What it does](#what-it-does) ·
 [Why it's shaped this way](#why-its-shaped-this-way) ·
 [The ontology](#the-ontology) · [Architecture](#architecture) ·
-[Install properly](#install-properly) ·
+[The full install](#the-full-install) ·
 [Reaching your server](#reaching-your-server)
 · [Build on it](#build-on-it) · [Development](#development) ·
 [Docs](https://virtues.com/docs)
@@ -86,7 +86,7 @@ When it asks about inference, choose **"Quick trial"**. It drops in a
 CPU-only model server and two small models, no configuration. At the end it
 prints a 6-digit code; type that into the desktop app from
 [virtues.com/downloads](https://virtues.com/downloads) and you're in. Chat and
-day-writing need a model the box can reach, so run
+day-writing need a model the server can reach, so run
 `sudo -u virtues virtues subscribe` or put your own provider key in Settings.
 
 That path is honestly slow and is not a deployment: for real use you run the
@@ -95,7 +95,7 @@ silicon the machine has, and hand the installer their two URLs. Good pairs to
 start from are **embeddinggemma-300m** (768-d, or 256 truncated) or
 **gte-small** (384-d) for embedding, with **gte-reranker-modernbert-base** for
 reranking — Q8_0 GGUFs of a few hundred megabytes each, served by
-`llama-server`, and [Install properly](#install-properly) has the commands.
+`llama-server`, and [The full install](#the-full-install) has the commands.
 
 <a id="what-it-does"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-what-it-does-dark.svg"><img alt="What it does" src=".github/images/headings/h2-what-it-does-light.svg" height="28"></picture>
@@ -215,35 +215,10 @@ the search index follow from the descriptor.
 
 <!-- Replace with a light/dark SVG pair (same machinery as the headings). -->
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Sources                                                    │
-│  OAuth: Google · Notion · Plaid · Strava · GitHub           │
-│  Device: HealthKit · Location · Microphone · Contacts       │
-│          FinanceKit · EventKit                              │
-└──────────────────────┬──────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│  Virtues Core (Rust · port 8000)                            │
-│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌───────────┐  │
-│  │ Ingest   │  │ Transform │  │ Wiki &   │  │ AI Agent  │  │
-│  │ Engine   │  │ Pipeline  │  │ Entities │  │ + Tools   │  │
-│  └──────────┘  └───────────┘  └──────────┘  └───────────┘  │
-│  Storage: Postgres (metadata + ontologies) · S3 (raw streams)│
-└──────────────────────┬──────────────────────────────────────┘
-                       ├────────────────► ┌──────────────────────────────────┐
-                       │                  │ Inference endpoints — YOURS      │
-                       │                  │ /v1/embeddings  :18181           │
-                       │                  │ /v1/rerank      :18182           │
-                       │                  │ loopback / LAN / VPN only        │
-                       │                  └──────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│  virtues-api (Rust sidecar · port 9002)                      │
-│  API proxy with per-account budget enforcement               │
-│  Holds the external keys (AI gateway, search, Plaid, OAuth)   │
-└──────────────────────────────────────────────────────────────┘
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/images/architecture/architecture-dark.svg">
+  <img alt="Sources flow into Virtues Core, one Rust binary on port 8000 holding Postgres and a file store and never an external API key. Core calls your own inference endpoints — /v1/embeddings on 18181 and /v1/rerank on 18182, loopback, LAN or VPN only — and reaches model providers solely through virtues-api on port 9002, which holds the external keys and enforces a budget." src=".github/images/architecture/architecture-light.svg" width="100%">
+</picture>
 
 **Core** is one Rust binary against one Postgres database: ingestion, entity
 resolution, the wiki, pages, chat, and the web UI it serves. It never touches
@@ -272,15 +247,16 @@ doesn't have to hold anyone's API keys.
 | iOS | HealthKit, Location, Microphone, Contacts, FinanceKit, EventKit | Device |
 | macOS | Apps, Browser, iMessage | Device |
 
+<a id="the-full-install"></a>
 <a id="install-properly"></a>
 <a id="install-linux-home-server"></a>
-## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-install-properly-dark.svg"><img alt="Install properly" src=".github/images/headings/h2-install-properly-light.svg" height="28"></picture>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-the-full-install-dark.svg"><img alt="The full install" src=".github/images/headings/h2-the-full-install-light.svg" height="28"></picture>
 
 <a id="what-to-run-it-on"></a>
 <a id="requirements"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-what-to-run-it-on-dark.svg"><img alt="What to run it on" src=".github/images/headings/h3-what-to-run-it-on-light.svg" height="22"></picture>
 
-|  |  |
+| Requirement | What, and why |
 |---|---|
 | **Host OS** | Debian 13+, Ubuntu 24.04 LTS+, or Fedora 40+, `x86_64` or `aarch64`, with systemd and root. A VM is fine; a container is not. |
 | **Hardware** | 8 GB RAM and an SSD. **No GPU required** — the model that writes is remote, and of the two local retrieval models only the reranker meaningfully gains from one. |
@@ -333,16 +309,17 @@ from, and how to change model later without losing your record.
 curl -sSL https://virtues.com/sh | sudo sh
 ```
 
-`virtues.com/sh` is the newest stable release; `virtues.com/sh-pre` is the
-prerelease channel. The channel you install on is remembered. On the appliance
-you run neither — the boot medium arrives flashed, and first boot mints the box
-its own identity.
+`virtues.com/sh` is the newest stable release, `sh-pre` the prerelease channel,
+and the one you install on is remembered —
+[Installing](docs/setup/install.md) covers pinning a version and reading the
+script before you run it. On a Virtues Server you run neither: the boot medium
+arrives flashed.
 
-That asks about inference (validating your endpoints before anything is
-written), measures your disk, installs Postgres 18 + pgvector and Avahi,
-advertises the box on the LAN as `virtues.local`, enables the `virtues.service`
-unit — the box mints and keeps its own iroh secret, and that key *is* its
-identity — and prints a **6-digit pair code**.
+In about ten minutes it asks how you want inference and validates your
+endpoints, measures the disk, installs Postgres 18 + pgvector and Avahi,
+advertises the machine on the LAN as `virtues.local`, starts `virtues.service`
+— which mints and keeps the Ed25519 secret that *is* this server's identity —
+and prints a **6-digit pair code**.
 
 ```bash
 sudo -u virtues virtues pair   # prints a fresh code, any time
@@ -351,33 +328,36 @@ sudo -u virtues virtues pair   # prints a fresh code, any time
 Enter it in the desktop or mobile app
 ([virtues.com/downloads](https://virtues.com/downloads)). **A browser cannot
 pair** — authentication is a held Ed25519 key and a browser tab has none. The
-one exception is a browser running *on the box*, trusted as the loopback
+one exception is a browser running *on the server*, trusted as the loopback
 console at `http://localhost:8000`.
+
+<a id="commands"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-commands-dark.svg"><img alt="Commands" src=".github/images/headings/h3-commands-light.svg" height="22"></picture>
 
 | Command | What it does |
 |---|---|
 | `virtues status` | Health in one screen: identity, inference, subscription, devices. `--json` for the same thing in a stable shape, which is what to paste into a support thread |
-| `virtues doctor` | How inference resolved, whether both endpoints are actually serving, whether the box is reachable — every finding with the command that diagnoses it |
+| `virtues doctor` | How inference resolved, whether both endpoints are actually serving, whether the server is reachable — every finding with the command that diagnoses it |
 | `virtues pair` | Print a code to connect a device |
-| `virtues device ls` / `add` / `rm <id>` | Who can reach this box. Revoking is real: the next dial is refused |
-| `virtues subscribe` | Connect the box to a subscription, so the assistant can reach a model |
+| `virtues device ls` / `add` / `rm <id>` | Who can reach this server. Revoking is real: the next dial is refused |
+| `virtues subscribe` | Connect the server to a subscription, so the assistant can reach a model |
 | `virtues sudo` | Approve a pending sensitive action — proves physical access |
-| `virtues upgrade` / `rollback` | Move between releases on this box's channel — nothing updates itself |
-| `virtues channel` | Print or set the release channel this box follows |
-| `virtues backup` / `restore` | Snapshot and restore box state |
+| `virtues upgrade` / `rollback` | Move between releases on this server's channel — nothing updates itself |
+| `virtues channel` | Print or set the release channel this server follows |
+| `virtues backup` / `restore` | Snapshot and restore server state |
 | `virtues configure-inference` | Re-validate the embedding endpoint after a model change, and offer to re-embed |
 | `virtues reindex` | Rebuild the derived search index from source data |
 | `virtues uninstall` | Leave. Prints the full manifest of what it found before touching anything |
 
 Two rules explain every `sudo` above: **root** for what changes the machine
 (`upgrade`, `restore`, `uninstall`), and the **`virtues` user** —
-`sudo -u virtues virtues …` — for what touches the box's own data (`pair`,
+`sudo -u virtues virtues …` — for what touches the server's own data (`pair`,
 `backup`, `subscribe`), because that is the user the daemon runs as.
 
 <a id="after-its-running"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-after-it-s-running-dark.svg"><img alt="After it's running" src=".github/images/headings/h3-after-it-s-running-light.svg" height="22"></picture>
 
-A paired box holds nothing yet. Connect a source in the app — Google, Plaid,
+A paired server holds nothing yet. Connect a source in the app — Google, Plaid,
 Strava, or a phone streaming HealthKit and location — and the record starts
 filling. The search index builds as data lands, and each day is written after
 that day has ended rather than live, so the first page worth reading arrives
@@ -386,7 +366,7 @@ tomorrow. `virtues status` is where you watch all three.
 <a id="where-things-live"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-where-things-live-dark.svg"><img alt="Where things live" src=".github/images/headings/h3-where-things-live-light.svg" height="22"></picture>
 
-| | |
+| What | Where |
 |---|---|
 | Binary | `/usr/local/bin/virtues` |
 | Config | `/var/lib/virtues/virtues.env` — edit, then `sudo systemctl restart virtues` |
@@ -396,7 +376,7 @@ tomorrow. `virtues status` is where you watch all three.
 | Ports | `8000` server · `5432` Postgres · `18181`/`18182` embed and rerank |
 | Logs | `journalctl -u virtues -f` |
 
-<!-- SHOT 4: `virtues doctor` as a terminal capture: three ledgers and a verdict. Proves the box is observable, which no paragraph can. -->
+<!-- SHOT 4: `virtues doctor` as a terminal capture: three ledgers and a verdict. Proves the server is observable, which no paragraph can. -->
 
 **When something breaks:** [When something breaks](docs/operate/recovery.md) is
 the owner's page; [agents/build/recovery.md](agents/build/recovery.md) is the

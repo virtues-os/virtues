@@ -1,6 +1,6 @@
 ---
 title: Setting up inference
-description: Virtues searches your record with two local models — an embedder and a reranker — that you run yourself. The contracts they must speak, the llama.cpp commands that serve them, which models work, and how to point the box at them.
+description: Virtues searches your record with two local models — an embedder and a reranker — that you run yourself. The contracts they must speak, the llama.cpp commands that serve them, which models work, and how to point the server at them.
 updated: 2026-09-03
 ---
 
@@ -42,7 +42,7 @@ does, and means what it says: inference traffic may leave your network.
 We provision inference on exactly one board — our own, where we know the
 accelerator, the driver stack, and what happens after a power cut. We do not
 install GPU or NPU inference software on hardware we cannot test, because
-doing so produces more broken boxes than it saves keystrokes. So the generic
+doing so produces more broken servers than it saves keystrokes. So the generic
 path is that you own the endpoint and we validate it at the door.
 
 The installer offers three answers:
@@ -192,7 +192,7 @@ above; the rerank prompt takes an empty answer). It then probes what you gave
 it and prints what it found: the vector width, a latency verdict, and whether
 the reranker answered.
 
-Everything it learned lands in the box's environment file at
+Everything it learned lands in the server's environment file at
 `/var/lib/virtues/virtues.env`, which is where you go to change any of it
 later:
 
@@ -208,13 +208,13 @@ later:
 ## What gets pinned, and why
 
 At setup the installer embeds two fixed probe strings and hashes the vectors
-that come back. That hash is the model's fingerprint, and the box recomputes
+that come back. That hash is the model's fingerprint, and the server recomputes
 it at every boot.
 
 This exists because of a failure that is otherwise silent. Swap the model
 behind an unchanged URL and every vector already in the index belongs to a
 different geometry: search doesn't error, it just quietly returns the wrong
-things forever. So on a mismatch the box **refuses to serve search** rather
+things forever. So on a mismatch the server **refuses to serve search** rather
 than answering from an index it can no longer trust.
 
 Recovering from that is one command:
@@ -291,7 +291,7 @@ curl -s localhost:18182/v1/rerank \
   -d '{"query":"cat","documents":["a cat","a bicycle"],"top_n":2}'
 ```
 
-Then against the box, which is the answer that counts:
+Then against the server, which is the answer that counts:
 
 ```bash
 virtues doctor
@@ -299,7 +299,7 @@ virtues doctor
 
 Its Inference section names the accelerator it resolved, the models on disk,
 and — separately, because the two questions are not the same — whether
-anything is actually *serving* at each URL. A box whose model server has been
+anything is actually *serving* at each URL. A server whose model server has been
 crash-looping for a week still has both model files exactly where they were
 put; only the live rows can tell you that search is broken. Every finding
 comes with the command that diagnoses it.

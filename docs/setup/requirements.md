@@ -18,13 +18,13 @@ you cut one.
   Fedora, whose PostgreSQL is recent enough as shipped.
 - **Not macOS or Windows.** Installing needs root, a native PostgreSQL
   cluster, and systemd units of its own. The Mac and iPhone apps are
-  *clients* that talk to a box; neither is one.
+  *clients* that talk to a server; neither is one.
 - A **virtual machine is fine**. A Docker or LXC container generally is not:
   the installer writes systemd units and expects to own the machine's
   services.
 
 An old laptop, a NUC-class mini PC, a rack server you already have, or a
-capable single-board computer all qualify. What separates a pleasant box from
+capable single-board computer all qualify. What separates a pleasant server from
 a miserable one is almost entirely memory and disk, in that order.
 
 ## Memory
@@ -80,7 +80,7 @@ at a **local** disk.
 This is where people overbuy, so it's worth being precise about which models
 run where.
 
-**The model that writes does not run on your box.** Composing an account of
+**The model that writes does not run on your server.** Composing an account of
 your day, answering a question, transcribing a recording — that work goes to
 a model provider, through our gateway by default or through an endpoint you
 choose. So there is no VRAM budget to plan for it.
@@ -112,7 +112,7 @@ machine fast enough".
 ## Network
 
 Outbound only. Virtues opens **no inbound port** and needs no forwarding
-rule; a paired device reaches the box by key, over paths described in
+rule; a paired device reaches the server by key, over paths described in
 [Reaching your server](/docs/operate/reach). During the install it needs to
 reach `github.com` for the release and `apt.postgresql.org` for PostgreSQL,
 and it probes both before touching anything.
@@ -127,7 +127,7 @@ the same machine. The installer warns if something already holds them.
 else is yours to measure — which is a real answer rather than a dodge,
 because the tools to measure it ship with the installer: the storage verdict
 and the embedding-latency verdict during setup, then `virtues doctor` on the
-running box.
+running server.
 
 Next: [Setting up inference](/docs/inference), which is the one piece worth
 standing up *before* you install, and then

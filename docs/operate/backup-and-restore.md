@@ -1,19 +1,19 @@
 ---
 title: Backup & restore
-description: How to protect a Virtues box — minting the recovery key the box will never hold, backing up to a drive, verifying archives, and restoring.
+description: How to protect a Virtues server — minting the recovery key the server will never hold, backing up to a drive, verifying archives, and restoring.
 updated: 2026-08-28
 ---
 
-Your box holds things that exist nowhere else. This page is how you keep them
+Your server holds things that exist nowhere else. This page is how you keep them
 when the hardware doesn't.
 
 Read the first section before the others. Backups here are encrypted to a key
-the box deliberately cannot keep, so the order of operations matters more than
+the server deliberately cannot keep, so the order of operations matters more than
 usual: get the key wrong and every archive you ever make is unreadable.
 
 ## First: mint the recovery key
 
-Backups are encrypted with [age](https://age-encryption.org), and your box
+Backups are encrypted with [age](https://age-encryption.org), and your server
 stores only the *public* half — enough to write an archive, never enough to
 read one back. Create the keypair once:
 
@@ -22,11 +22,11 @@ sudo -u virtues virtues backup --init-key
 ```
 
 This prints the secret key **once**, in a banner, and writes it nowhere. That
-is the whole design: an attacker who takes the box, and Virtues as a company,
+is the whole design: an attacker who takes the server, and Virtues as a company,
 are equally unable to decrypt your archives. It also means the consequence
 lands entirely on you.
 
-**Put the key somewhere it will outlive the box, and make more than one copy.**
+**Put the key somewhere it will outlive the server, and make more than one copy.**
 A password manager, a printout in a drawer, a note in a safe — the failure to
 plan for is a house fire or a dropped laptop, not a burglar. There is no
 escrow, no "email me a reset", and no support path that recovers it. Losing
@@ -50,26 +50,26 @@ existing file.
 
 ### What's inside
 
-- The **database**, as a full dump. Your box's identity lives in here too —
-  the network key that *is* this box, the certificate authority, the list of
-  paired devices — so the archive carries who your box is as well as what it
+- The **database**, as a full dump. Your server's identity lives in here too —
+  the network key that *is* this server, the certificate authority, the list of
+  paired devices — so the archive carries who your server is as well as what it
   knows.
 - The **environment file**, which holds the encryption key that makes the
   database's stored credentials readable. Without it a dump restores into
   gibberish, which is why a backup refuses to run when it can't find one.
 - The **data lake** — recordings, uploads, files.
-- **Authored applets**, the ones written on the box rather than shipped with it.
+- **Authored applets**, the ones written on the server rather than shipped with it.
 - A **manifest** recording the binary and schema versions, plus a SHA-256 for
   every member, which is what makes verification and restore able to detect
   a damaged archive.
 
 Because the environment file rides along, **the archive is exactly as
-sensitive as the box itself.** Treat a backup tarball the way you'd treat the
+sensitive as the server itself.** Treat a backup tarball the way you'd treat the
 machine.
 
 Deliberately *not* included: the downloaded model files, which are large and
 freely re-fetchable, and a handful of machine-local scraps like the saved
-Wi-Fi passphrase and the release channel. A restored box re-downloads and
+Wi-Fi passphrase and the release channel. A restored server re-downloads and
 re-derives those.
 
 ## Backing up to a drive
@@ -81,7 +81,7 @@ sudo -u virtues virtues volumes add /path/to/mount --name "study drive"
 ```
 
 The drive is remembered by its filesystem UUID rather than its mount path, so
-it's still recognized after a reboot moves it. Nothing outside the box's own
+it's still recognized after a reboot moves it. Nothing outside the server's own
 subdirectory is ever read or written, so the disk stays usable for whatever
 else lives on it.
 
@@ -122,7 +122,7 @@ restore.
 
 ## Restoring
 
-Restoring **replaces this box's state** with the archive's. It is not
+Restoring **replaces this server's state** with the archive's. It is not
 reversible and there is no dry run.
 
 ```bash
@@ -154,9 +154,9 @@ relying on a restore that matters.
 Being precise about the edges, since backups are exactly the wrong place for
 optimism:
 
-- **There is no cloud or network destination.** "Off-box" today means a drive
+- **There is no cloud or network destination.** "Off-server" today means a drive
   you physically plug in. Registering remote storage isn't implemented, so if
-  your only copies live in the same building as the box, a fire takes both.
+  your only copies live in the same building as the server, a fire takes both.
 - **Nothing escrows your recovery key.** It is a banner printed once; copies
   are entirely your responsibility.
 - **Nothing verifies archives on a schedule.** `--verify` is manual.
@@ -164,6 +164,6 @@ optimism:
   stale, or failing, but there is no button — backup and restore are terminal
   verbs today.
 
-If you're moving to new hardware rather than recovering the same box, ask
-first: the archive carries the old box's identity, and what that means for
+If you're moving to new hardware rather than recovering the same server, ask
+first: the archive carries the old server's identity, and what that means for
 your paired devices isn't settled yet.
