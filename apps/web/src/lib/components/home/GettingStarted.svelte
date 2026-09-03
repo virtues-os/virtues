@@ -381,24 +381,30 @@
 			{/each}
 		</ol>
 
-		{#if census && census.total > 0 && census.lines.length > 0}
-			<!-- Proof of life, one sentence: the census is already on the wire
-			     for the first-day date; this reads the rest of it. No card, no
-			     counter animation — the server stating a fact. -->
-			<p class="census">
-				So far the record holds {census.lines[0].count.toLocaleString()}
-				{census.lines[0].label}{#if census.lines[1]}&nbsp;and {census.lines[1].count.toLocaleString()}
-					{census.lines[1].label}{/if}{#if census.earliest};
-					the oldest trace is from {new Date(census.earliest).toLocaleDateString(undefined, { month: "long", year: "numeric" })}{/if}.
-			</p>
-		{/if}
-
 		<!-- The folio's right page: the active step's plate — a figure for
 		     what this step IS, the way an atlas pairs the photograph with the
-		     hand-drawn diagram. Wide screens only; the walk never depends on
-		     it. -->
+		     hand-drawn diagram — and, beneath it, the census as a printer's
+		     ledger. Proof of life belongs on the contemplation page, not at
+		     the walk's foot, where one orphaned sentence read as a non-part
+		     of the flow. Wide screens only; the walk never depends on either. -->
 		<aside class="plate-rail">
 			<StepPlate step={active ?? "settled"} {census} />
+			{#if census && census.total > 0 && census.lines.length > 0}
+				<div class="ledger mono">
+					<div class="ledger-head">the record, so far</div>
+					{#each census.lines.slice(0, 5) as line (line.id)}
+						<div class="ledger-row">
+							<span class="ledger-n">{line.count.toLocaleString()}</span>
+							<span class="ledger-l">{line.label}</span>
+						</div>
+					{/each}
+					{#if census.earliest}
+						<div class="ledger-foot">
+							since {new Date(census.earliest).toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+						</div>
+					{/if}
+				</div>
+			{/if}
 		</aside>
 	</div>
 {/if}
@@ -437,14 +443,43 @@
 
 	.steps { --gutter: 30px; }
 
-	.census {
-		max-width: 640px;
-		margin: 14px 0 0;
-		padding-left: var(--gutter);
-		font-family: var(--font-serif);
-		font-size: 15px;
-		line-height: 1.5;
+	/* The ledger: the census set like a colophon — tabular counts against
+	   lowercase labels, a hairline above, nothing animated. The server
+	   stating facts, in small type. */
+	.ledger {
+		margin: 18px 12px 0;
+		padding-top: 12px;
+		border-top: 1px solid var(--color-border-subtle);
+		font-size: 11px;
+		letter-spacing: 0.02em;
+	}
+
+	.ledger-head {
+		color: var(--color-foreground-subtle);
+		margin-bottom: 8px;
+	}
+
+	.ledger-row {
+		display: flex;
+		gap: 10px;
+		align-items: baseline;
+		padding: 1.5px 0;
+	}
+
+	.ledger-n {
+		min-width: 64px;
+		text-align: right;
+		color: var(--color-foreground);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.ledger-l {
 		color: var(--color-foreground-muted);
+	}
+
+	.ledger-foot {
+		margin-top: 8px;
+		color: var(--color-foreground-subtle);
 	}
 
 	.step { border-top: 1px solid var(--color-border-subtle); }
