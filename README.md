@@ -48,7 +48,7 @@ Virtues is what that ownership looks like in practice. Your days come back
 written down, the people and places in them linked, the whole record
 searchable — on a server you own, reachable only with a key you hold.
 
-<img src=".github/images/shots/day-page.png" alt="The day page for Wednesday 2 September: a first-person account of the day — a late call, a slow morning, a short errand, six hours at the desk, an afternoon call and a fantasy draft — with the people and organizations in it rendered as links, above a Dayline charting events, communication, location, activity, health and spending across the twenty-four hours." width="100%">
+<img src=".github/images/shots/day-page.png" alt="The day page for Wednesday 2 September, open beside a sidebar of notebooks: a first-person account of the day — a call that ran past two, a slow morning, a short errand, six hours at the desk — with the people and organizations in it rendered as links into their own pages." width="100%">
 
 Two ways to run it. **Do it yourself** is the software on your own Linux
 machine, installed with one command — the path you can take today, and the one
