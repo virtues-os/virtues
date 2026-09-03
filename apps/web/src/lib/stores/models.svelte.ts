@@ -35,8 +35,18 @@ async function loadModels() {
  * Get initialization promise to wait for models to load
  */
 export function getInitializationPromise(): Promise<void> {
+	// A failed load must not be remembered as a load.
+	//
+	// This used to memoize the promise unconditionally, so one flaky fetch —
+	// a phone's first request over a cold iroh hop, say — left the catalog
+	// empty for the life of the app process: every later caller got the
+	// already-settled promise back and `loadModels` never ran a second time.
+	// A desktop reload hid it; a webview that survives days of suspends did
+	// not. Only a load that actually produced models is worth keeping.
 	if (!initializationPromise) {
-		initializationPromise = loadModels();
+		initializationPromise = loadModels().finally(() => {
+			if (modelsCache.length === 0) initializationPromise = null;
+		});
 	}
 	return initializationPromise;
 }
@@ -56,11 +66,18 @@ export function getModelById(modelId: string): ModelOption | undefined {
 }
 
 /**
- * Get the default model (marked with is_default flag or first in list)
+ * The model the box says the Chat slot resolves to, for DISPLAY only.
+ *
+ * The box decides what actually answers (`model_choice::resolve_turn_model`);
+ * this is how the picker names it. It used to fall back to `modelsCache[0]`,
+ * which is not a default but "whatever the gateway listed first" — and the
+ * three vouched models all carry the same sort order, so that tie-break
+ * currently lands on the CODING model. If the flag ever goes missing the
+ * honest answer is that we do not know, and a blank picker beats a confident
+ * mislabel.
  */
 export function getDefaultModel(): ModelOption | undefined {
-	const defaultModel = modelsCache.find((m) => m.isDefault);
-	return defaultModel || modelsCache[0];
+	return modelsCache.find((m) => m.isDefault);
 }
 
 /**
@@ -78,41 +95,20 @@ export function setSelectedModel(model: ModelOption | undefined) {
 }
 
 /**
- * Initialize selected model with fallback chain:
- * 1. Conversation model (if exists)
- * 2. Assistant profile default (if exists)
- * 3. is_default flag model
- * 4. First model in list
+ * Seed what the picker DISPLAYS, once, from the owner's standing pin.
+ *
+ * This used to be a four-step precedence chain (conversation model, then the
+ * profile pin, then the flag, then the first row) — a second implementation of
+ * a rule the box already owns, running in a browser that may not have the
+ * catalog. The box's chain is the real one: pin, then the cloud slot map, then
+ * the compiled floor, in `api::model_choice`. This is display only, and being
+ * unable to seed it is no longer a reason a turn cannot be sent.
  */
-export function initializeSelectedModel(
-	conversationModelId?: string,
-	profileDefaultModelId?: string
-): void {
-	if (selectedModel) {
-		// Already initialized
-		return;
-	}
+export function initializeSelectedModel(profileDefaultModelId?: string): void {
+	if (selectedModel) return; // the person's pick outlives a chat switch
 
-	// Try conversation model first
-	if (conversationModelId) {
-		const foundModel = getModelById(conversationModelId);
-		if (foundModel) {
-			setSelectedModel(foundModel);
-			return;
-		}
-	}
-
-	// Try profile default
-	if (profileDefaultModelId) {
-		const foundModel = getModelById(profileDefaultModelId);
-		if (foundModel) {
-			setSelectedModel(foundModel);
-			return;
-		}
-	}
-
-	// Fall back to default model (is_default flag or first model)
-	setSelectedModel(getDefaultModel());
+	const pinned = profileDefaultModelId ? getModelById(profileDefaultModelId) : undefined;
+	setSelectedModel(pinned ?? getDefaultModel());
 }
 
 /**
