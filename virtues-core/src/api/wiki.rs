@@ -35,6 +35,10 @@ pub struct WikiPerson {
     pub emails: Vec<String>,
     pub phones: Vec<String>,
     pub birthday: Option<NaiveDate>,
+    /// When they died, if they have — with the precision the person gave
+    /// ("sometime in 2019" is a real answer; see migration 0016).
+    pub died_on: Option<NaiveDate>,
+    pub died_precision: Option<String>,
     pub instagram: Option<String>,
     pub facebook: Option<String>,
     pub linkedin: Option<String>,
@@ -42,6 +46,10 @@ pub struct WikiPerson {
     // Metadata
     pub relationship_category: Option<String>,
     pub nickname: Option<String>,
+    /// The AUTHORED line about what this person means — one sentence, the
+    /// owner's verbatim, never inferred. Recency says who is around; only
+    /// this says who matters. Rendered above every observed stat.
+    pub bond: Option<String>,
     // `notes` retired to wiki_notes (migration 0082). The column still exists —
     // drops trail by a release — but nothing reads or writes it from here, which
     // is what lets the next migration drop it safely.
@@ -231,12 +239,16 @@ pub struct UpdateWikiPersonRequest {
     pub emails: Option<Vec<String>>,
     pub phones: Option<Vec<String>>,
     pub birthday: Option<NaiveDate>,
+    pub died_on: Option<NaiveDate>,
+    pub died_precision: Option<String>,
     pub instagram: Option<String>,
     pub facebook: Option<String>,
     pub linkedin: Option<String>,
     pub x: Option<String>,
     pub relationship_category: Option<String>,
     pub nickname: Option<String>,
+    /// One sentence, theirs verbatim — see WikiPerson::bond.
+    pub bond: Option<String>,
     // `notes` retired to wiki_notes (migration 0082). The column still exists —
     // drops trail by a release — but nothing reads or writes it from here, which
     // is what lets the next migration drop it safely.
@@ -298,8 +310,9 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
         r#"
         SELECT
             id, name, content, article, article_updated_at, picture, cover_image,
-            emails, phones, birthday, instagram, facebook, linkedin, x,
-            relationship_category, nickname, aliases,
+            emails, phones, birthday, died_on, died_precision, instagram,
+            facebook, linkedin, x,
+            relationship_category, nickname, bond, aliases,
             first_seen, last_seen, seen_count,
             created_at, updated_at
         FROM wiki_people
@@ -328,12 +341,15 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
         phones: serde_json::from_value(row.phones).unwrap_or_default(),
         aliases: serde_json::from_value(row.aliases).unwrap_or_default(),
         birthday: row.birthday,
+        died_on: row.died_on,
+        died_precision: row.died_precision,
         instagram: row.instagram,
         facebook: row.facebook,
         linkedin: row.linkedin,
         x: row.x,
         relationship_category: row.relationship_category,
         nickname: row.nickname,
+        bond: row.bond,
         first_seen: row.first_seen,
         last_seen: row.last_seen,
         seen_count: Some(row.seen_count as i32),
@@ -464,6 +480,9 @@ pub async fn update_person(
             emails = COALESCE($6, emails),
             phones = COALESCE($7, phones),
             birthday = COALESCE($8, birthday),
+            died_on = COALESCE($16, died_on),
+            died_precision = COALESCE($17, died_precision),
+            bond = COALESCE($18, bond),
             instagram = COALESCE($9, instagram),
             facebook = COALESCE($10, facebook),
             linkedin = COALESCE($11, linkedin),
@@ -488,7 +507,10 @@ pub async fn update_person(
         req.x,
         req.relationship_category,
         req.nickname,
-        aliases_json
+        aliases_json,
+        req.died_on,
+        req.died_precision,
+        req.bond
     )
     .execute(pool)
     .await
@@ -731,68 +753,54 @@ pub async fn update_organization(
 // Narrative Identity
 // ============================================================================
 
-/// The user's narrative identity — a present-orientation self-portrait.
+/// The user's narrative identity — the "In your own words" DOCUMENT, read
+/// straight from its wiki article's page. There is no separate stored copy
+/// (the abridged capsule was retired 2026-09-01): editing happens on the page
+/// itself, which is why this view is read-only and carries the page id.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NarrativeIdentity {
-    pub id: String,
     pub content: String,
     pub updated_at: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
+    /// The document's page — where editing happens. Empty until the interview
+    /// has been written up.
+    pub page_id: String,
 }
 
-/// Get the narrative identity singleton. Before a draft is generated there is
-/// no row yet, so we return an empty placeholder (content = "") rather than
+/// Get the narrative identity. Before the interview is written up there is no
+/// article yet, so we return an empty placeholder (content = "") rather than
 /// 500ing — the clients treat empty content as "not authored yet".
 pub async fn get_narrative_identity(pool: &PgPool) -> Result<NarrativeIdentity> {
-    let row = sqlx::query_as::<_, (String, String, DateTime<Utc>, DateTime<Utc>)>(
-        "SELECT id, content, updated_at, created_at FROM wiki_narrative_identity LIMIT 1"
+    let article = crate::api::wiki_articles::get_article(
+        pool,
+        "narrative_identity",
+        crate::api::narrative_draft::NAR_IDENTITY_ID,
     )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get narrative identity: {}", e)))?;
-
-    Ok(match row {
-        Some(r) => NarrativeIdentity {
-            id: r.0,
-            content: r.1,
-            updated_at: r.2,
-            created_at: r.3,
+    .await?;
+    let Some(article) = article else {
+        return Ok(NarrativeIdentity {
+            content: String::new(),
+            updated_at: Utc::now(),
+            page_id: String::new(),
+        });
+    };
+    let prose = crate::api::wiki_articles::get_article_prose(
+        pool,
+        "narrative_identity",
+        crate::api::narrative_draft::NAR_IDENTITY_ID,
+    )
+    .await?;
+    Ok(match prose {
+        Some(p) => NarrativeIdentity {
+            content: p.content,
+            updated_at: p.updated_at,
+            page_id: article.page_id,
         },
-        None => {
-            let now = Utc::now();
-            NarrativeIdentity {
-                id: String::new(),
-                content: String::new(),
-                updated_at: now,
-                created_at: now,
-            }
-        }
+        None => NarrativeIdentity {
+            content: String::new(),
+            updated_at: Utc::now(),
+            page_id: article.page_id,
+        },
     })
-}
-
-/// Update request for narrative identity
-#[derive(Debug, Deserialize)]
-pub struct UpdateNarrativeIdentityRequest {
-    pub content: String,
-}
-
-/// Update the narrative identity content.
-pub async fn update_narrative_identity(
-    pool: &PgPool,
-    request: UpdateNarrativeIdentityRequest,
-) -> Result<NarrativeIdentity> {
-    // Upsert: the singleton row is not seeded by any migration, so a plain
-    // UPDATE on a fresh box would silently no-op and drop the user's writing.
-    sqlx::query(
-        "INSERT INTO wiki_narrative_identity (id, content) VALUES ('nar_identity_001', $1) \
-         ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content",
-    )
-    .bind(&request.content)
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to update narrative identity: {}", e)))?;
-
-    get_narrative_identity(pool).await
 }
 
 // ============================================================================

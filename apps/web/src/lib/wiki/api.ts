@@ -20,6 +20,11 @@ export interface WikiPersonApi {
 	emails: string[];
 	phones: string[];
 	birthday: string | null; // ISO date string
+	/** When they died, if they have; precision the person gave (year/month/day). */
+	died_on: string | null;
+	died_precision: string | null;
+	/** The authored line about what this person means — one sentence, verbatim. */
+	bond: string | null;
 	instagram: string | null;
 	facebook: string | null;
 	linkedin: string | null;
@@ -922,11 +927,14 @@ export async function listOnThisDay(
 
 // --- Narrative identity ---
 
+/** The "In your own words" document, read from its page. Read-only here —
+ *  editing happens on the page itself (`page_id`); the writable abridged copy
+ *  this used to front was retired 2026-09-01. */
 export interface NarrativeIdentityApi {
-	id: string;
 	content: string;
-	created_at: string;
 	updated_at: string;
+	/** The document's page; empty until the interview has been written up. */
+	page_id: string;
 }
 
 export async function getNarrativeIdentity(
@@ -937,17 +945,23 @@ export async function getNarrativeIdentity(
 	return res.json();
 }
 
-export async function updateNarrativeIdentity(
-	content: string,
-	fetchFn: FetchFn = fetch
-): Promise<NarrativeIdentityApi | null> {
-	const res = await fetchFn(`/api/wiki/narrative-identity`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ content }),
-	});
-	if (!res.ok) return null;
-	return res.json();
+/** One chapter of the life — authored in the interview, never inferred. */
+export interface ChapterApi {
+	id: string;
+	kind: "chapter" | "unknown";
+	title: string | null;
+	started_at: string;
+	ended_at: string | null;
+	is_current: boolean;
+	changepoint: string | null;
+	summary: string | null;
+}
+
+export async function getChapters(fetchFn: FetchFn = fetch): Promise<ChapterApi[]> {
+	const res = await fetchFn(`/api/wiki/chapters`);
+	if (!res.ok) return [];
+	const body = await res.json();
+	return body.chapters ?? [];
 }
 
 // ============================================================================

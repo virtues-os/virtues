@@ -62,6 +62,18 @@ export interface PersonPage extends WikiPageBase {
 	relationship: string;
 
 	/**
+	 * The AUTHORED bond line — one sentence, the owner's verbatim, about what
+	 * this person means. Recency says who is around; only this says who
+	 * matters. Never inferred, rendered above every observed stat.
+	 */
+	bond?: string;
+
+	/** When they died, if they have. */
+	diedOn?: Date;
+	/** Precision of diedOn as given: "year" | "month" | "day". */
+	diedPrecision?: string;
+
+	/**
 	 * Connection tier - how close/important.
 	 */
 	connectionTier?: ConnectionTier;

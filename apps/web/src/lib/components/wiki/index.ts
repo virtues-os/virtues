@@ -17,6 +17,7 @@ export { default as ActivityHeatmap } from './ActivityHeatmap.svelte';
 // Wiki room sections
 export { default as DaysChronicle } from './DaysChronicle.svelte';
 export { default as NarrativeIdentitySection } from './NarrativeIdentitySection.svelte';
+export { default as ChaptersSection } from './ChaptersSection.svelte';
 
 // Entity page sections
 export { default as EntityArticleSection } from './EntityArticleSection.svelte';
