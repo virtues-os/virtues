@@ -3,7 +3,7 @@
 This directory is the **public documentation** for Virtues — the source that
 `virtues.com/docs` renders and that the box will eventually serve as its own
 in-app help. It is not the workshop: design records, plans, and audits stay in
-[`../docs/`](../docs/) and are written for the people and agents building
+[`../agents/`](../agents/) and are written for the people and agents building
 Virtues. Pages here are written for the people *running* it.
 
 ## The contract
