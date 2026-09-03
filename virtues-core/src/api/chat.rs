@@ -1303,13 +1303,34 @@ pub async fn chat_handler(
     // the active-notebook context always matches the binding, even if a stale client
     // sends a different per-message notebookId. The create path above already bound a
     // new chat from request.notebook_id, so the row is current by now.
-    let effective_notebook_id: Option<String> =
-        sqlx::query_scalar(r#"SELECT notebook_id FROM app_chats WHERE id = $1"#)
-            .bind(&chat_id_str)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten();
+    // Decoded as `Option<String>` on purpose: `app_chats.notebook_id` is nullable
+    // (and the FK is ON DELETE SET NULL), so an unbound chat legitimately reads
+    // NULL. Scalar-typing it as `String` would make that NULL a decode *error* —
+    // which is what the old `.ok()` was really swallowing, alongside every real
+    // query failure. A swallow here is not cosmetic: None reads as "not in a
+    // notebook", so a broken query silently unscopes a scoped chat — retrieval
+    // stops being hard-filtered and the answer contract below is dropped.
+    let effective_notebook_id: Option<String> = match sqlx::query_scalar::<_, Option<String>>(
+        r#"SELECT notebook_id FROM app_chats WHERE id = $1"#,
+    )
+    .bind(&chat_id_str)
+    .fetch_optional(&pool)
+    .await
+    {
+        // Outer None = no such row, inner None = bound to no notebook.
+        Ok(notebook_id) => notebook_id.flatten(),
+        Err(e) => {
+            tracing::error!("Failed to resolve notebook for chat {}: {}", chat_id_str, e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ChatError {
+                    error: "Failed to resolve chat notebook".to_string(),
+                    details: Some(e.to_string()),
+                }),
+            )
+                .into_response();
+        }
+    };
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
     let mut system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, effective_notebook_id.as_deref()).await;
