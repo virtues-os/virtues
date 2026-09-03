@@ -161,11 +161,11 @@
 						<div class="flex items-center gap-2">
 							<span class="text-sm font-medium text-foreground">{persona.title}</span>
 							{#if persona.is_system}
-								<span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-surface-elevated text-foreground-muted">
+								<span class="text-[11px] px-1.5 py-0.5 rounded bg-surface-elevated text-foreground-muted">
 									System
 								</span>
 							{:else}
-								<span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+								<span class="text-[11px] px-1.5 py-0.5 rounded bg-primary/10 text-primary">
 									Custom
 								</span>
 							{/if}

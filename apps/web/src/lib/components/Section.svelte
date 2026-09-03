@@ -9,10 +9,11 @@
 	 * on which page you had landed on, so neighbouring sections of the same
 	 * product disagreed about what a section even looks like.
 	 *
-	 * This is the uppercase label, chosen because it is a LABEL and not a
-	 * title: settings headings name a category you are scanning past, not a
-	 * heading you are reading. It stays quiet, and it leaves the right margin
-	 * free for `note`.
+	 * The heading treatment is `.settings-label` in app.css — one definition,
+	 * shared with the views that still write their own `<h2 class=…>`. It was
+	 * an uppercase letterspaced micro-label until 2026-09-03; see that comment
+	 * for why a serif with no small-cap cut should not be asked to fake one.
+	 * It still leaves the right margin free for `note`.
 	 *
 	 * `note` is that margin — a short, subordinate fact about where the
 	 * section's contents came from ("measured here", "as your server heard
@@ -42,11 +43,11 @@
 
 <div class={first ? "" : "mt-8"}>
 	<div class="flex items-baseline justify-between gap-3 mb-2">
-		<h2 class="text-xs font-medium uppercase tracking-wide text-foreground-subtle">
+		<h2 class="settings-label mb-0">
 			{title}
 		</h2>
 		{#if note}
-			<span class="text-[11px] text-foreground-subtle font-normal normal-case tracking-normal">
+			<span class="text-[11px] text-foreground-subtle font-normal">
 				{note}
 			</span>
 		{/if}
