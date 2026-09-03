@@ -119,7 +119,9 @@ def psql(db, sql, *, tuples=True):
         # whole point of this script is that the content is somebody's life.
         # The first line, truncated at the first literal, is enough to locate it.
         head = sql.strip().split("\n")[0].split("=")[0][:120]
-        raise SystemExit(f"psql failed:\n{r.stderr.strip()}\n--- while running: {head}…")
+        safe = "\n".join(l for l in r.stderr.strip().split("\n")
+                         if not l.lstrip().startswith(("DETAIL:", "CONTEXT:", "HINT:")))
+        raise SystemExit(f"psql failed:\n{safe}\n--- while running: {head}…")
     if not tuples:
         return r.stdout
     return [rec.split("\x1f") for rec in r.stdout.split("\x1e") if rec.strip()]
@@ -299,7 +301,97 @@ def main():
              f"where kind is distinct from 'article'", tuples=False)
     print("  app_pages: user-written pages blanked")
 
+    # Names the owner chose: notebooks and chat titles. These render in the
+    # sidebar of EVERY screenshot, and an authored title routinely names a
+    # relationship, a diagnosis or an employer outright — more identifying than
+    # anything the prose says. Renamed, not substituted: they are labels a
+    # person wrote, not entity mentions, so no mapping reaches them.
+    for table, col, pool in [
+        ("app_notebooks", "name",
+         ["Reading", "Field notes", "House", "Training", "Travel", "Recipes",
+          "Projects", "Music", "Garden", "Letters"]),
+        ("app_chats", "title",
+         ["Weekend plan", "Ontology questions", "Reindex notes", "Trip costs",
+          "Sleep and training", "Draft outline", "Kitchen rebuild", "Search test"]),
+    ]:
+        rows = psql(db, f"select id from {table} order by id")
+        ups = [f"update {table} set {col}={q(pool[i % len(pool)] if i < len(pool) else pool[i % len(pool)] + f' {i // len(pool) + 1}')} where id={q(r[0])}"
+               for i, r in enumerate(rows)]
+        for i in range(0, len(ups), 200):
+            psql(db, ";\n".join(ups[i:i + 200]), tuples=False)
+        print(f"  {table}.{col}: {len(ups)} renamed")
+
+    # Pinned sidebar shortcuts carry their OWN label, copied from whatever they
+    # pointed at when they were pinned — so renaming the notebook leaves the
+    # original title sitting in the sidebar of every screenshot. Re-derive each
+    # label from its target, and fall back to a neutral one.
+    pins = psql(db, "select id, coalesce(url,'') from app_pins order by sort_order")
+    ups = []
+    for i, (pid, url) in enumerate(pins):
+        label = None
+        if "/notebook/" in url:
+            nb = psql(db, f"select name from app_notebooks where id="
+                          f"{q(url.rsplit('/', 1)[-1])}")
+            label = nb[0][0] if nb else None
+        elif "/page/" in url:
+            pg = psql(db, f"select title from app_pages where id="
+                          f"{q(url.rsplit('/', 1)[-1])}")
+            label = pg[0][0] if pg else None
+        ups.append(f"update app_pins set label={q(label or f'Pinned {i + 1}')} "
+                   f"where id={q(pid)}")
+    for i in range(0, len(ups), 100):
+        psql(db, ";\n".join(ups[i:i + 100]), tuples=False)
+    print(f"  app_pins.label: {len(ups)} relabelled from their targets")
+
+    # Message participants are NOT the entity graph. `from_name` carries whoever
+    # a provider said sent a message, and most of those people were never
+    # resolved into wiki_people — so the graph can be fully pseudonymous while
+    # every row in a person's record still names somebody real.
+    senders = psql(db, "select distinct from_name from data_communication_message "
+                       "where from_name is not null and from_name <> '' order by 1")
+    ups = []
+    for i, (real,) in enumerate(senders):
+        ups.append(f"update data_communication_message set from_name="
+                   f"{q(pseudonym('person', i + 997))} where from_name={q(real)}")
+    for i in range(0, len(ups), 200):
+        psql(db, ";\n".join(ups[i:i + 200]), tuples=False)
+    print(f"  data_communication_message.from_name: {len(ups)} senders renamed")
+    psql(db, "update data_communication_message set "
+             "from_identifier='anon:' || substr(md5(id), 1, 12), "
+             "from_handle=null, to_identifiers='[]'::jsonb, metadata='{}'::jsonb",
+         tuples=False)
+
+    # Derived copies. The search index stores its own title/preview/content, so
+    # a scrub of the source tables leaves every original string sitting in the
+    # index, one search away from a screenshot.
+    for table, cols in [("search_embeddings", ["title", "preview", "content", "author"]),
+                        ("data_activity_app_session", ["window_title"]),
+                        ("app_chat_messages", ["content", "parts", "tool_calls"])]:
+        for col in cols:
+            exists = psql(db, "select data_type from information_schema.columns "
+                              f"where table_name={q(table)} and column_name={q(col)}")
+            if not exists:
+                continue
+            null_ok = "jsonb" in exists[0][0]
+            val = "'null'::jsonb" if null_ok else q(PLACEHOLDER)
+            psql(db, f"update {table} set {col}={val} where {col} is not null",
+                 tuples=False)
+        print(f"  {table}: {', '.join(cols)} cleared")
+
     # ── 6. Bulk bodies ───────────────────────────────────────────────────
+    CHATTER = [
+        "on my way", "give me ten minutes", "that works", "sounds good",
+        "can you send the address?", "just parked", "running a bit late",
+        "did you eat yet?", "let's do next week", "yes please",
+        "call me when you're free", "got it, thanks", "see you there",
+        "no rush", "adding it to the calendar now",
+    ]
+    psql(db, "update data_communication_message set body = (array["
+             + ",".join(q(c) for c in CHATTER)
+             + "])[1 + (abs(hashtext(id)) % " + str(len(CHATTER)) + ")]",
+         tuples=False)
+    print(f"  data_communication_message.body: replaced with synthetic chatter")
+
     for table, col, tcol in BULK:
         exists = psql(db, "select 1 from information_schema.columns where "
                           f"table_name='{table}' and column_name='{col}'")
