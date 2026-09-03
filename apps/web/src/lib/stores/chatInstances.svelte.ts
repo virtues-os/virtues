@@ -283,10 +283,12 @@ class ChatInstanceStore {
             onError: (error) => {
                 console.error(`[ChatInstances] Error in chat ${conversationId}:`, error);
 
-                // A lapsed subscription / unrecognized key surfaces as these
-                // codes from virtues-api (402/401) — refresh subscription state.
-                if (/wallet_expired|subscription_inactive|unknown_key/.test(error.message ?? '')) {
-                    subscriptionStore.check();
+                // Any wallet-side refusal (402/401) means the standing shown
+                // in Settings may be stale — re-ask the box, fresh. wallet_empty
+                // is on the list because for a never-subscribed account it is
+                // the first signal that there is no subscription at all.
+                if (/wallet_empty|insufficient_budget|topup_disabled|wallet_expired|subscription_inactive|unknown_key|invalid_api_key/.test(error.message ?? '')) {
+                    subscriptionStore.check(true);
                 }
             }
         });

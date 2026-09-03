@@ -719,6 +719,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::create_billing_portal_handler),
         )
         .route("/api/billing/claim", post(api::claim_billing_handler))
+        .route("/api/billing/subscribe", post(api::subscribe_billing_handler))
         // Wallet balance + recent ledger (proxied from virtues-api /v1/usage).
         .route("/api/billing/usage", get(api::billing_usage_handler))
         // Box-local AI spend breakdown (app_ai_calls) for the Usage tab.

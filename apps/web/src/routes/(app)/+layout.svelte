@@ -282,71 +282,12 @@
 		}
 	});
 
-	// Trial countdown toasts (day 5, 2, 1, 0)
-	let trialToastShownForDay: number | null = null;
-	$effect(() => {
-		const days = subscriptionStore.daysRemaining;
-		if (days === null || subscriptionStore.status !== "trialing") return;
-		if (trialToastShownForDay === days) return;
-
-		const openBilling = () =>
-			windowShellStore.openTabFromRoute("/virtues/billing", {
-				label: "Settings",
-				preferEmptyPane: true,
-			});
-
-		if (days <= 5 && days > 2) {
-			trialToastShownForDay = days;
-			toast.warning(`Trial ends in ${days} days`, {
-				description: "Add a payment method to keep your data.",
-				duration: Infinity,
-				action: { label: "Billing", onClick: openBilling },
-			});
-		} else if (days <= 2 && days > 0) {
-			trialToastShownForDay = days;
-			toast.error(`Trial ends in ${days} day${days === 1 ? "" : "s"}`, {
-				description: "Your instance will be suspended without payment.",
-				duration: Infinity,
-				action: { label: "Add Payment", onClick: openBilling },
-			});
-		} else if (days <= 0) {
-			trialToastShownForDay = days;
-			toast.error("Trial expired", {
-				description: "Add a payment method to restore access.",
-				duration: Infinity,
-				action: { label: "Add Payment", onClick: openBilling },
-			});
-		}
-	});
-
-	// Show toast when subscription is expired (from 402 or polling)
-	let expiredToastShown = false;
-	$effect(() => {
-		if (
-			!subscriptionStore.isActive &&
-			subscriptionStore.status === "expired" &&
-			!expiredToastShown
-		) {
-			expiredToastShown = true;
-			toast.error("Subscription required", {
-				description:
-					"Your trial has ended. Subscribe to continue using AI features.",
-				duration: Infinity,
-				action: {
-					label: "Subscribe",
-					onClick: () =>
-						windowShellStore.openTabFromRoute("/virtues/billing", {
-							label: "Settings",
-							preferEmptyPane: true,
-						}),
-				},
-			});
-		}
-		// Reset if subscription becomes active again
-		if (subscriptionStore.isActive) {
-			expiredToastShown = false;
-		}
-	});
+	// No subscription toasts here. There is no trial — the countdown and
+	// "trial has ended" toasts that lived here fired on statuses the box never
+	// emits, and their copy sold a product that does not exist. The offer is
+	// made where it is honest: the metered 402 itself names the door
+	// (virtues_api::client::payment_required_message), and Settings → Billing
+	// carries the standing.
 </script>
 
 <!-- Desktop: bottom-right, out of the way of the pane toolbar and the ⌘K modal.

@@ -189,6 +189,52 @@ fn apply_byo_model(body: &Value, byo: &crate::api::settings_byo::ByoCredential) 
     body
 }
 
+/// The sentence for a metered 402, with its code — prose for the owner, code
+/// for the support conversation, in one string because every caller here
+/// surfaces a single `Error::ExternalApi(String)`.
+///
+/// Reads the box's last-known entitlement to tell two states apart that the
+/// wire cannot: virtues-api answers `wallet_empty` to a never-subscribed
+/// account and to a paying one whose balance ran out, and "Usage limit
+/// reached" / "add credits" is the wrong instruction to the first. Someone who
+/// never subscribed has not hit a limit; they need a subscription. This is the
+/// moment-of-need — the one place the offer is honest — so the sentence must
+/// name the right door.
+pub fn payment_required_message(body: &Value, feature: &str) -> String {
+    let code = body["error"]["code"].as_str().unwrap_or("payment_required");
+    let what = feature.replace('_', " ");
+    let free = matches!(
+        crate::api::subscription::last_known_entitlement(),
+        Some(crate::virtues_api::renew::Entitlement::Free)
+    );
+    let msg = match code {
+        "wallet_empty" | "insufficient_budget" if free => format!(
+            "{what} needs a Virtues subscription — there is no wallet behind this server yet. Subscribe in Settings → Billing, or bring your own AI key."
+        ),
+        "wallet_empty" | "insufficient_budget" => format!(
+            "Wallet empty — {what} is paused until it is topped up (Settings → Billing)."
+        ),
+        "topup_disabled" => format!(
+            "Wallet empty and auto top-up is off — {what} is paused. Top up in Settings → Billing."
+        ),
+        "card_declined" | "authentication_required" => format!(
+            "Auto top-up failed (card) — {what} is paused. Update your card through Stripe in Settings → Billing."
+        ),
+        "monthly_cap_reached" => format!(
+            "Monthly spending cap reached — {what} is paused until next month, or raise the cap in Settings → Billing."
+        ),
+        "subscription_inactive" | "wallet_expired" => format!(
+            "Your subscription has lapsed — {what} is paused until it renews."
+        ),
+        "unknown_key" | "invalid_api_key" => format!(
+            "This server's Virtues key is not recognized — reconnect your account in Settings → Billing. {what} is paused."
+        ),
+        "call_too_expensive" => format!("{what} was refused: the call would exceed the wallet."),
+        _ => format!("Payment required — {what} is paused."),
+    };
+    format!("{msg} [{code}]")
+}
+
 /// Convert an `AutoTopupOutcome` non-Funded variant into the same 402
 /// error shape virtues-api would have returned. Lets iOS handle every
 /// error via one contract regardless of whether the box did recovery.

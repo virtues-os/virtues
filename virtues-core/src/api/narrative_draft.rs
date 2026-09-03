@@ -536,7 +536,7 @@ async fn call_model_with(
 
     if !response.is_success() {
         return Err(Error::ExternalApi(match response.status {
-            402 => "Usage limit reached".to_string(),
+            402 => crate::virtues_api::client::payment_required_message(&response.body, "narrative drafting"),
             429 => "Rate limited — try again in a moment.".to_string(),
             s => format!("virtues-api error {s}: {}", response.body),
         }));

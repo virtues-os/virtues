@@ -10,6 +10,7 @@
 		getBillingLinkStatus,
 		startBillingLink,
 		openBillingPortal as requestBillingPortal,
+		subscribeBilling,
 		getBillingState,
 		setBillingAutoTopup,
 		getBillingUsage,
@@ -29,6 +30,56 @@
 	// of prose ("Try again."), so the code beside it is the only thing a
 	// screenshot can hand us. Shown verbatim — never translated, never mapped.
 	let portalErrorCode = $state<string | null>(null);
+
+	// ─── Subscribe (a linked account with no subscription) ─────────────────
+	// The door 0017 created and nothing served: the connect flow below would
+	// start a NEW device link and mint a second account; the portal has
+	// nothing to open. This asks atlas for a checkout on the account the box
+	// already belongs to, then polls fresh until the subscription shows.
+	let subscribeLoading = $state(false);
+	let subscribeError = $state<string | null>(null);
+	let subscribeErrorCode = $state<string | null>(null);
+	let subscribeWaiting = $state(false);
+	let subscribePoll: ReturnType<typeof setInterval> | null = null;
+
+	function stopSubscribePoll() {
+		if (subscribePoll) {
+			clearInterval(subscribePoll);
+			subscribePoll = null;
+		}
+		subscribeWaiting = false;
+	}
+
+	async function openSubscribe() {
+		subscribeLoading = true;
+		subscribeError = null;
+		subscribeErrorCode = null;
+		try {
+			const data = await subscribeBilling<{ url?: string; error?: string; code?: string }>();
+			if (data.url) {
+				openExternal(data.url);
+				// Ten minutes of fresh polls, every 5s — long enough for a card
+				// and a 3-D Secure prompt, short enough not to poll forever on
+				// an abandoned tab.
+				subscribeWaiting = true;
+				let ticks = 0;
+				subscribePoll = setInterval(async () => {
+					ticks += 1;
+					await subscriptionStore.check(true);
+					if (subscriptionStore.subscribed || ticks >= 120) stopSubscribePoll();
+				}, 5000);
+			} else if (data.error) {
+				subscribeError = data.error;
+				subscribeErrorCode = data.code ?? null;
+			}
+		} catch (e) {
+			subscribeError = e instanceof ApiError ? e.message : 'Failed to connect to billing service';
+			subscribeErrorCode = e instanceof ApiError ? `http_${e.status}` : 'unreachable';
+		} finally {
+			subscribeLoading = false;
+		}
+	}
+	$effect(() => () => stopSubscribePoll());
 
 	// Device-authorization link flow (connect a paid subscription). The box
 	// never holds a Stripe key: we start a link, open the Atlas-hosted checkout
@@ -458,19 +509,10 @@
 			: formatDate(ts, { month: 'short', day: 'numeric' });
 	}
 
-	const statusLabel: Record<string, string> = {
-		active: 'Active',
-		trialing: 'Trial',
-		past_due: 'Past Due',
-		expired: 'Expired',
-	};
-
-	const statusColor: Record<string, string> = {
-		active: 'text-success',
-		trialing: 'text-info',
-		past_due: 'text-warning',
-		expired: 'text-error',
-	};
+	// No trial, no expiry: the box reports subscribed or not. (`trialing` /
+	// `expired` labels lived here for a plan that never shipped.)
+	const statusLabel: Record<string, string> = { active: 'Active' };
+	const statusColor: Record<string, string> = { active: 'text-success' };
 </script>
 
 <!--
@@ -513,33 +555,40 @@
 						{statusLabel[subscriptionStore.status] || subscriptionStore.status}
 					</span>
 				</div>
-
-				{#if subscriptionStore.status === 'trialing' && subscriptionStore.daysRemaining !== null}
-					<div class="ledger-row">
-						<span class="ledger-label">Trial ends</span>
-						<span class="leader"></span>
-						<span class="ledger-value"
-							>{subscriptionStore.daysRemaining} day{subscriptionStore.daysRemaining === 1
-								? ''
-								: 's'} remaining</span
-						>
-					</div>
-				{/if}
-
-				{#if subscriptionStore.trialExpiresAt}
-					<div class="ledger-row">
-						<span class="ledger-label">Expiry date</span>
-						<span class="leader"></span>
-						<span class="ledger-value"
-							>{formatDate(subscriptionStore.trialExpiresAt, {
-								year: 'numeric',
-								month: 'long',
-								day: 'numeric',
-							})}</span
-						>
-					</div>
-				{/if}
 			</div>
+		</section>
+	{:else if subscriptionStore.linked && subscriptionStore.entitlementKnown}
+		<!-- Linked, not subscribed: the account exists and the wallet does not.
+		     Subscribe, not connect — connecting again would mint a second
+		     account. The sentence names exactly what is off, because the
+		     accurate sentence is the whole argument. -->
+		<section class="chapter">
+			<h2 class="settings-label">Standing</h2>
+			<div class="ledger">
+				<div class="ledger-row">
+					<span class="ledger-label">Subscription</span>
+					<span class="leader"></span>
+					<span class="ledger-value">None</span>
+				</div>
+			</div>
+			<p class="chapter-lede">
+				Your account is connected; there is no subscription behind it yet. Hosted AI, web
+				search, places, and bank data are off until there is. One subscription covers all
+				four, $20 a month — or bring your own AI key below, which covers the first.
+			</p>
+			{#if subscribeError}
+				<p class="note note-error">
+					{subscribeError}
+					{#if subscribeErrorCode}<span class="error-code">{subscribeErrorCode}</span>{/if}
+				</p>
+			{/if}
+			{#if subscribeWaiting}
+				<p class="note">Checkout is open in your browser — this page updates on its own once it completes.</p>
+			{:else}
+				<button class="btn-quiet" onclick={openSubscribe} disabled={subscribeLoading}>
+					{subscribeLoading ? 'Opening…' : 'Subscribe · $20/mo'}
+				</button>
+			{/if}
 		</section>
 	{:else if standingUnknown}
 		<section class="chapter">
@@ -552,10 +601,11 @@
 		</section>
 	{:else}
 		<section class="chapter">
-			<h2 class="settings-label">Connect your subscription</h2>
+			<h2 class="settings-label">Connect your Virtues account</h2>
 			<p class="chapter-lede">
-				Link this box to your Virtues subscription to turn on AI. Checkout happens on
-				Stripe — your box never sees a payment key.
+				Link this server to your Virtues account. Sign in if you have one; creating one
+				takes you through Stripe for the subscription. Your server never sees a payment
+				key.
 			</p>
 
 			{#if linkError}

@@ -16,6 +16,7 @@ a page, indexed from this table, so a record missing a row does not publish.
 | [data-durability.md](data-durability.md) | Partly built | Three-pass audit of the iOS → box ingestion path against the stated "zero silent data loss" promise, split into a data-integrity track and a background-reliability track. |
 | [device-version-update-audit.md](device-version-update-audit.md) | — | _Needs a line._ |
 | [display-hardware.md](display-hardware.md) | — | Measured behavior of the Dragon Q6A panel: the lying EDID, the ddcutil prohibition, the Q6A bootloader finding, and the only surviving copy of the captured EDID blob. |
+| [entitlement-split.md](entitlement-split.md) | Current | 0017 made linking identity rather than billing and no consumer was told: a free account read as Active for three days. The failure class (a semantic decoupling is a contract change), what was fixed 2026-09-03, and what is still open. |
 | [event-timeline.md](event-timeline.md) | Current | How a day becomes a clean, gapless sequence of events out of incomplete, out-of-order, mutually contradictory evidence. The spine the day page renders. |
 | [ir-notes.md](ir-notes.md) | Reference | Grounded map of the retrieval stack as it actually is, the non-obvious truths a full read exposed, and a ranked set of improvements with spikes. |
 | [lsi-plan.md](lsi-plan.md) | — | _Needs a line._ |

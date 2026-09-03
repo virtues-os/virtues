@@ -46,13 +46,24 @@ pub fn invalidate() {
     }
 }
 
+/// The last answer atlas gave, whatever its age — for callers that need a
+/// sentence right now (a metered 402 deciding between "subscribe" and "top
+/// up") and cannot wait on a network round-trip. `None` = never asked.
+pub fn last_known_entitlement() -> Option<Entitlement> {
+    cache().lock().ok().and_then(|c| c.map(|(_, e)| e))
+}
+
 /// Ask atlas, or reuse a recent answer. `None` means we have never had one and
 /// could not get one now — the caller reports "unknown", never "unsubscribed".
-async fn entitlement(api_key: &str) -> Option<Entitlement> {
-    if let Ok(c) = cache().lock() {
-        if let Some((at, e)) = *c {
-            if at.elapsed() < TTL {
-                return Some(e);
+/// `fresh` skips the cache: the UI passes it while it waits on a checkout the
+/// owner just opened, so a new subscription shows the moment it exists.
+async fn entitlement(api_key: &str, fresh: bool) -> Option<Entitlement> {
+    if !fresh {
+        if let Ok(c) = cache().lock() {
+            if let Some((at, e)) = *c {
+                if at.elapsed() < TTL {
+                    return Some(e);
+                }
             }
         }
     }
@@ -88,7 +99,7 @@ async fn entitlement(api_key: &str) -> Option<Entitlement> {
 /// bypassed locally, so the box never claims a key, and without this the
 /// frontend would nag despite AI working. Pointed at staging/prod (no verbatim
 /// key) we fall through to the real signal so the genuine flow is exercised.
-pub async fn get_subscription_status(pool: &PgPool) -> Result<serde_json::Value> {
+pub async fn get_subscription_status(pool: &PgPool, fresh: bool) -> Result<serde_json::Value> {
     if crate::middleware::auth::is_dev()
         && std::env::var("VIRTUES_API_KEY").is_ok_and(|b| !b.is_empty())
     {
@@ -103,7 +114,7 @@ pub async fn get_subscription_status(pool: &PgPool) -> Result<serde_json::Value>
         return Ok(payload("none", false, false, true));
     };
 
-    Ok(match entitlement(&api_key).await {
+    Ok(match entitlement(&api_key, fresh).await {
         Some(Entitlement::Subscribed) => payload("active", true, true, true),
         Some(Entitlement::Free) => payload("linked", true, false, true),
         // The key is dead: linked in name only. Reported as unknown rather than
@@ -123,8 +134,5 @@ fn payload(status: &str, linked: bool, subscribed: bool, known: bool) -> serde_j
         // Kept for older clients (the iOS bundle ships its own SPA build).
         // Means subscribed, which is what every consumer used it for.
         "is_active": subscribed,
-        // The launch plan is a flat monthly subscription with no trial.
-        "trial_expires_at": null,
-        "days_remaining": null,
     })
 }
