@@ -398,6 +398,20 @@ def main():
          tuples=False)
     print("  data_calendar_event: attendee and organizer identifiers replaced")
 
+    # Merchants. A transaction history names the shops, clinics and bars around
+    # somebody's home; it locates a person about as precisely as coordinates do,
+    # and none of these names are entities in the graph.
+    merchants = psql(db, "select distinct merchant_name from data_financial_transaction "
+                         "where merchant_name is not null and merchant_name <> '' order by 1")
+    ups = [f"update data_financial_transaction set merchant_name="
+           f"{q(pseudonym('org', i + 61))} where merchant_name={q(m[0])}"
+           for i, m in enumerate(merchants)]
+    for i in range(0, len(ups), 200):
+        psql(db, ";\n".join(ups[i:i + 200]), tuples=False)
+    psql(db, f"update data_financial_transaction set description={q(PLACEHOLDER)} "
+             f"where description is not null", tuples=False)
+    print(f"  data_financial_transaction: {len(ups)} merchants renamed, descriptions cleared")
+
     # Derived copies. The search index stores its own title/preview/content, so
     # a scrub of the source tables leaves every original string sitting in the
     # index, one search away from a screenshot.
