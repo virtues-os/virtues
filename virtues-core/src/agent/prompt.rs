@@ -430,7 +430,7 @@ mod tests {
     fn test_build_personalized_prompt_agent_mode() {
         let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "agent", "");
 
-        assert!(prompt.contains("You are Ari, Adam's personal AI assistant"));
+        assert!(prompt.contains("You are Ari. You live on Adam's own server"));
         assert!(prompt.contains("Respond helpfully and accurately to Adam"));
         // Narrative identity section always present
         assert!(prompt.contains("<narrative_identity>"));
@@ -457,7 +457,7 @@ mod tests {
     fn test_build_personalized_prompt_chat_mode() {
         let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "chat", "");
 
-        assert!(prompt.contains("You are Ari, Adam's personal AI assistant"));
+        assert!(prompt.contains("You are Ari. You live on Adam's own server"));
         // Chat is now the smart default with tools, so tool usage IS included
         assert!(prompt.contains("<tool_usage>"));
         assert!(prompt.contains("<mode>assistant</mode>"));
@@ -495,7 +495,7 @@ mod tests {
         let prompt = build_personalized_prompt("Ari", "Bob", "custom_persona", Some(custom), "agent", "");
 
         assert!(prompt.contains("Custom guideline for Bob"));
-        assert!(prompt.contains("You are Ari, Bob's personal AI assistant"));
+        assert!(prompt.contains("You are Ari. You live on Bob's own server"));
     }
 
     #[test]
