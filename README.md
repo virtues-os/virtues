@@ -27,9 +27,10 @@
   the visual size hierarchy. Times is a system font; Linux/Android fall back to
   their default serif.
 
-  SCREENSHOTS: the four `<!-- SHOT n -->` comments below mark frames that have not
-  been captured yet. Replace each with an <img> once the shot exists; see the
-  comment for what must be in frame.
+  SCREENSHOTS: shots 1 and 4 are placed. The remaining `<!-- SHOT n -->` comments
+  mark frames nobody has captured yet — replace each with an <img> once the shot
+  exists, and give it alt text describing WHAT IS IN FRAME, not "screenshot".
+  Capture against an anonymized copy: tools/anonymize-boxcopy.py.
   └──────────────────────────────────────────────────────────────────────────────┘
 -->
 
@@ -47,7 +48,7 @@ Virtues is what that ownership looks like in practice. Your days come back
 written down, the people and places in them linked, the whole record
 searchable — on a server you own, reachable only with a key you hold.
 
-<!-- SHOT 1: a day page: the diary, the epigraph, the movement map, the event timeline. The hero image. This is the artifact; everything else in this file is how it gets made. -->
+<img src=".github/images/shots/day-page.png" alt="The day page for Wednesday 2 September: a first-person account of the day — a late call, a slow morning, a short errand, six hours at the desk, an afternoon call and a fantasy draft — with the people and organizations in it rendered as links, above a Dayline charting events, communication, location, activity, health and spending across the twenty-four hours." width="100%">
 
 Two ways to run it. **Do it yourself** is the software on your own Linux
 machine, installed with one command — the path you can take today, and the one
@@ -376,7 +377,7 @@ tomorrow. `virtues status` is where you watch all three.
 | Ports | `8000` server · `5432` Postgres · `18181`/`18182` embed and rerank |
 | Logs | `journalctl -u virtues -f` |
 
-<!-- SHOT 4: `virtues doctor` as a terminal capture: three ledgers and a verdict. Proves the server is observable, which no paragraph can. -->
+<img src=".github/images/shots/doctor.png" alt="virtues doctor output: an Inference ledger naming the accelerator, the embedding and rerank models and both endpoints serving; a Reach ledger with the LAN address and three paired devices; then two warnings — no iroh identity yet, and no relay configured — each printed with the command that resolves it." width="100%">
 
 **When something breaks:** [When something breaks](docs/operate/recovery.md) is
 the owner's page; [agents/build/recovery.md](agents/build/recovery.md) is the
