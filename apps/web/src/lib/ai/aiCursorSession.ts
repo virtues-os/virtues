@@ -227,17 +227,15 @@ class AiCursorSession {
 	}
 
 	async run(): Promise<void> {
-		// Models may not be loaded yet — the pages editor, unlike chat, never
-		// triggers the fetch. Ensure they're loaded before resolving one, or the
-		// first inline edit on a fresh session fails with "no model available".
+		// The catalog is for DISPLAY here too: the box resolves the model when
+		// we send none (see `api/model_choice.rs`), so an editor that could not
+		// reach the catalog still edits. This used to hard-fail with "no model
+		// available" — the pages editor never triggers the fetch itself, so it
+		// was one flaky request away from that on every inline edit.
 		await getInitializationPromise();
 		if (this.aborted) return this.cleanup();
 
 		const model = getSelectedModel()?.id ?? getDefaultModel()?.id;
-		if (!model) {
-			aiSession.set("error", "No model available");
-			return;
-		}
 
 		aiSession.set("thinking");
 
@@ -284,7 +282,7 @@ class AiCursorSession {
 			const pageTitle = this.pageTitle?.trim() || undefined;
 			const stream = streamCompletion(
 				{
-					model,
+					...(model && { model }),
 					intent: this.intent,
 					instruction: this.instruction,
 					selection,

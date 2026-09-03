@@ -35,7 +35,11 @@ type SseEvent = axum::response::sse::Event;
 
 #[derive(Debug, Deserialize)]
 pub struct AiCompleteRequest {
-    pub model: String,
+    /// The person's pick, if they made one. Absent means the Chat slot — the
+    /// pages editor has no picker of its own, so absent is the normal case.
+    /// Same contract as `POST /api/chat`; see `api::model_choice`.
+    #[serde(default)]
+    pub model: Option<String>,
     /// "rewrite" | "continue" | "generate"
     pub intent: String,
     #[serde(default)]
@@ -107,20 +111,27 @@ pub async fn ai_complete_handler(
     _user: AuthUser,
     Json(request): Json<AiCompleteRequest>,
 ) -> Response {
-    // Validate the model against the registry (mirrors chat_handler).
-    match crate::api::models::list_models().await {
-        Ok(models) => {
-            if !models.iter().any(|m| m.model_id == request.model) {
-                return (StatusCode::BAD_REQUEST, "Invalid model").into_response();
-            }
+    // One door, same as chat_handler: the box resolves the model, the request
+    // only gets to override it. Inline prose editing is the Chat slot's work.
+    let model = match crate::api::model_choice::resolve_turn_model(
+        &pool,
+        request.model.as_deref(),
+        "chat",
+    )
+    .await
+    {
+        Ok(m) => m,
+        Err(crate::error::Error::InvalidInput(detail)) => {
+            tracing::warn!(requested = ?request.model, "rejected per-turn model");
+            return (StatusCode::BAD_REQUEST, detail).into_response();
         }
-        Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to load models").into_response();
+        Err(e) => {
+            tracing::error!(error = %e, "failed to resolve the model for this edit");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to resolve model").into_response();
         }
-    }
+    };
 
     let messages = build_messages(&request);
-    let model = request.model.clone();
 
     let stream: Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> =
         Box::pin(async_stream::stream! {

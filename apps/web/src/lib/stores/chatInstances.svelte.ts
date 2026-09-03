@@ -9,6 +9,7 @@
 import { Chat } from '@ai-sdk/svelte';
 import { DefaultChatTransport, type ChatTransport } from 'ai';
 import { subscriptionStore } from '$lib/stores/subscription.svelte';
+import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import type { CheckpointMessage } from '$lib/types/chat';
 
 // --- Streaming reactivity helpers (see replaceMessage override below) ---------
@@ -118,7 +119,11 @@ interface ActivePageContext {
 
 interface CreateChatConfig {
     conversationId: string;
-    getModel: () => string; // Getter to always get current model
+    /** The person's per-turn pick, or undefined when they have not made one.
+     *  Undefined is the ordinary case: the box resolves the model from the
+     *  slot (see `model_choice.rs`), so the field is omitted rather than
+     *  guessed at. Sending a guess is what put an empty string on the wire. */
+    getModel: () => string | undefined;
     getNotebookId: () => string | null; // Getter for space ID (null for system space)
     getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
     getPersona?: () => string; // Getter for selected persona (per-chat)
@@ -192,11 +197,12 @@ class ChatInstanceStore {
                     const temporary = getTemporary?.() || false;
                     const entry = this.instances.get(conversationId);
                     const thoughtSignature = entry?.lastThoughtSignature;
+                    // Omitted unless the person picked one — see getModel above.
+                    const model = getModel();
 
                     return {
                         body: {
                             chatId: conversationId,
-                            model: getModel(),
                             agentId: 'auto',
                             messages,
                             persona,
@@ -214,7 +220,8 @@ class ChatInstanceStore {
                             // Include active page context if a page is bound
                             ...(activePage && { activePage }),
                             // Include thought signature if available
-                            ...(thoughtSignature && { thoughtSignature })
+                            ...(thoughtSignature && { thoughtSignature }),
+                            ...(model && { model })
                         }
                     };
                 }
@@ -231,6 +238,16 @@ class ChatInstanceStore {
                 // Handle Deep Research subagent events (transient - drives the live panel)
                 else if (dataPart.type === 'data-subagent') {
                     this.applySubagent(conversationId, dataPart.data as SubagentStatus);
+                }
+                // The interview's write_it_up finished: open the "In your own
+                // words" document beside the chat. Sent as a transient data
+                // part because tool parts land in the messages array mutably,
+                // where no effect ever observes them arrive.
+                else if (dataPart.type === 'data-narrative-document') {
+                    const pageId = (dataPart.data as { pageId?: string })?.pageId;
+                    if (pageId) {
+                        windowShellStore.openRouteBeside(`/page/${pageId}`);
+                    }
                 }
                 // Handle checkpoint events from auto-compaction (non-transient - persists in messages)
                 else if (dataPart.type === 'data-checkpoint') {
