@@ -96,9 +96,16 @@
 	}
 </script>
 
-<!-- No <Page>: a SECTION of Plan. See PlanView. -->
-<section class="block">
+<!-- No <Page>: the last chapter of Plan. See PlanView. -->
+<section class="chapter">
 	<h2 class="settings-label">AI calls</h2>
+	<!-- Names its relation to the wallet ledger above it. Two lists of
+	     spending on one page, with nothing saying how they differ, is how you
+	     get a reader adding them together. -->
+	<p class="chapter-lede">
+		Every paid call, itemized. The “Usage” lines in the wallet ledger above are
+		these, totalled.
+	</p>
 	<UniversalDataGrid
 		items={[]}
 		columns={callColumns}
@@ -122,8 +129,19 @@
 </section>
 
 <style>
-	.block {
-		margin-bottom: 2rem;
+	/* Same chapter rule as the sections above (see BillingView) — a hairline
+	   under a small-caps eyebrow, not a bordered card. */
+	.chapter {
+		padding-top: 28px;
+		margin-top: 28px;
+		border-top: 1px solid var(--color-border-subtle);
+	}
+	.chapter-lede {
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+		margin: 0 0 14px;
+		max-width: 60ch;
 	}
 
 	.cell {

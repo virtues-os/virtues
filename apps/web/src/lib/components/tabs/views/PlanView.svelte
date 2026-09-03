@@ -25,7 +25,5 @@
 	maxWidth="wide"
 >
 	<BillingView {tab} {active} />
-	<div class="mt-10">
-		<UsageView />
-	</div>
+	<UsageView />
 </Page>
