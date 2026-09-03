@@ -30,7 +30,8 @@
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { fade } from "svelte/transition";
+	import { fade, fly } from "svelte/transition";
+	import { cubicOut } from "svelte/easing";
 	import Icon from "$lib/components/Icon.svelte";
 	import { getProfile, updateProfile, getCensus, type Profile, type Census } from "$lib/api/client";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
@@ -285,7 +286,7 @@
 					</div>
 
 					{#if s.id === active}
-						<div class="body" in:fade={{ duration: 150 }}>
+						<div class="body" in:fly={{ y: 10, duration: 260, easing: cubicOut }}>
 							{#if s.id === "letter"}
 								<a class="link" href="/founders-letter">Read it again <span class="arw">→</span></a>
 							{:else if s.id === "introductions"}
@@ -475,7 +476,9 @@
 	   between — three weights, read at a glance. */
 	.step.done .t { color: var(--color-foreground-subtle); }
 	.step.done .n { color: color-mix(in srgb, var(--color-foreground-subtle) 55%, transparent); }
-	.step.active .t { color: var(--color-foreground); }
+	/* The open step speaks in the folio's accent — title and numeral in the
+	   same claret as the plate's now-line. */
+	.step.active .t { color: #9a2b2e; }
 
 	/* Hover stays in the book's voice: ink, not link-blue. The whole line
 	   answers, so a row reads as pressable before the cursor finds the
