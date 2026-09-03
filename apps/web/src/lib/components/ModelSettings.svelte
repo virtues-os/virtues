@@ -26,9 +26,6 @@
 		label: string;
 		description: string;
 		dbField: string;
-		/** Pre-slot-system column. Cleared alongside dbField so an old pinned
-		 *  value can't resurrect itself through the backend's `.or()` fallback. */
-		legacyField?: string;
 	}
 
 	type SlotKey = "chat" | "lite" | "coding" | "image";
@@ -44,14 +41,12 @@
 			label: "Chat",
 			description: "Default for conversations",
 			dbField: "chat_model_id",
-			legacyField: "default_model_id",
 		},
 		{
 			key: "lite",
 			label: "Lite",
 			description: "Titles, summaries, background work",
 			dbField: "lite_model_id",
-			legacyField: "background_model_id",
 		},
 		{
 			key: "coding",
@@ -98,16 +93,10 @@
 			slotDefaults = data.slots || {};
 
 			if (profile) {
-				// NULL (or a legacy NULL) means unpinned → Virtues default.
+				// NULL means unpinned → Virtues default.
 				slotValues = {
-					chat:
-						profile.chat_model_id ||
-						profile.default_model_id ||
-						DEFAULT,
-					lite:
-						profile.lite_model_id ||
-						profile.background_model_id ||
-						DEFAULT,
+					chat: profile.chat_model_id || DEFAULT,
+					lite: profile.lite_model_id || DEFAULT,
 					coding: profile.coding_model_id || DEFAULT,
 					image: profile.image_model_id || DEFAULT,
 				};
@@ -181,7 +170,6 @@
 		const body: Record<string, string | null> = {
 			[slot.dbField]: id === DEFAULT ? null : id,
 		};
-		if (slot.legacyField && id === DEFAULT) body[slot.legacyField] = null;
 
 		try {
 			await updateAssistantProfile(body);
