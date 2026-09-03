@@ -686,11 +686,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::unhide_persona_handler),
         )
         .route("/api/personas/reset", post(api::reset_personas_handler))
-        // Metrics API
-        .route(
-            "/api/metrics/activity",
-            get(api::get_activity_metrics_handler),
-        )
         // Per-stream ingest freshness — surfaces a stalled source instead of
         // letting it rot silently.
         .route("/api/streams/health", get(api::stream_health_handler))
@@ -826,17 +821,21 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // particular now accumulates as a floating mention until something
         // promotes it. This comment used to point at /api/things, which no
         // longer exists.
-        // Wiki - Narrative Identity
+        // Wiki - Narrative Identity. Read-only: the document is edited on its
+        // page, and the retired abridged copy took its PUT with it.
         .route(
             "/api/wiki/narrative-identity",
-            get(api::wiki_get_narrative_identity_handler)
-                .put(api::wiki_update_narrative_identity_handler),
+            get(api::wiki_get_narrative_identity_handler),
         )
         // Wiki - Telos
         // Wiki - Act
         .route("/api/wiki/stories", get(api::wiki_list_stories_handler))
         .route("/api/wiki/story/:id", get(api::wiki_get_story_handler))
-        // Wiki - Chapter
+        // Wiki - Chapter (the life's partition, written by the interview)
+        .route(
+            "/api/wiki/chapters",
+            get(crate::api::narrative_draft::chapters_handler),
+        )
         // Wiki - Day
         .route("/api/wiki/days", get(api::wiki_list_days_handler))
         .route("/api/wiki/activity", get(api::wiki_day_activity_handler))

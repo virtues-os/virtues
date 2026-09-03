@@ -344,7 +344,6 @@ export async function getCensus(): Promise<Census> {
 
 export interface NarrativeDraft {
 	document: string;
-	core: string;
 	/** Proposed only. Nothing binds the assistant until it is confirmed. */
 	proposed_rules: string[];
 }
@@ -2420,6 +2419,16 @@ export interface SetupStep {
 	kind?: string;
 }
 
+/** A collector that is paired and running but missing a permission it needs. */
+export interface DegradedCollector {
+	device_id: string;
+	label?: string | null;
+	/** Capability names the collector reports NOT having, e.g. "full_disk_access". */
+	denied: string[];
+	stale: boolean;
+	checked_at?: string | null;
+}
+
 export interface SetupState {
 	setup: SetupStep[];
 	/** The box is up: claimed, and linked to an account on an appliance. */
@@ -2427,6 +2436,8 @@ export interface SetupState {
 	onboarding: SetupStep[];
 	/** The box has something to keep a record of — at least one source. */
 	onboarding_complete: boolean;
+	/** Collectors running with a denied permission — a ✓ over one of these lies. */
+	degraded?: DegradedCollector[];
 	/** `new` | `onboarding` | `active`. `active` means finished OR dismissed —
 	 *  both stop the redirect. Backed by app_user_profile.onboarding_status,
 	 *  which already tracked this life stage before a second flag was added. */
@@ -2672,9 +2683,6 @@ export function getSystemTelemetry<T = unknown>(): Promise<T> {
 export function getSystemHistory<T = unknown>(): Promise<T> {
 	return apiGet<T>('/system/history');
 }
-export function getMetricsActivity<T = unknown>(): Promise<T> {
-	return apiGet<T>('/metrics/activity');
-}
 /** One row of the box-local AI-call log. Metadata only — never content. */
 export interface AiCallRow {
 	id: string;
@@ -2716,11 +2724,10 @@ export function getSubscription<T = unknown>(): Promise<T> {
 }
 
 // ── Narrative identity (wiki) ────────────────────────────────────────────────
+// Read-only: the document is edited on its page. (The PUT died with the
+// retired abridged copy, 2026-09-01.)
 export function getNarrativeIdentity<T = unknown>(): Promise<T> {
 	return apiGet<T>('/wiki/narrative-identity');
-}
-export function updateNarrativeIdentity<T = unknown>(body: Record<string, unknown>): Promise<T> {
-	return apiSend<T>('PUT', '/wiki/narrative-identity', body);
 }
 
 // ── Devices / pairing (extras beyond pairMint/pairDeny/pairStatus) ────────────
