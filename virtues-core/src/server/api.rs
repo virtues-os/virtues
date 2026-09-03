@@ -1364,26 +1364,39 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
 /// api_key from the local vault, ask Atlas to mint a Stripe-hosted
 /// Customer Portal session, and return its `url` for BillingView to open.
 /// Any failure (no api_key yet, inactive subscription, Stripe hiccup)
-/// returns a clean `{error}` string the button renders inline — never a 500.
+/// returns a clean `{error, code}` the button renders inline — never a 500.
+///
+/// `code` exists because the prose cannot carry the branch: three unrelated
+/// conditions printed "Couldn't open the billing portal. Try again.", so a
+/// screenshot from an owner told us nothing about which one to go fix. The
+/// vocabulary is atlas's own codes passed through (`no_subscription`,
+/// `subscription_inactive`, `stripe_error`, `invalid_api_key`, `internal`)
+/// plus the three failures that never reach atlas:
+/// `not_linked`, `vault_unreadable`, `atlas_unreachable`.
 pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> Response {
+    /// Every refusal is a 200 with prose for the owner and a code for us.
+    fn refuse(code: &str, message: &str) -> Response {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({ "error": message, "code": code })),
+        )
+            .into_response()
+    }
+    // The sentence the owner sees when the failure is ours, not theirs — the
+    // code beside it is what says which "ours".
+    const TRY_AGAIN: &str = "Couldn't open the billing portal. Try again.";
+
     let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
         Ok(Some(t)) => t,
         Ok(None) => {
-            return (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "error": "Connect your subscription first, then you can manage billing here."
-                })),
-            )
-                .into_response();
+            return refuse(
+                "not_linked",
+                "Connect your subscription first, then you can manage billing here.",
+            );
         }
         Err(e) => {
-            tracing::warn!("billing portal: vault read failed: {e}");
-            return (
-                StatusCode::OK,
-                Json(serde_json::json!({ "error": "Couldn't open the billing portal. Try again." })),
-            )
-                .into_response();
+            tracing::warn!("billing portal [vault_unreadable]: {e}");
+            return refuse("vault_unreadable", TRY_AGAIN);
         }
     };
 
@@ -1403,20 +1416,20 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
         // A linked account with no active subscription (free, or lapsed):
         // valid key, nothing to open. Permanent until they subscribe —
         // "try again" would be a lie.
-        Ok(crate::virtues_api::renew::PortalSession::NoSubscription) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "error": "No active subscription on this account — start one and you can manage billing here."
-            })),
-        )
-            .into_response(),
+        Ok(crate::virtues_api::renew::PortalSession::NoSubscription { code }) => refuse(
+            &code,
+            "No active subscription on this account — start one and you can manage billing here.",
+        ),
+        // atlas answered and refused for its own reason. Its code is the one
+        // worth showing: it is the one their logs are keyed on too.
+        Ok(crate::virtues_api::renew::PortalSession::Failed { code, status }) => {
+            tracing::warn!("billing portal [{code}]: atlas answered {status}");
+            refuse(&code, TRY_AGAIN)
+        }
+        // Never got an answer: DNS, TLS, timeout, or a body we couldn't read.
         Err(e) => {
-            tracing::warn!("billing portal session failed: {e}");
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({ "error": "Couldn't open the billing portal. Try again." })),
-            )
-                .into_response()
+            tracing::warn!("billing portal [atlas_unreachable]: {e}");
+            refuse("atlas_unreachable", TRY_AGAIN)
         }
     }
 }

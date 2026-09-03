@@ -154,9 +154,18 @@ pub async fn auto_topup(
 /// free account holds a perfectly valid key and simply has no Stripe customer
 /// to open a portal for — the UI must say that, not "try again" (a beta owner
 /// read the generic copy as a transient failure and retried a permanent one).
+///
+/// Every non-URL variant carries atlas's own error `code` rather than only its
+/// prose, because three unrelated conditions used to print one sentence and a
+/// screenshot could not say which had happened.
 pub enum PortalSession {
     Url(String),
-    NoSubscription,
+    /// A valid key with no Stripe customer behind it: free, or lapsed.
+    /// `code` is atlas's (`no_subscription` / `subscription_inactive`).
+    NoSubscription { code: String },
+    /// atlas answered, and the failure is its own — Stripe down, unknown key,
+    /// internal. `status` is atlas's HTTP status, for the box's log line.
+    Failed { code: String, status: u16 },
 }
 
 pub async fn fetch_portal_session(
@@ -177,19 +186,30 @@ pub async fn fetch_portal_session(
         .send()
         .await
         .context("POST /billing/portal/sessions")?;
-    if resp.status() == reqwest::StatusCode::PAYMENT_REQUIRED {
-        return Ok(PortalSession::NoSubscription);
+    let status = resp.status();
+    if status.is_success() {
+        let v: serde_json::Value = resp.json().await?;
+        return v["url"]
+            .as_str()
+            .map(|s| PortalSession::Url(s.to_string()))
+            .ok_or_else(|| anyhow!("portal response missing url"));
     }
-    if !resp.status().is_success() {
-        let s = resp.status();
-        let b = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("portal session fetch failed: {s} — {b}"));
-    }
-    let v: serde_json::Value = resp.json().await?;
-    v["url"]
+
+    // A refusal is `{error:{code,message}}`. An unparseable body is not fatal
+    // here — "unknown" plus the status still names the branch better than the
+    // prose the owner sees.
+    let body: serde_json::Value = resp.json().await.unwrap_or_else(|_| serde_json::json!({}));
+    let code = body["error"]["code"]
         .as_str()
-        .map(|s| PortalSession::Url(s.to_string()))
-        .ok_or_else(|| anyhow!("portal response missing url"))
+        .unwrap_or("unknown")
+        .to_string();
+    if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+        return Ok(PortalSession::NoSubscription { code });
+    }
+    Ok(PortalSession::Failed {
+        code,
+        status: status.as_u16(),
+    })
 }
 
 async fn find_credential_id(db: &PgPool) -> Result<Option<String>> {
