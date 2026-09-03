@@ -45,12 +45,13 @@ HEADINGS = [
 ]
 H2 = [
     "What It Does", "Architecture", "Data Sources", "Overview",
-    "Install (Linux home server)", "Connect from another machine (v0.2 preview)",
+    "Install (Linux home server)", "Reaching your box",
     "Development", "Cloud sidecar", "iOS App", "Project Structure",
     "Database Schema", "The Day Pipeline", "Features", "License",
 ]
 H3 = [
-    "Requirements", "Install in one command", "Prerequisites", "Setup", "Run",
+    "Requirements", "Inference", "Install in one command", "Prerequisites",
+    "Setup", "Run",
     "virtues-api (required for AI features)", "Segmentation & Narration",
     "Event Novelty", "Topic & Entity Novelty", "Live Rhythm",
 ]

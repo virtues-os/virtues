@@ -34,17 +34,21 @@ already generate — health, location, money, calendar, mail, messages, what you
 record and read — and turns it into a record you can actually ask questions of.
 One household, one box, no account on somebody else's server.
 
-Two ways to run it. **The appliance** is a small board we flash and ship, with a
-screen on the front; you plug it in and pair a phone to it. **Do it yourself** is
-the same software on your own Linux machine, installed with one command. The
-appliance is the product; the DIY path is how it stays honest — it is the same
-binary, and you can always leave with your data.
+Two ways to run it. **Do it yourself** is the software on your own Linux
+machine, installed with one command — the path you can take today, and the one
+this README is written for. **The appliance** is the same binary on a small
+board we flash, with a screen on the front; it is what we are building toward
+and not yet something you can buy. Same binary either way, and you can always
+leave with your data.
 
-> **Status: 0.1.0, and early in the way that word should mean.** Exactly one box
-> exists and it was built by hand. The appliance path — flashing, first boot,
-> pairing over Bluetooth, the case button — has been walked end to end once, on
-> that board. No stable release is published yet, so the install command below
-> does not work today; see [Installing](#install-linux-home-server).
+> **Status: early, in the way that word should mean.** Stable releases ship on
+> the `virtues.com/sh` channel and prereleases on `sh-pre`; the
+> [releases page](https://github.com/virtues-os/virtues/releases) is the only
+> honest statement of what exists at any given moment, so read it there rather
+> than here. Boxes do not update themselves — an upgrade is a command you run.
+> The appliance path (flashing, first boot, pairing over Bluetooth, the case
+> button) has been walked end to end on real boards; DIY is the path under
+> daily use.
 >
 > Auth is **pair-only**: no passwords, no email, no magic links. The only way to
 > get in the first time is to be standing next to it. A paired device then
@@ -69,8 +73,10 @@ All of it runs as a single Rust binary against a Postgres database on the box's
 own disk.
 
 **Where your data goes, stated plainly.** It is stored on the box and it stays
-there. Search runs on the box — embeddings and reranking never leave it. GPS is
-reduced to distance and pace before anything is sent anywhere.
+there. Search runs on your side of the wire — the embedding and reranking
+endpoints must be local, and the installer refuses a public address for either
+(see [Setting up inference](docs/inference.md)). GPS is reduced to distance and
+pace before anything is sent anywhere.
 
 The exception is the assistant, and it is not a leak, it is the feature: asking a
 question, or letting the box write your day, sends the relevant part of your
@@ -103,16 +109,24 @@ says exactly what crosses it and what never does.
 │  └──────────┘  └───────────┘  └──────────┘  └───────────┘  │
 │  Storage: Postgres (metadata + ontologies) · S3 (raw streams)│
 └──────────────────────┬──────────────────────────────────────┘
+                       ├────────────────► ┌──────────────────────────────────┐
+                       │                  │ Inference endpoints — YOURS      │
+                       │                  │ /v1/embeddings  :18181           │
+                       │                  │ /v1/rerank      :18182           │
+                       │                  │ loopback / LAN / VPN only        │
+                       │                  └──────────────────────────────────┘
                        ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  virtues-api (Rust sidecar · port 9002)                       │
 │  API proxy with per-user budget enforcement                 │
 │  Routes to 100+ LLM providers via Vercel AI Gateway         │
-│  Holds all external API keys (AI, Exa, Plaid, Google, etc.) │
+│  Holds all external API keys (AI, search, Plaid, Google)    │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 **Core** handles data ingestion, entity resolution, the wiki, pages, chat, and serves the web UI. **virtues-api** is a sidecar proxy that mediates all external API calls — LLM requests, web search, bank connections — with budget tracking and key isolation. Core never touches API keys directly.
+
+**Retrieval is two HTTP contracts, not code we ship.** Core consumes an OpenAI-style `/v1/embeddings` endpoint (required) and a `/v1/rerank` endpoint (optional), and cannot tell what is behind them. On our own board the installer provisions them on the NPU; on your machine you run them, and the installer probes what you point it at and pins the model's fingerprint so a silent model swap can't quietly corrupt your index. That is the whole composability story — see [Setting up inference](docs/inference.md).
 
 **Remote access** has no public surface at all. The box is an iroh endpoint whose Ed25519 key *is* its identity, so a paired device reaches it by key — LAN-direct, hole-punched, or bounced off our relay — with no inbound port opened at home and no hostname anyone can type. The relay forwards sealed, end-to-end-encrypted bytes it has no key to read; it does see which two keys are talking, the addresses they connect from, and how much traffic passes. See **[Privacy &amp; security model](agents/record/privacy-model.md)** (who holds which secret, and who deliberately doesn't) and the [visual walkthrough](agents/archive/relay-walkthrough.html).
 
@@ -141,7 +155,7 @@ Extensible: add a new source as an applet in `applets/<name>/` with a `manifest.
 **AI Chat** — Multi-model chat (Claude, GPT, Gemini, etc.) with tools:
 
 - `sql_query` — read-only SQL against your ontology tables
-- `web_search` — Exa-powered web research
+- `web_search` — web research through the gateway
 - `code_interpreter` — Python sandbox (pandas, matplotlib, scipy)
 - `create_page` / `edit_page` — AI-authored documents
 - MCP server support for custom tool integrations
@@ -160,10 +174,50 @@ Extensible: add a new source as an applet in `applets/<name>/` with a `manifest.
 
 | | |
 |---|---|
-| **Host OS** | Debian 13+, Ubuntu 24.04 LTS+, or Fedora 40+. Debian 13 and Ubuntu 26.04+ ship Postgres 18 natively; on Ubuntu 24.04/25.04 the installer adds the [PGDG repo](https://www.postgresql.org/download/linux/) automatically. x86_64 or aarch64. |
-| **Hardware** | 8 GB RAM, an SSD. GPU optional. |
-| **Network** | Standard residential ISP — outbound 443 only, no port forwarding, no inbound rule. LAN-first: the web UI is reachable from a browser on the box itself (Chromium on the box → `http://localhost:8000`) or anywhere else from a paired client — the mobile app, or the desktop helper at `http://localhost:7117` (see [Connect from another machine](#connect-from-another-machine-v02-preview) below). |
+| **Host OS** | Debian 13+, Ubuntu 24.04 LTS+, or Fedora 40+, `x86_64` or `aarch64`, with systemd and root. Debian 13 and Ubuntu 26.04+ ship Postgres 18 natively; on Ubuntu 24.04/25.04 the installer adds the [PGDG repo](https://www.postgresql.org/download/linux/) automatically, and on Fedora it takes Postgres as shipped. A VM is fine; a container is not. |
+| **Hardware** | 8 GB RAM and an SSD. **No GPU required** — the model that writes is remote, embedding is faster on CPU than on an fp16 GPU path for the model we ship, and only the reranker meaningfully gains from a GPU. |
+| **Storage** | NVMe or SATA SSD. The installer classifies *and measures* the disk before provisioning anything: eMMC is workable to ~100k items, microSD is slow and wears out under database load, a USB bridge may lie about cache flushes, NFS/SMB is a corruption risk. |
+| **Inference** | Two endpoints you run: `/v1/embeddings` (required) and `/v1/rerank` (optional), on loopback, LAN, or VPN — never a public address. [Setting up inference](docs/inference.md) has the commands and the models. A bundled CPU-only trial exists for kicking the tires. |
+| **Network** | Standard residential ISP — outbound 443 only, no port forwarding, no inbound rule. LAN-first: the web UI is reachable from a browser on the box itself (Chromium on the box → `http://localhost:8000`) or anywhere else from a paired client — the mobile app, or the desktop helper at `http://localhost:7117` (see [Reaching your box](#reaching-your-box) below). |
 | **Mac / Windows** | Not supported as host — Virtues needs root, native Postgres, and full SSD ownership. Use a Linux box. |
+
+Full detail, and the reasoning behind each number, in
+[What to run it on](docs/setup/requirements.md).
+
+<a id="inference"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-inference-dark.svg"><img alt="Inference" src=".github/images/headings/h3-inference-light.svg" height="22"></picture>
+
+**Start this before you install.** The first thing the installer asks — before
+it touches a package, a service, or a disk — is where the retrieval models
+live. We provision inference on exactly one board, our own; we do not install
+GPU or NPU inference software on hardware we can't test, so on your machine
+you own the endpoints and we validate them at the door.
+
+[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` speaks
+both contracts. These are the invocations our own systemd units use:
+
+```bash
+# embedder — CPU is the right answer here (fp32 activations)
+llama-server --embedding --pooling mean -m embeddinggemma-300m-qat-Q8_0.gguf \
+  --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
+
+# reranker — the half that wants a GPU; drop -ngl for CPU
+llama-server --rerank --pooling rank -m gte-reranker-modernbert-base-Q8_0.gguf \
+  --host 127.0.0.1 --port 18182 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 99
+```
+
+`-np 1` and `--cache-ram 0` are what take each server from ~2.5 GB resident to
+~1 GB. Known-good embedders: **embeddinggemma-300m** (768, Matryoshka to 256),
+gte-small (384), bge-small-en-v1.5 (384), e5-small-v2 (384),
+nomic-embed-text-v1.5 (768). Known-good rerankers:
+**gte-reranker-modernbert-base**, bge-reranker-v2-m3, jina-reranker-v2. Any
+server will do — Ollama, vLLM, a vendor's NPU runtime — provided it answers
+the two POST routes *and* `GET /health`, which the box probes at startup and
+which is the requirement people trip over.
+
+[Setting up inference](docs/inference.md) is the full page: the exact contract,
+the prompt-prefix and dimension rules, what the fingerprint pin protects you
+from, and how to change model later without losing your record.
 
 <a id="install-in-one-command"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-install-in-one-command-dark.svg"><img alt="Install in one command" src=".github/images/headings/h3-install-in-one-command-light.svg" height="22"></picture>
@@ -172,20 +226,21 @@ Extensible: add a new source as an applet in `applets/<name>/` with a `manifest.
 curl -sSL https://virtues.com/sh | sudo sh
 ```
 
-> **This does not work yet.** `virtues.com/sh` serves the newest *stable*
-> release, and there is not one: the version line was reset to 0.1.0 before
-> launch and the older tags were withdrawn. Until `v0.1.0` is cut, install the
-> prerelease channel instead — same installer, same steps, cut from the branch
-> we are actually testing:
+> `virtues.com/sh` serves the newest **stable** release. For the prerelease
+> channel — same installer, cut from the branch we test on:
 >
 > ```bash
 > curl -sSL https://virtues.com/sh-pre | sudo sh
 > ```
 >
-> On the appliance you will not run either: the boot medium arrives flashed, and
+> Pin an exact build with `curl -sSL https://virtues.com/sh | sudo VIRTUES_VERSION=vX.Y.Z sh`.
+> The channel you install on is remembered, so later upgrades follow the same
+> line. On the appliance you run neither: the boot medium arrives flashed, and
 > first boot mints the box its own identity.
 
 That:
+- Asks how inference should run — your endpoints (validated and fingerprinted before anything is written) or the bundled CPU-only trial — and does it first, so a broken endpoint costs a prompt rather than a half-finished install
+- Measures the disk your record will live on and tells you, with numbers, what you're in for
 - Downloads the latest `virtues` binary into `/usr/local/bin/`
 - Installs Postgres 18 + pgvector, Avahi (mDNS), and the rest of the system deps via your package manager
 - Configures `/etc/avahi/services/virtues.service` so the box advertises itself on the LAN as `virtues.local`
@@ -210,14 +265,23 @@ Then connect a source, and optionally `sudo -u virtues virtues subscribe` to ena
 | `virtues init` | First-boot plumbing (migrations + pair-token handoff) — usually run by the installer, not by hand |
 | `virtues doctor` | Hardware + inference resolution report |
 | `virtues backup` / `virtues restore` | Snapshot + restore the box state |
-| `virtues upgrade` | Self-update from the latest GitHub Release |
+| `virtues upgrade` | Self-update from the latest release on this box's channel |
+| `virtues channel` | Print (or set) the release channel this box follows |
+| `virtues configure-inference` | Re-validate the embedding endpoint after a model change, and offer to re-embed |
+| `virtues reindex` | Rebuild the derived search index from source data |
 
-**When something breaks:** see [agents/build/recovery.md](agents/build/recovery.md) — covers
-unreachable-box, lost-session, last-device-revoked, Postgres won't start,
-restore from backup, BYO key reset, and more.
+**When something breaks:** [When something breaks](docs/operate/recovery.md)
+is the owner's page; [agents/build/recovery.md](agents/build/recovery.md) is
+the longer runbook behind it — unreachable box, lost session, last device
+revoked, Postgres won't start, restore from backup, BYO key reset.
 
+**The manual** lives in [`docs/`](docs/) and publishes to
+[virtues.com/docs](https://virtues.com/docs): what to run it on, inference,
+installing, reaching your box, upgrading, backup and restore, the CLI.
+
+<a id="reaching-your-box"></a>
 <a id="connect-from-another-machine-v02-preview"></a>
-## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-connect-from-another-machine-v0-2-preview-dark.svg"><img alt="Connect from another machine (v0.2 preview)" src=".github/images/headings/h2-connect-from-another-machine-v0-2-preview-light.svg" height="28"></picture>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-reaching-your-box-dark.svg"><img alt="Reaching your box" src=".github/images/headings/h2-reaching-your-box-light.svg" height="28"></picture>
 
 Reach your box from anywhere — no tunnel, no port forwarding, no DNS name.
 **There is no URL that reaches your box.** Reaching it requires holding a paired
@@ -267,8 +331,9 @@ For contributors working on the codebase itself (not for running Virtues in prod
 <a id="prerequisites"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-prerequisites-dark.svg"><img alt="Prerequisites" src=".github/images/headings/h3-prerequisites-light.svg" height="22"></picture>
 
-- Rust 1.75+
-- Node.js 18+ and pnpm
+- A recent stable Rust toolchain
+- Node.js 22+ and pnpm
+- Homebrew, on macOS — `make db` provisions `postgresql@18` + pgvector through it, and `make dev` installs `llama.cpp` for the local embed/rerank sidecars
 - Docker (for local S3 via MinIO, optional)
 
 <a id="setup"></a>
@@ -277,45 +342,61 @@ For contributors working on the codebase itself (not for running Virtues in prod
 ```bash
 git clone https://github.com/virtues-os/virtues
 cd virtues
-cp .env.example .env
-# Edit .env with your API keys (see comments in .env.example)
+make init   # copies .env.example → .env with a fresh encryption key
 ```
+
+Then read the comments in `.env.example` for the keys you'll want. Note that
+there is **no `./target` in this repo** — the virtues repos share one cargo
+target directory, set per-repo by an untracked `.cargo/config.toml`.
 
 <a id="run"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-run-dark.svg"><img alt="Run" src=".github/images/headings/h3-run-light.svg" height="22"></picture>
 
 ```bash
-# Terminal 1: Start Core server
-cd virtues-core && cargo run -- server
-
-# Terminal 2: Build and serve web UI (production mode)
-cd apps/web && pnpm install && pnpm build
-
-# Or for development with hot reload:
-cd apps/web && pnpm dev
+make dev
 ```
 
-Access: `http://localhost:8000` (Core serves the built web UI) or `http://localhost:5173` (dev server with hot reload).
+One command runs the whole local stack — Postgres, virtues-api on `:9002`,
+Core on `:8000`, the web dev server on `:5173`, and the embed/rerank sidecars
+on `:18181`/`:18182` (first run fetches ~480 MB of GGUFs into `.data/`).
+Ctrl-C stops all of it.
+
+```bash
+make dev WITH_EMBED=0   # skip the sidecars: UI-only or low-RAM session (search off)
+make dev-info           # the per-tab commands, when you want split logs
+make dev-link           # print a login URL for the local stack
+```
+
+Access `http://localhost:5173` for hot reload, or `http://localhost:8000`
+where Core serves the built web UI. `make help` lists every target.
 
 <a id="virtues-api-required-for-ai-features"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-virtues-api-required-for-ai-features-dark.svg"><img alt="virtues-api (required for AI features)" src=".github/images/headings/h3-virtues-api-required-for-ai-features-light.svg" height="22"></picture>
 
+`make dev` already starts it when `VIRTUES_API_URL` points at localhost. To
+run it alone:
+
 ```bash
-# Terminal 3: Start virtues-api sidecar
-cd services/virtues-api && cargo run
+make dev-api    # virtues-api on :9002, dev-seeded wallet
 ```
 
-virtues-api runs on port 9002. Core connects to it via `VIRTUES_API_URL=http://localhost:9002`. See `.env.example` for required API keys (`AI_GATEWAY_API_KEY`, `VIRTUES_API_INTERNAL_SECRET`).
+Core connects to it via `VIRTUES_API_URL=http://localhost:9002`. Real upstream
+spend applies even against the fake wallet. See `.env.example` for the required
+keys (`AI_GATEWAY_API_KEY`, `VIRTUES_API_INTERNAL_SECRET`).
 
 <a id="cloud-sidecar"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-cloud-sidecar-dark.svg"><img alt="Cloud sidecar" src=".github/images/headings/h2-cloud-sidecar-light.svg" height="28"></picture>
 
-**Cloud (managed)**: Virtues Cloud provisions a dedicated, isolated instance for each user — your own server, your own database, your own encryption keys. No shared infrastructure, no pooled data. Managed by [Atlas](https://github.com/virtues-os/atlas), our open-source orchestration layer.
+Two small services run off-box, and neither holds your record.
+
+**virtues-api** is the metered edge. It holds the external keys — the AI gateway, web search, Plaid, OAuth — and enforces a per-account budget, so a box never carries a credential that could be lifted off it. **atlas** owns identity and funding: Stripe on one side, an opaque account id on the other, and it never sees usage. Both live in this repo under `services/`.
+
+There is **no managed hosting**. Nobody runs a box for you; the two services above exist so that the box you run doesn't have to hold anyone's API keys. Point Virtues at your own provider key, or at your own local model, and you can use less of this — see [the auth model](agents/record/auth-model.md).
 
 <a id="ios-app"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-ios-app-dark.svg"><img alt="iOS App" src=".github/images/headings/h2-ios-app-light.svg" height="28"></picture>
 
-The companion app pairs with your box from `/virtues/devices → Add device` (scan the QR with the camera). See [agents/record/auth-model.md](agents/record/auth-model.md) for the pairing model. Source: the cross-platform Tauri app in `apps/web/src-tauri/` (macOS/Windows/Linux/iOS/Android), with on-device collection provided by the native plugins in `apps/web/plugins/`.
+The companion app pairs with a 6-digit code from `virtues pair`, typed into the app while you're standing next to the box — that code putting the device's key on the box's allowlist *is* the authentication. See [agents/record/auth-model.md](agents/record/auth-model.md) for the model. Source: the cross-platform Tauri app in `apps/web/src-tauri/` (macOS/Windows/Linux/iOS/Android), with on-device collection provided by the native plugins in `apps/web/plugins/`.
 
 <a id="project-structure"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-project-structure-dark.svg"><img alt="Project Structure" src=".github/images/headings/h2-project-structure-light.svg" height="28"></picture>
@@ -351,7 +432,8 @@ virtues/
 ├── deploy/                  # Model-fetch + sandbox scripts (cloud Docker lives under services/)
 ├── tools/                   # bootstrap.sh + virtues-installer (virtues.com/sh)
 ├── vendor/                  # Vendored third-party sources
-├── docs/                    # Architecture + concept docs (docs/archive/ holds superseded ones)
+├── docs/                    # The public manual — publishes to virtues.com/docs
+├── agents/                  # The workshop: build contracts, records, plans (never published)
 └── .data/                   # Gitignored runtime state (Postgres cluster, drive files)
 ```
 
@@ -411,7 +493,7 @@ The scores above are written by the end-of-day pass, so they cannot answer for t
 
 **AI Agent Modes** — Three distinct modes: **Agent** (full tool access — SQL, search, code, page editing), **Chat** (conversation only, no tools), and **Research** (read-only tools). Customizable personas let you shape the AI's behavior. Multi-model support across Claude, GPT, Gemini, and more.
 
-**Semantic Search** — Two-stage retrieval pipeline, entirely on-box: a bi-encoder (currently EmbeddingGemma-300M) generates embeddings, then a reranker (currently gte-reranker-modernbert) re-scores results for precision, both served by local llama.cpp sidecars. Per-ontology text extraction ensures every data type is searchable. Cmd+K modal for quick actions and cross-entity search.
+**Semantic Search** — Two-stage retrieval, on your side of the wire: a bi-encoder (EmbeddingGemma-300M on our own boxes) generates embeddings, then a cross-encoder reranker (gte-reranker-modernbert) re-scores the candidates for precision. Both are HTTP endpoints rather than linked code — llama.cpp sidecars we provision on our board, whatever you run on yours ([Setting up inference](docs/inference.md)). Per-ontology text extraction ensures every data type is searchable. Cmd+K modal for quick actions and cross-entity search.
 
 **Entity Resolution** — Automatic extraction of people, places, and organizations from your raw data. The "Sarah" in your calendar, the "Sarah" in your contacts, and the "Sarah" in your messages all resolve to one person. Dedicated wiki pages for each entity type with specialized views.
 

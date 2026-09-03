@@ -36,8 +36,14 @@ exactly what our relay can and cannot see, without rounding it up.
 
 ## Where to start
 
-If you're installing on your own hardware, [Installing](/docs/setup/install)
-is one command and the ten minutes around it. After that,
+If you're installing on your own hardware, three pages carry the setup, in
+order. [What to run it on](/docs/setup/requirements) says what the machine
+needs and, more usefully, what decides whether it feels fast.
+[Setting up inference](/docs/inference) covers the one part that is genuinely
+yours to run — the embedding and reranking models your record is searched
+with — and is worth doing before you install, because the installer asks for
+their URLs first. Then [Installing](/docs/setup/install) is one command and
+the ten minutes around it. After that,
 [Reaching your server](/docs/operate/reach) covers pairing a phone or laptop,
 which is how you actually use the thing.
 
