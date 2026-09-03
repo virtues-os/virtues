@@ -416,7 +416,7 @@ async fn print_reach(issues: &mut ui::Issues) {
             db_reachable: false,
             endpoint_id: None,
             relay_url: None,
-            allowlisted_devices: 0,
+            allowlisted_devices: None,
         },
     };
 
@@ -460,10 +460,22 @@ async fn print_reach(issues: &mut ui::Issues) {
             );
         }
     }
-    ui::kv("devices", &format!("{} paired", report.allowlisted_devices));
+    match report.allowlisted_devices {
+        Some(n) => ui::kv("devices", &format!("{n} paired")),
+        None => {
+            // The database answered `SELECT 1` and then failed this query —
+            // rare, but it must not render as "0 paired", which reads as a
+            // fact about the box rather than a failure to look.
+            ui::kv("devices", "unknown");
+            issues.error(
+                "couldn't read the device allowlist",
+                Some("check the box logs: journalctl -u virtues"),
+            );
+        }
+    }
     // 0 devices while unclaimed shares a root cause with the relay warning
     // above, so it only becomes its own finding once the relay leg is fine.
-    if report.allowlisted_devices == 0 && report.relay_url.is_some() {
+    if report.allowlisted_devices == Some(0) && report.relay_url.is_some() {
         issues.warn(
             "no devices on the allowlist",
             Some("pair one: virtues device add"),
