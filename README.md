@@ -27,7 +27,7 @@
   the visual size hierarchy. Times is a system font; Linux/Android fall back to
   their default serif.
 
-  SCREENSHOTS: shots 1 and 4 are placed. The remaining `<!-- SHOT n -->` comments
+  SCREENSHOTS: shots 1 and 4 are placed. The remaining SHOT comments below
   mark frames nobody has captured yet — replace each with an <img> once the shot
   exists, and give it alt text describing WHAT IS IN FRAME, not "screenshot".
   Capture against an anonymized copy: tools/anonymize-boxcopy.py.
