@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, name, content, article, article_updated_at, picture, cover_image,\n            emails, phones, birthday, instagram, facebook, linkedin, x,\n            relationship_category, nickname, aliases,\n            first_seen, last_seen, seen_count,\n            created_at, updated_at\n        FROM wiki_people\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id, name, content, article, article_updated_at, picture, cover_image,\n            emails, phones, birthday, died_on, died_precision, instagram,\n            facebook, linkedin, x,\n            relationship_category, nickname, bond, aliases,\n            first_seen, last_seen, seen_count,\n            created_at, updated_at\n        FROM wiki_people\n        WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -55,61 +55,76 @@
       },
       {
         "ordinal": 10,
-        "name": "instagram",
-        "type_info": "Text"
+        "name": "died_on",
+        "type_info": "Date"
       },
       {
         "ordinal": 11,
-        "name": "facebook",
+        "name": "died_precision",
         "type_info": "Text"
       },
       {
         "ordinal": 12,
-        "name": "linkedin",
+        "name": "instagram",
         "type_info": "Text"
       },
       {
         "ordinal": 13,
-        "name": "x",
+        "name": "facebook",
         "type_info": "Text"
       },
       {
         "ordinal": 14,
-        "name": "relationship_category",
+        "name": "linkedin",
         "type_info": "Text"
       },
       {
         "ordinal": 15,
-        "name": "nickname",
+        "name": "x",
         "type_info": "Text"
       },
       {
         "ordinal": 16,
+        "name": "relationship_category",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "nickname",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "bond",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
         "name": "aliases",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 17,
+        "ordinal": 20,
         "name": "first_seen",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 18,
+        "ordinal": 21,
         "name": "last_seen",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 19,
+        "ordinal": 22,
         "name": "seen_count",
         "type_info": "Int8"
       },
       {
-        "ordinal": 20,
+        "ordinal": 23,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 21,
+        "ordinal": 24,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -136,6 +151,9 @@
       true,
       true,
       true,
+      true,
+      true,
+      true,
       false,
       true,
       true,
@@ -144,5 +162,5 @@
       false
     ]
   },
-  "hash": "3a2da48f3445f60bc32567bcfefe8e971a36f8df0ebfe580943827da9bb0013e"
+  "hash": "2a9b0789cb1c79940e63bee0f267a06c780b0fc5a5e8fddce96c2c399aead7ce"
 }
