@@ -9,7 +9,7 @@
  * setup is complete and every onboarding step is done — nothing left to flip.
  */
 
-import { getSetupState, type SetupStep } from '$lib/api/client';
+import { getSetupState, type DegradedCollector, type SetupStep } from '$lib/api/client';
 
 const POLL_INTERVAL = 60_000; // 60 seconds
 
@@ -22,6 +22,8 @@ class SetupStateStore {
 	loaded = $state(false);
 	/** Set when remote_access flips false → true mid-session; consumer resets it. */
 	remoteAccessFlipped = $state(false);
+	/** Collectors running with a denied permission — surfaced, never swallowed. */
+	degraded = $state<DegradedCollector[]>([]);
 
 	/**
 	 * Last observed remote_access.done. Starts null so the very first
@@ -72,14 +74,18 @@ class SetupStateStore {
 		return linked || this.setupComplete === true;
 	}
 
-	/** Anything connected at all — the signal that retires "connect your world". */
+	/** Anything actually flowing — the signal that retires "connect your world".
+	 *  `device_collecting` (data has landed), never `first_device` (merely
+	 *  paired): the device someone paired to ENTER the app is an app_device
+	 *  row, so counting pairings made this step born-done on every box and
+	 *  fired the "tomorrow morning" promise over an empty record. */
 	get worldEnough(): boolean {
 		return (
 			this.done('first_source') ||
 			this.done('living_source') ||
 			this.done('first_phone') ||
 			this.done('chat_imported') ||
-			this.done('first_device')
+			this.done('device_collecting')
 		);
 	}
 
@@ -130,6 +136,7 @@ class SetupStateStore {
 			this.onboarding = data.onboarding ?? [];
 			this.setup = data.setup ?? [];
 			this.setupComplete = data.setup_complete ?? null;
+			this.degraded = data.degraded ?? [];
 			this.loaded = true;
 
 			// Flip detection: only a mid-session false → true transition counts.
