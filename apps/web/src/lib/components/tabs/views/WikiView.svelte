@@ -838,9 +838,9 @@
 						{error}
 						filters={entityFilters}
 						emptyIcon="ri:group-line"
-						emptyMessage="No entities yet"
-						loadingMessage="Loading entities..."
-						searchPlaceholder="Search all entities..."
+						emptyMessage="No people, places, or organizations yet"
+						loadingMessage="Loading…"
+						searchPlaceholder="Search people, places, organizations…"
 						onItemClick={openEntity}
 						onItemContextMenu={entityContextMenu}
 						onRetry={loadAllEntities}
@@ -991,7 +991,6 @@
 	.standfirst {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 1.0625rem;
-		font-style: italic;
 		line-height: 1.5;
 		color: var(--color-foreground-muted);
 		margin: 0 0 1rem;
@@ -1215,7 +1214,6 @@
 
 	.otd-epigraph {
 		font-family: var(--font-serif, Georgia, serif);
-		font-style: italic;
 		font-size: 0.9375rem;
 		color: var(--color-foreground);
 		overflow: hidden;
@@ -1225,7 +1223,6 @@
 
 	.otd-stub {
 		font-size: 0.8125rem;
-		font-style: italic;
 		color: var(--color-foreground-subtle);
 	}
 
@@ -1253,7 +1250,6 @@
 	.featured-epigraph {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 1.1875rem;
-		font-style: italic;
 		line-height: 1.5;
 		color: var(--color-foreground);
 		margin: 0;

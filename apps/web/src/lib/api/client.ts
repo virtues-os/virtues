@@ -2438,6 +2438,8 @@ export interface SetupState {
 	onboarding_complete: boolean;
 	/** Collectors running with a denied permission — a ✓ over one of these lies. */
 	degraded?: DegradedCollector[];
+	/** The interview has an answer but no document yet — show "underway". */
+	interview_started?: boolean;
 	/** `new` | `onboarding` | `active`. `active` means finished OR dismissed —
 	 *  both stop the redirect. Backed by app_user_profile.onboarding_status,
 	 *  which already tracked this life stage before a second flag was added. */

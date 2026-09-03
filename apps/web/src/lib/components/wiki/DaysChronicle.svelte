@@ -234,7 +234,6 @@
 		flex: 1;
 		min-width: 0;
 		font-family: var(--font-serif, Georgia, serif);
-		font-style: italic;
 		font-size: 0.9375rem;
 		line-height: 1.4;
 		color: var(--color-foreground);
@@ -249,7 +248,6 @@
 		flex: 1;
 		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle);
-		font-style: italic;
 	}
 
 	.day-count {

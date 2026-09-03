@@ -360,7 +360,6 @@
 		font-size: 1rem;
 		color: var(--color-foreground-muted);
 		margin: 0.25rem 0 0;
-		font-style: italic;
 	}
 
 	.person-meta {
@@ -554,7 +553,6 @@
 	.empty-placeholder {
 		font-size: 0.875rem;
 		color: var(--color-foreground-subtle);
-		font-style: italic;
 		margin: 0;
 	}
 

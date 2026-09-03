@@ -148,14 +148,18 @@
 			},
 		];
 		if (accountDone || !store.accountSatisfied) {
-			rows.push({ id: "signin", title: "Sign in to Virtues", done: accountDone, state: accountDone ? "✓ done" : "" });
+			rows.push({ id: "signin", title: "Connect your Virtues account", done: accountDone, state: accountDone ? "✓ done" : "" });
 		}
 		rows.push(
 			{
 				id: "interview",
 				title: "In your own words",
 				done: store.done("narrative_identity_ready") || isDismissed("interview"),
-				state: settled("interview", store.done("narrative_identity_ready")),
+				// The days between a first answer and "write it up" are the
+				// normal case — the column says so instead of nagging "Start".
+				state:
+					settled("interview", store.done("narrative_identity_ready")) ||
+					(store.interviewStarted ? "· underway" : ""),
 			},
 			{
 				id: "first_day",
@@ -171,7 +175,9 @@
 				id: "further",
 				title: "Go further",
 				done: isDismissed("further"),
-				state: isDismissed("further") ? "✓ done" : "",
+				// A wave-away is a skip, not an achievement — same vocabulary
+				// as every other dismissed row.
+				state: isDismissed("further") ? "· skipped" : "",
 			},
 		);
 		return rows;
@@ -197,12 +203,12 @@
 		void loadProfile();
 		void loadCensus();
 		// The first day lands on the box's own clock (narration runs at the
-		// maintenance hour); a 60s beat is plenty, and a hidden tab asks for
-		// nothing.
+		// maintenance hour, once a day) — a five-minute beat is generous, and
+		// the old 60s one was ~27 count(*) queries a minute for up to a day.
 		const t = setInterval(() => {
 			if (document.hidden || firstDay !== null) return;
 			void loadCensus();
-		}, 60_000);
+		}, 300_000);
 		return () => clearInterval(t);
 	});
 
@@ -247,7 +253,9 @@
 			aria-label="Skip getting started"
 		>
 			{#if doorExpanded}
-				<span in:fade={{ duration: 120 }}>Skip getting started →</span>
+				<span in:fade={{ duration: 120 }}>
+					{accountDone || store.accountSatisfied ? "Skip getting started →" : "Skip the rest — sign-in remains →"}
+				</span>
 			{:else}
 				<Icon icon="ri:door-open-line" width="14" />
 			{/if}
@@ -303,9 +311,11 @@
 								{/if}
 							{:else if s.id === "signin"}
 								<p class="lede">
-									Signing in links the subscription that pays for the models your server
-									writes with. Your records stay here; what a request sends to a model
-									passes through our gateway, metered and never kept.
+									The account is how your server reaches anything outside itself: the
+									models it writes with, plus the maps, photos, bank links and calendar
+									connections. One subscription, metered per request and never kept —
+									bringing your own AI key later moves the model calls and leaves the
+									rest here.
 								</p>
 								<div class="work">
 									<AccountGate done={accountDone} onLinked={() => void store.check()} />
@@ -318,7 +328,7 @@
 								</p>
 								<div class="row">
 									<button class="link" type="button" onclick={openInterview}>
-										Start the interview <span class="arw">→</span>
+										{store.interviewStarted ? "Pick up where you left off" : "Start the interview"} <span class="arw">→</span>
 									</button>
 									{#if !s.done}
 										<button class="skip" type="button" onclick={() => void dismiss("interview")}>Skip</button>
@@ -356,7 +366,7 @@
 								</ul>
 								{#if !s.done}
 									<button class="skip" type="button" onclick={() => void dismiss("further")}>
-										All set — take me to the app
+										All set
 									</button>
 								{/if}
 							{/if}
@@ -365,6 +375,18 @@
 				</li>
 			{/each}
 		</ol>
+
+		{#if census && census.total > 0 && census.lines.length > 0}
+			<!-- Proof of life, one sentence: the census is already on the wire
+			     for the first-day date; this reads the rest of it. No card, no
+			     counter animation — the server stating a fact. -->
+			<p class="census">
+				So far the record holds {census.lines[0].count.toLocaleString()}
+				{census.lines[0].label}{#if census.lines[1]}&nbsp;and {census.lines[1].count.toLocaleString()}
+					{census.lines[1].label}{/if}{#if census.earliest};
+					the oldest trace is from {new Date(census.earliest).toLocaleDateString(undefined, { month: "long", year: "numeric" })}{/if}.
+			</p>
+		{/if}
 	</div>
 {/if}
 
@@ -378,6 +400,16 @@
 	.steps { list-style: none; margin: 0; padding: 0; max-width: 640px; }
 
 	.steps { --gutter: 30px; }
+
+	.census {
+		max-width: 640px;
+		margin: 14px 0 0;
+		padding-left: var(--gutter);
+		font-family: var(--font-serif);
+		font-size: 15px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
 
 	.step { border-top: 1px solid var(--color-border-subtle); }
 	.step:first-child { border-top: 0; }

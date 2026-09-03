@@ -24,6 +24,8 @@ class SetupStateStore {
 	remoteAccessFlipped = $state(false);
 	/** Collectors running with a denied permission — surfaced, never swallowed. */
 	degraded = $state<DegradedCollector[]>([]);
+	/** The interview has an answer but no document yet. */
+	interviewStarted = $state(false);
 
 	/**
 	 * Last observed remote_access.done. Starts null so the very first
@@ -137,6 +139,7 @@ class SetupStateStore {
 			this.setup = data.setup ?? [];
 			this.setupComplete = data.setup_complete ?? null;
 			this.degraded = data.degraded ?? [];
+			this.interviewStarted = data.interview_started ?? false;
 			this.loaded = true;
 
 			// Flip detection: only a mid-session false → true transition counts.
