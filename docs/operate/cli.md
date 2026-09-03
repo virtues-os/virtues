@@ -94,7 +94,7 @@ server, and `virtues activate` installs what it staged.
 ## Data
 
 ```bash
-sudo -u virtues virtues backup     # snapshot the server into one tarball
+sudo virtues backup     # snapshot the server into one tarball
 sudo virtues restore <tarball>     # replace this server's state from one
 virtues volumes ls                 # registered backup destinations
 ```

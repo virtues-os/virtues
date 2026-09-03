@@ -18,7 +18,7 @@ stores only the *public* half — enough to write an archive, never enough to
 read one back. Create the keypair once:
 
 ```bash
-sudo -u virtues virtues backup --init-key
+sudo virtues backup --init-key
 ```
 
 This prints the secret key **once**, in a banner, and writes it nowhere. That
@@ -39,7 +39,7 @@ key had scrolled off a terminal months earlier.
 ## Making a backup
 
 ```bash
-sudo -u virtues virtues backup
+sudo virtues backup
 ```
 
 Writes one self-contained encrypted archive to
@@ -77,7 +77,7 @@ re-derives those.
 Plug in an external disk, mount it, and register it once:
 
 ```bash
-sudo -u virtues virtues volumes add /path/to/mount --name "study drive"
+sudo virtues volumes add /path/to/mount --name "study drive"
 ```
 
 The drive is remembered by its filesystem UUID rather than its mount path, so
@@ -87,7 +87,7 @@ else lives on it.
 
 ```bash
 virtues volumes ls                              # what's registered, and how fresh
-sudo -u virtues virtues backup --volume all     # write to every attached drive
+sudo virtues backup --volume all     # write to every attached drive
 ```
 
 **This already runs on its own.** A nightly job at 04:00 backs up to every

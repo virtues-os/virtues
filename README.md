@@ -84,7 +84,7 @@ device's key on the server's allowlist; that key is how you reach it from
 anywhere, and a fresh code is one command away:
 
 ```bash
-sudo -u virtues virtues pair
+sudo virtues pair
 ```
 
 **3. Give it a model.** Search runs locally, but writing your day and
@@ -92,7 +92,7 @@ answering questions need a model the server can reach — a subscription, or
 your own provider key under Settings:
 
 ```bash
-sudo -u virtues virtues subscribe
+sudo virtues subscribe
 ```
 
 **4. Connect a source** in the app: Google, Plaid, Strava, or the phone app
@@ -314,7 +314,7 @@ advertises the machine on the LAN as `virtues.local`, starts `virtues.service`
 and prints a **6-digit pair code**.
 
 ```bash
-sudo -u virtues virtues pair   # prints a fresh code, any time
+sudo virtues pair   # prints a fresh code, any time
 ```
 
 Enter it in the desktop or mobile app
@@ -341,10 +341,10 @@ console at `http://localhost:8000`.
 | `virtues reindex` | Rebuild the derived search index from source data |
 | `virtues uninstall` | Leave. Prints the full manifest of what it found before touching anything |
 
-Two rules explain every `sudo` above: **root** for what changes the machine
-(`upgrade`, `restore`, `uninstall`), and the **`virtues` user** —
-`sudo -u virtues virtues …` — for what touches the server's own data (`pair`,
-`backup`, `subscribe`), because that is the user the daemon runs as.
+One rule for all of them: `sudo virtues …`. The daemon runs as its own
+`virtues` user and owns the database, so commands that touch it re-exec
+themselves as that user; the ones that change the machine — `upgrade`,
+`restore`, `uninstall` — stay root.
 
 <a id="after-its-running"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-after-it-s-running-dark.svg"><img alt="After it's running" src=".github/images/headings/h3-after-it-s-running-light.svg" height="22"></picture>
