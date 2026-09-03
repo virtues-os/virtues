@@ -12,9 +12,8 @@
 
 	  You          /virtues/you            — profile, theme
 	  Assistant    /virtues/assistant      — name, persona, model
-	  Plan         /virtues/plan           — subscription, balance, and the
-	                                         AI calls and background runs that
-	                                         draw it down
+	  Plan         /virtues/plan           — subscription, balance, and the AI
+	                                         calls that draw it down
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Network      /virtues/network        — which network the box is on
 	  Software     /virtues/software       — release, track, update, artifacts
@@ -83,7 +82,9 @@
 		// Telemetry was this page under a word for something you send somewhere.
 		'/virtues/telemetry': '/virtues/plan',
 		'/virtues/developer/telemetry': '/virtues/plan',
-		'/virtues/system/history': '/virtues/plan',
+		// The 24h readings went back to System (2026-09-03): they are the
+		// machine measured, and had no business under a wallet balance.
+		'/virtues/system/history': '/virtues/system',
 		// Network, Display and Software stopped being top-level sections
 		// (2026-08-31). Network and Display are the machine's own connection and
 		// its own screen, so they live under System; Software described the
