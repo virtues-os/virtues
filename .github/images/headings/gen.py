@@ -45,12 +45,13 @@ HEADINGS = [
 ]
 H2 = [
     "DIY quickstart", "What it does", "Why it's shaped this way",
-    "The ontology", "Architecture", "Install properly",
+    "The ontology", "Architecture", "The full install",
     "Reaching your server", "Build on it", "Development", "The repo",
     "Security", "License",
 ]
 H3 = [
-    "What to run it on", "Inference", "The command", "After it's running",
+    "What to run it on", "Inference", "The command", "Commands",
+    "After it's running",
     "Where things live",
 ]
 for h in H2:

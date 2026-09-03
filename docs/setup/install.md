@@ -12,7 +12,7 @@ curl -sSL https://virtues.com/sh | sudo sh
 
 That fetches a small shell script, which downloads the installer for your
 architecture, verifies its checksum, and hands over. Ten minutes later you
-have a working box.
+have a working server.
 
 Two pages are worth reading first, and in this order:
 [What to run it on](/docs/setup/requirements), because memory and disk decide
@@ -39,7 +39,7 @@ code is about to run as root.
 ## What it needs
 
 - **Linux**, `x86_64` or `aarch64`, with systemd and root. Not macOS — the
-  Mac app is a client that talks to a box, not a box itself.
+  Mac app is a client that talks to a server, not a server itself.
 - **Debian or Ubuntu**, where the installer drives `apt` and adds the PGDG
   repository if the distribution's own packages ship an older PostgreSQL than
   the one Virtues needs — or **Fedora**, where it drives `dnf` and takes
@@ -50,13 +50,13 @@ code is about to run as root.
 
 Before it installs anything it also measures the disk your record will live
 on and tells you, with numbers, which tier you're on — an NVMe drive and a
-microSD card produce very different boxes, and the difference is worth
+microSD card produce very different servers, and the difference is worth
 knowing in advance rather than discovering later.
 [What to run it on](/docs/setup/requirements) has the full picture.
 
 It checks whether ports `5432`, `8000`, `18181`, and `18182` are already
 bound — Postgres, the server itself, and the two inference endpoints. A
-warning there usually means you're reinstalling over an existing box, which
+warning there usually means you're reinstalling over an existing server, which
 is fine.
 
 ## The first question is inference
@@ -91,11 +91,11 @@ curl -sSL https://virtues.com/sh | sudo VIRTUES_VERSION=vX.Y.Z sh
 
 The channel you install on is remembered, so later upgrades follow the same
 line without being asked again. See [Upgrading](/docs/operate/upgrading) for
-how a box moves between releases and how to roll one back.
+how a server moves between releases and how to roll one back.
 
 ## After it finishes
 
-The server comes up on port `8000`, and the machine is a Virtues box from
+The server comes up on port `8000`, and the machine is a Virtues server from
 that moment — but it holds nothing yet. The next step is pairing a device,
 which is what gives you a way in and starts the flow of your own data. Those
 pages land as the setup flow settles; until then the installer's own output
@@ -103,5 +103,5 @@ is the guide, and `virtues --help` lists everything the CLI can do.
 
 `virtues doctor` is the first thing to run if anything looks wrong. It
 reports how inference resolved, whether both endpoints are actually serving,
-and whether this box can be reached from away — each finding with the command
+and whether this server can be reached from away — each finding with the command
 that diagnoses it. [The CLI](/docs/operate/cli) covers the rest.

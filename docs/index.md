@@ -17,12 +17,12 @@ nothing on this site requires it.
 
 This is the part most people want answered first, so here it is plainly.
 
-**Your records stay on the box.** Sources are pulled in and written to a
+**Your records stay on the server.** Sources are pulled in and written to a
 database and a file store on your own disk. Nothing syncs them out. The
 embedding and reranking models that make your record searchable also run on
-the box, locally, on ports nothing outside it can reach.
+the server, locally, on ports nothing outside it can reach.
 
-**The language models that write do not run on the box.** When Virtues
+**The language models that write do not run on the server.** When Virtues
 composes an account of your day or answers a question, the material for that
 request goes to a model provider — through our gateway by default, or through
 any OpenAI-compatible endpoint you point it at, including a provider you have
@@ -30,7 +30,7 @@ your own account with. We meter what a request cost and never keep what was in
 it.
 
 **No inbound port is opened at home, and we have no way in.** Your devices
-reach the box by key, on a list the box itself keeps. We aren't on that list.
+reach the server by key, on a list the server itself keeps. We aren't on that list.
 [Reaching your server](/docs/operate/reach) describes the paths and states
 exactly what our relay can and cannot see, without rounding it up.
 
@@ -50,7 +50,7 @@ which is how you actually use the thing.
 Once it's running, four pages carry the weight:
 [Upgrading](/docs/operate/upgrading),
 [Backup & restore](/docs/operate/backup-and-restore) — read that one before you
-need it, since the box deliberately cannot decrypt its own archives —
+need it, since the server deliberately cannot decrypt its own archives —
 [When something breaks](/docs/operate/recovery), and
 [The CLI](/docs/operate/cli).
 
@@ -63,12 +63,12 @@ vocabulary feels invented. It partly is.
 These docs are written alongside the software and describe what actually
 ships. Pages marked *soon* in the sidebar are planned; they land as the
 features they cover settle, rather than in advance of them. Nothing published
-here is aspirational — if a page says the box does something, it does.
+here is aspirational — if a page says the server does something, it does.
 
 Every page here is also plain markdown: append `.md` to any docs URL to get
 the source, and [`/llms.txt`](/llms.txt) indexes the lot for anything reading
 on your behalf. The manual is versioned with the software it describes — this
-site publishes from the released branch, so what you read is what a box
+site publishes from the released branch, so what you read is what a server
 actually runs.
 
 The engineering record behind all of this — design decisions, audits, measured
