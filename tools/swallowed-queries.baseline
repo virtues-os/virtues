@@ -8,6 +8,14 @@
 1 applets/transcription_resolution/transform.rs	.unwrap_or(chrono_tz::UTC);
 2 applets/weather_sync/main.rs	r.try_get::<Option<f64>, _>("latitude").ok().flatten(),
 2 applets/weather_sync/main.rs	r.try_get::<Option<f64>, _>("longitude").ok().flatten(),
+1 services/virtues-api/src/entitlement.rs	let old_balance = existing.map(|(b,)| b).unwrap_or(0);
+1 services/virtues-api/src/entitlement.rs	month_to_date_micros: mtd.unwrap_or(0),
+1 services/virtues-atlas/src/routes/account.rs	.ok()
+2 services/virtues-atlas/src/routes/account.rs	.unwrap_or(None);
+1 services/virtues-atlas/src/routes/diag.rs	.ok()
+1 services/virtues-atlas/src/routes/diag.rs	let n = row.map(|(n,)| n).unwrap_or(0);
+1 services/virtues-atlas/src/routes/link.rs	.unwrap_or((0,));
+1 services/virtues-atlas/src/routes/settings.rs	// A read error is NOT "unknown api key". `.ok().flatten()` collapsed the
 1 virtues-core/src/api/annotations.rs	let name = filename.unwrap_or_else(|| file_id.to_string());
 1 virtues-core/src/api/annotations.rs	let title = notebook.unwrap_or_else(|| notebook_id.to_string());
 2 virtues-core/src/api/billing_state.rs	.ok()
@@ -115,7 +123,6 @@
 1 virtues-core/src/tools/applet_setup.rs	tx.rollback().await.ok();
 1 virtues-core/src/tools/dayline_events.rs	.and_then(|st| st.parse::<DateTime<Utc>>().ok().map(|dt| dt.date_naive()))
 1 virtues-core/src/tools/dayline_events.rs	.ok()
-1 virtues-core/src/tools/sql_query.rs	.ok()
 1 virtues-core/src/tools/sql_query.rs	.ok();
 1 virtues-core/src/tools/sql_query.rs	let row_count: i64 = count_row.map(|r| r.get("cnt")).unwrap_or(0);
 1 virtues-core/src/virtues_api/client.rs	.ok()
