@@ -83,8 +83,9 @@ pub fn is_relay_registered() -> bool {
     ENDPOINT_UP.get().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false)
 }
 
-/// The reason `maybe_spawn` gave up, if it did. `None` while still starting up
-/// (or once bound) — `is_relay_registered()` distinguishes those two.
+/// The reason the reach loop last failed, if it has not since recovered.
+/// `None` while still starting up, and again once a bind succeeds —
+/// [`is_relay_registered`] distinguishes those two.
 pub fn endpoint_error() -> Option<&'static str> {
     ENDPOINT_ERROR.get().and_then(|c| c.read().ok().and_then(|g| *g))
 }
@@ -93,6 +94,22 @@ fn set_endpoint_error(msg: &'static str) {
     let cell = ENDPOINT_ERROR.get_or_init(|| RwLock::new(None));
     if let Ok(mut g) = cell.write() {
         *g = Some(msg);
+    }
+}
+
+/// Clear the last failure after a bind succeeds.
+///
+/// Without this the field was a one-way latch on a path that RETRIES: the bind
+/// loop backs off and tries again, so the very transient it exists to survive
+/// — losing the race with the OS releasing the pinned UDP port — left
+/// `/api/setup/state` reporting "Couldn't start reach networking on this box"
+/// for the life of the process, while reach worked. A status surface built to
+/// stop onboarding from lying must not itself latch a stale failure.
+fn clear_endpoint_error() {
+    if let Some(cell) = ENDPOINT_ERROR.get() {
+        if let Ok(mut g) = cell.write() {
+            *g = None;
+        }
     }
 }
 
@@ -152,8 +169,11 @@ pub struct ReachReport {
     pub endpoint_id: Option<String>,
     /// The stored relay URL, or `None` when LAN-only (unclaimed / atlas down).
     pub relay_url: Option<String>,
-    /// How many device keys are currently on the allowlist.
-    pub allowlisted_devices: usize,
+    /// How many device keys are currently on the allowlist, or `None` when the
+    /// query failed. Optional like every other leg: a bare `0` here reads as
+    /// "no devices paired", which is a different and much more alarming
+    /// statement than "we could not check".
+    pub allowlisted_devices: Option<usize>,
 }
 
 /// Read each reach leg's actual state for `virtues doctor`.
@@ -166,7 +186,7 @@ pub async fn reach_report(db: &PgPool) -> ReachReport {
             db_reachable: false,
             endpoint_id: None,
             relay_url: None,
-            allowlisted_devices: 0,
+            allowlisted_devices: None,
         };
     }
     ReachReport {
@@ -177,7 +197,7 @@ pub async fn reach_report(db: &PgPool) -> ReachReport {
             .ok()
             .flatten()
             .map(|rc| rc.relay_url),
-        allowlisted_devices: allowed_ids(db).await.len(),
+        allowlisted_devices: allowed_ids(db).await.ok().map(|ids| ids.len()),
     }
 }
 
@@ -246,6 +266,7 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
             let eid = endpoint.id().to_string();
             set_box_endpoint_id(&eid);
             endpoint_up_flag().store(true, Ordering::Relaxed);
+            clear_endpoint_error();
             match &relay_url {
                 Some(u) => tracing::info!(endpoint_id = %eid, relay = %u, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId via our relay (+ LAN-direct)"),
                 None => tracing::info!(endpoint_id = %eid, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId LAN-direct (no relay)"),
@@ -431,22 +452,26 @@ static ALLOW: OnceLock<StaticAllow> = OnceLock::new();
 /// Non-revoked device EndpointIds from the DB, plus any `VIRTUES_IROH_ALLOW`
 /// (dev/manual). The box's own EndpointId is implicitly trusted (it never dials
 /// itself) so it's not included.
-async fn allowed_ids(db: &PgPool) -> Vec<EndpointId> {
-    let mut ids = Vec::new();
-    let rows: Result<Vec<(String,)>, _> = sqlx::query_as(
+///
+/// **Returns `Err` rather than an empty list when the query fails.** This used
+/// to log a warning and hand back whatever it had accumulated — which is
+/// nothing — and every caller then installed that empty set as the live
+/// allowlist. One transient database error therefore refused *every* paired
+/// device at the transport (`HttpHandler::accept` closes a non-allowlisted
+/// connection before any HTTP) until the next reconcile 15 minutes later. The
+/// box was up, the relay was up, and nothing anywhere said why. Absence and
+/// failure are different answers and only the caller can tell them apart.
+async fn allowed_ids(db: &PgPool) -> Result<Vec<EndpointId>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT node_id FROM app_device WHERE node_id IS NOT NULL AND revoked_at IS NULL",
     )
     .fetch_all(db)
-    .await;
-    match rows {
-        Ok(rows) => {
-            for (nid,) in rows {
-                if let Ok(id) = EndpointId::from_str(nid.trim()) {
-                    ids.push(id);
-                }
-            }
+    .await?;
+    let mut ids = Vec::with_capacity(rows.len());
+    for (nid,) in rows {
+        if let Ok(id) = EndpointId::from_str(nid.trim()) {
+            ids.push(id);
         }
-        Err(e) => tracing::warn!(error = %e, "iroh allowlist DB query failed"),
     }
     if let Ok(raw) = std::env::var("VIRTUES_IROH_ALLOW") {
         for tok in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -456,15 +481,26 @@ async fn allowed_ids(db: &PgPool) -> Vec<EndpointId> {
             }
         }
     }
-    ids
+    Ok(ids)
 }
 
 /// Build + install the live allowlist for `serve`.
+///
+/// A failed query leaves the previous set in place: on a rebind that is the
+/// working allowlist, and on a first bind it is empty either way. Never
+/// replace a good set with the result of a query that did not run.
 async fn load_allowlist(db: &PgPool) -> Arc<dyn AllowPolicy> {
-    let ids = allowed_ids(db).await;
-    tracing::info!(count = ids.len(), "iroh allowlist loaded");
     let allow = ALLOW.get_or_init(StaticAllow::default).clone();
-    allow.replace(ids);
+    match allowed_ids(db).await {
+        Ok(ids) => {
+            tracing::info!(count = ids.len(), "iroh allowlist loaded");
+            allow.replace(ids);
+        }
+        Err(e) => tracing::error!(
+            error = %e,
+            "iroh allowlist query failed — binding with the last known allowlist"
+        ),
+    }
     Arc::new(allow)
 }
 
@@ -485,15 +521,64 @@ pub fn after_pairing_change(db: PgPool) {
 pub async fn reconcile(db: &PgPool) {
     ensure_relay_config(db).await;
 
-    let ids = allowed_ids(db).await;
-    if let Some(allow) = ALLOW.get() {
-        tracing::debug!(count = ids.len(), "iroh allowlist refreshed");
-        allow.replace(ids);
+    match allowed_ids(db).await {
+        Ok(ids) => {
+            if let Some(allow) = ALLOW.get() {
+                tracing::debug!(count = ids.len(), "iroh allowlist refreshed");
+                allow.replace(ids);
+            }
+        }
+        // Keep serving the live allowlist. Replacing it with an empty set here
+        // is what locked whole fleets out for a reconcile interval.
+        Err(e) => tracing::error!(
+            error = %e,
+            "iroh allowlist query failed — keeping the live allowlist"
+        ),
     }
 
     let report = crate::inference_report::resolution_report();
     let missing = report.missing();
     if !missing.is_empty() {
         tracing::warn!(?missing, "reconcile: model files missing — re-run the installer to fetch");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A database error must reach the caller, not arrive disguised as "no
+    /// devices are paired". Every installer of the allowlist branches on this
+    /// distinction, and the empty-list answer refused the whole fleet at the
+    /// transport for a reconcile interval.
+    ///
+    /// The failure is induced by closing the pool, which is the cheapest thing
+    /// that makes a real query fail for a real reason.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn allowlist_query_failure_is_not_an_empty_allowlist(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, node_id) \
+             VALUES ('dev_alw1', $1, 'desktop_app', 'Test', \
+                     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .execute(&pool)
+        .await
+        .expect("seed a paired device");
+
+        let live = allowed_ids(&pool).await.expect("query succeeds while open");
+        assert_eq!(live.len(), 1, "the seeded device is on the allowlist");
+
+        pool.close().await;
+
+        match allowed_ids(&pool).await {
+            Err(_) => {}
+            Ok(ids) => panic!(
+                "a failed query returned Ok({}) — the caller cannot tell this \
+                 from a box with no paired devices, and installs it as the \
+                 live allowlist",
+                ids.len()
+            ),
+        }
     }
 }
