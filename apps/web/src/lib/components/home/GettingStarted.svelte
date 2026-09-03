@@ -38,6 +38,7 @@
 	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
 	import ConnectWorld from "$lib/components/onboarding/document/ConnectWorld.svelte";
 	import IntroductionsCard from "./IntroductionsCard.svelte";
+	import StepPlate from "./StepPlate.svelte";
 
 	// Mirrors narrative_draft::INTERVIEW_CHAT_ID (and ChatView's copy).
 	const INTERVIEW_CHAT_ID = "chat_narrative_interview";
@@ -244,7 +245,7 @@
 </script>
 
 {#if ready && anything}
-	<div class="gs" in:fade={{ duration: 200 }}>
+	<div class="gs folio" in:fade={{ duration: 200 }}>
 		<button
 			class="door"
 			class:expanded={doorExpanded}
@@ -387,6 +388,14 @@
 					the oldest trace is from {new Date(census.earliest).toLocaleDateString(undefined, { month: "long", year: "numeric" })}{/if}.
 			</p>
 		{/if}
+
+		<!-- The folio's right page: the active step's plate — a figure for
+		     what this step IS, the way an atlas pairs the photograph with the
+		     hand-drawn diagram. Wide screens only; the walk never depends on
+		     it. -->
+		<aside class="plate-rail">
+			<StepPlate step={active ?? "settled"} {census} />
+		</aside>
 	</div>
 {/if}
 
@@ -396,6 +405,29 @@
 	/* Full width, so the door can sit at the page's right edge; the sequence
 	   itself keeps a reading measure. */
 	.gs { position: relative; padding: clamp(4px, 1.5vh, 16px) 0 8px; }
+
+	/* The folio: the walk is the left page, the plate the right. The plate
+	   is companionship, not chrome — below 1080px it simply isn't, and the
+	   walk reads exactly as before. */
+	.folio {
+		display: grid;
+		grid-template-columns: minmax(0, 640px) 250px;
+		column-gap: clamp(32px, 6vw, 88px);
+		align-items: start;
+	}
+
+	.plate-rail {
+		grid-column: 2;
+		grid-row: 1 / span 2;
+		position: sticky;
+		top: 24px;
+		margin-top: 44px;
+	}
+
+	@media (max-width: 1080px) {
+		.folio { display: block; }
+		.plate-rail { display: none; }
+	}
 
 	.steps { list-style: none; margin: 0; padding: 0; max-width: 640px; }
 
