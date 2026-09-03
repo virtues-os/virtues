@@ -25,6 +25,10 @@
 
 	let portalLoading = $state(false);
 	let portalError = $state<string | null>(null);
+	// The branch, not the sentence. Several unrelated failures share one line
+	// of prose ("Try again."), so the code beside it is the only thing a
+	// screenshot can hand us. Shown verbatim — never translated, never mapped.
+	let portalErrorCode = $state<string | null>(null);
 
 	// Device-authorization link flow (connect a paid subscription). The box
 	// never holds a Stripe key: we start a link, open the Atlas-hosted checkout
@@ -123,15 +127,25 @@
 	async function openBillingPortal() {
 		portalLoading = true;
 		portalError = null;
+		portalErrorCode = null;
 		try {
-			const data = await requestBillingPortal<{ url?: string; error?: { message?: string } | string }>();
+			const data = await requestBillingPortal<{
+				url?: string;
+				error?: { message?: string } | string;
+				code?: string;
+			}>();
 			if (data.url) {
 				openExternal(data.url);
 			} else if (data.error) {
 				portalError = typeof data.error === 'string' ? data.error : data.error.message || 'Failed to open billing portal';
+				portalErrorCode = data.code ?? null;
 			}
 		} catch (e) {
+			// The endpoint answers 200 on every handled refusal, so landing here
+			// means the box itself did not answer — the status is the only code
+			// there is.
 			portalError = e instanceof ApiError ? e.message : 'Failed to connect to billing service';
+			portalErrorCode = e instanceof ApiError ? `http_${e.status}` : 'unreachable';
 		} finally {
 			portalLoading = false;
 		}
@@ -824,7 +838,10 @@
 			</button>
 		</div>
 		{#if portalError}
-			<p class="note note-error">{portalError}</p>
+			<p class="note note-error">
+				{portalError}
+				{#if portalErrorCode}<span class="error-code">{portalErrorCode}</span>{/if}
+			</p>
 		{/if}
 	</section>
 
@@ -1086,6 +1103,13 @@
 		color: var(--color-error);
 		border-color: color-mix(in srgb, var(--color-error) 22%, transparent);
 		background: var(--color-error-subtle);
+	}
+	/* The branch, set quietly beside the sentence: an owner reads past it, and
+	   reads it out loud when we ask what the screen said. */
+	.error-code {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 0.85em;
+		opacity: 0.72;
 	}
 	.note-warning {
 		color: var(--color-warning);
