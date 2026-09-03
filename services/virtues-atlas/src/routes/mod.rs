@@ -6,6 +6,7 @@ use crate::virtues_api_client::VirtuesApiClient;
 
 mod account;
 mod billing_portal;
+mod entitlement;
 mod claim;
 mod credits;
 mod diag;
@@ -126,6 +127,7 @@ pub fn router() -> Router<AppState> {
         .merge(credits::router())
         .merge(relay::router())
         .merge(billing_portal::router())
+        .merge(entitlement::router())
         .merge(settings::router())
         .merge(webhooks::router())
         .merge(diag::router())
