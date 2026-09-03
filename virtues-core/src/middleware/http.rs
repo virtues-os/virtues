@@ -60,7 +60,7 @@ fn rightmost_forwarded(headers: &HeaderMap) -> Option<String> {
 
 /// Whether a trusted reverse proxy sits in front of this process, so that
 /// `X-Forwarded-For` can be believed. Off by default — a box has no proxy.
-fn trusted_proxy_configured() -> bool {
+pub fn trusted_proxy_configured() -> bool {
     std::env::var("VIRTUES_TRUSTED_PROXY")
         .map(|v| matches!(v.trim(), "1" | "true" | "yes"))
         .unwrap_or(false)
