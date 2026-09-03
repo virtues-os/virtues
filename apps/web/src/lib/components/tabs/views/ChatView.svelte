@@ -92,12 +92,19 @@
 		"names and rough years. One person's might run:\n\n" +
 		"| Chapter | Years |\n" +
 		"|---|---|\n" +
-		"| Growing up in Ohio | 1988 \u2013 2006 |\n" +
-		"| College in Texas | 2006 \u2013 2010 |\n" +
-		"| The M&A job | 2010 \u2013 2012 |\n" +
-		"| Two years abroad | 2012 \u2013 2014 |\n" +
-		"| The startup years | 2014 \u2013 2021 |\n" +
-		"| Married, and the house in Denver | 2021 \u2013 now |\n\n" +
+		"| Childhood travels | 1997 \u2013 2003 |\n" +
+		"| Minnesota lower school | 2003 \u2013 2009 |\n" +
+		"| Wisconsin | 2009 \u2013 2016 |\n" +
+		"| College | 2016 \u2013 2020 |\n" +
+		"| Locked in DC | 2020 \u2013 2021 |\n" +
+		"| Vanderbilt & Atmos | 2021 \u2013 2023 |\n" +
+		"| USDP | 2023 \u2013 2025 |\n" +
+		"| Virtues | 2025 \u2013 now |\n\n" +
+		"The same chapters, drawn on the one wire a life is:";
+
+	/** The lifeline plate renders between the two parts (see the message
+	 *  template); the ask comes after the person has seen the shape. */
+	const INTERVIEW_OPENING_ASK =
 		"Yours will look nothing like these. Rough names and rough years are " +
 		"enough \u2014 what would your chapters be?";
 
@@ -123,7 +130,12 @@
 			{
 				id: "interview-opening",
 				role: "assistant",
-				parts: [{ type: "text", text: INTERVIEW_OPENING }],
+				// Two parts on purpose: the lifeline plate renders between
+				// them, so the ask lands after the shape has been seen.
+				parts: [
+					{ type: "text", text: INTERVIEW_OPENING },
+					{ type: "text", text: INTERVIEW_OPENING_ASK },
+				],
 			},
 			...chat.messages,
 		] as unknown as typeof chat.messages;
@@ -159,6 +171,7 @@
 	// Active page editing imports
 	import { editAllowListStore, type EditableResourceType } from "$lib/stores/editAllowList.svelte";
 	import PageBindingInline from "$lib/components/chat/PageBindingInline.svelte";
+	import ChapterLifeline from "$lib/components/chat/ChapterLifeline.svelte";
 	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
 	import EditDiffCard from "$lib/components/chat/EditDiffCard.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
@@ -1921,6 +1934,11 @@
 															citations={citationContext}
 															onCitationClick={openCitationPanel}
 														/>
+														{#if message.id === "interview-opening" && partIndex === 0}
+															<!-- The horizontal of the table above it: the same
+															     fictional life on one wire, α toward Ω. -->
+															<ChapterLifeline />
+														{/if}
 													</div>
 											{:else if part.type === "file"}
 												{@render renderFilePart(part as any)}
