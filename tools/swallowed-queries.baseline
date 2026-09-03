@@ -1,28 +1,27 @@
 1 applets/day_summary_eod/main.rs	.ok()
 1 applets/day_summary_eod/main.rs	.unwrap_or_else(|e| {
+2 applets/ios_ingest/contacts.rs	Ok(row.and_then(|r| r.try_get::<Option<String>, _>("id").ok().flatten()))
 1 applets/ios_ingest/contacts.rs	let existing_emails: Option<Value> = row.try_get("emails").ok();
 1 applets/mac_ingest/transform.rs	.filter(|(is_insert,)| is_insert.unwrap_or(true))
 1 applets/transcription_resolution/transform.rs	.and_then(|s| s.parse().ok())
 1 applets/transcription_resolution/transform.rs	.ok()
 1 applets/transcription_resolution/transform.rs	.unwrap_or(chrono_tz::UTC);
-1 services/virtues-api/src/entitlement.rs	let old_balance = existing.map(|(b,)| b).unwrap_or(0);
-1 services/virtues-api/src/entitlement.rs	month_to_date_micros: mtd.unwrap_or(0),
-1 services/virtues-atlas/src/routes/account.rs	.ok()
-1 services/virtues-atlas/src/routes/diag.rs	.ok()
-1 services/virtues-atlas/src/routes/diag.rs	let n = row.map(|(n,)| n).unwrap_or(0);
-1 services/virtues-atlas/src/routes/link.rs	.unwrap_or((0,));
-1 services/virtues-atlas/src/routes/relay.rs	.unwrap_or(false);
-1 services/virtues-atlas/src/routes/settings.rs	.ok()
+2 applets/weather_sync/main.rs	r.try_get::<Option<f64>, _>("latitude").ok().flatten(),
+2 applets/weather_sync/main.rs	r.try_get::<Option<f64>, _>("longitude").ok().flatten(),
 1 virtues-core/src/api/annotations.rs	let name = filename.unwrap_or_else(|| file_id.to_string());
 1 virtues-core/src/api/annotations.rs	let title = notebook.unwrap_or_else(|| notebook_id.to_string());
+2 virtues-core/src/api/billing_state.rs	.ok()
 1 virtues-core/src/api/billing_state.rs	let (enabled, failures, disabled_at) = row.unwrap_or((true, 0, None));
 1 virtues-core/src/api/bookmarks.rs	existing.unwrap_or((None, None, None, None));
 1 virtues-core/src/api/box_status.rs	.ok()
+3 virtues-core/src/api/box_status.rs	.unwrap_or(0);
+5 virtues-core/src/api/box_status.rs	.unwrap_or(false);
 1 virtues-core/src/api/box_status.rs	.unwrap_or_else(|| "new".to_string())
 1 virtues-core/src/api/census.rs	.unwrap_or_else(|e| {
 1 virtues-core/src/api/chat.rs	.ok()??;
-1 virtues-core/src/api/chat.rs	.unwrap_or_else(|| "active".to_string());
 1 virtues-core/src/api/chats.rs	let msg_id = msg.id.clone().unwrap_or_else(|| {
+5 virtues-core/src/api/day_summary.rs	.ok()
+12 virtues-core/src/api/day_summary.rs	.unwrap_or_default();
 1 virtues-core/src/api/day_summary.rs	let cents: i64 = r.try_get("amount").unwrap_or(0);
 1 virtues-core/src/api/day_summary.rs	let dur: Option<i32> = r.try_get("duration_minutes").ok().flatten();
 1 virtues-core/src/api/day_summary.rs	let mode: i16 = r.try_get("speaker_mode").unwrap_or(0);
@@ -32,17 +31,14 @@
 1 virtues-core/src/api/drive.rs	let (drive_bytes, file_count, folder_count) = row.unwrap_or((0, 0, 0));
 1 virtues-core/src/api/entities.rs	.unwrap_or(false);
 1 virtues-core/src/api/entities.rs	let is_home = req.set_as_home.unwrap_or(false);
+2 virtues-core/src/api/entity_article_gen.rs	.unwrap_or_default();
 1 virtues-core/src/api/home.rs	.ok()
 1 virtues-core/src/api/home.rs	let code: Option<i32> = cur.try_get("weather_code").ok().flatten();
 1 virtues-core/src/api/home.rs	let start: DateTime<Utc> = r.try_get("started_at").ok()?;
 1 virtues-core/src/api/home.rs	let valid: DateTime<Utc> = cur.try_get("occurred_at").ok().unwrap_or_else(Utc::now);
-1 virtues-core/src/api/mcp_client.rs	.unwrap_or(false);
-1 virtues-core/src/api/metrics.rs	job_id: row.try_get::<String, _>("id").unwrap_or_default(),
-1 virtues-core/src/api/metrics.rs	job_type: row.try_get("applet_type").unwrap_or_default(),
-1 virtues-core/src/api/metrics.rs	let succeeded: i64 = row.try_get("succeeded").unwrap_or(0);
-1 virtues-core/src/api/narrative_draft.rs	.unwrap_or_default();
 1 virtues-core/src/api/notebooks.rs	.ok();
 1 virtues-core/src/api/notebooks.rs	let name = req.name.as_deref().unwrap_or(&existing.name).trim().to_string();
+2 virtues-core/src/api/notebooks.rs	touch_notebook(pool, notebook_id).await.ok();
 1 virtues-core/src/api/pages.rs	let version_number = max_version.unwrap_or(0) + 1;
 1 virtues-core/src/api/pair.rs	.ok()
 1 virtues-core/src/api/pins.rs	.unwrap_or(0);
@@ -52,14 +48,19 @@
 1 virtues-core/src/api/sudo.rs	.ok()
 1 virtues-core/src/api/system_display.rs	.and_then(|name| name.parse::<chrono_tz::Tz>().ok());
 1 virtues-core/src/api/system_display.rs	.ok()
-1 virtues-core/src/api/usage.rs	Ok(result.unwrap_or(0))
+2 virtues-core/src/api/wiki.rs	.ok()
+2 virtues-core/src/api/wiki.rs	.unwrap_or(0);
+2 virtues-core/src/api/wiki.rs	.unwrap_or_default();
 1 virtues-core/src/applet_runner/limits.rs	Ok(n.unwrap_or(0))
+2 virtues-core/src/applet_runner/limits.rs	Ok(total.unwrap_or(0))
 1 virtues-core/src/applet_runner/mod.rs	Ok(result.unwrap_or(false))
 1 virtues-core/src/applet_runner/mod.rs	tx.rollback().await.ok();
 1 virtues-core/src/cli/backup.rs	Ok(row.map(|(v,)| v.to_string()).unwrap_or_else(|| "unknown".to_string()))
 1 virtues-core/src/cli/backup_volume.rs	.and_then(|v| u64::try_from(v).ok())
 1 virtues-core/src/cli/backup_volume.rs	.ok()
 1 virtues-core/src/cli/backup_volume.rs	.unwrap_or(MIN_FREE_BYTES);
+10 virtues-core/src/cli/commands/status_json.rs	.ok()
+2 virtues-core/src/cli/commands/status_json.rs	.unwrap_or_default();
 1 virtues-core/src/cli/commands/status_json.rs	consumed_24h: consumed.map(|(n,)| n).unwrap_or(0),
 1 virtues-core/src/cli/commands/status_json.rs	devices_paired: devices.map(|(n,)| n).unwrap_or(0),
 1 virtues-core/src/cli/commands/status_json.rs	pending: pending.map(|(n,)| n).unwrap_or(0),
@@ -71,32 +72,33 @@
 1 virtues-core/src/cli/reindex.rs	.unwrap_or(0);
 1 virtues-core/src/client.rs	.unwrap_or(0) as usize;
 1 virtues-core/src/database/mod.rs	let from = current.map(|d| d.to_string()).unwrap_or_else(|| "?".into());
+2 virtues-core/src/dayline/annotate.rs	.ok()
+2 virtues-core/src/dayline/autonomic_scoring.rs	.ok()?;
 1 virtues-core/src/dayline/context.rs	let app: String = r.try_get("app_name").ok()?;
 1 virtues-core/src/dayline/context.rs	let arrival: DateTime<Utc> = r.try_get("started_at").ok()?;
-1 virtues-core/src/dayline/context.rs	let artist: Option<String> = r.try_get("artist_name").ok().flatten();
 1 virtues-core/src/dayline/context.rs	let avg: Option<f64> = r.try_get("avg_bpm").ok().flatten();
 1 virtues-core/src/dayline/context.rs	let body: Option<String> = r.try_get("body").ok().flatten();
 1 virtues-core/src/dayline/context.rs	let channel: Option<String> = r.try_get("channel").ok().flatten();
 1 virtues-core/src/dayline/context.rs	let cnt: i64 = r.try_get("cnt").unwrap_or(0);
-1 virtues-core/src/dayline/context.rs	let display = title.unwrap_or_else(|| {
-1 virtues-core/src/dayline/context.rs	let dur: Option<i32> = r.try_get("visit_duration_seconds").ok().flatten();
+2 virtues-core/src/dayline/context.rs	let dur: Option<i32> = r.try_get("duration_minutes").ok().flatten();
 1 virtues-core/src/dayline/context.rs	let emp: Option<String> = r.try_get("employer").ok().flatten();
+2 virtues-core/src/dayline/context.rs	let end: DateTime<Utc> = r.try_get("ended_at").ok()?;
 1 virtues-core/src/dayline/context.rs	let id: String = r.try_get("id").ok()?;
 1 virtues-core/src/dayline/context.rs	let name: Option<String> = r.try_get("preferred_name").ok().flatten();
 1 virtues-core/src/dayline/context.rs	let name: String = r.try_get::<Option<String>, _>("place_name").ok().flatten()?;
 1 virtues-core/src/dayline/context.rs	let occ: Option<String> = r.try_get("occupation").ok().flatten();
 1 virtues-core/src/dayline/context.rs	let sender: Option<String> = r.try_get("from_name").ok().flatten();
+2 virtues-core/src/dayline/context.rs	let start: DateTime<Utc> = r.try_get("started_at").ok()?;
 1 virtues-core/src/dayline/context.rs	let text: Option<String> = r.try_get("text").ok()?;
 1 virtues-core/src/dayline/context.rs	let title: Option<String> = r.try_get("page_title").ok().flatten();
 1 virtues-core/src/dayline/context.rs	let title: String = r.try_get("title").ok()?;
 1 virtues-core/src/dayline/context.rs	let total: Option<i64> = r.try_get("total").ok().flatten();
-1 virtues-core/src/dayline/context.rs	let track: String = r.try_get("track_name").ok()?;
 1 virtues-core/src/dayline/context.rs	let window: Option<String> = r.try_get("window_title").ok().flatten();
 1 virtues-core/src/dayline/gaps.rs	.unwrap_or_default();
+3 virtues-core/src/dayline/sleep.rs	.ok()
 1 virtues-core/src/dayline/sleep.rs	// once `.ok()` collapses them, and the difference is the whole story:
 1 virtues-core/src/entity_resolution/people.rs	let identifiers: Vec<String> = serde_json::from_value(row.attendee_identifiers).ok()?;
 1 virtues-core/src/entity_resolution/places.rs	let id = Uuid::parse_str(&row.id).ok()?;
-1 virtues-core/src/mcp/client.rs	.unwrap_or(0);
 1 virtues-core/src/middleware/auth.rs	.ok()
 1 virtues-core/src/search/embedder.rs	.ok()
 1 virtues-core/src/search/query.rs	.unwrap_or((0, 0));
@@ -117,29 +119,3 @@
 1 virtues-core/src/tools/sql_query.rs	.ok();
 1 virtues-core/src/tools/sql_query.rs	let row_count: i64 = count_row.map(|r| r.get("cnt")).unwrap_or(0);
 1 virtues-core/src/virtues_api/client.rs	.ok()
-10 virtues-core/src/cli/commands/status_json.rs	.ok()
-12 virtues-core/src/api/day_summary.rs	.unwrap_or_default();
-2 applets/ios_ingest/contacts.rs	Ok(row.and_then(|r| r.try_get::<Option<String>, _>("id").ok().flatten()))
-2 applets/weather_sync/main.rs	r.try_get::<Option<f64>, _>("latitude").ok().flatten(),
-2 applets/weather_sync/main.rs	r.try_get::<Option<f64>, _>("longitude").ok().flatten(),
-2 services/virtues-atlas/src/routes/account.rs	.unwrap_or(None);
-2 virtues-core/src/api/billing_state.rs	.ok()
-2 virtues-core/src/api/chat.rs	.ok()
-2 virtues-core/src/api/entity_article_gen.rs	.unwrap_or_default();
-2 virtues-core/src/api/mcp_client.rs	.unwrap_or_default();
-2 virtues-core/src/api/notebooks.rs	touch_notebook(pool, notebook_id).await.ok();
-2 virtues-core/src/api/wiki.rs	.ok()
-2 virtues-core/src/api/wiki.rs	.unwrap_or(0);
-2 virtues-core/src/api/wiki.rs	.unwrap_or_default();
-2 virtues-core/src/applet_runner/limits.rs	Ok(total.unwrap_or(0))
-2 virtues-core/src/cli/commands/status_json.rs	.unwrap_or_default();
-2 virtues-core/src/dayline/annotate.rs	.ok()
-2 virtues-core/src/dayline/autonomic_scoring.rs	.ok()?;
-2 virtues-core/src/dayline/context.rs	let dur: Option<i32> = r.try_get("duration_minutes").ok().flatten();
-2 virtues-core/src/dayline/context.rs	let end: DateTime<Utc> = r.try_get("ended_at").ok()?;
-2 virtues-core/src/dayline/context.rs	let start: DateTime<Utc> = r.try_get("started_at").ok()?;
-3 virtues-core/src/api/box_status.rs	.unwrap_or(0);
-3 virtues-core/src/dayline/sleep.rs	.ok()
-5 virtues-core/src/api/box_status.rs	.unwrap_or(false);
-5 virtues-core/src/api/day_summary.rs	.ok()
-7 services/virtues-atlas/src/routes/link.rs	.unwrap_or(None);
