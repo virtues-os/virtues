@@ -109,7 +109,9 @@ pub async fn join_handler(
 /// the relay leg drops, so this is a live reading rather than a record that a
 /// bind once succeeded; `enabled`
 /// is the switch state (false only when the stored config carries the off
-/// word — the env override is operator territory and reads as its value).
+/// word). `VIRTUES_RELAY_URL` is NOT reflected here and cannot be: resolution
+/// consults it only when no stored config exists, so on any linked box the env
+/// var is inert — see `relay::resolve_relay_url`.
 pub async fn relay_status_handler(State(state): State<AppState>) -> impl IntoResponse {
     let stored = crate::virtues_api::relay::load(state.db.pool())
         .await
