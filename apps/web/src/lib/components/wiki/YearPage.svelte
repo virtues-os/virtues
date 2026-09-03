@@ -7,6 +7,8 @@
 
 <script lang="ts">
 	import type { YearPage as YearPageType } from "$lib/wiki/types";
+	import { listDayActivity } from "$lib/wiki/api";
+	import { toActivityLevels } from "$lib/wiki/activity";
 	import WikiRightRail from "./WikiRightRail.svelte";
 	import ActivityHeatmap from "./ActivityHeatmap.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -18,22 +20,18 @@
 
 	let { page }: Props = $props();
 
-	// Generate activity data from months
-	const activityData = $derived.by(() => {
-		const data = new Map<string, number>();
-		// For now, generate placeholder data based on activeDays
-		for (const month of page.months) {
-			const daysInMonth = month.totalDays;
-			for (let d = 1; d <= daysInMonth; d++) {
-				const dateStr = `${page.year}-${String(month.month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-				// Randomly assign activity levels based on activeDays ratio
-				const ratio = month.activeDays / month.totalDays;
-				if (Math.random() < ratio) {
-					data.set(dateStr, Math.floor(Math.random() * 4) + 1);
-				}
-			}
-		}
-		return data;
+	// The heatmap is OBSERVED, never invented. This used to roll
+	// Math.random() against each month's activeDays ratio — generated data
+	// presented as a record of a year of someone's life, the one sin the
+	// glossary defines the product against. Now it reads the same day
+	// activity the wiki's Days/Years views read; until the fetch lands the
+	// calendar is simply empty, which is at least true.
+	let activityData = $state(new Map<string, number>());
+	$effect(() => {
+		const y = page.year;
+		void listDayActivity(`${y}-01-01`, `${y}-12-31`).then((days) => {
+			activityData = toActivityLevels(days);
+		});
 	});
 
 	function handleDayClick(_date: Date, slug: string) {
@@ -127,16 +125,10 @@
 			<!-- Narrative Context (Acts & Chapters) -->
 			<section class="section" id="narrative-context">
 				<h2 class="section-title">Narrative Context</h2>
-				{#if page.acts.length > 0 || page.chapters.length > 0}
+				{#if page.chapters.length > 0}
+					<!-- The acts hierarchy was deleted (migration 0107); its render
+					     branch outlived it here and drew records of nothing. -->
 					<ul class="footer-list">
-						{#each page.acts as act}
-							<li>
-								<a href="/wiki/{act.pageId}" class="footer-link">
-									<span class="link-text">{act.displayName}</span>
-									<span class="link-type">act</span>
-								</a>
-							</li>
-						{/each}
 						{#each page.chapters as chapter}
 							<li>
 								<a href="/wiki/{chapter.pageId}" class="footer-link">
@@ -243,8 +235,6 @@
 				</div>
 				<div class="meta-stats">
 					<span class="stat">{totalActiveDays} days</span>
-					<span class="stat-sep">·</span>
-					<span class="stat">{page.acts.length} acts</span>
 				</div>
 			</div>
 		{/snippet}
@@ -387,7 +377,6 @@
 	.empty-placeholder {
 		font-size: 0.875rem;
 		color: var(--color-foreground-subtle);
-		font-style: italic;
 		margin: 0;
 	}
 
@@ -454,9 +443,6 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	.stat-sep {
-		color: var(--color-border-strong);
-	}
 
 	/* Responsive */
 	@media (max-width: 900px) {

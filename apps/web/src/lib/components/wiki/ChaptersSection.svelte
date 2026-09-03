@@ -25,15 +25,23 @@
 		}
 	});
 
+	/** A chapter whose page hasn't been seeded yet — acknowledged, not a
+	 *  dead click. Cleared after a beat. */
+	let missingNote = $state<string | null>(null);
+	let missingTimer: ReturnType<typeof setTimeout> | undefined;
+
 	async function openChapter(ch: ChapterApi) {
 		// The chapter's article page, resolved on demand — seeded by the
-		// interview's finisher; a chapter without one simply doesn't open yet.
+		// interview's finisher.
 		const res = await fetch(`/api/wiki/articles/chapter/${ch.id}`);
-		if (!res.ok) return;
-		const article = await res.json();
+		const article = res.ok ? await res.json() : null;
 		if (article?.page_id) {
 			windowShellStore.openRouteBeside(`/page/${article.page_id}`);
+			return;
 		}
+		missingNote = ch.id;
+		clearTimeout(missingTimer);
+		missingTimer = setTimeout(() => (missingNote = null), 2600);
 	}
 
 	function openInterview() {
@@ -76,6 +84,9 @@
 						{/if}
 						{#if ch.changepoint}
 							<p class="chapter-note changepoint">Ended when: {ch.changepoint}</p>
+						{/if}
+						{#if missingNote === ch.id}
+							<p class="chapter-note changepoint">No page yet — it is written when the interview is written up.</p>
 						{/if}
 					</button>
 				</li>

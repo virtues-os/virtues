@@ -350,6 +350,13 @@ pub struct SetupState {
     /// check over a three-day iMessage outage — the exact failure this signal
     /// was built for, which no web surface read until 2026-09-01.
     pub degraded: Vec<DegradedCollector>,
+    /// The interview has at least one answer but no document yet — the days
+    /// between a first reply and "write it up" are the normal case, and the
+    /// getting-started row must say "underway" then, not "Start the
+    /// interview". A field rather than a checklist step: it is a phase of one
+    /// step, and a step of its own would hold `allDone` hostage on a skipped
+    /// interview.
+    pub interview_started: bool,
     /// `new` | `onboarding` | `active`, from `app_user_profile`.
     ///
     /// The routing gate reads this rather than a flag of its own. A second
@@ -654,12 +661,22 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     let onboarding_status = onboarding_status(pool).await;
 
+    let interview_started: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM app_chat_messages \
+         WHERE chat_id = $1 AND role = 'user')",
+    )
+    .bind(crate::api::narrative_draft::INTERVIEW_CHAT_ID)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
     Ok(SetupState {
         setup,
         setup_complete,
         onboarding,
         onboarding_complete,
         degraded: s.degraded,
+        interview_started,
         onboarding_status,
     })
 }
