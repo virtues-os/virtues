@@ -307,6 +307,20 @@ impl ToolExecutor {
             "propose_narrative_identity_edit" => {
                 self.execute_propose_narrative_identity(arguments).await
             }
+            // The narrative interview's finisher (interview mode's only tool):
+            // document + capsule + chapters from the transcript. The frontend
+            // watches this tool's output for document_page_id and opens the
+            // page beside the chat.
+            "write_it_up" => {
+                match crate::api::narrative_draft::finalize_interview(&self._pool).await {
+                    Ok(outcome) => Ok(ToolResult::success(
+                        serde_json::to_value(outcome).unwrap_or_default(),
+                    )),
+                    Err(e) => Err(ToolError::ExecutionFailed(format!(
+                        "write it up failed: {e}"
+                    ))),
+                }
+            }
             "update_memory" => self.execute_update_memory(arguments).await,
             "set_user_name" => self.execute_set_user_name(arguments).await,
             "set_assistant_name" => self.execute_set_assistant_name(arguments).await,

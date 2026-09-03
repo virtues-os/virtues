@@ -48,13 +48,6 @@ and sometimes contradicting each other.
 its own timeline of events and a written account of what happened, generated
 overnight from everything the box saw.
 
-**Year** — the other span people actually narrate, written the same way once
-the period is closed.
-
-**Story** — a throughline that isn't bounded by the clock: something that
-resumes, overlaps other things, and may span an afternoon or a decade. Stories
-are declared by you rather than guessed at.
-
 **Article** — a page about a subject rather than a span of time. The people,
 places, and organizations in your record each get one, accumulating what's
 known about them.
@@ -67,12 +60,23 @@ from. Refs are what make a claim checkable rather than merely plausible; when
 the box tells you something about your life, a ref is how you see why it
 thinks so.
 
-**Rule** — a standing instruction you give the system that outranks whatever
-it would otherwise infer. Rules don't expire.
+**Wiki** — where all of the above lands: the record's own encyclopedia. Days
+and their events on one axis, people, places, and organizations on the other,
+articles accumulating on both — and your chapters and narrative identity
+giving the whole thing its coordinates.
+
+## What you author about yourself
+
+These are not derived and are never recomputed. The machine may write each one
+only while it is empty; from then on it is yours.
 
 **Narrative identity** — the account of who you are that grounds everything
-the models see. You own it; the machine fills it in only while it's empty, and
-what it says about you is yours to write.
+the models see: your history, in your own words, arranged from the interview
+and edited on its page from then on.
+
+**Chapter** — your own division of your life into named eras, rough years and
+all, given in the interview. Every day the record holds falls inside exactly
+one chapter; each chapter has a page of its own.
 
 ## What you make
 

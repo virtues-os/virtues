@@ -344,6 +344,12 @@ pub struct SetupState {
     /// would hold someone on a page while a background job runs. One connected
     /// source is the honest line between "a box" and "your box".
     pub onboarding_complete: bool,
+    /// Collectors that are paired and running but missing a permission they
+    /// need (see [`DegradedCollector`]). Carried here so the getting-started
+    /// page can say "⚠ needs Full Disk Access" instead of showing a green
+    /// check over a three-day iMessage outage — the exact failure this signal
+    /// was built for, which no web surface read until 2026-09-01.
+    pub degraded: Vec<DegradedCollector>,
     /// `new` | `onboarding` | `active`, from `app_user_profile`.
     ///
     /// The routing gate reads this rather than a flag of its own. A second
@@ -442,14 +448,14 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(0);
 
-    // Narrative-identity reveal: ready once there is a non-empty core to carry
-    // (drafted from the interview or hand-written — the machine never writes it
-    // from observed data; that generator was deleted 2026-08-26). Anchored on
-    // content presence (not `updated_at`, which the writer doesn't bump) so
-    // it's drift-free.
+    // Narrative-identity reveal: ready once the "In your own words" article
+    // exists (written up from the interview — the machine never writes it
+    // from observed data; that generator was deleted 2026-08-26). The article
+    // IS the identity now; the abridged wiki_narrative_identity copy this
+    // used to check was retired 2026-09-01.
     let nid_ready: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM wiki_narrative_identity \
-         WHERE content IS NOT NULL AND length(trim(content)) > 0)",
+        "SELECT EXISTS(SELECT 1 FROM wiki_articles \
+         WHERE subject_type = 'narrative_identity')",
     )
     .fetch_one(pool)
     .await
@@ -649,6 +655,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
         setup_complete,
         onboarding,
         onboarding_complete,
+        degraded: s.degraded,
         onboarding_status,
     })
 }

@@ -6,38 +6,100 @@
 	import {
 		getSelectedModel,
 		getDefaultModel,
+		getModels,
 		setSelectedModel,
 		initializeSelectedModel,
 		getInitializationPromise,
 	} from "$lib/stores/models.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
+	import Bloub from "$lib/bloub/Bloub.svelte";
+	import { EXPRESSIONS } from "$lib/bloub/bot/expressions";
+	import { DEFAULT_SHAPE, SHAPES } from "$lib/bloub/bot/skins";
+	import { getRandomThinkingLabel } from "$lib/utils/thinkingLabels";
+
+	// A poke morphs the eyes to one random expression — and, roughly one poke
+	// in five, the body to one random shape, so the circle stays the norm.
+	// Both hold while the pointer stays and settle back to resting one second
+	// after it leaves. Re-entering re-rolls.
+	let interviewExpression = $state<string | null>(null);
+	let interviewShape = $state<string | null>(null);
+	let interviewHoverTimer: ReturnType<typeof setTimeout> | undefined;
+	function pokeCompanion() {
+		rouseCompanion();
+		const others = EXPRESSIONS.filter(
+			(e) => e.id !== "neutre" && e.id !== interviewExpression,
+		);
+		interviewExpression =
+			others[Math.floor(Math.random() * others.length)].id;
+		const shapes = SHAPES.filter(
+			(s) => s.id !== DEFAULT_SHAPE && s.id !== interviewShape,
+		);
+		interviewShape =
+			Math.random() < 0.2
+				? shapes[Math.floor(Math.random() * shapes.length)].id
+				: null;
+		clearTimeout(interviewHoverTimer);
+	}
+	function settleCompanion() {
+		clearTimeout(interviewHoverTimer);
+		interviewHoverTimer = setTimeout(() => {
+			interviewExpression = null;
+			interviewShape = null;
+		}, 1000);
+	}
+
+	// After a quiet stretch the bot dozes off instead of blinking at an empty
+	// room forever. Anything happening — a hover, a send, the model speaking —
+	// rouses it and re-arms the timer.
+	const COMPANION_DOZE_MS = 90_000;
+	let interviewAsleep = $state(false);
+	let interviewSleepTimer: ReturnType<typeof setTimeout> | undefined;
+	// While the bot thinks, one rotating gerund rides beside it — the bot's
+	// three-dot morph is already the ellipsis, so the word comes bare.
+	let interviewWord = $state("");
+	function rouseCompanion() {
+		interviewAsleep = false;
+		clearTimeout(interviewSleepTimer);
+		interviewSleepTimer = setTimeout(
+			() => (interviewAsleep = true),
+			COMPANION_DOZE_MS,
+		);
+	}
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import SelectionPopover from "$lib/components/SelectionPopover.svelte";
 	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
-	import { fetchModels, type ModelOption } from "$lib/config/models";
 
 	// ── the narrative interview ────────────────────────────────────────────
 	// One fixed chat (seeded at boot; the server forces interview mode by this
 	// id — see chat_handler). Mirrors narrative_draft::INTERVIEW_CHAT_ID.
 	const INTERVIEW_CHAT_ID = "chat_narrative_interview";
 	const INTERVIEW_OPENING =
-		"From here on your box keeps a record of your days. It cannot reach what " +
-		"came before it, and it cannot see what any of it meant — that part only " +
-		"you can tell.\n\n" +
-		"This is the interview where you tell it. It matters because everything a " +
-		"machine is not told, it assumes: left alone, it will fill you in as the " +
-		"average person. Your answers, never mine, are arranged afterwards into a " +
-		"document called \u201cIn your own words\u201d — yours to keep, and to " +
-		"correct.\n\n" +
-		"About twenty minutes, one question at a time. Answer at whatever length " +
-		"suits you, skip anything without explaining, and stop whenever you like; " +
-		"it saves as you go. It will never be finished, and it isn\u2019t meant to " +
-		"be — an honest start is all it needs.\n\n" +
-		"We\u2019ll begin with the chapters of your life. A chapter is a period " +
-		"that felt like one thing: a name only you would give it, roughly when it " +
-		"ran, and what ended it. Most people find four to eight.\n\n" +
-		"Where does yours start?";
+		"# The story of your life\n\n" +
+		"Your server keeps the record of your life \u2014 where you go, what you " +
+		"say, how you sleep. But the record can't say what any of it meant. " +
+		"That part is yours to tell.\n\n" +
+		"People understand predominantly through stories. They're accessible, " +
+		"they carry context, and they can mix facts and feelings in a way that " +
+		"captures the human experience. The goal here is to write yours, so " +
+		"your server can make better sense of your data \u2014 not by inferring or " +
+		"guessing, but by giving structure to your history: your past, goals, " +
+		"ambitions, relationships, places, temperaments. Everything is a lot, " +
+		"so we'll take it a piece at a time.\n\n" +
+		"What you say here stays on your server. The model conducting this is " +
+		"sent your words under a no-retention agreement and keeps nothing.\n\n" +
+		"We start with the chapters of your life \u2014 five to ten of them, rough " +
+		"names and rough years. One person's might run:\n\n" +
+		"| Chapter | Years |\n" +
+		"|---|---|\n" +
+		"| Growing up in Ohio | 1988 \u2013 2006 |\n" +
+		"| College in Texas | 2006 \u2013 2010 |\n" +
+		"| The M&A job | 2010 \u2013 2012 |\n" +
+		"| Two years abroad | 2012 \u2013 2014 |\n" +
+		"| The startup years | 2014 \u2013 2021 |\n" +
+		"| Married, and the house in Denver | 2021 \u2013 now |\n\n" +
+		"Yours will look nothing like these. Rough names and rough years are " +
+		"enough \u2014 what would your chapters be?";
 
 	/** The narrative interview opens ALREADY SPEAKING: an authored first line,
 	 *  shown free (never persisted, no model call). The interview prompt knows
@@ -47,15 +109,23 @@
 	 *  lived inline in the first one only, so switching to an open interview
 	 *  tab greeted you and deep-linking to /chat/chat_narrative_interview
 	 *  (a fresh page load, a restored tab, the Home link) opened a blank room
-	 *  with no explanation of what it was for. */
+	 *  with no explanation of what it was for.
+	 *
+	 *  PREPENDS rather than requiring an empty room: the opening is never
+	 *  persisted, so a reload mid-interview would otherwise start the
+	 *  transcript at the person's first reply with no trace of what was
+	 *  asked. The backend rebuilds model context from its own store, so the
+	 *  synthetic message rides the UI only. */
 	function applyInterviewOpening(convId: string | null | undefined) {
-		if (convId !== INTERVIEW_CHAT_ID || chat.messages.length > 0) return;
+		if (convId !== INTERVIEW_CHAT_ID) return;
+		if (chat.messages[0]?.id === "interview-opening") return;
 		chat.messages = [
 			{
 				id: "interview-opening",
 				role: "assistant",
 				parts: [{ type: "text", text: INTERVIEW_OPENING }],
 			},
+			...chat.messages,
 		] as unknown as typeof chat.messages;
 	}
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
@@ -83,7 +153,6 @@
 		getProfile,
 		setChatTitle,
 		cancelChat,
-		draftNarrative,
 	} from "$lib/api/client";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
@@ -311,13 +380,13 @@
 		const el = e.currentTarget as HTMLImageElement;
 		lightbox = { src, alt, rect: el.getBoundingClientRect() };
 	}
-	let availableModels = $state<ModelOption[]>([]);
-
-	onMount(() => {
-		fetchModels()
-			.then((m) => (availableModels = m))
-			.catch(() => {});
-	});
+	// The catalog, read from the one store that loads it. This used to be a
+	// SECOND fetch of /api/models with a `.catch(() => {})`, so the list the
+	// attachment gate judged against and the list everything else used were
+	// different objects that could disagree about what models exist. There is
+	// no picker in the composer, so the only readers left are the capability
+	// gate and the two recovery buttons below.
+	const availableModels = $derived(getModels());
 
 	// Text/code/doc extensions — MIME is unreliable for these, so check the name too.
 	const TEXT_EXT =
@@ -416,6 +485,11 @@
 			availableModels.find((m) => m.id === selectedModelValue?.id) ??
 			selectedModelValue ??
 			null;
+		// No catalog means no capabilities to judge, not a model that lacks
+		// them. Reading absent flags as "unsupported" told anyone whose
+		// catalog failed to load that they could not attach an image, while
+		// the box would have taken it happily.
+		if (!model || availableModels.length === 0) return null;
 		const needs = {
 			image: attachments.some((a) => a.kind === "image"),
 			pdf: attachments.some((a) => a.kind === "pdf"),
@@ -675,6 +749,10 @@
 		}
 	});
 
+	// (The interview's write_it_up auto-open lives in chatInstances.onData —
+	// the backend sends a transient data-narrative-document part, because tool
+	// parts land in the messages array mutably where no effect observes them.)
+
 
 
 	// Effect to drive the AI presence animation when a chat `edit_page` lands.
@@ -844,9 +922,18 @@
 	let chat = $state<Chat>(null!);
 	let currentChatConversationId = $state<string | null>(null);
 
-	// Getter for current model - used by Chat transport
-	function getCurrentModel(): string {
-		return selectedModelValue?.id || getDefaultModel()?.id || "";
+	// The id that goes on the wire — ONLY when the person moved the picker off
+	// what we prefilled for them. What the picker is showing is not a choice.
+	//
+	// The box resolves every unpinned turn from the slot (see
+	// `api/model_choice.rs`), which is what lets a slot swap reach a
+	// conversation already in progress, and what keeps a client that failed to
+	// load the catalog able to chat at all. This function returned `""` in
+	// that case, and the box rejected it with a 400 listing 244 allowed ids
+	// and never the one it refused.
+	function getCurrentModel(): string | undefined {
+		const id = selectedModelValue?.id;
+		return id && id !== prefilledModelId ? id : undefined;
 	}
 
 	// Getter for the chat's Notebook (room) ID — sent with each message so the agent
@@ -965,11 +1052,13 @@
 								parts: convertMessageToParts(msg),
 							})) as unknown as typeof chat.messages;
 							applyInterviewOpening(currentTabConversationId);
-							if (data.conversation?.model) {
-								initializeSelectedModel(
-									data.conversation.model,
-								);
-							}
+							// The picker is deliberately left alone on a tab
+							// switch. It used to be re-seeded from the model
+							// that last answered THIS conversation, which is
+							// neither the person's choice nor what the next
+							// turn will use — a chat is not pinned to a model.
+							// Leaving it holds their pick across chats, and an
+							// unpicked picker keeps showing the slot default.
 							await Promise.all([
 								refreshContextUsage(),
 								editAllowListStore.init(currentTabConversationId),
@@ -1033,13 +1122,12 @@
 					const profile = await getAssistantProfile<{
 						ui_preferences?: Record<string, unknown>;
 						chat_model_id?: string;
-						default_model_id?: string;
 						persona?: string;
 					}>();
 					if (profile.ui_preferences) {
 						uiPreferences = profile.ui_preferences;
 					}
-					profileDefaultModelId = profile.chat_model_id || profile.default_model_id;
+					profileDefaultModelId = profile.chat_model_id;
 					profileDefaultPersona = profile.persona;
 				} catch (error) {
 					console.error("Failed to load assistant profile:", error);
@@ -1070,9 +1158,6 @@
 							parts: convertMessageToParts(msg),
 						}),
 					) as unknown as typeof chat.messages;
-					if (data.conversation?.model) {
-						initializeSelectedModel(data.conversation.model);
-					}
 				} catch (error) {
 					console.error("[ChatView] Error loading conversation:", error);
 				}
@@ -1084,6 +1169,13 @@
 			// the interview speaking rather than showing a blank room.
 			applyInterviewOpening(tabConversationId);
 
+			// What the picker SHOWS, for every chat old or new: the owner's
+			// standing preference, else the Virtues default. Deliberately not
+			// the model that last answered this conversation — a chat is not
+			// pinned to the model it opened with, so showing the last one
+			// would name a model the next turn may not use.
+			prefillModelDisplay(profileDefaultModelId);
+
 			// Stage 3: Post-load tasks (depend on conversation being loaded)
 			if (tabConversationId) {
 				await Promise.all([
@@ -1093,11 +1185,6 @@
 			} else {
 				// New chat - set defaults from profile
 				editAllowListStore.setChatId(conversationId);
-				initializeSelectedModel(undefined, profileDefaultModelId);
-				const defaultModel = getSelectedModel() || getDefaultModel();
-				if (defaultModel) {
-					selectedModelValue = defaultModel;
-				}
 				if (profileDefaultPersona) {
 					selectedPersona = profileDefaultPersona;
 				}
@@ -1206,6 +1293,28 @@
 	let selectedModelValue = $state<
 		import("$lib/config/models").ModelOption | undefined
 	>(undefined);
+	/** The id we put in the picker ourselves, so `getCurrentModel` can tell a
+	 *  prefill apart from a choice. Picking this exact model back is the same
+	 *  as not choosing: either way the box resolves the slot. */
+	let prefilledModelId = $state<string | undefined>(undefined);
+
+	/** Show what the next turn will use: the owner's pin, else the Virtues
+	 *  default. Records what it showed; sends nothing. */
+	function prefillModelDisplay(profileDefaultModelId?: string) {
+		// Re-seed on every mount UNLESS a recovery button picked something this
+		// session. The store's seeder only runs once per session, so changing
+		// your pin in Settings used to leave the attachment capability gate
+		// judging against the model you were pinned to before — warning that
+		// you cannot send an image to a model that was no longer answering.
+		const picked =
+			selectedModelValue && selectedModelValue.id !== prefilledModelId;
+		if (!picked) setSelectedModel(undefined);
+		initializeSelectedModel(profileDefaultModelId);
+		const shown = getSelectedModel() ?? getDefaultModel();
+		if (!shown) return; // catalog not loaded — the box still knows
+		selectedModelValue = shown;
+		prefilledModelId = shown.id;
+	}
 
 	// Agent mode and persona selection state - used for tool filtering on backend
 	let selectedAgentMode = $state<AgentModeId>('chat');
@@ -1219,11 +1328,13 @@
 	// belongs somewhere it can be explained, not as a two-state word.
 	const chatMode = 'open' as const;
 
-	// Sync selected model with store (only on initial load)
+	// Sync selected model with store (only on initial load). Still a prefill,
+	// not a choice — record it as one.
 	$effect(() => {
 		const storeModel = getSelectedModel();
 		if (storeModel && !selectedModelValue) {
 			selectedModelValue = storeModel;
+			prefilledModelId = storeModel.id;
 		}
 	});
 
@@ -1260,32 +1371,25 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
-	// "Write it up" appears in the interview once the person has said anything:
-	// the drafter reads this chat's whole transcript and arranges THEIR words
-	// into the narrative-identity document (one writer, once — see
-	// narrative_draft.rs). The finished page opens beside the conversation.
-	const interviewSpoke = $derived(
-		currentChatConversationId === INTERVIEW_CHAT_ID &&
-			uniqueMessages.some((m) => m.role === "user"),
-	);
-	let interviewDrafting = $state(false);
-	let interviewDraftError = $state<string | null>(null);
+	// The companion's activity feed: a new message or a status change wakes it
+	// and re-arms the doze timer.
+	$effect(() => {
+		if (currentChatConversationId !== INTERVIEW_CHAT_ID) return;
+		void uniqueMessages.length;
+		void chat.status;
+		rouseCompanion();
+		return () => clearTimeout(interviewSleepTimer);
+	});
 
-	async function writeItUp() {
-		interviewDrafting = true;
-		interviewDraftError = null;
-		try {
-			await draftNarrative();
-			const res = await fetch("/api/wiki/articles/narrative_identity/nar_identity_001");
-			const article = res.ok ? await res.json() : null;
-			if (article?.page_id) {
-				windowShellStore.openRouteBeside(`/page/${article.page_id}`);
-			}
-		} catch (e) {
-			interviewDraftError = e instanceof Error ? e.message : String(e);
-		}
-		interviewDrafting = false;
-	}
+	$effect(() => {
+		if (currentChatConversationId !== INTERVIEW_CHAT_ID) return;
+		if (chat.status !== "submitted" && chat.status !== "streaming") return;
+		interviewWord = getRandomThinkingLabel();
+		const rotate = setInterval(() => {
+			interviewWord = getRandomThinkingLabel();
+		}, 4000);
+		return () => clearInterval(rotate);
+	});
 
 	// The chat's title, from the persisted session so it stays in step with the
 	// sidebar. It is no longer DRAWN here: a title fixed to the top-left of the
@@ -1706,7 +1810,9 @@
 											.length
 									: -1}
 								<div
-									class="flex justify-start"
+									class="flex {isUserMessage
+										? 'justify-end'
+										: 'justify-start'}"
 									id={isUserMessage
 										? `exchange-${exchangeIndex}`
 										: undefined}
@@ -1785,7 +1891,11 @@
 												/>
 											{/if}
 
-											{#if hasThinkingContent || (isStreaming && isLastMessage)}
+											{#if currentChatConversationId !== INTERVIEW_CHAT_ID && (hasThinkingContent || (isStreaming && isLastMessage))}
+												<!-- Interview room excluded: the companion below is
+												     its one indicator, and the model's reasoning
+												     about the person must never surface as chrome
+												     in the room built on their own account. -->
 												<ThinkingBlock
 													isThinking={isStreaming &&
 														isLastMessage &&
@@ -1957,7 +2067,40 @@
 							<!-- Optimistic thinking indicator: shows immediately on submit,
 							     only until the AI SDK creates the assistant message (at text-start).
 							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
-							{#if isAwaitingResponse && !lastAssistantMessage}
+							{#if currentChatConversationId === INTERVIEW_CHAT_ID}
+								<!-- The interview's resident, hanging out below the last turn:
+								     idle between turns, the three-dot thinking morph while the
+								     model composes. Engine vendored from bloub (MIT) — see
+								     lib/bloub/README.md. -->
+								<div class="flex justify-start">
+									<div
+										class="interview-companion"
+										role="presentation"
+										onmouseenter={pokeCompanion}
+										onmouseleave={settleCompanion}
+									>
+										<Bloub
+											size={54}
+											state={chat.status === "submitted" ||
+											chat.status === "streaming"
+												? "thinking"
+												: interviewAsleep
+													? "sleep"
+													: "idle"}
+											shape={interviewShape ?? DEFAULT_SHAPE}
+											expression={interviewExpression ??
+												"neutre"}
+											ink="var(--color-foreground)"
+											paper="var(--color-background)"
+										/>
+										{#if chat.status === "submitted" || chat.status === "streaming"}
+											<span class="companion-word"
+												>{interviewWord}</span
+											>
+										{/if}
+									</div>
+								</div>
+							{:else if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">
 									<div class="message-wrapper" data-role="assistant">
 										<ThinkingBlock
@@ -2008,20 +2151,6 @@
 							     composer already say what this mode is — an icon and an
 							     explainer on top of them was the same fact three times. -->
 							<h1 class="ghost-hero-title">Temporary Chat</h1>
-						</div>
-					{/if}
-
-					{#if interviewSpoke}
-						<!-- The interview's one affordance: the conversation
-						     becomes the document whenever they're ready. -->
-						<div class="interview-writeup">
-							<button onclick={writeItUp} disabled={interviewDrafting}>
-								{interviewDrafting ? "Writing it up…" : "Write it up"}
-								<Icon icon="ri:quill-pen-line" width="14" />
-							</button>
-							{#if interviewDraftError}
-								<span class="err">{interviewDraftError}</span>
-							{/if}
 						</div>
 					{/if}
 
@@ -2134,7 +2263,6 @@
 							onAttach={addFiles}
 							bind:value={input}
 							bind:focused={inputFocused}
-							bind:selectedModel={selectedModelValue}
 							disabled={false}
 							sendDisabled={chat.status !== "ready"}
 							isStreaming={chat.status === "streaming"}
@@ -2284,38 +2412,6 @@
 	   small and floats over the transcript, so the target grows around it
 	   rather than under it. */
 	@media (max-width: 768px), (pointer: coarse) {
-		.interview-writeup {
-			display: flex;
-			align-items: center;
-			gap: 0.75rem;
-			padding: 0 1rem 0.5rem;
-			justify-content: center;
-		}
-
-		.interview-writeup button {
-			display: inline-flex;
-			align-items: center;
-			gap: 0.4rem;
-			background: none;
-			border: 1px solid var(--color-border);
-			border-radius: 999px;
-			padding: 0.4rem 1rem;
-			font-family: var(--font-serif, Georgia, serif);
-			font-size: 0.9rem;
-			color: var(--color-foreground-muted);
-			cursor: pointer;
-		}
-
-		.interview-writeup button:hover {
-			color: var(--color-foreground);
-			border-color: var(--color-foreground-subtle);
-		}
-
-		.interview-writeup .err {
-			font-size: 12px;
-			color: var(--color-error, #c00);
-		}
-
 		/* (The composer's phone padding lives in the docked-composer block at
 		   the end of these styles — it must follow the base rules to win the
 		   cascade.) */
@@ -2584,6 +2680,25 @@
 		opacity: 1;
 		transform: translateY(0);
 		pointer-events: auto;
+	}
+
+	.interview-companion {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0 0 0.5rem;
+		/* The bloub viewBox is ±158 around a body of radius 100, so the SVG
+		   carries (58/316)·size of built-in whitespace per side; pull the ball's
+		   edge back onto the column's left margin, and its top toward the
+		   conversation's tail. Keep the px in step with the size= prop. */
+		margin-left: calc(54px * -58 / 316);
+		margin-top: calc(54px * -58 / 316);
+	}
+
+	.companion-word {
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
+		opacity: 0.5;
 	}
 
 	.messages-container {

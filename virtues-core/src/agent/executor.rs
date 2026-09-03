@@ -166,8 +166,12 @@ async fn execute_single(
     // `dispatch_subagents` fans out several nested agent loops in parallel and routinely runs for
     // minutes — far past the default per-tool timeout. Give it a long dedicated ceiling so it isn't
     // killed mid-research (the workers have their own step + per-call limits as the real bounds).
+    // `write_it_up` chains three model calls (document, capsule, chapters) over a full interview
+    // transcript — ~40s+ observed for the document alone, so the 30s default would kill every run.
     let tool_timeout = if tool_call.name == "dispatch_subagents" {
         Duration::from_secs(600)
+    } else if tool_call.name == "write_it_up" {
+        Duration::from_secs(240)
     } else {
         config.tool_timeout
     };

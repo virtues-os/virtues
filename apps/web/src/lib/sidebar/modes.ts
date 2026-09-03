@@ -123,6 +123,10 @@ export const WIKI_MODE: SidebarMode = {
 			icon: 'ri:compass-3-line',
 			href: '/wiki/identity',
 		},
+		// The life's own partition — authored in the interview, never inferred.
+		// Its own room: wiki_chapters is structure, not part of the identity
+		// document.
+		{ id: 'chapters', label: 'Chapters', icon: 'ri:contacts-book-2-line', href: '/wiki/chapters' },
 		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', href: '/wiki/days' },
 		{ id: 'years', label: 'Years', icon: 'ri:calendar-2-line', href: '/wiki/years' },
 		{ id: 'people', label: 'People', icon: 'ri:user-line', href: '/wiki/people' },

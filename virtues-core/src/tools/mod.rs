@@ -172,30 +172,6 @@ pub fn get_tools_for_council_voice() -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Onboarding-only tools: just naming + memory (no search, no data, no edit).
-///
-/// Prevents the AI from running web searches, SQL queries, or other tools
-/// during the onboarding conversation before names are set.
-const ONBOARDING_TOOLS: &[&str] = &["think", "update_memory", "set_user_name", "set_assistant_name"];
-
-/// Get tool definitions for onboarding (naming + memory only)
-pub fn get_tools_for_onboarding() -> Vec<serde_json::Value> {
-    virtues_registry::tools::default_tools()
-        .into_iter()
-        .filter(|tool| ONBOARDING_TOOLS.contains(&tool.id.as_str()))
-        .map(|tool| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": tool.id,
-                    "description": tool.llm_description,
-                    "parameters": tool.parameters,
-                }
-            })
-        })
-        .collect()
-}
-
 /// The orchestrator's tools in Deep Research mode: the read-only research set, plus the fan-out
 /// tool and `create_page` for the report artifact. Explicit allow-list (not a category filter) so
 /// genuinely read-write Data-category tools (`update_memory`, `set_user_name`, `set_assistant_name`)
@@ -227,9 +203,11 @@ pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
     let allowlist = match agent_mode {
         "deep_research" => Some(DEEP_RESEARCH_TOOLS),
         "council" => Some(COUNCIL_TOOLS),
-        // The narrative interview: a listener, not an agent. No tools at all —
-        // it must not read the record mid-confession or claim capabilities.
-        "interview" => Some(&[] as &[&str]),
+        // The narrative interview: a listener, not an agent. Exactly one tool
+        // — the finisher that turns the transcript into the document and
+        // chapters. Still no search, no data, no pages: it must not read the
+        // record mid-confession or claim capabilities.
+        "interview" => Some(&["write_it_up"] as &[&str]),
         _ => None,
     };
     match allowlist {

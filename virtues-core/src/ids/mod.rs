@@ -85,6 +85,10 @@ pub const PAGE_SHARE_PREFIX: &str = "share";
 // itself is an app_pages row with kind='article'). See migration 0081.
 pub const WIKI_ARTICLE_PREFIX: &str = "article";
 
+// Chapters of a life (wiki_chapters, migration 0015) — authored in the
+// narrative interview, never inferred.
+pub const CHAPTER_PREFIX: &str = "chapter";
+
 // Sidebar pins (user's globally-pinned URLs)
 pub const PIN_PREFIX: &str = "pin";
 

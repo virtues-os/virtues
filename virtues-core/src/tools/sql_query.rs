@@ -225,10 +225,10 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         key_columns: &["subject_type", "subject_id", "kind", "body", "author", "resolved_at"],
         join_hint: None,
     });
-    m.insert("wiki_narrative_identity", TableMetadata {
-        description: "The distilled core of the owner's own account of who they are — the few lines carried into every chat. The full document is a wiki article (subject_type 'narrative_identity') whose prose lives in its page",
+    m.insert("wiki_chapters", TableMetadata {
+        description: "The chapters of the owner's life — their own gapless partition of it into named eras, authored in the narrative interview and never inferred. A day's chapter is a range lookup on started_at/ended_at; each chapter also has a wiki article (subject_type 'chapter')",
         category: "wiki",
-        key_columns: &["content", "drafted_at"],
+        key_columns: &["title", "kind", "started_at", "ended_at", "is_current", "changepoint", "summary"],
         join_hint: None,
     });
     m.insert("wiki_rules", TableMetadata {
