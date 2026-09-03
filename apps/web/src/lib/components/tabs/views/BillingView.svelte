@@ -46,9 +46,14 @@
 	let linkDone = $state(false);
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-	const isSubscribed = $derived(
-		subscriptionStore.status === 'active' || subscriptionStore.status === 'trialing'
-	);
+	// `subscribed`, not "do we hold a key". Those were the same thing until
+	// 0017 decoupled linking from billing, after which a free account rendered
+	// this whole page as though it were paying.
+	const isSubscribed = $derived(subscriptionStore.subscribed);
+	// atlas unreachable and nothing cached. Neither standing is honest here, so
+	// the page says so instead of offering a subscription to someone who may
+	// already have one.
+	const standingUnknown = $derived(!subscriptionStore.entitlementKnown && !isSubscribed);
 
 	function stopPolling() {
 		if (pollTimer) {
@@ -535,6 +540,15 @@
 					</div>
 				{/if}
 			</div>
+		</section>
+	{:else if standingUnknown}
+		<section class="chapter">
+			<h2 class="settings-label">Standing</h2>
+			<p class="chapter-lede">
+				We couldn't reach the Virtues billing service just now, so this page can't say
+				where your subscription stands. Your server is unaffected — nothing here gates it.
+				Check your connection and reload.
+			</p>
 		</section>
 	{:else}
 		<section class="chapter">

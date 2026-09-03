@@ -1342,15 +1342,22 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
     match crate::api::subscription::get_subscription_status(&pool).await {
         Ok(data) => (StatusCode::OK, Json(data)).into_response(),
         Err(e) => {
-            tracing::debug!("Subscription status check failed: {}", e);
-            // Safe fallback so the app works even if the vault read hiccups.
+            // NOT a fallback to `active`. It was one, and that turned a blipped
+            // vault read into a subscription the owner does not have — the
+            // banned "broken query becomes a plausible value" (CLAUDE.md), on
+            // the one endpoint whose whole job is to say where they stand.
+            // Unknown is a state the UI can render; a lie is not.
+            tracing::warn!("subscription status check failed: {e}");
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
-                    "status": "active",
+                    "status": "unknown",
+                    "linked": false,
+                    "subscribed": false,
+                    "entitlement_known": false,
+                    "is_active": false,
                     "trial_expires_at": null,
-                    "days_remaining": null,
-                    "is_active": true
+                    "days_remaining": null
                 })),
             )
                 .into_response()
@@ -1474,6 +1481,8 @@ pub async fn claim_billing_handler(
         )
             .into_response();
     }
+    // New key, new account: whatever we cached is about the old one.
+    crate::api::subscription::invalidate();
 
     // Provision relay reachability (best-effort): atlas answers with a relay
     // URL and nothing else — no token, no per-box secret. (The per-SNI HMAC
@@ -1609,7 +1618,14 @@ pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Re
         crate::virtues_api::atlas_url();
     let http = crate::http_client::virtues_api_client();
     match crate::virtues_api::link::poll(&pool, &http, &atlas_url).await {
-        Ok(status) => (StatusCode::OK, Json(serde_json::json!({ "status": status }))).into_response(),
+        Ok(status) => {
+            // A fresh link is a new key and possibly a new subscription; the
+            // cached entitlement is now about the previous account.
+            if status == crate::virtues_api::link::LinkStatus::Ready {
+                crate::api::subscription::invalidate();
+            }
+            (StatusCode::OK, Json(serde_json::json!({ "status": status }))).into_response()
+        }
         Err(e) => {
             tracing::warn!("billing link status failed: {e}");
             (

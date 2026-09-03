@@ -212,6 +212,65 @@ pub async fn fetch_portal_session(
     })
 }
 
+/// What atlas says about this box's account. Distinct from "do we hold an
+/// api_key", which is all the box could see before this door existed — and
+/// which stopped meaning "subscribed" on 2026-08-31, when linking became
+/// identity rather than billing (0017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Entitlement {
+    /// Linked, and an active subscription stands behind the key.
+    Subscribed,
+    /// Linked, no subscription: free, or lapsed. Hosted AI, web search,
+    /// Places and Plaid all refuse; the box itself is unaffected.
+    Free,
+    /// atlas rejected the key outright — revoked, or minted against an
+    /// account that no longer exists. Distinct from Free: this one wants a
+    /// re-link, and must never be shown as "you have no subscription".
+    KeyUnknown,
+}
+
+/// `POST {atlas}/account/entitlement` — read-only, Stripe-free, safe to poll.
+///
+/// Err means we did not get an answer (transport, 5xx, malformed body). The
+/// caller must hold its last known answer rather than render "unsubscribed"
+/// from a network blip — atlas being unreachable is not a billing event.
+pub async fn fetch_entitlement(
+    http: &reqwest::Client,
+    atlas_url: &str,
+    api_key: &str,
+) -> Result<Entitlement> {
+    let resp = http
+        .post(format!(
+            "{}/account/entitlement",
+            atlas_url.trim_end_matches('/')
+        ))
+        .json(&serde_json::json!({ "api_key": api_key }))
+        .send()
+        .await
+        .context("POST /account/entitlement")?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(Entitlement::KeyUnknown);
+    }
+    if !status.is_success() {
+        let b = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("entitlement fetch failed: {status} — {b}"));
+    }
+    let v: serde_json::Value = resp.json().await?;
+    // Absent `subscribed` is a contract break, not a "no" — an older atlas
+    // that does not serve this door 404s above, so reaching here with a body
+    // we cannot read means something changed underneath us. Say so.
+    let subscribed = v["subscribed"]
+        .as_bool()
+        .ok_or_else(|| anyhow!("entitlement response missing `subscribed`"))?;
+    Ok(if subscribed {
+        Entitlement::Subscribed
+    } else {
+        Entitlement::Free
+    })
+}
+
 async fn find_credential_id(db: &PgPool) -> Result<Option<String>> {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT id FROM credentials WHERE source_id = $1 LIMIT 1")
