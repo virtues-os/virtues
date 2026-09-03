@@ -265,8 +265,6 @@
 			{/if}
 		</button>
 
-		<div class="mark serif" aria-hidden="true">∴</div>
-
 		<ol class="steps">
 			{#each steps as s, i (s.id)}
 				<li class="step" class:done={s.done} class:active={s.id === active}>
@@ -437,13 +435,6 @@
 	.steps { list-style: none; margin: 0; padding: 0; max-width: 640px; }
 
 	.steps { --gutter: 30px; }
-
-	.mark {
-		font-family: var(--font-serif);
-		font-size: 15px;
-		color: var(--color-foreground-subtle);
-		padding: 0 0 6px 1px;
-	}
 
 	.census {
 		max-width: 640px;
