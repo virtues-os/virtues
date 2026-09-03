@@ -27,10 +27,10 @@
   the visual size hierarchy. Times is a system font; Linux/Android fall back to
   their default serif.
 
-  SCREENSHOTS: shots 1 and 4 are placed. The remaining SHOT comments below
-  mark frames nobody has captured yet — replace each with an <img> once the shot
-  exists, and give it alt text describing WHAT IS IN FRAME, not "screenshot".
-  Capture against an anonymized copy: tools/anonymize-boxcopy.py.
+  SCREENSHOTS: all four are placed. Alt text describes WHAT IS IN FRAME, never
+  the word "screenshot". Capture against an anonymized copy —
+  tools/anonymize-boxcopy.py — and read every frame before it is committed:
+  four rounds of capture found four more tables holding real content.
   └──────────────────────────────────────────────────────────────────────────────┘
 -->
 
@@ -115,7 +115,7 @@ of a day that didn't happen. Each event is then scored for novelty against your
 calendar, your contacts, and your messages resolve to one person, with a page
 of her own.
 
-<!-- SHOT 2: an entity page: a person, their linked mentions across sources, the events they appear in. Demonstrates entity resolution instead of asserting it. -->
+<img src=".github/images/shots/wiki.png" alt="The wiki index: a record of 592 people, 46 places and 204 organizations with entries since December 2017, above a sparkline of the whole record and an activity grid showing which days are dense and which are sparse." width="100%">
 
 **It answers questions with your actual data**, not a generic profile. The
 agent gets read-only SQL over your ontology tables, semantic search across the
@@ -123,7 +123,7 @@ whole record, a Python sandbox, web research, and the ability to write pages.
 Multi-model — Claude, GPT, Gemini — in three modes: full tools, conversation
 only, and read-only research.
 
-<!-- SHOT 3: a chat with `sql_query` running against the owner's own life and the result rendered. The money shot for a technical reader. -->
+<img src=".github/images/shots/chat.png" alt="A chat: the question "How much of last week does the record actually account for?", the agent's sql_query step against the events table, and an answer — 92.4 hours placed as stays, 16.5 in transit, and 59.1 it will not claim to know, because those hours have no visit, movement, audio or purchase to corroborate them." width="100%">
 
 **Where your data goes, stated plainly.** It is stored on your server and it
 stays there. Search runs on your side of the wire — the embedding and reranking
