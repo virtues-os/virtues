@@ -24,11 +24,18 @@
 	a dated form). What survived every review was: a picture, a real button,
 	the letter within reach, and few words.
 
-	WHILE ANY STEP IS OPEN, THIS IS THE PAGE. HomeView renders nothing else —
-	and drops its own title and padding so the spread bleeds to the pane —
+	WHILE ANY STEP IS OPEN, THIS IS THE PAGE. HomeView renders nothing else
 	until every step is done or waved away; only then does Home exist. The
 	`phase` binding tells HomeView which page this is ("loading" holds until
 	both ends have answered once, so a first-run box never flashes Home).
+
+	MOUNTED ONCE. HomeView keeps this component outside its Page shell and
+	never re-creates it: the first spread build switched Page's props on the
+	phase, Page moved its children between branches, this component was
+	re-created with phase "loading", and the two chased each other — twelve
+	instances a second, each with a census request in flight, the visible
+	one always the newest. If HomeView ever changes its structure around
+	this component on `phase`, that loop comes back.
 
 	SKIPPED MEANS GONE FROM THE LIST'S DEMANDS, NOT FROM THE PRODUCT. A
 	skipped step counts as settled; the same asks stay findable where they
@@ -290,7 +297,7 @@
 			if (document.hidden) return;
 			void loadProfile();
 			void loadCensus();
-				void store.check();
+			void store.check();
 		};
 		document.addEventListener("visibilitychange", refresh);
 		window.addEventListener("focus", refresh);

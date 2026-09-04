@@ -329,38 +329,33 @@
 	}
 </script>
 
-<!-- While getting started is the page, it is a spread that bleeds to the
-     pane's edges and carries its own title; Page's chrome returns with Home. -->
-<Page
-	title={gsPhase === "settled" ? "Home" : undefined}
-	description={gsPhase === "settled" ? subtitle : undefined}
-	maxWidth={gsPhase === "settled" ? "wide" : "none"}
-	padding={gsPhase === "settled" ? "default" : "none"}
->
+<!-- First run: getting started is the page, whole and alone — a spread that
+     bleeds to the pane and carries its own title, so it lives OUTSIDE the Page
+     shell. It is mounted exactly once and hidden, not destroyed, when the box
+     settles: it is what computes `gsPhase`, and re-creating it on a phase
+     change made it and this view chase each other (see its header). -->
+<div class="gs" class:settled={gsPhase === "settled"}>
+	<div class="rv"><GettingStarted bind:phase={gsPhase} /></div>
+</div>
+
+{#if gsPhase === "settled"}
+<Page title="Home" description={subtitle} maxWidth="wide">
 	{#snippet actions()}
-		{#if gsPhase === "settled"}
-			<!-- The two adjacent days, as a stepper: they are neighbours on one axis,
-			     which a pair of loose links did not say. -->
-			<div class="days" role="group" aria-label="Go to a day">
-				<button type="button" onclick={() => open(`/day/day_${yesterdayDate}`, "Yesterday")}>
-					<Icon icon="ri:arrow-left-s-line" width="15" />
-					Yesterday
-				</button>
-				<button type="button" class="now" onclick={() => open(`/day/day_${todayDate}`, "Today")}>
-					Today
-					<Icon icon="ri:arrow-right-s-line" width="15" />
-				</button>
-			</div>
-		{/if}
+		<!-- The two adjacent days, as a stepper: they are neighbours on one axis,
+		     which a pair of loose links did not say. -->
+		<div class="days" role="group" aria-label="Go to a day">
+			<button type="button" onclick={() => open(`/day/day_${yesterdayDate}`, "Yesterday")}>
+				<Icon icon="ri:arrow-left-s-line" width="15" />
+				Yesterday
+			</button>
+			<button type="button" class="now" onclick={() => open(`/day/day_${todayDate}`, "Today")}>
+				Today
+				<Icon icon="ri:arrow-right-s-line" width="15" />
+			</button>
+		</div>
 	{/snippet}
 
 	<div class="body">
-		<!-- First run: the getting-started page, whole and alone, each section
-		     retiring as it is answered or as its promise lands. Renders nothing
-		     on a settled box — see GettingStarted.svelte and
-		     agents/plan/getting-started-plan.md. -->
-		<div class="rv"><GettingStarted bind:phase={gsPhase} /></div>
-
 		{#if gsPhase === "settled"}
 		<!-- The box speaks — today's rhythm against the trailing twelve weeks —
 		     then, if it wrote one, quotes itself. -->
@@ -497,10 +492,16 @@
 		{/if}
 	</div>
 </Page>
+{/if}
 
 <style>
 	.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
+	/* The getting-started host: the pane's full height, its own scroll, and
+	   display:none (not unmount) once Home takes over. */
+	.gs { height: 100%; overflow-y: auto; }
+	.gs.settled { display: none; }
+	.gs .rv { height: 100%; }
 	.rv { opacity: 0; transform: translateY(7px); animation: rv 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) forwards; }
 	@keyframes rv { to { opacity: 1; transform: none; } }
 	@media (prefers-reduced-motion: reduce) { .rv { animation: none; opacity: 1; transform: none; } }
