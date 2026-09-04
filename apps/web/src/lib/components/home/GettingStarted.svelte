@@ -376,24 +376,12 @@
 		<section class="work">
 			<div class="head">
 				<h1 class="title">Getting started</h1>
-				<span class="count">{doneSteps.length} of {steps.length}</span>
 			</div>
-			<div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax={steps.length} aria-valuenow={doneSteps.length}>
+			<div class="progress" role="progressbar" aria-label="Getting started" aria-valuemin="0" aria-valuemax={steps.length} aria-valuenow={doneSteps.length}>
 				{#each steps as s (s.id)}
 					<span class:done={s.done} class:now={s.id === now.id}></span>
 				{/each}
 			</div>
-
-			{#if doneSteps.length > 0}
-				<div class="done-row">
-					<span class="lbl">Done</span>
-					{#each doneSteps as s (s.id)}
-						<button class="chip" type="button" onclick={s.go}>
-							<span class="ok"><Icon icon="ri:check-line" width="10" /></span>{s.title}
-						</button>
-					{/each}
-				</div>
-			{/if}
 
 			<div class="now-panel">
 				<div class="eyebrow">Now</div>
@@ -417,20 +405,36 @@
 				</div>
 			{/if}
 
-			<div class="foot">
-				{#if connected.length > 0 || toAdd}
-					<div class="sources">
-						<span class="lbl">Reading from</span>
-						{#each connected as s (s.id)}
-							<button class="chip" type="button" onclick={() => open("/sources", "Sources")}>
-								<span class="ok"><Icon icon="ri:check-line" width="10" /></span>{s.name}
-							</button>
-						{/each}
-						{#if toAdd}
-							<button class="chip add" type="button" onclick={() => open("/sources", "Sources")}>+ {toAdd.name}</button>
-						{/if}
+			<!-- What is behind you and what is flowing: two quiet rows. The chips
+			     stay pressable — the letter is always one click away — but carry
+			     no check; the row's label already says done. -->
+			<div class="rows">
+				{#if doneSteps.length > 0}
+					<div class="row">
+						<span class="lbl">Done</span>
+						<div class="chips">
+							{#each doneSteps as s (s.id)}
+								<button class="chip" type="button" onclick={s.go}>{s.title}</button>
+							{/each}
+						</div>
 					</div>
 				{/if}
+				{#if connected.length > 0 || toAdd}
+					<div class="row">
+						<span class="lbl">Reading from</span>
+						<div class="chips">
+							{#each connected as s (s.id)}
+								<button class="chip" type="button" onclick={() => open("/sources", "Sources")}>{s.name}</button>
+							{/each}
+							{#if toAdd}
+								<button class="chip add" type="button" onclick={() => open("/sources", "Sources")}>+ {toAdd.name}</button>
+							{/if}
+						</div>
+					</div>
+				{/if}
+			</div>
+
+			<div class="foot">
 				<button
 					class="door"
 					class:expanded={doorExpanded}
@@ -503,32 +507,29 @@
 	.work > :nth-child(6) { animation-delay: 300ms; }
 	@media (max-width: 640px) { .work { padding: 32px 24px; } .front .text { padding: 0 24px 28px; } }
 
-	.head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 	.title { font-family: var(--font-serif); font-weight: 400; font-size: 36px; line-height: 1.1; margin: 0; color: var(--color-foreground); }
-	.count { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); white-space: nowrap; }
 	.progress { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-top: 20px; }
 	.progress span { height: 3px; border-radius: 999px; background: var(--color-border); }
 	.progress span.done { background: var(--color-foreground); }
 	.progress span.now { background: var(--color-secondary); }
 
-	.done-row, .sources { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-	.done-row { margin-top: 32px; }
-	.lbl { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); margin-right: 4px; }
+	/* The quiet rows: a label, then ghost chips — a hairline, no fill, no
+	   check. Pressable, but nothing here competes with the panel above. */
+	.rows { margin-top: 40px; display: grid; gap: 12px; }
+	.row { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
+	.row .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+	.lbl { font-family: var(--font-sans); font-size: 13px; line-height: 28px; color: var(--color-foreground-subtle); }
 	.chip {
-		display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 14px 0 12px;
-		border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface);
-		font-family: var(--font-sans); font-size: 13px; font-weight: 500; color: var(--color-foreground);
-		cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease;
+		display: inline-flex; align-items: center; height: 28px; padding: 0 12px;
+		border: 1px solid var(--color-border); border-radius: 999px; background: transparent;
+		font-family: var(--font-sans); font-size: 13px; font-weight: 400; color: var(--color-foreground-muted);
+		cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
 	}
-	.chip:hover { background: var(--hover-bg, color-mix(in srgb, var(--color-foreground) 7%, transparent)); }
-	.chip .ok {
-		width: 14px; height: 14px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
-		background: var(--color-foreground); color: var(--color-background);
-	}
-	.chip.add { color: var(--color-primary); background: transparent; }
+	.chip:hover { background: var(--hover-bg, color-mix(in srgb, var(--color-foreground) 7%, transparent)); color: var(--color-foreground); }
+	.chip.add { color: var(--color-primary); border-style: dashed; }
 
 	.now-panel {
-		margin-top: 32px; padding: 28px 32px;
+		margin-top: 40px; padding: 28px 32px;
 		background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px;
 	}
 	.eyebrow { font-family: var(--font-sans); font-size: 12px; font-weight: 500; color: var(--color-foreground-subtle); }
@@ -549,10 +550,9 @@
 	.next .t { font-family: var(--font-serif); font-weight: 400; font-size: 22px; line-height: 1.2; margin-top: 6px; color: var(--color-foreground); }
 	.next .p { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); margin-top: 4px; }
 
-	.foot { margin-top: auto; padding-top: 24px; display: flex; align-items: center; gap: 16px; }
-	.foot .sources { flex: 1; padding-top: 24px; border-top: 1px solid var(--color-border-subtle); }
+	.foot { margin-top: auto; padding-top: 24px; display: flex; justify-content: flex-end; }
 	.door {
-		margin-left: auto; display: flex; align-items: center; align-self: flex-end;
+		display: flex; align-items: center;
 		font-family: var(--font-mono); font-size: 11px;
 		color: var(--color-foreground-subtle); background: none; border: 0;
 		padding: 2px; cursor: pointer; opacity: 0.45;
