@@ -2,260 +2,208 @@
 
 [design.md](design.md) governs the **shell** — the desk, the chrome, the
 sidebar. This governs the **page**: everything rendered in the pane. Where the
-two touch (radii, the 8pt grid, the interaction ramp), design.md wins.
+two touch (the 8pt grid, the interaction ramp), design.md wins; on radius this
+file wins, and says why below.
 
-This file exists because Getting Started was redesigned four times on
-2026-09-04 and every review was taste against taste. Each version was either
-stripped or cluttered, and the reason was never the objects on the page. It was
-that no page had a sentence, and no page had an anatomy, so every screen was
-designed from scratch and every radius, accent and paragraph got re-argued.
-A grammar is what stops that. It is small enough to hold in your head and
-strict enough that a page mostly designs itself.
+This file exists because Getting Started was redesigned eight times on
+2026-09-04 and every review was taste against taste. The first grammar,
+written mid-way, described a printed book page — hairlines, oldstyle numerals,
+a shoulder column, 6px cards — and the user called every build of it "an old
+Windows XP thing." What finally landed, and what this file now describes, is
+the **spread**: a painting with words on it, and the work beside it, in a
+current app's register. The lesson, so it is not re-learned: the reader
+responds to atmosphere, depth and real controls, not to bare pages; "academic"
+means the serif, the paintings and the lines — never small gray type and
+rules.
 
-The lineage, named so nobody has to rediscover it: the English scholarly
-book — running heads, folios, shoulder notes, plates tipped in at chapter
-heads — under Apple's restraint: one action per screen, large type, one system
-everywhere. Not Tufte: his furniture *is* the content. Here the furniture
-recedes and the person's record is the content.
+Precedence, always: the user's words, then this file, then taste.
 
 ---
 
 ## 1. One sentence per page
 
 Every page has a sentence, written down before anything is drawn. Every object
-on the page either **advances** that sentence or **proves** it. An object that
-does neither is cut, however handsome.
+on the page either **advances** it or **proves** it. An object that does
+neither is cut, however handsome.
 
-Getting Started's sentence: *Your server is reading your life, and tomorrow
-morning it writes the first page.* The steps advance it. The census proves it.
-Source cards belong in Sources; the lifeline is a promise, not proof, and lives
-at the head of the interview until chapters exist. That single test settled a
-week of argument.
+- Getting Started: *Your server is reading your life, and tomorrow morning it
+  writes the first page.* The stepper advances it; the census on the painting
+  proves it. Source cards went to Sources and the lifeline to the interview
+  by this test.
+- Home: *Today, while it is still happening.* The deck advances it; today's
+  count on the painting proves it.
 
-The sentence may appear on the page **once**, as the running head's line, and
-it is the only prose the page gets. Explanatory paragraphs in lists are
-prohibited; a row gets at most one line under its title.
+The sentence may appear once, under the title, in the sans. It is the only
+prose the page writes; a step or a row gets at most one line under its title.
 
-## 2. Page anatomy
+## 2. The spread
 
-Every page in the pane has the same four parts, in this order. A page may omit
-a part; it may not reorder them or add a fifth.
+Every chapter page is a **spread**: the work on the left in one measure, and
+on the right the **frontispiece** — a painting as a card set in the page's
+margin. Chapter pages are Home, Getting Started, a day, a place, a person.
+Pages that are lists or tools (Sources, Settings, the wiki index, chat) keep
+the shell's `Page` and have no frontispiece.
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ plate                (chapter heads only; cut by the page)    │
-├──────────────────────────────────────────────────────────────┤
-│ running head         title · one line              ┃ folio   │
-├────────────────────────────────────────────────────┨ margin  │
-│ body                 one measure, ~64ch            ┃ column  │
-│                      lists, prose, ledgers         ┃ verbs,  │
-│                                                    ┃ dates,  │
-│                                                    ┃ counts  │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────┬──────────────────────────┐
+│ title              (serif 36)    │  ┌────────────────────┐  │
+│ one line           (sans 15)     │  │                    │  │
+│                                  │  │   the painting     │  │
+│ the work                         │  │                    │  │
+│   stepper · deck · list · card   │  │  the line (26)     │  │
+│                                  │  │  figures  (28)     │  │
+│                                  │  │  since · links     │  │
+│                                  │  └────────────────────┘  │
+└──────────────────────────────────┴──────────────────────────┘
 ```
 
-**Plate.** A picture, at the head of a *chapter* only: Home, a day, a place, a
-person, the interview. Never inside a list, never in a card, never as a ground
-behind text. It is cut by the page — a hard bottom edge the body may overlap —
-not faded into it. §4 says what a plate is.
+**The frontispiece** is one component, `home/Frontispiece.svelte`, and is
+the only framed object the app's pages share. A painting for the moment, one
+line on it, up to three numbers, one quiet line, up to two ways onward — all
+in white over the painting's dusk. It is a 12px card with the page's margin
+on three sides, sticky and pane-tall so its words stay in view on a long page,
+and it becomes a header above the work below 900px. It is never a ground
+behind the text column, never a band cut by the page, never faded into paper;
+those were built and struck.
 
-**Running head.** The title in the serif; beneath it the page's one sentence in
-the sans; at the right edge, in the margin column, the folio — the one number
-that says where you are (`3 of 5`, a date, a count). No rule under it. The
-claret rule under a heading was tried and read as a progress bar wearing a
-costume; the folio *is* the progress.
+What goes on it, by page: Getting Started shows the step's painting, the
+step's banked line and the record's census. Home shows the hour's painting,
+yesterday's own sentence (the record quoting itself; the day's banked line
+when it has none), today's steps, screen time and messages, and the two
+adjacent day pages.
 
-**Body.** One reading measure, about 64 characters, left-aligned to the running
-head's title. Lists, prose, ledgers. Whitespace separates first; a hairline
-(`--border-subtle`) separates list rows and nothing else; a border and a fill
-are spent only on an object that must read as a separate thing (a card with its
-own state), never as decoration.
+**The paintings** are oil, in color, portrait, one palette (warm gold and
+cool teal, morning light), and ship in `static/plates` — drawn once through
+the box's own image slot — until the plate job draws them from the record
+(today's sky over the home place, the first place the record can name). One
+ink-engraving register for small marginal plates is still allowed where a
+picture must invert for the dark themes; it is not in use on any page today.
+No words on a painting except the frontispiece's own.
 
-**Margin column.** The right edge of the measure is a column, not a place
-buttons drift to. It holds **marginalia**: the quiet facts and verbs that
-belong to a row but are not its title — the way back (`Read again`, `Change`,
-`Add a source`), a date, a count, a state (`Tomorrow morning`). One item per
-row, set in the quietest style on the page (§5, role *margin*). The one row
-that asks for action carries its verb as a pill here, and that is the only
-control in the column. Right edges align; a marginalia item never wraps.
+**The lines** come from the bank in [voice.md](voice.md), unattributed on the
+page; `home/lines.ts` carries the app's copy and rotates one per day. A line
+the record wrote itself (a day's epigraph) always outranks a banked one.
 
-**Colophon.** A page may end with an epigraph: one quotation from the bank in
-[voice.md](voice.md), set in the serif at the foot of the body, unattributed —
-the bank holds the provenance; the page shows only the line. It is not the page's sentence and does not count against
-§1, because it is quoted, not written. **One at a time,** chosen per day, never
-carouselled and never animated: the reader who wants another comes back
-tomorrow. A page that has a colophon has nothing below it.
+**The work** sits in `.work`: padding 56 / 56 / 48 / 64, one measure of about
+40em for prose and lists, full width for a chart. Nothing in it paints its own
+ground; the pane's surface is the page's.
 
-## 3. Cards
+## 3. The stepper
 
-A card is an object with its own state, not a way to group things. It earns a
-border and a fill because it can be *done*, *connected*, *empty*. Four cards in
-a grid that are really four paragraphs are four paragraphs.
+A sequence with state renders as a **vertical stepper**, never as chips, a
+progress rule, or an accordion — all three were built and struck. Every step
+in walking order; a rail on the left carrying a 20px dot: filled ink with a
+check for done, filled claret with the number for now, hollow with the number
+for later; a hairline joining them. The current step opens in place: its
+title one size up, its one paragraph, its button, its skip. Done steps keep
+their way back as a quiet verb at the right edge (`Read again`, `Change`,
+`Add a source`). Later steps sit muted with their one line.
 
-- Radius: **6px**, per design.md. Nothing at 2, 8, 12, 14, or 18.
-- Border `--border`, fill `--surface`, **no shadow, ever.** A sheet that
-  overlaps a plate is a pasted label, not a floating panel: the hairline and
-  the plate's hard edge do the work. Shadows were tried on the overlap and
-  read as a SaaS card on a painting.
-- Inside a card the anatomy repeats at small scale: a head (serif name, margin
-  state at the right), one line, then a ledger or a list. Never a paragraph.
+A step's work happens in the step, not on another page, when it is small (a
+card of three fields, three Connect rows, a sign-in); it goes to the page
+where it permanently lives when it is large (the interview, the manual).
 
-## 4. Plates
+## 4. Type
 
-A plate is a picture **drawn from the record** — the first place it can name,
-today's sky over the home place, the person's own hand — never stock, never a
-diagram of a product construct. The line diagrams of "streams flowing into a
-box" were the previous plates; they read as artsy because they were abstract.
-A real subject drawn well beats a clever abstraction every time.
+Three faces, the ones `themes.css` declares: `--font-serif` (JJannon),
+`--font-sans` (Avenir), `--font-mono` (IBM Plex Mono). One scale:
 
-Two inks, and only two:
+| Size | Face | Used for |
+|---|---|---|
+| 36 | serif | the page title (a dateline on Home) |
+| 26 · 28 | serif | the frontispiece's line · its figures |
+| 22 | serif | the open step's title; a card's question |
+| 18 | serif | step titles, list rows, the novelty line, the ask |
+| 15 | sans | the sentence under the title; a paragraph |
+| 14 | sans | buttons, links, list bodies |
+| 13 | sans | labels, quiet verbs, notes, dates |
+| 12 | sans / mono | times and captions in white on the painting; mono only for a clock time |
+| 11 | sans, 500 | the number inside a stepper dot |
 
-| Plate | Where | Treatment | Why |
-|---|---|---|---|
-| **Chapter plate** | the head of Home, a day, a place, a person | an oil sky or landscape, in color, cut by the page | the one bold thing on the page |
-| **Marginal plate** | small: a wiki thumbnail, an empty state, a colophon | a line engraving, **one ink**, shipped as an alpha mask and painted with `--foreground` | inverts for the dark themes with no second asset |
+Prohibitions, each of which has shipped: the serif is never bold and never
+italic (JJannon has no italic); no uppercase serif with tracking; **no mono
+outside a chart's own axis and a clock time** — mono kickers ("recents",
+"map") at 9.5–10.5px were the single strongest tell of the dated register;
+nothing under 11px; no half-pixel sizes (`12.5`, `13.5`).
 
-Rules: one plate per page. No words on a plate. A caption, if any, is set in
-the mono in the margin column: number, name, place (`plate 1 · Wren Yard ·
-Chicago`), nothing witty. Glosses like "two names, thirty seconds" were tried
-and read as ad copy in museum-label costume.
+## 5. Color
 
-The reference implementation is the Getting Started specimen on `wave`
-(2026-09-04, uncommitted at the time of writing): `RecordPlate.svelte` paints a
-mask through `mask-image` with the foreground token; the mask was drawn once
-through the box's own image slot and thresholded to two tones. The production
-shape is a nightly job that draws plates into the asset store — the deleted
-day-illustration job, brought back with a fixed style.
-
-## 5. Type
-
-Three faces, four roles, one scale. Faces are the ones `apps/web/src/themes.css`
-already declares: `--font-serif` (JJannon, Lora fallback), `--font-sans`
-(Avenir), `--font-mono` (IBM Plex Mono).
-
-| Role | Face | Sizes | Used for |
-|---|---|---|---|
-| **Title** | serif, regular | 32 · 24 · 20 | page titles, card names, list-row titles, numerals |
-| **Line** | sans, 400 | 15 · 13 | the one sentence under a title, the one line under a row |
-| **Margin** | sans, 400, `--foreground-subtle` | 13 · 12 | marginalia: the way back, a state, a date |
-| **Measure** | mono, 400 | 12 · 11 | numbers and only numbers: the folio, counts, dates in a ledger, the CLI's vocabulary (`✓ · ⚠`) |
-
-A page uses at most **four sizes** from this scale. The sweep on 2026-09-04
-found `12.5`, `13.5`, `11.5`, `10.5` and `9.5px` scattered through the pane;
-those are off the scale and are not to be reused.
-
-Prohibitions, each of which has shipped here:
-
-- **The serif is never bold and never italic.** JJannon has no italic cut;
-  hierarchy comes from size and ink, never weight.
-- **No uppercase serif with wide tracking** (design.md §6).
-- **The mono is for measured things only.** A label is not code; a heading is
-  not data. "no. 05 / in your own words / chapters · beliefs · days" was mono
-  used as a costume.
-- **The sans never headlines.** If a heading wants to be sans it is a label,
-  and labels are set in the margin role.
-
-## 6. Color
-
-Paper and ink, from the theme tokens, never literals: `--background`,
-`--surface`, `--foreground`, `--foreground-muted`, `--foreground-subtle`,
-`--border`, `--border-subtle`.
+Paper and ink from the theme tokens, never literals in the pane (the
+frontispiece's white and its dusk gradient are the one exception, because
+they sit on a painting, not on the theme).
 
 **One accent, one meaning.** Claret (`--secondary`) means *you are here; do
-this now*. The open step's numeral and title, the one verb pill, the
-now-marker on a wire. It is never a rule, a fill, a badge, or a border for
-emphasis. If two things on a page are claret, one of them is wrong.
+this now*: the current step's dot and eyebrow, the one filled button on the
+page, the now-marker on a wire. Never a rule, a fill, a border for emphasis,
+or a second button. Navy (`--primary`) is the ink of anything else pressable.
+Semantic color is separate and appears only on a state a person acts on.
 
-Navy (`--primary`) is the ink of anything pressable that is not the one
-action: links, the interaction ramp, focus.
+## 6. Radius, spacing, surfaces
 
-Semantic color (`--success`, `--warning`, `--error`) is separate from the
-accent and appears only on a state that a person would act on: `✓ Connected`
-in green is right; a green check on a finished step is decoration, and a
-finished step's check is ink.
+- **12px** on cards and the frontispiece; **pills** on buttons; **circles**
+  on stepper dots; **6px** only inside the shell (design.md). Nothing else.
+- **No shadows in the pane.** A card is a hairline (`--border`) on
+  `--surface`; it reads as separate because it can be acted on (the keep, a
+  step's gate), never as grouping.
+- **8pt grid.** Gaps of 8 · 12 · 16 · 20 · 24 · 32 · 40 · 48 · 56 · 64.
+  Section spacing is `margin-top: 48px`; a title's sentence sits 10px below
+  it; the stepper starts 40px below the sentence.
+- Buttons: 40px tall, `padding: 0 22px`, filled claret with white 14px/500
+  sans for the one action; a quiet navy 14px link for its skip. Verbs name
+  the place: `Start the interview`, `Open sources`, never an arrow alone.
 
-No hardcoded badge colors for non-semantic values (see the feedback rule of
-the same name). No color on the desk (design.md).
+## 7. Motion
 
-## 7. Spacing, alignment, radius
+Three animations in the pane, all **from-only** keyframes so the resting
+state is the stylesheet's:
 
-- **8pt grid.** 4 is the half-step. 8 · 12 · 16 · 24 · 40 · 64 are the only
-  gaps. Off-grid paddings (`17px`, `26px`, `34px`) were in three of four
-  Getting Started drafts; they are the sloppiness the eye feels and cannot
-  name.
-- **One left edge** for the body: title, lines, list rows, ledger labels all
-  start at the same x. **One right edge** for the margin column.
-- **Radius:** 6px on cards; pills (`999px`) on buttons and tabs. Nothing else.
-- **Rules:** `--border-subtle`, 1px, between list rows only. No rule under a
-  heading, no rule at the foot of a card, no double rules.
-
-## 8. Motion
-
-Forty-seven named keyframes across forty-eight files were counted on
-2026-09-04. The pane is allowed **three**:
-
-| Name | When | Shape |
+| Name | Where | Shape |
 |---|---|---|
-| `arrive` | a page or plate mounts | opacity from 0, translateY from 4px, 240ms |
-| `disclose` | a row or card reveals its body | height/opacity, 200ms |
-| `now` | the now-marker on a wire | a slow pulse, and nothing else pulses |
+| `arrive` | the work's blocks, staggered 60ms | opacity from 0, translateY from 6px, 500ms |
+| `front-in` | the painting | opacity from 0, 800ms; its text follows at 200ms |
+| `pulse` | the deck's now-marker | a slow breath, and nothing else pulses |
 
-All keyframes are **from-only** (the house rule since the airlock pass): they
-declare where motion starts, never where it ends, so the resting state is the
-stylesheet's and the animation cannot leave a property behind. Under
-`prefers-reduced-motion`, keep the information and drop the travel. Hover is a
-color change on the interaction ramp, never movement.
+One page, one load sequence. Wrapping a spread in a second fade (the old
+`.rv`) doubled the ghosting and is gone. Under `prefers-reduced-motion`,
+keep the information and drop the travel.
 
-## 9. Words
+## 8. Mounting
 
-[voice.md](voice.md) owns the voice. The grammar adds a budget:
+A page that computes its own phase is **mounted once**. Getting Started is
+what tells Home whether Home exists; it lives outside the `Page` shell in a
+`.host` that is `display: none` when settled, never unmounted. Re-creating it
+on a phase change — by switching a parent's props on that phase — made the
+two chase each other at twelve instances a second. Both files carry the
+record; do not undo it.
 
-- The running head's line is the page's only sentence.
-- A list row gets a title and at most one line. A card gets a name, a state,
-  and at most one line.
-- Verbs name the place: `Start the interview`, `Add a source`, `Read again`.
-  Never an arrow alone, never `Continue`, never `Go`.
-- Empty is shown, not explained: a dash in the ledger, not "no data yet".
+## 9. The checklist
 
-## 10. The checklist
-
-Before a page ships, count. Every number here is measurable in the DOM.
+Before a chapter page ships, count.
 
 | | Limit |
 |---|---|
-| sentences of prose | 1 |
-| type sizes | 4 |
-| faces | 3, in their roles |
-| claret objects | 1 meaning (numeral + title + verb of the *same* row count as one) |
-| plates | 1, at the head, no words on it |
-| keyframes | 3, from-only |
-| radii | 6px and pills |
-| rules | between list rows only |
+| sentences of prose the page writes | 1 |
+| framed objects | the frontispiece, plus cards that can be acted on |
+| claret objects | the current step's dot, its eyebrow, its one button |
+| paintings | 1, with the frontispiece's words only |
+| mono outside a chart or a clock | 0 |
+| sizes under 11px, or with a half | 0 |
 | shadows | 0 |
-| off-grid values | 0 |
+| animations | 3, from-only |
+| radii | 12, pills, circles |
 
-## Worked example: Getting Started
+## Worked examples
 
-Sentence: *Your server is reading your life, and tomorrow morning it writes
-the first page.*
+**Getting Started** (`home/GettingStarted.svelte`). Title, the sentence, the
+seven-step stepper with the current step open in place; the frontispiece
+with the step's painting, its banked line and the census. The hidden door
+bottom-right skips everything.
 
-1. **Plate.** An oil sky, cut by the page. No words.
-2. **Running head.** `Getting started` · the sentence · folio `3 of 5`.
-3. **Body.** Five rows, in walking order: the founder's letter, introductions,
-   connect your world, in your own words, your first day. Every row is
-   numbered, in the serif with **lining figures** so the column aligns; state
-   is told by ink alone — done rows recede to `--foreground-subtle`, the open
-   row is claret, later rows are ink. A mono `✓` beside serif numerals was
-   tried and read as two idioms in one column. Each row: title, at most one
-   line.
-4. **Margin column.** `Read again` · `Change` · `Add a source` · the pill
-   `Start the interview` · `Tomorrow morning`.
-5. **Proof.** One ledger under the list, set in the measure role: the census.
-   Not four cards. Sources have a page; the lifeline has the interview.
-6. **Colophon.** One epigraph from the bank, today's, and the page ends.
+**Home** (`tabs/views/HomeView.svelte`). The dateline as title, the weather
+and the clock under it; the novelty line; the deck with its map; the recents;
+the ask; the keep. The frontispiece with the hour's painting, yesterday's
+sentence, today's count, and the two adjacent pages.
 
-What was cut, and by which rule: the hero on the picture (§4, no words on a
-plate); the rule under the heading (§2); the source cards and the lifeline card
-(§1, neither advances nor proves); the dates and "Change" links on every row
-(§2, one item per row); the explanatory paragraph under the open step (§9);
-`13.5px` and `26px` (§5, §7).
+**Next in the pass:** a day page (its own painting, its epigraph, its
+numbers), a place, a person; then the list pages and Settings brought onto
+the type scale and radius without a frontispiece; chat last.
