@@ -92,7 +92,10 @@
 				// never let a failed write hold someone out of their own app.
 			}
 		}
-		void goto("/");
+		// Home, by name: getting started is Home's page until the record is
+		// set up. "/" is the chat tab in the window shell's registry, so the
+		// letter used to hand people to an empty chat.
+		void goto("/home");
 	}
 </script>
 
