@@ -83,7 +83,7 @@ pub async fn system_completion(
 
     if !response.is_success() {
         return Err(Error::ExternalApi(match response.status {
-            402 => format!("Usage limit reached ({feature})"),
+            402 => crate::virtues_api::client::payment_required_message(&response.body, feature),
             429 => "Rate limited. Please try again later.".to_string(),
             _ => format!("virtues-api error {}: {}", response.status, response.body),
         }));

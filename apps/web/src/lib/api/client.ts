@@ -2530,6 +2530,10 @@ export function startBillingLink<T = unknown>(): Promise<T> {
 export function openBillingPortal<T = unknown>(): Promise<T> {
 	return apiSend<T>('POST', '/billing/portal');
 }
+/** A Stripe Checkout URL for the account this box is linked to. */
+export function subscribeBilling<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/billing/subscribe');
+}
 export function getBillingState<T = unknown>(): Promise<T> {
 	return apiGet<T>('/billing/state');
 }
@@ -2721,8 +2725,8 @@ export function getAiCallsPage(opts: {
 export function getUsageSummary<T = unknown>(): Promise<T> {
 	return apiGet<T>('/usage/summary');
 }
-export function getSubscription<T = unknown>(): Promise<T> {
-	return apiGet<T>('/subscription');
+export function getSubscription<T = unknown>(fresh = false): Promise<T> {
+	return apiGet<T>('/subscription', fresh ? { fresh: 1 } : undefined);
 }
 
 // ── Narrative identity (wiki) ────────────────────────────────────────────────

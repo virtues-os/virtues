@@ -134,6 +134,13 @@ interface CreateChatConfig {
 
 class ChatInstanceStore {
     private instances = $state(new Map<string, ChatInstanceEntry>());
+
+    /** The narrative interview's document page, once `write_it_up` has run
+     *  in THIS session. Set from the transient data part (deterministic)
+     *  rather than read off the tool part (mutated into the messages array
+     *  where no effect sees it), so ChatView can retire the composer the
+     *  moment the interview closes rather than on the next reload. */
+    narrativeDocumentPageId = $state<string | null>(null);
     // Live Deep Research subagent state, keyed by conversationId. Ephemeral — rebuilt each turn
     // from transient `data-subagent` events.
     private subagents = $state(new Map<string, SubagentStatus[]>());
@@ -246,7 +253,8 @@ class ChatInstanceStore {
                 else if (dataPart.type === 'data-narrative-document') {
                     const pageId = (dataPart.data as { pageId?: string })?.pageId;
                     if (pageId) {
-                        windowShellStore.openRouteBeside(`/page/${pageId}`);
+                        this.narrativeDocumentPageId = pageId;
+                        windowShellStore.openRouteBeside(`/page/${pageId}`, 'In your own words');
                     }
                 }
                 // Handle checkpoint events from auto-compaction (non-transient - persists in messages)
@@ -283,10 +291,12 @@ class ChatInstanceStore {
             onError: (error) => {
                 console.error(`[ChatInstances] Error in chat ${conversationId}:`, error);
 
-                // A lapsed subscription / unrecognized key surfaces as these
-                // codes from virtues-api (402/401) — refresh subscription state.
-                if (/wallet_expired|subscription_inactive|unknown_key/.test(error.message ?? '')) {
-                    subscriptionStore.check();
+                // Any wallet-side refusal (402/401) means the standing shown
+                // in Settings may be stale — re-ask the box, fresh. wallet_empty
+                // is on the list because for a never-subscribed account it is
+                // the first signal that there is no subscription at all.
+                if (/wallet_empty|insufficient_budget|topup_disabled|wallet_expired|subscription_inactive|unknown_key|invalid_api_key/.test(error.message ?? '')) {
+                    subscriptionStore.check(true);
                 }
             }
         });

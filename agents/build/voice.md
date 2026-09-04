@@ -108,3 +108,17 @@ Banked film-script material (spoken-to-camera register, too hot for print):
 data, time, energy) · "you have no idea what people do with your data right
 now, and I can promise you it's not good things" · "disordered men" (survives
 in speech; cut from the letter's list 2026-08-24).
+
+## Epigraphs (added 2026-09-04)
+
+Quotations for the colophon slot the page grammar defines
+([design-grammar.md](design-grammar.md) §2): one per page, one per day, set in
+the serif with the attribution in the margin. Provenance matters here more
+than anywhere — a line shown as a quotation must be one, or be marked as ours.
+
+| Line | Provenance | Likely surface |
+|---|---|---|
+| The trouble with data is not that it is collected, but that it is collected by everyone except its owner. | ours, Chestertonian in shape | website problem section; press-ready aphorism |
+| This day, honestly seen, is material enough for virtue. Write to yourself, for yourself — no other reader was ever needed. | ours, after Marcus Aurelius (*Ta eis heauton*, "to himself", is his own title) | **in-product**: the reveal colophon, the day page's empty state, Getting Started's foot |
+| The line between good and evil runs through every human heart — and strangers have been mapping your half of it for profit. | first clause is Solzhenitsyn, *The Gulag Archipelago*; the turn is ours. **In public, frame as allusion or credit him** | film script |
+| The most revolutionary act available to an ordinary man is an accurate record of his own life, because every power now in existence would prefer he didn't keep one. | ours, Orwellian in shape | website hero; the manifesto's opening |

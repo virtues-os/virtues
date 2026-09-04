@@ -881,7 +881,7 @@ Conversation:
     if !response.is_success() {
         // Provide user-friendly message for budget errors
         let error_msg = match response.status {
-            402 => "Usage limit reached for title generation".to_string(),
+            402 => crate::virtues_api::client::payment_required_message(&response.body, "title generation"),
             429 => "Rate limited. Please try again later.".to_string(),
             _ => format!("virtues-api error: {}", response.body),
         };
