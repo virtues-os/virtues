@@ -1225,8 +1225,19 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let app = app.layer(
         tower_http::cors::CorsLayer::new()
             .allow_origin(tower_http::cors::AllowOrigin::predicate(
-                |origin: &axum::http::HeaderValue, _req| {
-                    origin.to_str().is_ok_and(origin_is_ours)
+                |origin: &axum::http::HeaderValue, req| {
+                    origin.to_str().is_ok_and(|o| {
+                        // A face lives in `<iframe sandbox="allow-scripts">`,
+                        // whose opaque origin serializes as the literal
+                        // "null". This layer answers the CORS preflight before
+                        // faces.rs's own `*` header can, so without this arm
+                        // the sandboxed face's fetch to its bridge is refused
+                        // and the panel silently renders no data. Scoped to
+                        // the face routes only: a face carries no ambient
+                        // authority (face token + face_reader role), and
+                        // everything else keeps rejecting "null".
+                        face_origin_allowed(o, req.uri.path())
+                    })
                 },
             ))
             .allow_credentials(false)
@@ -1461,6 +1472,18 @@ async fn server_info() -> impl IntoResponse {
     }))
 }
 
+/// The routes a sandboxed (opaque-origin) applet face is allowed to reach:
+/// its own static files and the query bridge. See the CORS predicate.
+fn is_face_path(path: &str) -> bool {
+    path.starts_with("/api/face/") || path.starts_with("/face/")
+}
+
+/// The CORS predicate, named so it can be tested: our own origins anywhere,
+/// and the opaque origin `null` only on the face routes.
+fn face_origin_allowed(origin: &str, path: &str) -> bool {
+    origin_is_ours(origin) || (origin == "null" && is_face_path(path))
+}
+
 /// Is this `Origin` one of ours?
 ///
 /// The allowlist behind the CORS layer. Kept as a named function with tests
@@ -1520,7 +1543,7 @@ fn origin_is_ours(origin: &str) -> bool {
 
 #[cfg(test)]
 mod cors_tests {
-    use super::origin_is_ours;
+    use super::{face_origin_allowed, origin_is_ours};
 
     /// A remote page must not be allowed to read the box's responses.
     ///
@@ -1570,6 +1593,37 @@ mod cors_tests {
             "http://virtues:8000",
         ] {
             assert!(origin_is_ours(o), "must allow {o}");
+        }
+    }
+
+    /// The face is hung in `<iframe sandbox="allow-scripts">`, so its origin
+    /// is the literal "null". It must clear CORS on its own routes: the panel
+    /// drew background stars and nothing else from cohort launch to
+    /// 2026-09-03 because it didn't, and no test went red.
+    #[test]
+    fn the_sandboxed_face_reaches_its_own_routes() {
+        for p in [
+            "/face/applet_dot_cloud/",
+            "/face/applet_dot_cloud/virtues.js",
+            "/api/face/query",
+        ] {
+            assert!(face_origin_allowed("null", p), "must allow null on {p}");
+        }
+    }
+
+    /// ...and nowhere else. A sandboxed or file:// page still cannot read
+    /// the box. Near-misses included: only the exact prefixes are face routes.
+    #[test]
+    fn null_is_refused_everywhere_else() {
+        for p in [
+            "/api/status",
+            "/api/applets/applet_dot_cloud/face-token",
+            "/display",
+            "/api/faces/x",
+            "/faces/x",
+            "/face",
+        ] {
+            assert!(!face_origin_allowed("null", p), "must refuse null on {p}");
         }
     }
 }
