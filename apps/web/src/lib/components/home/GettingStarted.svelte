@@ -12,10 +12,10 @@
 	left, the title page on the right. The frontispiece is a painting for the
 	step at hand with one line from the bank (agents/build/voice.md) and the
 	record's numbers on it in white — the record introduced as a work, not a
-	stats row. The facing page is the work: what is done as chips (still
-	pressable — the letter is always one click away), the ONE thing to do now
-	as a panel with a real button that names the place, what comes next
-	beneath it in plain type, and what is done as a quiet row beneath that.
+	stats row. The facing page is the work: a stepper — every step in walking
+	order with its state in the rail, the current one open in place with a
+	button that names the place, done ones keeping their way back at the
+	right (the letter is always one click away).
 
 	Four earlier shapes were struck the same day: an accordion whose rows
 	unfolded into forms (nobody could tell done from next), a flat list of
@@ -147,6 +147,8 @@
 		go: () => void;
 		/** Waving this one away — absent when it cannot be skipped. */
 		skip?: { label: string; run: () => void };
+		/** The way back once done — the quiet verb at the row's right. */
+		back: string;
 	}
 
 	const steps = $derived.by(() => {
@@ -159,6 +161,7 @@
 				note: "",
 				verb: "Read the letter",
 				go: () => open("/founders-letter", "The founder's letter"),
+				back: "Read again",
 			},
 			{
 				id: "introductions",
@@ -169,6 +172,7 @@
 				verb: "Answer",
 				go: () => open("/virtues/you", "You"),
 				skip: { label: "Skip for now", run: () => void dismiss("introductions") },
+				back: "Change",
 			},
 			{
 				id: "connect",
@@ -182,6 +186,7 @@
 				verb: "Open sources",
 				go: () => open("/sources", "Sources"),
 				skip: { label: "Skip for now", run: () => void dismiss("connect") },
+				back: "Add a source",
 			},
 		];
 		if (accountDone || !store.accountSatisfied) {
@@ -193,6 +198,7 @@
 				note: "One sign-in.",
 				verb: "Sign in",
 				go: () => open("/virtues/billing", "Plan"),
+				back: "Plan",
 			});
 		}
 		const interviewDone = store.done("narrative_identity_ready");
@@ -206,6 +212,7 @@
 				verb: store.interviewStarted ? "Continue the interview" : "Start the interview",
 				go: () => open(`/chat/${INTERVIEW_CHAT_ID}`, "In your own words"),
 				skip: { label: "Skip for now", run: () => void dismiss("interview") },
+				back: interviewDone ? "Read it" : "Open",
 			},
 			{
 				id: "first_day",
@@ -219,6 +226,7 @@
 				verb: firstDay !== null ? `Read ${prettyDay(firstDay)}` : "",
 				go: () => firstDay !== null && open(`/day/day_${firstDay}`, "Your first day"),
 				skip: { label: "Don't wait for it here", run: () => void dismiss("first_day") },
+				back: firstDay !== null ? `Read ${prettyDay(firstDay)}` : "",
 			},
 			{
 				id: "further",
@@ -229,6 +237,7 @@
 				verb: "Open applets",
 				go: () => open("/applets", "Applets"),
 				skip: { label: "All set", run: () => void dismiss("further") },
+				back: "Applets",
 			},
 		);
 		return rows;
@@ -333,42 +342,41 @@
 	<div class="spread" in:fade={{ duration: 200 }}>
 		<!-- The work: done, now, then, and what it reads from. -->
 		<section class="work">
-			<div class="head">
-				<h1 class="title">Getting started</h1>
-			</div>
-			<div class="now-panel">
-				<div class="eyebrow">Now</div>
-				<h2 class="t">{now.title}</h2>
-				<p class="p">{now.what}</p>
-				<div class="acts">
-					{#if now.verb}
-						<button class="btn" type="button" onclick={now.go}>{now.verb}</button>
-					{/if}
-					{#if now.skip}
-						<button class="link" type="button" onclick={now.skip.run}>{now.skip.label}</button>
-					{/if}
-				</div>
-			</div>
+			<h1 class="title">Getting started</h1>
 
-			{#if then}
-				<p class="then">Then, <span>{then.title.charAt(0).toLowerCase() + then.title.slice(1)}</span>{then.note ? ` — ${then.note.charAt(0).toLowerCase() + then.note.slice(1)}` : ""}</p>
-			{/if}
-
-			<!-- What is behind you: one quiet row. The chips stay pressable — the
-			     letter is always one click away — but carry no check; the row's
-			     label already says done. -->
-			<div class="rows">
-				{#if doneSteps.length > 0}
-					<div class="row">
-						<span class="lbl">Done</span>
-						<div class="chips">
-							{#each doneSteps as s (s.id)}
-								<button class="chip" type="button" onclick={s.go}>{s.title}</button>
-							{/each}
+			<!-- The stepper: every step, in walking order, with its state in the
+			     rail — a check, the claret numeral for now, a hollow numeral for
+			     what follows. The current step opens in place; done steps keep
+			     their way back at the right. -->
+			<ol class="stepper">
+				{#each steps as s, i (s.id)}
+					<li class:done={s.done} class:now={s.id === now.id} class:later={!s.done && s.id !== now.id}>
+						<div class="rail">
+							<span class="dot">{#if s.done}<Icon icon="ri:check-line" width="13" />{:else}{i + 1}{/if}</span>
+							{#if i < steps.length - 1}<span class="line"></span>{/if}
 						</div>
-					</div>
-				{/if}
-			</div>
+						<div class="step">
+							<div class="row">
+								{#if s.done}
+									<button class="t" type="button" onclick={s.go}>{s.title}</button>
+									{#if s.back}<button class="back" type="button" onclick={s.go}>{s.back}</button>{/if}
+								{:else}
+									<span class="t">{s.title}</span>
+								{/if}
+							</div>
+							{#if s.id === now.id}
+								<p class="p">{s.what}</p>
+								<div class="acts">
+									{#if s.verb}<button class="btn" type="button" onclick={s.go}>{s.verb}</button>{/if}
+									{#if s.skip}<button class="link" type="button" onclick={s.skip.run}>{s.skip.label}</button>{/if}
+								</div>
+							{:else if !s.done && s.note}
+								<div class="note">{s.note}</div>
+							{/if}
+						</div>
+					</li>
+				{/each}
+			</ol>
 
 			<div class="foot">
 				<button
@@ -468,34 +476,41 @@
 	.work > * { animation: arrive 0.5s ease both; }
 	.work > :nth-child(2) { animation-delay: 60ms; }
 	.work > :nth-child(3) { animation-delay: 120ms; }
-	.work > :nth-child(4) { animation-delay: 180ms; }
-	.work > :nth-child(5) { animation-delay: 240ms; }
 	@media (max-width: 640px) { .work { padding: 32px 24px; } .front .text { padding: 0 24px 28px; } }
 
 	.title { font-family: var(--font-serif); font-weight: 400; font-size: 36px; line-height: 1.1; margin: 0; color: var(--color-foreground); }
 
-	/* The quiet rows: a label, then ghost chips — a hairline, no fill, no
-	   check. Pressable, but nothing here competes with the panel above. */
-	.rows { margin-top: 56px; display: grid; gap: 12px; }
-	.row { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
-	.row .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-	.lbl { font-family: var(--font-sans); font-size: 13px; line-height: 28px; color: var(--color-foreground-subtle); }
-	.chip {
-		display: inline-flex; align-items: center; height: 28px; padding: 0 12px;
-		border: 1px solid var(--color-border); border-radius: 999px; background: transparent;
-		font-family: var(--font-sans); font-size: 13px; font-weight: 400; color: var(--color-foreground-muted);
-		cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
+	/* ── the stepper ── */
+	.stepper { list-style: none; margin: 40px 0 0; padding: 0; }
+	.stepper li { display: grid; grid-template-columns: 28px minmax(0, 1fr); column-gap: 20px; }
+	.rail { display: flex; flex-direction: column; align-items: center; }
+	.dot {
+		flex: none; width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+		font-family: var(--font-serif); font-size: 15px; font-variant-numeric: lining-nums;
+		border: 1px solid var(--color-border-strong, var(--color-border)); color: var(--color-foreground-subtle); background: var(--color-surface);
 	}
-	.chip:hover { background: var(--hover-bg, color-mix(in srgb, var(--color-foreground) 7%, transparent)); color: var(--color-foreground); }
+	li.done .dot { background: var(--color-foreground); border-color: var(--color-foreground); color: var(--color-background); }
+	li.now .dot { background: var(--color-secondary); border-color: var(--color-secondary); color: #fff; }
+	.line { flex: 1; width: 1px; background: var(--color-border); margin: 4px 0; min-height: 16px; }
+	li.done .line { background: var(--color-foreground-subtle); opacity: 0.5; }
 
-	/* The one thing to do: no frame — the painting is the page's one framed
-	   object, and the button carries the weight here. */
-	.now-panel { margin-top: 48px; }
-	.eyebrow { font-family: var(--font-sans); font-size: 12px; font-weight: 500; color: var(--color-foreground-subtle); }
-	.now-panel .eyebrow { color: var(--color-secondary); }
-	.now-panel .t { font-family: var(--font-serif); font-weight: 400; font-size: 30px; line-height: 1.15; margin: 8px 0 0; color: var(--color-foreground); }
-	.now-panel .p { font-family: var(--font-sans); font-size: 15px; line-height: 1.55; color: var(--color-foreground-muted); margin: 12px 0 0; max-width: 34em; }
-	.acts { display: flex; align-items: center; gap: 20px; margin-top: 24px; flex-wrap: wrap; }
+	.step { padding: 3px 0 28px; min-width: 0; }
+	li:last-child .step { padding-bottom: 0; }
+	.row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+	.t {
+		font-family: var(--font-serif); font-weight: 400; font-size: 20px; line-height: 1.2; color: var(--color-foreground);
+		background: none; border: 0; padding: 0; text-align: left; min-width: 0;
+	}
+	button.t { cursor: pointer; }
+	li.done .t { color: var(--color-foreground-muted); }
+	button.t:hover { color: var(--color-foreground); }
+	li.now .t { font-size: 28px; color: var(--color-foreground); }
+	li.later .t { color: var(--color-foreground-subtle); }
+	.back { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
+	.back:hover { color: var(--color-primary); }
+	.note { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); margin-top: 4px; }
+	.p { font-family: var(--font-sans); font-size: 15px; line-height: 1.55; color: var(--color-foreground-muted); margin: 10px 0 0; max-width: 34em; }
+	.acts { display: flex; align-items: center; gap: 20px; margin-top: 20px; flex-wrap: wrap; }
 	.btn {
 		display: inline-flex; align-items: center; height: 40px; padding: 0 22px; border: 0; border-radius: 999px;
 		background: var(--color-secondary); color: #fff; font-family: var(--font-sans); font-size: 14px; font-weight: 500;
@@ -504,9 +519,6 @@
 	.btn:hover { background: var(--color-secondary-hover, var(--color-secondary)); }
 	.link { font-family: var(--font-sans); font-size: 14px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; }
 	.link:hover { text-decoration: underline; text-underline-offset: 3px; }
-
-	.then { font-family: var(--font-sans); font-size: 14px; color: var(--color-foreground-subtle); margin: 24px 0 0; }
-	.then span { color: var(--color-foreground-muted); }
 
 	.foot { margin-top: auto; padding-top: 24px; display: flex; justify-content: flex-end; }
 	.door {
