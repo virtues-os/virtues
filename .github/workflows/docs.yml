@@ -20,6 +20,12 @@ name: Docs
 # VIRTUES_DOCS_REF must stay in agreement with the deploy trigger below — if
 # one moves, move the other, or the site rebuilds content it did not intend.
 
+# README.md is checked here too. `ci.yml` carries `paths-ignore: **/*.md`, so
+# every README change has always run through zero CI — and its serif headings
+# couple four hand-maintained things per heading (a <picture>, two SVGs, an
+# <a id>, a TOC entry) that nothing verified. See tools/check-readme.py for the
+# four failures that motivated it, all of which reached a push.
+#
 # Two paths publish: `docs/**` is the manual at virtues.com/docs, and
 # `agents/record/**` is the engineering notes at virtues.com/docs/notes,
 # indexed by its own README table. `agents/build/**` and `agents/plan/**` are
@@ -32,22 +38,30 @@ on:
       - "docs/**"
       - "agents/record/**"
       - "tools/check-manual.py"
+      - "README.md"
+      - ".github/images/**"
+      - "tools/check-readme.py"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
       - "agents/record/**"
       - "tools/check-manual.py"
+      - "README.md"
+      - ".github/images/**"
+      - "tools/check-readme.py"
       - ".github/workflows/docs.yml"
 
 jobs:
   check:
-    name: Check the manual
+    name: Check the manual and the README
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Manifest, frontmatter, links, version literals
         run: tools/check-manual.py
+      - name: README headings, anchors, images, badges
+        run: tools/check-readme.py
 
   deploy:
     name: Publish to virtues.com

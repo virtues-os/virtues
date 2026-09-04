@@ -765,6 +765,15 @@ pub async fn update_messages(
 /// Delete a chat
 /// Also cleans up all notebook_items references (orphan cleanup)
 pub async fn delete_chat(pool: &PgPool, chat_id: String) -> Result<DeleteChatResponse> {
+    // The narrative interview is undeletable, decided by the id like every
+    // other property of that room (mode, title). Boot would re-seed the CHAT
+    // row, but the transcript — the most private data on the box and the
+    // drafter's only source — would be gone on one misclick, unrecoverably.
+    if chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID {
+        return Err(crate::Error::InvalidInput(
+            "The interview conversation can't be deleted — it is the source of \"In your own words\".".into(),
+        ));
+    }
     let chat_id_str = chat_id;
     let result = sqlx::query(
         r#"

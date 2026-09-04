@@ -30,6 +30,7 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import {
 		ActivityHeatmap,
+		ChaptersSection,
 		DaysChronicle,
 		NarrativeIdentitySection,
 	} from '$lib/components/wiki';
@@ -70,7 +71,7 @@
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity' | 'history' | 'lifeline';
+	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity' | 'chapters' | 'history' | 'lifeline';
 
 
 	// The active section comes from the route; the sidebar rail does the linking.
@@ -526,10 +527,13 @@
 				};
 			}
 
-			// The identity's first line is the front page's standfirst.
+			// The identity's first PROSE line is the front page's standfirst —
+			// headings are skipped, since the document now arrives whole
+			// ("## Where you have been" would otherwise be the standfirst).
 			const firstLine = identity?.content
 				?.split('\n')
-				.map((l) => l.replace(/^[#>*\-\s]+/, '').trim())
+				.filter((l) => !l.trim().startsWith('#'))
+				.map((l) => l.replace(/^[>*\-\s]+/, '').trim())
 				.find((l) => l.length > 0);
 			if (firstLine) {
 				standfirst =
@@ -767,15 +771,15 @@
 				</section>
 			</div>
 		{:else if section === 'stories'}
+			<!-- Stories exist in the schema but the author path hasn't shipped —
+			     until it does, a room with no write path teaches a construct the
+			     product can't yet keep. Ships later (ruled 2026-09-01); until
+			     then, list what stands and say nothing about a promise. -->
 			<div class="measure">
 				{#if !storiesLoaded}
 					<p class="quiet">Loading…</p>
 				{:else if stories.length === 0}
-					<p class="quiet">
-						No stories yet. A story is a themed article that spans time — the
-						story of a wedding, of starting a company, of a period you came
-						through. Unlike days and years, one is written on purpose.
-					</p>
+					<p class="quiet">Nothing here yet.</p>
 				{:else}
 					<ul class="stories">
 						{#each stories as story (story.id)}
@@ -834,9 +838,9 @@
 						{error}
 						filters={entityFilters}
 						emptyIcon="ri:group-line"
-						emptyMessage="No entities yet"
-						loadingMessage="Loading entities..."
-						searchPlaceholder="Search all entities..."
+						emptyMessage="No people, places, or organizations yet"
+						loadingMessage="Loading…"
+						searchPlaceholder="Search people, places, organizations…"
 						onItemClick={openEntity}
 						onItemContextMenu={entityContextMenu}
 						onRetry={loadAllEntities}
@@ -885,6 +889,10 @@
 				<!-- Where the assistant's proposals wait. It may suggest an
 				     addition; it may never make one. -->
 				<NotesRail subjectType="narrative_identity" subjectId="nar_identity_001" />
+			</div>
+		{:else if section === 'chapters'}
+			<div class="identity-wrap">
+				<ChaptersSection />
 			</div>
 		{/if}
 	</main>
@@ -983,7 +991,6 @@
 	.standfirst {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 1.0625rem;
-		font-style: italic;
 		line-height: 1.5;
 		color: var(--color-foreground-muted);
 		margin: 0 0 1rem;
@@ -1207,7 +1214,6 @@
 
 	.otd-epigraph {
 		font-family: var(--font-serif, Georgia, serif);
-		font-style: italic;
 		font-size: 0.9375rem;
 		color: var(--color-foreground);
 		overflow: hidden;
@@ -1217,7 +1223,6 @@
 
 	.otd-stub {
 		font-size: 0.8125rem;
-		font-style: italic;
 		color: var(--color-foreground-subtle);
 	}
 
@@ -1245,7 +1250,6 @@
 	.featured-epigraph {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 1.1875rem;
-		font-style: italic;
 		line-height: 1.5;
 		color: var(--color-foreground);
 		margin: 0;

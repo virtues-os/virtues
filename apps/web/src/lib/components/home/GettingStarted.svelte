@@ -105,6 +105,14 @@
 	const accountDone = $derived(store.setup.find((s) => s.id === "account")?.done ?? false);
 	const worldEnough = $derived(store.worldEnough || deviceReady);
 	const firstDay = $derived(census?.first_day ?? null);
+	/** "⚠ needs Full Disk Access" (or the denied capability's name) when a
+	 *  collector is running with a permission hole; null when all is well. */
+	const degradedNote = $derived.by(() => {
+		const d = store.degraded[0];
+		if (!d) return null;
+		const cap = d.denied[0] === "full_disk_access" ? "Full Disk Access" : (d.denied[0] ?? "a permission");
+		return `⚠ needs ${cap}`;
+	});
 
 	// ---- the steps, in walking order ----
 	// `done` means settled: answered, arrived, or skipped. The sign-in step
@@ -133,18 +141,25 @@
 				id: "connect",
 				title: "Connect your world",
 				done: worldEnough || isDismissed("connect"),
-				state: settled("connect", worldEnough),
+				// A collector running with a denied permission outranks the
+				// check: a ✓ over a permission hole is how the three-day
+				// iMessage outage happened.
+				state: degradedNote ?? settled("connect", worldEnough),
 			},
 		];
 		if (accountDone || !store.accountSatisfied) {
-			rows.push({ id: "signin", title: "Sign in to Virtues", done: accountDone, state: accountDone ? "✓ done" : "" });
+			rows.push({ id: "signin", title: "Connect your Virtues account", done: accountDone, state: accountDone ? "✓ done" : "" });
 		}
 		rows.push(
 			{
 				id: "interview",
-				title: "Fill in your past",
+				title: "In your own words",
 				done: store.done("narrative_identity_ready") || isDismissed("interview"),
-				state: settled("interview", store.done("narrative_identity_ready")),
+				// The days between a first answer and "write it up" are the
+				// normal case — the column says so instead of nagging "Start".
+				state:
+					settled("interview", store.done("narrative_identity_ready")) ||
+					(store.interviewStarted ? "· underway" : ""),
 			},
 			{
 				id: "first_day",
@@ -160,7 +175,9 @@
 				id: "further",
 				title: "Go further",
 				done: isDismissed("further"),
-				state: isDismissed("further") ? "✓ done" : "",
+				// A wave-away is a skip, not an achievement — same vocabulary
+				// as every other dismissed row.
+				state: isDismissed("further") ? "· skipped" : "",
 			},
 		);
 		return rows;
@@ -186,12 +203,12 @@
 		void loadProfile();
 		void loadCensus();
 		// The first day lands on the box's own clock (narration runs at the
-		// maintenance hour); a 60s beat is plenty, and a hidden tab asks for
-		// nothing.
+		// maintenance hour, once a day) — a five-minute beat is generous, and
+		// the old 60s one was ~27 count(*) queries a minute for up to a day.
 		const t = setInterval(() => {
 			if (document.hidden || firstDay !== null) return;
 			void loadCensus();
-		}, 60_000);
+		}, 300_000);
 		return () => clearInterval(t);
 	});
 
@@ -236,7 +253,9 @@
 			aria-label="Skip getting started"
 		>
 			{#if doorExpanded}
-				<span in:fade={{ duration: 120 }}>Skip getting started →</span>
+				<span in:fade={{ duration: 120 }}>
+					{accountDone || store.accountSatisfied ? "Skip getting started →" : "Skip the rest — sign-in remains →"}
+				</span>
 			{:else}
 				<Icon icon="ri:door-open-line" width="14" />
 			{/if}
@@ -279,7 +298,7 @@
 									}}
 								/>
 							{:else if s.id === "connect"}
-								<p class="lede">What already holds your life — the box reads it from here on.</p>
+								<p class="lede">What already holds your life — your server reads it from here on.</p>
 								<ConnectWorld
 									onConnected={() => void store.check()}
 									onDeviceReady={() => (deviceReady = true)}
@@ -292,22 +311,24 @@
 								{/if}
 							{:else if s.id === "signin"}
 								<p class="lede">
-									The models your box writes with are what the subscription pays for. Signing in
-									is the only part of Virtues that touches our servers — everything written
-									stays here.
+									The account is how your server reaches anything outside itself: the
+									models it writes with, plus the maps, photos, bank links and calendar
+									connections. One subscription, metered per request and never kept —
+									bringing your own AI key later moves the model calls and leaves the
+									rest here.
 								</p>
 								<div class="work">
 									<AccountGate done={accountDone} onLinked={() => void store.check()} />
 								</div>
 							{:else if s.id === "interview"}
 								<p class="lede">
-									A narrative interview about your life: the chapters, the people, what
-									mattered and what didn't. About twenty minutes, one question at a time.
-									Skip anything, stop anywhere.
+									A conversation about your life: its chapters, what makes you unlike
+									others, what you believe, what a good day is. About twenty minutes,
+									one question at a time. Skip anything, stop anywhere.
 								</p>
 								<div class="row">
 									<button class="link" type="button" onclick={openInterview}>
-										Start the interview <span class="arw">→</span>
+										{store.interviewStarted ? "Pick up where you left off" : "Start the interview"} <span class="arw">→</span>
 									</button>
 									{#if !s.done}
 										<button class="skip" type="button" onclick={() => void dismiss("interview")}>Skip</button>
@@ -315,9 +336,9 @@
 								</div>
 							{:else if s.id === "first_day"}
 								<p class="lede">
-									Overnight, the box writes yesterday down — where you went, who you spoke
-									with, what the day was. The first page arrives tomorrow morning, and every
-									day after writes itself.
+									Overnight, your server writes yesterday down — where you went, who you
+									spoke with, what the day was. The first page arrives tomorrow morning,
+									and every day after writes itself.
 								</p>
 								{#if firstDay !== null}
 									<button class="link" type="button" onclick={() => openDay(firstDay)}>
@@ -345,7 +366,7 @@
 								</ul>
 								{#if !s.done}
 									<button class="skip" type="button" onclick={() => void dismiss("further")}>
-										All set — take me to the app
+										All set
 									</button>
 								{/if}
 							{/if}
@@ -354,6 +375,18 @@
 				</li>
 			{/each}
 		</ol>
+
+		{#if census && census.total > 0 && census.lines.length > 0}
+			<!-- Proof of life, one sentence: the census is already on the wire
+			     for the first-day date; this reads the rest of it. No card, no
+			     counter animation — the server stating a fact. -->
+			<p class="census">
+				So far the record holds {census.lines[0].count.toLocaleString()}
+				{census.lines[0].label}{#if census.lines[1]}&nbsp;and {census.lines[1].count.toLocaleString()}
+					{census.lines[1].label}{/if}{#if census.earliest};
+					the oldest trace is from {new Date(census.earliest).toLocaleDateString(undefined, { month: "long", year: "numeric" })}{/if}.
+			</p>
+		{/if}
 	</div>
 {/if}
 
@@ -367,6 +400,16 @@
 	.steps { list-style: none; margin: 0; padding: 0; max-width: 640px; }
 
 	.steps { --gutter: 30px; }
+
+	.census {
+		max-width: 640px;
+		margin: 14px 0 0;
+		padding-left: var(--gutter);
+		font-family: var(--font-serif);
+		font-size: 15px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
 
 	.step { border-top: 1px solid var(--color-border-subtle); }
 	.step:first-child { border-top: 0; }

@@ -16,7 +16,8 @@ ends with `ON CONFLICT DO NOTHING` so a re-run is a no-op.
   ~1.4 KLOC.
 
 - **`demo_narrative.sql`** — the 12-week character narrative (Nov 24 2025 →
-  Feb 11 2026) used as the novelty-scoring baseline. ~638 INSERTs, ~8 KLOC.
+  Feb 11 2026 as written; see `demo_reanchor.sql`, which moves it to the
+  current week at seed time) used as the novelty-scoring baseline. ~638 INSERTs, ~8 KLOC.
   Originally split into four week-range files; consolidated here for the
   Postgres cutover.
 
@@ -26,6 +27,19 @@ ends with `ON CONFLICT DO NOTHING` so a re-run is a no-op.
   happy — a room built against all-enriched data hides its own empty states.
   `extraction_text` mirrors `ExtractionRecord::to_embed_text`, so if that
   rendering changes this file should follow it.
+
+- **`demo_reanchor.sql`** *(runs last, after the three above)* — walks the
+  whole seeded life forward so that **the instrumented day lands on today**,
+  rather than in February 2026. The other files keep their absolute dates,
+  which is what makes them readable and re-generatable; this is where "relative
+  to today" is bought, once, in one pass. It anchors on the day carrying the
+  most location points — all the raw streams live in one day, and Home asks for
+  the literal current date with no "newest day with data" fallback, so any
+  other anchor leaves the good day just off the only page anyone opens. The
+  shift is exact rather than a whole number of weeks, so weekdays rotate; the
+  file explains why that trade was made and when to revisit it. Idempotent —
+  the anchor comes out of the data, so a second run moves nothing, and
+  re-running the seeder is therefore also how you re-age a long-lived demo box.
 
 ## Why these are different from migrations
 
@@ -53,3 +67,8 @@ emit Postgres-compatible SQL directly:
 - Use `TRUE` / `FALSE` for BOOLEAN columns, not `1` / `0`
 - Use `'2026-02-13T12:30:00Z'` ISO 8601 strings for TIMESTAMPTZ
 - Always append ` ON CONFLICT DO NOTHING` to every `INSERT`
+- Keep writing absolute dates; `demo_reanchor.sql` moves the whole set to
+  today at seed time. Keep the raw streams concentrated in one instrumented
+  day, or say so here — that day is what the re-anchor pass aims at today, and
+  spreading the streams thinly across the narrative would make a whole-week
+  shift (weekday-preserving) the better rule instead.

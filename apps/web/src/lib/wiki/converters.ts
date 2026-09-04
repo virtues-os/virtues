@@ -56,6 +56,9 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 			facebook: api.facebook ?? undefined,
 		},
 		birthday: api.birthday ? new Date(api.birthday) : undefined,
+		bond: api.bond ?? undefined,
+		diedOn: api.died_on ? new Date(api.died_on) : undefined,
+		diedPrecision: api.died_precision ?? undefined,
 
 		// Content
 		content: api.content ?? "",

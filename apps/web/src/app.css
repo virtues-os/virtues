@@ -32,20 +32,29 @@
  * chosen; it is what a copied shape turns into. Which one you met depended on
  * which settings page you had opened.
  *
- * This is the label treatment `Section.svelte` renders, available as a class
- * for views whose markup has not been restructured into that component yet.
- * A settings heading is a LABEL — a category you scan past on the way to a
- * value — not a title you stop and read. Reading surfaces (the wiki pages,
- * narrative identity) keep their own serif voice deliberately: they ARE meant
- * to be read, and their `.section-title` is untouched.
+ * This is the treatment `Section.svelte` renders, available as a class for
+ * views whose markup has not been restructured into that component yet.
+ * Reading surfaces (the wiki pages, narrative identity) keep their own serif
+ * voice deliberately: their `.section-title` is untouched.
+ *
+ * It WAS 12px uppercase letterspaced in `--foreground-subtle`, on the theory
+ * that a settings heading is a label you scan past rather than a title you
+ * read. Sitting on an `<h2>`, which this app sets in JJannon, that produced
+ * faux small caps in a serif that has no small-cap cut — the letterforms are
+ * stretched capitals with tracking added to keep them apart, in the lightest
+ * ink on the page. It read as decoration, and it was the loudest, ugliest
+ * thing on every settings page precisely because it was trying to be quiet.
+ *
+ * So: a heading, set like a heading. Serif at a readable size, in the
+ * page's own ink, roman (JJannon has no italic cut and is never set bold —
+ * hierarchy comes from size and weight of ink, not from shouting).
  */
 .settings-label {
-	font-size: 0.75rem;
-	font-weight: 500;
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	color: var(--color-foreground-subtle);
-	margin: 0 0 0.5rem;
+	font-size: 1rem;
+	font-weight: 400;
+	line-height: 1.3;
+	color: var(--color-foreground);
+	margin: 0 0 0.625rem;
 }
 
 .app-shell {

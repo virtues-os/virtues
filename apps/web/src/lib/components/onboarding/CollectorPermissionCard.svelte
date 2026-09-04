@@ -41,12 +41,12 @@
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 	let completed = $state(false);
 
-	// DONE gate: daemon running + BOTH permissions. Full Disk Access (Messages,
-	// Mail, etc.) and Accessibility (on-screen context) are both load-bearing
-	// for the collector — neither is optional.
-	const isDone = $derived(
-		!!status?.running && !!status?.hasFullDiskAccess && !!status?.hasAccessibility,
-	);
+	// DONE gate: daemon running + Full Disk Access (Messages, Mail — the
+	// marquee Mac data). Accessibility (on-screen context) is OPTIONAL, per the
+	// original design above: it is the most invasive permission this card asks
+	// for, and the collector runs fine without it. The row stays visible and
+	// amber so it can be granted later, but it never blocks done.
+	const isDone = $derived(!!status?.running && !!status?.hasFullDiskAccess);
 
 	$effect(() => {
 		if (isDone && !completed) {
@@ -170,7 +170,8 @@
 					</div>
 				</li>
 
-				<!-- Accessibility — REQUIRED (on-screen context). -->
+				<!-- Accessibility — optional (on-screen context). Amber until
+				     granted, never blocking. -->
 				<li class="flex items-start gap-2 text-sm">
 					<Icon
 						icon={status.hasAccessibility ? "ri:checkbox-circle-fill" : "ri:error-warning-line"}
@@ -179,7 +180,7 @@
 					/>
 					<div class="flex-1">
 						<span class="text-foreground">Accessibility</span>
-						<span class="text-foreground-subtle">— what's on your screen, stays on your server</span>
+						<span class="text-foreground-subtle">— optional; adds what's on your screen, kept on your server</span>
 						{#if !status.hasAccessibility}
 							<button
 								class="text-xs text-primary hover:underline mt-1 block"
@@ -196,7 +197,7 @@
 				<p class="text-sm text-success">This Mac is collecting.</p>
 			{:else}
 				<p class="text-xs text-foreground-muted">
-					Grant both Full Disk Access and Accessibility to finish.
+					Grant Full Disk Access to finish. Accessibility is optional.
 				</p>
 			{/if}
 		{/if}

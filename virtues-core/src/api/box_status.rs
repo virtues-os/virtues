@@ -83,6 +83,13 @@ fn endpoint_up() -> bool {
 /// Compute the box's health snapshot. Shared by the CLI (`virtues status`) and
 /// the HTTP endpoint.
 pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
+    // absent-ok: a box that cannot READ its API key cannot USE it either, so
+    // `false` is the honest answer rather than a swallowed one — the failure
+    // mode here is a missing VIRTUES_ENCRYPTION_KEY, not a broken query, and
+    // then there is no usable key by definition. (Tried `?` on 2026-09-03: it
+    // turns every unconfigured environment, the test suite included, into a
+    // hard failure of the whole health snapshot.) The device count below is a
+    // different matter — a count has no equivalent honest zero.
     let linked = crate::virtues_api::renew::has_api_key(pool)
         .await
         .unwrap_or(false);
@@ -344,6 +351,19 @@ pub struct SetupState {
     /// would hold someone on a page while a background job runs. One connected
     /// source is the honest line between "a box" and "your box".
     pub onboarding_complete: bool,
+    /// Collectors that are paired and running but missing a permission they
+    /// need (see [`DegradedCollector`]). Carried here so the getting-started
+    /// page can say "⚠ needs Full Disk Access" instead of showing a green
+    /// check over a three-day iMessage outage — the exact failure this signal
+    /// was built for, which no web surface read until 2026-09-01.
+    pub degraded: Vec<DegradedCollector>,
+    /// The interview has at least one answer but no document yet — the days
+    /// between a first reply and "write it up" are the normal case, and the
+    /// getting-started row must say "underway" then, not "Start the
+    /// interview". A field rather than a checklist step: it is a phase of one
+    /// step, and a step of its own would hold `allDone` hostage on a skipped
+    /// interview.
+    pub interview_started: bool,
     /// `new` | `onboarding` | `active`, from `app_user_profile`.
     ///
     /// The routing gate reads this rather than a flag of its own. A second
@@ -442,14 +462,14 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(0);
 
-    // Narrative-identity reveal: ready once there is a non-empty core to carry
-    // (drafted from the interview or hand-written — the machine never writes it
-    // from observed data; that generator was deleted 2026-08-26). Anchored on
-    // content presence (not `updated_at`, which the writer doesn't bump) so
-    // it's drift-free.
+    // Narrative-identity reveal: ready once the "In your own words" article
+    // exists (written up from the interview — the machine never writes it
+    // from observed data; that generator was deleted 2026-08-26). The article
+    // IS the identity now; the abridged wiki_narrative_identity copy this
+    // used to check was retired 2026-09-01.
     let nid_ready: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM wiki_narrative_identity \
-         WHERE content IS NOT NULL AND length(trim(content)) > 0)",
+        "SELECT EXISTS(SELECT 1 FROM wiki_articles \
+         WHERE subject_type = 'narrative_identity')",
     )
     .fetch_one(pool)
     .await
@@ -615,7 +635,11 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             detail: None,
             kind: None,
         },
-        remote_access_step(crate::relay::is_relay_registered(), crate::relay::endpoint_error()),
+        remote_access_step(
+            crate::relay::is_relay_registered(),
+            crate::relay::box_relay_url().is_some(),
+            crate::relay::endpoint_error(),
+        ),
         SetupStep {
             id: "first_sync",
             title: "First data synced",
@@ -644,11 +668,21 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     let onboarding_status = onboarding_status(pool).await;
 
+    let interview_started: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM app_chat_messages \
+         WHERE chat_id = $1 AND role = 'user')",
+    )
+    .bind(crate::api::narrative_draft::INTERVIEW_CHAT_ID)
+    .fetch_one(pool)
+    .await?;
+
     Ok(SetupState {
         setup,
         setup_complete,
         onboarding,
         onboarding_complete,
+        degraded: s.degraded,
+        interview_started,
         onboarding_status,
     })
 }
@@ -701,18 +735,33 @@ fn collecting_kind(completed: bool, started: bool) -> Option<&'static str> {
 /// (Tailscale, a foreign WireGuard, …) IS reachable — at the overlay address —
 /// so the step is honestly `done`. `kind` qualifies the three states for
 /// renderers; behavior keys off `done`, copy off `detail`.
-fn remote_access_step(endpoint_up: bool, endpoint_error: Option<&str>) -> SetupStep {
+fn remote_access_step(
+    reachable: bool,
+    relay_configured: bool,
+    endpoint_error: Option<&str>,
+) -> SetupStep {
     // iroh model: "reachable from anywhere" == the box's iroh endpoint is bound
     // and homed on our relay. From there any paired device reaches it by
     // EndpointId — via the relay, upgrading to hole-punched direct when possible
     // — so NAT/IPv6 no longer gate reach (iroh traverses them).
     //
-    // Three states, not two: the endpoint task runs once at boot and exits on
-    // either failure path (secret load, socket bind), so without an explicit
-    // error state a failed box reads identically to one that's still starting
-    // up — "Connecting…" forever, with no signal that reach is never coming
-    // back without a restart.
-    let (done, kind, detail) = if endpoint_up {
+    // `reachable` now means exactly that (`relay::is_relay_registered`), where
+    // it used to mean only "bind returned" — so this sentence stopped being an
+    // aspiration and became the condition.
+    //
+    // Four states, not two: the endpoint task retries on failure but can stay
+    // failed, so without an explicit error state a failed box reads identically
+    // to one still starting up — "Connecting…" forever, with no signal that
+    // reach is never coming back. And a box with the relay deliberately OFF is
+    // reachable on its own network and nowhere else; claiming "from anywhere"
+    // there was the same lie in the other direction.
+    let (done, kind, detail) = if reachable && !relay_configured {
+        (
+            true,
+            "lan_only",
+            "Reachable on this network. Remote access is switched off — turn it back on in Settings → Network.".to_string(),
+        )
+    } else if reachable {
         (
             true,
             "iroh_relay",
@@ -808,20 +857,31 @@ mod tests {
     #[test]
     fn remote_access_reflects_iroh_endpoint() {
         // Endpoint up + homed on the relay → reachable from anywhere.
-        let step = remote_access_step(true, None);
+        let step = remote_access_step(true, true, None);
         assert!(step.done);
         assert_eq!(step.kind, Some("iroh_relay"));
 
+        // Bound, but the relay is deliberately off: reachable here and nowhere
+        // else. Done — the owner chose this, so it must not nag — but it must
+        // not claim "from anywhere" either, which is what it used to do.
+        let step = remote_access_step(true, false, None);
+        assert!(step.done);
+        assert_eq!(step.kind, Some("lan_only"));
+        assert!(
+            !step.detail.as_deref().unwrap_or_default().contains("from anywhere"),
+            "a relay-less box must not claim remote reach"
+        );
+
         // Endpoint not yet up, no failure recorded → pending (a weather
         // report, flips on its own).
-        let step = remote_access_step(false, None);
+        let step = remote_access_step(false, true, None);
         assert!(!step.done);
         assert_eq!(step.kind, Some("pending"));
 
         // Endpoint task gave up → error, not eternal pending. `done` still
         // being false, an unrecognized `kind` frontend falls back to the
         // same not-done treatment as "pending" — this is a strict refinement.
-        let step = remote_access_step(false, Some("bind failed: address in use"));
+        let step = remote_access_step(false, true, Some("bind failed: address in use"));
         assert!(!step.done);
         assert_eq!(step.kind, Some("error"));
         assert_eq!(step.detail, Some("bind failed: address in use".to_string()));

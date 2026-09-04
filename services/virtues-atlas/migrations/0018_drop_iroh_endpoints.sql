@@ -1,0 +1,26 @@
+-- Drop `iroh_endpoints` — the EndpointId → account map.
+--
+-- It was added (0011) for one consumer: `/relay/authorize`, the per-connection
+-- callout that admitted only endpoints belonging to an active-subscription
+-- account. That callout was deleted on 2026-08-31 when the relay opened
+-- (open-relay-plan); this table and the `/iroh/register` endpoint that filled
+-- it survived it by a day.
+--
+-- What survived is worth naming, because it is the failure class rather than
+-- the incident: with the gate gone, atlas still held a live, reconcile-
+-- refreshed inventory of every box and every paired device — including the
+-- moment each was unpaired, since the box reported the full set each tick and
+-- the handler deleted the difference — keyed to a billing account, and read by
+-- nothing. Joined outward through `accounts.email` and Stripe, that is a
+-- device roster attached to a real identity, retained for no purpose.
+--
+-- **When admission logic is deleted, its registry goes in the same change.**
+-- Deleting a gate and keeping its data is strictly worse than either keeping
+-- both or dropping both: the liability stays and the justification leaves.
+--
+-- Nothing else in the tree reads this table (verified by audit, 2026-09-01).
+-- The box's `report_endpoints` is deleted in the same change; older boxes that
+-- still POST `/iroh/register` get a 404 and carry on, because that call has
+-- always been best-effort and logs at debug on any non-success.
+
+DROP TABLE IF EXISTS iroh_endpoints;

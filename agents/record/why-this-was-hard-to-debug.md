@@ -49,10 +49,12 @@ that don't get it.
 rows, each with no reason, on the one page built to answer this question. The
 answer travelled all the way to the browser and was not drawn.
 
-Same shape elsewhere: `/api/metrics/activity` returns the last 10 error
-messages box-wide and **no client calls it**; `diagnose_box` distinguishes four
-causes of unreachability and **has zero call sites**; `shellSupports()`, the
-documented per-feature degradation gate, **has zero call sites**.
+Same shape elsewhere: `/api/metrics/activity` returned the last 10 error
+messages box-wide and **no client called it** (retired 2026-09-03, along with
+the aggregate run panel on the billing page that was its last reader);
+`diagnose_box` distinguishes four causes of unreachability and **has zero call
+sites**; `shellSupports()`, the documented per-feature degradation gate, **has
+zero call sites**.
 
 ### 4. Two surfaces on one machine, disagreeing, with nothing to adjudicate
 During incident B the tray said **"Collecting" (green)** while the window said

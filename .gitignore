@@ -102,6 +102,16 @@ uv.lock
 build/
 apps/mac/build/
 
+# ...but `agents/build/` is a WRITING ROOT, not a build directory. The bare
+# `build/` above matches a directory of that name at ANY depth, so it silently
+# swallowed the whole prescriptive-docs tree (CLAUDE.md, "Where writing goes").
+# The files in there are tracked only because they were `git mv`d in from
+# `docs/` — a rename carries a tracked file past an ignore rule. Anything NEW
+# could not be added at all, which is why that directory's own README, the one
+# `tools/check-manual.py` requires every doc to be listed in, had never been
+# committed. Re-include the directory itself so git will descend into it.
+!agents/build/
+
 # Build artifacts
 apps/mac/virtues-mac
 apps/mac/*.tar.gz

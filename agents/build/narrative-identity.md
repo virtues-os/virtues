@@ -30,14 +30,23 @@ AI knows *happened*; narrative identity fixes **who it is talking to**. It is
 the single highest-leverage document in the product: every conversation,
 every day page, every suggestion is downstream of it.
 
-## The two artifacts (and the neighbor)
+## One artifact (and the neighbor)
 
-One idea, two carriers:
+One idea, ONE carrier (settled 2026-09-01: "no abridged version at all"):
 
 | artifact | what | reader | size |
 |---|---|---|---|
-| **the document** | the full prose — chapters, worldview, the arc | the person (and the drafter) | pages; a real wiki article page: editor, history, marginalia |
-| **the core** | the distillation carried into every chat (`wiki_narrative_identity.content`) | the AI, every message | 80–120 words (hard ceiling ~2k tokens) |
+| **the document** | the full prose — who they are, the arc | the person AND the AI, every message | a real wiki article page: editor, history, marginalia; injected whole (paragraph-boundary ceiling ~2k tokens) |
+
+There is deliberately no distilled "core"/"capsule" beside it. That existed
+(`wiki_narrative_identity.content`, 80–120 words, with a follower re-deriving
+it on document edits) and was deleted 2026-09-01: two versions of one
+identity drifted, and the abridger was caught inventing standing directives
+("be direct, don't go easy") that would have silently steered every chat.
+What the person edits is byte-for-byte what the assistant carries
+(`chat.rs::build_narrative_identity` reads the article prose directly). The
+interview's structured sibling is `wiki_chapters` — the authored partition of
+the life, with a seeded article page per chapter.
 
 **Rules are NOT part of narrative identity** (settled 2026-08-27). They are a
 neighboring channel: NI is *who the person is* — theirs, prose, weighed by
@@ -48,9 +57,6 @@ do" is a rule (obeyed). They ride adjacent in the prompt, but a rule is an
 instruction and the NI is a portrait, and conflating them makes the
 portrait read as a policy file.
 
-The core stays deliberately short: a longer core does not make the AI
-understand better, it makes it *perform* understanding more often (chat.rs's
-own doctrine).
 
 ## What belongs in it
 
@@ -143,8 +149,9 @@ almost never surfacing it:
 - **Born in the first conversation**: the interview chat ("In your own
   words", the product's first conversation — see lsi-plan.md final form)
   covers five territories: the chapters, what makes them unlike others, who
-  they admire, the strongest pull, what they believe. "Write it up" arranges
-  their words into the document + core.
+  they admire, the strongest pull, what they believe. "Write it up" — the
+  interview's one TOOL, the agent's to call — arranges their words into the
+  document, the chapters, and a page per chapter.
 - **Never finished, on purpose**: a record of a life can't be complete, and
   saying so is what disarms the perfectionism that kills the first draft.
 - **Grows by grounded questions**: the resolution queue asks one thing at a
@@ -152,7 +159,8 @@ almost never surfacing it:
   since 2019 — who are they to you?"). Recognition beats recall; an
   ungrounded question is homework, a grounded one is a gift.
 - **Corrected by editing**: the document is a page; the person rewrites it
-  whenever they like, and the core follows.
+  whenever they like, and the next message carries the edit — there is no
+  derived copy to lag behind it.
 
 ## Its place in the system prompt — the formula
 

@@ -18,7 +18,6 @@ export const THINKING_LABELS = [
 	'Cerebrating',
 	'Channelling',
 	'Churning',
-	'Clauding',
 	'Coalescing',
 	'Cogitating',
 	'Combobulating',

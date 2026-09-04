@@ -24,27 +24,27 @@ pub async fn seed_assistant_profile(db: &Database) -> Result<()> {
     // Store values in variables before binding (borrow lifetimes)
     let assistant_name = defaults.assistant_name.clone();
     let default_agent_id = defaults.default_agent_id.clone();
-    let default_model_id = defaults.default_model_id.clone();
     let enabled_tools = defaults.enabled_tools.clone();
     let ui_preferences = defaults.ui_preferences.clone();
 
-    // Update assistant profile with defaults, but only for NULL fields
-    // This preserves any user customizations while setting initial defaults
+    // Update assistant profile with defaults, but only for NULL fields.
+    // This preserves any user customizations while setting initial defaults.
+    // No model is seeded: NULL slots mean "follow the Virtues default" at read
+    // time. Seeding one froze the registry's then-current chat model into the
+    // row, where it kept being served long after the default moved on.
     sqlx::query!(
         r#"
         UPDATE app_assistant_profile
         SET
             assistant_name = COALESCE(assistant_name, $1),
             default_agent_id = COALESCE(default_agent_id, $2),
-            default_model_id = COALESCE(default_model_id, $3),
-            enabled_tools = COALESCE(enabled_tools, $4),
-            ui_preferences = COALESCE(ui_preferences, $5),
+            enabled_tools = COALESCE(enabled_tools, $3),
+            ui_preferences = COALESCE(ui_preferences, $4),
             updated_at = now()
-        WHERE id = $6
+        WHERE id = $5
         "#,
         assistant_name,
         default_agent_id,
-        default_model_id,
         enabled_tools,
         ui_preferences,
         profile_id_str

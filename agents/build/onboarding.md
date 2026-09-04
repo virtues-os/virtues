@@ -1,6 +1,9 @@
 # Onboarding & Setup
 
-> **Status: Current.** Rewritten 2026-08-28 against the code. The previous
+> **Status: Current.** Rewritten 2026-08-28 against the code; onboarding
+> half updated 2026-09-03 (the four-screen /onboarding flow was demolished
+> 2026-08-31 — onboarding is the founder's letter plus Home's getting-started
+> page, and the abridged narrative-identity capsule was deleted 2026-09-01). The previous
 > version had three generations of doctrine stacked in it plus a preamble
 > listing what the body got wrong — a structure that only works if every reader
 > reads the correction first, and they did not. The corrections have been folded
@@ -17,7 +20,8 @@
 >    `maintenance/ble_provision.rs`, `api/setup_phrase.rs`, `api/pair.rs`,
 >    `api/box_status.rs`, `apps/web/src-tauri/ui/connect.html`,
 >    `apps/web/src/routes/(public)/display`,
->    `apps/web/src/lib/components/onboarding/steps.ts`.
+>    `apps/web/src/routes/(onboarding)/founders-letter/`,
+>    `apps/web/src/lib/components/home/GettingStarted.svelte`.
 > 3. This file — what is *built*.
 
 Imaging and manufacturing live in [appliance-image.md](appliance-image.md),
@@ -330,7 +334,11 @@ everything they just read about.
 - **Setup = the box coming up. It ends early.** Three steps: **claimed** (a
   device paired) → **account** → **on your network**. There is no naming step:
   reach is by EndpointId, so the box keeps its `.local` name.
-- **Onboarding = four screens inside the app** (`/onboarding`).
+- **Onboarding = the founder's letter, then Home.** One screen
+  (`/founders-letter`), then the app opens on Home's getting-started page — a
+  numbered list the person returns to, because the payoff of connecting a
+  life is asynchronous. The old four-screen `/onboarding` flow is demolished
+  (2026-08-31).
 
 ### `/api/setup/state` (`api/box_status.rs::compute_setup_state`, public)
 
@@ -360,7 +368,10 @@ Signals are **derived**, never stored as a wizard-progress table: claimed =
 unrevoked device rows · account = API key in the box vault · network = a primary
 IP · first_source = an active non-device credential · remote_access = **iroh
 relay registered** · first_sync = a successful applet run ·
-narrative_identity_ready = `wiki_narrative_identity` has content. Derivation
+narrative_identity_ready = the narrative-identity ARTICLE exists
+(`wiki_articles`, subject_type `narrative_identity`) — the abridged
+`wiki_narrative_identity` capsule this used to check was deleted 2026-09-01;
+the document is the one artifact. Derivation
 means the state survives re-installs, restores, and out-of-band changes.
 
 Note the deliberate split on `claimed`: `compute_setup_state` **counts** the
@@ -373,30 +384,23 @@ onboarding path.
 `make dev` sets `VIRTUES_DEV_SKIP_SETUP=1` to pre-satisfy the wizard. Never set
 in prod.
 
-### The four screens (`lib/components/onboarding/steps.ts`)
+### The walk (letter, then Home)
 
-| # | View | Step |
-|---|---|---|
-| ① | `/onboarding/letter` | the founder's letter |
-| ② | `/onboarding/introductions` | two names, thirty seconds |
-| ③ | `/onboarding/sources` | connect what already holds your life (skippable) |
-| ④ | `/onboarding/you` | the reveal |
+| Where | What |
+|---|---|
+| `/founders-letter` | the one onboarding screen — the letter, then "Enter Virtues" |
+| Home, getting-started | the numbered list: introductions · connect your world · sign in (appliance) · the interview ("In your own words") · your first day · go further |
 
-**The URL is the flow** — Back and Forward work, a refresh keeps your place, a
-screen can be linked to. Five local booleans used to encode this between them;
-they made Back leave the app entirely and a refresh start the step over.
+The shell redirects to the letter only on `onboarding_status` — never on
+`setup_complete`, which on an appliance also requires the account and once
+looped an account-less box at the letter forever (fixed 2026-09-03; the
+account is Home's business, via AccountGate on the sign-in step).
 
-**There is no account step.** The account is a *setup* fact, handled in the
-airlock's BLE link step and skippable there. Sources need no account on either
-side. It renders as a conditional interstitial at `you`, for exactly the people
-who skipped linking — a toll booth, not a story beat.
-
-**There is no interview step either** (2026-08-27). The narrative interview is
-the product's first *conversation* — one chat in the real app
-(`chat_narrative_interview`) — not an onboarding surface. Onboarding is done
-when the record is flowing; the reveal's door points at the waiting
-conversation. Three form factors died teaching us this; see
-[lsi-plan.md](lsi-plan.md).
+**There is no interview step in any flow** (2026-08-27). The narrative
+interview is the product's first *conversation* — one chat in the real app
+(`chat_narrative_interview`) — and the getting-started row that points at it
+says "underway" between a first answer and "write it up". Three form factors
+died teaching us this; see [lsi-plan.md](lsi-plan.md).
 
 `/setup` is a **308 redirect** to `/onboarding`, kept rather than deleted
 because the box's own copy points there and SPA delivery is OTA — a bundle baked

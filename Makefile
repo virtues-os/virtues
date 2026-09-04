@@ -44,7 +44,7 @@ DEV_DB_URL ?= postgres://virtues:virtues@localhost:5432/virtues
 # stays on the box — only the structured spine is copied. The box's encryption key
 # is NEVER pulled: bulk life-data is plaintext, so browsing needs no secret (only
 # credentialed actions, which you wouldn't run in a read-only browse, would want it).
-DEV_BOX_SSH    ?= virtues-box
+DEV_BOX_SSH    ?= dragon
 DEV_BOXCOPY_DB ?= virtues_boxcopy
 
 # Quiet dev logs: warnings/errors only. Override for a noisy session, e.g.

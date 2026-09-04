@@ -58,7 +58,7 @@ pub async fn run(cli: Config) -> Result<()> {
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
-        ui::skip("  • Inference: Dragon NPU auto-detect, else bring your own endpoint (recommended) or a throwaway bundled-CPU trial");
+        ui::skip("  • Inference: Dragon NPU auto-detect, else bring your own endpoint (recommended) or a bundled-CPU quick trial");
         ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
         ui::skip("  • System packages (Postgres 18, Avahi)");
         ui::skip(&format!(

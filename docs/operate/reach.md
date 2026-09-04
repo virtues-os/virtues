@@ -1,24 +1,24 @@
 ---
 title: Reaching your server
-description: How your phone and laptop connect to your Virtues box at home and away — pairing devices, what the relay can and cannot see, and what to expect when the network changes.
+description: How your phone and laptop connect to your Virtues server at home and away — pairing devices, what the relay can and cannot see, and what to expect when the network changes.
 updated: 2026-08-28
 ---
 
-Your box sits at home behind a router that, by default, nothing on the
+Your server sits at home behind a router that, by default, nothing on the
 internet can reach. Getting to it from your kitchen and from another continent
 should feel the same, and it should not require opening a hole in your home
 network. This is how that works.
 
 ## The shape of it
 
-Every device and every box has its own cryptographic key. That key *is* its
+Every device and every server has its own cryptographic key. That key *is* its
 identity — there's no password, no account cookie, no bearer token to steal.
-Your phone dials your box by its key, and the box answers only devices whose
+Your phone dials your server by its key, and the server answers only devices whose
 keys are on its allowlist.
 
 Three paths, tried in order, all invisible to you:
 
-1. **Direct on your own network.** Phone and box on the same Wi-Fi talk
+1. **Direct on your own network.** Phone and server on the same Wi-Fi talk
    straight to each other. Nothing leaves the building.
 2. **Direct across the internet.** The two ends punch through their routers
    and connect to each other without a middleman.
@@ -26,7 +26,7 @@ Three paths, tried in order, all invisible to you:
    some corporate and mobile networks won't. The connection upgrades itself to
    a direct path if one becomes possible.
 
-**No inbound port is ever opened at home.** The box dials out; nothing dials
+**No inbound port is ever opened at home.** The server dials out; nothing dials
 in. That's why this works on a normal home router with no configuration and no
 port forwarding.
 
@@ -34,43 +34,43 @@ port forwarding.
 
 The iPhone app and the desktop app. Both speak the key-based protocol; a
 plain web browser can't, because it has no key to prove it's yours — a browser
-pointed at the box on your own network is refused like any other stranger.
+pointed at the server on your own network is refused like any other stranger.
 
-So: the apps, or a terminal on the box itself.
+So: the apps, or a terminal on the server itself.
 
 ## Pairing a device
 
-Pairing is putting a device's key on the box's allowlist. There are a few
+Pairing is putting a device's key on the server's allowlist. There are a few
 routes, and which one you take depends on where you are.
 
-**Your first phone, during setup**, connects over Bluetooth. The box shows a
+**Your first phone, during setup**, connects over Bluetooth. The server shows a
 four-word phrase on its screen and the phone has to send it back before the
-box will do anything — proof you can see the machine, rather than proof you
+server will do anything — proof you can see the machine, rather than proof you
 know a secret.
 
-**Any later device** pairs with a code from the box:
+**Any later device** pairs with a code from the server:
 
 ```bash
 virtues pair
 ```
 
-That prints a code to type into the app, then waits. On a box that's already
+That prints a code to type into the app, then waits. On a server that's already
 yours, each code is fresh and single-use. If your phone is on the same network
-as the box, the app can scan a QR instead.
+as the server, the app can scan a QR instead.
 
 **A phone joining from a different network** can be handed its identity by a
 laptop that's already paired, from the Devices screen — one scan and it's in,
 with no network path needed between the two devices.
 
 > That handoff QR **contains a private key**. Anyone who photographs it while
-> it's on screen gets access to your box. Don't display it on a shared screen
+> it's on screen gets access to your server. Don't display it on a shared screen
 > or a video call, and if you suspect someone caught it, revoke the device
 > immediately — it appears in Devices the moment it pairs.
 
 To see and manage what's connected:
 
 ```bash
-virtues device ls          # every device allowed to reach this box
+virtues device ls          # every device allowed to reach this server
 virtues device rm <id>     # revoke one; its next connection is refused
 ```
 
@@ -83,7 +83,7 @@ When a direct path isn't possible, traffic passes through a relay we run. The
 honest description:
 
 - **It cannot read anything.** The connection is encrypted end-to-end between
-  your device and your box, with keys the relay never holds. It forwards
+  your device and your server, with keys the relay never holds. It forwards
   packets it has no ability to open.
 - **It does see** which two device keys are talking to each other, the IP
   addresses they connect from, and how much traffic passes and when. That's
@@ -97,7 +97,7 @@ We'd rather state that plainly than round it up to "blind." The strong claim —
 that we can't read your life — is true and rests on the encryption, not on
 promises about the relay's memory.
 
-Your server knows the relay's address out of the box, so it is reachable from
+Your server knows the relay's address out of the server, so it is reachable from
 your first boot with no account at all — the same way every connected product
 ships its rendezvous servers built in. It's a default, not a requirement:
 Settings → System → Network names the relay in use and carries the off switch,
@@ -109,7 +109,7 @@ and a server with the relay off works normally on your own network.
 virtues doctor
 ```
 
-Among other things this prints a reach summary: whether the box has an
+Among other things this prints a reach summary: whether the server has an
 identity, whether it knows a relay or is local-network-only, and how many
 devices are paired.
 
@@ -122,7 +122,7 @@ Some behavior is worth recognizing so it doesn't read as a fault:
   longer if it has to rebuild from scratch.
 - **A backgrounded phone deliberately parks its connection** so the radio can
   idle and the battery lasts. It isn't continuously connected, by design.
-- **A box that was just set up** can take a few minutes to become reachable
+- **A server that was just set up** can take a few minutes to become reachable
   from outside your home, as it settles into a relay.
 - **On restrictive networks** — some workplaces, some mobile carriers — the
   direct path fails and everything rides the relay. That's slower, and
@@ -131,5 +131,5 @@ Some behavior is worth recognizing so it doesn't read as a fault:
   same network from seeing each other. The handoff QR above is the way through
   it.
 
-If the box itself seems unhealthy rather than unreachable,
+If the server itself seems unhealthy rather than unreachable,
 [When something breaks](/docs/operate/recovery) is the place to start.

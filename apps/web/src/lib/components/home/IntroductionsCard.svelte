@@ -161,6 +161,7 @@
 
 			<label>
 				<span class="q">When were you born?</span>
+				<span class="q-why">It anchors the record's arithmetic — ages, anniversaries, the chapters of your life.</span>
 				<input type="date" bind:value={born} />
 			</label>
 
@@ -225,6 +226,7 @@
 	/* The questions are prose, so they are set as prose — same voice as the
 	   keep card's question. */
 	.q { font-family: var(--font-serif); font-size: 16px; line-height: 1.4; color: var(--color-foreground); }
+	.q-why { display: block; margin: 2px 0 6px; font-size: 13px; line-height: 1.45; color: var(--color-foreground-subtle); }
 
 	input, .tz-trigger {
 		width: 100%;

@@ -36,11 +36,6 @@ where
 pub struct UpdateAssistantProfileRequest {
     pub assistant_name: Option<String>,
     pub default_agent_id: Option<String>,
-    // Legacy fields (kept for backward compatibility)
-    #[serde(deserialize_with = "double_option")]
-    pub default_model_id: Option<Option<String>>,
-    #[serde(deserialize_with = "double_option")]
-    pub background_model_id: Option<Option<String>>,
     // Model slots. NULL here = "follow the Virtues default" (the cloud slot
     // map, then the compiled floor — see api::model_catalog).
     #[serde(deserialize_with = "double_option")]
@@ -102,8 +97,6 @@ pub async fn update_assistant_profile(
 
     add_field!(request.assistant_name, "assistant_name");
     add_field!(request.default_agent_id, "default_agent_id");
-    add_field!(request.default_model_id, "default_model_id");
-    add_field!(request.background_model_id, "background_model_id");
     add_field!(request.chat_model_id, "chat_model_id");
     add_field!(request.lite_model_id, "lite_model_id");
     add_field!(request.coding_model_id, "coding_model_id");
@@ -135,12 +128,6 @@ pub async fn update_assistant_profile(
     // Double-option: the outer Some means "this field was mentioned"; the inner
     // Option is the value, and `None` binds as SQL NULL — which is how a slot
     // gets reset to the Virtues default.
-    if let Some(v) = &request.default_model_id {
-        q = q.bind(v.as_deref());
-    }
-    if let Some(v) = &request.background_model_id {
-        q = q.bind(v.as_deref());
-    }
     if let Some(v) = &request.chat_model_id {
         q = q.bind(v.as_deref());
     }
@@ -184,28 +171,27 @@ pub async fn get_assistant_name(db: &PgPool) -> Result<String> {
 }
 
 /// Helper to get the lite/background model for cheap tasks (titles, summaries)
-///
-/// Uses new lite_model_id slot, falls back to background_model_id for compatibility,
-/// then to default lite model
 pub async fn get_background_model(db: &PgPool) -> Result<String> {
     let profile = get_assistant_profile(db).await?;
 
-    // Try new slot first, then legacy field, then default
     Ok(profile
         .lite_model_id
-        .or(profile.background_model_id)
         .unwrap_or_else(|| crate::api::model_catalog::model_for_slot(
             virtues_registry::models::ModelSlot::Lite
         )))
 }
 
 /// Helper to get the chat model (default for conversations)
+///
+/// Pin, else the Virtues default — never the legacy default_model_id column.
+/// That column held a SNAPSHOT of the registry default frozen at seed time, so
+/// its `.or()` fallback kept serving a model Virtues had since moved off of,
+/// wearing the costume of a user pin.
 pub async fn get_chat_model(db: &PgPool) -> Result<String> {
     let profile = get_assistant_profile(db).await?;
 
     Ok(profile
         .chat_model_id
-        .or(profile.default_model_id)
         .unwrap_or_else(|| crate::api::model_catalog::model_for_slot(
             virtues_registry::models::ModelSlot::Chat
         )))
@@ -277,14 +263,16 @@ mod tests {
         );
     }
 
-    /// Clearing the Chat slot must clear the legacy column too, or
-    /// `get_chat_model`'s `chat_model_id.or(default_model_id)` resurrects the
-    /// old pin. The web client sends both; this just proves the shape parses.
+    /// Old clients still send the retired legacy columns
+    /// (default_model_id/background_model_id) alongside their slot. Those keys
+    /// must be silently ignored — not an error — or every stale SPA's model
+    /// save starts failing on upgrade.
     #[test]
-    fn legacy_columns_are_clearable_alongside_their_slot() {
-        let req: UpdateAssistantProfileRequest =
-            serde_json::from_str(r#"{"chat_model_id":null,"default_model_id":null}"#).unwrap();
+    fn retired_legacy_keys_from_old_clients_are_ignored() {
+        let req: UpdateAssistantProfileRequest = serde_json::from_str(
+            r#"{"chat_model_id":null,"default_model_id":null,"background_model_id":"x/y"}"#,
+        )
+        .unwrap();
         assert_eq!(req.chat_model_id, Some(None));
-        assert_eq!(req.default_model_id, Some(None));
     }
 }
