@@ -80,8 +80,8 @@ that asks for action carries its verb as a pill here, and that is the only
 control in the column. Right edges align; a marginalia item never wraps.
 
 **Colophon.** A page may end with an epigraph: one quotation from the bank in
-[voice.md](voice.md), set in the serif at the foot of the body, its attribution
-in the margin role. It is not the page's sentence and does not count against
+[voice.md](voice.md), set in the serif at the foot of the body, unattributed —
+the bank holds the provenance; the page shows only the line. It is not the page's sentence and does not count against
 §1, because it is quoted, not written. **One at a time,** chosen per day, never
 carouselled and never animated: the reader who wants another comes back
 tomorrow. A page that has a colophon has nothing below it.
