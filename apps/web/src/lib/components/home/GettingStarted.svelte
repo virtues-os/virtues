@@ -15,7 +15,7 @@
 	stats row. The facing page is the work: what is done as chips (still
 	pressable — the letter is always one click away), the ONE thing to do now
 	as a panel with a real button that names the place, what comes next
-	beneath it in plain type, and the sources it reads from along the foot.
+	beneath it in plain type, and what is done as a quiet row beneath that.
 
 	Four earlier shapes were struck the same day: an accordion whose rows
 	unfolded into forms (nobody could tell done from next), a flat list of
@@ -39,10 +39,7 @@
 	import { onMount } from "svelte";
 	import { fade } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
-	import {
-		getProfile, updateProfile, getCensus, listSourceCatalog, listCredentials,
-		type Profile, type Census, type SourceCatalogItem,
-	} from "$lib/api/client";
+	import { getProfile, updateProfile, getCensus, type Profile, type Census } from "$lib/api/client";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 
@@ -65,8 +62,6 @@
 	/** Set even on failure — "couldn't read the profile" must not hold the
 	 *  whole of Home in the loading state forever. */
 	let profileSettled = $state(false);
-	/** The sources strip: what the box reads from, and the one worth adding. */
-	let sources = $state<SourceCatalogItem[]>([]);
 
 	const store = setupStateStore;
 
@@ -86,17 +81,6 @@
 			census = await getCensus();
 		} catch {
 			/* same: the first-day step simply doesn't advance this tick */
-		}
-	}
-
-	async function loadSources() {
-		// Best-effort: the strip is a receipt, not a gate. The catalog carries
-		// credential_count, so one call says which sources are connected.
-		try {
-			sources = (await listSourceCatalog()).filter((s) => !s.id.startsWith("__"));
-			void listCredentials; // the count on the catalog is enough here
-		} catch {
-			sources = [];
 		}
 	}
 
@@ -291,17 +275,9 @@
 	};
 	const front = $derived(FRONT[now?.id ?? "further"]);
 
-	// ---- the sources strip ----
-	const connected = $derived(sources.filter((s) => s.credential_count > 0));
-	/** The one worth adding next: the phone, then the Mac, then nothing. */
-	const toAdd = $derived(
-		["ios", "mac", "google"].map((id) => sources.find((s) => s.id === id && s.credential_count === 0)).find(Boolean) ?? null,
-	);
-
 	onMount(() => {
 		void loadProfile();
 		void loadCensus();
-		void loadSources();
 		// The first day lands on the box's own clock (narration runs at the
 		// maintenance hour, once a day) — a five-minute beat is generous.
 		const t = setInterval(() => {
@@ -314,8 +290,7 @@
 			if (document.hidden) return;
 			void loadProfile();
 			void loadCensus();
-			void loadSources();
-			void store.check();
+				void store.check();
 		};
 		document.addEventListener("visibilitychange", refresh);
 		window.addEventListener("focus", refresh);
@@ -349,29 +324,6 @@
 
 {#if ready && now}
 	<div class="spread" in:fade={{ duration: 200 }}>
-		<!-- The frontispiece: the painting for this step, its line, and the
-		     record's numbers — white on the painting's dusk. -->
-		<aside class="front" aria-hidden="true">
-			{#key front.src}
-				<img src={front.src} alt="" />
-			{/key}
-			<div class="text">
-				<p class="epigraph">{front.line}</p>
-				{#if census && census.total > 0 && census.lines.length > 0}
-					<div class="ledger">
-						{#each census.lines.slice(0, 3) as line (line.id)}
-							<div><div class="v">{line.count.toLocaleString()}</div><div class="k">{line.label}</div></div>
-						{/each}
-					</div>
-					{#if census.earliest}
-						<div class="since">
-							The record, since {new Date(census.earliest).toLocaleDateString(undefined, { month: "long", year: "numeric" })}
-						</div>
-					{/if}
-				{/if}
-			</div>
-		</aside>
-
 		<!-- The work: done, now, then, and what it reads from. -->
 		<section class="work">
 			<div class="head">
@@ -405,9 +357,9 @@
 				</div>
 			{/if}
 
-			<!-- What is behind you and what is flowing: two quiet rows. The chips
-			     stay pressable — the letter is always one click away — but carry
-			     no check; the row's label already says done. -->
+			<!-- What is behind you: one quiet row. The chips stay pressable — the
+			     letter is always one click away — but carry no check; the row's
+			     label already says done. -->
 			<div class="rows">
 				{#if doneSteps.length > 0}
 					<div class="row">
@@ -416,19 +368,6 @@
 							{#each doneSteps as s (s.id)}
 								<button class="chip" type="button" onclick={s.go}>{s.title}</button>
 							{/each}
-						</div>
-					</div>
-				{/if}
-				{#if connected.length > 0 || toAdd}
-					<div class="row">
-						<span class="lbl">Reading from</span>
-						<div class="chips">
-							{#each connected as s (s.id)}
-								<button class="chip" type="button" onclick={() => open("/sources", "Sources")}>{s.name}</button>
-							{/each}
-							{#if toAdd}
-								<button class="chip add" type="button" onclick={() => open("/sources", "Sources")}>+ {toAdd.name}</button>
-							{/if}
 						</div>
 					</div>
 				{/if}
@@ -452,15 +391,40 @@
 				</button>
 			</div>
 		</section>
+
+		<!-- The frontispiece: the painting for this step, its line, and the
+		     record's numbers — white on the painting's dusk. -->
+		<aside class="front" aria-hidden="true">
+			{#key front.src}
+				<img src={front.src} alt="" />
+			{/key}
+			<div class="text">
+				<p class="epigraph">{front.line}</p>
+				{#if census && census.total > 0 && census.lines.length > 0}
+					<div class="ledger">
+						{#each census.lines.slice(0, 3) as line (line.id)}
+							<div><div class="v">{line.count.toLocaleString()}</div><div class="k">{line.label}</div></div>
+						{/each}
+					</div>
+					{#if census.earliest}
+						<div class="since">
+							The record, since {new Date(census.earliest).toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+						</div>
+					{/if}
+				{/if}
+			</div>
+		</aside>
+
 	</div>
 {/if}
 
 <style>
-	/* The spread fills the pane: the frontispiece takes 42%, the work the
-	   rest. Below 900px the painting becomes a header and the work follows. */
+	/* The spread fills the pane: the work on the left in the page's measure,
+	   the painting on the right as a card set in the page's margin. Below
+	   900px the painting becomes a header and the work follows. */
 	.spread {
 		display: grid;
-		grid-template-columns: minmax(360px, 42%) minmax(0, 1fr);
+		grid-template-columns: minmax(0, 1fr) minmax(360px, 44%);
 		/* Fill the pane: the window less the chrome row and the pane's inset.
 		   Nothing above sets a height, so the spread must state its own. */
 		min-height: calc(100dvh - var(--chrome-row-h, 40px) - 2 * var(--pane-inset, 12px) - 2px);
@@ -468,11 +432,15 @@
 	}
 	@media (max-width: 900px) {
 		.spread { grid-template-columns: 1fr; }
-		.front { min-height: 320px; }
+		.front { order: -1; min-height: 320px; margin: 12px; }
 	}
 
-	/* ── frontispiece ── */
-	.front { position: relative; overflow: hidden; background: color-mix(in srgb, var(--color-foreground) 40%, var(--color-background)); }
+	/* ── the painting, as a card in the margin ── */
+	.front {
+		position: relative; overflow: hidden;
+		margin: 20px 20px 20px 0; border-radius: 12px;
+		background: color-mix(in srgb, var(--color-foreground) 40%, var(--color-background));
+	}
 	.front img {
 		position: absolute; inset: 0; width: 100%; height: 100%;
 		object-fit: cover; object-position: 50% 30%;
@@ -498,7 +466,7 @@
 	.since { margin-top: 20px; font-family: var(--font-sans); font-size: 12px; color: rgba(255,255,255,0.6); }
 
 	/* ── the work ── */
-	.work { display: flex; flex-direction: column; padding: 48px 64px 40px; min-width: 0; }
+	.work { display: flex; flex-direction: column; padding: 56px 56px 40px 64px; min-width: 0; }
 	.work > * { animation: arrive 0.5s ease both; }
 	.work > :nth-child(2) { animation-delay: 60ms; }
 	.work > :nth-child(3) { animation-delay: 120ms; }
@@ -515,7 +483,7 @@
 
 	/* The quiet rows: a label, then ghost chips — a hairline, no fill, no
 	   check. Pressable, but nothing here competes with the panel above. */
-	.rows { margin-top: 40px; display: grid; gap: 12px; }
+	.rows { margin-top: 48px; display: grid; gap: 12px; }
 	.row { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
 	.row .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 	.lbl { font-family: var(--font-sans); font-size: 13px; line-height: 28px; color: var(--color-foreground-subtle); }
@@ -526,7 +494,6 @@
 		cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
 	}
 	.chip:hover { background: var(--hover-bg, color-mix(in srgb, var(--color-foreground) 7%, transparent)); color: var(--color-foreground); }
-	.chip.add { color: var(--color-primary); border-style: dashed; }
 
 	.now-panel {
 		margin-top: 40px; padding: 28px 32px;
