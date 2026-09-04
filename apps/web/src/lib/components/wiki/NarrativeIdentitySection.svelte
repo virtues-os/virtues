@@ -83,8 +83,8 @@
 			<p class="empty-lead">Nothing written yet.</p>
 			<p class="empty-body">
 				Your document is written from the interview — a conversation, not a
-				form. When you say "write it up" there, it lands here and on its own
-				page, in your words.
+				form. When you close it there, it lands here and on its own page,
+				in your words and in the first person.
 			</p>
 			<button class="btn primary" onclick={openInterview}>Open the interview</button>
 		</div>
