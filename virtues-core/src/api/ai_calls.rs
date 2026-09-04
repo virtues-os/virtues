@@ -126,6 +126,55 @@ pub async fn spend_by_feature(
     .await
 }
 
+/// One day of wallet spend, for the Billing chart. Days with no calls are
+/// absent — the caller fills the run so the chart has a bar slot per day.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct DaySpend {
+    pub day: chrono::NaiveDate,
+    pub calls: i64,
+    pub cost_micros: i64,
+}
+
+/// Wallet spend per UTC day since `since`. BYO calls count toward `calls`
+/// and never toward `cost_micros`, for the reason `AiSpendBucket` gives.
+pub async fn spend_by_day(
+    pool: &PgPool,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<DaySpend>, sqlx::Error> {
+    sqlx::query_as::<_, DaySpend>(
+        r#"
+        SELECT (created_at AT TIME ZONE 'UTC')::date AS day,
+               COUNT(*) AS calls,
+               COALESCE(SUM(cost_micros) FILTER (WHERE route = 'wallet'), 0) AS cost_micros
+        FROM app_ai_calls
+        WHERE created_at >= $1
+        GROUP BY 1
+        ORDER BY 1
+        "#,
+    )
+    .bind(since)
+    .fetch_all(pool)
+    .await
+}
+
+/// Wallet spend in a half-open window — used for "this month against last
+/// month by the same date", which is the only comparison that is fair on
+/// the 4th.
+pub async fn wallet_spend_between(
+    pool: &PgPool,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(cost_micros) FILTER (WHERE route = 'wallet'), 0)
+           FROM app_ai_calls WHERE created_at >= $1 AND created_at < $2",
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_one(pool)
+    .await
+}
+
 /// Spend grouped by model since `since`, highest cost first.
 pub async fn spend_by_model(
     pool: &PgPool,
