@@ -47,13 +47,14 @@
 		type WeatherNow,
 	} from "$lib/wiki/api";
 	import { getStreamHealth, type StreamHealth } from "$lib/api/client";
-	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import GettingStarted from "$lib/components/home/GettingStarted.svelte";
+	import Frontispiece from "$lib/components/home/Frontispiece.svelte";
+	import { lineForDay, plateForHour } from "$lib/components/home/lines";
 	import DayDeck from "$lib/components/home/DayDeck.svelte";
 
 	// Which page this is — written by GettingStarted, read here. While any
@@ -219,12 +220,31 @@
 	});
 
 	// ---- the page's subtitle: the day, the weather, the time ----
+	/** Under the dateline: the weather, then the clock. */
 	const subtitle = $derived.by(() => {
 		const wx =
 			weather && weather.temperature_c != null
 				? `${Math.round((weather.temperature_c * 9) / 5 + 32)}° ${weather.condition}`.trim()
 				: null;
-		return [dateline, wx, clock].filter(Boolean).join(" · ");
+		return [wx, clock].filter(Boolean).join(" · ");
+	});
+
+	// ---- the frontispiece: the hour's painting, yesterday's sentence, today's count ----
+	const plate = $derived(plateForHour(new Date(nowMs).getHours()));
+	const frontLine = $derived(leadLine ?? lineForDay(new Date(nowMs)));
+	const sumLane = (id: string) => (life?.lanes?.find((l) => l.id === id)?.density ?? []).reduce((a, b) => a + b, 0);
+	const figures = $derived.by(() => {
+		const out: { v: string; k: string }[] = [];
+		const steps = sumLane("health");
+		if (steps > 0) out.push({ v: Math.round(steps).toLocaleString(), k: "steps" });
+		const screenH = sumLane("activity");
+		if (screenH > 0.05) {
+			const m = Math.round(screenH * 60);
+			out.push({ v: m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}` : `${m}m`, k: "at a screen" });
+		}
+		const sent = sumLane("communication");
+		if (sent > 0) out.push({ v: Math.round(sent).toLocaleString(), k: "messages sent" });
+		return out;
 	});
 
 	// ---- recents: notebooks, pages and chats blended by recency ----
@@ -334,39 +354,23 @@
      shell. It is mounted exactly once and hidden, not destroyed, when the box
      settles: it is what computes `gsPhase`, and re-creating it on a phase
      change made it and this view chase each other (see its header). -->
-<div class="gs" class:settled={gsPhase === "settled"}>
-	<div class="rv"><GettingStarted bind:phase={gsPhase} /></div>
+<div class="host" class:settled={gsPhase === "settled"}>
+	<GettingStarted bind:phase={gsPhase} />
 </div>
 
 {#if gsPhase === "settled"}
-<Page title="Home" description={subtitle} maxWidth="wide">
-	{#snippet actions()}
-		<!-- The two adjacent days, as a stepper: they are neighbours on one axis,
-		     which a pair of loose links did not say. -->
-		<div class="days" role="group" aria-label="Go to a day">
-			<button type="button" onclick={() => open(`/day/day_${yesterdayDate}`, "Yesterday")}>
-				<Icon icon="ri:arrow-left-s-line" width="15" />
-				Yesterday
-			</button>
-			<button type="button" class="now" onclick={() => open(`/day/day_${todayDate}`, "Today")}>
-				Today
-				<Icon icon="ri:arrow-right-s-line" width="15" />
-			</button>
-		</div>
-	{/snippet}
-
-	<div class="body">
-		{#if gsPhase === "settled"}
-		<!-- The box speaks — today's rhythm against the trailing twelve weeks —
-		     then, if it wrote one, quotes itself. -->
-		<div class="rv">
-			<DayNovelty {dayStartMs} {nowMs} {tz} />
-			{#if leadLine}
-				<p class="lead">{leadLine}</p>
-			{/if}
+<div class="host">
+<div class="spread">
+	<section class="work">
+		<div class="head">
+			<h1 class="title">{dateline}</h1>
+			{#if subtitle}<p class="sub">{subtitle}</p>{/if}
 		</div>
 
-		<section class="today rv" style="animation-delay:.06s">
+		<!-- The box speaks — today's rhythm against the trailing twelve weeks. -->
+		<DayNovelty {dayStartMs} {nowMs} {tz} />
+
+		<section class="today">
 			<div class="tbody" class:solo={points.length <= 1}>
 				<DayDeck
 					{dayStartMs}
@@ -383,7 +387,6 @@
 				/>
 				{#if points.length > 1}
 					<aside class="ground">
-						<span class="glabel mono">map</span>
 						<div class="gcanvas"><DayGround {points} scrubMs={scrubMs ?? pinnedMs} {nowMs} /></div>
 					</aside>
 				{/if}
@@ -405,7 +408,7 @@
 							{#each moment.records as r (r.id + r.at)}
 								<li>
 									<span class="mono rt">{recTime(r.at)}</span>
-									<span class="rk mono">{recKind(r)}</span>
+									<span class="rk">{recKind(r)}</span>
 									<span class="rb">
 										{r.label ?? "—"}{#if r.preview}<span class="rp">{r.preview}</span>{/if}
 									</span>
@@ -421,8 +424,8 @@
 		</section>
 
 		{#if recentItems.length}
-			<section class="recents rv" style="animation-delay:.12s">
-				<h2 class="kicker">recents</h2>
+			<section class="recents">
+				<h2 class="kicker">Recent</h2>
 				{#each recentItems as it (it.route)}
 					<div class="line">
 						<!-- The kicker's space has to come from CSS: leading whitespace
@@ -430,16 +433,16 @@
 						<button class="t" type="button" onclick={() => open(it.route, it.title)}>
 							{it.title}{#if it.kind !== "notebook"}<span class="s">— {it.kind}</span>{/if}
 						</button>
-						<span class="d mono">{it.note ?? ago(new Date(it.ts).toISOString())}</span>
+						<span class="d">{it.note ?? ago(new Date(it.ts).toISOString())}</span>
 					</div>
 				{/each}
 			</section>
 		{/if}
 
 		<!-- The box asks. -->
-		<div class="rv" style="animation-delay:.16s"><PlaceAsk /></div>
+		<PlaceAsk />
 
-		<section class="keep rv" style="animation-delay:.2s">
+		<section class="keep">
 			<!-- The card is the writing surface: the question is the only prompt,
 			     so clicking anywhere that isn't already a control puts the cursor
 			     where you'd expect it. -->
@@ -483,63 +486,70 @@
 							<li><span class="kt mono">{keptTime(n.created_at)}</span><span class="kb">{n.body}</span></li>
 						{/each}
 					</ul>
-					<button class="link sm kfoot" type="button" onclick={() => open(`/day/day_${todayDate}`, "Today")}>
-						In the margin of today's page <span class="arw">→</span>
+					<button class="link kfoot" type="button" onclick={() => open(`/day/day_${todayDate}`, "Today")}>
+						In the margin of today's page →
 					</button>
 				{/if}
 			</div>
 		</section>
-		{/if}
-	</div>
-</Page>
+	</section>
+
+	<!-- The frontispiece: the hour's painting, yesterday's own sentence (or
+	     the day's banked line), today's count, and the two adjacent pages. -->
+	<Frontispiece
+		src={plate}
+		line={frontLine}
+		{figures}
+		since={figures.length ? "Today, so far" : ""}
+		links={[
+			{ label: "Yesterday's page →", run: () => open(`/day/day_${yesterdayDate}`, "Yesterday") },
+			{ label: "Today's page →", run: () => open(`/day/day_${todayDate}`, "Today") },
+		]}
+	/>
+</div>
+</div>
 {/if}
 
 <style>
 	.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
-	/* The getting-started host: the pane's full height, its own scroll, and
-	   display:none (not unmount) once Home takes over. */
-	.gs { height: 100%; overflow-y: auto; }
-	.gs.settled { display: none; }
-	.gs .rv { height: 100%; }
-	.rv { opacity: 0; transform: translateY(7px); animation: rv 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) forwards; }
-	@keyframes rv { to { opacity: 1; transform: none; } }
-	@media (prefers-reduced-motion: reduce) { .rv { animation: none; opacity: 1; transform: none; } }
+	/* The host: the pane's full height and its own scroll, for both the
+	   getting-started spread and Home's. Getting started is display:none
+	   (not unmounted) once Home takes over — see GettingStarted.svelte. */
+	.host { height: 100%; overflow-y: auto; }
+	.host.settled { display: none; }
 
-	.kicker { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--color-foreground-subtle); margin: 0 0 18px; font-weight: 400; }
-	.link { font-family: var(--font-sans); font-size: 13.5px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; }
+	/* The spread, as on Getting Started: the work in the page's measure on the
+	   left, the painting as a card in the margin on the right. */
+	.spread {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(360px, 40%);
+		min-height: calc(100dvh - var(--chrome-row-h, 40px) - 2 * var(--pane-inset, 12px) - 2px);
+	}
+	@media (max-width: 900px) { .spread { grid-template-columns: 1fr; } }
+	.work { padding: 56px 56px 48px 64px; min-width: 0; }
+	.work > * { animation: arrive 0.5s ease both; }
+	.work > :nth-child(2) { animation-delay: 60ms; }
+	.work > :nth-child(3) { animation-delay: 120ms; }
+	@media (max-width: 640px) { .work { padding: 32px 24px; } }
+	@keyframes arrive { from { opacity: 0; transform: translateY(6px); } }
+	@media (prefers-reduced-motion: reduce) { .work > * { animation: none; } }
+
+	/* the dateline is the title; the weather and the clock under it */
+	.title { font-family: var(--font-serif); font-weight: 400; font-size: 36px; line-height: 1.1; margin: 0; color: var(--color-foreground); }
+	.sub { font-family: var(--font-sans); font-size: 15px; line-height: 1.5; color: var(--color-foreground-muted); margin: 10px 0 0; }
+	.head { margin-bottom: 40px; }
+
+	.kicker { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); margin: 0 0 12px; font-weight: 400; }
+	.link { font-family: var(--font-sans); font-size: 14px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; }
 	.link:hover { text-decoration: underline; text-underline-offset: 3px; }
-	.link .arw { opacity: 0.7; }
-	.link.sm { font-size: 12.5px; font-weight: 400; }
-
-	/* Day stepper — sits in the page heading's action slot, so it lines up with
-	   the "New X" button every other room puts there. */
-	.days { display: inline-flex; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; background: var(--color-surface-elevated); }
-	.days button {
-		display: inline-flex; align-items: center; gap: 3px;
-		padding: 7px 12px; background: none; border: 0;
-		font-family: var(--font-sans); font-size: 13px; font-weight: 500;
-		color: var(--color-foreground-muted); cursor: pointer; white-space: nowrap;
-	}
-	.days button + button { border-left: 1px solid var(--color-border); }
-	.days button:hover { background: var(--hover-bg); color: var(--color-foreground); }
-	.days button.now { color: var(--color-foreground); }
-
-	/* Yesterday's own sentence. Quieter than the page's h1 on purpose — it is a
-	   line the box wrote, not the name of the room. */
-	.lead {
-		font-family: var(--font-serif); font-size: 19px; line-height: 1.45;
-		color: var(--color-foreground-muted); margin: 0 0 26px; max-width: 58ch;
-	}
 
 	/* the deck */
-	.today { padding-bottom: clamp(44px, 7vh, 84px); }
+	.today { padding-bottom: 48px; }
 	/* No fixes today means no map — the deck takes the whole width
 	   rather than leaving a column of air where it would have been. */
-	.tbody { display: grid; grid-template-columns: minmax(0, 1fr) 170px; gap: clamp(20px, 3vw, 34px); align-items: center; }
+	.tbody { display: grid; grid-template-columns: minmax(0, 1fr) 170px; gap: 24px; align-items: center; }
 	.tbody.solo { grid-template-columns: minmax(0, 1fr); }
-	.ground { display: flex; flex-direction: column; gap: 7px; }
-	.glabel { font-size: 9.5px; letter-spacing: 0.04em; color: var(--color-foreground-subtle); }
 	.gcanvas { height: 170px; }
 	@media (max-width: 780px) {
 		.tbody { grid-template-columns: 1fr; }
@@ -547,54 +557,41 @@
 	}
 
 	/* the rows behind a point — aligned to the plot, not the lane-name gutter. */
-	.moment { margin-top: 22px; margin-left: 62px; max-width: 720px; }
-	.mhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+	.moment { margin-top: 24px; margin-left: 62px; max-width: 720px; }
+	.mhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
 	.mhead .mt { font-size: 12px; color: var(--color-foreground); }
-	.mlabel { font-family: var(--font-sans); font-size: 11.5px; color: var(--color-foreground-subtle); }
-	.mclose { margin-left: auto; display: flex; align-items: center; background: none; border: 0; padding: 3px; border-radius: 5px; color: var(--color-foreground-subtle); cursor: pointer; }
+	.mlabel { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); }
+	.mclose { margin-left: auto; display: flex; align-items: center; background: none; border: 0; padding: 3px; border-radius: 6px; color: var(--color-foreground-subtle); cursor: pointer; }
 	.mclose:hover { background: var(--hover-bg); color: var(--color-foreground); }
 	.mlist { list-style: none; margin: 0; padding: 0; }
-	.mlist li { display: flex; gap: 12px; align-items: baseline; padding: 4px 0; font-size: 13px; line-height: 1.45; }
-	.mlist .rt { font-size: 10.5px; color: var(--color-foreground-subtle); flex: none; width: 38px; }
-	.mlist .rk { font-size: 10px; color: var(--color-foreground-subtle); flex: none; width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.mlist .rb { font-family: var(--font-sans); color: var(--color-foreground); min-width: 0; }
+	.mlist li { display: flex; gap: 12px; align-items: baseline; padding: 4px 0; font-family: var(--font-sans); font-size: 14px; line-height: 1.45; }
+	.mlist .rt { font-size: 12px; color: var(--color-foreground-subtle); flex: none; width: 40px; }
+	.mlist .rk { font-size: 13px; color: var(--color-foreground-subtle); flex: none; width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.mlist .rb { color: var(--color-foreground); min-width: 0; }
 	/* The gap has to come from CSS: leading whitespace inside the span is
 	   trimmed by the compiler, which rendered "Deposit$0.38". */
 	.mlist .rp { color: var(--color-foreground-muted); margin-left: 0.4em; }
-	.mnone { font-family: var(--font-sans); font-size: 12.5px; color: var(--color-foreground-subtle); margin: 0; }
+	.mnone { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); margin: 0; }
 	@media (max-width: 640px) { .moment { margin-left: 0; } }
 
-	/* recents — the work you had in your hands last, newest first */
-	.recents { max-width: 640px; }
-	.line { display: flex; align-items: baseline; gap: 14px; padding: 8px 0; }
-	.line .t { font-family: var(--font-serif); font-size: 16.5px; color: var(--color-foreground); min-width: 0; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; }
+	/* recent — the work you had in your hands last, newest first */
+	.recents { max-width: 40em; }
+	.line { display: flex; align-items: baseline; gap: 16px; padding: 8px 0; }
+	.line .t { font-family: var(--font-serif); font-size: 18px; color: var(--color-foreground); min-width: 0; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; }
 	.line .t .s { margin-left: 0.34em; color: var(--color-foreground-subtle); }
 	.line .t:hover { color: var(--color-primary); }
-	.line .d { margin-left: auto; font-size: 11px; color: var(--color-foreground-subtle); white-space: nowrap; flex: none; }
-
-	/* Home is what the bottom bar points at first, and every control on it sat
-	   under Apple's 44pt floor — the day stepper 34px tall, these recents 25px.
-	   Both grow by padding, so the type and the rhythm are unchanged and only
-	   the hit area moves; the row's own padding moves into the button so the
-	   spacing doesn't double. Keyed to touch as well as to width, because an
-	   iPad in a wide layout has the same fingers.
-
-	   Placed here, below the rules it overrides: these selectors match the base
-	   ones exactly, so at equal specificity it is source order that decides,
-	   and a media query does not change that. */
+	.line .d { margin-left: auto; font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); white-space: nowrap; flex: none; }
+	/* Apple's 44pt floor on touch: the row's padding moves into the button. */
 	@media (max-width: 768px), (pointer: coarse) {
-		/* 13, not 12: the label measures 19.6px, so 12 lands at 43.6 — under the
-		   floor by the kind of fraction that only a measurement catches. */
-		.days button { padding: 13px 14px; }
 		.line { padding: 0; }
 		.line .t { padding: 10px 0; }
 	}
 
 	/* the keep */
-	.keep { margin-top: clamp(48px, 8vh, 92px); max-width: 640px; }
+	.keep { margin-top: 48px; max-width: 40em; }
 	.card {
-		background: var(--color-surface-elevated); border: 1px solid var(--color-border);
-		border-radius: 14px; padding: clamp(18px, 3vw, 24px);
+		background: var(--color-surface); border: 1px solid var(--color-border);
+		border-radius: 12px; padding: 24px;
 		transition: border-color 0.2s;
 		/* The card is the field. Its border is the only affordance the question
 		   needs, so no placeholder has to explain itself. */
@@ -610,19 +607,19 @@
 	}
 	.card textarea:focus { outline: none; }
 	.krow { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
-	.khint { font-family: var(--font-mono); font-size: 10px; color: var(--color-foreground-subtle); }
+	.khint { font-family: var(--font-sans); font-size: 12px; color: var(--color-foreground-subtle); }
 	.ksave {
 		margin-left: auto; flex: none; cursor: pointer;
-		font-family: var(--font-sans); font-size: 12.5px; font-weight: 500;
+		font-family: var(--font-sans); font-size: 14px; font-weight: 500;
 		background: none; border: 0; padding: 0;
 		color: var(--color-primary);
 	}
 	.ksave:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
 	.ksave:disabled { color: var(--color-foreground-disabled); cursor: default; }
-	.kerr { font-family: var(--font-sans); font-size: 12.5px; color: var(--color-error); margin: 12px 0 0; }
+	.kerr { font-family: var(--font-sans); font-size: 13px; color: var(--color-error); margin: 12px 0 0; }
 	.kept { list-style: none; margin: 20px 0 0; padding: 0; }
-	.kept li { display: flex; gap: 14px; align-items: baseline; padding: 6px 0; }
-	.kept .kt { font-size: 10.5px; color: var(--color-foreground-subtle); flex: none; width: 62px; }
-	.kept .kb { font-family: var(--font-serif); font-size: 15.5px; line-height: 1.45; color: var(--color-foreground); }
-	.kfoot { margin-top: 10px; }
+	.kept li { display: flex; gap: 16px; align-items: baseline; padding: 6px 0; }
+	.kept .kt { font-size: 12px; color: var(--color-foreground-subtle); flex: none; width: 64px; }
+	.kept .kb { font-family: var(--font-serif); font-size: 16px; line-height: 1.45; color: var(--color-foreground); }
+	.kfoot { margin-top: 12px; }
 </style>
