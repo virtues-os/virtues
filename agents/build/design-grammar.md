@@ -71,13 +71,6 @@ head's title. Lists, prose, ledgers. Whitespace separates first; a hairline
 are spent only on an object that must read as a separate thing (a card with its
 own state), never as decoration.
 
-**Colophon.** A page may end with an epigraph: one quotation from the bank in
-[voice.md](voice.md), set in the serif at the foot of the body, its attribution
-in the margin role. It is not the page's sentence and does not count against
-§1, because it is quoted, not written. **One at a time,** chosen per day, never
-carouselled and never animated: the reader who wants another comes back
-tomorrow. A page that has a colophon has nothing below it.
-
 **Margin column.** The right edge of the measure is a column, not a place
 buttons drift to. It holds **marginalia**: the quiet facts and verbs that
 belong to a row but are not its title — the way back (`Read again`, `Change`,
@@ -85,6 +78,13 @@ belong to a row but are not its title — the way back (`Read again`, `Change`,
 row, set in the quietest style on the page (§5, role *margin*). The one row
 that asks for action carries its verb as a pill here, and that is the only
 control in the column. Right edges align; a marginalia item never wraps.
+
+**Colophon.** A page may end with an epigraph: one quotation from the bank in
+[voice.md](voice.md), set in the serif at the foot of the body, its attribution
+in the margin role. It is not the page's sentence and does not count against
+§1, because it is quoted, not written. **One at a time,** chosen per day, never
+carouselled and never animated: the reader who wants another comes back
+tomorrow. A page that has a colophon has nothing below it.
 
 ## 3. Cards
 
