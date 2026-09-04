@@ -71,6 +71,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
     vec![
         think_tool(),
         propose_narrative_identity_tool(),
+        write_it_up_tool(),
         update_memory_tool(),
         set_user_name_tool(),
         set_assistant_name_tool(),
@@ -170,6 +171,31 @@ If you are unsure whether something qualifies, it does not."#.to_string(),
         icon: "ri:compass-3-line".to_string(),
         display_order: 0,
         is_system: false,
+    }
+}
+
+/// The narrative interview's ONE tool: turn the transcript into the person's
+/// document and chapters. Interview-mode only (see get_tools_for_agent_mode);
+/// is_system keeps it out of every other room's tool set.
+fn write_it_up_tool() -> ToolConfig {
+    ToolConfig {
+        id: "write_it_up".to_string(),
+        name: "Write it up".to_string(),
+        description: "Arrange the interview into the person's document and chapters".to_string(),
+        llm_description: r#"Finalize the narrative interview: a separate drafter reads this conversation's transcript and writes two things — the "In your own words" document (their words arranged, never yours) and the structured chapters of their life. The document opens beside the chat when this returns.
+
+Call it when the person says they are done or asks for their document, in whatever words. If territories are still uncovered when they ask, say which ones in one sentence and ask whether to write anyway — this runs ONCE; a thin early document stays thin. Never compose the document yourself in the chat.
+
+Takes no arguments. On success, tell them in a message or two what was written and that the document is theirs to edit and correct from here."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {}
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:quill-pen-line".to_string(),
+        display_order: 0,
+        is_system: true,
     }
 }
 

@@ -113,8 +113,15 @@ pub struct ChatRequest {
     pub messages: Vec<UIMessage>,
     #[serde(rename = "chatId")]
     pub chat_id: String,
-    /// Model ID is required - frontend must send selected model from picker
-    pub model: String,
+    /// The person's per-turn pick from the picker, if they made one.
+    ///
+    /// Absent — the ordinary case — means "whatever this turn's slot resolves
+    /// to", decided by the box in `model_choice::resolve_turn_model`. A client
+    /// is never required to know a model id, and an unpinned chat is not
+    /// frozen to the model it opened with. Empty string counts as absent; see
+    /// that module for why shipped clients depend on it.
+    #[serde(default)]
+    pub model: Option<String>,
     #[serde(rename = "agentId", default = "default_agent")]
     pub agent_id: String,
     /// Optional client-generated message ID for idempotency
@@ -319,6 +326,17 @@ pub enum StreamEvent {
         signature: String,
     },
 
+    // The interview's write_it_up finished: tell the client which page to open
+    // beside the chat. A data part rather than the tool part, because tool
+    // parts are pushed into a message's parts array MUTABLY mid-turn and
+    // effects watching the messages array provably never see them arrive;
+    // onData fires deterministically.
+    #[serde(rename = "narrative-document-ready")]
+    NarrativeDocumentReady {
+        #[serde(rename = "pageId")]
+        page_id: String,
+    },
+
     // Deep Research subagent status (data event for the live panel)
     #[serde(rename = "subagent-status")]
     SubagentStatus {
@@ -380,6 +398,13 @@ struct CheckpointData {
 #[derive(Debug, Serialize)]
 struct ThoughtSignatureData {
     signature: String,
+}
+
+/// Narrative-document-ready payload for AI SDK v6 data event
+#[derive(Debug, Serialize)]
+struct NarrativeDocumentData {
+    #[serde(rename = "pageId")]
+    page_id: String,
 }
 
 /// Subagent status payload for AI SDK v6 data event (live Deep Research panel)
@@ -499,6 +524,21 @@ fn serialize_event(event: &StreamEvent) -> String {
                 r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
             })
         }
+        // Wrap the narrative-document signal in AI SDK v6 data event format
+        // (transient — a reload reconstructs the document from its page, and
+        // replaying the auto-open on old chats would be wrong).
+        StreamEvent::NarrativeDocumentReady { page_id } => {
+            let wrapper = DataEvent {
+                event_type: "data-narrative-document".to_string(),
+                id: None,
+                data: NarrativeDocumentData { page_id: page_id.clone() },
+                transient: true,
+            };
+            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize narrative-document event: {}", e);
+                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
+            })
+        }
         // Wrap subagent status in AI SDK v6 data event format (transient — live panel only)
         StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens } => {
             let wrapper = DataEvent {
@@ -551,11 +591,21 @@ const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
 /// in practice: the table has no rows on a real box, so NI has been the empty
 /// string in every prompt since it shipped. Fixing it is a build, not a repair.)
 async fn build_narrative_identity(pool: &PgPool) -> String {
-    match sqlx::query_scalar::<_, String>("SELECT content FROM wiki_narrative_identity LIMIT 1")
-        .fetch_one(pool)
-        .await
+    // The DOCUMENT itself — "In your own words", the page the person edits.
+    // There is deliberately no abridged copy between them and the assistant:
+    // the old capsule (wiki_narrative_identity) drifted from the document and
+    // was caught inventing standing directives. One artifact, read whole,
+    // truncated at a paragraph boundary if the person writes past the budget.
+    match crate::api::wiki_articles::get_article_prose(
+        pool,
+        "narrative_identity",
+        crate::api::narrative_draft::NAR_IDENTITY_ID,
+    )
+    .await
     {
-        Ok(content) if !content.trim().is_empty() => truncate_to_budget(&content, NI_BUDGET_CHARS),
+        Ok(Some(prose)) if !prose.content.trim().is_empty() => {
+            truncate_to_budget(&prose.content, NI_BUDGET_CHARS)
+        }
         _ => String::new(),
     }
 }
@@ -657,14 +707,12 @@ async fn build_rules(pool: &PgPool) -> String {
 ///
 /// Assembles: identity → persona → narrative_identity → tools → datetime → user_context → active_page.
 /// Loads user name, assistant name, persona, and narrative identity from profiles.
-/// When `is_new_user` is true, appends the onboarding prompt for first conversations.
 async fn build_system_prompt(
     pool: &PgPool,
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
     agent_mode: &str,
     persona_id: &str,
-    is_new_user: bool,
     notebook_id: Option<&str>,
 ) -> String {
     use crate::api::assistant_profile::get_assistant_name;
@@ -687,7 +735,6 @@ async fn build_system_prompt(
         timezone,
         agent_mode,
         persona_id,
-        is_new_user,
         notebook_id,
         &assistant_name,
         &user_name,
@@ -707,7 +754,6 @@ async fn build_system_prompt_blocks(
     timezone: Option<&str>,
     agent_mode: &str,
     persona_id: &str,
-    is_new_user: bool,
     notebook_id: Option<&str>,
     assistant_name: &str,
     user_name: &str,
@@ -744,13 +790,6 @@ async fn build_system_prompt_blocks(
             meta: BlockMeta { tag: "precedence", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Static },
             body: Box::pin(async move {
                 Some(crate::agent::prompt_blocks::precedence_line().to_string())
-            }),
-        },
-        // Onboarding guidance for a first conversation.
-        Block {
-            meta: BlockMeta { tag: "new_user", author: Author::System, mood: Mood::Declarative, rung: 40, cadence: Cadence::Slow },
-            body: Box::pin(async move {
-                is_new_user.then(|| crate::agent::prompt::NEW_USER_PROMPT.to_string())
             }),
         },
         // The machine's memory: per-note rows the person can read and edit
@@ -885,7 +924,7 @@ fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<St
 /// assert on what the model is actually sent rather than re-deriving it.
 #[cfg(test)]
 pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
-    build_system_prompt(pool, None, Some("America/Chicago"), "default", "default", false, None).await
+    build_system_prompt(pool, None, Some("America/Chicago"), "default", "default", None).await
 }
 
 /// Maximum member URLs to inline for a Notebook before truncating.
@@ -1002,33 +1041,50 @@ pub async fn chat_handler(
         request.agent_mode = "interview".to_string();
     }
 
-    // Validate model against registry
-    let valid_models = match crate::api::models::list_models().await {
-        Ok(models) => models,
+    // Which model answers. One door — the box decides, from the mode and the
+    // owner's pin; the request's `model` is a per-turn override and nothing
+    // else. See `model_choice` for why the interview refuses that override,
+    // and why an empty string means "I did not choose".
+    let model = match crate::api::model_choice::resolve_turn_model(
+        &pool,
+        request.model.as_deref(),
+        &request.agent_mode,
+    )
+    .await
+    {
+        Ok(m) => m,
+        // Name the id we rejected. The version of this that listed 244
+        // allowed ids and never the offending one cost a day of debugging.
+        Err(crate::error::Error::InvalidInput(detail)) => {
+            tracing::warn!(
+                requested = ?request.model,
+                agent_mode = %request.agent_mode,
+                "rejected per-turn model"
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ChatError {
+                    error: "Invalid model".to_string(),
+                    details: Some(detail),
+                }),
+            )
+                .into_response();
+        }
         Err(e) => {
-            tracing::error!("Failed to load models from registry: {}", e);
+            tracing::error!(error = %e, "failed to resolve the model for this turn");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ChatError {
-                    error: "Failed to load models".to_string(),
+                    error: "Failed to resolve model".to_string(),
                     details: Some(e.to_string()),
                 }),
             )
                 .into_response();
         }
     };
-
-    let allowed_ids: Vec<&str> = valid_models.iter().map(|m| m.model_id.as_str()).collect();
-    if !allowed_ids.contains(&request.model.as_str()) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ChatError {
-                error: "Invalid model".to_string(),
-                details: Some(format!("Allowed models: {:?}", allowed_ids)),
-            }),
-        )
-            .into_response();
-    }
+    // Deliberately NOT written back onto `request`: the resolved address has
+    // one home from here down, threaded as an argument. `request.model` stays
+    // what the client sent, which is the only thing it ever meant.
 
 
     // Use client-provided message ID for idempotency, or generate one
@@ -1037,26 +1093,14 @@ pub async fn chat_handler(
         .clone()
         .unwrap_or_else(|| format!("msg_{}", generate_id()));
 
-    // Check onboarding status early — needed for synthetic message injection and tool filtering
-    let _onboarding_status = sqlx::query_scalar::<_, String>(
-        "SELECT onboarding_status FROM app_user_profile LIMIT 1"
-    )
-    .fetch_optional(&pool)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_else(|| "active".to_string());
-
-    // DISABLED for demo — onboarding was repeating the same message
-    let is_new_user = false; // onboarding_status == "new";
-    let is_onboarding = false; // onboarding_status == "new" || onboarding_status == "onboarding";
+    // The June-era chat onboarding is DELETED (2026-09-01) — onboarding is
+    // the founder's letter + Home's getting-started page, and the assistant's
+    // first conversation is an ordinary one. onboarding_status still gates
+    // those surfaces; the chat no longer reads it.
 
     // Ensure chat exists - use ON CONFLICT DO NOTHING to handle race conditions
     let chat_id_str = request.chat_id.clone();
-    let title = if is_new_user {
-        // Onboarding: first conversation, use a friendly default title
-        "Welcome".to_string()
-    } else {
+    let title = {
         let raw_title = request
             .messages
             .iter()
@@ -1149,12 +1193,9 @@ pub async fn chat_handler(
     }
 
     // Check if compaction is needed before sending to LLM
-    let compaction_status = crate::api::chat_usage::check_compaction_needed(
-        &pool,
-        request.chat_id.clone(),
-        &request.model,
-    )
-    .await;
+    let compaction_status =
+        crate::api::chat_usage::check_compaction_needed(&pool, request.chat_id.clone(), &model)
+            .await;
 
     // Pass compaction_needed flag to stream - compaction will run inside stream
     // and emit a checkpoint event for real-time UI updates
@@ -1262,17 +1303,37 @@ pub async fn chat_handler(
     // the active-notebook context always matches the binding, even if a stale client
     // sends a different per-message notebookId. The create path above already bound a
     // new chat from request.notebook_id, so the row is current by now.
-    let effective_notebook_id: Option<String> =
-        sqlx::query_scalar(r#"SELECT notebook_id FROM app_chats WHERE id = $1"#)
-            .bind(&chat_id_str)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten();
+    // Decoded as `Option<String>` on purpose: `app_chats.notebook_id` is nullable
+    // (and the FK is ON DELETE SET NULL), so an unbound chat legitimately reads
+    // NULL. Scalar-typing it as `String` would make that NULL a decode *error* —
+    // which is what the old `.ok()` was really swallowing, alongside every real
+    // query failure. A swallow here is not cosmetic: None reads as "not in a
+    // notebook", so a broken query silently unscopes a scoped chat — retrieval
+    // stops being hard-filtered and the answer contract below is dropped.
+    let effective_notebook_id: Option<String> = match sqlx::query_scalar::<_, Option<String>>(
+        r#"SELECT notebook_id FROM app_chats WHERE id = $1"#,
+    )
+    .bind(&chat_id_str)
+    .fetch_optional(&pool)
+    .await
+    {
+        // Outer None = no such row, inner None = bound to no notebook.
+        Ok(notebook_id) => notebook_id.flatten(),
+        Err(e) => {
+            tracing::error!("Failed to resolve notebook for chat {}: {}", chat_id_str, e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ChatError {
+                    error: "Failed to resolve chat notebook".to_string(),
+                    details: Some(e.to_string()),
+                }),
+            )
+                .into_response();
+        }
+    };
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
-    // is_onboarding keeps the onboarding prompt active until set_user_name completes
-    let mut system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, effective_notebook_id.as_deref()).await;
+    let mut system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, effective_notebook_id.as_deref()).await;
     // Scoped (grounded) chat: retrieval is hard-filtered to the notebook's
     // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
     // answer contract. Only meaningful inside a notebook.
@@ -1286,14 +1347,6 @@ pub async fn chat_handler(
         );
     }
 
-    // Flip 'new' → 'onboarding' after the first synthetic message (NOT to 'active').
-    // The onboarding prompt stays active. set_user_name flips 'onboarding' → 'active'.
-    if is_new_user {
-        let _ = sqlx::query("UPDATE app_user_profile SET onboarding_status = 'onboarding' WHERE onboarding_status = 'new'")
-            .execute(&pool)
-            .await;
-    }
-
     // Build context using compaction summary if available
     let api_messages = build_context_for_llm(
         &messages,
@@ -1302,24 +1355,16 @@ pub async fn chat_handler(
         Some(&system_prompt),
     );
 
-    // For brand-new users, skip the LLM and emit a preloaded opening message
-    let stream = if is_new_user {
-        create_preloaded_onboarding_stream(
-            pool,
-            request.chat_id.clone(),
-            msg_id,
-            request.agent_id.clone(),
-        )
-    } else {
+    let stream = {
         create_agent_stream(
             pool,
             yjs_state,
             cancel_state,
             request,
+            model,
             api_messages,
             msg_id,
             compaction_needed,
-            is_onboarding,
         )
     };
 
@@ -1340,70 +1385,20 @@ pub async fn chat_handler(
     response.into_response()
 }
 
-/// Create a preloaded SSE stream for the onboarding opening message.
-/// Skips the LLM entirely — emits a hardcoded message, saves it to the DB.
-fn create_preloaded_onboarding_stream(
-    pool: PgPool,
-    chat_id: String,
-    msg_id: String,
-    agent_id: String,
-) -> Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> {
-    use crate::agent::prompt::ONBOARDING_OPENING_MESSAGE;
-
-    Box::pin(async_stream::stream! {
-        // TextStart
-        let start_event = StreamEvent::TextStart { id: msg_id.clone() };
-        yield Ok(SseEvent::default().data(serialize_event(&start_event)));
-
-        // TextDelta — emit the full preloaded message
-        let event = StreamEvent::TextDelta {
-            id: msg_id.clone(),
-            delta: ONBOARDING_OPENING_MESSAGE.to_string(),
-        };
-        yield Ok(SseEvent::default().data(serialize_event(&event)));
-
-        // TextEnd
-        let end_event = StreamEvent::TextEnd { id: msg_id.clone() };
-        yield Ok(SseEvent::default().data(serialize_event(&end_event)));
-
-        // [DONE]
-        yield Ok(SseEvent::default().data("[DONE]"));
-
-        // Save assistant message to chat
-        let assistant_message = ChatMessage {
-            id: None,
-            role: "assistant".to_string(),
-            content: ONBOARDING_OPENING_MESSAGE.to_string(),
-            timestamp: Timestamp::now(),
-            model: None,
-            provider: None,
-            agent_id: Some(agent_id),
-            tool_calls: None,
-            reasoning: None,
-            intent: None,
-            subject: None,
-            thought_signature: None,
-            parts: None,
-        };
-
-        if let Err(e) = append_message(&pool, chat_id, assistant_message).await {
-            tracing::error!("Failed to save preloaded onboarding message: {}", e);
-        }
-    })
-}
-
 /// Create the SSE stream using the AgentLoop for tool execution
 fn create_agent_stream(
     pool: PgPool,
     yjs_state: YjsState,
     cancel_state: ChatCancellationState,
     request: ChatRequest,
+    // Already resolved by `model_choice::resolve_turn_model` — passed in
+    // rather than re-read off the request so the stream cannot disagree with
+    // what the handler decided, or fall back to a default of its own.
+    model: String,
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
     compaction_needed: bool,
-    is_onboarding: bool,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> {
-    let model = request.model.clone();
     let chat_id = request.chat_id.clone();
     let agent_id = request.agent_id.clone();
 
@@ -1483,12 +1478,7 @@ fn create_agent_stream(
             worker_budget: Some(worker_budget),
         };
 
-        // Get tool definitions — onboarding restricts to naming/memory tools only.
-        let tools = if is_onboarding {
-            crate::tools::get_tools_for_onboarding()
-        } else {
-            crate::tools::get_tools_for_agent_mode(&request.agent_mode)
-        };
+        let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
 
         // Send text-start event
         let start_event = StreamEvent::TextStart { id: msg_id.clone() };
@@ -1641,6 +1631,15 @@ fn create_agent_stream(
                     if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
                         tc.result = Some(result.clone());
                     }
+                    // The interview's finisher names the page the client
+                    // should open beside the chat (see NarrativeDocumentReady).
+                    let narrative_page = all_tool_calls
+                        .iter()
+                        .find(|tc| tc.tool_call_id.as_deref() == Some(&id))
+                        .filter(|tc| tc.tool_name == "write_it_up")
+                        .and_then(|_| result.get("document_page_id"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
                     // Bill nested Deep Research worker tokens to this chat's usage. The dispatch
                     // result carries aggregate worker token counts that the orchestrator's own
                     // Usage events don't include.
@@ -1654,6 +1653,10 @@ fn create_agent_stream(
                         output: result,
                     };
                     yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    if let Some(page_id) = narrative_page {
+                        let event = StreamEvent::NarrativeDocumentReady { page_id };
+                        yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    }
                 }
 
                 AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cost_micros } => {
@@ -1937,7 +1940,7 @@ mod tests {
             .await
             .unwrap();
         let (prompt, rendered) = build_system_prompt_blocks(
-            &pool, None, Some("America/Chicago"), "default", "default", false, None, "Ari",
+            &pool, None, Some("America/Chicago"), "default", "default", None, "Ari",
             "Adam",
         )
         .await;
@@ -2077,7 +2080,6 @@ mod live_prompt_audit {
                 Some("America/Chicago"),
                 "default",
                 "default",
-                false,
                 nb,
             )
             .await;

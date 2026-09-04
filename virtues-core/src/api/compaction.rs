@@ -20,7 +20,7 @@ use crate::virtues_api::client::BearerClient;
 // Constants
 // ============================================================================
 
-// Note: Summarization model is now read from app_assistant_profile.background_model_id
+// Note: Summarization model comes from the Lite slot (assistant_profile::get_background_model)
 
 /// Number of recent exchanges to keep verbatim (user + assistant pairs)
 /// Lower value = more aggressive compaction, but less recent context preserved

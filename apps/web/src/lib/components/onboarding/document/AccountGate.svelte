@@ -103,17 +103,17 @@
 		<summary
 			class="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-foreground-muted transition-colors hover:text-foreground"
 		>
-			What stays on your box, and what we see
+			What stays on your server, and what we see
 			<Icon icon="ri:arrow-down-s-line" width="18" class="transition-transform duration-200 group-open:rotate-180" />
 		</summary>
 		<div class="space-y-3 px-4 pb-4 text-foreground-muted">
 			<div>
 				<div class="mb-1 font-medium text-foreground">Stays on your server</div>
-				<p>Every message, photo, file, note, and prompt. Your encryption keys. Anything semantic about who you are.</p>
+				<p>Every record — messages, photos, files, notes. Your encryption keys. The database of your life.</p>
 			</div>
 			<div>
 				<div class="mb-1 font-medium text-foreground">What we see — the strict minimum</div>
-				<p>A Stripe customer ID, token counts on AI calls (for billing), and OAuth callbacks for ~200ms. Never content, conversations, or who you talk to.</p>
+				<p>A Stripe customer ID, token counts on AI calls (for billing), and OAuth callbacks for ~200ms. What you write to a model passes through our gateway to reach it — metered, never kept.</p>
 			</div>
 		</div>
 	</details>

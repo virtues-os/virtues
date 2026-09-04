@@ -24,7 +24,10 @@ pub use endpoint::{
 pub use server::{serve, AllowPolicy, ProvenPeer, StaticAllow};
 
 // Re-export the iroh types callers need so they don't depend on iroh directly.
-pub use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey};
+// `Watcher` is the trait behind `Endpoint::home_relay_status()`; a consumer
+// that wants to know whether the relay leg is actually UP (rather than
+// whether bind returned) needs it in scope to call `.get()`/`.updated()`.
+pub use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, Watcher};
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="545" viewBox="0 0 900 545" role="img" aria-label="Virtues architecture: sources flow into Virtues Core on port 8000, which uses your own inference endpoints on ports 18181 and 18182 and reaches external providers only through the virtues-api proxy on port 9002.">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#57606a"/></marker></defs>
+<rect x="24" y="16" width="560" height="84" rx="7" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="44" y="42" font-family="'Times New Roman', Times, serif" font-size="17" font-weight="400" fill="#1f2328" text-anchor="start">Sources</text>
+<text x="44" y="66" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#57606a" text-anchor="start">OAuth</text>
+<text x="92" y="66" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="start">Google · Notion · Plaid · Strava · GitHub</text>
+<text x="44" y="86" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#57606a" text-anchor="start">Device</text>
+<text x="92" y="86" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="start">HealthKit · Location · Microphone · Contacts · FinanceKit</text>
+<line x1="304" y1="100" x2="304" y2="134" stroke="#57606a" stroke-width="1.4" marker-end="url(#a)"/>
+<rect x="24" y="136" width="560" height="196" rx="7" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="44" y="164" font-family="'Times New Roman', Times, serif" font-size="17" font-weight="400" fill="#1f2328" text-anchor="start">Virtues Core</text>
+<text x="154" y="164" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="400" fill="#57606a" text-anchor="start">one Rust binary · :8000</text>
+<rect x="44" y="182" width="120" height="60" rx="7" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="104" y="209" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="middle">Ingest</text>
+<rect x="177" y="182" width="120" height="60" rx="7" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="237" y="209" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="middle">Transform</text>
+<rect x="310" y="182" width="120" height="60" rx="7" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="370" y="202" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="middle">Wiki &amp;</text>
+<text x="370" y="217" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="middle">Entities</text>
+<rect x="443" y="182" width="120" height="60" rx="7" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="503" y="202" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="middle">AI agent</text>
+<text x="503" y="217" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="middle">+ tools</text>
+<text x="44" y="274" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="start">Postgres — the ontology, the wiki, the narrative</text>
+<text x="44" y="296" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="start">File store — recordings, documents, attachments</text>
+<text x="44" y="318" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#57606a" text-anchor="start">Never holds an external API key.</text>
+<line x1="584" y1="214" x2="626" y2="214" stroke="#57606a" stroke-width="1.4" marker-end="url(#a)"/>
+<rect x="628" y="150" width="248" height="128" rx="7" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="648" y="178" font-family="'Times New Roman', Times, serif" font-size="16" font-weight="400" fill="#1f2328" text-anchor="start">Inference — yours</text>
+<text x="648" y="204" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">/v1/embeddings</text>
+<text x="856" y="204" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="400" fill="#57606a" text-anchor="end">:18181</text>
+<text x="648" y="224" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">/v1/rerank</text>
+<text x="856" y="224" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="400" fill="#57606a" text-anchor="end">:18182</text>
+<text x="648" y="252" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#57606a" text-anchor="start">loopback, LAN or VPN only —</text>
+<text x="648" y="268" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#57606a" text-anchor="start">a public address is refused.</text>
+<line x1="304" y1="332" x2="304" y2="372" stroke="#57606a" stroke-width="1.4" marker-end="url(#a)"/>
+<rect x="24" y="374" width="560" height="96" rx="7" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+<text x="44" y="402" font-family="'Times New Roman', Times, serif" font-size="17" font-weight="400" fill="#1f2328" text-anchor="start">virtues-api</text>
+<text x="148" y="402" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="400" fill="#57606a" text-anchor="start">the metered edge · :9002</text>
+<text x="44" y="428" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="start">Holds the external keys — AI gateway, web search, Plaid, OAuth</text>
+<text x="44" y="450" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="start">and enforces a per-account budget.</text>
+<text x="24" y="502" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#57606a" text-anchor="start">Sources, Core and inference all run on hardware you own.</text>
+<text x="24" y="522" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#57606a" text-anchor="start">The model that writes is the one thing that leaves, and it leaves only through virtues-api.</text>
+</svg>

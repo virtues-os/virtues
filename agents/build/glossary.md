@@ -32,7 +32,7 @@ primitive below cannot.**
 | week | a rhythm you feel, not a story you tell | refused |
 | month · quarter | a window, not a unit | refused |
 | **year** | the other unit people narrate | **yes** |
-| **chapter** | a partition of the life — 4–8 in view at any age | **yes** — named by the person |
+| **chapter** | a partition of the life — 5–10 in view at any age | **yes** — named by the person |
 | **story** | a throughline at any scale — narrative or investigative | **yes** — declared |
 | **life** | who this person is | **yes** — exactly one |
 | ∞ (telos) | what it is all for | no — a direction, not a page |
@@ -40,7 +40,7 @@ primitive below cannot.**
 - **Chapter** is a *partition*: contiguous, exclusive, tiles the life. It
   answers "where am I right now." Boundaries are shifts the record can notice;
   a person names them. The partition is **normalized, not linear**: a life
-  reads in 4–8 chapters at any age — new ones open at the front, older ones
+  reads in 5–10 chapters at any age — new ones open at the front, older ones
   concatenate behind (university and the first job blur into "the twenties"),
   so resolution matches distance and the count stays human-scaled. Merges are
   offered, never silent.

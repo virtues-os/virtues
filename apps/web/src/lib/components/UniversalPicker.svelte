@@ -171,7 +171,7 @@
 				<div class="{maxHeight} overflow-y-auto py-1">
 					{#each rows as row, i (('header' in row) ? `h:${row.header}` : getKey(row.item))}
 						{#if 'header' in row}
-							<div class="px-3 pt-2 pb-1 text-xs font-medium text-foreground-subtle uppercase tracking-wide {i === 0 ? '' : 'border-t border-border mt-1'}">
+							<div class="px-3 pt-2 pb-1 text-xs font-medium text-foreground-subtle {i === 0 ? '' : 'border-t border-border mt-1'}">
 								{row.header}
 							</div>
 						{:else}

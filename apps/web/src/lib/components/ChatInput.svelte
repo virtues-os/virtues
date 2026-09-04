@@ -2,7 +2,6 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
 	import { Spring } from "svelte/motion";
-	import type { ModelOption } from "$lib/config/models";
 	import { createEntityBadgeElement } from "$lib/utils/refBadge";
 	import RefPicker, { type EntityResult } from "./RefPicker.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
@@ -15,7 +14,6 @@
 		isStreaming = false,
 		maxWidth = "max-w-3xl",
 		focused = $bindable(false),
-		selectedModel = $bindable<ModelOption | undefined>(undefined),
 		placeholder = "Write a message...",
 		onAttach = undefined as ((files: File[]) => void) | undefined,
 		onSubmit = undefined as ((content: string) => void) | undefined,
@@ -28,7 +26,6 @@
 		isStreaming?: boolean;
 		maxWidth?: string;
 		focused?: boolean;
-		selectedModel?: ModelOption;
 		placeholder?: string;
 		onAttach?: (files: File[]) => void;
 		onSubmit?: (content: string) => void;

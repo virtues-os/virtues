@@ -83,10 +83,13 @@ pub struct AssistantProfile {
     pub id: String,
     pub assistant_name: Option<String>,
     pub default_agent_id: Option<String>,
-    // Legacy model fields (kept for backward compatibility)
-    pub default_model_id: Option<String>,
-    pub background_model_id: Option<String>,
-    // Purpose-based model slots
+    // Purpose-based model slots. The legacy default_model_id/background_model_id
+    // columns still exist in the schema (released binaries' FromRow needs them
+    // for rollback) but are read by nothing: the seed once froze the
+    // registry's then-current chat default into default_model_id, and the
+    // .or() fallback then served that snapshot as if the person had pinned it
+    // — grok-4.5 outliving its ZDR delisting by a week, breaking every
+    // server-side model call routed through it.
     pub chat_model_id: Option<String>,
     pub lite_model_id: Option<String>,
     pub coding_model_id: Option<String>,

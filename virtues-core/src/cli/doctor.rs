@@ -170,11 +170,23 @@ pub fn print_inference(r: &ResolutionReport, issues: &mut ui::Issues) {
 /// tell the difference is worse than no row at all — it is what someone reads
 /// when they go looking for the cause of failing search.
 ///
-/// `/health` is the honest signal, and it is uniform across both inference
-/// flavors: llama-server returns 200 once the GGUF is loaded, and `virtues-qnnd`
-/// implements the same route by running a real embed through the Hexagon
-/// (`crates/virtues-qnnd/src/http.rs`). Either way 200 means "this endpoint can
-/// answer right now", which is the thing being claimed.
+/// `/health` is the cheap signal, and it is uniform across both inference
+/// flavors we ship: llama-server returns 200 once the GGUF is loaded, and
+/// `virtues-qnnd` implements the same route by running a real embed through the
+/// Hexagon (`crates/virtues-qnnd/src/http.rs`). Either way 200 means "this
+/// endpoint can answer right now", which is the thing being claimed.
+///
+/// It is not, however, the *only* signal, and treating it as one was a bug: the
+/// route is llama-server's, not part of the OpenAI shape. Ollama — which the
+/// installer recommends first for NVIDIA and x86 CPU — answers 404 on `/health`
+/// and serves `/v1/embeddings` flawlessly, so a perfectly working box read as
+/// `✖ not serving`. A row that condemns a healthy endpoint sends someone to
+/// restart a unit that was never broken.
+///
+/// So three states, not two. 2xx is serving. A non-2xx (or a `/health` that
+/// isn't there to answer) falls through to the work the endpoint actually
+/// exists to do — a one-input embed, a two-document rerank — and that verdict
+/// is the row. Only when both fail is the endpoint down.
 ///
 /// Errors, not warnings: with no embed endpoint there is no indexing and no
 /// semantic retrieval, and doctor's exit code should say so.
@@ -190,6 +202,14 @@ async fn probe_inference(issues: &mut ui::Issues) {
             return;
         }
     };
+    // The fallback probe runs real inference, so it needs a real budget — a
+    // cold CPU model can spend several seconds on its first token. Only built
+    // because a separate timeout is the whole point; the 3s client above stays
+    // right for `/health`, which is meant to be instant.
+    let work_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .ok();
 
     // The unit that owns these endpoints differs by profile, and a remedy that
     // names the wrong service is a remedy that wastes someone's evening.
@@ -198,34 +218,53 @@ async fn probe_inference(issues: &mut ui::Issues) {
     // Row labels stay inside `ui::kv`'s 12-column leader so the values line up
     // with the rows above them; the prose noun for the issue list is separate,
     // because "embed live answered 503" is not a sentence.
-    for (label, noun, base, unit) in [
+    for (label, noun, base, unit, work) in [
         (
             "embed live",
             "embed endpoint",
             endpoint("VIRTUES_EMBED_URL", crate::search::embedder::resolve_base_url()),
             if dragon { "virtues-qnnd" } else { "virtues-embed" },
+            Work::Embed,
         ),
         (
             "rerank live",
             "rerank endpoint",
             endpoint("VIRTUES_RERANK_URL", crate::search::reranker::resolve_base_url()),
             if dragon { "virtues-qnnd" } else { "virtues-rerank" },
+            Work::Rerank,
         ),
     ] {
         let health = format!("{base}/health");
-        // Distinguish "nothing is listening" from "listening but not ready":
-        // the first is a dead unit, the second is a model that won't load, and
-        // they send the operator to different places.
-        let (mark, finding) = match client.get(&health).send().await {
-            Ok(r) if r.status().is_success() => (style("✓ serving").green().to_string(), None),
-            Ok(r) => (
-                style(format!("✖ unhealthy ({})", r.status())).red().to_string(),
-                Some(format!("{noun} answered {} at {base}", r.status())),
-            ),
-            Err(_) => (
-                style("✖ not serving").red().to_string(),
-                Some(format!("nothing serving at {base}")),
-            ),
+        // Distinguish "nothing is listening" from "listening but not ready"
+        // from "listening, working, and simply has no /health route": the first
+        // is a dead unit, the second is a model that won't load, and the third
+        // is a healthy Ollama. They send the operator to three different
+        // places, one of which is "nowhere, it's fine".
+        let health_answer = client.get(&health).send().await;
+        let healthy = matches!(&health_answer, Ok(r) if r.status().is_success());
+        let (mark, finding) = if healthy {
+            (style("✓ serving").green().to_string(), None)
+        } else {
+            // `/health` didn't vouch for it. Ask it to do the actual job.
+            match work_probe(work_client.as_ref(), &base, &work).await {
+                Ok(()) => (
+                    style("✓ serving (no /health)").green().to_string(),
+                    None,
+                ),
+                Err(why) => match &health_answer {
+                    Ok(r) => (
+                        style(format!("✖ unhealthy ({})", r.status())).red().to_string(),
+                        Some(format!(
+                            "{noun} answered {} at {base} and {why}",
+                            r.status()
+                        )),
+                    ),
+                    Err(_) => (
+                        style("✖ not serving").red().to_string(),
+                        Some(format!("nothing serving at {base} ({why})")),
+                    ),
+                },
+            }
         };
         ui::kv(label, &format!("{base}  {mark}"));
         if let Some(what) = finding {
@@ -235,6 +274,95 @@ async fn probe_inference(issues: &mut ui::Issues) {
             );
         }
     }
+}
+
+/// What an endpoint is for, so the fallback probe can ask it to do that.
+enum Work {
+    Embed,
+    Rerank,
+}
+
+/// Ask the endpoint to do its actual job.
+///
+/// This is the authoritative liveness answer — `/health` is only a shortcut to
+/// it — and it is the same call `HttpEmbedder::new` makes at startup, so a
+/// green row here means the server will come up rather than merely that a
+/// socket is open.
+///
+/// Deliberately cheap (one short input; two one-character documents) and
+/// deliberately shaped like the installer's setup probes
+/// (`mode.rs::validate_manual`, `probe_rerank`), so setup and doctor cannot
+/// disagree about the same server. The body is inspected, not just the status:
+/// a 200 carrying an error object is a shape we have shipped before, and it
+/// must not read as green.
+async fn work_probe(
+    client: Option<&reqwest::Client>,
+    base: &str,
+    work: &Work,
+) -> Result<(), String> {
+    let Some(client) = client else {
+        return Err("its probe client could not be built".to_string());
+    };
+    let (path, body) = match work {
+        Work::Embed => (
+            "/v1/embeddings",
+            serde_json::json!({ "input": ["doctor probe"], "model": embed_model() }),
+        ),
+        Work::Rerank => (
+            "/v1/rerank",
+            serde_json::json!({
+                "model": "default",
+                "query": "probe",
+                "documents": ["a", "b"],
+                "top_n": 2,
+            }),
+        ),
+    };
+
+    let resp = match client.post(format!("{base}{path}")).json(&body).send().await {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => return Err(format!("its {path} probe answered {}", r.status())),
+        Err(e) => return Err(format!("its {path} probe failed ({e})")),
+    };
+    let payload: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return Err(format!("its {path} probe returned unparseable JSON ({e})")),
+    };
+
+    let served = match work {
+        // Accepts both OpenAI-style shapes the embedder does: a `data` array of
+        // rows, or a bare top-level row array.
+        Work::Embed => payload
+            .get("data")
+            .and_then(|d| d.as_array())
+            .or_else(|| payload.as_array())
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("embedding"))
+            .and_then(|e| e.as_array())
+            .is_some_and(|v| !v.is_empty()),
+        Work::Rerank => payload
+            .get("results")
+            .and_then(|r| r.as_array())
+            .is_some_and(|r| !r.is_empty()),
+    };
+    if served {
+        Ok(())
+    } else {
+        Err(format!("its {path} probe returned no usable result"))
+    }
+}
+
+/// The routing key doctor's embed probe should send. Ignored by llama.cpp
+/// (it serves whatever it loaded) and load-bearing for Ollama-style servers
+/// that route by model name — so it is resolved from the same two places as
+/// the URLs, for the same reason `endpoint` exists.
+fn embed_model() -> String {
+    std::env::var("VIRTUES_EMBED_MODEL")
+        .ok()
+        .or_else(|| super::upgrade::read_box_env_var("VIRTUES_EMBED_MODEL"))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "default".to_string())
 }
 
 /// The endpoint doctor should probe.
@@ -288,7 +416,7 @@ async fn print_reach(issues: &mut ui::Issues) {
             db_reachable: false,
             endpoint_id: None,
             relay_url: None,
-            allowlisted_devices: 0,
+            allowlisted_devices: None,
         },
     };
 
@@ -332,10 +460,22 @@ async fn print_reach(issues: &mut ui::Issues) {
             );
         }
     }
-    ui::kv("devices", &format!("{} paired", report.allowlisted_devices));
+    match report.allowlisted_devices {
+        Some(n) => ui::kv("devices", &format!("{n} paired")),
+        None => {
+            // The database answered `SELECT 1` and then failed this query —
+            // rare, but it must not render as "0 paired", which reads as a
+            // fact about the box rather than a failure to look.
+            ui::kv("devices", "unknown");
+            issues.error(
+                "couldn't read the device allowlist",
+                Some("check the box logs: journalctl -u virtues"),
+            );
+        }
+    }
     // 0 devices while unclaimed shares a root cause with the relay warning
     // above, so it only becomes its own finding once the relay leg is fine.
-    if report.allowlisted_devices == 0 && report.relay_url.is_some() {
+    if report.allowlisted_devices == Some(0) && report.relay_url.is_some() {
         issues.warn(
             "no devices on the allowlist",
             Some("pair one: virtues device add"),

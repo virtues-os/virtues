@@ -85,7 +85,7 @@ async fn get_settings(
         }
     };
 
-    let row: Option<(i64, bool, i64, i64)> = sqlx::query_as(
+    let row: Result<Option<(i64, bool, i64, i64)>, _> = sqlx::query_as(
         r#"
         SELECT monthly_cap_micros, auto_topup_enabled,
                monthly_charges_micros, COALESCE(EXTRACT(EPOCH FROM month_reset_at)::bigint, 0)
@@ -95,9 +95,23 @@ async fn get_settings(
     )
     .bind(&cid)
     .fetch_optional(&state.pool)
-    .await
-    .ok()
-    .flatten();
+    .await;
+
+    // A read error is NOT "unknown api key". `.ok().flatten()` collapsed the
+    // two, and the box reads a 401 as "key revoked, re-link" — so one blipped
+    // query sent a paying owner through a needless re-pair. (CLAUDE.md, "Do
+    // not swallow a query error"; the same lie the sibling doors avoid.)
+    let row = match row {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("settings customer lookup failed: {e:#}");
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "customer lookup failed",
+            );
+        }
+    };
 
     let Some((monthly_cap, auto_topup, charges, reset_epoch)) = row else {
         return err(

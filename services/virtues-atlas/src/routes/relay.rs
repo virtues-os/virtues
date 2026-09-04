@@ -1,21 +1,28 @@
-//! Relay control plane for the iroh reach layer.
+//! Relay control plane for the iroh reach layer — one door.
 //!
 //! - `POST /relay/config { api_key } -> { relay_url }` — the box learns which
 //!   relay to home on. Any linked box; identity, not billing (0017 /
 //!   open-relay-plan §Work 1b).
-//! - `POST /iroh/register { api_key, endpoint_ids: [..] }` — the box reports its
-//!   own + its paired devices' EndpointIds; atlas maps each → the account. Once
-//!   the relay admission gate this fed, now an informational registry (fleet
-//!   ops, future per-account tooling); kept because shipped boxes call it.
+//!
+//! **Two endpoints were deleted here and neither should come back casually.**
 //!
 //! `POST /relay/authorize` — the per-connection admission callout iroh-relay
-//! used to make — is GONE (open-relay-plan, 2026-08-31). The relay admits
-//! everyone and defends itself with rate limits; the callout was both a paywall
-//! on the connectivity substrate and a live linkage between account state and
-//! connection metadata, which contradicted the blind-relay doctrine. The real
-//! security boundary always was the box's own EndpointId allowlist. atlas never
-//! sees traffic, volume, or timing.
-
+//! used to make (open-relay-plan, 2026-08-31). It was both a paywall on the
+//! connectivity substrate and a live linkage between account state and
+//! connection metadata. The relay now admits everyone and defends itself with
+//! rate limits; the real security boundary always was the box's own EndpointId
+//! allowlist.
+//!
+//! `POST /iroh/register` — the box reporting its own + every paired device's
+//! EndpointId, upserted into `iroh_endpoints` and reconciled on unpair
+//! (dropped by migration 0018). It existed ONLY to feed the callout above, and
+//! outlived it by a day: for that day atlas kept a live, reconcile-refreshed
+//! inventory of every box and every paired device, joined to a billing
+//! account, that nothing read. A gate's data outliving the gate is the failure
+//! class — when admission logic goes, its registry goes in the same change.
+//!
+//! atlas never sees traffic, volume, or timing, and now holds no map from an
+//! EndpointId to an account.
 use axum::{
     extract::State,
     http::StatusCode,
@@ -31,7 +38,6 @@ use crate::routes::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/relay/config", post(relay_config))
-        .route("/iroh/register", post(iroh_register))
 }
 
 /// Resolve an api_key → owning account, with no subscription requirement —
@@ -84,85 +90,4 @@ async fn relay_config(
             .into_response();
     }
     (StatusCode::OK, Json(json!({ "relay_url": state.relay.relay_url }))).into_response()
-}
-
-#[derive(Debug, Deserialize)]
-struct IrohRegisterBody {
-    api_key: String,
-    /// The box's own EndpointId plus every currently-paired device's EndpointId.
-    endpoint_ids: Vec<String>,
-}
-
-/// The box reports the EndpointIds that belong to its account. Idempotent
-/// upsert; a device that re-pairs to a different account moves with it.
-async fn iroh_register(
-    State(state): State<AppState>,
-    Json(body): Json<IrohRegisterBody>,
-) -> axum::response::Response {
-    let account_id = match resolve_account(&state, &body.api_key).await {
-        Ok(v) => v,
-        Err(resp) => return resp,
-    };
-    let ids: Vec<String> = body
-        .endpoint_ids
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    // Guard the reconcile below: `endpoint_id <> ALL('{}')` is vacuously TRUE, so
-    // an empty set would DELETE every one of this account's registrations. A box
-    // always reports at least its own EndpointId, so an empty list is a malformed
-    // request — reject it rather than let it wipe the account's registry.
-    if ids.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "no_endpoint_ids" })),
-        )
-            .into_response();
-    }
-
-    // Claim each EndpointId for this account. The `ON CONFLICT ... WHERE` makes
-    // the update a no-op when the row is already owned by a DIFFERENT account, so
-    // a caller can't hijack another account's EndpointId (they aren't secret —
-    // they're handed out in pairing tickets).
-    for eid in &ids {
-        if let Err(e) = sqlx::query(
-            "INSERT INTO iroh_endpoints (endpoint_id, account_id) VALUES ($1, $2) \
-             ON CONFLICT (endpoint_id) DO UPDATE SET account_id = EXCLUDED.account_id \
-             WHERE iroh_endpoints.account_id = EXCLUDED.account_id",
-        )
-        .bind(eid)
-        .bind(&account_id)
-        .execute(&state.pool)
-        .await
-        {
-            tracing::error!(error = %e, "iroh_endpoints upsert failed");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "register_failed" })),
-            )
-                .into_response();
-        }
-    }
-
-    // Reconcile: drop this account's EndpointIds no longer in the reported set
-    // (revoked/unpaired devices). The box always includes its own + all
-    // paired-device ids, so this is exact.
-    if let Err(e) = sqlx::query(
-        "DELETE FROM iroh_endpoints WHERE account_id = $1 AND endpoint_id <> ALL($2)",
-    )
-    .bind(&account_id)
-    .bind(&ids)
-    .execute(&state.pool)
-    .await
-    {
-        tracing::error!(error = %e, "iroh_endpoints reconcile failed");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "register_failed" })),
-        )
-            .into_response();
-    }
-    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }

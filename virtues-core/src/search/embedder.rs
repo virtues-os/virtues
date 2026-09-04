@@ -257,22 +257,45 @@ impl HttpEmbedder {
             .timeout(std::time::Duration::from_secs(120))
             .build()?;
 
-        // Liveness check so we fail at startup with a clear message instead
-        // of every embed call returning a confusing transport error.
-        // llama-server's /health returns 200 once the model is loaded.
+        // Liveness check so we fail at startup with a clear message instead of
+        // every embed call returning a confusing transport error.
+        //
+        // ADVISORY, not a gate. `/health` is llama-server's readiness route; it
+        // is NOT part of the OpenAI shape, and mainstream servers don't
+        // implement it. Ollama answers 404 there while serving `/v1/embeddings`
+        // flawlessly — so requiring 2xx here meant the installer's own
+        // documented Ollama recipe produced a box that installed cleanly and
+        // then could not embed a single row. Measured, not assumed: Ollama
+        // 0.30.6, `/health` → 404, `/v1/embeddings` → 200 with 768-d vectors.
+        //
+        // A transport failure IS fatal — nothing is listening, and that is the
+        // common case this check exists to name. Any HTTP answer, including a
+        // 404, means something is there; the verdict then comes from the real
+        // embed probe below, which runs unconditionally either way.
         let health = format!("{base_url}/health");
-        client
+        let health_status = match client
             .get(&health)
             .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
-            .and_then(|r| r.error_for_status())
-            .with_context(|| {
-                format!(
-                    "embedding sidecar unreachable at {base_url} — \
-                     check: systemctl status virtues-embed"
-                )
-            })?;
+        {
+            Ok(r) => r.status(),
+            Err(e) => {
+                return Err(anyhow!(e)).with_context(|| {
+                    format!(
+                        "embedding endpoint unreachable at {base_url} — \
+                         nothing accepted a connection; \
+                         check: systemctl status virtues-embed"
+                    )
+                })
+            }
+        };
+        if !health_status.is_success() {
+            tracing::info!(
+                "embedding endpoint {health} answered {health_status} — no /health route, \
+                 which is fine; verifying with a real embed instead"
+            );
+        }
 
         let pinned = std::env::var("VIRTUES_EMBED_FINGERPRINT")
             .ok()
@@ -304,10 +327,19 @@ impl HttpEmbedder {
         // a fact: you could not change model without editing Rust.
         let mut probe = Self::embed_raw(&client, &base_url, &model, vec!["dim probe".into()])
             .await
-            .context(
-                "embedding endpoint accepted /health but would not embed — cannot \
-                 determine its vector width",
-            )?;
+            .with_context(|| {
+                if health_status.is_success() {
+                    format!(
+                        "embedding endpoint {base_url} accepted /health but would not embed \
+                         — cannot determine its vector width"
+                    )
+                } else {
+                    format!(
+                        "embedding endpoint {base_url} answered {health_status} on /health \
+                         and would not embed either — cannot determine its vector width"
+                    )
+                }
+            })?;
         let native_dim = probe.pop().map(|v| v.len()).filter(|d| *d > 0).ok_or_else(|| {
             anyhow!("embedding endpoint returned no vector for the width probe")
         })?;
@@ -652,3 +684,4 @@ pub async fn get_embedder() -> Result<Arc<LocalEmbedder>> {
         .await?;
     Ok(embedder.clone())
 }
+
