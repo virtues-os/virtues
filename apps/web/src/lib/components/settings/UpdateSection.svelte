@@ -391,8 +391,6 @@
 	/* The track is the fact people misread; give it a shape, not just a word. */
 	.track {
 		font-size: 11px;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
 		padding: 1px 6px;
 		border-radius: 999px;
 		border: 1px solid var(--color-border);

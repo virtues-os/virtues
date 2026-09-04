@@ -149,12 +149,31 @@ pub async fn auto_topup(
 
 /// `POST {atlas}/billing/portal/sessions` — exchange the api_key for a
 /// Stripe-hosted Customer Portal URL (card, invoices, cancellation).
+/// What atlas said when asked for a portal session. `NoSubscription` is a
+/// real, expected state since the accounts decoupling (2026-08-31): a linked
+/// free account holds a perfectly valid key and simply has no Stripe customer
+/// to open a portal for — the UI must say that, not "try again" (a beta owner
+/// read the generic copy as a transient failure and retried a permanent one).
+///
+/// Every non-URL variant carries atlas's own error `code` rather than only its
+/// prose, because three unrelated conditions used to print one sentence and a
+/// screenshot could not say which had happened.
+pub enum PortalSession {
+    Url(String),
+    /// A valid key with no Stripe customer behind it: free, or lapsed.
+    /// `code` is atlas's (`no_subscription` / `subscription_inactive`).
+    NoSubscription { code: String },
+    /// atlas answered, and the failure is its own — Stripe down, unknown key,
+    /// internal. `status` is atlas's HTTP status, for the box's log line.
+    Failed { code: String, status: u16 },
+}
+
 pub async fn fetch_portal_session(
     http: &reqwest::Client,
     atlas_url: &str,
     api_key: &str,
     return_url: &str,
-) -> Result<String> {
+) -> Result<PortalSession> {
     let resp = http
         .post(format!(
             "{}/billing/portal/sessions",
@@ -167,16 +186,89 @@ pub async fn fetch_portal_session(
         .send()
         .await
         .context("POST /billing/portal/sessions")?;
-    if !resp.status().is_success() {
-        let s = resp.status();
+    let status = resp.status();
+    if status.is_success() {
+        let v: serde_json::Value = resp.json().await?;
+        return v["url"]
+            .as_str()
+            .map(|s| PortalSession::Url(s.to_string()))
+            .ok_or_else(|| anyhow!("portal response missing url"));
+    }
+
+    // A refusal is `{error:{code,message}}`. An unparseable body is not fatal
+    // here — "unknown" plus the status still names the branch better than the
+    // prose the owner sees.
+    let body: serde_json::Value = resp.json().await.unwrap_or_else(|_| serde_json::json!({}));
+    let code = body["error"]["code"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
+    if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+        return Ok(PortalSession::NoSubscription { code });
+    }
+    Ok(PortalSession::Failed {
+        code,
+        status: status.as_u16(),
+    })
+}
+
+/// What atlas says about this box's account. Distinct from "do we hold an
+/// api_key", which is all the box could see before this door existed — and
+/// which stopped meaning "subscribed" on 2026-08-31, when linking became
+/// identity rather than billing (0017).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Entitlement {
+    /// Linked, and an active subscription stands behind the key.
+    Subscribed,
+    /// Linked, no subscription: free, or lapsed. Hosted AI, web search,
+    /// Places and Plaid all refuse; the box itself is unaffected.
+    Free,
+    /// atlas rejected the key outright — revoked, or minted against an
+    /// account that no longer exists. Distinct from Free: this one wants a
+    /// re-link, and must never be shown as "you have no subscription".
+    KeyUnknown,
+}
+
+/// `POST {atlas}/account/entitlement` — read-only, Stripe-free, safe to poll.
+///
+/// Err means we did not get an answer (transport, 5xx, malformed body). The
+/// caller must hold its last known answer rather than render "unsubscribed"
+/// from a network blip — atlas being unreachable is not a billing event.
+pub async fn fetch_entitlement(
+    http: &reqwest::Client,
+    atlas_url: &str,
+    api_key: &str,
+) -> Result<Entitlement> {
+    let resp = http
+        .post(format!(
+            "{}/account/entitlement",
+            atlas_url.trim_end_matches('/')
+        ))
+        .json(&serde_json::json!({ "api_key": api_key }))
+        .send()
+        .await
+        .context("POST /account/entitlement")?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(Entitlement::KeyUnknown);
+    }
+    if !status.is_success() {
         let b = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("portal session fetch failed: {s} — {b}"));
+        return Err(anyhow!("entitlement fetch failed: {status} — {b}"));
     }
     let v: serde_json::Value = resp.json().await?;
-    v["url"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| anyhow!("portal response missing url"))
+    // Absent `subscribed` is a contract break, not a "no" — an older atlas
+    // that does not serve this door 404s above, so reaching here with a body
+    // we cannot read means something changed underneath us. Say so.
+    let subscribed = v["subscribed"]
+        .as_bool()
+        .ok_or_else(|| anyhow!("entitlement response missing `subscribed`"))?;
+    Ok(if subscribed {
+        Entitlement::Subscribed
+    } else {
+        Entitlement::Free
+    })
 }
 
 async fn find_credential_id(db: &PgPool) -> Result<Option<String>> {

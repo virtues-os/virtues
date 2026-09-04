@@ -7,7 +7,8 @@
 		{
 			"title": "Set up",
 			"pages": [
-				{ "slug": "setup/requirements", "title": "What to run it on", "planned": true },
+				{ "slug": "setup/requirements", "title": "What to run it on" },
+				{ "slug": "inference", "title": "Setting up inference" },
 				{ "slug": "setup/install", "title": "Installing" },
 				{ "slug": "setup/first-boot", "title": "First boot", "planned": true },
 				{

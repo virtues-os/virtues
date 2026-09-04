@@ -1,9 +1,9 @@
 # The manual
 
 This directory is the **public documentation** for Virtues — the source that
-`virtues.com/docs` renders and that the box will eventually serve as its own
+`virtues.com/docs` renders and that the server will eventually serve as its own
 in-app help. It is not the workshop: design records, plans, and audits stay in
-[`../docs/`](../docs/) and are written for the people and agents building
+[`../agents/`](../agents/) and are written for the people and agents building
 Virtues. Pages here are written for the people *running* it.
 
 ## The contract
@@ -16,7 +16,7 @@ Virtues. Pages here are written for the people *running* it.
 - **Pages are plain markdown** with frontmatter: `title`, `description`
   (becomes the meta description — write it for search), and optionally
   `updated` (YYYY-MM-DD). No Svelte components — these files must also render
-  on the box, and must stay readable as raw markdown (every page is served
+  on the server, and must stay readable as raw markdown (every page is served
   as `<slug>.md` for agents and curl).
 - **Slugs are paths.** `operate/upgrading.md` publishes at
   `/docs/operate/upgrading`. `index.md` is the `/docs` landing page.
@@ -32,7 +32,7 @@ Virtues. Pages here are written for the people *running* it.
 The website repo's `scripts/sync-docs.mjs` copies this directory into its
 build — from a local sibling checkout in dev, from a GitHub tarball pinned to
 `VIRTUES_DOCS_REF` on Vercel. Once stable releases exist, that ref pins to the
-latest stable tag so published docs describe what boxes actually run.
+latest stable tag so published docs describe what servers actually run.
 
 When work lands that changes user-visible behavior, sweep the relevant manual
 page in the same wave of commits — same discipline as the workshop README's

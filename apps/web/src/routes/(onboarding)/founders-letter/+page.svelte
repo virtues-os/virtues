@@ -104,7 +104,7 @@
 {:else if !state_}
 	<div class="flex min-h-screen items-center justify-center px-6">
 		<div class="rounded-xl border border-error/20 bg-error-subtle p-4 text-sm text-error" in:fade>
-			Couldn't reach the box. Make sure you're on the same network, then refresh.
+			Couldn't reach your server. Make sure you're on the same network, then refresh.
 		</div>
 	</div>
 {:else}

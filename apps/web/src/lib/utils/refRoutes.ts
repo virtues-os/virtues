@@ -94,7 +94,7 @@ export function refIcon(type: string | null | undefined, hint?: RefIconHint): st
  *
  * Now supports both ID-based and slug-based routes:
  * @example parseEntityRoute('/person/person_abc123') → 'person_abc123'
- * @example parseEntityRoute('/person/adam-jace') → 'adam-jace'
+ * @example parseEntityRoute('/person/david-okafor') → 'david-okafor'
  */
 export function parseEntityRoute(route: string): string | null {
 	for (const base of Object.keys(ROUTE_TO_TYPE)) {
@@ -110,7 +110,7 @@ export function parseEntityRoute(route: string): string | null {
 
 /**
  * Get entity type from a route URL
- * @example getEntityTypeFromRoute('/person/adam-jace') → 'person'
+ * @example getEntityTypeFromRoute('/person/david-okafor') → 'person'
  */
 export function getEntityTypeFromRoute(route: string): string | null {
 	for (const [base, type] of Object.entries(ROUTE_TO_TYPE)) {

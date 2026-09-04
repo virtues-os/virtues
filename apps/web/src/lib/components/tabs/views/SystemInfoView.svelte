@@ -117,6 +117,62 @@
 			.join(" ");
 	}
 
+	// ─── Persisted history (last 24h) ───────────────────────────────────────
+	// The live sparklines above are a rolling 48-sample window — about two and a
+	// half minutes. This is the same four readings off the box's own stored
+	// samples, which is the only thing on the page that can answer "was it like
+	// this overnight?". It lived on the billing page until 2026-09-03, where a
+	// temperature chart sat under a wallet balance.
+	type Sample = {
+		sampled_at: string;
+		cpu_pct: number | null;
+		mem_used_bytes: number | null;
+		mem_total_bytes: number | null;
+		gpu_pct: number | null;
+		temp_c: number | null;
+	};
+	let history = $state<Sample[]>([]);
+
+	async function loadHistory() {
+		// Absent is fine here and only here: a box that booted minutes ago has
+		// no stored samples yet, and the chapter says so rather than erroring.
+		try {
+			const h = await apiGet<Sample[]>("/system/history", { since_secs: 86400 });
+			if (Array.isArray(h)) history = h;
+		} catch (e) {
+			console.error("system history failed", e);
+		}
+	}
+
+	// Full-width path over an arbitrary-length series (the vitals' sparkPath is
+	// pinned to the HIST window and would draw this squeezed into a corner).
+	function historyPath(values: (number | null)[], max?: number): string {
+		const v = values.map((x) => x ?? 0);
+		if (v.length < 2) return "";
+		const hi = max ?? Math.max(1, ...v);
+		const w = 240;
+		const h = 36;
+		const step = w / (v.length - 1);
+		return v
+			.map((y, i) => {
+				const px = (i * step).toFixed(1);
+				const py = (h - (Math.min(y, hi) / hi) * h).toFixed(1);
+				return `${i === 0 ? "M" : "L"}${px},${py}`;
+			})
+			.join(" ");
+	}
+
+	const cpuSeries = $derived(history.map((s) => s.cpu_pct));
+	const memSeries = $derived(
+		history.map((s) =>
+			s.mem_total_bytes ? ((s.mem_used_bytes ?? 0) / s.mem_total_bytes) * 100 : 0,
+		),
+	);
+	const gpuSeries = $derived(history.map((s) => s.gpu_pct));
+	const tempSeries = $derived(history.map((s) => s.temp_c));
+	const hasGpuHistory = $derived(history.some((s) => s.gpu_pct != null));
+	const hasTempHistory = $derived(history.some((s) => s.temp_c != null));
+
 	// Backup freshness. Polled once on mount, not on the 3s telemetry cadence —
 	// it changes nightly, and a number that only moves once a day has no business
 	// on a live ticker.
@@ -176,7 +232,7 @@
 	}
 
 	onMount(async () => {
-		await Promise.all([loadHealth(), loadTelemetry(), loadBackup()]);
+		await Promise.all([loadHealth(), loadTelemetry(), loadBackup(), loadHistory()]);
 		loading = false;
 		// Calm cadence — the machine breathes, it doesn't twitch.
 		pollTimer = setInterval(loadTelemetry, 3000);
@@ -335,6 +391,40 @@
 				</div>
 			</section>
 		{/if}
+
+		<!-- ─── LAST 24 HOURS ──────────────────────────────────────────── -->
+		<!-- Directly under the live vitals, because it is those same four
+		     readings with a memory. -->
+		<section class="chapter">
+			<h2 class="settings-label">Last 24 hours</h2>
+			{#if history.length < 2}
+				<p class="history-empty">
+					Collecting samples — history appears after the box has run a few minutes.
+				</p>
+			{:else}
+				<div class="history-grid">
+					{#each [{ label: "Processor", series: cpuSeries, max: 100, pct: true, show: true }, { label: "Memory", series: memSeries, max: 100, pct: true, show: true }, { label: "Graphics", series: gpuSeries, max: 100, pct: true, show: hasGpuHistory }, { label: "Temperature", series: tempSeries, max: undefined, pct: false, show: hasTempHistory }] as chart (chart.label)}
+						{#if chart.show}
+							<div class="history-cell">
+								<div class="history-head">
+									<span class="vital-name">{chart.label}</span>
+									<span class="vital-pct mono"
+										>{(chart.series.at(-1) ?? 0).toFixed(0)}{chart.pct ? "%" : " °C"}</span
+									>
+								</div>
+								<svg class="spark tall" viewBox="0 0 240 36" preserveAspectRatio="none">
+									<path
+										d={historyPath(chart.series, chart.max)}
+										fill="none"
+										vector-effect="non-scaling-stroke"
+									/>
+								</svg>
+							</div>
+						{/if}
+					{/each}
+				</div>
+			{/if}
+		</section>
 
 		<!-- ─── SERVICE ────────────────────────────────────────────────── -->
 		<!-- Was "About", and it carried the three version lines. Those moved to
@@ -666,6 +756,28 @@
 	.muted-vital .vital-sub { padding-top: 4px; }
 
 	.spark { width: 100%; height: 24px; display: block; }
+	.spark.tall { height: 36px; }
+
+	/* ─── Last 24 hours ────────────────────────────────────────────────── */
+	.history-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 14px;
+	}
+	@media (max-width: 880px) { .history-grid { grid-template-columns: 1fr; } }
+	.history-cell {
+		border: 1px solid var(--border-subtle, var(--border));
+		border-radius: 10px;
+		padding: 16px;
+		background: var(--surface-elevated);
+	}
+	.history-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		margin-bottom: 8px;
+	}
+	.history-empty { font-size: 12px; color: var(--foreground-subtle); }
 	.spark path { stroke: var(--foreground-subtle); stroke-width: 1.25; opacity: 0.7; transition: stroke 600ms ease; }
 	.spark.warn path { stroke: var(--warning); }
 	.spark.crit path { stroke: var(--error); }

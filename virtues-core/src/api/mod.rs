@@ -36,8 +36,8 @@ pub mod home;
 pub mod internal;
 pub mod lake;
 pub mod media;
-pub mod metrics;
 pub mod model_catalog;
+pub mod model_choice;
 pub mod models;
 pub mod entity_article_gen;
 pub mod assistant_memories;
@@ -125,10 +125,6 @@ pub use media::{
     MediaFile, UploadMediaRequest,
 };
 pub use stream_health::{stream_health, StreamHealth};
-pub use metrics::{
-    get_activity_metrics, ActivityMetrics, JobTypeStats, MetricsSummary, PeriodStats, RecentError,
-    StreamStats, TimeWindowMetrics,
-};
 pub use models::{
     get_model, list_models, list_models_with_slots, ModelInfo, ModelsResponse,
 };
@@ -237,9 +233,7 @@ pub use wiki::{
     delete_temporal_event,
     get_story,
     get_narrative_identity,
-    update_narrative_identity,
     NarrativeIdentity,
-    UpdateNarrativeIdentityRequest,
     get_day_chats,
     get_day_events,
     get_day_sources,

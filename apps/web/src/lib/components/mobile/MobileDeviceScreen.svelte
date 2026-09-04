@@ -291,6 +291,12 @@
 		}
 	}
 
+	/// The one stream that records people who never consented gets a real
+	/// consent beat before the OS dialog: first Enable opens the interstitial;
+	/// only its confirm actually starts recording. Once authorized, the
+	/// button is a plain pause control and the interstitial never returns.
+	let audioConsentOpen = $state(false);
+
 	/// Audio is toggleable (its toggle doubles as the pause control): Enable
 	/// prompts + starts; once authorized the button stops/resumes recording.
 	async function toggleAudio() {
@@ -561,12 +567,49 @@
 			</div>
 			<button
 				class="s-action"
-				onclick={toggleAudio}
+				onclick={() => {
+					if (!audio?.authorized) {
+						audioConsentOpen = !audioConsentOpen;
+					} else {
+						void toggleAudio();
+					}
+				}}
 				disabled={togglingAudio}
 			>
 				{#if togglingAudio}…{:else if audio?.recording}Stop{:else if audio?.authorized}Resume{:else}Enable{/if}
 			</button>
 		</div>
+		{#if audioConsentOpen && !audio?.authorized}
+			<!-- The consent beat this one stream earns. Four words and a stock
+			     OS dialog were the whole answer before; this is the honest one. -->
+			<div class="s-consent">
+				<p>
+					The microphone stays on while your phone is with you. It records the
+					sound of your day — and everyone in the room. Recordings and
+					transcripts go to your server and nowhere else.
+				</p>
+				<p>
+					Quiet hours can silence any part of the day. And other people's
+					voices will be in the record: in some places, recording a
+					conversation needs everyone's consent. That part is yours to honor.
+				</p>
+				<div class="s-consent-actions">
+					<button
+						class="s-action"
+						onclick={() => {
+							audioConsentOpen = false;
+							void toggleAudio();
+						}}
+						disabled={togglingAudio}
+					>
+						Turn the microphone on
+					</button>
+					<button class="s-action quiet" onclick={() => (audioConsentOpen = false)}>
+						Not now
+					</button>
+				</div>
+			</div>
+		{/if}
 		{#if audio?.authorized}
 			<button class="s-subrow" onclick={toggleAudioNotify} type="button">
 				<span class="s-subrow-label">Notify me if recording stops</span>
@@ -769,6 +812,30 @@
 		opacity: 0.5;
 	}
 	/* Secondary toggle row beneath a stream (e.g. audio gap-nudge). */
+	/* The audio consent interstitial: plain sentences, then the choice. */
+	.s-consent {
+		padding: 12px 14px 14px 48px;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.s-consent p {
+		margin: 0 0 10px;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+
+	.s-consent-actions {
+		display: flex;
+		gap: 10px;
+		margin-top: 2px;
+	}
+
+	.s-action.quiet {
+		border-color: var(--color-border);
+		color: var(--color-foreground-muted);
+	}
+
 	.s-subrow {
 		display: flex;
 		align-items: center;

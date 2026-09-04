@@ -14,7 +14,8 @@
 export type AiIntent = "rewrite" | "continue" | "generate";
 
 export interface AiCompleteRequest {
-	model: string;
+	/** Omitted unless the person picked one — the box resolves the slot. */
+	model?: string;
 	intent: AiIntent;
 	instruction: string;
 	selection?: string;

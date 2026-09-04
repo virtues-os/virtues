@@ -44,15 +44,15 @@ HEADINGS = [
     ("Virtues", 34, 400, "h1-virtues"),
 ]
 H2 = [
-    "What It Does", "Architecture", "Data Sources", "Overview",
-    "Install (Linux home server)", "Connect from another machine (v0.2 preview)",
-    "Development", "Cloud sidecar", "iOS App", "Project Structure",
-    "Database Schema", "The Day Pipeline", "Features", "License",
+    "DIY quickstart", "What it does", "Why it's shaped this way",
+    "The ontology", "Architecture", "The full install",
+    "Reaching your server", "Build on it", "Development", "The repo",
+    "Security", "License",
 ]
 H3 = [
-    "Requirements", "Install in one command", "Prerequisites", "Setup", "Run",
-    "virtues-api (required for AI features)", "Segmentation & Narration",
-    "Event Novelty", "Topic & Entity Novelty", "Live Rhythm",
+    "What to run it on", "Inference", "The command", "Commands",
+    "After it's running",
+    "Where things live",
 ]
 for h in H2:
     HEADINGS.append((h, 24, 400, "h2-" + slug(h)))

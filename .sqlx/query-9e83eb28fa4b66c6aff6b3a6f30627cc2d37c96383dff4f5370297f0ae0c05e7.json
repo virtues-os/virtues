@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE app_assistant_profile\n        SET\n            assistant_name = COALESCE(assistant_name, $1),\n            default_agent_id = COALESCE(default_agent_id, $2),\n            enabled_tools = COALESCE(enabled_tools, $3),\n            ui_preferences = COALESCE(ui_preferences, $4),\n            updated_at = now()\n        WHERE id = $5\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9e83eb28fa4b66c6aff6b3a6f30627cc2d37c96383dff4f5370297f0ae0c05e7"
+}

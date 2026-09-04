@@ -82,9 +82,11 @@ VIRTUES_RELAY_URL=https://relay.virtues.ch
 1. **Cert**: `curl -sI https://relay.virtues.ch` returns a valid LE cert.
 2. **Open admission**: any iroh endpoint connects with no atlas callout (check
    metrics on the host: `curl -s localhost:9090/metrics | grep accepts`).
-3. **Box homes on it**: a box with `VIRTUES_RELAY_URL` set (via `/relay/config`)
-   binds its endpoint and registers via atlas `/iroh/register`; `virtues doctor`
-   / box_status shows `endpoint_up`.
+3. **Box homes on it**: a box binds its endpoint and connects to the relay —
+   no registration step, `/iroh/register` and the EndpointId→account registry
+   it fed are deleted. `virtues doctor` and `GET /api/network/relay` report
+   `homed` only once the relay leg is genuinely connected, so this is a real
+   check and not a record that a bind once returned.
 4. **Reach**: a paired device dials the box by EndpointId and loads the app over
    the relay; then confirm it upgrades to a hole-punched direct path when both
    ends allow UDP.

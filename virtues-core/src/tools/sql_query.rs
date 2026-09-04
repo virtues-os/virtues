@@ -225,10 +225,10 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         key_columns: &["subject_type", "subject_id", "kind", "body", "author", "resolved_at"],
         join_hint: None,
     });
-    m.insert("wiki_narrative_identity", TableMetadata {
-        description: "The distilled core of the owner's own account of who they are — the few lines carried into every chat. The full document is a wiki article (subject_type 'narrative_identity') whose prose lives in its page",
+    m.insert("wiki_chapters", TableMetadata {
+        description: "The chapters of the owner's life — their own gapless partition of it into named eras, authored in the narrative interview and never inferred. A day's chapter is a range lookup on started_at/ended_at; each chapter also has a wiki article (subject_type 'chapter')",
         category: "wiki",
-        key_columns: &["content", "drafted_at"],
+        key_columns: &["title", "kind", "started_at", "ended_at", "is_current", "changepoint", "summary"],
         join_hint: None,
     });
     m.insert("wiki_rules", TableMetadata {
@@ -241,19 +241,19 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // WIKI TABLES - Entities (resolved nouns)
     // ============================================================================
     m.insert("wiki_people", TableMetadata {
-        description: "Resolved people in user's life",
+        description: "The people in the owner's life, resolved to one row each",
         category: "wiki_entity",
         key_columns: &["name", "emails", "phones", "relationship_category", "nickname", "notes", "first_seen", "last_seen", "seen_count", "birthday"],
         join_hint: None,
     });
     m.insert("wiki_places", TableMetadata {
-        description: "Resolved places in user's life",
+        description: "The places of the owner's life, resolved to one row each",
         category: "wiki_entity",
         key_columns: &["name", "category", "address", "latitude", "longitude", "radius_m", "seen_count", "first_seen", "last_seen"],
         join_hint: None,
     });
     m.insert("wiki_orgs", TableMetadata {
-        description: "Organizations in user's life",
+        description: "The organizations in the owner's life, resolved to one row each",
         category: "wiki_entity",
         key_columns: &["name", "organization_type", "relationship_type", "role_title", "start_date", "end_date", "seen_count", "first_seen", "last_seen"],
         join_hint: None,
@@ -419,22 +419,27 @@ impl SqlQueryTool {
                 continue;
             };
 
-            // Get row count
+            // Row count — a FAILED count must never be advertised as an empty
+            // table (the exact `.ok()`-on-a-fetch this file's own comment
+            // warns about, forty lines up). Absent means "count unavailable",
+            // and the model is told so rather than shown a plausible zero.
             let count_query = format!("SELECT COUNT(*) as cnt FROM \"{}\"", table_name);
-            let count_row = sqlx::query(&count_query)
-                .fetch_optional(self.pool.as_ref())
+            let row_count: Option<i64> = match sqlx::query(&count_query)
+                .fetch_one(self.pool.as_ref())
                 .await
-                .ok()
-                .flatten();
-            
-            let row_count: i64 = count_row
-                .map(|r| r.get::<i64, _>("cnt"))
-                .unwrap_or(0);
+            {
+                Ok(r) => Some(r.get::<i64, _>("cnt")),
+                Err(e) => {
+                    tracing::warn!(table = %table_name, error = %e, "list_tables count failed");
+                    None
+                }
+            };
 
             let description = meta.description;
 
             tables.push(serde_json::json!({
                 "name": table_name,
+                // null = the count failed; distinct from 0 on purpose.
                 "row_count": row_count,
                 "description": description,
             }));

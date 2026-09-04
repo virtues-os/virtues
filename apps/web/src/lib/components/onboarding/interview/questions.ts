@@ -266,7 +266,7 @@ export const QUESTIONS: Question[] = [
 		facet: 'RULES',
 		prompt: 'Looking back at everything you just wrote — what should it never bring up?',
 		purpose: 'The part that becomes rules rather than understanding.',
-		why: "Everything above is for understanding. This is for enforcement. Some things matter enormously and must still never be raised unprompted — a person you lost, an addiction in recovery, a marriage that ended. Prose cannot guarantee that: a model reading a paragraph might honour it nine times and miss the tenth, and the tenth is the one that would matter. What you write here stops being context and becomes a rule.",
+		why: "Everything above is for understanding. This is for enforcement. Some things matter enormously and must still never be raised unprompted — a person you lost, an addiction in recovery, a marriage that ended. Prose cannot guarantee that: a model reading a paragraph might honor it nine times and miss the tenth, and the tenth is the one that would matter. What you write here stops being context and becomes a rule.",
 		hint: 'Plainly: “never suggest bars”, “do not mention my father unless I do”.',
 		target: null,
 		mode: 'type',

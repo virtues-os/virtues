@@ -21,9 +21,12 @@ pub struct SetQuietHoursRequest {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioStatus {
-  /// Microphone permission has been granted.
+  /// Microphone permission has been granted. Deliberately required — no serde
+  /// default: a Swift resolve missing it must fail loudly, not read back as a
+  /// de-authorized mic. Every command resolves the full shape.
   pub authorized: bool,
-  /// The recorder is running (a chunk is actively being captured).
+  /// The recorder is running (a chunk is actively being captured). Required
+  /// for the same reason as `authorized`.
   pub recording: bool,
   /// The gap-nudge notification is enabled (default true).
   #[serde(default)]

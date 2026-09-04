@@ -36,6 +36,11 @@ pub extern "C" fn virtues_enqueue(stream: *const c_char, record_json: *const c_c
     Ok(v) => v,
     Err(_) => return -3,
   };
+  // Records must be JSON objects: enqueue stamps `id` via index-insert, which
+  // panics on a non-object value — and a panic out of extern "C" is an abort.
+  if !record.is_object() {
+    return -3;
+  }
   // Silent chunks are ~1KB of metadata — not worth a dial of their own. Defer
   // them to a wall-clock 30-min grid (all chunks in a window batch onto one
   // dial) instead of nudging; overnight that's 2 dials/hour instead of 12.
@@ -47,7 +52,7 @@ pub extern "C" fn virtues_enqueue(stream: *const c_char, record_json: *const c_c
   if silent {
     return match outbox::enqueue_deferred(stream, record, 30 * 60) {
       Ok(()) => 0,
-      Err(_) => -4,
+      Err(e) => enqueue_err_code(&e),
     };
   }
   match outbox::enqueue(stream, record) {
@@ -60,7 +65,19 @@ pub extern "C" fn virtues_enqueue(stream: *const c_char, record_json: *const c_c
       }
       0
     }
-    Err(_) => -4,
+    Err(e) => enqueue_err_code(&e),
+  }
+}
+
+/// -5 = capacity back-pressure (the outbox refused the row; the producer must
+/// keep its source and retry later) — distinct from -4 so field logs can tell
+/// a full queue from a broken one. Callers already treat any nonzero as
+/// "keep the file", so the split costs no Swift changes.
+fn enqueue_err_code(e: &anyhow::Error) -> i32 {
+  if e.downcast_ref::<outbox::CapacityReached>().is_some() {
+    -5
+  } else {
+    -4
   }
 }
 

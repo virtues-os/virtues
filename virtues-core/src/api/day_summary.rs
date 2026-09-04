@@ -7,8 +7,9 @@
 use chrono::{NaiveDate, TimeZone};
 use chrono_tz::Tz;
 use sqlx::PgPool;
+use virtues_registry::models::ModelSlot;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 use super::wiki::{
     create_temporal_event, delete_auto_events_for_day, get_day_sources, get_or_create_day,
@@ -321,8 +322,9 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
 
     // Chat slot: fusing noisy witnesses into a gapless timeline is adjudication,
     // not extraction — a best-model job, run once nightly on a completed day.
-    let model = crate::api::assistant_profile::get_chat_model(pool).await?;
-    let raw_response = call_virtues_api(pool, SEGMENT_PROMPT, &model, &prompt).await?;
+    // The completion helper resolves the slot's DEFAULT, never the profile's
+    // pinned chat model — see virtues_api::completion for the ZDR class.
+    let raw_response = call_virtues_api(pool, SEGMENT_PROMPT, ModelSlot::Chat, &prompt).await?;
 
     // An empty parse is a FAILURE, not a day with nothing in it.
     //
@@ -525,8 +527,8 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     }
 
     // Chat slot: this is the narrative call, and the only one left that earns it.
-    let model = crate::api::assistant_profile::get_chat_model(pool).await?;
-    let raw = call_virtues_api(pool, NARRATE_PROMPT, &model, &prompt).await?;
+    // Slot DEFAULT via the completion helper, never the pinned chat model.
+    let raw = call_virtues_api(pool, NARRATE_PROMPT, ModelSlot::Chat, &prompt).await?;
     let mut parsed = parse_virtues_api_response(&raw);
     parsed.diary = strip_prompt_echo(&parsed.diary);
     parsed.diary = unlink_uninvited_refs(&parsed.diary, &entities);
@@ -1664,12 +1666,13 @@ async fn recent_event_case_file(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>)
 // ── virtues-api call ───────────────────────────────────────────────────────────
 
 /// Call virtues-api for the summary generation
-/// One call, two jobs — so the caller says which model and which instructions.
+/// One call, two jobs — so the caller says which slot and which instructions.
 ///
 /// Both callers resolve the Chat slot today: segmentation is adjudication, not
 /// extraction (see the callers' comments), and the narration is the narrative
 /// call. If segmentation ever moves to Lite for cost, change it at the caller —
-/// this function takes whatever model it is handed.
+/// this function takes whatever slot it is handed, and the shared completion
+/// helper turns the slot into a model (slot default for Chat, never the pin).
 ///
 /// They used to be a single Opus call producing both, which is why events cost
 /// narrative prices, why "only narrate a day with enough events" was circular
@@ -1678,64 +1681,24 @@ async fn recent_event_case_file(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>)
 async fn call_virtues_api(
     pool: &PgPool,
     system_prompt: &str,
-    model: &str,
+    slot: ModelSlot,
     user_prompt: &str,
 ) -> Result<String> {
-    // api_key-auth path: the device's own key funds this background call,
-    // with one auto-top-up-and-retry on a 402 wallet_empty.
-    let client = crate::virtues_api::client::BearerClient::from_env(pool.clone())
-        .with_purpose(crate::virtues_api::client::Purpose::System)
-        .with_feature("day_summary");
-    let response = client
-        .post_json(
-            "/v1/ai/chat/completions",
-            &serde_json::json!({
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                // 16 events x ~60-90 tokens is 960-1440 for the events ALONE,
-                // before the 180-word diary, the epigraph and the data_quality
-                // JSON. At 1000 a rich day truncated mid-array — and since the
-                // parse was all-or-nothing, that day lost EVERY event with only
-                // a warn!. Raised, and the parse now salvages besides.
-                "max_tokens": 4000,
-                "temperature": 0.3
-            }),
-        )
-        .await
-        .map_err(|e| Error::Network(format!("virtues-api request failed: {e}")))?;
-
-    if !response.is_success() {
-        let error_msg = match response.status {
-            402 => "Usage limit reached for summary generation".to_string(),
-            429 => "Rate limited. Please try again later.".to_string(),
-            _ => format!("virtues-api error {}: {}", response.status, response.body),
-        };
-        return Err(Error::ExternalApi(error_msg));
-    }
-
-    let response_json = response.body;
-
-    let summary = response_json["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
-    if summary.is_empty() {
-        return Err(Error::ExternalApi(
-            "LLM returned empty summary".to_string(),
-        ));
-    }
-
-    tracing::info!(
-        summary_chars = summary.len(),
-        "Daily summary generated"
-    );
-
-    Ok(summary)
+    crate::virtues_api::completion::system_completion(
+        pool,
+        slot,
+        "day_summary",
+        system_prompt,
+        user_prompt,
+        // 16 events x ~60-90 tokens is 960-1440 for the events ALONE, before
+        // the 180-word diary, the epigraph and the data_quality JSON. At 1000
+        // a rich day truncated mid-array — and since the parse was
+        // all-or-nothing, that day lost EVERY event with only a warn!.
+        // Raised, and the parse now salvages besides.
+        4000,
+        0.3,
+    )
+    .await
 }
 
 // ── Structured event parsing ─────────────────────────────────────────────────

@@ -137,35 +137,38 @@ function buildStars(seed) {
 // ── the record, as events ────────────────────────────────────────────────
 // One UNION over the ontology. The face session's timezone is the home
 // timezone (faces.rs sets it), so date_trunc('day', now()) is box-local
-// midnight. Magnitudes are per-source normalizations, clamped to 1.
+// midnight. Every branch is bounded on BOTH sides: with only a lower bound,
+// expanded calendar recurrences dated decades out won the ORDER BY t DESC
+// and filled all 500 slots, so a real day rendered as one uniform gold
+// field. Magnitudes are per-source normalizations, clamped to 1.
 const EVENTS_SQL = `
-WITH today AS (SELECT date_trunc('day', now()) AS d0)
+WITH today AS (SELECT date_trunc('day', now()) AS d0, date_trunc('day', now()) + interval '1 day' AS d1)
 SELECT t, cat, mag FROM (
 	SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int AS t, 0 AS cat, 0.5::float AS mag
-		FROM data_communication_message, today WHERE occurred_at >= d0
+		FROM data_communication_message, today WHERE occurred_at >= d0 AND occurred_at < d1
 	UNION ALL SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int, 0, 0.4
-		FROM data_communication_email, today WHERE occurred_at >= d0
+		FROM data_communication_email, today WHERE occurred_at >= d0 AND occurred_at < d1
 	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 0,
 			LEAST(1.0, EXTRACT(EPOCH FROM (ended_at - started_at)) / 1800.0)
-		FROM data_audio_session, today WHERE started_at >= d0
+		FROM data_audio_session, today WHERE started_at >= d0 AND started_at < d1
 	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 1,
 			LEAST(1.0, EXTRACT(EPOCH FROM (ended_at - started_at)) / 7200.0)
-		FROM data_calendar_event, today WHERE started_at >= d0
+		FROM data_calendar_event, today WHERE started_at >= d0 AND started_at < d1
 	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 2,
 			LEAST(1.0, EXTRACT(EPOCH FROM (ended_at - started_at)) / 3600.0)
-		FROM data_activity_app_session, today WHERE started_at >= d0
+		FROM data_activity_app_session, today WHERE started_at >= d0 AND started_at < d1
 	UNION ALL SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int, 2, 0.1
-		FROM data_activity_web_browsing, today WHERE occurred_at >= d0
+		FROM data_activity_web_browsing, today WHERE occurred_at >= d0 AND occurred_at < d1
 	UNION ALL SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int, 3, 0.6
-		FROM data_health_steps, today WHERE occurred_at >= d0
+		FROM data_health_steps, today WHERE occurred_at >= d0 AND occurred_at < d1
 	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 3,
 			LEAST(1.0, COALESCE(duration_minutes, 60) / 480.0)
-		FROM data_health_sleep, today WHERE started_at >= d0
+		FROM data_health_sleep, today WHERE started_at >= d0 AND started_at < d1
 	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 3, 0.8
-		FROM data_health_workout, today WHERE started_at >= d0
+		FROM data_health_workout, today WHERE started_at >= d0 AND started_at < d1
 	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 4,
 			LEAST(1.0, COALESCE(duration_minutes, 30) / 240.0)
-		FROM data_location_visit, today WHERE started_at >= d0
+		FROM data_location_visit, today WHERE started_at >= d0 AND started_at < d1
 ) e ORDER BY t DESC LIMIT 500`;
 
 // Per-install seed: the epoch of the record's oldest message — stable per

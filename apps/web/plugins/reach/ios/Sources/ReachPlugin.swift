@@ -135,7 +135,29 @@ class ReachPlugin: Plugin {
   }
 }
 
+/// `<AppSupport>/virtues` holds the outbox — gigabytes of base64 audio churn
+/// when the box is unreachable — and none of it belongs in iCloud/device
+/// backups: the queue is transient by design, and the pairing that must
+/// survive lives in the Keychain, not here. Creates the dir if the Rust side
+/// has not yet (both creators tolerate the other), then flags it excluded.
+private func excludeVirtuesDirFromBackup() {
+  let fm = FileManager.default
+  guard let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+    return
+  }
+  var dir = base.appendingPathComponent("virtues", isDirectory: true)
+  try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+  var vals = URLResourceValues()
+  vals.isExcludedFromBackup = true
+  do {
+    try dir.setResourceValues(vals)
+  } catch {
+    NSLog("[Reach] backup exclusion failed: %@", error.localizedDescription)
+  }
+}
+
 @_cdecl("init_plugin_reach")
 func initPlugin() -> Plugin {
+  excludeVirtuesDirFromBackup()
   return ReachPlugin()
 }

@@ -1272,15 +1272,6 @@ pub async fn reset_personas_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::reset_personas(state.db.pool()).await)
 }
 
-// ============================================================================
-// Metrics handlers
-// ============================================================================
-
-/// Get activity metrics (job statistics, time windows, recent errors)
-pub async fn get_activity_metrics_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::get_activity_metrics(&state.db).await)
-}
-
 /// Per-stream ingest freshness, worst-first. The signal that was missing when
 /// messages, the calendar sync, and finance each went dark unnoticed.
 pub async fn stream_health_handler(State(state): State<AppState>) -> Response {
@@ -1351,15 +1342,22 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
     match crate::api::subscription::get_subscription_status(&pool).await {
         Ok(data) => (StatusCode::OK, Json(data)).into_response(),
         Err(e) => {
-            tracing::debug!("Subscription status check failed: {}", e);
-            // Safe fallback so the app works even if the vault read hiccups.
+            // NOT a fallback to `active`. It was one, and that turned a blipped
+            // vault read into a subscription the owner does not have — the
+            // banned "broken query becomes a plausible value" (CLAUDE.md), on
+            // the one endpoint whose whole job is to say where they stand.
+            // Unknown is a state the UI can render; a lie is not.
+            tracing::warn!("subscription status check failed: {e}");
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
-                    "status": "active",
+                    "status": "unknown",
+                    "linked": false,
+                    "subscribed": false,
+                    "entitlement_known": false,
+                    "is_active": false,
                     "trial_expires_at": null,
-                    "days_remaining": null,
-                    "is_active": true
+                    "days_remaining": null
                 })),
             )
                 .into_response()
@@ -1373,26 +1371,39 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
 /// api_key from the local vault, ask Atlas to mint a Stripe-hosted
 /// Customer Portal session, and return its `url` for BillingView to open.
 /// Any failure (no api_key yet, inactive subscription, Stripe hiccup)
-/// returns a clean `{error}` string the button renders inline — never a 500.
+/// returns a clean `{error, code}` the button renders inline — never a 500.
+///
+/// `code` exists because the prose cannot carry the branch: three unrelated
+/// conditions printed "Couldn't open the billing portal. Try again.", so a
+/// screenshot from an owner told us nothing about which one to go fix. The
+/// vocabulary is atlas's own codes passed through (`no_subscription`,
+/// `subscription_inactive`, `stripe_error`, `invalid_api_key`, `internal`)
+/// plus the three failures that never reach atlas:
+/// `not_linked`, `vault_unreadable`, `atlas_unreachable`.
 pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> Response {
+    /// Every refusal is a 200 with prose for the owner and a code for us.
+    fn refuse(code: &str, message: &str) -> Response {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({ "error": message, "code": code })),
+        )
+            .into_response()
+    }
+    // The sentence the owner sees when the failure is ours, not theirs — the
+    // code beside it is what says which "ours".
+    const TRY_AGAIN: &str = "Couldn't open the billing portal. Try again.";
+
     let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
         Ok(Some(t)) => t,
         Ok(None) => {
-            return (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "error": "Connect your subscription first, then you can manage billing here."
-                })),
-            )
-                .into_response();
+            return refuse(
+                "not_linked",
+                "Connect your subscription first, then you can manage billing here.",
+            );
         }
         Err(e) => {
-            tracing::warn!("billing portal: vault read failed: {e}");
-            return (
-                StatusCode::OK,
-                Json(serde_json::json!({ "error": "Couldn't open the billing portal. Try again." })),
-            )
-                .into_response();
+            tracing::warn!("billing portal [vault_unreadable]: {e}");
+            return refuse("vault_unreadable", TRY_AGAIN);
         }
     };
 
@@ -1406,14 +1417,26 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
     match crate::virtues_api::renew::fetch_portal_session(&http, &atlas_url, &api_key, "")
         .await
     {
-        Ok(url) => (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response(),
+        Ok(crate::virtues_api::renew::PortalSession::Url(url)) => {
+            (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response()
+        }
+        // A linked account with no active subscription (free, or lapsed):
+        // valid key, nothing to open. Permanent until they subscribe —
+        // "try again" would be a lie.
+        Ok(crate::virtues_api::renew::PortalSession::NoSubscription { code }) => refuse(
+            &code,
+            "No active subscription on this account — start one and you can manage billing here.",
+        ),
+        // atlas answered and refused for its own reason. Its code is the one
+        // worth showing: it is the one their logs are keyed on too.
+        Ok(crate::virtues_api::renew::PortalSession::Failed { code, status }) => {
+            tracing::warn!("billing portal [{code}]: atlas answered {status}");
+            refuse(&code, TRY_AGAIN)
+        }
+        // Never got an answer: DNS, TLS, timeout, or a body we couldn't read.
         Err(e) => {
-            tracing::warn!("billing portal session failed: {e}");
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({ "error": "Couldn't open the billing portal. Try again." })),
-            )
-                .into_response()
+            tracing::warn!("billing portal [atlas_unreachable]: {e}");
+            refuse("atlas_unreachable", TRY_AGAIN)
         }
     }
 }
@@ -1458,10 +1481,16 @@ pub async fn claim_billing_handler(
         )
             .into_response();
     }
+    // New key, new account: whatever we cached is about the old one.
+    crate::api::subscription::invalidate();
 
-    // Provision relay reachability (best-effort): atlas mints this box's per-SNI
-    // token; the box stores it for the relay subsystem. A failure (e.g. relay
-    // disabled → 503) just leaves the box reachable on LAN.
+    // Provision relay reachability (best-effort): atlas answers with a relay
+    // URL and nothing else — no token, no per-box secret. (The per-SNI HMAC
+    // this comment used to describe belonged to the superseded relay control
+    // plane, `agents/archive/relay-control-plane.md`, and was never built.)
+    // A failure (e.g. relay disabled → 503) just leaves the box on LAN, and
+    // since the relay opened, a box that never links still homes on the baked
+    // default — so this is a shortcut, not the only road.
     if let Err(e) =
         crate::virtues_api::relay::fetch_and_store(&pool, &http, &atlas_url, &claim.api_key).await
     {
@@ -1589,7 +1618,14 @@ pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Re
         crate::virtues_api::atlas_url();
     let http = crate::http_client::virtues_api_client();
     match crate::virtues_api::link::poll(&pool, &http, &atlas_url).await {
-        Ok(status) => (StatusCode::OK, Json(serde_json::json!({ "status": status }))).into_response(),
+        Ok(status) => {
+            // A fresh link is a new key and possibly a new subscription; the
+            // cached entitlement is now about the previous account.
+            if status == crate::virtues_api::link::LinkStatus::Ready {
+                crate::api::subscription::invalidate();
+            }
+            (StatusCode::OK, Json(serde_json::json!({ "status": status }))).into_response()
+        }
         Err(e) => {
             tracing::warn!("billing link status failed: {e}");
             (
@@ -2260,13 +2296,6 @@ pub async fn wiki_get_narrative_identity_handler(State(state): State<AppState>) 
     api_response(crate::api::get_narrative_identity(state.db.pool()).await)
 }
 
-/// Update narrative identity
-pub async fn wiki_update_narrative_identity_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::UpdateNarrativeIdentityRequest>,
-) -> Response {
-    api_response(crate::api::update_narrative_identity(state.db.pool(), request).await)
-}
 
 // --- Telos ---
 

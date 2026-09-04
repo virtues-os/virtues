@@ -121,6 +121,22 @@ The relay admits **any endpoint**. Specifically:
    service active, HTTPS 200, six fleet endpoints reconnected within
    seconds. Still to do: retire `atlas.virtues.com/relay/authorize` (dead —
    nothing calls it), fix the stale per-SNI comment in `server/api.rs`.
+1c. ✔ **BUILT 2026-09-01 — the registry the gate fed is gone too.** An audit
+   found `/iroh/register`, `iroh_endpoints`, and the box's `report_endpoints`
+   all still live and still running every reconcile tick, a day after the
+   callout they existed for was deleted: a reconcile-refreshed inventory of
+   every box and every paired device, keyed to a billing account, read by
+   nothing. Deleted on both sides (migration `0018_drop_iroh_endpoints.sql`);
+   older boxes that still POST get a 404 and carry on, because the call was
+   always best-effort. Stale references fixed with it: the box comment
+   justifying register-before-bind by a race that no longer has a racer,
+   `reconcile()`'s four-leg contract (now three), `entitlement.md` §7 listing
+   both deleted endpoints as live behind a link into `agents/archive/`, and
+   the relay unit file still naming the retired bearer.
+   **The rule this earns: when admission logic is deleted, its registry goes
+   in the same change.** Deleting a gate and keeping its data is strictly
+   worse than keeping both or dropping both — the liability stays and the
+   justification leaves.
 1b. ✔ **BUILT 2026-08-31 (not yet deployed)** — decoupling chosen over the
    free-Stripe-customer trick (Stripe must learn only about people who pay
    it). Migration `0017_accounts_decouple.sql`: `accounts` table (account_id

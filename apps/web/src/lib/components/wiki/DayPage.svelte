@@ -25,6 +25,7 @@
 	import Markdown from "$lib/components/Markdown.svelte";
 	import { getOntologyName } from "$lib/wiki/ontology";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
+	import { getChapters, type ChapterApi } from "$lib/wiki/api";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import EventTimeline from "./EventTimeline.svelte";
 	import DaylineChart from "./DaylineChart.svelte";
@@ -87,6 +88,23 @@
 
 	const currentDateSlug = $derived(getLocalDateSlug(page.date));
 	const todaySlug = $derived(getLocalDateSlug(new Date()));
+
+	// The day's chapter — the gapless partition made felt where a day is
+	// actually read. A range lookup over the authored eras (started_at <= day
+	// < ended_at; the last era runs open), exactly the derived query migration
+	// 0015 built the table for. Absent chapters, the dateline simply isn't.
+	let chapters = $state<ChapterApi[]>([]);
+	$effect(() => {
+		void getChapters().then((rows) => (chapters = rows));
+	});
+	const dayChapter = $derived.by(() => {
+		if (!chapters.length) return null;
+		return (
+			chapters.findLast(
+				(c) => c.started_at <= currentDateSlug && (!c.ended_at || currentDateSlug < c.ended_at),
+			) ?? null
+		);
+	});
 
 	// Relative date badge: "Today", "Yesterday", "2 days ago", "Tomorrow", "Future"
 	const relativeDateLabel = $derived(() => {
@@ -515,9 +533,18 @@
 					<h1 class="day-title">
 						{formatDate(page.date, page.dayOfWeek)}
 					</h1>
-					{#if relativeDateLabel()}
+					{#if relativeDateLabel() || dayChapter}
 						<div class="day-subtitle">
-							<span class="date-badge">{relativeDateLabel()}</span>
+							{#if relativeDateLabel()}
+								<span class="date-badge">{relativeDateLabel()}</span>
+							{/if}
+							{#if dayChapter}
+								<!-- The chapter dateline: which era of the life this day
+								     falls in, by the person's own partition. -->
+								<button class="chapter-dateline" type="button" onclick={() => windowShellStore.openRouteBeside('/wiki/chapters')}>
+									In {dayChapter.title ?? 'an unnamed stretch'}
+								</button>
+							{/if}
 						</div>
 					{/if}
 					{#if page.epigraph}
@@ -862,6 +889,22 @@
 		justify-content: center;
 		gap: 0.625rem;
 		margin-top: 0.375rem;
+	}
+
+	/* The era this day belongs to, in the person's own partition. Quiet serif
+	   roman — a dateline, not a badge. */
+	.chapter-dateline {
+		background: none;
+		border: none;
+		padding: 0;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 0.875rem;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+	}
+
+	.chapter-dateline:hover {
+		color: var(--color-foreground);
 	}
 
 	.date-badge {

@@ -1,45 +1,33 @@
 <!--
 	NarrativeIdentitySection.svelte
 
-	The wiki's standing answer to "who is this person?" — user-authored prose,
-	set as an essay. Read view renders markdown in the serif register; the
-	edit view is a plain textarea, saved whole. Deliberately one document, not
-	a form: identity is written, not configured.
+	The wiki's standing answer to "who is this person?" — the "In your own
+	words" DOCUMENT, presented in the wiki's own register (mast h1 like the
+	overview). Read-only by design: the document is edited on its page — the
+	editor, history, marginalia — never through a side textarea. The textarea
+	this replaced wrote to the retired abridged copy, which the assistant read
+	while the person edited something else entirely. The chapters live in
+	their own room (/wiki/chapters): structure, not part of this prose.
 -->
 
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
-	import {
-		getNarrativeIdentity,
-		updateNarrativeIdentity,
-	} from '$lib/wiki/api';
+	import Icon from '$lib/components/Icon.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { getNarrativeIdentity } from '$lib/wiki/api';
 
 	let loading = $state(true);
 	let content = $state('');
-
+	let pageId = $state('');
 	let updatedAt = $state<string | null>(null);
-	let editing = $state(false);
-	let draft = $state('');
-	/**
-	 * ~2k tokens, matching the server's ceiling (build_narrative_identity).
-	 *
-	 * Shown rather than enforced. This document is in every conversation, so
-	 * length costs precision — a longer identity gives the assistant more
-	 * surface to find a spurious connection to a routine question. But deciding
-	 * what has stopped being true about yourself is a value judgment, so the
-	 * page reports the overage and the person prunes. Nothing here truncates.
-	 */
-	const BUDGET_CHARS = 8000;
-	const overBudget = $derived(draft.length > BUDGET_CHARS);
-	let saving = $state(false);
-	let error = $state<string | null>(null);
 
 	onMount(async () => {
 		try {
 			const identity = await getNarrativeIdentity();
 			if (identity) {
 				content = identity.content;
+				pageId = identity.page_id;
 				updatedAt = identity.content ? identity.updated_at : null;
 			}
 		} finally {
@@ -47,24 +35,12 @@
 		}
 	});
 
-	function startEditing() {
-		draft = content;
-		editing = true;
-		error = null;
+	function editDocument() {
+		if (pageId) windowShellStore.openRouteBeside(`/page/${pageId}`);
 	}
 
-	async function save() {
-		saving = true;
-		error = null;
-		const updated = await updateNarrativeIdentity(draft);
-		saving = false;
-		if (!updated) {
-			error = 'Could not save. Your writing is still here — try again.';
-			return;
-		}
-		content = updated.content;
-		updatedAt = updated.updated_at;
-		editing = false;
+	function openInterview() {
+		windowShellStore.openRouteBeside('/chat/chat_narrative_interview');
 	}
 
 	const updatedLabel = $derived(
@@ -79,33 +55,16 @@
 </script>
 
 <div class="identity">
+	<header class="mast">
+		<h1>Narrative identity</h1>
+		<p class="standfirst">
+			The standing answer to who this is a record of — told in the interview,
+			never inferred, and yours to correct.
+		</p>
+	</header>
+
 	{#if loading}
 		<p class="quiet">Loading…</p>
-	{:else if editing}
-		<!-- svelte-ignore a11y_autofocus -->
-		<textarea
-			class="editor"
-			bind:value={draft}
-			placeholder="Who is this a record of? Write it the way a careful biographer would."
-			autofocus
-		></textarea>
-		{#if error}
-			<p class="error">{error}</p>
-		{/if}
-		<div class="actions">
-			<button class="btn" onclick={() => (editing = false)} disabled={saving}>
-				Cancel
-			</button>
-			{#if overBudget}
-				<span class="over-budget">
-					{draft.length.toLocaleString()} / {BUDGET_CHARS.toLocaleString()} characters —
-					past this the assistant only reads the beginning. Worth pruning.
-				</span>
-			{/if}
-			<button class="btn primary" onclick={save} disabled={saving}>
-				{saving ? 'Saving…' : 'Save'}
-			</button>
-		</div>
 	{:else if content}
 		<article class="essay">
 			<Markdown {content} />
@@ -114,17 +73,20 @@
 			{#if updatedLabel}
 				<span>Last revised {updatedLabel}</span>
 			{/if}
-			<button class="btn" onclick={startEditing}>Edit</button>
+			<button class="btn" onclick={editDocument} disabled={!pageId}>
+				<Icon icon="ri:quill-pen-line" width="13" />
+				Edit the page
+			</button>
 		</footer>
 	{:else}
 		<div class="empty">
 			<p class="empty-lead">Nothing written yet.</p>
 			<p class="empty-body">
-				This page is the standing answer to <em>who is this a record of?</em> —
-				in your words, not inferred from your data. The rest of the wiki
-				accumulates on its own; this one is yours to write.
+				Your document is written from the interview — a conversation, not a
+				form. When you say "write it up" there, it lands here and on its own
+				page, in your words.
 			</p>
-			<button class="btn primary" onclick={startEditing}>Start writing</button>
+			<button class="btn primary" onclick={openInterview}>Open the interview</button>
 		</div>
 	{/if}
 </div>
@@ -133,7 +95,29 @@
 	.identity {
 		display: flex;
 		flex-direction: column;
-		gap: 1.25rem;
+	}
+
+	/* Mirrors the wiki overview's mast so the rooms read as siblings. */
+	.mast {
+		margin-bottom: 2rem;
+	}
+
+	.mast h1 {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 2rem;
+		font-weight: 500;
+		letter-spacing: -0.01em;
+		color: var(--color-foreground);
+		margin: 0 0 0.625rem;
+	}
+
+	.standfirst {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 1.0625rem;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+		margin: 0;
+		max-width: 40rem;
 	}
 
 	.quiet {
@@ -155,6 +139,7 @@
 		align-items: center;
 		gap: 1rem;
 		border-top: 1px solid var(--color-border);
+		margin-top: 1.25rem;
 		padding-top: 0.75rem;
 		font-size: 0.6875rem;
 		letter-spacing: 0.04em;
@@ -165,32 +150,10 @@
 		margin-left: auto;
 	}
 
-	.editor {
-		width: 100%;
-		min-height: 20rem;
-		resize: vertical;
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1rem;
-		line-height: 1.6;
-		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		padding: 1rem 1.125rem;
-	}
-
-	.editor:focus {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -1px;
-	}
-
-	.actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 0.5rem;
-	}
-
 	.btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
 		font: inherit;
 		font-size: 0.8125rem;
 		padding: 0.375rem 0.875rem;
@@ -213,13 +176,10 @@
 	.btn.primary {
 		background: var(--color-primary);
 		border-color: var(--color-primary);
-		color: var(--color-primary-foreground, #fff);
-	}
-
-	.error {
-		font-size: 0.8125rem;
-		color: var(--color-danger, #b3261e);
-		margin: 0;
+		/* --color-background, not a hardcoded white: on dark themes the
+		   primary is light and white-on-light would vanish. (There is no
+		   --color-primary-foreground token; it silently fell back.) */
+		color: var(--color-background);
 	}
 
 	.empty {
@@ -238,12 +198,5 @@
 		line-height: 1.55;
 		color: var(--color-foreground-muted);
 		margin: 0 0 1.25rem;
-	}
-
-	.over-budget {
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-		max-width: 34ch;
-		line-height: 1.4;
 	}
 </style>
