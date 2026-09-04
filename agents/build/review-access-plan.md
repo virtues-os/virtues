@@ -183,11 +183,28 @@ row must produce a 429.
    reviewer in Pacific time after 5pm is a calendar day behind the box, so they
    land on the day before the instrumented one — which still carries
    `wiki_events`, just no raw streams. Every other direction lines up.
-8. ~~Subscribe the box's account.~~ **No longer a step** — kept at its old
-   number because it is the one everybody's notes still say to do. Atlas used to
-   issue a `relay_url` only to a subscribed box, so without it the reviewer
-   paired and then lost the box the moment they left the network they paired
-   from. The open-relay work deleted that coupling on both sides:
+8. **Give the server a funded api key.** NOT the old "subscribe the account"
+   step — that one is genuinely dead, see below — but the server still needs to
+   be able to pay for inference, and this is easy to miss now that the two are
+   decoupled. The app is chat-first: a reviewer pairs, lands in a chat, types a
+   question, and without a key gets a red card reading "Connection failed: no
+   virtues_api key — link a subscription first" on every message, with a Retry
+   that re-fails. There is no local chat model and the BYO-key screen is
+   unreachable from a phone, so the app is simply dead at that point.
+
+   `ensure_bearer` checks `VIRTUES_API_KEY` from the environment before it
+   reads the credential vault, so the whole claim/link flow can be skipped:
+   generate a 64-hex-char key, insert `(sha256(key), <account_id>, box_id)`
+   into **virtues-api**'s `device_keys` — that is the table `bearer_auth`
+   actually resolves against; atlas's `box_key` is a mirror and plays no part —
+   then put the raw key in the env file and restart. Give `box_id` a real value
+   like `review-demo`: a NULL there is retired by the next labeled registration
+   on that account. Revoking is a `DELETE` of that one row, and the prepaid
+   balance is the damage ceiling.
+
+   ~~The old step:~~ atlas used to issue a `relay_url` only to a subscribed
+   account, so without it the reviewer paired and then lost the server the
+   moment they left the network they paired from. The open-relay work deleted that coupling on both sides:
    `relay::DEFAULT_RELAY_URL` is compiled into the box ("so a box that never
    signs in is still reachable from its first boot", gated only on the
    box-install marker), and `services/virtues-atlas/src/routes/relay.rs`
@@ -237,7 +254,22 @@ change as this note. The first is the one that mattered:
 
 None of these are visible from a green CI run, and three of them present as
 success. Budget for a full bring-up, not a checklist tick — and check the
-claims in this file against the running box rather than reading them.
+claims in this file against the running server rather than reading them.
+
+**And the one that no amount of server-side care would have caught: the app and
+the server can be too far apart to talk.** `POST /api/chat` required `model`
+through v0.1.5 and validated it against the allowed list; the change that made
+it optional (the server resolves the turn's model from its slot) shipped in
+v0.1.6. An app built after that omits the field, so it fails to deserialize on
+EVERY message against any older server — including the demo server, which was
+on v0.1.5 at the time. Verified by sending the app's exact wire shape: 422
+before, a real answer after upgrading.
+
+The demo server must therefore run a release at least as new as the app being
+submitted. More generally: servers upgrade only when someone runs
+`sudo virtues upgrade`, while phones update themselves, so the app is
+structurally the side that runs ahead. Check this pairing explicitly before
+every submission — it is invisible until a reviewer types the first message.
 
 ## Between review rounds
 
