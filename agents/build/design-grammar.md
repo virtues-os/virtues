@@ -242,9 +242,12 @@ the first page.*
 1. **Plate.** An oil sky, cut by the page. No words.
 2. **Running head.** `Getting started` · the sentence · folio `3 of 5`.
 3. **Body.** Five rows, in walking order: the founder's letter, introductions,
-   connect your world, in your own words, your first day. Done rows recede to
-   `--foreground-subtle` with an ink `✓`; the open row is claret; later rows
-   are ink. Each row: title, at most one line.
+   connect your world, in your own words, your first day. Every row is
+   numbered, in the serif with **lining figures** so the column aligns; state
+   is told by ink alone — done rows recede to `--foreground-subtle`, the open
+   row is claret, later rows are ink. A mono `✓` beside serif numerals was
+   tried and read as two idioms in one column. Each row: title, at most one
+   line.
 4. **Margin column.** `Read again` · `Change` · `Add a source` · the pill
    `Start the interview` · `Tomorrow morning`.
 5. **Proof.** One ledger under the list, set in the measure role: the census.
