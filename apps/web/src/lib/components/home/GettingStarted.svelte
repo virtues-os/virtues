@@ -329,12 +329,6 @@
 			<div class="head">
 				<h1 class="title">Getting started</h1>
 			</div>
-			<div class="progress" role="progressbar" aria-label="Getting started" aria-valuemin="0" aria-valuemax={steps.length} aria-valuenow={doneSteps.length}>
-				{#each steps as s (s.id)}
-					<span class:done={s.done} class:now={s.id === now.id}></span>
-				{/each}
-			</div>
-
 			<div class="now-panel">
 				<div class="eyebrow">Now</div>
 				<h2 class="t">{now.title}</h2>
@@ -350,11 +344,7 @@
 			</div>
 
 			{#if then}
-				<div class="next">
-					<div class="eyebrow">Then</div>
-					<div class="t">{then.title}</div>
-					{#if then.note}<div class="p">{then.note}</div>{/if}
-				</div>
+				<p class="then">Then, <span>{then.title.charAt(0).toLowerCase() + then.title.slice(1)}</span>{then.note ? ` — ${then.note.charAt(0).toLowerCase() + then.note.slice(1)}` : ""}</p>
 			{/if}
 
 			<!-- What is behind you: one quiet row. The chips stay pressable — the
@@ -473,18 +463,13 @@
 	.work > :nth-child(3) { animation-delay: 120ms; }
 	.work > :nth-child(4) { animation-delay: 180ms; }
 	.work > :nth-child(5) { animation-delay: 240ms; }
-	.work > :nth-child(6) { animation-delay: 300ms; }
 	@media (max-width: 640px) { .work { padding: 32px 24px; } .front .text { padding: 0 24px 28px; } }
 
 	.title { font-family: var(--font-serif); font-weight: 400; font-size: 36px; line-height: 1.1; margin: 0; color: var(--color-foreground); }
-	.progress { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-top: 20px; }
-	.progress span { height: 3px; border-radius: 999px; background: var(--color-border); }
-	.progress span.done { background: var(--color-foreground); }
-	.progress span.now { background: var(--color-secondary); }
 
 	/* The quiet rows: a label, then ghost chips — a hairline, no fill, no
 	   check. Pressable, but nothing here competes with the panel above. */
-	.rows { margin-top: 48px; display: grid; gap: 12px; }
+	.rows { margin-top: 56px; display: grid; gap: 12px; }
 	.row { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
 	.row .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 	.lbl { font-family: var(--font-sans); font-size: 13px; line-height: 28px; color: var(--color-foreground-subtle); }
@@ -496,10 +481,9 @@
 	}
 	.chip:hover { background: var(--hover-bg, color-mix(in srgb, var(--color-foreground) 7%, transparent)); color: var(--color-foreground); }
 
-	.now-panel {
-		margin-top: 40px; padding: 28px 32px;
-		background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px;
-	}
+	/* The one thing to do: no frame — the painting is the page's one framed
+	   object, and the button carries the weight here. */
+	.now-panel { margin-top: 48px; }
 	.eyebrow { font-family: var(--font-sans); font-size: 12px; font-weight: 500; color: var(--color-foreground-subtle); }
 	.now-panel .eyebrow { color: var(--color-secondary); }
 	.now-panel .t { font-family: var(--font-serif); font-weight: 400; font-size: 30px; line-height: 1.15; margin: 8px 0 0; color: var(--color-foreground); }
@@ -514,9 +498,8 @@
 	.link { font-family: var(--font-sans); font-size: 14px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; }
 	.link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-	.next { margin-top: 32px; padding: 0 32px; }
-	.next .t { font-family: var(--font-serif); font-weight: 400; font-size: 22px; line-height: 1.2; margin-top: 6px; color: var(--color-foreground); }
-	.next .p { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); margin-top: 4px; }
+	.then { font-family: var(--font-sans); font-size: 14px; color: var(--color-foreground-subtle); margin: 24px 0 0; }
+	.then span { color: var(--color-foreground-muted); }
 
 	.foot { margin-top: auto; padding-top: 24px; display: flex; justify-content: flex-end; }
 	.door {
