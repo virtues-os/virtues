@@ -107,31 +107,29 @@
 		/* Enough to read as its own turn, less than the keep's below it: the
 		   question and the answer belong nearer each other than either does to
 		   the list above. */
-		margin-top: clamp(40px, 6vh, 72px);
-		padding-top: 14px;
-		border-top: 1px solid var(--color-border);
-		max-width: 640px;
+		margin-top: 48px;
+		max-width: 40em;
 	}
 	.q {
-		font-family: var(--font-sans); font-size: 15px; font-weight: 400; line-height: 1.5;
+		font-family: var(--font-serif); font-size: 18px; font-weight: 400; line-height: 1.45;
 		font-variant-numeric: tabular-nums;
 		color: var(--color-foreground); margin: 0;
 	}
-	.where { font-size: 10.5px; color: var(--color-foreground-subtle); margin: 4px 0 0; }
+	.where { font-size: 13px; color: var(--color-foreground-subtle); margin: 4px 0 0; }
 
 	.row { display: flex; align-items: center; gap: 14px; margin-top: 14px; flex-wrap: wrap; }
 	.row input {
 		flex: 1 1 220px; min-width: 0;
 		background: none; border: 0; border-bottom: 1px solid var(--color-border);
 		padding: 5px 0;
-		font-family: var(--font-serif); font-size: 16px; color: var(--color-foreground);
+		font-family: var(--font-sans); font-size: 15px; color: var(--color-foreground);
 	}
 	.row input::placeholder { color: var(--color-foreground-subtle); }
 	.row input:focus { outline: none; border-bottom-color: var(--color-primary); }
 
 	.save, .skip {
 		flex: none; background: none; border: 0; padding: 0; cursor: pointer;
-		font-family: var(--font-sans); font-size: 12.5px;
+		font-family: var(--font-sans); font-size: 14px;
 	}
 	.save { font-weight: 500; color: var(--color-primary); }
 	.save:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
@@ -139,5 +137,5 @@
 	.skip { color: var(--color-foreground-subtle); }
 	.skip:hover:not(:disabled) { color: var(--color-foreground-muted); }
 
-	.err { font-family: var(--font-sans); font-size: 12.5px; color: var(--color-error); margin: 12px 0 0; }
+	.err { font-family: var(--font-sans); font-size: 13px; color: var(--color-error); margin: 12px 0 0; }
 </style>

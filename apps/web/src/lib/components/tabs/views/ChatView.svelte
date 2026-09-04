@@ -174,6 +174,8 @@
 	import ChapterLifeline from "$lib/components/chat/ChapterLifeline.svelte";
 	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
 	import EditDiffCard from "$lib/components/chat/EditDiffCard.svelte";
+	import InterviewClosedCard from "$lib/components/chat/InterviewClosedCard.svelte";
+	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
 	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
@@ -1384,6 +1386,41 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
+	// The interview's close. Three witnesses, any one suffices: the tool
+	// result in this session (the transient data part — see chatInstances),
+	// a write_it_up part in the loaded transcript (a reload after the close),
+	// or the box saying the document stands (the HTTP path wrote it, or the
+	// transcript's tool part didn't survive). Once closed, the composer
+	// retires: the drafter runs once, so a message typed here now would reach
+	// nothing — the page is where corrections go.
+	const interviewClosedPart = $derived.by(() => {
+		if (currentChatConversationId !== INTERVIEW_CHAT_ID) return null;
+		for (let i = uniqueMessages.length - 1; i >= 0; i--) {
+			const m = uniqueMessages[i] as any;
+			if (m.role !== "assistant") continue;
+			for (const part of m.parts ?? []) {
+				if (part.type === "tool-write_it_up" && part.state === "output-available" && part.output?.document_page_id) {
+					return part.output as {
+						document_page_id: string;
+						document_already_existed?: boolean;
+						chapters_written?: number;
+						chapters_error?: string;
+					};
+				}
+			}
+		}
+		return null;
+	});
+	const interviewClosed = $derived(
+		currentChatConversationId === INTERVIEW_CHAT_ID &&
+			(chatInstances.narrativeDocumentPageId !== null ||
+				interviewClosedPart !== null ||
+				setupStateStore.done("narrative_identity_ready")),
+	);
+	const interviewDocumentPageId = $derived(
+		interviewClosedPart?.document_page_id ?? chatInstances.narrativeDocumentPageId,
+	);
+
 	// The companion's activity feed: a new message or a status change wakes it
 	// and re-arms the doze timer.
 	$effect(() => {
@@ -1954,6 +1991,15 @@
 													onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
 													onDeny={() => handlePermissionDeny()}
 												/>
+											{:else if part.type === "tool-write_it_up" && (part as any).state === "output-available"}
+												{@const output = (part as any).output}
+												<!-- The interview's close, in the transcript: the two doors. -->
+												<InterviewClosedCard
+													pageId={output?.document_page_id ?? null}
+													chaptersWritten={output?.chapters_written ?? 0}
+													alreadyExisted={output?.document_already_existed ?? false}
+													chaptersError={output?.chapters_error ?? null}
+												/>
 											{:else if part.type === "tool-create_page" && (part as any).state === "output-available"}
 												{@const output = (part as any).output}
 												{#if output?.page_id}
@@ -2276,6 +2322,15 @@
 								{/each}
 							</div>
 						{/if}
+						{#if interviewClosed}
+							<!-- The interview is over: no composer, the two doors instead. -->
+							<InterviewClosedCard
+								standing
+								pageId={interviewDocumentPageId}
+								chaptersWritten={interviewClosedPart?.chapters_written ?? 0}
+								chaptersError={interviewClosedPart?.chapters_error ?? null}
+							/>
+						{:else}
 						<ChatInput
 							allowEmptySubmit={stagedRefs.length > 0 || attachments.length > 0}
 							onAttach={addFiles}
@@ -2289,6 +2344,7 @@
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
 						/>
+						{/if}
 
 					</div>
 				</div>

@@ -20,6 +20,7 @@ for people running a box; see [`../docs/`](../docs/).
 | [codemirror.md](codemirror.md) | Current | The page editor's document model. The document **is** markdown in a Yjs `Y.Text`; decorations provide live preview. No intermediate AST. |
 | [composable-inference.md](composable-inference.md) | Current | Plan of record for inference composability: the two HTTP contracts (`/v1/embeddings` required, `/v1/rerank` optional) and how the index defends itself. |
 | [deployment.md](deployment.md) | Current | The two shipping shapes — native Linux binary on the box, Docker on EC2 for atlas + api — and the systemd privilege split. |
+| [design-grammar.md](design-grammar.md) | Current | The **page** grammar (design.md is the shell): one sentence per page, the four-part anatomy (plate · running head · body · margin column), plates drawn from the record in two inks, the type roles and scale, one accent with one meaning, three animations, and a countable checklist. Written 2026-09-04 after Getting Started was redesigned four times with no rule to settle it. |
 | [design.md](design.md) | Current | Shell design constraints. Exists because the same visual mistakes kept recurring across sessions. |
 | [entitlement.md](entitlement.md) | Current | How a paying box gets AI and utility calls paid for: accounts, a rotatable device api_key, an append-only ledger, Stripe-webhook crediting. **§1 states the privacy posture plainly — read it before making any privacy claim.** |
 | [glossary.md](glossary.md) | — | _Needs a line._ |

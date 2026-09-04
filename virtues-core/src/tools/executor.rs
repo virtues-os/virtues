@@ -307,10 +307,10 @@ impl ToolExecutor {
             "propose_narrative_identity_edit" => {
                 self.execute_propose_narrative_identity(arguments).await
             }
-            // The narrative interview's finisher (interview mode's only tool):
-            // document + capsule + chapters from the transcript. The frontend
-            // watches this tool's output for document_page_id and opens the
-            // page beside the chat.
+            // The narrative interview's close (interview mode's only tool):
+            // document + chapters from the transcript. The frontend watches
+            // this tool's output for document_page_id, opens the page beside
+            // the chat, and retires the composer — the interview is over.
             "write_it_up" => {
                 match crate::api::narrative_draft::finalize_interview(&self._pool).await {
                     Ok(outcome) => Ok(ToolResult::success(

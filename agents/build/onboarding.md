@@ -399,7 +399,8 @@ account is Home's business, via AccountGate on the sign-in step).
 **There is no interview step in any flow** (2026-08-27). The narrative
 interview is the product's first *conversation* — one chat in the real app
 (`chat_narrative_interview`) — and the getting-started row that points at it
-says "underway" between a first answer and "write it up". Three form factors
+says "underway" between a first answer and the close ("write it up", the
+interview's one tool, after which the composer retires). Three form factors
 died teaching us this; see [lsi-plan.md](lsi-plan.md).
 
 `/setup` is a **308 redirect** to `/onboarding`, kept rather than deleted

@@ -246,6 +246,25 @@ pub async fn read_credential_secrets(
     Ok(serde_json::from_str(&plaintext)?)
 }
 
+/// The box's own Virtues api_key, if linked — the credential stored under
+/// `source_id = 'virtues_api'` by core's `virtues_api::renew`. Lives here
+/// rather than in core because the credential-refresh cron (this crate) needs
+/// it to identify itself to the OAuth proxy, and helpers cannot depend on
+/// core. `Ok(None)` is an unlinked box, an ordinary state; `Err` is a vault
+/// that could not be read, which is not.
+pub async fn read_box_api_key(db: &PgPool) -> Result<Option<String>> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM credentials WHERE source_id = 'virtues_api' LIMIT 1")
+            .fetch_optional(db)
+            .await?;
+    let Some((id,)) = row else { return Ok(None) };
+    let secrets = read_credential_secrets(db, &id).await?;
+    Ok(secrets["api_key"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(String::from))
+}
+
 /// Mark a credential's status without touching its secret payload.
 pub async fn mark_credential_status(
     db: &PgPool,

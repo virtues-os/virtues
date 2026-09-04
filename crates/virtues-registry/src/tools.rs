@@ -180,13 +180,13 @@ If you are unsure whether something qualifies, it does not."#.to_string(),
 fn write_it_up_tool() -> ToolConfig {
     ToolConfig {
         id: "write_it_up".to_string(),
-        name: "Write it up".to_string(),
-        description: "Arrange the interview into the person's document and chapters".to_string(),
-        llm_description: r#"Finalize the narrative interview: a separate drafter reads this conversation's transcript and writes two things — the "In your own words" document (their words arranged, never yours) and the structured chapters of their life. The document opens beside the chat when this returns.
+        name: "Write it up and close the interview".to_string(),
+        description: "Close the interview: arrange it into the person's document and chapters".to_string(),
+        llm_description: r#"Close the narrative interview. A separate drafter reads this conversation's transcript and writes two things — the "In your own words" document (their words arranged in their own first person, never yours) and the structured chapters of their life. Both open beside the chat when this returns, and the interview is over: the composer retires.
 
-Call it when the person says they are done or asks for their document, in whatever words. If territories are still uncovered when they ask, say which ones in one sentence and ask whether to write anyway — this runs ONCE; a thin early document stays thin. Never compose the document yourself in the chat.
+Call it when the six territories are covered and the person says yes to closing, or immediately when they ask to finish in whatever words. If territories are still uncovered when they ask, say which ones in one sentence and ask whether to close anyway — this runs ONCE; a thin early document stays thin. Never compose the document yourself in the chat.
 
-Takes no arguments. On success, tell them in a message or two what was written and that the document is theirs to edit and correct from here."#.to_string(),
+Takes no arguments. On success, tell them in one short message what was written, that both pages are theirs to edit from here, and that the interview is closed."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {}

@@ -24,7 +24,9 @@
 //! article holding their own words about that era.
 //!
 //! THE DRAFT IS A MIRROR, NOT A VERDICT. It arranges what someone wrote and
-//! hands it back for correction. Everything below is aimed at keeping it from
+//! hands it back for correction — in the FIRST PERSON, because it is their
+//! account and reads as one they wrote (a portrait in "you" read as the
+//! machine describing them back; settled 2026-09-04). Everything below is aimed at keeping it from
 //! doing anything more than that — no diagnosis, no invention, no flattery, no
 //! psychologising a person out of their own words.
 
@@ -39,18 +41,19 @@ You are given the transcript of an interview about their life — the chapters o
 
 WRITE THE DOCUMENT, then its rules. The document first. Three sections with these exact headings:
 
-## Where you have been
-## Who you are
-## Where you are going
+## Where I have been
+## Who I am
+## Where I am going
 
 Rules for the document:
-- Use THEIR words. Keep their phrases, their names, their turns of speech. You are arranging, not translating. If a sentence of theirs is good, use it.
-- Second person throughout ("you"), present tense for who they are, past for what happened.
+- FIRST PERSON THROUGHOUT. This is their account, written as they would write it: "I", "my", "me". Never "you", never "they", never their name as a subject. The reader is the person; the writer is the person. A stranger reading it should take it for something they wrote themselves.
+- Use THEIR words. Keep their phrases, their names, their turns of speech. You are arranging, not translating. If a sentence of theirs is good, use it as it stands — they already said it in the first person.
+- Present tense for who they are, past for what happened.
 - Ground every sentence in something they actually wrote. If they did not say it, it does not appear. No inference about motives, no "this suggests", no filling gaps with what people are usually like.
-- Never diagnose, never psychologise, never explain someone to themselves. "You lost your father in 2019 and the year after was the worst of your life" is right. "This loss clearly shapes your fear of commitment" is a violation.
+- Never diagnose, never psychologise, never explain someone to themselves. "I lost my father in 2019 and the year after was the worst of my life" is right. "This loss clearly shapes my fear of commitment" is a violation — even in the first person, an interpretation they never made is not theirs.
 - Leave the unanswered alone. If they skipped a question, that section is simply shorter. Do not note the absence, do not prompt them, do not compensate.
 - Do not flatter, do not console, do not summarise their life as a lesson. No redemptive arc unless they wrote one.
-- Aspirations are marked as aspirations. "You want to be more patient" — never "you are patient".
+- Aspirations are marked as aspirations. "I want to be more patient" — never "I am patient".
 - Plain prose. No lists, no bold, no headings beyond the three above.
 
 SECOND, after a line containing only ---RULES---: any instruction they gave about what NOT to raise, one per line, as a short imperative in their own terms ("never suggest bars", "do not mention my father unless I do"). These are drawn ONLY from what they explicitly asked for, anywhere in the transcript. Never invent one, never infer one from a sad story, never turn an observation into a rule. If they asked for nothing, write nothing after this line. Being told about a loss is not the same as being asked never to mention it.
@@ -536,7 +539,7 @@ async fn call_model_with(
 
     if !response.is_success() {
         return Err(Error::ExternalApi(match response.status {
-            402 => "Usage limit reached".to_string(),
+            402 => crate::virtues_api::client::payment_required_message(&response.body, "narrative drafting"),
             429 => "Rate limited — try again in a moment.".to_string(),
             s => format!("virtues-api error {s}: {}", response.body),
         }));
@@ -733,16 +736,16 @@ mod tests {
     #[test]
     fn splits_document_and_rules() {
         let (doc, rules) = split_draft(
-            "## Where you have been\nBoston.\n---RULES---\n- never suggest bars\n- do not mention my father",
+            "## Where I have been\nBoston.\n---RULES---\n- never suggest bars\n- do not mention my father",
         );
-        assert_eq!(doc, "## Where you have been\nBoston.");
+        assert_eq!(doc, "## Where I have been\nBoston.");
         assert_eq!(rules, vec!["never suggest bars", "do not mention my father"]);
     }
 
     #[test]
     fn a_missing_sentinel_keeps_the_document_and_proposes_nothing() {
-        let (doc, rules) = split_draft("## Where you have been\nBoston.");
-        assert_eq!(doc, "## Where you have been\nBoston.");
+        let (doc, rules) = split_draft("## Where I have been\nBoston.");
+        assert_eq!(doc, "## Where I have been\nBoston.");
         assert!(rules.is_empty());
     }
 

@@ -10,9 +10,11 @@
 		getBillingLinkStatus,
 		startBillingLink,
 		openBillingPortal as requestBillingPortal,
+		subscribeBilling,
 		getBillingState,
 		setBillingAutoTopup,
 		getBillingUsage,
+		getUsageSummary,
 		getByoKey,
 		setByoKey,
 		deleteByoKey,
@@ -29,6 +31,56 @@
 	// of prose ("Try again."), so the code beside it is the only thing a
 	// screenshot can hand us. Shown verbatim — never translated, never mapped.
 	let portalErrorCode = $state<string | null>(null);
+
+	// ─── Subscribe (a linked account with no subscription) ─────────────────
+	// The door 0017 created and nothing served: the connect flow below would
+	// start a NEW device link and mint a second account; the portal has
+	// nothing to open. This asks atlas for a checkout on the account the box
+	// already belongs to, then polls fresh until the subscription shows.
+	let subscribeLoading = $state(false);
+	let subscribeError = $state<string | null>(null);
+	let subscribeErrorCode = $state<string | null>(null);
+	let subscribeWaiting = $state(false);
+	let subscribePoll: ReturnType<typeof setInterval> | null = null;
+
+	function stopSubscribePoll() {
+		if (subscribePoll) {
+			clearInterval(subscribePoll);
+			subscribePoll = null;
+		}
+		subscribeWaiting = false;
+	}
+
+	async function openSubscribe() {
+		subscribeLoading = true;
+		subscribeError = null;
+		subscribeErrorCode = null;
+		try {
+			const data = await subscribeBilling<{ url?: string; error?: string; code?: string }>();
+			if (data.url) {
+				openExternal(data.url);
+				// Ten minutes of fresh polls, every 5s — long enough for a card
+				// and a 3-D Secure prompt, short enough not to poll forever on
+				// an abandoned tab.
+				subscribeWaiting = true;
+				let ticks = 0;
+				subscribePoll = setInterval(async () => {
+					ticks += 1;
+					await subscriptionStore.check(true);
+					if (subscriptionStore.subscribed || ticks >= 120) stopSubscribePoll();
+				}, 5000);
+			} else if (data.error) {
+				subscribeError = data.error;
+				subscribeErrorCode = data.code ?? null;
+			}
+		} catch (e) {
+			subscribeError = e instanceof ApiError ? e.message : 'Failed to connect to billing service';
+			subscribeErrorCode = e instanceof ApiError ? `http_${e.status}` : 'unreachable';
+		} finally {
+			subscribeLoading = false;
+		}
+	}
+	$effect(() => () => stopSubscribePoll());
 
 	// Device-authorization link flow (connect a paid subscription). The box
 	// never holds a Stripe key: we start a link, open the Atlas-hosted checkout
@@ -428,6 +480,73 @@
 
 	$effect(() => { void loadUsage(); });
 
+	// ─── Local spend summary: the chart and the by-kind tracks ─────────────
+	// `app_ai_calls`, box-local, no egress. The wallet above is what the
+	// gateway says the money is; this is where it went, by day and by kind.
+	type SpendBucket = { label: string; calls: number; cost_micros: number; byo_calls: number };
+	type DaySpend = { day: string; calls: number; cost_micros: number };
+	type Summary = {
+		by_feature: SpendBucket[];
+		by_day: DaySpend[];
+		last_month_to_date_micros: number | null;
+	};
+	let summary = $state<Summary | null>(null);
+	let summaryError = $state<string | null>(null);
+	async function loadSummary() {
+		summaryError = null;
+		try {
+			summary = await getUsageSummary<Summary>();
+		} catch (e) {
+			summaryError = e instanceof ApiError ? e.message : 'Could not read this box’s call log.';
+		}
+	}
+	$effect(() => { void loadSummary(); });
+
+	/** The last 14 UTC days as bar slots, absent days filled with zero. */
+	const days = $derived.by(() => {
+		const byDay = new Map((summary?.by_day ?? []).map((d) => [d.day, d]));
+		const out: { day: string; cost: number; calls: number; label: string }[] = [];
+		const today = new Date();
+		for (let i = 13; i >= 0; i--) {
+			const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
+			const key = d.toISOString().slice(0, 10);
+			const row = byDay.get(key);
+			out.push({
+				day: key,
+				cost: row?.cost_micros ?? 0,
+				calls: row?.calls ?? 0,
+				label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+			});
+		}
+		return out;
+	});
+	const dayMax = $derived(Math.max(1, ...days.map((d) => d.cost)));
+	// Chart geometry: 14 slots of 45 in a 640 box, bars 34 wide; plot 106 tall
+	// from y=12 to the baseline at y=118. One scale, from the tallest day.
+	const barX = (i: number) => 6 + i * 45;
+	const barH = (cost: number) => Math.max(cost > 0 ? 2 : 0, (cost / dayMax) * 106);
+
+	const monthLocalMicros = $derived((summary?.by_feature ?? []).reduce((a, b) => a + b.cost_micros, 0));
+	const totalCalls = $derived((summary?.by_feature ?? []).reduce((a, b) => a + b.calls, 0));
+	/** Percent change against last month to the same date; null when there is nothing to compare to. */
+	const monthDelta = $derived.by(() => {
+		const prev = summary?.last_month_to_date_micros;
+		if (prev == null || prev <= 0) return null;
+		return Math.round(((monthLocalMicros - prev) / prev) * 100);
+	});
+	const kindMax = $derived(Math.max(1, ...(summary?.by_feature ?? []).map((b) => b.cost_micros)));
+	const kindLabelOf = (label: string) =>
+		label === 'other' ? 'Other' : label.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+
+	/** `$12<span class="c">.40</span>` — the cents recede. Escaped: only digits reach the markup. */
+	function moneyFigure(micros: number): string {
+		const neg = micros < 0;
+		const cents = Math.round(Math.abs(micros) / 10_000);
+		const dollars = Math.floor(cents / 100);
+		const rest = String(cents % 100).padStart(2, '0');
+		return `${neg ? '−' : ''}$${dollars.toLocaleString()}<span class="c">.${rest}</span>`;
+	}
+
 	const kindLabel: Record<string, string> = {
 		grant: 'Monthly credit',
 		topup: 'Top-up',
@@ -458,19 +577,10 @@
 			: formatDate(ts, { month: 'short', day: 'numeric' });
 	}
 
-	const statusLabel: Record<string, string> = {
-		active: 'Active',
-		trialing: 'Trial',
-		past_due: 'Past Due',
-		expired: 'Expired',
-	};
-
-	const statusColor: Record<string, string> = {
-		active: 'text-success',
-		trialing: 'text-info',
-		past_due: 'text-warning',
-		expired: 'text-error',
-	};
+	// No trial, no expiry: the box reports subscribed or not. (`trialing` /
+	// `expired` labels lived here for a plan that never shipped.)
+	const statusLabel: Record<string, string> = { active: 'Active' };
+	const statusColor: Record<string, string> = { active: 'text-success' };
 </script>
 
 <!--
@@ -503,43 +613,47 @@
 	     linking the box is the whole job of the page in that state, and it
 	     used to sit third, below a balance that cannot exist yet. -->
 	{#if isSubscribed}
+		<!-- The plan, its state, its date — one line. The figures follow in
+		     the Balance chapter below; this is only the standing. -->
+		<section class="chapter">
+			<div class="standing-line">
+				<span class="plan">Virtues</span>
+				<span class="plan-state">Active</span>
+				{#if renewsLabel}<span class="plan-aside">Renews {renewsLabel}</span>{/if}
+			</div>
+		</section>
+	{:else if subscriptionStore.linked && subscriptionStore.entitlementKnown}
+		<!-- Linked, not subscribed: the account exists and the wallet does not.
+		     Subscribe, not connect — connecting again would mint a second
+		     account. The sentence names exactly what is off, because the
+		     accurate sentence is the whole argument. -->
 		<section class="chapter">
 			<h2 class="settings-label">Standing</h2>
 			<div class="ledger">
 				<div class="ledger-row">
 					<span class="ledger-label">Subscription</span>
 					<span class="leader"></span>
-					<span class="ledger-value {statusColor[subscriptionStore.status] || ''}">
-						{statusLabel[subscriptionStore.status] || subscriptionStore.status}
-					</span>
+					<span class="ledger-value">None</span>
 				</div>
-
-				{#if subscriptionStore.status === 'trialing' && subscriptionStore.daysRemaining !== null}
-					<div class="ledger-row">
-						<span class="ledger-label">Trial ends</span>
-						<span class="leader"></span>
-						<span class="ledger-value"
-							>{subscriptionStore.daysRemaining} day{subscriptionStore.daysRemaining === 1
-								? ''
-								: 's'} remaining</span
-						>
-					</div>
-				{/if}
-
-				{#if subscriptionStore.trialExpiresAt}
-					<div class="ledger-row">
-						<span class="ledger-label">Expiry date</span>
-						<span class="leader"></span>
-						<span class="ledger-value"
-							>{formatDate(subscriptionStore.trialExpiresAt, {
-								year: 'numeric',
-								month: 'long',
-								day: 'numeric',
-							})}</span
-						>
-					</div>
-				{/if}
 			</div>
+			<p class="chapter-lede">
+				Your account is connected; there is no subscription behind it yet. Hosted AI, web
+				search, places, and bank data are off until there is. One subscription covers all
+				four, $20 a month — or bring your own AI key below, which covers the first.
+			</p>
+			{#if subscribeError}
+				<p class="note note-error">
+					{subscribeError}
+					{#if subscribeErrorCode}<span class="error-code">{subscribeErrorCode}</span>{/if}
+				</p>
+			{/if}
+			{#if subscribeWaiting}
+				<p class="note">Checkout is open in your browser — this page updates on its own once it completes.</p>
+			{:else}
+				<button class="btn-quiet" onclick={openSubscribe} disabled={subscribeLoading}>
+					{subscribeLoading ? 'Opening…' : 'Subscribe · $20/mo'}
+				</button>
+			{/if}
 		</section>
 	{:else if standingUnknown}
 		<section class="chapter">
@@ -552,10 +666,11 @@
 		</section>
 	{:else}
 		<section class="chapter">
-			<h2 class="settings-label">Connect your subscription</h2>
+			<h2 class="settings-label">Connect your Virtues account</h2>
 			<p class="chapter-lede">
-				Link this box to your Virtues subscription to turn on AI. Checkout happens on
-				Stripe — your box never sees a payment key.
+				Link this server to your Virtues account. Sign in if you have one; creating one
+				takes you through Stripe for the subscription. Your server never sees a payment
+				key.
 			</p>
 
 			{#if linkError}
@@ -609,9 +724,7 @@
 	     one subject, one chapter. Auto top-up used to live two chapters below
 	     the number it governs, in a panel called "Wallet & top-up" that a
 	     reader had no reason to connect to the balance above it. -->
-	<section class="chapter">
-		<h2 class="settings-label">Balance</h2>
-
+	<section class="chapter chapter-figures">
 		{#if usageLoading && !usage && !usageError}
 			<p class="chapter-lede">Reading the wallet…</p>
 		{:else if usageError}
@@ -623,52 +736,51 @@
 				<button class="link-btn" onclick={() => void loadUsage()}>Try again</button>
 			</p>
 		{:else if usage}
-			<div class="figure-line">
-				<span class="figure mono">{formatMicrosUSD(usage.balance_micros)}</span>
-				<span class="figure-unit">available</span>
-			</div>
-
-			<!-- The standing sentence: what the number is, what happens when it
-			     runs out, and when it refills. Three facts that were spread
-			     across two cards and a toggle. -->
-			<p class="standing">
-				<!-- Three states, not two. `local` arrives on its own request, and
-				     an `{:else}` here spent the first beat of every load asserting
-				     "Auto top-up is off" — a false sentence about money, shown
-				     while the truth was still in flight. Silence until known. -->
-				{#if local}
-					{#if local.auto_topup.enabled}
-						$10 is charged to your card automatically when this reaches zero.
-					{:else}
-						Auto top-up is off — AI stops when this reaches zero.
-					{/if}
-				{/if}
-				{#if renewsLabel}Renews {renewsLabel}.{/if}
-			</p>
-
-			<div class="ledger ledger-tight">
-				<div class="ledger-row">
-					<span class="ledger-label">Spent this month</span>
-					<span class="leader"></span>
-					<span class="ledger-value mono">{formatMicrosUSD(usage.month_to_date_micros)}</span>
+			<!-- Two figures, Apple-large, the cents receding. The delta is
+			     against last month to the same date — the only fair comparison
+			     on the 4th — and is absent rather than wrong when there is no
+			     last month to compare to. -->
+			<div class="figures">
+				<div>
+					<div class="figure-label">Balance</div>
+					<div class="figure mono">{@html moneyFigure(usage.balance_micros)}</div>
 				</div>
-				{#if !localLoading && local}
-					<div class="ledger-row">
-						<span class="ledger-label">Auto top-up</span>
-						<span class="leader"></span>
-						<span class="ledger-value">
-							<button
-								class="toggle"
-								class:on={local.auto_topup.enabled}
-								aria-pressed={local.auto_topup.enabled}
-								onclick={() => setAutoTopup(!local!.auto_topup.enabled)}
-							>
-								{local.auto_topup.enabled ? 'On' : 'Off'}
-							</button>
-						</span>
-					</div>
-				{/if}
+				<div>
+					<div class="figure-label">This month</div>
+					<div class="figure mono">{@html moneyFigure(usage.month_to_date_micros)}</div>
+					{#if monthDelta !== null}
+						<div class="delta" class:down={monthDelta < 0}>
+							{monthDelta < 0 ? '↓' : '↑'} {Math.abs(monthDelta)}% on last month
+						</div>
+					{/if}
+				</div>
 			</div>
+
+			<!-- One control, one sentence, one switch. Silence until `local`
+			     is known: a false sentence about money, shown while the truth
+			     is in flight, is worse than a beat of nothing. -->
+			{#if !localLoading && local}
+				<div class="control">
+					<div>
+						<div class="control-t">Auto top-up</div>
+						<div class="control-d">
+							{#if local.auto_topup.enabled}
+								Adds <span class="mono">$10</span> when the balance reaches <span class="mono">$0</span>.
+							{:else}
+								Off — AI stops when the balance reaches <span class="mono">$0</span>.
+							{/if}
+						</div>
+					</div>
+					<button
+						class="switch"
+						class:on={local.auto_topup.enabled}
+						role="switch"
+						aria-checked={local.auto_topup.enabled}
+						aria-label="Auto top-up"
+						onclick={() => setAutoTopup(!local!.auto_topup.enabled)}
+					></button>
+				</div>
+			{/if}
 
 			{#if local && !local.auto_topup.enabled && local.auto_topup.disabled_at}
 				<p class="note note-error">
@@ -708,6 +820,65 @@
 				</div>
 			{:else}
 				<p class="chapter-lede">Nothing has moved yet. Top-ups and charges appear here.</p>
+			{/if}
+		{/if}
+	</section>
+
+	<!-- ─── USAGE ─────────────────────────────────────────────────────────
+	     Where the month went: fourteen days as bars, then the same money by
+	     kind. Box-local (`app_ai_calls`); the wallet figures above are the
+	     gateway's. Own-key calls are counted and never priced. -->
+	<section class="chapter">
+		<div class="chapter-head">
+			<h2 class="settings-label">Usage</h2>
+			{#if totalCalls > 0}
+				<a class="see-all" href="#calls">See all {totalCalls} calls →</a>
+			{/if}
+		</div>
+		{#if summaryError}
+			<p class="note note-error">{summaryError}</p>
+		{:else if summary}
+			<svg class="chart" viewBox="0 0 640 146" role="img" aria-label="Wallet spend per day, the last fourteen days">
+				<g>
+					{#each days as d, i (d.day)}
+						<rect
+							class="bar"
+							class:today={i === 13}
+							x={barX(i)}
+							y={118 - barH(d.cost)}
+							width="34"
+							height={barH(d.cost)}
+							rx="3"
+						><title>{i === 13 ? 'Today' : d.label} · {formatMicrosPrecise(d.cost)}{d.calls ? ` · ${d.calls} call${d.calls === 1 ? '' : 's'}` : ''}</title></rect>
+					{/each}
+				</g>
+				<line class="base" x1="6" x2="625" y1="118.5" y2="118.5" />
+				{#if days[13]?.cost > 0}
+					<text class="v" x={barX(13) + 17} y={118 - barH(days[13].cost) - 8} text-anchor="middle">{formatMicrosPrecise(days[13].cost)}</text>
+				{/if}
+				{#if monthLocalMicros === 0 && days.every((d) => d.cost === 0)}
+					<text class="empty" x="316" y="72" text-anchor="middle">Nothing has drawn on the wallet in two weeks</text>
+				{/if}
+				<text x="6" y="138">{days[0]?.label}</text>
+				<text x="625" y="138" text-anchor="end">Today</text>
+			</svg>
+
+			{#if summary.by_feature.length > 0}
+				<div class="kinds">
+					{#each summary.by_feature as b (b.label)}
+						<div class="kind">
+							<span class="kind-n">{kindLabelOf(b.label)}</span>
+							<div class="track"><div class="fill" style="width:{(b.cost_micros / kindMax) * 100}%"></div></div>
+							<!-- A bucket that is all own-key has a count and no price;
+							     "$0.00" there would be a number we invented. -->
+							{#if b.byo_calls === b.calls}
+								<span class="kind-amt dim">own key</span>
+							{:else}
+								<span class="kind-amt mono">{formatMicrosPrecise(b.cost_micros)}</span>
+							{/if}
+						</div>
+					{/each}
+				</div>
 			{/if}
 		{/if}
 	</section>
@@ -860,7 +1031,7 @@
 	</section>
 
 	<!-- The itemization, last. -->
-	<UsageView />
+	<div id="calls"><UsageView /></div>
 </div>
 </Page>
 
@@ -1000,46 +1171,16 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* ─── The figure ────────────────────────────────────────────────────────
-	   The one number the page exists to show, set like System's vitals: mono,
-	   large, tabular. It was `text-3xl font-semibold` sans, third down the
-	   page, inside the second of five identical boxes. */
-	.figure-line {
-		display: flex;
-		align-items: baseline;
-		gap: 8px;
-		margin: 2px 0 6px;
-	}
 	.figure {
 		font-size: 40px;
 		line-height: 1;
 		font-weight: 500;
 		color: var(--color-foreground);
 	}
-	.figure.dim {
-		color: var(--color-foreground-subtle);
-	}
-	.figure-unit {
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-	/* What the number does next, in one sentence: the top-up rule and the
-	   renewal date, which used to be a toggle two chapters away and a caption
-	   in the corner of a card. */
-	.standing {
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-		margin: 0;
-		max-width: 60ch;
-	}
 
 	/* ─── Ledger rows (label · leader · value) ─────────────────────────────── */
 	.ledger {
 		margin-top: 10px;
-	}
-	.ledger-tight {
-		margin-top: 14px;
 	}
 	.ledger-row {
 		display: flex;
@@ -1177,24 +1318,6 @@
 	.btn-quiet:hover { background: var(--color-background-hover); }
 	.btn-quiet:disabled { opacity: 0.5; cursor: default; }
 
-	.toggle {
-		padding: 2px 10px;
-		border: 1px solid var(--color-border);
-		border-radius: 5px;
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground-muted);
-		font-size: 12px;
-		font-weight: 500;
-		cursor: pointer;
-	}
-	/* Engaged reads as INK, not as a color. Filled with the accent it was the
-	   loudest thing on the page — louder than the balance it governs — and
-	   on/off is a state, not a status. Weight carries it. */
-	.toggle.on {
-		background: var(--color-foreground);
-		border-color: var(--color-foreground);
-		color: var(--color-background);
-	}
 
 	/* ─── Panels: places you act ────────────────────────────────────────── */
 	.panel {
@@ -1289,4 +1412,55 @@
 		.chapter-head { flex-direction: column; gap: 10px; }
 		.figure { font-size: 34px; }
 	}
+
+	/* ─── Standing: one line ────────────────────────────────────────────── */
+	.standing-line { display: flex; align-items: baseline; gap: 12px; }
+	.plan { font-family: var(--font-serif); font-size: 22px; color: var(--color-foreground); }
+	.plan-state { font-size: 13px; color: var(--color-success); }
+	.plan-aside { margin-left: auto; font-size: 13px; color: var(--color-foreground-subtle); }
+
+	/* ─── The figures: Apple-large, mono, the cents recede ─────────────── */
+	.chapter-figures { padding-top: 22px; margin-top: 22px; }
+	.figures { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+	.figure-label { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-foreground-subtle); }
+	.figures .figure { font-size: 44px; letter-spacing: -0.02em; margin-top: 8px; }
+	.figures .figure :global(.c) { color: var(--color-foreground-subtle); font-weight: 400; }
+	.delta { font-size: 13px; color: var(--color-foreground-subtle); margin-top: 8px; }
+	.delta.down { color: var(--color-success); }
+	@media (max-width: 480px) { .figures { grid-template-columns: 1fr; } }
+
+	/* One control, one sentence, one switch. */
+	.control { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--color-border-subtle); }
+	.control-t { font-size: 15px; color: var(--color-foreground); }
+	.control-d { font-size: 13px; color: var(--color-foreground-muted); margin-top: 2px; }
+	.control-d .mono { font-size: 12.5px; color: var(--color-foreground); }
+	.switch { width: 44px; height: 26px; border-radius: 13px; background: var(--color-border); position: relative; flex: none; border: 0; cursor: pointer; transition: background 150ms ease; padding: 0; }
+	.switch.on { background: var(--color-success); }
+	.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.18); transition: transform 150ms ease; }
+	.switch.on::after { transform: translateX(18px); }
+	.switch:focus-visible { outline: 2px solid var(--color-foreground); outline-offset: 3px; }
+
+	/* ─── The chart: soft bars, today in the accent, one baseline ─────── */
+	.see-all { font-size: 13px; color: var(--color-foreground-subtle); text-decoration: none; }
+	.see-all:hover { color: var(--color-foreground); }
+	.chart { width: 100%; height: auto; display: block; overflow: visible; margin-top: 6px; }
+	.chart .bar { fill: var(--color-border); transition: fill 120ms ease; }
+	.chart .bar.today { fill: var(--color-secondary); }
+	.chart .bar:hover { fill: var(--color-foreground-subtle); }
+	.chart .bar.today:hover { fill: var(--color-secondary); }
+	.chart .base { stroke: var(--color-border); stroke-width: 1; }
+	.chart text { font-family: var(--font-sans); font-size: 11px; fill: var(--color-foreground-subtle); }
+	.chart .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; fill: var(--color-secondary); font-weight: 500; }
+	.chart .empty { font-family: var(--font-sans); font-size: 12px; fill: var(--color-foreground-subtle); }
+
+	/* By kind: a name, a track, a figure. */
+	.kinds { margin-top: 22px; display: flex; flex-direction: column; gap: 12px; }
+	.kind { display: grid; grid-template-columns: 120px 1fr 72px; align-items: center; gap: 16px; font-size: 14px; }
+	.kind-n { color: var(--color-foreground); }
+	.track { height: 6px; border-radius: 3px; background: var(--color-border-subtle); overflow: hidden; }
+	.fill { height: 100%; border-radius: 3px; background: var(--color-border); }
+	.kind:first-child .fill { background: var(--color-secondary); }
+	.kind-amt { text-align: right; color: var(--color-foreground); }
+	.kind-amt.dim { color: var(--color-foreground-subtle); font-size: 13px; }
+	@media (max-width: 480px) { .kind { grid-template-columns: 96px 1fr 64px; } }
 </style>

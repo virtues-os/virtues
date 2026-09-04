@@ -42,5 +42,6 @@ these are not promises.
 | [sources-packages-plan.md](sources-packages-plan.md) | — | _Needs a line._ |
 | [spa-delivery-plan.md](spa-delivery-plan.md) | Ready to schedule | One UI-delivery architecture for phone and Mac: baked bundle, OTA overlay pulled from the box, local data. Unlocks the offline editing already built into Yjs, and makes UI-ahead-of-box skew impossible. |
 | [ui-overhaul-plan.md](ui-overhaul-plan.md) | Planned | Nineteen layout/settings/design items triaged against the codebase, each marked ship / spike / defer / drop. |
+| [version-compat-plan.md](version-compat-plan.md) | Planned | When the app outruns the server. Phones update themselves, servers update when someone types a command, so the app is always ahead — and v0.1.6 making `model` optional killed chat on every older server. Both version coordinates and the prerelease ordering already exist; what is missing is a declared minimum, a comparison, and a CI ratchet. |
 | [update-manifold-plan.md](update-manifold-plan.md) | Planned | Generalizes the box paradigm to the whole fleet, and adds the cross-component version negotiation the box doc never needed. |
 | [wiki-plan.md](wiki-plan.md) | — | _Needs a line._ |

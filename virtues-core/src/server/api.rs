@@ -1338,8 +1338,14 @@ pub async fn places_details_handler(
 /// Derived from the credential vault: reports whether an api_key has
 /// been claimed on this box. Gating itself is by bearer expiry, not this
 /// endpoint — see `crate::api::subscription`.
-pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Response {
-    match crate::api::subscription::get_subscription_status(&pool).await {
+pub async fn get_subscription_handler(
+    State(pool): State<sqlx::PgPool>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    // `?fresh=1` bypasses the entitlement cache — the UI polls with it while
+    // a checkout the owner just opened is in flight.
+    let fresh = q.get("fresh").is_some_and(|v| v == "1" || v == "true");
+    match crate::api::subscription::get_subscription_status(&pool, fresh).await {
         Ok(data) => (StatusCode::OK, Json(data)).into_response(),
         Err(e) => {
             // NOT a fallback to `active`. It was one, and that turned a blipped
@@ -1355,9 +1361,7 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
                     "linked": false,
                     "subscribed": false,
                     "entitlement_known": false,
-                    "is_active": false,
-                    "trial_expires_at": null,
-                    "days_remaining": null
+                    "is_active": false
                 })),
             )
                 .into_response()
@@ -1441,6 +1445,48 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
     }
 }
 
+/// POST /api/billing/subscribe — a Stripe Checkout URL for the account this
+/// box is linked to. The door for a linked FREE account (0017): the connect
+/// flow would start a new device link and mint a second account, and the
+/// portal has nothing to open. Same `{url}` / `{error, code}` contract as the
+/// portal, for the same reason.
+pub async fn subscribe_billing_handler(State(pool): State<sqlx::PgPool>) -> Response {
+    fn refuse(code: &str, message: &str) -> Response {
+        (StatusCode::OK, Json(serde_json::json!({ "error": message, "code": code }))).into_response()
+    }
+    const TRY_AGAIN: &str = "Couldn't open checkout. Try again.";
+
+    let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return refuse("not_linked", "Connect your Virtues account first."),
+        Err(e) => {
+            tracing::warn!("billing subscribe [vault_unreadable]: {e}");
+            return refuse("vault_unreadable", TRY_AGAIN);
+        }
+    };
+    let atlas_url = crate::virtues_api::atlas_url();
+    let http = crate::http_client::virtues_api_client();
+    match crate::virtues_api::renew::fetch_checkout_session(&http, &atlas_url, &api_key).await {
+        Ok(crate::virtues_api::renew::CheckoutSession::Url(url)) => {
+            // Whatever we cached is about to be stale; the UI polls fresh.
+            crate::api::subscription::invalidate();
+            (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response()
+        }
+        Ok(crate::virtues_api::renew::CheckoutSession::AlreadySubscribed) => {
+            crate::api::subscription::invalidate();
+            refuse("already_subscribed", "This account already has an active subscription.")
+        }
+        Ok(crate::virtues_api::renew::CheckoutSession::Failed { code, status }) => {
+            tracing::warn!("billing subscribe [{code}]: atlas answered {status}");
+            refuse(&code, TRY_AGAIN)
+        }
+        Err(e) => {
+            tracing::warn!("billing subscribe [atlas_unreachable]: {e}");
+            refuse("atlas_unreachable", TRY_AGAIN)
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub struct ClaimRequest {
     /// Stripe Checkout `session_id` from the post-purchase success URL.
@@ -1514,7 +1560,7 @@ pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response
     if !crate::virtues_api::renew::has_api_key(&pool).await.unwrap_or(false) {
         return (
             StatusCode::OK,
-            Json(serde_json::json!({ "error": "Connect your subscription to see your balance." })),
+            Json(serde_json::json!({ "error": "Connect your Virtues account to see your balance." })),
         )
             .into_response();
     }
@@ -1548,12 +1594,42 @@ pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
         .unwrap_or(now);
 
     let pool = state.db.pool();
-    let by_feature = crate::api::ai_calls::spend_by_feature(pool, month_start)
-        .await
-        .unwrap_or_default();
-    let by_model = crate::api::ai_calls::spend_by_model(pool, month_start)
-        .await
-        .unwrap_or_default();
+    // Errors surface. `.unwrap_or_default()` here rendered a broken query as
+    // an empty month — a wallet with no spend is a real state, and this made
+    // a failure indistinguishable from it (CLAUDE.md, "Do not swallow").
+    let by_feature = match crate::api::ai_calls::spend_by_feature(pool, month_start).await {
+        Ok(v) => v,
+        Err(e) => return error_response(e.into()),
+    };
+    let by_model = match crate::api::ai_calls::spend_by_model(pool, month_start).await {
+        Ok(v) => v,
+        Err(e) => return error_response(e.into()),
+    };
+    // The Billing chart: the last 14 UTC days, today included. Days with no
+    // calls are absent from the rows; the client fills the run.
+    let since = (now - chrono::Duration::days(13)).date_naive().and_hms_opt(0, 0, 0)
+        .map(|dt| dt.and_utc())
+        .unwrap_or(now);
+    let by_day = match crate::api::ai_calls::spend_by_day(pool, since).await {
+        Ok(v) => v,
+        Err(e) => return error_response(e.into()),
+    };
+    // Last month, to the same point: the fair comparison on the 4th. None
+    // when the calendar cannot supply it (the 31st of a month after a 30-day
+    // one) — the client then shows no delta rather than a wrong one.
+    let prev_start = month_start
+        .date_naive()
+        .checked_sub_months(chrono::Months::new(1))
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|dt| dt.and_utc());
+    let prev_same_point = prev_start.and_then(|ps| ps.checked_add_signed(now - month_start));
+    let last_month_to_date_micros = match (prev_start, prev_same_point) {
+        (Some(a), Some(b)) => match crate::api::ai_calls::wallet_spend_between(pool, a, b).await {
+            Ok(v) => Some(v),
+            Err(e) => return error_response(e.into()),
+        },
+        _ => None,
+    };
 
     (
         StatusCode::OK,
@@ -1561,6 +1637,8 @@ pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
             "month_start": month_start,
             "by_feature": by_feature,
             "by_model": by_model,
+            "by_day": by_day,
+            "last_month_to_date_micros": last_month_to_date_micros,
         })),
     )
         .into_response()

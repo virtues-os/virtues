@@ -83,13 +83,18 @@ pub struct ProxyExchangeResponse {
 /// POSTs to `{proxy}/{source_id}/exchange/{exchange_token}`. The proxy holds
 /// the provider's `client_id` / `client_secret` and performs the real token
 /// exchange before responding to us.
+///
+/// `api_key` is the box's Virtues key, sent as `X-Virtues-Api-Key` so the
+/// proxy can tell which box is asking. Optional today: the proxy accepts calls
+/// without it while boxes upgrade, and logs them; it flips to required once
+/// the fleet has moved. `None` on an unlinked box is an ordinary state.
 pub async fn proxy_exchange(
     source_id: &str,
     exchange_token: &str,
+    api_key: Option<&str>,
 ) -> Result<ProxyExchangeResponse> {
     let url = format!("{}/{source_id}/exchange/{exchange_token}", proxy_url());
-    let resp = client()
-        .post(&url)
+    let resp = with_box_key(client().post(&url), api_key)
         .send()
         .await
         .map_err(|e| AuthError::Proxy(format!("unreachable: {e}")))?;
@@ -114,13 +119,18 @@ pub async fn proxy_exchange(
 /// POSTs to `{proxy}/{source_id}/refresh` with `{refresh_token}` body.
 /// Returns the same shape as `proxy_exchange`. Used by the
 /// `credential_refresh` cron action.
+///
+/// `api_key`: as for [`proxy_exchange`]. This is the call the proxy will
+/// require it on first — unauthenticated, `/refresh` performs the refresh
+/// grant with the proxy's own client secret for anyone holding a refresh
+/// token.
 pub async fn proxy_refresh(
     source_id: &str,
     refresh_token: &str,
+    api_key: Option<&str>,
 ) -> Result<ProxyExchangeResponse> {
     let url = format!("{}/{source_id}/refresh", proxy_url());
-    let resp = client()
-        .post(&url)
+    let resp = with_box_key(client().post(&url), api_key)
         .json(&serde_json::json!({ "refresh_token": refresh_token }))
         .send()
         .await
@@ -139,4 +149,13 @@ pub async fn proxy_refresh(
     resp.json::<ProxyExchangeResponse>()
         .await
         .map_err(|e| AuthError::Proxy(format!("invalid response: {e}")))
+}
+
+/// Attach the box's key when it has one. The header name is the contract with
+/// `services/virtues-api/src/routes/oauth.rs::caller_api_key`.
+fn with_box_key(req: reqwest::RequestBuilder, api_key: Option<&str>) -> reqwest::RequestBuilder {
+    match api_key {
+        Some(k) => req.header("X-Virtues-Api-Key", k),
+        None => req,
+    }
 }

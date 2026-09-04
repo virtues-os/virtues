@@ -1,5 +1,13 @@
 <!--
-  AccountGate — the one required step: link a Virtues subscription (the wallet).
+  AccountGate — link a Virtues ACCOUNT. Identity, not billing: since 0017 an
+  account links whether or not a subscription stands behind it, and the
+  Getting Started step this sits in is done when the box holds a key.
+
+  Two doors. "I already have an account" is sign-in and costs nothing. "Create
+  one" goes through Stripe, because atlas creates the account and the
+  subscription in one checkout — so that button is honestly priced. The skip
+  is stated below both, in the accurate words, because the philosophy says it
+  exists for anyone and the accuracy is what makes almost no one take it.
 
   A small state machine (choose → subscribe | login → waiting) over the setup
   endpoints. It owns its own poll loop and calls `onLinked` once the box reports
@@ -79,7 +87,7 @@
 				accountMode = "waiting";
 				startPolling();
 			} else if (data.status === "no_account")
-				accountError = "No Virtues subscription on that email — create a new account instead.";
+				accountError = "No Virtues account on that email yet — create one instead.";
 			else if (data.status === "rate_limited")
 				accountError = "Too many attempts for that email — try again in an hour.";
 		} catch {
@@ -137,6 +145,12 @@
 			>
 				I already have an account
 			</button>
+			<!-- The stated skip. Accurate, and therefore quiet: this is every
+			     reason not to take it, in one sentence. -->
+			<p class="pt-1 text-xs text-foreground-muted">
+				Your server runs without an account. Hosted AI, web search, places, and bank data
+				stay off; a key of your own in Settings covers the first of those, not the rest.
+			</p>
 		</div>
 	{:else if accountMode === "subscribe"}
 		<div class="space-y-4">
@@ -161,7 +175,7 @@
 			<input
 				type="email"
 				bind:value={email}
-				placeholder="Email on your Virtues subscription"
+				placeholder="Email on your Virtues account"
 				class="w-full rounded-lg border border-border bg-surface-elevated/50 px-3.5 py-2.5 text-sm outline-none transition-colors focus:border-foreground-muted"
 			/>
 			<Button type="button" variant="primary" class="w-full justify-center py-2.5" onclick={startLogin}>
