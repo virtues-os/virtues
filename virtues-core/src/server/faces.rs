@@ -120,26 +120,54 @@ fn cors_headers(headers: &mut HeaderMap) {
 }
 
 /// Strict CSP for face documents: same-URL-origin subresources only, no
-/// external hosts. `connect-src 'self'` lets the bridge reach the box; CORS
-/// (absent everywhere but this module) blocks reading anything else.
-const FACE_CSP: &str = "default-src 'none'; script-src 'self' 'unsafe-inline'; \
-     style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; \
-     font-src 'self' data:; connect-src 'self'";
+/// external hosts. The face is hung in `<iframe sandbox="allow-scripts">`,
+/// whose document has an opaque origin — and by CSP spec `'self'` matches
+/// nothing for an opaque origin. WebKit enforces that literally: a CSP of
+/// `script-src 'self'` refuses the face's own `virtues.js`, so the panel
+/// never runs the bridge (Chromium is lenient here, which is how it went
+/// unnoticed). So the box's origin is named explicitly on every directive,
+/// derived from the request's Host header so it stays right on whichever
+/// hostname the box is reached by (`localhost`, `.local`, Tailscale, LAN).
+/// `'self'` is kept for a face loaded top-level. Still no external hosts;
+/// CORS (absent everywhere but this module) blocks reading anything else.
+fn face_csp(req_headers: &HeaderMap) -> String {
+    let host = req_headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let scheme = req_headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+    let origin = format!("{scheme}://{host}");
+    format!(
+        "default-src 'none'; \
+         script-src 'self' {origin} 'unsafe-inline'; \
+         style-src 'self' {origin} 'unsafe-inline'; \
+         img-src 'self' {origin} data: blob:; \
+         font-src 'self' {origin} data:; \
+         connect-src 'self' {origin}"
+    )
+}
 
 /// `GET /face/:applet_id/` and `GET /face/:applet_id/*path` — static files
 /// from the applet's `face/` directory. `virtues.js` / `virtues.css` resolve
 /// from the injected runtime, shadowing any local file of the same name.
 pub async fn face_file_handler(
     Path((applet_id, path)): Path<(String, String)>,
+    req_headers: HeaderMap,
 ) -> Response {
-    serve_face_file(&applet_id, &path).await
+    serve_face_file(&applet_id, &path, &req_headers).await
 }
 
-pub async fn face_index_handler(Path(applet_id): Path<String>) -> Response {
-    serve_face_file(&applet_id, "index.html").await
+pub async fn face_index_handler(
+    Path(applet_id): Path<String>,
+    req_headers: HeaderMap,
+) -> Response {
+    serve_face_file(&applet_id, "index.html", &req_headers).await
 }
 
-async fn serve_face_file(applet_id: &str, raw_path: &str) -> Response {
+async fn serve_face_file(applet_id: &str, raw_path: &str, req_headers: &HeaderMap) -> Response {
     let rel = if raw_path.is_empty() { "index.html" } else { raw_path };
 
     // Injected runtime files shadow local ones.
@@ -187,10 +215,10 @@ async fn serve_face_file(applet_id: &str, raw_path: &str) -> Response {
     );
     cors_headers(&mut headers);
     if mime.starts_with("text/html") {
-        headers.insert(
-            header::CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static(FACE_CSP),
-        );
+        let csp = face_csp(req_headers);
+        if let Ok(v) = HeaderValue::from_str(&csp) {
+            headers.insert(header::CONTENT_SECURITY_POLICY, v);
+        }
     }
     (headers, bytes).into_response()
 }
