@@ -428,7 +428,8 @@
 		/* Fill the pane: the window less the chrome row and the pane's inset.
 		   Nothing above sets a height, so the spread must state its own. */
 		min-height: calc(100dvh - var(--chrome-row-h, 40px) - 2 * var(--pane-inset, 12px) - 2px);
-		background: var(--color-background);
+		/* No ground of its own: the pane's. A page that paints its own
+		   background reads as a different surface from every other page. */
 	}
 	@media (max-width: 900px) {
 		.spread { grid-template-columns: 1fr; }
