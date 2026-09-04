@@ -84,7 +84,10 @@
 		// (`skipOnboarding` keeps its wire name: the flag on the box is still
 		// called onboarding_status, and renaming the protocol is a bigger sweep
 		// than a route.)
-		if (state_ && state_.onboarding_complete === false) {
+		// Release the gate whenever it is holding — by an empty record or by
+		// a status set back to `onboarding` to read the letter again. Keying
+		// this on the record alone left a re-opened letter with no way out.
+		if (state_ && (state_.onboarding_complete === false || state_.onboarding_status === 'onboarding')) {
 			try {
 				await skipOnboarding(true);
 			} catch {
