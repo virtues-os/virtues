@@ -72,7 +72,7 @@
 	const slotDefaults = $derived<Record<string, string>>(res.data?.slots ?? {});
 
 	// The user's pins, kept locally so a pin from this page reflects without a
-	// refetch. Same field/legacy-fallback reading as ModelSettings.
+	// refetch. Same field reading as ModelSettings.
 	let pins = $state<Record<SlotKey, string | null>>({
 		chat: null,
 		lite: null,
@@ -82,8 +82,8 @@
 		const p = profileRes.data;
 		if (!p) return;
 		pins = {
-			chat: p.chat_model_id || p.default_model_id || null,
-			lite: p.lite_model_id || p.background_model_id || null,
+			chat: p.chat_model_id || null,
+			lite: p.lite_model_id || null,
 			coding: p.coding_model_id || null,
 		};
 	});
@@ -91,9 +91,9 @@
 	// The chat-facing slots only. Image never appears here (this list is the
 	// gateway's language models) and Omni is a fixed system slot.
 	type SlotKey = "chat" | "lite" | "coding";
-	const SLOTS: { key: SlotKey; label: string; dbField: string; legacyField?: string }[] = [
-		{ key: "chat", label: "Chat", dbField: "chat_model_id", legacyField: "default_model_id" },
-		{ key: "lite", label: "Lite", dbField: "lite_model_id", legacyField: "background_model_id" },
+	const SLOTS: { key: SlotKey; label: string; dbField: string }[] = [
+		{ key: "chat", label: "Chat", dbField: "chat_model_id" },
+		{ key: "lite", label: "Lite", dbField: "lite_model_id" },
 		{ key: "coding", label: "Coding", dbField: "coding_model_id" },
 	];
 
@@ -103,11 +103,8 @@
 		const previous = pins[slot.key];
 		pins[slot.key] = modelId;
 		saveError = null;
-		// `null` clears the pin — the backend reads that as "follow the
-		// default"; the legacy column is cleared with it so an old value can't
-		// resurrect through the `.or()` fallback (see ModelSettings).
+		// `null` clears the pin — the backend reads that as "follow the default".
 		const body: Record<string, string | null> = { [slot.dbField]: modelId };
-		if (slot.legacyField && modelId === null) body[slot.legacyField] = null;
 		try {
 			await updateAssistantProfile(body);
 		} catch (e) {

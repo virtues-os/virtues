@@ -27,27 +27,27 @@ DELETE FROM wiki_events WHERE id LIKE 'ev_b0%' AND CAST(SUBSTR(id, 5) AS INTEGER
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. WIKI DAYS
 -- ─────────────────────────────────────────────────────────────────────────────
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-11-24', '2025-11-24', 'America/Chicago', 0.48) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-11-25', '2025-11-25', 'America/Chicago', 0.52) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-11-26', '2025-11-26', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-11-27', '2025-11-27', 'America/Chicago', 0.55) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-11-28', '2025-11-28', 'America/Chicago', 0.45) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-11-29', '2025-11-29', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-11-30', '2025-11-30', 'America/Chicago', 0.47) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-01', '2025-12-01', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-02', '2025-12-02', 'America/Chicago', 0.53) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-03', '2025-12-03', 'America/Chicago', 0.48) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-04', '2025-12-04', 'America/Chicago', 0.51) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-05', '2025-12-05', 'America/Chicago', 0.46) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-06', '2025-12-06', 'America/Chicago', 0.54) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-07', '2025-12-07', 'America/Chicago', 0.49) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-08', '2025-12-08', 'America/Chicago', 0.52) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-09', '2025-12-09', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-10', '2025-12-10', 'America/Chicago', 0.44) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-11', '2025-12-11', 'America/Chicago', 0.55) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-12', '2025-12-12', 'America/Chicago', 0.48) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-13', '2025-12-13', 'America/Chicago', 0.52) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-14', '2025-12-14', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-11-24', '2025-11-24', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-11-25', '2025-11-25', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-11-26', '2025-11-26', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-11-27', '2025-11-27', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-11-28', '2025-11-28', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-11-29', '2025-11-29', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-11-30', '2025-11-30', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-01', '2025-12-01', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-02', '2025-12-02', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-03', '2025-12-03', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-04', '2025-12-04', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-05', '2025-12-05', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-06', '2025-12-06', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-07', '2025-12-07', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-08', '2025-12-08', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-09', '2025-12-09', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-10', '2025-12-10', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-11', '2025-12-11', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-12', '2025-12-12', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-13', '2025-12-13', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-14', '2025-12-14', 'America/Chicago') ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. WIKI EVENTS
@@ -2339,31 +2339,31 @@ DELETE FROM wiki_events WHERE id LIKE 'ev_b0%' AND CAST(SUBSTR(id, 5) AS INTEGER
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Week 4: Dec 15-21
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-15', '2025-12-15', 'America/Chicago', 0.48) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-16', '2025-12-16', 'America/Chicago', 0.52) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-17', '2025-12-17', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-18', '2025-12-18', 'America/Chicago', 0.45) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-19', '2025-12-19', 'America/Chicago', 0.53) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-20', '2025-12-20', 'America/Chicago', 0.55) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-21', '2025-12-21', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-15', '2025-12-15', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-16', '2025-12-16', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-17', '2025-12-17', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-18', '2025-12-18', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-19', '2025-12-19', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-20', '2025-12-20', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-21', '2025-12-21', 'America/Chicago') ON CONFLICT DO NOTHING;
 
 -- Week 5: Dec 22-28 (Christmas week)
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-22', '2025-12-22', 'America/Chicago', 0.47) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-23', '2025-12-23', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-24', '2025-12-24', 'America/Chicago', 0.55) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-25', '2025-12-25', 'America/Chicago', 0.58) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-26', '2025-12-26', 'America/Chicago', 0.52) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-27', '2025-12-27', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-28', '2025-12-28', 'America/Chicago', 0.48) ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-22', '2025-12-22', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-23', '2025-12-23', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-24', '2025-12-24', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-25', '2025-12-25', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-26', '2025-12-26', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-27', '2025-12-27', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-28', '2025-12-28', 'America/Chicago') ON CONFLICT DO NOTHING;
 
 -- Week 6: Dec 29 - Jan 4 (New Year's week)
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-29', '2025-12-29', 'America/Chicago', 0.46) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-30', '2025-12-30', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2025-12-31', '2025-12-31', 'America/Chicago', 0.52) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-01', '2026-01-01', 'America/Chicago', 0.42) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-02', '2026-01-02', 'America/Chicago', 0.45) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-03', '2026-01-03', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-04', '2026-01-04', 'America/Chicago', 0.48) ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-29', '2025-12-29', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-30', '2025-12-30', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2025-12-31', '2025-12-31', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-01', '2026-01-01', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-02', '2026-01-02', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-03', '2026-01-03', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-04', '2026-01-04', 'America/Chicago') ON CONFLICT DO NOTHING;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -3363,27 +3363,27 @@ DELETE FROM wiki_events WHERE id LIKE 'ev_b0%' AND CAST(SUBSTR(id, 5) AS INTEGER
 -- ─────────────────────────────────────────────────────────────────────────────
 -- WIKI DAYS
 -- ─────────────────────────────────────────────────────────────────────────────
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-05', '2026-01-05', 'America/Chicago', 0.52) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-06', '2026-01-06', 'America/Chicago', 0.48) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-07', '2026-01-07', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-08', '2026-01-08', 'America/Chicago', 0.45) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-09', '2026-01-09', 'America/Chicago', 0.53) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-10', '2026-01-10', 'America/Chicago', 0.55) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-11', '2026-01-11', 'America/Chicago', 0.47) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-12', '2026-01-12', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-13', '2026-01-13', 'America/Chicago', 0.51) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-14', '2026-01-14', 'America/Chicago', 0.49) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-15', '2026-01-15', 'America/Chicago', 0.54) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-16', '2026-01-16', 'America/Chicago', 0.46) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-17', '2026-01-17', 'America/Chicago', 0.52) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-18', '2026-01-18', 'America/Chicago', 0.58) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-19', '2026-01-19', 'America/Chicago', 0.44) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-20', '2026-01-20', 'America/Chicago', 0.50) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-21', '2026-01-21', 'America/Chicago', 0.48) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-22', '2026-01-22', 'America/Chicago', 0.53) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-23', '2026-01-23', 'America/Chicago', 0.42) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-24', '2026-01-24', 'America/Chicago', 0.56) ON CONFLICT DO NOTHING;
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline) VALUES ('day_2026-01-25', '2026-01-25', 'America/Chicago', 0.49) ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-05', '2026-01-05', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-06', '2026-01-06', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-07', '2026-01-07', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-08', '2026-01-08', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-09', '2026-01-09', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-10', '2026-01-10', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-11', '2026-01-11', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-12', '2026-01-12', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-13', '2026-01-13', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-14', '2026-01-14', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-15', '2026-01-15', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-16', '2026-01-16', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-17', '2026-01-17', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-18', '2026-01-18', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-19', '2026-01-19', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-20', '2026-01-20', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-21', '2026-01-21', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-22', '2026-01-22', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-23', '2026-01-23', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-24', '2026-01-24', 'America/Chicago') ON CONFLICT DO NOTHING;
+INSERT INTO wiki_days (id, date, start_timezone) VALUES ('day_2026-01-25', '2026-01-25', 'America/Chicago') ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- WIKI EVENTS
@@ -5887,25 +5887,25 @@ DELETE FROM wiki_events WHERE id LIKE 'ev_b0%' AND CAST(SUBSTR(id, 5) AS INTEGER
 -- Wiki Days
 -- ─────────────────────────────────────────────────────────────────────────────
 
-INSERT INTO wiki_days (id, date, start_timezone, morning_baseline)
+INSERT INTO wiki_days (id, date, start_timezone)
 VALUES
-('day_2026-01-26', '2026-01-26', 'America/Chicago', 0.48),
-('day_2026-01-27', '2026-01-27', 'America/Chicago', 0.52),
-('day_2026-01-28', '2026-01-28', 'America/Chicago', 0.50),
-('day_2026-01-29', '2026-01-29', 'America/Chicago', 0.45),
-('day_2026-01-30', '2026-01-30', 'America/Chicago', 0.53),
-('day_2026-01-31', '2026-01-31', 'America/Chicago', 0.55),
-('day_2026-02-01', '2026-02-01', 'America/Chicago', 0.47),
-('day_2026-02-02', '2026-02-02', 'America/Chicago', 0.50),
-('day_2026-02-03', '2026-02-03', 'America/Chicago', 0.44),
-('day_2026-02-04', '2026-02-04', 'America/Chicago', 0.51),
-('day_2026-02-05', '2026-02-05', 'America/Chicago', 0.46),
-('day_2026-02-06', '2026-02-06', 'America/Chicago', 0.54),
-('day_2026-02-07', '2026-02-07', 'America/Chicago', 0.58),
-('day_2026-02-08', '2026-02-08', 'America/Chicago', 0.49),
-('day_2026-02-09', '2026-02-09', 'America/Chicago', 0.42),
-('day_2026-02-10', '2026-02-10', 'America/Chicago', 0.50),
-('day_2026-02-11', '2026-02-11', 'America/Chicago', 0.48) ON CONFLICT DO NOTHING;
+('day_2026-01-26', '2026-01-26', 'America/Chicago'),
+('day_2026-01-27', '2026-01-27', 'America/Chicago'),
+('day_2026-01-28', '2026-01-28', 'America/Chicago'),
+('day_2026-01-29', '2026-01-29', 'America/Chicago'),
+('day_2026-01-30', '2026-01-30', 'America/Chicago'),
+('day_2026-01-31', '2026-01-31', 'America/Chicago'),
+('day_2026-02-01', '2026-02-01', 'America/Chicago'),
+('day_2026-02-02', '2026-02-02', 'America/Chicago'),
+('day_2026-02-03', '2026-02-03', 'America/Chicago'),
+('day_2026-02-04', '2026-02-04', 'America/Chicago'),
+('day_2026-02-05', '2026-02-05', 'America/Chicago'),
+('day_2026-02-06', '2026-02-06', 'America/Chicago'),
+('day_2026-02-07', '2026-02-07', 'America/Chicago'),
+('day_2026-02-08', '2026-02-08', 'America/Chicago'),
+('day_2026-02-09', '2026-02-09', 'America/Chicago'),
+('day_2026-02-10', '2026-02-10', 'America/Chicago'),
+('day_2026-02-11', '2026-02-11', 'America/Chicago') ON CONFLICT DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Wiki Events

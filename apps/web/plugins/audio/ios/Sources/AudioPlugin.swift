@@ -2,54 +2,53 @@ import Tauri
 import UIKit
 
 class AudioPlugin: Plugin {
+  /// The one status payload every command resolves. Rust's AudioStatus REQUIRES
+  /// authorized/recording (no serde defaults — a partial payload rejects the
+  /// whole invoke, which is how set_notify shipped broken once), and the Svelte
+  /// screen assigns the whole response to its `audio` state — so omitting the
+  /// quiet fields wipes the quiet-hours UI until the next full load. One
+  /// builder, so no resolve site can drift from the shape.
+  private static func fullStatus() -> [String: Any] {
+    let r = AudioRecorder.shared
+    let quiet = r.quietHours()
+    return [
+      "authorized": r.authorized(),
+      "recording": r.recording,
+      "notify": r.notifyEnabled(),
+      "silentDropped": r.silentDroppedCount(),
+      "quietStart": quiet.start,
+      "quietEnd": quiet.end,
+    ]
+  }
+
   /// Explicit "Enable": prompt for microphone access, then start recording.
   @objc public func enable(_ invoke: Invoke) throws {
-    AudioRecorder.shared.enable { granted in
-      invoke.resolve([
-        "authorized": granted,
-        "recording": AudioRecorder.shared.recording,
-        "notify": AudioRecorder.shared.notifyEnabled(),
-      ])
+    AudioRecorder.shared.enable { _ in
+      invoke.resolve(AudioPlugin.fullStatus())
     }
   }
 
   /// Toggle off / pause: finalize the current chunk and stop.
   @objc public func disable(_ invoke: Invoke) throws {
     AudioRecorder.shared.disable()
-    invoke.resolve([
-      "authorized": AudioRecorder.shared.authorized(),
-      "recording": AudioRecorder.shared.recording,
-      "notify": AudioRecorder.shared.notifyEnabled(),
-    ])
+    invoke.resolve(AudioPlugin.fullStatus())
   }
 
   /// Launch auto-resume: record only if already authorized + left enabled.
   @objc public func resume(_ invoke: Invoke) throws {
     AudioRecorder.shared.resume()
-    invoke.resolve([
-      "authorized": AudioRecorder.shared.authorized(),
-      "recording": AudioRecorder.shared.recording,
-      "notify": AudioRecorder.shared.notifyEnabled(),
-    ])
+    invoke.resolve(AudioPlugin.fullStatus())
   }
 
   @objc public func status(_ invoke: Invoke) throws {
-    let quiet = AudioRecorder.shared.quietHours()
-    invoke.resolve([
-      "authorized": AudioRecorder.shared.authorized(),
-      "recording": AudioRecorder.shared.recording,
-      "notify": AudioRecorder.shared.notifyEnabled(),
-      "silentDropped": AudioRecorder.shared.silentDroppedCount(),
-      "quietStart": quiet.start,
-      "quietEnd": quiet.end,
-    ])
+    invoke.resolve(AudioPlugin.fullStatus())
   }
 
   /// Toggle the "notify me if recording stops" gap-nudge (default on).
   @objc public func setNotify(_ invoke: Invoke) throws {
     let on = (try? invoke.parseArgs(NotifyArgs.self))?.enabled ?? true
     AudioRecorder.shared.setNotifyEnabled(on)
-    invoke.resolve(["notify": on])
+    invoke.resolve(AudioPlugin.fullStatus())
   }
 
   /// Set the quiet-hours window (minutes since local midnight; -1/-1 = off).
@@ -57,15 +56,7 @@ class AudioPlugin: Plugin {
   @objc public func setQuietHours(_ invoke: Invoke) throws {
     let args = (try? invoke.parseArgs(QuietHoursArgs.self))
     AudioRecorder.shared.setQuietHours(start: args?.start ?? -1, end: args?.end ?? -1)
-    // Resolve the same shape as `status` so the Rust side's AudioStatus parses.
-    let quiet = AudioRecorder.shared.quietHours()
-    invoke.resolve([
-      "authorized": AudioRecorder.shared.authorized(),
-      "recording": AudioRecorder.shared.recording,
-      "notify": AudioRecorder.shared.notifyEnabled(),
-      "quietStart": quiet.start,
-      "quietEnd": quiet.end,
-    ])
+    invoke.resolve(AudioPlugin.fullStatus())
   }
 }
 

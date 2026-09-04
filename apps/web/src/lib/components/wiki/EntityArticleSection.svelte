@@ -213,7 +213,6 @@
 	.regime-hint {
 		margin: 0.25rem 0 0;
 		font-size: 0.6875rem;
-		font-style: italic;
 		color: var(--color-foreground-subtle);
 		opacity: 0.85;
 	}
@@ -221,7 +220,6 @@
 	.stub {
 		margin: 0;
 		font-family: var(--font-serif, Georgia, serif);
-		font-style: italic;
 		font-size: 0.9375rem;
 		color: var(--color-foreground-subtle);
 	}

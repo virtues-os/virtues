@@ -26,16 +26,29 @@ use std::sync::{Arc, OnceLock, RwLock};
 use tokio::sync::Notify;
 use virtues_iroh::{
     build_endpoint, iroh_port, serve, AllowPolicy, Endpoint, EndpointId, RelayUrl, SecretKey,
-    StaticAllow,
+    StaticAllow, Watcher,
 };
 
 /// `box_secrets` key holding this box's persistent iroh secret key (hex of the
 /// 32-byte seed) — so the box keeps a stable `EndpointId` across restarts.
 const BOX_IROH_SECRET: &str = "iroh_secret_key";
 
-/// Process-wide "iroh endpoint is bound and homed on the relay" flag. Read by
-/// pairing to advertise the box's reach ticket only when it's actually up.
+/// Process-wide "the iroh endpoint is bound" flag — LAN-direct reach works.
+/// Says nothing about the relay; see [`RELAY_HOMED`].
 static ENDPOINT_UP: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+/// Process-wide "the relay leg is connected right now" flag, driven by
+/// `Endpoint::home_relay_status()` for the life of each bind.
+///
+/// Bound and homed are different facts and this used to conflate them: the
+/// single flag was set the instant `build_endpoint` returned and cleared only
+/// at the next rebind, so it meant "bind returned" while every reader asked it
+/// "is remote reach working?" — and `remote_access_step`'s own comment already
+/// defined the answer as "bound AND homed on our relay". Two consequences,
+/// both silent: right after boot a box claimed remote reach it did not yet
+/// have, and **if the relay host went away the box went on reporting itself
+/// reachable forever**, which is what made a single-relay outage invisible
+/// from the fleet side.
+static RELAY_HOMED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 /// Set when `maybe_spawn` gives up (secret load or endpoint bind failed) so
 /// `/api/setup/state` can report an honest failure instead of leaving the
 /// `remote_access` step reading "Connecting…" forever — the endpoint task
@@ -77,14 +90,32 @@ fn endpoint_up_flag() -> Arc<AtomicBool> {
     ENDPOINT_UP.get_or_init(|| Arc::new(AtomicBool::new(false))).clone()
 }
 
-/// Whether the box's iroh endpoint is bound (and reachable). Kept under the old
-/// name so pairing call sites are unchanged; Step 7 renames to `endpoint_up`.
-pub fn is_relay_registered() -> bool {
-    ENDPOINT_UP.get().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false)
+fn relay_homed_flag() -> Arc<AtomicBool> {
+    RELAY_HOMED.get_or_init(|| Arc::new(AtomicBool::new(false))).clone()
 }
 
-/// The reason `maybe_spawn` gave up, if it did. `None` while still starting up
-/// (or once bound) — `is_relay_registered()` distinguishes those two.
+/// Whether this box is reachable the way its own configuration promises:
+/// bound, and — when a relay is configured — actually homed on it.
+///
+/// A deliberately relay-less box (reach switched off, or a dev checkout) is
+/// reachable once bound, because LAN-direct is the whole promise there; it must
+/// not read as "still connecting" forever. A box that *has* a relay is only
+/// reachable-from-anywhere once the relay leg is up, and stops being so the
+/// moment that leg drops.
+pub fn is_relay_registered() -> bool {
+    let bound = ENDPOINT_UP.get().is_some_and(|f| f.load(Ordering::Relaxed));
+    if !bound {
+        return false;
+    }
+    if box_relay_url().is_none() {
+        return true; // LAN-direct only, by configuration — bound is the promise
+    }
+    RELAY_HOMED.get().is_some_and(|f| f.load(Ordering::Relaxed))
+}
+
+/// The reason the reach loop last failed, if it has not since recovered.
+/// `None` while still starting up, and again once a bind succeeds —
+/// [`is_relay_registered`] distinguishes those two.
 pub fn endpoint_error() -> Option<&'static str> {
     ENDPOINT_ERROR.get().and_then(|c| c.read().ok().and_then(|g| *g))
 }
@@ -93,6 +124,22 @@ fn set_endpoint_error(msg: &'static str) {
     let cell = ENDPOINT_ERROR.get_or_init(|| RwLock::new(None));
     if let Ok(mut g) = cell.write() {
         *g = Some(msg);
+    }
+}
+
+/// Clear the last failure after a bind succeeds.
+///
+/// Without this the field was a one-way latch on a path that RETRIES: the bind
+/// loop backs off and tries again, so the very transient it exists to survive
+/// — losing the race with the OS releasing the pinned UDP port — left
+/// `/api/setup/state` reporting "Couldn't start reach networking on this box"
+/// for the life of the process, while reach worked. A status surface built to
+/// stop onboarding from lying must not itself latch a stale failure.
+fn clear_endpoint_error() {
+    if let Some(cell) = ENDPOINT_ERROR.get() {
+        if let Ok(mut g) = cell.write() {
+            *g = None;
+        }
     }
 }
 
@@ -152,8 +199,11 @@ pub struct ReachReport {
     pub endpoint_id: Option<String>,
     /// The stored relay URL, or `None` when LAN-only (unclaimed / atlas down).
     pub relay_url: Option<String>,
-    /// How many device keys are currently on the allowlist.
-    pub allowlisted_devices: usize,
+    /// How many device keys are currently on the allowlist, or `None` when the
+    /// query failed. Optional like every other leg: a bare `0` here reads as
+    /// "no devices paired", which is a different and much more alarming
+    /// statement than "we could not check".
+    pub allowlisted_devices: Option<usize>,
 }
 
 /// Read each reach leg's actual state for `virtues doctor`.
@@ -166,7 +216,7 @@ pub async fn reach_report(db: &PgPool) -> ReachReport {
             db_reachable: false,
             endpoint_id: None,
             relay_url: None,
-            allowlisted_devices: 0,
+            allowlisted_devices: None,
         };
     }
     ReachReport {
@@ -177,12 +227,17 @@ pub async fn reach_report(db: &PgPool) -> ReachReport {
             .ok()
             .flatten()
             .map(|rc| rc.relay_url),
-        allowlisted_devices: allowed_ids(db).await.len(),
+        allowlisted_devices: allowed_ids(db).await.ok().map(|ids| ids.len()),
     }
 }
 
 /// How often the background reconcile runs to catch drift (15 min).
 const RECONCILE_INTERVAL_SECS: u64 = 900;
+
+/// How long the pre-bind relay-config self-heal may spend talking to atlas.
+/// Short on purpose: being reachable now on the LAN beats being reachable
+/// remotely a minute later, and the reconcile retries the same call forever.
+const RELAY_CONFIG_BIND_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Spawn the iroh reach subsystem: bind the endpoint and serve `app` over it.
 /// `app` is the box's fully-built axum `Router` (cloned from the one served on
@@ -209,21 +264,10 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
                 return;
             }
         };
-        // Tell atlas our EndpointId BEFORE binding. The relay authorizes by
-        // endpoint id (atlas `relay_authorize` joins `iroh_endpoints` against an
-        // active subscription), and iroh's relay actor starts connecting the
-        // instant the endpoint binds — so registering afterwards loses a race it
-        // cannot win. Measured on hardware 2026-08-12, on the very first link:
-        // bind at :50.598, six "the relay denied our authentication" at
-        // :53.8–:55.6, and our registration only at :55.6 — by which time iroh
-        // had exhausted its initial retries and the box sat relay-less until a
-        // restart. It bit exactly once per box, on the first link, which is the
-        // moment the whole account step exists to make work.
-        //
-        // The id is derivable without binding (it is the secret's public half),
-        // so there is no chicken-and-egg here — only an ordering mistake.
+        // The EndpointId is the secret's public half, so it is known without
+        // binding. Set it now: pairing advertises this box's reach ticket from
+        // it, and should not have to wait for the endpoint to come up.
         set_box_endpoint_id(&secret.public().to_string());
-        report_endpoints(&db).await;
 
         let mut bind_backoff: u64 = 1;
         loop {
@@ -257,6 +301,34 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
             let eid = endpoint.id().to_string();
             set_box_endpoint_id(&eid);
             endpoint_up_flag().store(true, Ordering::Relaxed);
+            clear_endpoint_error();
+
+            // Track the relay leg for the life of this bind. iroh already
+            // maintains the connection and reports it; we only mirror it into a
+            // flag the HTTP surfaces can read synchronously. The transition is
+            // logged both ways because "the relay went away and came back" is
+            // otherwise invisible in the journal — and a relay outage is the
+            // one failure this box cannot fix by itself.
+            let homed_task = {
+                let mut status = endpoint.home_relay_status();
+                tokio::spawn(async move {
+                    loop {
+                        let connected = status.get().iter().any(|s| s.is_connected());
+                        if relay_homed_flag().swap(connected, Ordering::Relaxed) != connected {
+                            if connected {
+                                tracing::info!("iroh: homed on the relay — reachable from anywhere");
+                            } else {
+                                tracing::warn!("iroh: relay leg lost — remote reach is down until it returns (LAN-direct is unaffected)");
+                            }
+                        }
+                        // Err = the endpoint dropped its watchable, i.e. this
+                        // bind is over; the teardown below owns the flag then.
+                        if status.updated().await.is_err() {
+                            break;
+                        }
+                    }
+                })
+            };
             match &relay_url {
                 Some(u) => tracing::info!(endpoint_id = %eid, relay = %u, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId via our relay (+ LAN-direct)"),
                 None => tracing::info!(endpoint_id = %eid, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId LAN-direct (no relay)"),
@@ -271,10 +343,6 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
             let ep_handle = endpoint.clone();
 
             let allow = load_allowlist(&db).await;
-            // Register this box + its paired devices with atlas BEFORE homing on the
-            // relay, so the relay's active-sub gate already recognises the box when it
-            // connects (best-effort; the periodic reconcile below retries).
-            report_endpoints(&db).await;
             // Serve the existing axum app over iroh. Hold the router handle until a
             // rebind (dropping it aborts the accept loop).
             let router = serve(endpoint, app.clone(), allow);
@@ -308,6 +376,8 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
             // Tear down for rebind. The next bind reuses the same pinned UDP port,
             // so the endpoint must be closed (not just dropped) to release it.
             endpoint_up_flag().store(false, Ordering::Relaxed);
+            relay_homed_flag().store(false, Ordering::Relaxed);
+            homed_task.abort();
             tracing::info!("iroh: relay config changed — rebinding endpoint");
             router.shutdown().await.ok();
             ep_handle.close().await;
@@ -352,13 +422,32 @@ fn relay_disabled_by_env(raw: &str) -> bool {
 /// on a box install only — [`DEFAULT_RELAY_URL`], so a box that never signs
 /// in is still reachable from its first boot. `None` → relay-less.
 ///
+/// **Stored beats env, and that order is deliberate** — Settings writes the
+/// off word into the stored slot so the owner's choice survives an upgrade
+/// that rewrites `/etc/virtues/env`. The consequence to know before debugging
+/// it: on a box that has ever been linked (so a stored config exists),
+/// `VIRTUES_RELAY_URL` is never consulted, and setting it there — including
+/// setting it to `off` — does nothing at all, silently. The env var is the
+/// override for a box with no stored config; the switch for every other box is
+/// `PUT /api/network/relay`.
+///
 /// The default is gated on the box-install marker: a dev checkout on a
 /// laptop must not home on the production relay just because someone ran
 /// `make dev` (same guard, same reasoning as the sudo re-exec in main.rs).
 async fn resolve_relay_url(db: &PgPool) -> Option<RelayUrl> {
     // Self-heal a missing relay config (box claimed before the relay existed, or
-    // a claim-time fetch that 503'd) before we bind.
-    ensure_relay_config(db).await;
+    // a claim-time fetch that 503'd) before we bind — but on a BUDGET. This
+    // call reaches atlas over HTTP with a 10s connect / 60s request timeout,
+    // and it sits on the path to binding, inside the bind-retry loop: an
+    // unreachable atlas therefore delayed the box becoming reachable at all,
+    // which is precisely backwards. Bind LAN-only now; the 15-minute reconcile
+    // runs the same self-heal and calls `request_rebind` when it lands.
+    if tokio::time::timeout(RELAY_CONFIG_BIND_BUDGET, ensure_relay_config(db))
+        .await
+        .is_err()
+    {
+        tracing::warn!("iroh: relay-config self-heal timed out — binding without it");
+    }
     if let Ok(Some(rc)) = crate::virtues_api::relay::load(db).await {
         if relay_disabled_by_env(&rc.relay_url) {
             // The stored config can also carry the off word (Settings writes
@@ -446,22 +535,26 @@ static ALLOW: OnceLock<StaticAllow> = OnceLock::new();
 /// Non-revoked device EndpointIds from the DB, plus any `VIRTUES_IROH_ALLOW`
 /// (dev/manual). The box's own EndpointId is implicitly trusted (it never dials
 /// itself) so it's not included.
-async fn allowed_ids(db: &PgPool) -> Vec<EndpointId> {
-    let mut ids = Vec::new();
-    let rows: Result<Vec<(String,)>, _> = sqlx::query_as(
+///
+/// **Returns `Err` rather than an empty list when the query fails.** This used
+/// to log a warning and hand back whatever it had accumulated — which is
+/// nothing — and every caller then installed that empty set as the live
+/// allowlist. One transient database error therefore refused *every* paired
+/// device at the transport (`HttpHandler::accept` closes a non-allowlisted
+/// connection before any HTTP) until the next reconcile 15 minutes later. The
+/// box was up, the relay was up, and nothing anywhere said why. Absence and
+/// failure are different answers and only the caller can tell them apart.
+async fn allowed_ids(db: &PgPool) -> Result<Vec<EndpointId>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT node_id FROM app_device WHERE node_id IS NOT NULL AND revoked_at IS NULL",
     )
     .fetch_all(db)
-    .await;
-    match rows {
-        Ok(rows) => {
-            for (nid,) in rows {
-                if let Ok(id) = EndpointId::from_str(nid.trim()) {
-                    ids.push(id);
-                }
-            }
+    .await?;
+    let mut ids = Vec::with_capacity(rows.len());
+    for (nid,) in rows {
+        if let Ok(id) = EndpointId::from_str(nid.trim()) {
+            ids.push(id);
         }
-        Err(e) => tracing::warn!(error = %e, "iroh allowlist DB query failed"),
     }
     if let Ok(raw) = std::env::var("VIRTUES_IROH_ALLOW") {
         for tok in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -471,47 +564,27 @@ async fn allowed_ids(db: &PgPool) -> Vec<EndpointId> {
             }
         }
     }
-    ids
+    Ok(ids)
 }
 
 /// Build + install the live allowlist for `serve`.
+///
+/// A failed query leaves the previous set in place: on a rebind that is the
+/// working allowlist, and on a first bind it is empty either way. Never
+/// replace a good set with the result of a query that did not run.
 async fn load_allowlist(db: &PgPool) -> Arc<dyn AllowPolicy> {
-    let ids = allowed_ids(db).await;
-    tracing::info!(count = ids.len(), "iroh allowlist loaded");
     let allow = ALLOW.get_or_init(StaticAllow::default).clone();
-    allow.replace(ids);
+    match allowed_ids(db).await {
+        Ok(ids) => {
+            tracing::info!(count = ids.len(), "iroh allowlist loaded");
+            allow.replace(ids);
+        }
+        Err(e) => tracing::error!(
+            error = %e,
+            "iroh allowlist query failed — binding with the last known allowlist"
+        ),
+    }
     Arc::new(allow)
-}
-
-/// Report this box's EndpointId + its paired devices' EndpointIds to atlas.
-/// Since the relay opened (open-relay-plan, 2026-08-31) nothing gates on this
-/// registry — the `/relay/authorize` callout it fed is deleted — so it is an
-/// informational fleet map, kept because shipped boxes call it. Best-effort.
-pub async fn report_endpoints(db: &PgPool) {
-    report_endpoints_with(db, &allowed_ids(db).await).await;
-}
-
-/// As [`report_endpoints`], but reusing an allowlist already read from the DB so
-/// callers that just fetched it (e.g. [`after_pairing_change`]) don't query twice.
-async fn report_endpoints_with(db: &PgPool, device_ids: &[EndpointId]) {
-    let Some(box_id) = box_endpoint_id() else { return };
-    let Ok(Some(api_key)) = crate::virtues_api::renew::read_api_key(db).await else { return };
-    let mut endpoint_ids = vec![box_id];
-    for id in device_ids {
-        endpoint_ids.push(id.to_string());
-    }
-    let http = crate::http_client::virtues_api_client();
-    let atlas = crate::virtues_api::atlas_url();
-    let resp = http
-        .post(format!("{}/iroh/register", atlas.trim_end_matches('/')))
-        .json(&serde_json::json!({ "api_key": api_key, "endpoint_ids": endpoint_ids }))
-        .send()
-        .await;
-    match resp {
-        Ok(r) if r.status().is_success() => tracing::debug!("iroh endpoints registered with atlas"),
-        Ok(r) => tracing::debug!(status = %r.status(), "iroh endpoint register non-success"),
-        Err(e) => tracing::debug!(error = %e, "iroh endpoint register skipped"),
-    }
 }
 
 /// Fire-and-forget reconcile after a pairing or revocation. Non-blocking so the
@@ -527,23 +600,68 @@ pub fn after_pairing_change(db: PgPool) {
 /// revocation:
 ///   1. relay config present (self-heal a late / failed claim-time fetch)
 ///   2. iroh allowlist == non-revoked device keys (hot-swapped into `serve`)
-///   3. atlas knows our box + device EndpointIds (the relay active-sub gate)
-///   4. model files present (health signal only — the installer owns fetching)
+///   3. model files present (health signal only — the installer owns fetching)
 pub async fn reconcile(db: &PgPool) {
     ensure_relay_config(db).await;
 
-    // Read the allowlist once, use it for BOTH the local hot-swap and the atlas
-    // report (same set — no reason to query twice).
-    let ids = allowed_ids(db).await;
-    if let Some(allow) = ALLOW.get() {
-        tracing::debug!(count = ids.len(), "iroh allowlist refreshed");
-        allow.replace(ids.clone());
+    match allowed_ids(db).await {
+        Ok(ids) => {
+            if let Some(allow) = ALLOW.get() {
+                tracing::debug!(count = ids.len(), "iroh allowlist refreshed");
+                allow.replace(ids);
+            }
+        }
+        // Keep serving the live allowlist. Replacing it with an empty set here
+        // is what locked whole fleets out for a reconcile interval.
+        Err(e) => tracing::error!(
+            error = %e,
+            "iroh allowlist query failed — keeping the live allowlist"
+        ),
     }
-    report_endpoints_with(db, &ids).await;
 
     let report = crate::inference_report::resolution_report();
     let missing = report.missing();
     if !missing.is_empty() {
         tracing::warn!(?missing, "reconcile: model files missing — re-run the installer to fetch");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A database error must reach the caller, not arrive disguised as "no
+    /// devices are paired". Every installer of the allowlist branches on this
+    /// distinction, and the empty-list answer refused the whole fleet at the
+    /// transport for a reconcile interval.
+    ///
+    /// The failure is induced by closing the pool, which is the cheapest thing
+    /// that makes a real query fail for a real reason.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn allowlist_query_failure_is_not_an_empty_allowlist(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, node_id) \
+             VALUES ('dev_alw1', $1, 'desktop_app', 'Test', \
+                     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .execute(&pool)
+        .await
+        .expect("seed a paired device");
+
+        let live = allowed_ids(&pool).await.expect("query succeeds while open");
+        assert_eq!(live.len(), 1, "the seeded device is on the allowlist");
+
+        pool.close().await;
+
+        match allowed_ids(&pool).await {
+            Err(_) => {}
+            Ok(ids) => panic!(
+                "a failed query returned Ok({}) — the caller cannot tell this \
+                 from a box with no paired devices, and installs it as the \
+                 live allowlist",
+                ids.len()
+            ),
+        }
     }
 }

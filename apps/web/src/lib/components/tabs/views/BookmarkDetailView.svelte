@@ -286,9 +286,7 @@
 	.note-label {
 		display: block;
 		margin-bottom: 0.4rem;
-		font-size: 0.6875rem;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
+		font-size: 0.75rem;
 		color: var(--color-foreground-subtle);
 	}
 	.note-input {
@@ -375,13 +373,14 @@
 	.block {
 		margin-top: 2rem;
 	}
+	/* Was 11px uppercase letterspaced in the lightest ink — faux small caps in
+	   a serif that has no small-cap cut. Matches `.settings-label` now. */
 	.block h2 {
 		margin: 0 0 0.75rem;
-		font-size: 0.6875rem;
+		font-size: 1rem;
 		font-weight: 400;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-		color: var(--color-foreground-subtle);
+		line-height: 1.3;
+		color: var(--color-foreground);
 	}
 	/* A hairline is the whole separation between their words and ours. */
 	.block.machine {

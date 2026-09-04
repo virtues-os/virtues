@@ -27,9 +27,13 @@ sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "chrono", "js
 # Without a roots feature the trust store is EMPTY and every TLS handshake
 # fails with "error sending request for url". We bake the webpki (Mozilla)
 # roots rather than relying on the OS store so the appliance works even
-# without `ca-certificates` installed. `-no-provider` because the process
-# installs the ring CryptoProvider once at startup (see core `main.rs`).
+# without `ca-certificates` installed. `-no-provider` keeps the crypto
+# backend unpinned; auth::proxy installs ring itself before building a
+# client (rustls below), because this crate is linked into standalone
+# applet binaries whose `main` installs nothing — the `credential_refresh`
+# cron panicked "No provider set" hourly for six weeks on that assumption.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider", "rustls-tls-webpki-roots-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 # Async + utilities
 tokio = { version = "1.40", features = ["full"] }

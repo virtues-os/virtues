@@ -266,6 +266,19 @@
 						</div>
 					</div>
 				</section>
+
+				<!-- The letter's permanent home. Getting-started retires; this
+				     page doesn't — without one quiet door the letter's only
+				     in-app link dies with the checklist that carried it. -->
+				<section>
+					<h2 class="settings-label">Why this exists</h2>
+					<div class="fields">
+						<div class="field">
+							<a class="letter-link" href="/founders-letter">The founder's letter →</a>
+							<span class="field-hint">The letter that opened the app, kept where you can reread it.</span>
+						</div>
+					</div>
+				</section>
 			</div>
 		{/if}
 </Page>
@@ -276,6 +289,18 @@
 		display: flex;
 		flex-direction: column;
 		gap: 16px;
+	}
+
+	.letter-link {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 15px;
+		color: var(--color-foreground);
+		text-decoration: none;
+		width: fit-content;
+	}
+
+	.letter-link:hover {
+		color: var(--color-primary);
 	}
 
 	.field {

@@ -11,6 +11,7 @@ use tracing::info;
 const DEMO_DAY_SQL: &str = include_str!("../../seeds/demo_day.sql");
 const DEMO_NARRATIVE_SQL: &str = include_str!("../../seeds/demo_narrative.sql");
 const DEMO_BOOKMARKS_SQL: &str = include_str!("../../seeds/demo_bookmarks.sql");
+const DEMO_REANCHOR_SQL: &str = include_str!("../../seeds/demo_reanchor.sql");
 
 /// Seed demo data (people, places, orgs, events, messages, health, etc.).
 /// Idempotent — every INSERT ends with ON CONFLICT DO NOTHING.
@@ -29,6 +30,15 @@ pub async fn seed_demo_data(db: &Database) -> Result<()> {
     // image pass, tombstoned-but-kept).
     info!("🔖 Seeding bookmarks...");
     sqlx::raw_sql(DEMO_BOOKMARKS_SQL).execute(db.pool()).await?;
+
+    // MUST BE LAST. The three files above are written with absolute dates
+    // ending 2026-02-14; this walks the whole life forward so the instrumented
+    // day lands on today. Without it a box seeded after about February opens on
+    // an empty Home — the page renders the literal current date and has no
+    // fallback to the newest day with data. Idempotent: the anchor comes out of
+    // the data, so a second run moves nothing.
+    info!("📅 Re-anchoring demo data onto today...");
+    sqlx::raw_sql(DEMO_REANCHOR_SQL).execute(db.pool()).await?;
 
     info!("✅ Demo data seeded successfully");
     Ok(())

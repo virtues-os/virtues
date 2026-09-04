@@ -49,6 +49,10 @@ public final class AudioRecorder: NSObject {
   private let enabledKey = "virtues.audio.enabled"
   private let targetSampleRate = 16000.0
   private let targetBitRate = 24000  // ~24 kbps mono AAC
+  // virtues_enqueue back-pressure code (reach ffi.rs): the outbox refused the
+  // row for capacity — keep the file, and expect the same answer until acks
+  // free space.
+  private let rcOutboxCapacity: Int32 = -5
 
   // Gap-nudge: notify the user if recording is meant to be on but has been silently
   // down for a while (the cases the watchdog can't self-heal — app killed, exotic
@@ -204,9 +208,21 @@ public final class AudioRecorder: NSObject {
   public func disable() {
     cachedEnabled = false
     UserDefaults.standard.set(false, forKey: enabledKey)
-    stopWatchdog()
     virtues_location_audio_state(0)
-    q.async { [weak self] in self?.stopEngine(finalize: true) }
+    // stopWatchdog runs on q: `watchdog` is written by startWatchdog on q (via
+    // startEngine), and stopping it from the caller's thread (Tauri's ipc
+    // queue) is an unsynchronized ARC assignment race. A tick that fires
+    // before this block lands no-ops — cachedEnabled is already false.
+    q.async { [weak self] in
+      guard let self = self else { return }
+      self.stopWatchdog()
+      self.stopEngine(finalize: true)
+      // Re-assert state 0 now the engine is provably down: an arm block that
+      // interleaved AHEAD of this one pushed state 2 after disable's
+      // synchronous 0, and stopEngine pushes nothing — location would be left
+      // believing audio is healthy while it is off.
+      virtues_location_audio_state(0)
+    }
   }
 
   public func resume() {
@@ -332,7 +348,14 @@ public final class AudioRecorder: NSObject {
     }
     q.async { [weak self] in
       guard let self = self else { return }
-      if !self.recording {
+      // Re-check the desire flag ON q: a tick can pass ensureRecording's guard
+      // on main, then disable() clears the flag and enqueues its stop block
+      // ahead of this one — without this check the stale arm restarts the
+      // engine after the user said stop, and nothing ever stops it again
+      // (ensureRecording bails on the flag without tearing down). The q block
+      // that ran disable's stop has acquired the flag write, so this read is
+      // ordered.
+      if self.cachedEnabled, !self.recording {
         self.startEngine(reason: reason)
       }
       if bg != .invalid { UIApplication.shared.endBackgroundTask(bg); bg = .invalid }
@@ -351,8 +374,31 @@ public final class AudioRecorder: NSObject {
       if engine.isRunning { engine.stop() }
       if tapInstalled { input.removeTap(onBus: 0); tapInstalled = false }
       let hw = input.inputFormat(forBus: 0)
+      // A phone call (or any exclusive owner of the mic) can leave the input
+      // node at 0 Hz/0 ch even after setActive(true) succeeds — .mixWithOthers
+      // activates fine mid-call. installTap with that format throws an ObjC
+      // exception no Swift catch can see → SIGABRT (the 1.2.14 field crash).
+      // Guarded BEFORE hwFormat is stored so a straggler tap callback can
+      // never divide by a 0 Hz rate in process().
+      guard hw.sampleRate > 0, hw.channelCount > 0 else {
+        NSLog("[Audio] arm failed (%@): unusable input format %.0fHz/%dch — will retry on next wake/foreground",
+              reason, hw.sampleRate, hw.channelCount)
+        bailArm()
+        return
+      }
+      // A nil converter is the sibling wedge: buffers would flow and stamp the
+      // health signals while zero bytes ever get written, invisible to the
+      // watchdog. Logged apart from the format case — it arrives with a
+      // healthy-looking format, and a shared line would read as a format
+      // problem that does not exist.
+      guard let conv = AVAudioConverter(from: hw, to: targetFormat) else {
+        NSLog("[Audio] arm failed (%@): converter init failed for %.0fHz/%dch — will retry on next wake/foreground",
+              reason, hw.sampleRate, hw.channelCount)
+        bailArm()
+        return
+      }
       hwFormat = hw
-      converter = AVAudioConverter(from: hw, to: targetFormat)
+      converter = conv
       input.installTap(onBus: 0, bufferSize: 4096, format: hw) { [weak self] buf, _ in
         self?.process(buf)
       }
@@ -371,8 +417,20 @@ public final class AudioRecorder: NSObject {
     } catch {
       NSLog("[Audio] arm failed (%@): %@ — will retry on next wake/foreground",
             reason, error.localizedDescription)
-      recording = false
-      virtues_location_audio_state(1)
+      bailArm()
+    }
+  }
+
+  /// Shared exit for an arm attempt that cannot proceed (unusable format,
+  /// converter failure, configure/start throw). Mid-call a relaunched process
+  /// has no .began hold (and foreground clears any hold), so without one the
+  /// watchdog spins 5s bails against the call — match the .began cadence for
+  /// the call's remainder instead.
+  private func bailArm() {
+    recording = false
+    virtues_location_audio_state(1)
+    if callActive() {
+      interruptionHoldUntil = Date().addingTimeInterval(interruptedRetryInterval)
     }
   }
 
@@ -443,9 +501,27 @@ public final class AudioRecorder: NSObject {
     ]
     outFile = try AVAudioFile(forWriting: url, settings: settings,
                               commonFormat: .pcmFormatFloat32, interleaved: false)
+    excludeFromBackup(url)
     chunkStart = Date()
     framesInChunk = 0
     sumSq = 0; sampleCount = 0; peak = 0
+  }
+
+  /// Chunks outlive their enqueue by days when the outbox is at capacity
+  /// (rc -5 keeps them for the sweep), and Documents rides iCloud/device
+  /// backups by default — raw room audio must not reach a backup. Same
+  /// posture as the outbox dir's exclusion in ReachPlugin. Best-effort, but
+  /// a failure is logged: a silent one would put audio back in backups.
+  private func excludeFromBackup(_ url: URL) {
+    var u = url
+    var vals = URLResourceValues()
+    vals.isExcludedFromBackup = true
+    do {
+      try u.setResourceValues(vals)
+    } catch {
+      NSLog("[Audio] backup exclusion failed for %@: %@",
+            url.lastPathComponent, error.localizedDescription)
+    }
   }
 
   /// Called on the realtime tap thread for every input buffer.
@@ -490,6 +566,10 @@ public final class AudioRecorder: NSObject {
     if outFile == nil { try? openChunk() }
     guard let converter = converter else { return }
     let ratio = targetSampleRate / (hwFormat?.sampleRate ?? targetSampleRate)
+    // A 0 Hz hwFormat would make this infinite and the AVAudioFrameCount cast
+    // below traps on non-finite doubles. The arm guard keeps 0 Hz out of
+    // hwFormat; this covers any straggler buffer racing a teardown.
+    guard ratio.isFinite, ratio > 0 else { return }
     let cap = AVAudioFrameCount(Double(input.frameLength) * ratio) + 32
     guard let out = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: cap) else { return }
     var err: NSError?
@@ -550,9 +630,14 @@ public final class AudioRecorder: NSObject {
     }
   }
 
+  /// Returns the outbox rc (0 = taken, rcOutboxCapacity = refused for space,
+  /// other negatives = broken) so the orphan sweep can stop on a deterministic
+  /// refusal; 0 when the chunk was dropped as worthless, -1 when our own
+  /// serialization failed (file kept). rotate() ignores the value.
+  @discardableResult
   private func finalizeAndEnqueue(
     url: URL, start: Date, end: Date, avgDb: Float, silent: Bool
-  ) {
+  ) -> Int32 {
     // NO blanket `defer { removeItem }` here. Every other stream this app
     // collects re-reads a source that persists — chat.db, HealthKit, Contacts —
     // so a failed handoff costs a retry. Audio's source IS this file. Deleting
@@ -564,7 +649,7 @@ public final class AudioRecorder: NSObject {
       // Worthless: nothing recoverable in a truncated or unreadable husk.
       NSLog("[Audio] chunk too small / unreadable, dropping")
       try? FileManager.default.removeItem(at: url)
-      return
+      return 0
     }
     var rec: [String: Any] = [
       "id": UUID().uuidString,
@@ -590,19 +675,20 @@ public final class AudioRecorder: NSObject {
       // Our own encoding bug, not the file's fault — keep the audio. The sweep
       // will retry it, and its age cap eventually bounds the damage.
       NSLog("[Audio] chunk failed to serialize — KEPT at %@", url.lastPathComponent)
-      return
+      return -1
     }
     let rc = "microphone".withCString { s in str.withCString { j in virtues_enqueue(s, j) } }
     NSLog("[Audio] enqueued chunk %d bytes, avg=%.0fdB silent=%@ rc=%d",
           data.count, avgDb, silent ? "y (metadata-only)" : "n", rc)
     guard rc == 0 else {
-      // The outbox did NOT take it (uninitialized, disk full, SQLite error).
-      // Keeping the file is the whole point: the outbox is durable once a row
-      // lands, so the only unrecoverable window is right here.
+      // The outbox did NOT take it (capacity, uninitialized, disk full, SQLite
+      // error). Keeping the file is the whole point: the outbox is durable once
+      // a row lands, so the only unrecoverable window is right here.
       NSLog("[Audio] enqueue failed rc=%d — chunk KEPT at %@", rc, url.lastPathComponent)
-      return
+      return rc
     }
     try? FileManager.default.removeItem(at: url)
+    return 0
   }
 
   /// Re-offer chunks that a previous run wrote but could not hand to the outbox.
@@ -642,8 +728,25 @@ public final class AudioRecorder: NSObject {
       }
       let end = modified
       let start = end.addingTimeInterval(-chunkSeconds)
+      excludeFromBackup(url)  // legacy orphans predate creation-time flagging
       NSLog("[Audio] retrying orphan chunk %@", url.lastPathComponent)
-      finalizeAndEnqueue(url: url, start: start, end: end, avgDb: -50, silent: false)
+      // Pool per chunk: this loop runs inside ONE dispatch block (startEngine
+      // on q, under armEngine's bg-task assertion), and the ~2.4MB of
+      // base64/JSON temporaries per chunk otherwise accumulate for the whole
+      // sweep — a serial queue's default pool drains at thread idle, not per
+      // block. After a long outbox outage that is jetsam bait at exactly the
+      // moment the background memory limit is tightest.
+      let rc = autoreleasepool {
+        finalizeAndEnqueue(url: url, start: start, end: end, avgDb: -50, silent: false)
+      }
+      // Capacity is a property of the queue, not the chunk: every later orphan
+      // in this pass gets the same refusal, so stop paying the read + base64
+      // for guaranteed no's. The next arm retries; the age cap still bounds
+      // the backlog.
+      if rc == rcOutboxCapacity {
+        NSLog("[Audio] outbox at capacity — deferring remaining orphan retries to next arm")
+        break
+      }
     }
   }
 

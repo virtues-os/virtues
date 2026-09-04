@@ -6,6 +6,7 @@
 -->
 
 <script lang="ts">
+	import { untrack } from "svelte";
 	import type { PersonPage as PersonPageType } from "$lib/wiki/types";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
 	import SubjectBacklinks from "./SubjectBacklinks.svelte";
@@ -50,13 +51,56 @@
 		)
 	);
 	const hasAbout = $derived(
-		Boolean(page.location || page.company || page.role || page.birthday)
+		Boolean(page.location || page.company || page.role || page.birthday || page.diedOn)
 	);
+
+	/** Died, at the precision the person gave — never more exact than they said. */
+	function formatDeath(date: Date, precision?: string): string {
+		if (precision === "day")
+			return date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+		if (precision === "month")
+			return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+		return String(date.getFullYear());
+	}
 
 	async function saveAliases(next: string[]) {
 		const saved = await updatePerson(page.id, { aliases: next });
 		if (!saved) throw new Error("Could not save aliases");
 	}
+
+	// ── the bond ──────────────────────────────────────────────────────────
+	// The one AUTHORED line on this page: what this person means, in the
+	// owner's words. Everything else here is observed; this is the field the
+	// doctrine says only the person can write ("recency says who is around;
+	// bonds say who matters"). Rendered above every stat, edited in place.
+	// Seeded once from the prop, then locally owned (saves write through).
+	let bond = $state(untrack(() => page.bond ?? ""));
+	let bondEditing = $state(false);
+	let bondDraft = $state("");
+	let bondSaving = $state(false);
+
+	function startBondEdit() {
+		bondDraft = bond;
+		bondEditing = true;
+	}
+
+	async function saveBond() {
+		bondSaving = true;
+		const saved = await updatePerson(page.id, { bond: bondDraft.trim() });
+		bondSaving = false;
+		if (saved) {
+			bond = bondDraft.trim();
+			bondEditing = false;
+		}
+	}
+
+	/** "1948 – 2019" under the name once a death is recorded; birthday alone
+	 *  stays where it was (the About list). */
+	const lifespan = $derived.by(() => {
+		if (!page.diedOn) return null;
+		const died = page.diedOn.getFullYear();
+		return page.birthday ? `${page.birthday.getFullYear()} – ${died}` : `died ${died}`;
+	});
 
 </script>
 
@@ -75,8 +119,41 @@
 						<span class="meta-sep">·</span>
 						<span class="meta-tier">{tierLabels[page.connectionTier]}</span>
 					{/if}
+					{#if lifespan}
+						<span class="meta-sep">·</span>
+						<span class="meta-lifespan">{lifespan}</span>
+					{/if}
 				</div>
 			</header>
+
+			<!-- The bond: authored, above everything observed. -->
+			<div class="bond">
+				{#if bondEditing}
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						class="bond-input"
+						bind:value={bondDraft}
+						placeholder="What {page.title} means, in a sentence of your own."
+						autofocus
+						onkeydown={(e) => {
+							if (e.key === "Enter") void saveBond();
+							if (e.key === "Escape") bondEditing = false;
+						}}
+					/>
+					<button class="bond-btn" onclick={saveBond} disabled={bondSaving}>
+						{bondSaving ? "Saving…" : "Save"}
+					</button>
+				{:else if bond}
+					<button class="bond-line" type="button" onclick={startBondEdit} title="Edit">
+						{bond}
+					</button>
+				{:else}
+					<button class="bond-invite" type="button" onclick={startBondEdit}>
+						The record shows how often you cross paths. Only you can say what
+						{page.title} means — write it in a sentence.
+					</button>
+				{/if}
+			</div>
 
 			<!-- Also known as. Sits directly under the name because that is what
 			     it corrects: the record calling someone by a surface the
@@ -169,7 +246,7 @@
 			<!-- About -->
 			<section class="section" id="about">
 				<h2 class="section-title">About</h2>
-				{#if page.location || page.company || page.role || page.birthday}
+				{#if page.location || page.company || page.role || page.birthday || page.diedOn}
 					<dl class="info-list">
 						{#if page.role || page.company}
 							<div class="info-row">
@@ -195,6 +272,12 @@
 							<div class="info-row">
 								<dt>Birthday</dt>
 								<dd>{formatBirthday(page.birthday)}</dd>
+							</div>
+						{/if}
+						{#if page.diedOn}
+							<div class="info-row">
+								<dt>Died</dt>
+								<dd>{formatDeath(page.diedOn, page.diedPrecision)}</dd>
 							</div>
 						{/if}
 					</dl>
@@ -277,7 +360,6 @@
 		font-size: 1rem;
 		color: var(--color-foreground-muted);
 		margin: 0.25rem 0 0;
-		font-style: italic;
 	}
 
 	.person-meta {
@@ -286,6 +368,68 @@
 		gap: 0.5rem;
 		margin-top: 0.5rem;
 		font-size: 0.875rem;
+	}
+
+	.meta-lifespan {
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* The bond: one authored serif line, above everything observed. */
+	.bond {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		margin: 0.875rem 0 0;
+	}
+
+	.bond-line,
+	.bond-invite {
+		background: none;
+		border: none;
+		padding: 0;
+		text-align: left;
+		cursor: pointer;
+		font-family: var(--font-serif, Georgia, serif);
+		line-height: 1.5;
+	}
+
+	.bond-line {
+		font-size: 1.0625rem;
+		color: var(--color-foreground);
+	}
+
+	.bond-invite {
+		font-size: 0.9375rem;
+		color: var(--color-foreground-subtle);
+		max-width: 34rem;
+	}
+
+	.bond-invite:hover,
+	.bond-line:hover {
+		color: var(--color-foreground-muted);
+	}
+
+	.bond-input {
+		flex: 1;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 1rem;
+		padding: 0.375rem 0.625rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground);
+	}
+
+	.bond-btn {
+		font: inherit;
+		font-size: 0.8125rem;
+		padding: 0.375rem 0.875rem;
+		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground);
+		cursor: pointer;
 	}
 
 	/* Sits between the header and the article's rule, indented to the same
@@ -409,7 +553,6 @@
 	.empty-placeholder {
 		font-size: 0.875rem;
 		color: var(--color-foreground-subtle);
-		font-style: italic;
 		margin: 0;
 	}
 

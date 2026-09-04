@@ -28,8 +28,6 @@ pub struct AssistantProfileDefaults {
     pub assistant_name: Option<String>,
     /// Default agent ID
     pub default_agent_id: String,
-    /// Default model ID
-    pub default_model_id: String,
     /// Which tools are enabled by default (JSON object: tool_id -> bool)
     pub enabled_tools: serde_json::Value,
     /// UI preferences (JSON object)
@@ -41,8 +39,6 @@ pub fn assistant_profile_defaults() -> AssistantProfileDefaults {
     AssistantProfileDefaults {
         assistant_name: None,
         default_agent_id: "agent".to_string(),
-        default_model_id: crate::models::default_model_for_slot(crate::models::ModelSlot::Chat)
-            .to_string(),
         enabled_tools: default_enabled_tools(),
         ui_preferences: serde_json::json!({
             "theme": DEFAULT_THEME,
@@ -66,10 +62,6 @@ mod tests {
         assert!(
             !defaults.default_agent_id.is_empty(),
             "Default agent ID should not be empty"
-        );
-        assert!(
-            !defaults.default_model_id.is_empty(),
-            "Default model ID should not be empty"
         );
         assert!(
             defaults.enabled_tools.is_object(),

@@ -94,9 +94,12 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 				}
 			}
 			if (setup) {
-				if (setup.setup_complete === false) {
-					throw redirect(303, '/founders-letter');
-				}
+				// Gate on onboarding_status ONLY — never on setup_complete. On an
+				// appliance, setup_complete also requires the linked account, and
+				// the airlock's account step is skippable: gating the shell on it
+				// bounced "Enter Virtues" straight back to the letter forever,
+				// with AccountGate (the remedy) stranded behind the wall it was
+				// meant to open. The account is Home's getting-started business.
 				// `active` covers both finished and dismissed, which is the whole
 				// reason it replaced a separate skipped flag.
 				if (setup.onboarding_complete === false && setup.onboarding_status !== 'active') {
