@@ -666,13 +666,13 @@
 
 	.read {
 		display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
-		margin-top: 13px; padding-left: 62px;
-		font-size: 11.5px; color: var(--color-foreground-subtle);
+		margin-top: 12px; padding-left: 62px;
+		font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle);
 	}
-	.read .t { color: var(--color-foreground); font-size: 11px; }
+	.read .t { color: var(--color-foreground); font-size: 13px; }
 	.read .v { font-family: var(--font-sans); }
 	.read .quiet { color: var(--color-foreground-subtle); }
-	.read .dark { margin-left: auto; color: var(--color-foreground-disabled); font-size: 10.5px; }
+	.read .dark { margin-left: auto; color: var(--color-foreground-disabled); font-size: 13px; }
 	.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 	@media (prefers-reduced-motion: reduce) {

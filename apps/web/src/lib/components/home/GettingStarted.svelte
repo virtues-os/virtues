@@ -54,6 +54,7 @@
 	import { getProfile, updateProfile, getCensus, type Profile, type Census } from "$lib/api/client";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import Frontispiece from "./Frontispiece.svelte";
 
 	// Mirrors narrative_draft::INTERVIEW_CHAT_ID (and ChatView's copy).
 	const INTERVIEW_CHAT_ID = "chat_narrative_interview";
@@ -441,27 +442,13 @@
 		</section>
 
 		<!-- The frontispiece: the painting for this step, its line, and the
-		     record's numbers — white on the painting's dusk. -->
-		<aside class="front" aria-hidden="true">
-			{#key front.src}
-				<img src={front.src} alt="" />
-			{/key}
-			<div class="text">
-				<p class="epigraph">{front.line}</p>
-				{#if census && census.total > 0 && census.lines.length > 0}
-					<div class="ledger">
-						{#each census.lines.slice(0, 3) as line (line.id)}
-							<div><div class="v">{line.count.toLocaleString()}</div><div class="k">{line.label}</div></div>
-						{/each}
-					</div>
-					{#if census.earliest}
-						<div class="since">
-							The record, since {new Date(census.earliest).toLocaleDateString(undefined, { month: "long", year: "numeric" })}
-						</div>
-					{/if}
-				{/if}
-			</div>
-		</aside>
+		     record's numbers. -->
+		<Frontispiece
+			src={front.src}
+			line={front.line}
+			figures={census && census.total > 0 ? census.lines.slice(0, 3).map((l) => ({ v: l.count.toLocaleString(), k: l.label })) : []}
+			since={census?.earliest ? `The record, since ${new Date(census.earliest).toLocaleDateString(undefined, { month: "long", year: "numeric" })}` : ""}
+		/>
 
 	</div>
 {/if}
@@ -479,47 +466,14 @@
 		/* No ground of its own: the pane's. A page that paints its own
 		   background reads as a different surface from every other page. */
 	}
-	@media (max-width: 900px) {
-		.spread { grid-template-columns: 1fr; }
-		.front { order: -1; min-height: 320px; margin: 12px; }
-	}
-
-	/* ── the painting, as a card in the margin ── */
-	.front {
-		position: relative; overflow: hidden;
-		margin: 20px 20px 20px 0; border-radius: 12px;
-		background: color-mix(in srgb, var(--color-foreground) 40%, var(--color-background));
-	}
-	.front img {
-		position: absolute; inset: 0; width: 100%; height: 100%;
-		object-fit: cover; object-position: 50% 30%;
-		animation: front-in 0.8s ease both;
-	}
-	.front::after {
-		content: ""; position: absolute; inset: 0; pointer-events: none;
-		background: linear-gradient(180deg, rgba(20,26,38,0) 38%, rgba(20,26,38,0.55) 68%, rgba(20,26,38,0.86) 100%);
-	}
-	.front .text {
-		position: absolute; left: 0; right: 0; bottom: 0; z-index: 1;
-		padding: 0 48px 48px; color: #fff;
-		animation: arrive 0.8s ease both; animation-delay: 200ms;
-	}
-	.epigraph {
-		font-family: var(--font-serif); font-weight: 400;
-		font-size: 26px; line-height: 1.3; letter-spacing: -0.005em;
-		max-width: 15em; margin: 0;
-	}
-	.ledger { display: flex; gap: 32px; margin-top: 32px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.28); }
-	.ledger .v { font-family: var(--font-serif); font-size: 28px; line-height: 1; font-variant-numeric: lining-nums tabular-nums; }
-	.ledger .k { font-family: var(--font-sans); font-size: 12px; color: rgba(255,255,255,0.72); margin-top: 8px; }
-	.since { margin-top: 20px; font-family: var(--font-sans); font-size: 12px; color: rgba(255,255,255,0.6); }
+	@media (max-width: 900px) { .spread { grid-template-columns: 1fr; } }
 
 	/* ── the work ── */
 	.work { display: flex; flex-direction: column; padding: 56px 56px 40px 64px; min-width: 0; }
 	.work > * { animation: arrive 0.5s ease both; }
 	.work > :nth-child(2) { animation-delay: 60ms; }
 	.work > :nth-child(3) { animation-delay: 120ms; }
-	@media (max-width: 640px) { .work { padding: 32px 24px; } .front .text { padding: 0 24px 28px; } }
+	@media (max-width: 640px) { .work { padding: 32px 24px; } }
 
 	.title { font-family: var(--font-serif); font-weight: 400; font-size: 36px; line-height: 1.1; margin: 0; color: var(--color-foreground); }
 
@@ -578,8 +532,5 @@
 
 	/* from-only keyframes, per the house rule */
 	@keyframes arrive { from { opacity: 0; transform: translateY(6px); } }
-	@keyframes front-in { from { opacity: 0; } }
-	@media (prefers-reduced-motion: reduce) {
-		.work > *, .front .text, .front img { animation: none; }
-	}
+	@media (prefers-reduced-motion: reduce) { .work > * { animation: none; } }
 </style>
