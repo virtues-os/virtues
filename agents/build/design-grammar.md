@@ -93,9 +93,10 @@ border and a fill because it can be *done*, *connected*, *empty*. Four cards in
 a grid that are really four paragraphs are four paragraphs.
 
 - Radius: **6px**, per design.md. Nothing at 2, 8, 12, 14, or 18.
-- Border `--border`, fill `--surface`, no shadow at rest. A card that overlaps
-  a plate may carry one soft shadow, since it is physically on top of
-  something; that is the only shadow in the pane.
+- Border `--border`, fill `--surface`, **no shadow, ever.** A sheet that
+  overlaps a plate is a pasted label, not a floating panel: the hairline and
+  the plate's hard edge do the work. Shadows were tried on the overlap and
+  read as a SaaS card on a painting.
 - Inside a card the anatomy repeats at small scale: a head (serif name, margin
   state at the right), one line, then a ledger or a list. Never a paragraph.
 
@@ -230,7 +231,7 @@ Before a page ships, count. Every number here is measurable in the DOM.
 | keyframes | 3, from-only |
 | radii | 6px and pills |
 | rules | between list rows only |
-| shadows | 1, and only if something overlaps the plate |
+| shadows | 0 |
 | off-grid values | 0 |
 
 ## Worked example: Getting Started
