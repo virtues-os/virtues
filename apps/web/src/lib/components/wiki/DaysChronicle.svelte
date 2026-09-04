@@ -3,8 +3,10 @@
 
 	The wiki's temporal spine: a year of activity as a calendar, then the
 	recent record as a month-grouped chronicle. Each day is one line — date,
-	epigraph if the night's narration has run, an honest "unwritten" stub if
-	it hasn't. Reads like an annal, not a feed.
+	then the first sentence of the article's lede if the night's narration has
+	run, an honest "unwritten" stub if it hasn't. Reads like an annal, not a
+	feed. (The narrator no longer writes an epigraph — that line drifted into
+	ungrounded poetry — so the lede, which traces to the events, is the caption.)
 -->
 
 <script lang="ts">
@@ -23,7 +25,7 @@
 	interface DayRow {
 		slug: string;
 		dayLabel: string; // "Mon 28"
-		epigraph: string | null;
+		lede: string | null;
 		narrated: boolean;
 		eventCount: number;
 	}
@@ -36,6 +38,30 @@
 	}
 
 	const CHRONICLE_DAYS = 180;
+
+	/**
+	 * The first sentence of the article's lede — the paragraph before the first
+	 * `## ` heading — as plain text. Markdown links keep their label, emphasis
+	 * marks are dropped. The row is one line; CSS clips whatever is left.
+	 */
+	function ledeOf(article: string | null | undefined): string | null {
+		if (!article) return null;
+		const body = article.split(/\n#{1,6} /)[0];
+		const paragraph = body
+			.split(/\n\s*\n/)
+			.map((s) => s.trim())
+			.find((s) => s.length > 0);
+		if (!paragraph) return null;
+		const plain = paragraph
+			.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+			.replace(/[*_`]/g, '')
+			.replace(/\s+/g, ' ')
+			.trim();
+		// First sentence: a terminal mark followed by a space and a capital,
+		// so "Toys \"R\" Us." and "St. Mary" don't cut early.
+		const m = plain.match(/^[\s\S]*?[.!?]["')]?(?=\s+[A-Z])/);
+		return (m ? m[0] : plain) || null;
+	}
 
 	let loading = $state(true);
 	let activityData = $state<Map<string, number>>(new Map());
@@ -86,7 +112,7 @@
 						weekday: 'short',
 						day: 'numeric',
 					}),
-					epigraph: day.epigraph,
+					lede: ledeOf(day.article),
 					narrated,
 					eventCount: countByDate.get(day.date)?.event_count ?? 0,
 				});
@@ -130,10 +156,8 @@
 						<li>
 							<button class="day" onclick={() => onOpenDay(day.slug)}>
 								<span class="day-date">{day.dayLabel}</span>
-								{#if day.epigraph}
-									<span class="day-epigraph">{day.epigraph}</span>
-								{:else if day.narrated}
-									<span class="day-epigraph">Narrated, without an epigraph</span>
+								{#if day.lede}
+									<span class="day-lede">{day.lede}</span>
 								{:else}
 									<span class="day-stub">Unwritten</span>
 								{/if}
@@ -230,7 +254,7 @@
 		transition: color 0.12s ease;
 	}
 
-	.day-epigraph {
+	.day-lede {
 		flex: 1;
 		min-width: 0;
 		font-family: var(--font-serif, Georgia, serif);
