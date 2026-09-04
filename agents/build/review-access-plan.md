@@ -287,9 +287,50 @@ every submission — it is invisible until a reviewer types the first message.
 
 ## App Review notes
 
-Give them the URL and the code, and say the app requires a paired box with the
-demo instance standing in for one. Reviewers do not SSH anywhere or run
+Give them the URL and the code, and say the app requires a paired server with
+the demo instance standing in for one. Reviewers do not SSH anywhere or run
 `virtues pair` — they type an address and six digits.
+
+**THE ADDRESS MUST INCLUDE `https://`.** `normalize_server`
+(`apps/web/plugins/reach/src/lib.rs`) passes a scheme through untouched, but a
+bare hostname with no colon becomes `http://<host>:8000` — right for
+`virtues.local` or a LAN IP, and wrong for every public demo server, whose
+security group opens only 80/443. A reviewer typing `demo-<rand>.virtues.ch`
+gets `POST http://demo-<rand>.virtues.ch:8000/api/pair/consume` and a timeout
+with no explanation. Found on 2026-09-04 by driving the actual app in a
+simulator; an earlier harness that passed a full origin string never went down
+that branch, and neither does any test. Write the scheme into the notes
+verbatim and say why, because the field's own placeholder teaches the opposite.
+
+Worth fixing properly at some point: a dotted public hostname probably should
+not default to `http` on port 8000. Until then the notes carry it.
+
+## Shooting App Store screenshots
+
+The demo server doubles as the screenshot rig — synthetic data that looks like
+a life, re-anchored nightly so "today" is always full. Drive a simulator
+against it rather than a real phone: exact store canvas sizes, no personal data,
+and `xcrun simctl status_bar override` gives the clean 9:41 full-battery bar.
+
+Three things cost time on 2026-09-04 and will again:
+
+- **Check the size App Store Connect actually asks for.** It wanted 1284×2778
+  (6.5"); the newest Pro Max simulator gives 1320×2868 (6.9"). Different aspect
+  ratios, so rescaling is not an option — `simctl create` the matching device.
+- **`bind 127.0.0.1:7117: Address already in use`.** Simulator apps share the
+  Mac's loopback, so the Mac app's proxy port collides. Launch with
+  `SIMCTL_CHILD_VIRTUES_PROXY_PORT=<free port>`. Simulator-only; a real phone
+  has its own loopback.
+- **The founder's letter will not scroll under injected touches.** Not a bug —
+  verified in a browser at phone size that the page scrolls normally. The way
+  past it is the app's own loopback proxy: point a browser at
+  `http://127.0.0.1:<proxy port>`, which IS the paired device's session, and
+  click through there. `skipOnboarding` writes server-side, so the app comes
+  back past the letter.
+
+Delete any probe chats off the server before shooting the drawer. Recents shows
+them, and "Reply with exactly: PREFLIGHT OK" is not what you want in a store
+listing.
 
 ## Alternative not taken
 
