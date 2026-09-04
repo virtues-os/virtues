@@ -14,10 +14,12 @@
 <script>
 // Dot Cloud — the "star cloud" ambient viz, ported from the handoff spec.
 //
-// A field of white background stars plus colored dots for the day's real
-// events: each event contributes 3-6 sharp category-colored pins and the
-// same count of large soft additive halos, so dense stretches of the day
-// paint a nebula. Positions are a pure function of (event time, category,
+// A field of white background stars plus one colored star per thing the
+// day was spent with — a chat, a place, an app, a workout: a sharp
+// category-colored pin under a large soft additive halo, both scaled by
+// how much of the day that thing took, so a day of many small things
+// paints a dense field and a day of a few big things paints a few big
+// stars. Positions are a pure function of (first-seen time, category,
 // seed) — same seed + same events render identically everywhere. Twinkle
 // is asymmetric on purpose: symmetric reads as blinking Christmas lights,
 // asymmetric reads as breathing stars.
@@ -35,24 +37,40 @@ const P = {
 	STAR_SIZE_PX: 3.1,
 	STAR_SIZE_JITTER: 0.5,
 	STAR_BRIGHTNESS: 1.5,
-	PIN_SIZE_PX: 14,
+	PIN_SIZE_PX: 9.5,
 	PIN_SIZE_JITTER: 0.81,
 	PIN_COLOR_MIX: 1,
-	PIN_BRIGHTNESS: 2,
+	PIN_BRIGHTNESS: 3.55,
+	// The sharp bright center on each pin, on top of its soft disc.
+	PIN_CORE_POP: 0,
 	HALO_SIZE_PX: 120,
 	HALO_COLOR_MIX: 0.95,
-	HALO_ALPHA: 0.155,
+	HALO_ALPHA: 0.365,
 	HALO_FALLOFF: 13,
 	RANDOMIZE_POSITIONS: true,
 	EDGE_BUFFER: 0,
 	CLUSTER_SPREAD: 0.16,
 	CENTER_RADIUS_MIN: 0.15,
 	CENTER_RADIUS_MAX: 0.26,
-	TW_AMP: 1.5,
+	TW_AMP: 1,
 	TW_INTERVAL_S: 10,
 	TW_ASYM: 0.52,
 	TW_JITTER: 0.1,
 	TW_SIZE_COUP: 0.15,
+	// A star's size, as a multiple of the preset pin/halo size: SCALE_MIN at
+	// magnitude 0, SCALE_MAX at magnitude 1.
+	SCALE_MIN: 1,
+	SCALE_MAX: 4,
+	// How much of a thing earns the biggest star (magnitude 1). Substituted
+	// into the query below, so the tool and the panel share one definition.
+	CAP_CHAT_MSGS: 50,
+	CAP_AUDIO_MIN: 30,
+	CAP_CALENDAR_H: 2,
+	CAP_APP_H: 4,
+	CAP_STEPS: 10000,
+	CAP_SLEEP_H: 8,
+	CAP_WORKOUT_MIN: 60,
+	CAP_PLACE_H: 4,
 };
 // Category palette: comm, calendar, activity, health, location, unknown.
 const PALETTE = ["#7ba8c9", "#d4a34a", "#c876a3", "#d18a8a", "#8ac4a3", "#e6e0d0"];
@@ -96,39 +114,42 @@ function computeCategoryCenters(seed) {
 }
 
 // ── data → dots ──────────────────────────────────────────────────────────
-// Each event contributes 3-6 dots by magnitude (the spec's biggest gotcha).
+// One star per row. A row is something you spent the day with — a chat, a
+// place, an app, a workout — and its magnitude (0..1) is how much, which
+// sets the star's scale from SCALE_MIN to SCALE_MAX. The shader derives
+// brightness from the same scale, so a speck of a thing is also dim.
 function buildEventDots(events, seed) {
 	const centers = computeCategoryCenters(seed);
 	const dots = [];
 	for (let ei = events.length - 1; ei >= 0 && dots.length < P.N_EVENT_DOTS; ei--) {
 		const [t, catRaw, mag] = events[ei];
 		const cat = (catRaw < 0 || catRaw > 4) ? 5 : catRaw;
-		const dotsForEvent = Math.max(3, Math.min(6, 3 + Math.round((+mag || 0) * 3)));
+		const m = Math.max(0, Math.min(1, +mag || 0));
+		const scale = P.SCALE_MIN + (P.SCALE_MAX - P.SCALE_MIN) * m;
 		const cc = cat < 5 ? centers[cat] : [0.5, 0.5];
-		for (let k = 0; k < dotsForEvent && dots.length < P.N_EVENT_DOTS; k++) {
-			let x, y;
-			if (P.RANDOMIZE_POSITIONS) {
-				x = spreadToEdges(hash2((t | 0) + k * 7, (cat | 0) * 13 + 1, seed));
-				y = spreadToEdges(hash2((t | 0) + k * 11 + 3, (cat | 0) * 17 + 4, seed));
-			} else {
-				const ox = gaussHash((t | 0) + k * 7, (cat | 0) * 13, seed) * P.CLUSTER_SPREAD * 2.2;
-				const oy = gaussHash((t | 0) + k * 11 + 3, (cat | 0) * 17 + 4, seed) * P.CLUSTER_SPREAD * 2.2;
-				x = clampToEdges(cc[0] + ox);
-				y = clampToEdges(cc[1] + oy);
-			}
-			dots.push(x, y, cat, t);
+		let x, y;
+		if (P.RANDOMIZE_POSITIONS) {
+			x = spreadToEdges(hash2(t | 0, (cat | 0) * 13 + 1, seed));
+			y = spreadToEdges(hash2((t | 0) + 3, (cat | 0) * 17 + 4, seed));
+		} else {
+			const ox = gaussHash(t | 0, (cat | 0) * 13, seed) * P.CLUSTER_SPREAD * 2.2;
+			const oy = gaussHash((t | 0) + 3, (cat | 0) * 17 + 4, seed) * P.CLUSTER_SPREAD * 2.2;
+			x = clampToEdges(cc[0] + ox);
+			y = clampToEdges(cc[1] + oy);
 		}
+		dots.push(x, y, cat, scale);
 	}
 	return dots;
 }
 
+// Background stars render at preset scale (1.0).
 function buildStars(seed) {
 	const dots = [];
 	for (let i = 0; i < P.N_STARS; i++) {
 		dots.push(
 			hash2(i * 3 + 1, seed & 0xffff, seed),
 			hash2(i * 5 + 2, (seed >>> 16) & 0xffff, seed),
-			5, 0,
+			5, 1.0,
 		);
 	}
 	return dots;
@@ -140,36 +161,64 @@ function buildStars(seed) {
 // midnight. Every branch is bounded on BOTH sides: with only a lower bound,
 // expanded calendar recurrences dated decades out won the ORDER BY t DESC
 // and filled all 500 slots, so a real day rendered as one uniform gold
-// field. Magnitudes are per-source normalizations, clamped to 1.
-const EVENTS_SQL = `
+// field.
+//
+// A row is something you spent the day with, not something that happened:
+// a conversation, a meeting, an app, a place, the day's steps, a sleep, a
+// workout. Its magnitude is how much, divided by the CAP_* preset value
+// that earns the biggest star, and clamped to 1. Its time is when it first
+// showed up today; the position hash keys on that. Web page visits are not
+// rows of their own — they have no duration, and their time is already
+// inside the browser's app row. The Mac agent logs an app session per
+// focus switch, hundreds a day, which is why apps roll up per name.
+//
+// `{{CAP_*}}` tokens are the preset's caps; eventsSql() fills them in, and
+// the dot-cloud tool's reducer fills the same tokens from published.json.
+const EVENTS_SQL_TEMPLATE = `
 WITH today AS (SELECT date_trunc('day', now()) AS d0, date_trunc('day', now()) + interval '1 day' AS d1)
 SELECT t, cat, mag FROM (
-	SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int AS t, 0 AS cat, 0.5::float AS mag
+	SELECT EXTRACT(EPOCH FROM (MIN(occurred_at) - d0))::int AS t, 0 AS cat,
+			LEAST(1.0, COUNT(*)::float / {{CAP_CHAT_MSGS}}) AS mag
 		FROM data_communication_message, today WHERE occurred_at >= d0 AND occurred_at < d1
-	UNION ALL SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int, 0, 0.4
+		GROUP BY COALESCE(thread_id, from_identifier), d0
+	UNION ALL SELECT EXTRACT(EPOCH FROM (MIN(occurred_at) - d0))::int, 0,
+			LEAST(1.0, COUNT(*)::float / {{CAP_CHAT_MSGS}})
 		FROM data_communication_email, today WHERE occurred_at >= d0 AND occurred_at < d1
+		GROUP BY COALESCE(thread_id, from_email), d0
 	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 0,
-			LEAST(1.0, EXTRACT(EPOCH FROM (ended_at - started_at)) / 1800.0)
+			LEAST(1.0, EXTRACT(EPOCH FROM (ended_at - started_at)) / ({{CAP_AUDIO_MIN}} * 60.0))
 		FROM data_audio_session, today WHERE started_at >= d0 AND started_at < d1
 	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 1,
-			LEAST(1.0, EXTRACT(EPOCH FROM (ended_at - started_at)) / 7200.0)
+			LEAST(1.0, EXTRACT(EPOCH FROM (ended_at - started_at)) / ({{CAP_CALENDAR_H}} * 3600.0))
 		FROM data_calendar_event, today WHERE started_at >= d0 AND started_at < d1
-	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 2,
-			LEAST(1.0, EXTRACT(EPOCH FROM (ended_at - started_at)) / 3600.0)
+	UNION ALL SELECT EXTRACT(EPOCH FROM (MIN(started_at) - d0))::int, 2,
+			LEAST(1.0, SUM(EXTRACT(EPOCH FROM (ended_at - started_at))) / ({{CAP_APP_H}} * 3600.0))
 		FROM data_activity_app_session, today WHERE started_at >= d0 AND started_at < d1
-	UNION ALL SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int, 2, 0.1
-		FROM data_activity_web_browsing, today WHERE occurred_at >= d0 AND occurred_at < d1
-	UNION ALL SELECT EXTRACT(EPOCH FROM (occurred_at - d0))::int, 3, 0.6
+		GROUP BY app_name, d0
+	UNION ALL SELECT EXTRACT(EPOCH FROM (MIN(occurred_at) - d0))::int, 3,
+			LEAST(1.0, SUM(step_count)::float / {{CAP_STEPS}})
 		FROM data_health_steps, today WHERE occurred_at >= d0 AND occurred_at < d1
+		GROUP BY d0
 	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 3,
-			LEAST(1.0, COALESCE(duration_minutes, 60) / 480.0)
+			LEAST(1.0, COALESCE(duration_minutes, 60) / ({{CAP_SLEEP_H}} * 60.0))
 		FROM data_health_sleep, today WHERE started_at >= d0 AND started_at < d1
-	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 3, 0.8
+	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 3,
+			LEAST(1.0, COALESCE(duration_minutes, 30)::float / {{CAP_WORKOUT_MIN}})
 		FROM data_health_workout, today WHERE started_at >= d0 AND started_at < d1
-	UNION ALL SELECT EXTRACT(EPOCH FROM (started_at - d0))::int, 4,
-			LEAST(1.0, COALESCE(duration_minutes, 30) / 240.0)
+	UNION ALL SELECT EXTRACT(EPOCH FROM (MIN(started_at) - d0))::int, 4,
+			LEAST(1.0, SUM(COALESCE(duration_minutes, 30)) / ({{CAP_PLACE_H}} * 60.0))
 		FROM data_location_visit, today WHERE started_at >= d0 AND started_at < d1
+		GROUP BY COALESCE(place_name, ROUND(latitude::numeric, 3) || ',' || ROUND(longitude::numeric, 3)), d0
 ) e ORDER BY t DESC LIMIT 500`;
+
+// Caps are numbers from the preset, never strings: a token with no finite
+// positive value falls back to 1 rather than producing an unparseable query.
+function eventsSql() {
+	return EVENTS_SQL_TEMPLATE.replace(/\{\{(CAP_[A-Z_]+)\}\}/g, (_, key) => {
+		const v = Number(P[key]);
+		return String(Number.isFinite(v) && v > 0 ? v : 1);
+	});
+}
 
 // Per-install seed: the epoch of the record's oldest message — stable per
 // box, different per life. Fallback is the spec's canonical seed.
@@ -216,15 +265,19 @@ void main() {
 	vec4 d = texelFetch(uDots, ivec2(idx, 0), 0);
 	vec2 pos = d.rg;
 	int cat = int(d.b);
+	// Per-dot scale: 1.0 is the preset size. Small stars are also dim, so a
+	// speck of a thing does not read as a full star of a smaller kind.
+	float scale = d.a;
 	gl_Position = vec4(pos.x * 2.0 - 1.0, (1.0 - pos.y) * 2.0 - 1.0, 0.0, 1.0);
 	float sizeJ = mix(1.0 - uSizeJitter, 1.0 + uSizeJitter, hash11(aIndex + 0.31));
 	float twShape = twinkleShape(aIndex, uTime);
 	float sizeMul = 1.0 + uTwSizeCoup * uTwAmp * twShape;
-	gl_PointSize = max(1.0, uSizePx * sizeJ * sizeMul * uDpr);
+	gl_PointSize = max(1.0, uSizePx * scale * sizeJ * sizeMul * uDpr);
 	int ci = cat;
 	if (ci < 0 || ci > 5) ci = 5;
 	vColor = mix(vec3(1.0), uCategoryColors[ci], uColorMix);
 	vBrightness = uBaseBrightness * mix(0.7, 1.05, hash11(aIndex + 7.7));
+	vBrightness *= clamp(scale, 0.45, 1.0);
 	vBrightness *= (1.0 + uTwAmp * twShape);
 	vBrightness *= uAlphaScale;
 }`;
@@ -294,7 +347,7 @@ gl.bufferData(gl.ARRAY_BUFFER, Float32Array.from({ length: MAX_DOTS }, (_, i) =>
 gl.enableVertexAttribArray(0);
 gl.vertexAttribPointer(0, 1, gl.FLOAT, false, 0, 0);
 
-// Dot data lives in a 1-row RGBA32F texture: (x, y, cat, birth).
+// Dot data lives in a 1-row RGBA32F texture: (x, y, cat, scale).
 function makeDotTexture(data) {
 	const n = data.length / 4;
 	const tex = gl.createTexture();
@@ -391,7 +444,7 @@ function frame(tMs) {
 		gl.bindTexture(gl.TEXTURE_2D, events.tex);
 		setPass({ size: P.PIN_SIZE_PX, jitter: P.PIN_SIZE_JITTER, colorMix: P.PIN_COLOR_MIX,
 			brightness: 1.0, alpha: P.PIN_BRIGHTNESS, falloff: 20.0,
-			corePop: 0.9, twinkle: true });
+			corePop: P.PIN_CORE_POP, twinkle: true });
 		gl.drawArrays(gl.POINTS, 0, events.n);
 	}
 	requestAnimationFrame(frame);
@@ -403,7 +456,7 @@ requestAnimationFrame(frame);
 // a box whose query blipped should not blank the stars.
 async function refresh() {
 	try {
-		const rows = await virtues.query(EVENTS_SQL);
+		const rows = await virtues.query(eventsSql());
 		rebuild(rows.map((r) => [r.t | 0, r.cat | 0, +r.mag || 0]));
 	} catch (e) {
 		/* keep the last sky */
