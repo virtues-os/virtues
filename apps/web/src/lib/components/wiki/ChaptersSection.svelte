@@ -86,7 +86,7 @@
 							<p class="chapter-note changepoint">Ended when: {ch.changepoint}</p>
 						{/if}
 						{#if missingNote === ch.id}
-							<p class="chapter-note changepoint">No page yet — it is written when the interview is written up.</p>
+							<p class="chapter-note changepoint">No page yet — it is written when the interview is closed.</p>
 						{/if}
 					</button>
 				</li>
@@ -96,7 +96,7 @@
 		<div class="empty">
 			<p class="empty-lead">No chapters yet.</p>
 			<p class="empty-body">
-				They are written when the interview is written up — rough names and
+				They are written when the interview is closed — rough names and
 				rough years, in your words. Each one becomes a page you can keep
 				writing in.
 			</p>

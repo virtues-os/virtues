@@ -149,9 +149,18 @@ almost never surfacing it:
 - **Born in the first conversation**: the interview chat ("In your own
   words", the product's first conversation — see lsi-plan.md final form)
   covers five territories: the chapters, what makes them unlike others, who
-  they admire, the strongest pull, what they believe. "Write it up" — the
-  interview's one TOOL, the agent's to call — arranges their words into the
-  document, the chapters, and a page per chapter.
+  they admire, the strongest pull, what they believe, the shape of a day.
+  "Write it up" — the interview's one TOOL, the agent's to call — CLOSES the
+  interview: it arranges their words into the document, the chapters, and a
+  page per chapter, and the room is over (the composer retires; a card in
+  the chat holds the doors to both). The interviewer offers the close the
+  turn after the sixth territory is answered; a conversation that just ran
+  on left people unsure whether they were done (2026-09-04).
+- **In the first person.** The document reads as theirs because it is
+  written as they would write it — "I", not "you". A second-person draft
+  read as the machine describing them back, which is the exact posture the
+  artifact exists to refuse (settled 2026-09-04). The assistant's prompt says
+  so: "I" in the document is the person, never the model.
 - **Never finished, on purpose**: a record of a life can't be complete, and
   saying so is what disarms the perfectionism that kills the first draft.
 - **Grows by grounded questions**: the resolution queue asks one thing at a
