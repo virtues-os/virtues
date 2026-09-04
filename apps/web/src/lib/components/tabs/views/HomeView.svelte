@@ -329,10 +329,13 @@
 	}
 </script>
 
+<!-- While getting started is the page, it is a spread that bleeds to the
+     pane's edges and carries its own title; Page's chrome returns with Home. -->
 <Page
-	title={gsPhase === "focus" ? "Getting started" : "Home"}
+	title={gsPhase === "settled" ? "Home" : undefined}
 	description={gsPhase === "settled" ? subtitle : undefined}
-	maxWidth="wide"
+	maxWidth={gsPhase === "settled" ? "wide" : "none"}
+	padding={gsPhase === "settled" ? "default" : "none"}
 >
 	{#snippet actions()}
 		{#if gsPhase === "settled"}
