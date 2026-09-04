@@ -407,7 +407,7 @@
 									<span class="mono rt">{recTime(r.at)}</span>
 									<span class="rk mono">{recKind(r)}</span>
 									<span class="rb">
-										{r.label ?? "—"}{#if r.preview}<span class="rp"> {r.preview}</span>{/if}
+										{r.label ?? "—"}{#if r.preview}<span class="rp">{r.preview}</span>{/if}
 									</span>
 								</li>
 							{/each}
@@ -558,7 +558,9 @@
 	.mlist .rt { font-size: 10.5px; color: var(--color-foreground-subtle); flex: none; width: 38px; }
 	.mlist .rk { font-size: 10px; color: var(--color-foreground-subtle); flex: none; width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.mlist .rb { font-family: var(--font-sans); color: var(--color-foreground); min-width: 0; }
-	.mlist .rp { color: var(--color-foreground-muted); }
+	/* The gap has to come from CSS: leading whitespace inside the span is
+	   trimmed by the compiler, which rendered "Deposit$0.38". */
+	.mlist .rp { color: var(--color-foreground-muted); margin-left: 0.4em; }
 	.mnone { font-family: var(--font-sans); font-size: 12.5px; color: var(--color-foreground-subtle); margin: 0; }
 	@media (max-width: 640px) { .moment { margin-left: 0; } }
 
