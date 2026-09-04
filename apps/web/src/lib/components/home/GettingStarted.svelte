@@ -13,9 +13,10 @@
 	step at hand with one line from the bank (agents/build/voice.md) and the
 	record's numbers on it in white — the record introduced as a work, not a
 	stats row. The facing page is the work: a stepper — every step in walking
-	order with its state in the rail, the current one open in place with a
-	button that names the place, done ones keeping their way back at the
-	right (the letter is always one click away).
+	order with its state in the rail, the current one open IN PLACE — the
+	introductions card, the sources, the account gate are the step's body,
+	not a page you are sent to — and done ones reopenable from their row
+	(the letter is always one click away; it is a page of its own).
 
 	Four earlier shapes were struck the same day: an accordion whose rows
 	unfolded into forms (nobody could tell done from next), a flat list of
@@ -45,7 +46,11 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { fade } from "svelte/transition";
+	import { goto } from "$app/navigation";
 	import Icon from "$lib/components/Icon.svelte";
+	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
+	import ConnectWorld from "$lib/components/onboarding/document/ConnectWorld.svelte";
+	import IntroductionsCard from "./IntroductionsCard.svelte";
 	import { getProfile, updateProfile, getCensus, type Profile, type Census } from "$lib/api/client";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -63,12 +68,19 @@
 		phase?: "loading" | "focus" | "settled";
 	} = $props();
 
+	type StepId = "letter" | "introductions" | "connect" | "signin" | "interview" | "first_day" | "further";
+
 	let profile = $state<Profile | null>(null);
 	let census = $state<Census | null>(null);
 	let dismissed = $state<string[]>([]);
 	/** Set even on failure — "couldn't read the profile" must not hold the
 	 *  whole of Home in the loading state forever. */
 	let profileSettled = $state(false);
+	/** The Mac collector finishing fires before the next setup-state poll. */
+	let deviceReady = $state(false);
+	/** A step the person opened by hand — a done one to revisit, or one
+	 *  ahead of the walk. Null means "the first not-done step". */
+	let chosen = $state<StepId | null>(null);
 
 	const store = setupStateStore;
 
@@ -116,7 +128,7 @@
 
 	// ---- the signals ----
 	const accountDone = $derived(store.setup.find((s) => s.id === "account")?.done ?? false);
-	const worldEnough = $derived(store.worldEnough);
+	const worldEnough = $derived(store.worldEnough || deviceReady);
 	const firstDay = $derived(census?.first_day ?? null);
 	/** "needs Full Disk Access" (or the denied capability's name) when a
 	 *  collector is running with a permission hole; null when all is well. */
@@ -132,7 +144,6 @@
 	// exists only where an account is the box's business at all — linked
 	// already (shown done), or an appliance still waiting on one. A DIY box
 	// that satisfies setup without an account never sees the line.
-	type StepId = "letter" | "introductions" | "connect" | "signin" | "interview" | "first_day" | "further";
 	interface Step {
 		id: StepId;
 		title: string;
@@ -141,9 +152,12 @@
 		what: string;
 		/** The one line under the title when this step is next, not now. */
 		note: string;
-		/** The button, which names the place it goes. Empty when there is
-		 *  nothing to press — a day that has not arrived yet. */
+		/** The button, which names the place it goes. Empty when the step's
+		 *  work happens right here (a card of inputs, the sources) or when
+		 *  there is nothing to press yet — a day that has not arrived. */
 		verb: string;
+		/** Opening the step: in place for the inline ones, elsewhere for the
+		 *  letter (a page), the interview (a chat) and the day. */
 		go: () => void;
 		/** Waving this one away — absent when it cannot be skipped. */
 		skip?: { label: string; run: () => void };
@@ -160,7 +174,9 @@
 				what: "Why any of this exists, in a page.",
 				note: "",
 				verb: "Read the letter",
-				go: () => open("/founders-letter", "The founder's letter"),
+				// A page of its own, not a tab route: the shell's tab router would
+				// answer "/founders-letter" with a new chat.
+				go: () => void goto("/founders-letter"),
 				back: "Read again",
 			},
 			{
@@ -169,8 +185,8 @@
 				done: !!profile?.preferred_name || isDismissed("introductions"),
 				what: "What you like to be called, what you'll call it, and when you were born — the few things the record cannot supply.",
 				note: "Three questions, in Settings.",
-				verb: "Answer",
-				go: () => open("/virtues/you", "You"),
+				verb: "",
+				go: () => toggle("introductions"),
 				skip: { label: "Skip for now", run: () => void dismiss("introductions") },
 				back: "Change",
 			},
@@ -183,9 +199,9 @@
 				// check: a ✓ over a permission hole is how the three-day
 				// iMessage outage happened.
 				note: degradedNote ?? "Sources, in Settings.",
-				verb: "Open sources",
-				go: () => open("/sources", "Sources"),
-				skip: { label: "Skip for now", run: () => void dismiss("connect") },
+				verb: "",
+				go: () => toggle("connect"),
+				skip: { label: "Skip — sources stay in Settings", run: () => void dismiss("connect") },
 				back: "Add a source",
 			},
 		];
@@ -196,9 +212,9 @@
 				done: accountDone,
 				what: "The models it writes with, plus the maps, photos, bank links and calendars. One subscription, metered per request and never kept.",
 				note: "One sign-in.",
-				verb: "Sign in",
-				go: () => open("/virtues/billing", "Plan"),
-				back: "Plan",
+				verb: "",
+				go: () => toggle("signin"),
+				back: "Account",
 			});
 		}
 		const interviewDone = store.done("narrative_identity_ready");
@@ -237,18 +253,23 @@
 				verb: "Open applets",
 				go: () => open("/applets", "Applets"),
 				skip: { label: "All set", run: () => void dismiss("further") },
-				back: "Applets",
+				back: "Open",
 			},
 		);
 		return rows;
 	});
 
-	const doneSteps = $derived(steps.filter((s) => s.done));
-	/** The one thing to do now, and the one after it. */
-	const now = $derived(steps.find((s) => !s.done) ?? null);
-	const then = $derived(now ? (steps.find((s) => !s.done && s.id !== now.id) ?? null) : null);
+	/** Open a step in place; opening the open one closes it back to the walk. */
+	function toggle(id: StepId) {
+		chosen = chosen === id ? null : id;
+	}
 
-	const anything = $derived(now !== null);
+	/** The first thing still to do — what decides whether this is the page. */
+	const next = $derived(steps.find((s) => !s.done) ?? null);
+	/** The open step: chosen by hand, else the next one. */
+	const now = $derived((chosen ? steps.find((s) => s.id === chosen) : null) ?? next);
+
+	const anything = $derived(next !== null);
 	/** Both ends have answered once. */
 	const ready = $derived(store.loaded && profileSettled);
 	$effect(() => {
@@ -290,6 +311,7 @@
 		},
 	};
 	const front = $derived(FRONT[now?.id ?? "further"]);
+	const doneSteps = $derived(steps.filter((s) => s.done));
 
 	onMount(() => {
 		void loadProfile();
@@ -343,6 +365,7 @@
 		<!-- The work: done, now, then, and what it reads from. -->
 		<section class="work">
 			<h1 class="title">Getting started</h1>
+			<p class="sub">Your server is reading your life. Tomorrow morning it writes the first page.</p>
 
 			<!-- The stepper: every step, in walking order, with its state in the
 			     rail — a check, the claret numeral for now, a hollow numeral for
@@ -357,18 +380,38 @@
 						</div>
 						<div class="step">
 							<div class="row">
-								{#if s.done}
-									<button class="t" type="button" onclick={s.go}>{s.title}</button>
-									{#if s.back}<button class="back" type="button" onclick={s.go}>{s.back}</button>{/if}
-								{:else}
-									<span class="t">{s.title}</span>
-								{/if}
+								<button class="t" type="button" onclick={s.go}>{s.title}</button>
+								{#if s.done && s.back && s.id !== now.id}<button class="back" type="button" onclick={s.go}>{s.back}</button>{/if}
 							</div>
 							{#if s.id === now.id}
-								<p class="p">{s.what}</p>
-								<div class="acts">
-									{#if s.verb}<button class="btn" type="button" onclick={s.go}>{s.verb}</button>{/if}
-									{#if s.skip}<button class="link" type="button" onclick={s.skip.run}>{s.skip.label}</button>{/if}
+								<div class="body">
+									{#if s.id === "introductions"}
+										<p class="p">{s.what}</p>
+										<IntroductionsCard
+											ondone={() => { void loadProfile(); void dismiss("introductions"); chosen = null; }}
+											ondismiss={() => { void dismiss("introductions"); chosen = null; }}
+										/>
+									{:else if s.id === "connect"}
+										<p class="p">{s.what}</p>
+										<ConnectWorld onConnected={() => void store.check()} onDeviceReady={() => (deviceReady = true)} next="/" />
+										{#if !s.done && s.skip}<button class="link quiet" type="button" onclick={s.skip.run}>{s.skip.label}</button>{/if}
+									{:else if s.id === "signin"}
+										<p class="p">{s.what}</p>
+										<div class="gate"><AccountGate done={accountDone} onLinked={() => void store.check()} /></div>
+									{:else if s.id === "further"}
+										<p class="p">{s.what}</p>
+										<div class="acts">
+											<button class="btn" type="button" onclick={s.go}>{s.verb}</button>
+											<a class="link" href="https://virtues.com/docs" target="_blank" rel="noreferrer">Read the manual</a>
+											{#if !s.done && s.skip}<button class="link quiet" type="button" onclick={s.skip.run}>{s.skip.label}</button>{/if}
+										</div>
+									{:else}
+										<p class="p">{s.what}</p>
+										<div class="acts">
+											{#if s.verb}<button class="btn" type="button" onclick={s.go}>{s.verb}</button>{/if}
+											{#if !s.done && s.skip}<button class="link" type="button" onclick={s.skip.run}>{s.skip.label}</button>{/if}
+										</div>
+									{/if}
 								</div>
 							{:else if !s.done && s.note}
 								<div class="note">{s.note}</div>
@@ -481,43 +524,46 @@
 	.title { font-family: var(--font-serif); font-weight: 400; font-size: 36px; line-height: 1.1; margin: 0; color: var(--color-foreground); }
 
 	/* ── the stepper ── */
+	.sub { font-family: var(--font-sans); font-size: 15px; line-height: 1.5; color: var(--color-foreground-muted); margin: 10px 0 0; max-width: 40em; }
+
 	.stepper { list-style: none; margin: 40px 0 0; padding: 0; }
-	.stepper li { display: grid; grid-template-columns: 28px minmax(0, 1fr); column-gap: 20px; }
-	.rail { display: flex; flex-direction: column; align-items: center; }
+	.stepper li { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: 16px; }
+	.rail { display: flex; flex-direction: column; align-items: center; padding-top: 3px; }
 	.dot {
-		flex: none; width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
-		font-family: var(--font-serif); font-size: 15px; font-variant-numeric: lining-nums;
+		flex: none; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+		font-family: var(--font-sans); font-size: 11px; font-weight: 500; font-variant-numeric: lining-nums;
 		border: 1px solid var(--color-border-strong, var(--color-border)); color: var(--color-foreground-subtle); background: var(--color-surface);
 	}
 	li.done .dot { background: var(--color-foreground); border-color: var(--color-foreground); color: var(--color-background); }
 	li.now .dot { background: var(--color-secondary); border-color: var(--color-secondary); color: #fff; }
-	.line { flex: 1; width: 1px; background: var(--color-border); margin: 4px 0; min-height: 16px; }
-	li.done .line { background: var(--color-foreground-subtle); opacity: 0.5; }
+	.line { flex: 1; width: 1px; background: var(--color-border); margin: 4px 0; min-height: 12px; }
 
-	.step { padding: 3px 0 28px; min-width: 0; }
+	.step { padding: 0 0 22px; min-width: 0; }
 	li:last-child .step { padding-bottom: 0; }
 	.row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 	.t {
-		font-family: var(--font-serif); font-weight: 400; font-size: 20px; line-height: 1.2; color: var(--color-foreground);
-		background: none; border: 0; padding: 0; text-align: left; min-width: 0;
+		font-family: var(--font-serif); font-weight: 400; font-size: 18px; line-height: 1.3; color: var(--color-foreground);
+		background: none; border: 0; padding: 0; text-align: left; min-width: 0; cursor: pointer;
 	}
-	button.t { cursor: pointer; }
 	li.done .t { color: var(--color-foreground-muted); }
-	button.t:hover { color: var(--color-foreground); }
-	li.now .t { font-size: 28px; color: var(--color-foreground); }
+	.t:hover { color: var(--color-foreground); }
+	li.now .t { font-size: 22px; color: var(--color-foreground); }
 	li.later .t { color: var(--color-foreground-subtle); }
+	.body { padding-bottom: 8px; }
+	.gate { margin-top: 16px; max-width: 34em; }
+	.link.quiet { display: block; margin-top: 14px; font-weight: 400; color: var(--color-foreground-subtle); }
 	.back { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
 	.back:hover { color: var(--color-primary); }
 	.note { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); margin-top: 4px; }
-	.p { font-family: var(--font-sans); font-size: 15px; line-height: 1.55; color: var(--color-foreground-muted); margin: 10px 0 0; max-width: 34em; }
-	.acts { display: flex; align-items: center; gap: 20px; margin-top: 20px; flex-wrap: wrap; }
+	.p { font-family: var(--font-sans); font-size: 14px; line-height: 1.55; color: var(--color-foreground-muted); margin: 8px 0 0; max-width: 34em; }
+	.acts { display: flex; align-items: center; gap: 20px; margin-top: 16px; flex-wrap: wrap; }
 	.btn {
 		display: inline-flex; align-items: center; height: 40px; padding: 0 22px; border: 0; border-radius: 999px;
 		background: var(--color-secondary); color: #fff; font-family: var(--font-sans); font-size: 14px; font-weight: 500;
 		cursor: pointer; transition: background 0.15s ease;
 	}
 	.btn:hover { background: var(--color-secondary-hover, var(--color-secondary)); }
-	.link { font-family: var(--font-sans); font-size: 14px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; }
+	.link { font-family: var(--font-sans); font-size: 14px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: none; }
 	.link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 	.foot { margin-top: auto; padding-top: 24px; display: flex; justify-content: flex-end; }
