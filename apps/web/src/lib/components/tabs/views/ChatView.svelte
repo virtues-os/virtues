@@ -12,135 +12,22 @@
 		getInitializationPromise,
 	} from "$lib/stores/models.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
-	import Bloub from "$lib/bloub/Bloub.svelte";
-	import { EXPRESSIONS } from "$lib/bloub/bot/expressions";
-	import { DEFAULT_SHAPE, SHAPES } from "$lib/bloub/bot/skins";
-	import { getRandomThinkingLabel } from "$lib/utils/thinkingLabels";
-
-	// A poke morphs the eyes to one random expression — and, roughly one poke
-	// in five, the body to one random shape, so the circle stays the norm.
-	// Both hold while the pointer stays and settle back to resting one second
-	// after it leaves. Re-entering re-rolls.
-	let interviewExpression = $state<string | null>(null);
-	let interviewShape = $state<string | null>(null);
-	let interviewHoverTimer: ReturnType<typeof setTimeout> | undefined;
-	function pokeCompanion() {
-		rouseCompanion();
-		const others = EXPRESSIONS.filter(
-			(e) => e.id !== "neutre" && e.id !== interviewExpression,
-		);
-		interviewExpression =
-			others[Math.floor(Math.random() * others.length)].id;
-		const shapes = SHAPES.filter(
-			(s) => s.id !== DEFAULT_SHAPE && s.id !== interviewShape,
-		);
-		interviewShape =
-			Math.random() < 0.2
-				? shapes[Math.floor(Math.random() * shapes.length)].id
-				: null;
-		clearTimeout(interviewHoverTimer);
-	}
-	function settleCompanion() {
-		clearTimeout(interviewHoverTimer);
-		interviewHoverTimer = setTimeout(() => {
-			interviewExpression = null;
-			interviewShape = null;
-		}, 1000);
-	}
-
-	// After a quiet stretch the bot dozes off instead of blinking at an empty
-	// room forever. Anything happening — a hover, a send, the model speaking —
-	// rouses it and re-arms the timer.
-	const COMPANION_DOZE_MS = 90_000;
-	let interviewAsleep = $state(false);
-	let interviewSleepTimer: ReturnType<typeof setTimeout> | undefined;
-	// While the bot thinks, one rotating gerund rides beside it — the bot's
-	// three-dot morph is already the ellipsis, so the word comes bare.
-	let interviewWord = $state("");
-	function rouseCompanion() {
-		interviewAsleep = false;
-		clearTimeout(interviewSleepTimer);
-		interviewSleepTimer = setTimeout(
-			() => (interviewAsleep = true),
-			COMPANION_DOZE_MS,
-		);
-	}
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import SelectionPopover from "$lib/components/SelectionPopover.svelte";
 	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
 
 	// ── the narrative interview ────────────────────────────────────────────
-	// One fixed chat (seeded at boot; the server forces interview mode by this
-	// id — see chat_handler). Mirrors narrative_draft::INTERVIEW_CHAT_ID.
-	const INTERVIEW_CHAT_ID = "chat_narrative_interview";
-	/** The opening, in three parts: the heading alone (the lifeline plate
-	 *  renders right after it, bleeding past the column — see the message
-	 *  template), then the intro and the example table, then the ask. */
-	const INTERVIEW_OPENING = "# The story of your life: chapters & identity";
-	const INTERVIEW_OPENING_BODY =
-		"In order to help the Virtues platform generate more powerful insights " +
-		"in your life, we\u2019ll guide you in briefly describing your past " +
-		"chapters.\n\n" +
-		"We define chapters as seven major arcs in your life; see the table " +
-		"below for an example.\n\n" +
-		// A made-up life (see ChapterLifeline.svelte, which draws the same
-		// one). The interview prompt tells the model this table is an
-		// example, and the repo's rule is that nothing from a real life ships.
-		"| Chapter | Years |\n" +
-		"|---|---|\n" +
-		"| Childhood on the coast | 1997 \u2013 2003 |\n" +
-		"| Grade school, inland | 2003 \u2013 2009 |\n" +
-		"| The band years | 2009 \u2013 2016 |\n" +
-		"| College | 2016 \u2013 2021 |\n" +
-		"| The first shop | 2021 \u2013 2023 |\n" +
-		"| The workshop | 2023 \u2013 2025 |\n" +
-		"| Out on my own | 2025 \u2013 now |";
-
-	/** The ask comes last, after the shape has been seen; the retention
-	 *  promise rides with it because it is the one thing to know before
-	 *  answering. */
-	const INTERVIEW_OPENING_ASK =
-		"Yours will look nothing like these. What would your chapters be? " +
-		"Rough names and rough years are enough; months and dates are welcome " +
-		"where you remember them.\n\n" +
-		"What you say here stays on your server. The model conducting this is " +
-		"sent your words under a no-retention agreement and keeps nothing.";
-
-	/** The narrative interview opens ALREADY SPEAKING: an authored first line,
-	 *  shown free (never persisted, no model call). The interview prompt knows
-	 *  this opening was delivered and picks up from the reply.
-	 *
-	 *  Called from BOTH load paths — the tab-change effect and onMount. It
-	 *  lived inline in the first one only, so switching to an open interview
-	 *  tab greeted you and deep-linking to /chat/chat_narrative_interview
-	 *  (a fresh page load, a restored tab, the Home link) opened a blank room
-	 *  with no explanation of what it was for.
-	 *
-	 *  PREPENDS rather than requiring an empty room: the opening is never
-	 *  persisted, so a reload mid-interview would otherwise start the
-	 *  transcript at the person's first reply with no trace of what was
-	 *  asked. The backend rebuilds model context from its own store, so the
-	 *  synthetic message rides the UI only. */
-	function applyInterviewOpening(convId: string | null | undefined) {
-		if (convId !== INTERVIEW_CHAT_ID) return;
-		if (chat.messages[0]?.id === "interview-opening") return;
-		chat.messages = [
-			{
-				id: "interview-opening",
-				role: "assistant",
-				// Three parts on purpose: the lifeline plate renders after
-				// the first (the heading), so the shape is seen before the
-				// example table, and the ask lands last.
-				parts: [
-					{ type: "text", text: INTERVIEW_OPENING },
-					{ type: "text", text: INTERVIEW_OPENING_BODY },
-					{ type: "text", text: INTERVIEW_OPENING_ASK },
-				],
-			},
-			...chat.messages,
-		] as unknown as typeof chat.messages;
-	}
+	// The one chat that is not a chat. Its substance — the id, the authored
+	// opening, the close detection, the resident bot — lives in
+	// $lib/components/chat/interview; this view keeps only the branches.
+	import {
+		INTERVIEW_CHAT_ID,
+		INTERVIEW_OPENING_ID,
+		applyInterviewOpening,
+		findWriteItUpOutput,
+	} from "$lib/components/chat/interview/interview";
+	import InterviewCompanion from "$lib/components/chat/interview/InterviewCompanion.svelte";
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
 	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
@@ -172,10 +59,10 @@
 	// Active page editing imports
 	import { editAllowListStore, type EditableResourceType } from "$lib/stores/editAllowList.svelte";
 	import PageBindingInline from "$lib/components/chat/PageBindingInline.svelte";
-	import ChapterLifeline from "$lib/components/chat/ChapterLifeline.svelte";
+	import ChapterLifeline from "$lib/components/chat/interview/ChapterLifeline.svelte";
 	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
 	import EditDiffCard from "$lib/components/chat/EditDiffCard.svelte";
-	import InterviewClosedCard from "$lib/components/chat/InterviewClosedCard.svelte";
+	import InterviewClosedCard from "$lib/components/chat/interview/InterviewClosedCard.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
 	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
@@ -252,6 +139,13 @@
 	let conversationId = $state(initialConversationId || `chat_${generateHex16()}`);
 	let messagesContainer: HTMLDivElement | null = $state(null);
 	let scrollContainer: HTMLDivElement | null = $state(null);
+	// The composer is absolutely positioned OVER the scroller, so the transcript
+	// has to reserve its height itself. That reserve was a fixed 10rem, sized
+	// for a one-line pill; a composer grown to its 200px cap (plus attachment
+	// previews) overhung it and painted over the tail of the last reply. The
+	// observer below writes the live height into a CSS variable the transcript
+	// pads from, and re-pins the scroll when the reader was already at the end.
+	let composerEl: HTMLDivElement | null = $state(null);
 	let enableTransitions = $state(false);
 	// A NEW chat has nothing to load. Starting this at a blanket `true` meant
 	// the composer painted docked at the bottom for one frame and then jumped
@@ -1067,7 +961,7 @@
 								role: msg.role as "user" | "assistant" | "checkpoint",
 								parts: convertMessageToParts(msg),
 							})) as unknown as typeof chat.messages;
-							applyInterviewOpening(currentTabConversationId);
+							applyInterviewOpening(chat, currentTabConversationId);
 							// The picker is deliberately left alone on a tab
 							// switch. It used to be re-seeded from the model
 							// that last answered THIS conversation, which is
@@ -1183,7 +1077,7 @@
 
 			// After the load, not inside it: a failed fetch must still leave
 			// the interview speaking rather than showing a blank room.
-			applyInterviewOpening(tabConversationId);
+			applyInterviewOpening(chat, tabConversationId);
 
 			// What the picker SHOWS, for every chat old or new: the owner's
 			// standing preference, else the Virtues default. Deliberately not
@@ -1394,24 +1288,9 @@
 	// transcript's tool part didn't survive). Once closed, the composer
 	// retires: the drafter runs once, so a message typed here now would reach
 	// nothing — the page is where corrections go.
-	const interviewClosedPart = $derived.by(() => {
-		if (currentChatConversationId !== INTERVIEW_CHAT_ID) return null;
-		for (let i = uniqueMessages.length - 1; i >= 0; i--) {
-			const m = uniqueMessages[i] as any;
-			if (m.role !== "assistant") continue;
-			for (const part of m.parts ?? []) {
-				if (part.type === "tool-write_it_up" && part.state === "output-available" && part.output?.document_page_id) {
-					return part.output as {
-						document_page_id: string;
-						document_already_existed?: boolean;
-						chapters_written?: number;
-						chapters_error?: string;
-					};
-				}
-			}
-		}
-		return null;
-	});
+	const interviewClosedPart = $derived(
+		currentChatConversationId === INTERVIEW_CHAT_ID ? findWriteItUpOutput(uniqueMessages) : null,
+	);
 	const interviewClosed = $derived(
 		currentChatConversationId === INTERVIEW_CHAT_ID &&
 			(chatInstances.narrativeDocumentPageId !== null ||
@@ -1422,25 +1301,6 @@
 		interviewClosedPart?.document_page_id ?? chatInstances.narrativeDocumentPageId,
 	);
 
-	// The companion's activity feed: a new message or a status change wakes it
-	// and re-arms the doze timer.
-	$effect(() => {
-		if (currentChatConversationId !== INTERVIEW_CHAT_ID) return;
-		void uniqueMessages.length;
-		void chat.status;
-		rouseCompanion();
-		return () => clearTimeout(interviewSleepTimer);
-	});
-
-	$effect(() => {
-		if (currentChatConversationId !== INTERVIEW_CHAT_ID) return;
-		if (chat.status !== "submitted" && chat.status !== "streaming") return;
-		interviewWord = getRandomThinkingLabel();
-		const rotate = setInterval(() => {
-			interviewWord = getRandomThinkingLabel();
-		}, 4000);
-		return () => clearInterval(rotate);
-	});
 
 	// The chat's title, from the persisted session so it stays in step with the
 	// sidebar. It is no longer DRAWN here: a title fixed to the top-left of the
@@ -1548,6 +1408,23 @@
 			// Title generation is non-critical
 		}
 	}
+
+	$effect(() => {
+		const composer = composerEl;
+		const scroller = scrollContainer;
+		if (!composer || !scroller) return;
+		const observer = new ResizeObserver(() => {
+			// Measure "at the bottom" BEFORE the padding grows: the growth itself
+			// moves scrollHeight, and a reader who was pinned to the end would
+			// otherwise read as scrolled up and be left under the composer.
+			const wasAtBottom =
+				scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 8;
+			scroller.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
+			if (wasAtBottom) scroller.scrollTop = scroller.scrollHeight;
+		});
+		observer.observe(composer);
+		return () => observer.disconnect();
+	});
 
 	function scrollToBottom(behavior: ScrollBehavior = "smooth") {
 		if (scrollContainer) {
@@ -1863,7 +1740,7 @@
 					>
 						<div
 							class="messages-container"
-							class:bleeds={uniqueMessages[0]?.id === "interview-opening"}
+							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID}
 						>
 							{#each uniqueMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
@@ -1883,7 +1760,7 @@
 								>
 									<div
 										class="message-wrapper"
-										class:bleeds={message.id === "interview-opening"}
+										class:bleeds={message.id === INTERVIEW_OPENING_ID}
 										class:user-has-attachment={isUserMessage &&
 											message.parts.some((p: any) => p.type === "file")}
 										data-message-id={message.id}
@@ -1986,7 +1863,7 @@
 															citations={citationContext}
 															onCitationClick={openCitationPanel}
 														/>
-														{#if message.id === "interview-opening" && partIndex === 0}
+														{#if message.id === INTERVIEW_OPENING_ID && partIndex === 0}
 															<!-- Right under the heading, wider than the column:
 															     one fictional life on one wire, α toward Ω. The
 															     table that follows lists the same chapters. -->
@@ -2145,38 +2022,7 @@
 							     only until the AI SDK creates the assistant message (at text-start).
 							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
 							{#if currentChatConversationId === INTERVIEW_CHAT_ID}
-								<!-- The interview's resident, hanging out below the last turn:
-								     idle between turns, the three-dot thinking morph while the
-								     model composes. Engine vendored from bloub (MIT) — see
-								     lib/bloub/README.md. -->
-								<div class="flex justify-start">
-									<div
-										class="interview-companion"
-										role="presentation"
-										onmouseenter={pokeCompanion}
-										onmouseleave={settleCompanion}
-									>
-										<Bloub
-											size={54}
-											state={chat.status === "submitted" ||
-											chat.status === "streaming"
-												? "thinking"
-												: interviewAsleep
-													? "sleep"
-													: "idle"}
-											shape={interviewShape ?? DEFAULT_SHAPE}
-											expression={interviewExpression ??
-												"neutre"}
-											ink="var(--color-foreground)"
-											paper="var(--color-background)"
-										/>
-										{#if chat.status === "submitted" || chat.status === "streaming"}
-											<span class="companion-word"
-												>{interviewWord}</span
-											>
-										{/if}
-									</div>
-								</div>
+								<InterviewCompanion status={chat.status} activity={uniqueMessages.length} />
 							{:else if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">
 									<div class="message-wrapper" data-role="assistant">
@@ -2233,6 +2079,7 @@
 
 					<!-- ChatInput -->
 					<div
+						bind:this={composerEl}
 						class="chat-input-wrapper"
 						class:is-empty={isEmpty}
 						class:has-messages={!isEmpty}
@@ -2773,30 +2620,16 @@
 		pointer-events: auto;
 	}
 
-	.interview-companion {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0 0 0.5rem;
-		/* The bloub viewBox is ±158 around a body of radius 100, so the SVG
-		   carries (58/316)·size of built-in whitespace per side; pull the ball's
-		   edge back onto the column's left margin, and its top toward the
-		   conversation's tail. Keep the px in step with the size= prop. */
-		margin-left: calc(54px * -58 / 316);
-		margin-top: calc(54px * -58 / 316);
-	}
-
-	.companion-word {
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-		opacity: 0.5;
-	}
-
 	.messages-container {
 		max-width: 48rem;
 		margin: 0 auto;
 		width: 100%;
 		padding: 1.5rem 2rem 10rem 2rem;
+		/* The docked composer's measured height (set by the observer in the
+		   script) plus a breath of room, never less than the resting reserve.
+		   The composer overlays the scroller rather than pushing it, so this is
+		   the only thing keeping a tall draft off the last reply. */
+		padding-bottom: max(10rem, calc(var(--composer-height, 0px) + 1.5rem));
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;

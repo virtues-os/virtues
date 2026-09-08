@@ -55,9 +55,7 @@
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Frontispiece from "./Frontispiece.svelte";
-
-	// Mirrors narrative_draft::INTERVIEW_CHAT_ID (and ChatView's copy).
-	const INTERVIEW_CHAT_ID = "chat_narrative_interview";
+	import { INTERVIEW_CHAT_ID } from "$lib/components/chat/interview/interview";
 
 	/** What the hidden door skips at once — every step that can be. */
 	const ALL_DISMISSIBLE = ["introductions", "connect", "interview", "first_day", "further"];
