@@ -1,44 +1,27 @@
 <!--
 	ChapterLifeline.svelte
 
-	The lifeline as a plate, cropped to its life-level view — the picture
-	under the opening's "Chapters" heading, wider than the column it sits in:
-	one wire from α to Ω, a fictional life's seven chapters as boxes on it
-	(the same ones the example table below it lists), their names in the
-	dimension lane above, the age ruler below, now marked, one planned
-	chapter drafted in dashes.
+	The lifeline as a plate, cropped to its life-level view: one wire from α
+	to Ω, a life's chapters as boxes on it, their names in the dimension lane
+	above, the age ruler below, now marked. Wider than the column it sits in.
+
+	It draws whatever `life` it is handed (see life.ts). The interview opening
+	hands it nothing and gets the repo's fictional example — enough to show
+	what a partition of a life LOOKS like before someone writes theirs. The
+	interview's close hands it the person's own chapters (ChapterLifelineLive),
+	so the shape they saw as an example comes back drawn from their answers.
 
 	Ported from the "Alpha to Omega" prototype (the full zoomable plate lives
-	there; this is the static crop the interview opening earns — enough to
-	show what a partition of a life LOOKS like before someone writes theirs).
-	The life is the repo's reserved fictional one (Sarah, Nick, Maya, David
-	Okafor); nothing here is a real person's.
+	there; this is the static crop).
 -->
 
 <script lang="ts">
-	// ── the fictional life, verbatim from the prototype ──
-	const YR = 365.25 * 24 * 3600e3;
-	const BIRTH = new Date(1997, 3, 2).getTime();
-	const NOW = new Date(2026, 7, 17).getTime();
-	const BOX = new Date(2025, 1, 9).getTime(); // the record begins
+	import { FICTIONAL_LIFE, YR, type Life } from "./life";
 
-	interface Chapter {
-		t0: number;
-		t1: number | null;
-		label: string;
-		ep: string;
+	interface Props {
+		life?: Life;
 	}
-	const CHAPTERS: Chapter[] = [
-		// A made-up life, the same one the opening's table lists (ChatView).
-		{ t0: BIRTH, t1: new Date(2003, 7, 20).getTime(), label: "Childhood on the coast", ep: "three towns before the first classroom" },
-		{ t0: new Date(2003, 7, 20).getTime(), t1: new Date(2009, 5, 10).getTime(), label: "Grade school, inland", ep: "snow days and the lake" },
-		{ t0: new Date(2009, 5, 10).getTime(), t1: new Date(2016, 7, 20).getTime(), label: "The band years", ep: "the garage after hours" },
-		{ t0: new Date(2016, 7, 20).getTime(), t1: new Date(2021, 8, 1).getTime(), label: "College", ep: "everything new at once, then a year at a desk" },
-		{ t0: new Date(2021, 8, 1).getTime(), t1: new Date(2023, 6, 1).getTime(), label: "The first shop", ep: "the first real build" },
-		{ t0: new Date(2023, 6, 1).getTime(), t1: new Date(2025, 5, 1).getTime(), label: "The workshop", ep: "two years of hard problems" },
-		{ t0: new Date(2025, 5, 1).getTime(), t1: null, label: "Out on my own", ep: "the shop with my name on it" },
-	];
-	const PLANNED = { t0: NOW + 10 * (YR / 12), t1: NOW + 4.2 * YR, label: "The shop, grown" };
+	let { life = FICTIONAL_LIFE }: Props = $props();
 
 	/* The plate's palette — one muted color per chapter, cycled. */
 	const CH_COLORS = ["#B07514", "#2E6B43", "#1E4E8C", "#1E3159", "#6C7185", "#7E5A2E"];
@@ -53,10 +36,11 @@
 	const BASE = 90;            // the wire
 	const DIM = BASE - BH - 20; // the dimension lane's hairline
 	const SHEET_H = BASE + BH + 60;
-	// now sits at 72% of the sheet, as the prototype boots
-	const LO = BIRTH;
-	const HI = BIRTH + (NOW - BIRTH) / 0.72;
-	const X = (t: number) => PX0 + ((t - LO) / (HI - LO)) * (PX1 - PX0);
+	const ROW_H = 14;
+
+	interface Label { cx: number; text: string; tight: boolean; row: number; planned: boolean; unnamed: boolean }
+	interface Tick { t: number; year: number; age: number | null; major: boolean }
+	interface Strip { x: number; w: number; o: number }
 
 	/* Deterministic coverage strips — dense and live after the box arrived,
 	   faint imported traces before it. Same idea as the prototype's covSegs,
@@ -66,65 +50,100 @@
 		h = Math.imul(h ^ (h >>> 13), 1274126177);
 		return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 	}
-	function coverage(ci: number, t0: number, t1: number): { x: number; w: number; o: number }[] {
-		const segs: { x: number; w: number; o: number }[] = [];
-		const xa = X(t0), xb = X(Math.min(t1, NOW));
-		const n = Math.max(3, Math.round((xb - xa) / 9));
-		for (let i = 0; i < n; i++) {
-			const fa = xa + ((xb - xa) * i) / n;
-			const t = t0 + ((t1 - t0) * i) / n;
-			const live = t >= BOX;
-			const r = rnd(ci * 97 + i, 5);
-			if (!live && r < 0.55) continue; // imported traces are sparse
-			segs.push({ x: fa, w: (xb - xa) / n - 1.4, o: live ? 0.5 : 0.16 + r * 0.14 });
+
+	/* Everything the template draws, laid out from the life at hand. The
+	   origin of the scale is birth when known, else the first chapter; now
+	   sits at 72% of the sheet, as the prototype boots. */
+	const L = $derived.by(() => {
+		const { now, box, chapters, planned } = life;
+		const origin = life.birth ?? chapters[0]?.t0 ?? now - 30 * YR;
+		const LO = origin;
+		const HI = origin + Math.max(now - origin, YR) / 0.72;
+		const X = (t: number) => PX0 + ((t - LO) / (HI - LO)) * (PX1 - PX0);
+
+		const coverage = (ci: number, t0: number, t1: number): Strip[] => {
+			if (box === null) return [];
+			const segs: Strip[] = [];
+			const xa = X(t0), xb = X(Math.min(t1, now));
+			const n = Math.max(3, Math.round((xb - xa) / 9));
+			for (let i = 0; i < n; i++) {
+				const fa = xa + ((xb - xa) * i) / n;
+				const t = t0 + ((t1 - t0) * i) / n;
+				const live = t >= box;
+				const r = rnd(ci * 97 + i, 5);
+				if (!live && r < 0.55) continue; // imported traces are sparse
+				segs.push({ x: fa, w: (xb - xa) / n - 1.4, o: live ? 0.5 : 0.16 + r * 0.14 });
+			}
+			return segs;
+		};
+
+		/* The ruler. With a birth known, birthday ticks read in both
+		   coordinate systems — the world's calendar above, the life's age
+		   below, every fifth labeled. Without one there is no honest zero
+		   for an age, so the ruler is the calendar alone: a tick each New
+		   Year, the years divisible by five labeled. */
+		const ticks: Tick[] = [];
+		if (life.birth !== null) {
+			for (let age = 1; age * YR < HI - origin; age++) {
+				const d = new Date(origin);
+				d.setFullYear(d.getFullYear() + age);
+				ticks.push({ t: d.getTime(), year: d.getFullYear(), age, major: age % 5 === 0 });
+			}
+		} else {
+			for (let y = new Date(origin).getFullYear() + 1; ; y++) {
+				const t = new Date(y, 0, 1).getTime();
+				if (t > HI) break;
+				ticks.push({ t, year: y, age: null, major: y % 5 === 0 });
+			}
 		}
-		return segs;
-	}
+		const ages = ticks.filter((a) => X(a.t) >= PX0 && X(a.t) <= PX1);
 
-	const yearOf = (t: number) => new Date(t).getFullYear();
-	/* Birthday ticks: the same tick read in both coordinate systems —
-	   the world's calendar above, the life's age below. */
-	const ages = Array.from({ length: 40 }, (_, i) => i + 1)
-		.map((age) => {
-			const d = new Date(BIRTH);
-			d.setFullYear(d.getFullYear() + age);
-			return { age, t: d.getTime() };
-		})
-		.filter((a) => X(a.t) >= PX0 && X(a.t) <= PX1);
+		// The planned chapter's span, clamped to the sheet.
+		const plannedX0 = planned ? X(planned.t0) : 0;
+		const plannedX1 = planned ? Math.min(X(planned.t1), PX1) : 0;
 
-	// The planned chapter's span, clamped to the sheet.
-	const plannedX0 = X(PLANNED.t0);
-	const plannedX1 = Math.min(X(PLANNED.t1), PX1);
-
-	/* The dimension lane's labels, laid out so none collide. A name longer
-	   than its box is set tight; a name that would still run into the one
-	   before it on the lane steps up a row. Widths are estimated from the
-	   mono face's advance (0.62em) plus tracking, in viewBox px. */
-	const ROW_H = 14;
-	interface Label { cx: number; text: string; tight: boolean; row: number; planned: boolean }
-	const LABELS: Label[] = (() => {
+		/* The dimension lane's labels, laid out so none collide. A name longer
+		   than its box is set tight; a name that would still run into the one
+		   before it on the lane steps up a row. Widths are estimated from the
+		   mono face's advance (0.62em) plus tracking, in viewBox px. */
 		const spans = [
-			...CHAPTERS.map((c) => ({ x0: X(c.t0), x1: X(c.t1 ?? NOW), text: c.label, planned: false })),
-			{ x0: plannedX0, x1: plannedX1, text: PLANNED.label, planned: true },
+			...chapters.map((c) => ({
+				x0: X(c.t0),
+				x1: X(c.t1 ?? now),
+				text: c.label ?? "unnamed",
+				planned: false,
+				unnamed: c.label === null,
+			})),
+			...(planned ? [{ x0: plannedX0, x1: plannedX1, text: planned.label, planned: true, unnamed: false }] : []),
 		];
 		const width = (text: string, tight: boolean) =>
 			text.length * (tight ? 9.5 * 0.62 * 1.04 : 12.5 * 0.62 * 1.1);
 		const ends = [-Infinity, -Infinity];
-		return spans.map(({ x0, x1, text, planned }) => {
+		const labels: Label[] = spans.map(({ x0, x1, text, planned, unnamed }) => {
 			const tight = width(text, false) > x1 - x0;
 			const w = width(text, tight);
 			const cx = (x0 + x1) / 2;
 			const row = cx - w / 2 < ends[0] + 10 ? 1 : 0;
 			ends[row] = cx + w / 2;
-			return { cx, text, tight, row, planned };
+			return { cx, text, tight, row, planned, unnamed };
 		});
-	})();
+
+		const boxes = chapters.map((c, ci) => ({
+			c,
+			x0: X(c.t0),
+			x1: X(c.t1 ?? now),
+			color: CH_COLORS[ci % CH_COLORS.length],
+			strips: coverage(ci, c.t0, c.t1 ?? now),
+		}));
+
+		return { X, now, ages, plannedX0, plannedX1, labels, boxes, planned };
+	});
 
 	let readout = $state<string | null>(null);
 </script>
 
 <figure class="lifeline">
-	<svg viewBox={`0 0 1280 ${SHEET_H}`} role="img" aria-label="One fictional life drawn on one wire: seven chapters as spans from birth toward now, named above, aged below. The table that follows lists the same chapters.">
+	<svg viewBox={`0 0 1280 ${SHEET_H}`} role="img" aria-label={life.ariaLabel}>
 		<!-- the wire IS the life: it begins at α and runs toward Ω -->
 		<line x1={PX0} y1={BASE} x2={PX1} y2={BASE} class="wire" />
 		<circle cx={PX0} cy={BASE} r="3" class="alpha-dot" />
@@ -132,43 +151,45 @@
 		<text x={PX1 + 14} y={BASE + 5} text-anchor="start" class="t-omega">Ω</text>
 
 		<!-- the age ruler: years above the ticks, the life's age below -->
-		{#each ages as a (a.age)}
-			<line x1={X(a.t)} y1={BASE + BH + 14} x2={X(a.t)} y2={BASE + BH + 19} class="tick" class:fut={a.t > NOW} />
-			{#if a.age % 5 === 0}
-				<text x={X(a.t)} y={BASE + BH + 10} text-anchor="middle" class="t-age" class:fut={a.t > NOW}>{yearOf(a.t)}</text>
-				<text x={X(a.t)} y={BASE + BH + 30} text-anchor="middle" class="t-age" class:fut={a.t > NOW}>{a.age}</text>
+		{#each L.ages as a (a.t)}
+			<line x1={L.X(a.t)} y1={BASE + BH + 14} x2={L.X(a.t)} y2={BASE + BH + 19} class="tick" class:fut={a.t > L.now} />
+			{#if a.major}
+				<text x={L.X(a.t)} y={BASE + BH + 10} text-anchor="middle" class="t-age" class:fut={a.t > L.now}>{a.year}</text>
+				{#if a.age !== null}
+					<text x={L.X(a.t)} y={BASE + BH + 30} text-anchor="middle" class="t-age" class:fut={a.t > L.now}>{a.age}</text>
+				{/if}
 			{/if}
 		{/each}
 
 		<!-- chapters: boxes on the wire, coverage inside, names in the lane above -->
-		{#each CHAPTERS as c, ci (c.t0)}
-			{@const x0 = X(c.t0)}
-			{@const x1 = X(c.t1 ?? NOW)}
-			{@const color = CH_COLORS[ci % CH_COLORS.length]}
+		{#each L.boxes as b, ci (b.c.t0)}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<g
 				class="blk"
-				onmouseenter={() => (readout = `${c.label} — ${c.ep}`)}
+				class:unnamed={b.c.label === null}
+				onmouseenter={() => (readout = `${b.c.label ?? "An unnamed stretch"} — ${b.c.ep}`)}
 				onmouseleave={() => (readout = null)}
 			>
-				<rect x={x0} y={BASE - BH} width={x1 - x0} height={BH * 2} class="box" style={`--ch:${color}`} />
-				{#each coverage(ci, c.t0, c.t1 ?? NOW) as s, si (si)}
-					<rect x={s.x} y={BASE - BH + 3} width={Math.max(s.w, 1)} height={BH * 2 - 6} fill={color} fill-opacity={s.o} />
+				<rect x={b.x0} y={BASE - BH} width={b.x1 - b.x0} height={BH * 2} class="box" style={`--ch:${b.color}`} />
+				{#each b.strips as s, si (si)}
+					<rect x={s.x} y={BASE - BH + 3} width={Math.max(s.w, 1)} height={BH * 2 - 6} fill={b.color} fill-opacity={s.o} />
 				{/each}
 				<!-- the dimension lane: a hairline with end ticks, the drafted name above -->
-				<line x1={x0 + 1} y1={DIM} x2={c.t1 === null ? x1 : x1 - 1} y2={DIM} class="dim" />
-				<line x1={x0 + 1} y1={DIM} x2={x0 + 1} y2={DIM + 5} class="dim" />
-				{#if c.t1 !== null}
-					<line x1={x1 - 1} y1={DIM} x2={x1 - 1} y2={DIM + 5} class="dim" />
+				<line x1={b.x0 + 1} y1={DIM} x2={b.c.t1 === null ? b.x1 : b.x1 - 1} y2={DIM} class="dim" />
+				<line x1={b.x0 + 1} y1={DIM} x2={b.x0 + 1} y2={DIM + 5} class="dim" />
+				{#if b.c.t1 !== null}
+					<line x1={b.x1 - 1} y1={DIM} x2={b.x1 - 1} y2={DIM + 5} class="dim" />
 				{/if}
 			</g>
 		{/each}
 
 		<!-- the planned chapter: drafted, not lived — dashed, in intent red -->
-		<line x1={plannedX0} y1={DIM} x2={plannedX1} y2={DIM} class="dim planned" />
+		{#if L.planned}
+			<line x1={L.plannedX0} y1={DIM} x2={L.plannedX1} y2={DIM} class="dim planned" />
+		{/if}
 
 		<!-- the names, on the lane or one row up when they would collide -->
-		{#each LABELS as l (l.text)}
+		{#each L.labels as l, li (li)}
 			<text
 				x={l.cx}
 				y={DIM - 7 - l.row * ROW_H}
@@ -176,6 +197,7 @@
 				class="t-dim"
 				class:t-dim-tight={l.tight}
 				class:planned-t={l.planned}
+				class:unnamed-t={l.unnamed}
 			>
 				{l.text}
 			</text>
@@ -184,11 +206,11 @@
 		<!-- now: the one claret vertical. It runs from the boxes down through
 		     the ruler and is named below it, so it never cuts through a
 		     chapter's name in the lane above. -->
-		<line x1={X(NOW)} y1={BASE - BH - 8} x2={X(NOW)} y2={BASE + BH + 38} class="now" />
-		<text x={X(NOW)} y={BASE + BH + 50} text-anchor="middle" class="t-now">now</text>
+		<line x1={L.X(L.now)} y1={BASE - BH - 8} x2={L.X(L.now)} y2={BASE + BH + 38} class="now" />
+		<text x={L.X(L.now)} y={BASE + BH + 50} text-anchor="middle" class="t-now">now</text>
 	</svg>
 	<figcaption class="readout" class:idle={!readout}>
-		{readout ?? "One life on one wire: every day falls inside exactly one chapter."}
+		{readout ?? life.caption}
 	</figcaption>
 </figure>
 
@@ -261,6 +283,15 @@
 		stroke: var(--color-foreground);
 		stroke-opacity: 0.35;
 		stroke-width: 0.8;
+	}
+
+	.blk.unnamed .box {
+		stroke-dasharray: 3 3;
+		fill-opacity: 0.03;
+	}
+
+	.unnamed-t {
+		fill: var(--color-foreground-subtle);
 	}
 
 	.blk:hover .box {
