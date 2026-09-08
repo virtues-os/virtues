@@ -74,23 +74,16 @@
 	// One fixed chat (seeded at boot; the server forces interview mode by this
 	// id — see chat_handler). Mirrors narrative_draft::INTERVIEW_CHAT_ID.
 	const INTERVIEW_CHAT_ID = "chat_narrative_interview";
-	const INTERVIEW_OPENING =
-		"# The story of your life\n\n" +
-		"Your server keeps the record of your life \u2014 where you go, what you " +
-		"say, how you sleep. But the record can't say what any of it meant. " +
-		"That part is yours to tell.\n\n" +
-		"People understand predominantly through stories. They're accessible, " +
-		"they carry context, and they can mix facts and feelings in a way that " +
-		"captures the human experience. The goal here is to write yours, so " +
-		"your server can make better sense of your data \u2014 not by inferring or " +
-		"guessing, but by giving structure to your history: your past, goals, " +
-		"ambitions, relationships, places, temperaments. Everything is a lot, " +
-		"so we'll take it a piece at a time.\n\n" +
-		"What you say here stays on your server. The model conducting this is " +
-		"sent your words under a no-retention agreement and keeps nothing.\n\n" +
-		"We start with the chapters of your life \u2014 five to ten of them, rough " +
-		"names and rough years. Months and dates are welcome where you remember " +
-		"them. One person's might run:\n\n" +
+	/** The opening, in three parts: the heading alone (the lifeline plate
+	 *  renders right after it, bleeding past the column — see the message
+	 *  template), then the intro and the example table, then the ask. */
+	const INTERVIEW_OPENING = "# The story of your life: chapters & identity";
+	const INTERVIEW_OPENING_BODY =
+		"In order to help the Virtues platform generate more powerful insights " +
+		"in your life, we\u2019ll guide you in briefly describing your past " +
+		"chapters.\n\n" +
+		"We define chapters as seven major arcs in your life; see the table " +
+		"below for an example.\n\n" +
 		// A made-up life (see ChapterLifeline.svelte, which draws the same
 		// one). The interview prompt tells the model this table is an
 		// example, and the repo's rule is that nothing from a real life ships.
@@ -99,18 +92,20 @@
 		"| Childhood on the coast | 1997 \u2013 2003 |\n" +
 		"| Grade school, inland | 2003 \u2013 2009 |\n" +
 		"| The band years | 2009 \u2013 2016 |\n" +
-		"| College | 2016 \u2013 2020 |\n" +
-		"| Locked down | 2020 \u2013 2021 |\n" +
+		"| College | 2016 \u2013 2021 |\n" +
 		"| The first shop | 2021 \u2013 2023 |\n" +
 		"| The workshop | 2023 \u2013 2025 |\n" +
-		"| Out on my own | 2025 \u2013 now |\n\n" +
-		"The same chapters, drawn on the one wire a life is:";
+		"| Out on my own | 2025 \u2013 now |";
 
-	/** The lifeline plate renders between the two parts (see the message
-	 *  template); the ask comes after the person has seen the shape. */
+	/** The ask comes last, after the shape has been seen; the retention
+	 *  promise rides with it because it is the one thing to know before
+	 *  answering. */
 	const INTERVIEW_OPENING_ASK =
-		"Yours will look nothing like these. Rough names and rough years are " +
-		"enough \u2014 what would your chapters be?";
+		"Yours will look nothing like these. What would your chapters be? " +
+		"Rough names and rough years are enough; months and dates are welcome " +
+		"where you remember them.\n\n" +
+		"What you say here stays on your server. The model conducting this is " +
+		"sent your words under a no-retention agreement and keeps nothing.";
 
 	/** The narrative interview opens ALREADY SPEAKING: an authored first line,
 	 *  shown free (never persisted, no model call). The interview prompt knows
@@ -134,10 +129,12 @@
 			{
 				id: "interview-opening",
 				role: "assistant",
-				// Two parts on purpose: the lifeline plate renders between
-				// them, so the ask lands after the shape has been seen.
+				// Three parts on purpose: the lifeline plate renders after
+				// the first (the heading), so the shape is seen before the
+				// example table, and the ask lands last.
 				parts: [
 					{ type: "text", text: INTERVIEW_OPENING },
+					{ type: "text", text: INTERVIEW_OPENING_BODY },
 					{ type: "text", text: INTERVIEW_OPENING_ASK },
 				],
 			},
@@ -1864,7 +1861,10 @@
 						class="flex-1 overflow-y-auto chat-layout"
 						class:visible={!isEmpty}
 					>
-						<div class="messages-container">
+						<div
+							class="messages-container"
+							class:bleeds={uniqueMessages[0]?.id === "interview-opening"}
+						>
 							{#each uniqueMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
 								{@const exchangeIndex = isUserMessage
@@ -1883,6 +1883,7 @@
 								>
 									<div
 										class="message-wrapper"
+										class:bleeds={message.id === "interview-opening"}
 										class:user-has-attachment={isUserMessage &&
 											message.parts.some((p: any) => p.type === "file")}
 										data-message-id={message.id}
@@ -1986,8 +1987,9 @@
 															onCitationClick={openCitationPanel}
 														/>
 														{#if message.id === "interview-opening" && partIndex === 0}
-															<!-- The horizontal of the table above it: the same
-															     fictional life on one wire, α toward Ω. -->
+															<!-- Right under the heading, wider than the column:
+															     one fictional life on one wire, α toward Ω. The
+															     table that follows lists the same chapters. -->
 															<ChapterLifeline />
 														{/if}
 													</div>
@@ -2745,6 +2747,9 @@
 
 	.chat-layout {
 		height: 100%;
+		/* The plate in the interview's opening measures its bleed against
+		   this scroller (cqw), never the viewport. */
+		container-type: inline-size;
 		opacity: 0;
 		pointer-events: none;
 		/* Fade + rise in as the composer glides down (matched to the ~400ms glide). */
@@ -2801,6 +2806,14 @@
 		   Safe here: the sticky .chat-input-wrapper is a sibling of the scroller,
 		   not a descendant, so layout containment doesn't affect it. */
 		contain: layout paint;
+	}
+
+	/* The interview's opening plate bleeds past the column (see
+	   ChapterLifeline.svelte: it sizes itself in cqw of the scroller). Paint
+	   containment would clip it at the column's edge, so the room that shows
+	   it keeps layout containment only. */
+	.messages-container.bleeds {
+		contain: layout;
 	}
 
 	.chat-input-wrapper {
@@ -3149,6 +3162,10 @@
 		/* Isolate each message's layout/paint so a re-render of one (e.g. the
 		   streaming tail) can't reflow siblings. */
 		contain: layout paint;
+	}
+
+	.message-wrapper.bleeds {
+		contain: layout;
 	}
 
 	.message-wrapper :global(h1),
