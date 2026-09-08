@@ -1,10 +1,12 @@
 <!--
 	ChapterLifeline.svelte
 
-	The lifeline as a plate, cropped to its life-level view — the horizontal
-	of the opening's example table: one wire from α to Ω, the same fictional
-	life's chapters as boxes on it, their names in the dimension lane above,
-	the age ruler below, now marked, one planned chapter drafted in dashes.
+	The lifeline as a plate, cropped to its life-level view — the picture
+	under the opening's "Chapters" heading, wider than the column it sits in:
+	one wire from α to Ω, a fictional life's seven chapters as boxes on it
+	(the same ones the example table below it lists), their names in the
+	dimension lane above, the age ruler below, now marked, one planned
+	chapter drafted in dashes.
 
 	Ported from the "Alpha to Omega" prototype (the full zoomable plate lives
 	there; this is the static crop the interview opening earns — enough to
@@ -31,8 +33,7 @@
 		{ t0: BIRTH, t1: new Date(2003, 7, 20).getTime(), label: "Childhood on the coast", ep: "three towns before the first classroom" },
 		{ t0: new Date(2003, 7, 20).getTime(), t1: new Date(2009, 5, 10).getTime(), label: "Grade school, inland", ep: "snow days and the lake" },
 		{ t0: new Date(2009, 5, 10).getTime(), t1: new Date(2016, 7, 20).getTime(), label: "The band years", ep: "the garage after hours" },
-		{ t0: new Date(2016, 7, 20).getTime(), t1: new Date(2020, 4, 12).getTime(), label: "College", ep: "everything new at once" },
-		{ t0: new Date(2020, 4, 12).getTime(), t1: new Date(2021, 8, 1).getTime(), label: "Locked down", ep: "a year at a desk, itching" },
+		{ t0: new Date(2016, 7, 20).getTime(), t1: new Date(2021, 8, 1).getTime(), label: "College", ep: "everything new at once, then a year at a desk" },
 		{ t0: new Date(2021, 8, 1).getTime(), t1: new Date(2023, 6, 1).getTime(), label: "The first shop", ep: "the first real build" },
 		{ t0: new Date(2023, 6, 1).getTime(), t1: new Date(2025, 5, 1).getTime(), label: "The workshop", ep: "two years of hard problems" },
 		{ t0: new Date(2025, 5, 1).getTime(), t1: null, label: "Out on my own", ep: "the shop with my name on it" },
@@ -44,9 +45,14 @@
 
 	// ── geometry: the prototype's sheet, cropped to one static window ──
 	const PX0 = 60, PX1 = 1220;
-	const BASE = 148;   // the wire
-	const DIM = 100;    // the dimension lane's hairline
-	const BH = 16;      // box half-height
+	/* Vertical geometry, top to bottom: the name lane (two rows of names
+	   above its hairline), the boxes on the wire, the age ruler, and the
+	   now-word below it. Kept tight: the lane sits just above the boxes it
+	   measures, and the sheet's height is the content's, no dead band. */
+	const BH = 16;              // box half-height
+	const BASE = 90;            // the wire
+	const DIM = BASE - BH - 20; // the dimension lane's hairline
+	const SHEET_H = BASE + BH + 60;
 	// now sits at 72% of the sheet, as the prototype boots
 	const LO = BIRTH;
 	const HI = BIRTH + (NOW - BIRTH) / 0.72;
@@ -90,11 +96,35 @@
 	const plannedX0 = X(PLANNED.t0);
 	const plannedX1 = Math.min(X(PLANNED.t1), PX1);
 
+	/* The dimension lane's labels, laid out so none collide. A name longer
+	   than its box is set tight; a name that would still run into the one
+	   before it on the lane steps up a row. Widths are estimated from the
+	   mono face's advance (0.62em) plus tracking, in viewBox px. */
+	const ROW_H = 14;
+	interface Label { cx: number; text: string; tight: boolean; row: number; planned: boolean }
+	const LABELS: Label[] = (() => {
+		const spans = [
+			...CHAPTERS.map((c) => ({ x0: X(c.t0), x1: X(c.t1 ?? NOW), text: c.label, planned: false })),
+			{ x0: plannedX0, x1: plannedX1, text: PLANNED.label, planned: true },
+		];
+		const width = (text: string, tight: boolean) =>
+			text.length * (tight ? 9.5 * 0.62 * 1.04 : 12.5 * 0.62 * 1.1);
+		const ends = [-Infinity, -Infinity];
+		return spans.map(({ x0, x1, text, planned }) => {
+			const tight = width(text, false) > x1 - x0;
+			const w = width(text, tight);
+			const cx = (x0 + x1) / 2;
+			const row = cx - w / 2 < ends[0] + 10 ? 1 : 0;
+			ends[row] = cx + w / 2;
+			return { cx, text, tight, row, planned };
+		});
+	})();
+
 	let readout = $state<string | null>(null);
 </script>
 
 <figure class="lifeline">
-	<svg viewBox="0 0 1280 232" role="img" aria-label="The same fictional life as the table, drawn on one wire: chapters as spans from birth toward now, named above, aged below.">
+	<svg viewBox={`0 0 1280 ${SHEET_H}`} role="img" aria-label="One fictional life drawn on one wire: seven chapters as spans from birth toward now, named above, aged below. The table that follows lists the same chapters.">
 		<!-- the wire IS the life: it begins at α and runs toward Ω -->
 		<line x1={PX0} y1={BASE} x2={PX1} y2={BASE} class="wire" />
 		<circle cx={PX0} cy={BASE} r="3" class="alpha-dot" />
@@ -131,33 +161,57 @@
 				{#if c.t1 !== null}
 					<line x1={x1 - 1} y1={DIM} x2={x1 - 1} y2={DIM + 5} class="dim" />
 				{/if}
-				<text x={(x0 + x1) / 2} y={DIM - 7} text-anchor="middle" class="t-dim" class:t-dim-tight={x1 - x0 < 92}>
-					{c.label}
-				</text>
 			</g>
 		{/each}
 
 		<!-- the planned chapter: drafted, not lived — dashed, in intent red -->
 		<line x1={plannedX0} y1={DIM} x2={plannedX1} y2={DIM} class="dim planned" />
-		<text x={(plannedX0 + plannedX1) / 2} y={DIM - 7} text-anchor="middle" class="t-dim planned-t">{PLANNED.label}</text>
 
-		<!-- now: the one claret vertical -->
-		<line x1={X(NOW)} y1={DIM - 26} x2={X(NOW)} y2={BASE + BH + 6} class="now" />
-		<text x={X(NOW)} y={DIM - 32} text-anchor="middle" class="t-now">now</text>
+		<!-- the names, on the lane or one row up when they would collide -->
+		{#each LABELS as l (l.text)}
+			<text
+				x={l.cx}
+				y={DIM - 7 - l.row * ROW_H}
+				text-anchor="middle"
+				class="t-dim"
+				class:t-dim-tight={l.tight}
+				class:planned-t={l.planned}
+			>
+				{l.text}
+			</text>
+		{/each}
+
+		<!-- now: the one claret vertical. It runs from the boxes down through
+		     the ruler and is named below it, so it never cuts through a
+		     chapter's name in the lane above. -->
+		<line x1={X(NOW)} y1={BASE - BH - 8} x2={X(NOW)} y2={BASE + BH + 38} class="now" />
+		<text x={X(NOW)} y={BASE + BH + 50} text-anchor="middle" class="t-now">now</text>
 	</svg>
 	<figcaption class="readout" class:idle={!readout}>
-		{readout ?? "The same life, horizontally — every day falls inside exactly one chapter."}
+		{readout ?? "One life on one wire: every day falls inside exactly one chapter."}
 	</figcaption>
 </figure>
 
 <style>
 	.lifeline {
-		margin: 1.25rem 0 0.5rem;
+		margin: 1.5rem 0 1.75rem;
+		/* Wider than the column it sits in: the chat scroller is the size
+		   container (ChatView sets container-type on it), so the plate takes
+		   up to 72rem of it, less a gutter, and centers on the column. The
+		   column's paint containment is relaxed for this one message so the
+		   overhang is drawn, not clipped. On a narrow scroller this collapses
+		   to the column width. */
+		width: min(72rem, calc(100cqw - 3rem));
+		max-width: none;
+		position: relative;
+		left: 50%;
+		transform: translateX(-50%);
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
-		padding: 1rem 0.75rem 0.5rem;
+		padding: 1.5rem 1.25rem 0.875rem;
 		background: var(--color-background);
 	}
+
 
 	svg {
 		display: block;
@@ -256,7 +310,7 @@
 	}
 
 	.readout {
-		margin: 0.375rem 0.25rem 0.25rem;
+		margin: 0.75rem 0.25rem 0;
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
 		min-height: 1.2em;
