@@ -271,7 +271,12 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
         })
         .collect();
 
-    // Get aggregated usage from chat_usage
+    // Get aggregated usage from chat_usage: one row per (chat, model), summed
+    // across every model the chat has used. The model is NOT selected — a
+    // bare `model` beside the SUMs is a GROUP BY violation Postgres rejects
+    // at parse time, so this endpoint returned 500 on every chat and the
+    // context indicator never once painted. The model reported below is the
+    // last one that spoke, read off the messages.
     let usage_row = sqlx::query(
         r#"
         SELECT
@@ -280,8 +285,7 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
             COALESCE(SUM(reasoning_tokens), 0) as "reasoning_tokens",
             COALESCE(SUM(cache_read_tokens), 0) as "cache_read_tokens",
             COALESCE(SUM(cache_write_tokens), 0) as "cache_write_tokens",
-            COALESCE(SUM(estimated_cost_usd), 0.0) as "total_cost",
-            model
+            COALESCE(SUM(estimated_cost_usd), 0.0) as "total_cost"
         FROM app_chat_usage
         WHERE chat_id = $1
         GROUP BY chat_id
@@ -333,7 +337,10 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
         context_window,
     );
 
-    // Use recorded usage if available, otherwise estimate from messages
+    // The billed totals: what every turn of this chat has cost, summed. These
+    // are CUMULATIVE — each turn re-sends the whole transcript, so after N
+    // turns the input figure is roughly N times the context — which is what
+    // the cost rows want and what a context gauge must never read.
     let (input_tokens, output_tokens, reasoning_tokens, cache_read, cache_write, total_cost) =
         if let Some(usage) = usage_row {
             use sqlx::Row;
@@ -346,20 +353,18 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
                 usage.get("total_cost"),
             )
         } else {
-            // Estimate from messages if no recorded usage
+            // Nothing recorded yet (a chat that has not completed a turn, or a
+            // transcript older than usage tracking): approximate the split.
             (estimate.total_tokens / 2, estimate.total_tokens / 2, 0, 0, 0, 0.0)
         };
 
-    let total_tokens = input_tokens + output_tokens;
-    let usage_percentage = (total_tokens as f64 / context_window as f64) * 100.0;
-
-    let context_status = if usage_percentage >= 85.0 {
-        ContextStatus::Critical
-    } else if usage_percentage >= 70.0 {
-        ContextStatus::Warning
-    } else {
-        ContextStatus::Healthy
-    };
+    // The context gauge: what the NEXT turn will send, against the window.
+    // This used to be input + output from the sums above, which made a
+    // thirty-turn chat read as thirty contexts' worth and would have tripped
+    // the compaction thresholds on chats that were nowhere near full.
+    let total_tokens = estimate.total_tokens;
+    let usage_percentage = estimate.usage_percentage;
+    let context_status = estimate.status;
 
     Ok(ChatUsageInfo {
         chat_id: chat_id_str,
