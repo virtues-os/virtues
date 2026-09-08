@@ -44,6 +44,7 @@ tensorrt = ["cuda"]
 [dependencies]
 # Shared registry
 virtues-registry = { path = "../crates/virtues-registry" }
+virtues-ai-wire = { path = "../crates/virtues-ai-wire" }
 
 # Single shared utility crate: crypto, auth, contract, db, dedup, ids, ios, ...
 virtues-helpers = { path = "../crates/virtues-helpers" }
@@ -73,7 +74,9 @@ async-trait = "0.1"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "migrate", "chrono", "json", "macros", "uuid", "rust_decimal"] }
 
 # Vector search (pgvector extension — Rust bindings round-trip vector(N) via sqlx)
-pgvector = { version = "0.4", features = ["sqlx", "halfvec"] }
+# 0.4.2 moved to sqlx 0.9 — a second sqlx in the graph and every Vector
+# column stops satisfying `sqlx::Type<Postgres>`. Lift the bound with sqlx.
+pgvector = { version = "0.4, <0.4.2", features = ["sqlx", "halfvec"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

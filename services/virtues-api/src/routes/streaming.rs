@@ -13,14 +13,14 @@
 
 use axum::response::{sse::Event as SseEvent, IntoResponse, Response, Sse};
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::convert::Infallible;
 use std::future::Future;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     config::Config,
-    providers::{calculate_cost, get_provider_config},
+    providers::{calculate_cost, get_provider_config, upstream_body},
     proxy::ProxyError,
 };
 
@@ -61,25 +61,8 @@ pub struct StreamUsage {
     pub cost: Option<f64>,
 }
 
-/// Internal request format for streaming
-#[derive(Clone, Serialize)]
-pub struct StreamingRequest {
-    pub model: String,
-    pub messages: Vec<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-    /// Tool definitions for function calling
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<serde_json::Value>>,
-    /// Tool choice: "auto", "none", "required", or specific tool
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<serde_json::Value>,
-    /// Optional reasoning budget hint forwarded to the gateway.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
-}
+/// The streaming request is the shared wire type; see `routes/ai.rs`.
+pub type StreamingRequest = virtues_ai_wire::ChatCompletionRequest;
 
 /// Create SSE streaming response with caller-supplied charge callback.
 ///
@@ -100,37 +83,8 @@ where
 {
     let provider = get_provider_config(&request.model, config);
 
-    // Build OpenAI-compatible request body with stream_options for usage tracking
-    let mut body = serde_json::json!({
-        "model": provider.model_name,
-        "messages": request.messages,
-        "max_tokens": request.max_tokens.unwrap_or(4096),
-        "temperature": request.temperature.unwrap_or(0.7),
-        "stream": true,
-        "stream_options": { "include_usage": true }
-    });
-
-    if let Some(ref effort) = request.reasoning_effort {
-        body["reasoning_effort"] = serde_json::json!(effort);
-    }
-
-    // Same zero-retention enforcement as the non-streaming path. Chat streams,
-    // so omitting it here would have left the single highest-volume, most
-    // personal route as the one that never asked.
-    if catalog.enforce_zdr(&request.model) {
-        body["providerOptions"] =
-            serde_json::json!({ "gateway": { "zeroDataRetention": true } });
-    }
-
-    // Only include tools if present and non-empty (providers reject null/empty arrays)
-    if let Some(ref tools) = request.tools {
-        if !tools.is_empty() {
-            body["tools"] = serde_json::json!(tools);
-            if let Some(ref choice) = request.tool_choice {
-                body["tool_choice"] = choice.clone();
-            }
-        }
-    }
+    // One builder for both paths; `stream: true` adds stream_options.
+    let body = upstream_body(&request, &provider.model_name, true, catalog.enforce_zdr(&request.model));
 
     let response = client
         .post(&provider.endpoint)

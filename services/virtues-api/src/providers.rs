@@ -32,6 +32,63 @@ pub fn get_provider_config(model: &str, config: &Config) -> ProviderConfig {
     }
 }
 
+/// The body sent upstream, built in exactly one place for the streaming and
+/// non-streaming paths (they used to be two near-copies that drifted).
+///
+/// What this does NOT do, on purpose:
+/// - It never invents `max_tokens`. For three months this filled in 4096 when
+///   the caller sent none, which put a hard ceiling on every live chat turn
+///   the box had deliberately left uncapped, on a model that counts its
+///   thinking inside that ceiling. Absent means the model's own window.
+/// - It never forwards `thought_signature`. See the wire crate.
+///
+/// What it still does, for now: default `temperature` to 0.7. The box sends
+/// none on chat turns and has run at 0.7 since the proxy existed; dropping
+/// the default here would move every chat to the provider's 1.0 in a cloud
+/// deploy nobody can see from the box. The box starts sending its own
+/// temperature in plan phase 2d; this default goes in the deploy after that.
+pub fn upstream_body(
+    req: &virtues_ai_wire::ChatCompletionRequest,
+    upstream_model: &str,
+    stream: bool,
+    enforce_zdr: bool,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": upstream_model,
+        "messages": req.messages,
+        "temperature": req.temperature.unwrap_or(0.7),
+    });
+    if let Some(mt) = req.max_tokens {
+        body["max_tokens"] = serde_json::json!(mt);
+    }
+    if stream {
+        body["stream"] = serde_json::json!(true);
+        body["stream_options"] = serde_json::json!({ "include_usage": true });
+    }
+    if let Some(ref effort) = req.reasoning_effort {
+        body["reasoning_effort"] = serde_json::json!(effort);
+    }
+    if let Some(ref reasoning) = req.reasoning {
+        body["reasoning"] = serde_json::to_value(reasoning).unwrap_or_default();
+    }
+    // Only include tools if present and non-empty (providers reject null/empty arrays)
+    if let Some(ref tools) = req.tools {
+        if !tools.is_empty() {
+            body["tools"] = serde_json::json!(tools);
+            if let Some(ref choice) = req.tool_choice {
+                body["tool_choice"] = choice.clone();
+            }
+        }
+    }
+    // The caller's provider options, with zero-retention pinned over them
+    // wherever the catalog says the model has ZDR routes. See
+    // Catalog::enforce_zdr for why this is per-request and never a setting.
+    if let Some(po) = virtues_ai_wire::merge_provider_options(req.provider_options.clone(), enforce_zdr) {
+        body["providerOptions"] = po;
+    }
+    body
+}
+
 /// Calculate cost from token usage. FALLBACK ONLY. `None` means we do not know.
 ///
 /// The gateway's `usage.cost` is authoritative and is present on every call, on

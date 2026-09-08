@@ -8950,6 +8950,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "virtues-ai-wire",
  "virtues-helpers",
  "virtues-improv",
  "virtues-iroh",
@@ -8957,6 +8958,14 @@ dependencies = [
  "y-sync",
  "yrs 0.18.8",
  "zip",
+]
+
+[[package]]
+name = "virtues-ai-wire"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -8988,6 +8997,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "virtues-ai-wire",
  "virtues-helpers",
  "virtues-registry",
 ]

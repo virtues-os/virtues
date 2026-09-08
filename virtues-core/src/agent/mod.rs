@@ -183,7 +183,12 @@ impl AgentLoop {
                 tracing::info!(step, "Agent loop step");
 
                 // Build provider options for reasoning models
-                let provider_options = stream::build_provider_options(&model);
+                // None until plan phase 2d attaches the catalog's display
+                // options. The function this replaced matched `claude-3` /
+                // `o1` / `deepseek` by substring and built a legacy
+                // `budget_tokens` thinking shape that the proxy dropped and
+                // that Claude 4.7+ now rejects with a 400.
+                let provider_options: Option<serde_json::Value> = None;
 
                 // Use the next_thought_signature if available, otherwise look in history
                 let thought_signature = if next_thought_signature.is_some() {

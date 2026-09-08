@@ -871,8 +871,10 @@ Conversation:
                 "model": background_model,
                 "messages": [
                     {"role": "user", "content": prompt}
-                ],
-                "max_tokens": 50
+                ]
+                // No output ceiling. The prompt asks for a short title; the
+                // 50-token cap that sat here was spent thinking on a model
+                // that thinks and returned no title at all.
             }),
         )
         .await
