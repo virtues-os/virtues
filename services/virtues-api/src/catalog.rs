@@ -95,6 +95,28 @@ pub struct GatewayModel {
     /// Same tri-state for "providers do not train on request data".
     #[serde(default)]
     pub no_training: Option<String>,
+    /// The gateway's reasoning controls: `[{type: toggle}, {type: effort,
+    /// values: [...]}, {type: budget_tokens, min, max}]`. Absent means the
+    /// catalog does not specify the controls, not that the model cannot
+    /// reason. Read live on 2026-09-08: Sonnet 5 and Fable 5 list toggle +
+    /// effort, glm-4.7-flash toggle only, gemini-3-flash effort only.
+    #[serde(default)]
+    pub reasoning_options: Vec<ReasoningOption>,
+}
+
+/// One entry of a model's `reasoning_options`. Kept loose (a `type` string
+/// plus every field any kind carries) so a control the gateway adds later
+/// cannot break the whole catalog parse.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReasoningOption {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub values: Vec<String>,
+    #[serde(default)]
+    pub min: Option<u64>,
+    #[serde(default)]
+    pub max: Option<u64>,
 }
 
 /// Input/output modality lists as the gateway reports them (`text`, `image`,
@@ -133,6 +155,38 @@ impl GatewayModel {
     }
     fn display_name(&self) -> String {
         self.name.clone().unwrap_or_else(|| self.id.clone())
+    }
+    /// The catalog's `owned_by`, falling back to the id's creator prefix.
+    fn owner(&self) -> String {
+        self.owned_by
+            .clone()
+            .or_else(|| self.id.split('/').next().map(str::to_string))
+            .unwrap_or_default()
+    }
+    /// What the gateway says about this model's thinking, in the shape the
+    /// box's completion helper reads. A claim, not a measurement: the
+    /// catalog lists a toggle for Claude Fable 5, which the gateway's docs
+    /// say cannot turn thinking off. Good enough to decide what to ask for;
+    /// never enough to justify an output ceiling.
+    fn reasoning_facts(&self) -> virtues_ai_wire::ReasoningFacts {
+        let thinks = self.tags.iter().any(|t| t == "reasoning") || !self.reasoning_options.is_empty();
+        let can_disable = self.reasoning_options.iter().any(|o| o.kind == "toggle");
+        let effort_values = self
+            .reasoning_options
+            .iter()
+            .find(|o| o.kind == "effort")
+            .map(|o| o.values.clone())
+            .unwrap_or_default();
+        virtues_ai_wire::ReasoningFacts {
+            thinks,
+            can_disable,
+            effort_values,
+            display_options: if thinks {
+                virtues_ai_wire::ReasoningFacts::display_options_for(&self.owner())
+            } else {
+                serde_json::json!({})
+            },
+        }
     }
     /// A presentable provider label from `owned_by`, with the handful of
     /// lowercase/opaque slugs mapped to how the provider brands itself.
@@ -305,6 +359,7 @@ impl Catalog {
                     recommended,
                     zdr: m.zdr.clone(),
                     no_training: m.no_training.clone(),
+                    reasoning: Some(m.reasoning_facts()),
                 })
             })
             .collect();
@@ -422,6 +477,10 @@ pub struct CuratedModel {
     /// `None` when it didn't say. `None` is unknown, not `"none"`.
     pub zdr: Option<String>,
     pub no_training: Option<String>,
+    /// Whether and how this model thinks, per the gateway. Always present
+    /// from this build of the proxy; a box reads `None` only from an older
+    /// proxy or its compiled floor.
+    pub reasoning: Option<virtues_ai_wire::ReasoningFacts>,
 }
 
 /// Split a bare model name into its family stem and version, e.g. `grok-4.5`
@@ -509,7 +568,43 @@ mod tests {
             supported_parameters: vec![],
             zdr: None,
             no_training: None,
+            reasoning_options: vec![],
         }
+    }
+
+    /// The four shapes the live catalog showed on 2026-09-08, and the one
+    /// rule for reading them: a toggle means "may be disabled", an effort
+    /// entry is the lever, and no controls plus no tag means it does not
+    /// think.
+    #[test]
+    fn reasoning_facts_follow_the_catalogs_controls() {
+        let opt = |kind: &str, values: &[&str]| ReasoningOption {
+            kind: kind.into(),
+            values: values.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        let mut sonnet = gw("anthropic/claude-sonnet-5", "0.000003", &["reasoning"], &["text"]);
+        sonnet.reasoning_options = vec![opt("toggle", &[]), opt("effort", &["low", "medium", "high", "xhigh"])];
+        let f = sonnet.reasoning_facts();
+        assert!(f.thinks && f.can_disable);
+        assert_eq!(f.effort_values, vec!["low", "medium", "high", "xhigh"]);
+        assert_eq!(f.display_options["anthropic"]["thinking"]["display"], "summarized");
+
+        let mut glm = gw("zai/glm-4.7-flash", "0.00000007", &["reasoning"], &["text"]);
+        glm.reasoning_options = vec![opt("toggle", &[])];
+        let f = glm.reasoning_facts();
+        assert!(f.thinks && f.can_disable && f.effort_values.is_empty());
+        assert_eq!(f.display_options, serde_json::json!({}));
+
+        let mut gemini = gw("google/gemini-3-flash", "0.0000005", &["reasoning"], &["text"]);
+        gemini.reasoning_options = vec![opt("effort", &["minimal", "low", "medium", "high"])];
+        let f = gemini.reasoning_facts();
+        assert!(f.thinks && !f.can_disable);
+        assert_eq!(f.display_options["google"]["thinkingConfig"]["includeThoughts"], true);
+
+        let qwen = gw("alibaba/qwen3-coder-plus", "0.000001", &[], &["text"]);
+        let f = qwen.reasoning_facts();
+        assert!(!f.thinks && !f.can_disable && f.effort_values.is_empty());
     }
 
     #[test]
