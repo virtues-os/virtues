@@ -28,6 +28,7 @@
 		findWriteItUpOutput,
 	} from "$lib/components/chat/interview/interview";
 	import InterviewCompanion from "$lib/components/chat/interview/InterviewCompanion.svelte";
+	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
 	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
@@ -2022,6 +2023,11 @@
 							     only until the AI SDK creates the assistant message (at text-start).
 							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
 							{#if currentChatConversationId === INTERVIEW_CHAT_ID}
+								{#if interviewClosed}
+									<!-- The close answers the opening: the same plate, drawn from
+									     the chapters the person just named. -->
+									<ChapterLifelineLive />
+								{/if}
 								<InterviewCompanion status={chat.status} activity={uniqueMessages.length} />
 							{:else if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">
