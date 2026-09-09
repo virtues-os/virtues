@@ -77,11 +77,12 @@ pub async fn stream_llm_response<F>(
 where
     F: FnMut(AgentEvent),
 {
-    // The wire type: a field here either reaches the proxy's builder or does
-    // not compile. (The hand-built JSON this replaced sent `provider_options`
-    // and `thought_signature` to a proxy that had neither field, for three
-    // months, silently.)
-    let request = virtues_ai_wire::ChatCompletionRequest {
+    // One builder for every site that posts a chat completion; the proxy
+    // forwards the body opaquely, so what is set here is what the gateway
+    // sees. (The hand-built JSON this replaced sent `provider_options` to a
+    // proxy that re-typed the body without that field, for three months,
+    // silently.)
+    let request = crate::virtues_api::request::ChatCompletionRequest {
         model: model.to_string(),
         messages: messages.to_vec(),
         stream: Some(true),

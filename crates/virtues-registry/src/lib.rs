@@ -29,7 +29,7 @@ pub mod tools;
 
 // Re-export main types for convenience
 pub use assistant::{assistant_profile_defaults, AssistantProfileDefaults, DEFAULT_THEME};
-pub use models::{default_model_for_slot, required_model_ids, ModelSlot};
+pub use models::{default_model_for_slot, required_model_ids, ModelSlot, ReasoningFacts};
 pub use ontologies::{registered_ontologies, EmbeddingConfig, OntologyDescriptor};
 pub use personas::{default_personas, get_persona, PersonaConfig};
 pub use tools::{default_tools, ToolConfig};

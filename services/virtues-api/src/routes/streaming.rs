@@ -61,30 +61,31 @@ pub struct StreamUsage {
     pub cost: Option<f64>,
 }
 
-/// The streaming request is the shared wire type; see `routes/ai.rs`.
-pub type StreamingRequest = virtues_ai_wire::ChatCompletionRequest;
-
 /// Create SSE streaming response with caller-supplied charge callback.
 ///
 /// `on_complete` is called once with the resolved `cost_micros` after the
 /// upstream stream emits `[DONE]`. The bearer-auth AI route wires this to
 /// `entitlement::charge()`. The streaming hot path knows nothing about
 /// budget storage.
+///
+/// `request` is the caller's body, opaque; `model` is the id the route
+/// already read from it. See `routes/ai.rs`.
 pub async fn create_streaming_response<F, Fut>(
     client: &reqwest::Client,
     config: &Config,
     catalog: &crate::catalog::Catalog,
-    request: StreamingRequest,
+    model: &str,
+    request: serde_json::Value,
     on_complete: F,
 ) -> Result<Response, ProxyError>
 where
     F: FnOnce(i64) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
-    let provider = get_provider_config(&request.model, config);
+    let provider = get_provider_config(model, config);
 
-    // One builder for both paths; `stream: true` adds stream_options.
-    let body = upstream_body(&request, &provider.model_name, true, catalog.enforce_zdr(&request.model));
+    // One pass-through for both paths; `stream: true` adds stream_options.
+    let body = upstream_body(request, &provider.model_name, true, catalog.enforce_zdr(model));
 
     let response = client
         .post(&provider.endpoint)
@@ -106,7 +107,7 @@ where
         // UpstreamError below, not to tracing.
         tracing::warn!(
             status = status.as_u16(),
-            model = %request.model,
+            model = %model,
             endpoint = %provider.endpoint,
             "AI Gateway returned error"
         );
@@ -117,7 +118,7 @@ where
         });
     }
 
-    let model = request.model.clone();
+    let model = model.to_string();
     // Owned handle: the fallback price is resolved inside the spawned stream
     // task, long after this fn returns. Cheap — it's an Arc.
     let catalog = catalog.clone();

@@ -168,7 +168,7 @@ impl GatewayModel {
     /// catalog lists a toggle for Claude Fable 5, which the gateway's docs
     /// say cannot turn thinking off. Good enough to decide what to ask for;
     /// never enough to justify an output ceiling.
-    fn reasoning_facts(&self) -> virtues_ai_wire::ReasoningFacts {
+    fn reasoning_facts(&self) -> virtues_registry::ReasoningFacts {
         let thinks = self.tags.iter().any(|t| t == "reasoning") || !self.reasoning_options.is_empty();
         let can_disable = self.reasoning_options.iter().any(|o| o.kind == "toggle");
         let effort_values = self
@@ -177,12 +177,12 @@ impl GatewayModel {
             .find(|o| o.kind == "effort")
             .map(|o| o.values.clone())
             .unwrap_or_default();
-        virtues_ai_wire::ReasoningFacts {
+        virtues_registry::ReasoningFacts {
             thinks,
             can_disable,
             effort_values,
             display_options: if thinks {
-                virtues_ai_wire::ReasoningFacts::display_options_for(&self.owner())
+                display_options_for(&self.owner())
             } else {
                 serde_json::json!({})
             },
@@ -480,7 +480,26 @@ pub struct CuratedModel {
     /// Whether and how this model thinks, per the gateway. Always present
     /// from this build of the proxy; a box reads `None` only from an older
     /// proxy or its compiled floor.
-    pub reasoning: Option<virtues_ai_wire::ReasoningFacts>,
+    pub reasoning: Option<virtues_registry::ReasoningFacts>,
+}
+
+/// The provider options that make a model family return its thinking text,
+/// keyed on the catalog's `owned_by`. Claude 5 omits it unless asked; Gemini
+/// needs `includeThoughts`. Both Google keys are set because the gateway may
+/// serve a Gemini model from either provider and applies whichever entry
+/// matches the one it picked. Provider knowledge lives here, beside the
+/// catalog that fetches the rest of it, and nowhere the box compiles against.
+fn display_options_for(owner: &str) -> serde_json::Value {
+    match owner {
+        "anthropic" => serde_json::json!({
+            "anthropic": { "thinking": { "type": "adaptive", "display": "summarized" } }
+        }),
+        "google" => serde_json::json!({
+            "google": { "thinkingConfig": { "includeThoughts": true } },
+            "vertex": { "thinkingConfig": { "includeThoughts": true } }
+        }),
+        _ => serde_json::json!({}),
+    }
 }
 
 /// Split a bare model name into its family stem and version, e.g. `grok-4.5`

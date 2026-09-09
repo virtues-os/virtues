@@ -7,7 +7,6 @@ members = [
     "crates/virtues-iroh-ffi",
     "crates/virtues-reach-client",
     "crates/virtues-registry",
-    "crates/virtues-ai-wire",
     "crates/virtues-qnnd",
     "applets",
     "apps/desktop",
