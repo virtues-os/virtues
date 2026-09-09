@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 use crate::bearer_auth::BearerAuth;
 use crate::entitlement::{self, Account};
-use crate::providers::{calculate_cost, get_provider_config, upstream_body};
+use crate::providers::{calculate_cost, get_provider_config, merge_provider_options, upstream_body};
 use crate::AppState;
 
 /// Pre-flight budget gate. AI cost is only known after the response, so we
@@ -64,29 +64,24 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/v1/ai/models", get(list_models))
 }
 
-/// The request is the shared wire type. Fields the box sends that this build
-/// does not know land in `extra` and are logged by key (never by value: a
-/// value could be prompt text). That is how a drifted box announces itself
-/// without being refused; the proxy serves every released box at once.
-type ChatRequest = virtues_ai_wire::ChatCompletionRequest;
-
-fn log_unknown_fields(request: &ChatRequest) {
-    if !request.extra.is_empty() {
-        tracing::warn!(
-            model = %request.model,
-            fields = ?request.extra.keys().collect::<Vec<_>>(),
-            "chat request carried fields the wire type does not know"
-        );
-    }
-}
-
+/// The body is opaque JSON. The proxy reads `model` and `stream`, rewrites
+/// the handful of keys it owns (`providers::upstream_body`), and forwards
+/// the rest untouched, so it serves every released box at once and a field
+/// it has never heard of still reaches the gateway. It never logs the body:
+/// a value could be prompt text.
 async fn chat_completions(
     State(state): State<Arc<AppState>>,
     BearerAuth(ent): BearerAuth,
     headers: HeaderMap,
-    Json(request): Json<ChatRequest>,
+    Json(request): Json<Value>,
 ) -> Response {
     let pool = &state.db;
+
+    let model = match request.get("model").and_then(Value::as_str) {
+        Some(m) if !m.is_empty() => m.to_string(),
+        _ => return err(StatusCode::BAD_REQUEST, "invalid_request", "`model` is required"),
+    };
+    let stream = request.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
     // Pre-flight budget gate (empty wallet / daily cap). The actual charge
     // happens after the response, since AI cost is only known then.
@@ -95,20 +90,19 @@ async fn chat_completions(
     }
 
     let _ = &headers; // X-Virtues-Purpose accepted but ignored (v3 no-op)
-    log_unknown_fields(&request);
 
     // Streaming: hand off to streaming.rs with a charge callback that
     // applies the resolved cost via entitlement::charge() once the
     // upstream stream emits [DONE].
-    if request.stream == Some(true) {
-        let streaming_req = request;
+    if stream {
         let pool_clone = pool.clone();
         let account_id = ent.account_id.clone();
         let result = crate::routes::streaming::create_streaming_response(
             &state.http_client,
             &state.config,
             &state.catalog,
-            streaming_req,
+            &model,
+            request,
             move |cost_micros| async move {
                 if let Err(e) =
                     entitlement::settle(&pool_clone, &account_id, cost_micros).await
@@ -125,9 +119,8 @@ async fn chat_completions(
         };
     }
 
-    let provider = get_provider_config(&request.model, &state.config);
-    let model = request.model.clone();
-    let body = upstream_body(&request, &provider.model_name, false, state.catalog.enforce_zdr(&model));
+    let provider = get_provider_config(&model, &state.config);
+    let body = upstream_body(request, &provider.model_name, false, state.catalog.enforce_zdr(&model));
 
     let upstream = state
         .http_client
@@ -195,9 +188,7 @@ async fn completions(
     let mut request = request;
     if let Some(obj) = request.as_object_mut() {
         let callers = obj.remove("providerOptions");
-        if let Some(merged) =
-            virtues_ai_wire::merge_provider_options(callers, state.catalog.enforce_zdr(&model))
-        {
+        if let Some(merged) = merge_provider_options(callers, state.catalog.enforce_zdr(&model)) {
             obj.insert("providerOptions".to_string(), merged);
         }
     }

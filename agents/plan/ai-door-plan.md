@@ -131,6 +131,22 @@ mechanical, at compile time, with no compatibility cliff. The two proxy body
 builders (`streaming.rs:105` and `ai.rs:141`) collapse into one function that
 takes the wire type.
 
+> **Amended 2026-09-08, same day.** The shared crate treated the symptom. The
+> proxy re-typed a body it only needs to touch in five places, and rebuilt the
+> outgoing JSON field by field in `upstream_body`, so a field added to the
+> shared struct still compiled on both ends and still never reached the
+> gateway: the allowlist had moved one function over. The fix is that the
+> proxy does not have a request type at all. It forwards the body as opaque
+> JSON and rewrites only what it owns (`model`, `stream_options`, the
+> `temperature` default, `provider_options` → `providerOptions` + ZDR, the
+> empty-tools guard, and stripping `thought_signature`). A field the box adds
+> reaches the gateway with no proxy edit; a field the gateway rejects returns
+> its 400, loudly. `crates/virtues-ai-wire` is deleted: the request builder is
+> the box's alone (`virtues_api/request.rs`), `ReasoningFacts` sits in the
+> registry beside the slots it feeds (a shape, not a fact; the guard test
+> still passes), and the provider display literals and the ZDR merge live in
+> the proxy. The proxy's tests now assert an unknown field passes through.
+
 **1e. The catalog learns who thinks.** Parse `reasoning_options` from
 `GET /v1/models` into `GatewayModel`, and derive on `CuratedModel`:
 
@@ -171,14 +187,14 @@ a 400 where an absent one is the endpoint's default. Same bound, no new
 failure. A future per-request budget rule goes in the one body builder
 (`providers::upstream_body`), beside ZDR.
 
-**Built 2026-09-08 (wave).** Phase 1 as amended: `crates/virtues-ai-wire` with
-the one request type, `Reasoning`, `ReasoningFacts`, and the ZDR merge; the
-proxy's two body builders collapsed into `providers::upstream_body`, no
-`max_tokens` default, `reasoning` forwarded, `providerOptions` merged,
-unknown fields logged by key; the catalog parses `reasoning_options` and
-serves `reasoning` on every picker entry; the box builds the wire type at the
-chat, background, and inline-edit sites, and `build_provider_options` is
-deleted. The two output ceilings (titles at 50, inline edit at 512) are gone
+**Built 2026-09-08 (wave).** Phase 1 as amended, then re-amended the same
+day (see 1d): the proxy's two body builders collapsed into
+`providers::upstream_body`, which is a pass-through on opaque JSON, no
+`max_tokens` default, every unknown field forwarded, `providerOptions`
+merged; the catalog parses `reasoning_options` and serves `reasoning`
+(`virtues_registry::ReasoningFacts`) on every picker entry; the box builds
+`virtues_api::request::ChatCompletionRequest` at the chat, background, and
+inline-edit sites, and `build_provider_options` is deleted. The two output ceilings (titles at 50, inline edit at 512) are gone
 with it, one phase early, because the catalog's `can_disable` turned out to
 be a claim (it lists a toggle for Fable 5) and no ceiling is safe on a claim.
 Temperature keeps its proxy default until 2d, as decided in 1a. Not yet
@@ -420,8 +436,8 @@ model fails less often, and a cap that never fails is what Phase 2 provides.
 
 ## Review register (2026-09-08)
 
-Raised against v1 and folded in: the 400-on-unknown-fields cliff (now 1d, a
-shared wire crate); the hidden temperature change (1a, decided: box sends it);
+Raised against v1 and folded in: the 400-on-unknown-fields cliff (now 1d, an
+opaque pass-through; the shared crate it first became lasted a day); the hidden temperature change (1a, decided: box sends it);
 the `reasoning` object on the BYO route (2b); the vanished cost bound (1f);
 the finish-reason migration (3b); thinking text for chat (2d, decided: on);
 the thought-signature question (2d, `reasoning_details` echo then delete);

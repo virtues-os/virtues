@@ -87,7 +87,7 @@ pub struct CatalogModel {
     /// the completion helper treats unknown as "thinks, cannot be told not
     /// to", which is the reading that cannot lose an answer.
     #[serde(default)]
-    pub reasoning: Option<virtues_ai_wire::ReasoningFacts>,
+    pub reasoning: Option<virtues_registry::ReasoningFacts>,
 }
 
 /// Which model fills each slot, per the cloud. Ids only — the models

@@ -32,61 +32,108 @@ pub fn get_provider_config(model: &str, config: &Config) -> ProviderConfig {
     }
 }
 
-/// The body sent upstream, built in exactly one place for the streaming and
-/// non-streaming paths (they used to be two near-copies that drifted).
+/// The body sent upstream: the caller's body, passed through, with the few
+/// keys the proxy owns rewritten. One function for the streaming and
+/// non-streaming paths.
 ///
-/// What this does NOT do, on purpose:
-/// - It never invents `max_tokens`. For three months this filled in 4096 when
-///   the caller sent none, which put a hard ceiling on every live chat turn
-///   the box had deliberately left uncapped, on a model that counts its
-///   thinking inside that ceiling. Absent means the model's own window.
-/// - It never forwards `thought_signature`. See the wire crate.
+/// This is a pass-through and not a re-typed request, on purpose. The proxy
+/// used to deserialize the body into its own struct and rebuild the outgoing
+/// JSON field by field, which meant every field it did not name was dropped:
+/// the box sent `provider_options` on every chat turn for three months and
+/// no model ever saw it. Sharing the struct between box and proxy only moved
+/// that allowlist one function over. Forwarding the body opaquely removes the
+/// allowlist: a field the box adds reaches the gateway with no proxy edit,
+/// and a field the gateway rejects comes back as its 400, which is loud,
+/// instead of a silent drop. The gateway is the judge of the request shape;
+/// the proxy's job is authentication, billing, and zero-retention.
 ///
-/// What it still does, for now: default `temperature` to 0.7. The box sends
-/// none on chat turns and has run at 0.7 since the proxy existed; dropping
-/// the default here would move every chat to the provider's 1.0 in a cloud
-/// deploy nobody can see from the box. The box starts sending its own
-/// temperature in plan phase 2d; this default goes in the deploy after that.
+/// What the proxy rewrites, and nothing else:
+/// - `model`: the upstream id.
+/// - `stream` + `stream_options.include_usage`: so the final chunk carries
+///   the usage the charge is settled on.
+/// - `temperature`: 0.7 when absent. The box sends none on chat turns and has
+///   run at 0.7 since the proxy existed; dropping the default would move
+///   every chat to the provider's 1.0 in a cloud deploy nobody can see from
+///   the box. The box starts sending its own in plan phase 2d; the default
+///   goes in the deploy after that.
+/// - `provider_options` (the box's spelling) becomes `providerOptions` (the
+///   gateway's), with zero-retention merged over it where the catalog says
+///   the model must be pinned. See [`merge_provider_options`].
+/// - `tools`/`tool_choice` when `tools` is empty: providers reject an empty
+///   array.
+/// - `thought_signature`: stripped. It landed 2026-06-08 for Gemini 3's
+///   function-calling continuity and has never reached a model; the gateway
+///   has no such field. Released boxes still send it. Plan 2d replaces it.
+///
+/// What it never does: invent `max_tokens`. For three months this filled in
+/// 4096 when the caller sent none, which put a hard ceiling on every live
+/// chat turn the box had deliberately left uncapped, on a model that counts
+/// its thinking inside that ceiling. Absent means the model's own window.
 pub fn upstream_body(
-    req: &virtues_ai_wire::ChatCompletionRequest,
+    body: serde_json::Value,
     upstream_model: &str,
     stream: bool,
     enforce_zdr: bool,
 ) -> serde_json::Value {
-    let mut body = serde_json::json!({
-        "model": upstream_model,
-        "messages": req.messages,
-        "temperature": req.temperature.unwrap_or(0.7),
-    });
-    if let Some(mt) = req.max_tokens {
-        body["max_tokens"] = serde_json::json!(mt);
-    }
+    let mut obj = match body {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+    obj.insert("model".into(), serde_json::json!(upstream_model));
     if stream {
-        body["stream"] = serde_json::json!(true);
-        body["stream_options"] = serde_json::json!({ "include_usage": true });
+        obj.insert("stream".into(), serde_json::json!(true));
+        obj.insert("stream_options".into(), serde_json::json!({ "include_usage": true }));
     }
-    if let Some(ref effort) = req.reasoning_effort {
-        body["reasoning_effort"] = serde_json::json!(effort);
+    obj.entry("temperature").or_insert_with(|| serde_json::json!(0.7));
+
+    // The box spells it snake_case; the gateway reads camelCase. A caller
+    // that already sent the gateway's spelling is left alone unless the box
+    // spelling is also present, in which case the box's wins.
+    let callers = obj
+        .remove("provider_options")
+        .or_else(|| obj.remove("providerOptions"));
+    if let Some(po) = merge_provider_options(callers, enforce_zdr) {
+        obj.insert("providerOptions".into(), po);
     }
-    if let Some(ref reasoning) = req.reasoning {
-        body["reasoning"] = serde_json::to_value(reasoning).unwrap_or_default();
+
+    let tools_empty = obj
+        .get("tools")
+        .map(|t| t.as_array().map(|a| a.is_empty()).unwrap_or(true))
+        .unwrap_or(true);
+    if tools_empty {
+        obj.remove("tools");
+        obj.remove("tool_choice");
     }
-    // Only include tools if present and non-empty (providers reject null/empty arrays)
-    if let Some(ref tools) = req.tools {
-        if !tools.is_empty() {
-            body["tools"] = serde_json::json!(tools);
-            if let Some(ref choice) = req.tool_choice {
-                body["tool_choice"] = choice.clone();
-            }
-        }
+    obj.remove("thought_signature");
+    serde_json::Value::Object(obj)
+}
+
+/// The proxy's one rule for `providerOptions`: the caller's object, with
+/// `gateway.zeroDataRetention: true` written over it when the catalog says
+/// this model must be pinned to zero-retention routes. Other keys under
+/// `gateway` (routing order, BYOK) survive; a caller's own
+/// `zeroDataRetention` does not. A caller value that is not an object is
+/// discarded rather than merged into, because there is nothing to merge.
+pub fn merge_provider_options(
+    caller: Option<serde_json::Value>,
+    enforce_zdr: bool,
+) -> Option<serde_json::Value> {
+    use serde_json::Value;
+    if !enforce_zdr {
+        return caller;
     }
-    // The caller's provider options, with zero-retention pinned over them
-    // wherever the catalog says the model has ZDR routes. See
-    // Catalog::enforce_zdr for why this is per-request and never a setting.
-    if let Some(po) = virtues_ai_wire::merge_provider_options(req.provider_options.clone(), enforce_zdr) {
-        body["providerOptions"] = po;
+    let mut root = match caller {
+        Some(Value::Object(m)) => m,
+        _ => serde_json::Map::new(),
+    };
+    let gateway = root
+        .entry("gateway")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !gateway.is_object() {
+        *gateway = Value::Object(serde_json::Map::new());
     }
-    body
+    gateway["zeroDataRetention"] = Value::Bool(true);
+    Some(Value::Object(root))
 }
 
 /// Calculate cost from token usage. FALLBACK ONLY. `None` means we do not know.
@@ -134,4 +181,91 @@ pub fn calculate_cost(
     let output_cost = (completion_tokens as f64 / 1000.0) * output_cost_per_1k;
 
     Some(input_cost + output_cost)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The drift this pass-through exists to end: a field the proxy has never
+    /// heard of reaches the gateway, and the caller's ceiling is neither
+    /// invented nor removed.
+    #[test]
+    fn unknown_fields_pass_through_and_no_ceiling_is_invented() {
+        let body = upstream_body(
+            json!({"model": "m", "messages": [], "some_future_field": 1, "reasoning": {"effort": "low"}}),
+            "provider/m",
+            false,
+            false,
+        );
+        assert_eq!(body["some_future_field"], 1);
+        assert_eq!(body["reasoning"]["effort"], "low");
+        assert_eq!(body["model"], "provider/m");
+        assert!(body.get("max_tokens").is_none());
+        assert!(body.get("stream").is_none());
+        assert_eq!(body["temperature"], 0.7);
+    }
+
+    #[test]
+    fn the_proxy_owned_keys_are_rewritten() {
+        let body = upstream_body(
+            json!({
+                "model": "m", "messages": [], "temperature": 0.2,
+                "provider_options": {"anthropic": {"thinking": {"type": "adaptive"}}},
+                "thought_signature": "sig",
+                "tools": [], "tool_choice": "auto"
+            }),
+            "provider/m",
+            true,
+            true,
+        );
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["stream_options"]["include_usage"], true);
+        assert_eq!(body["temperature"], 0.2);
+        assert!(body.get("provider_options").is_none());
+        assert_eq!(body["providerOptions"]["anthropic"]["thinking"]["type"], "adaptive");
+        assert_eq!(body["providerOptions"]["gateway"]["zeroDataRetention"], true);
+        assert!(body.get("thought_signature").is_none());
+        assert!(body.get("tools").is_none());
+        assert!(body.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn non_empty_tools_survive() {
+        let body = upstream_body(
+            json!({"model": "m", "messages": [], "tools": [{"type": "function"}], "tool_choice": "auto"}),
+            "m",
+            false,
+            false,
+        );
+        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn zdr_is_merged_over_the_callers_options_and_cannot_be_switched_off() {
+        let merged = merge_provider_options(
+            Some(json!({
+                "anthropic": {"thinking": {"type": "adaptive"}},
+                "gateway": {"order": ["anthropic"], "zeroDataRetention": false}
+            })),
+            true,
+        )
+        .unwrap();
+        assert_eq!(merged["anthropic"]["thinking"]["type"], "adaptive");
+        assert_eq!(merged["gateway"]["order"], json!(["anthropic"]));
+        assert_eq!(merged["gateway"]["zeroDataRetention"], true);
+    }
+
+    #[test]
+    fn no_zdr_means_the_callers_options_pass_untouched() {
+        assert_eq!(merge_provider_options(None, false), None);
+        let own = json!({"google": {"thinkingConfig": {"includeThoughts": true}}});
+        assert_eq!(merge_provider_options(Some(own.clone()), false), Some(own));
+        assert_eq!(
+            merge_provider_options(None, true),
+            Some(json!({"gateway": {"zeroDataRetention": true}}))
+        );
+    }
 }

@@ -78,7 +78,7 @@ pub async fn system_completion(
         .with_purpose(Purpose::System)
         .with_feature(feature);
 
-    let request = virtues_ai_wire::ChatCompletionRequest {
+    let request = super::request::ChatCompletionRequest {
         model: model.clone(),
         messages: vec![
             json!({"role": "system", "content": system_prompt}),
