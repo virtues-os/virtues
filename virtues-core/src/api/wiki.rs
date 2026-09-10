@@ -1522,8 +1522,19 @@ pub async fn get_events_by_date(pool: &PgPool, date: NaiveDate) -> Result<Vec<Te
 }
 
 /// Create a temporal event
-pub async fn create_temporal_event(
-    pool: &PgPool,
+///
+/// Takes any executor so the segmenter can run every insert of a re-cut inside
+/// ONE transaction with the delete that precedes them (see
+/// `day_summary::store_structured_events`). The id is content-addressed from the
+/// boundaries, so a fresh cut can land on exactly the span of an event the user
+/// edited, hid, or added — the delete deliberately spares those rows. In that
+/// case the insert is a no-op (`ON CONFLICT DO NOTHING`) rather than a unique
+/// violation: a violation would abort the transaction and throw away the whole
+/// cut, and the user's judgement outranks the model's anyway. It surfaces as
+/// `Error::InvalidInput` so the caller can tell "already there" from a real
+/// failure; the API caller treats it as the duplicate it is.
+pub async fn create_temporal_event<'e>(
+    exec: impl sqlx::PgExecutor<'e>,
     req: CreateTemporalEventRequest,
 ) -> Result<TemporalEvent> {
     use sqlx::Row;
@@ -1567,6 +1578,7 @@ pub async fn create_temporal_event(
             source_ontologies, kind, is_user_added, event_summary,
             topics
         ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14::jsonb)
+        ON CONFLICT (id) DO NOTHING
         RETURNING
             id, is_user_edited, created_at, updated_at
         "#,
@@ -1585,9 +1597,14 @@ pub async fn create_temporal_event(
     .bind(req.is_user_added)
     .bind(&req.event_summary)
     .bind(req.topics.clone().unwrap_or_else(|| serde_json::json!([])))
-    .fetch_one(pool)
+    .fetch_optional(exec)
     .await
     .map_err(|e| Error::Database(format!("Failed to create temporal event: {}", e)))?;
+    let Some(row) = row else {
+        return Err(Error::InvalidInput(format!(
+            "an event already spans {start_time_str}–{end_time_str} on this day ({event_id})"
+        )));
+    };
 
     let id: String = row
         .try_get("id")
@@ -1730,7 +1747,14 @@ pub async fn delete_temporal_event(pool: &PgPool, id: String) -> Result<()> {
 /// Preserved events can now overlap the fresh cut — but that was already true
 /// of `is_user_added` events, so this widens an accepted condition rather than
 /// introducing one. A user's judgement outranks a gapless timeline.
-pub async fn delete_auto_events_for_day(pool: &PgPool, day_id: String) -> Result<u64> {
+///
+/// Any executor: the segmenter runs this inside the same transaction as the
+/// inserts that replace the deleted rows, so a failed re-cut leaves the old
+/// events standing instead of an empty day.
+pub async fn delete_auto_events_for_day<'e>(
+    exec: impl sqlx::PgExecutor<'e>,
+    day_id: String,
+) -> Result<u64> {
     let day_id_str = day_id;
 
     let result = sqlx::query!(
@@ -1743,7 +1767,7 @@ pub async fn delete_auto_events_for_day(pool: &PgPool, day_id: String) -> Result
         "#,
         day_id_str
     )
-    .execute(pool)
+    .execute(exec)
     .await
     .map_err(|e| Error::Database(format!("Failed to delete auto events: {}", e)))?;
 

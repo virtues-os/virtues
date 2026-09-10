@@ -195,6 +195,165 @@ const MIN_ACTIVATION_SOURCES: usize = 3;
 /// a confident, permanent, searchable account of a life nobody lived.
 const MIN_SPANS: usize = 3;
 
+/// What a day's sources amount to, measured the way the segmenter measures it.
+///
+/// One definition, two readers. The segmenter asks it before spending a model
+/// call; the catch-up queue asks it before offering a day at all. The queue used
+/// to ask a different question — "does the day already have four events?" — and
+/// a day whose cut had failed, leaving zero events, answered no forever. Sources
+/// are the evidence that a day HAPPENED; events are the output of the step that
+/// may have failed. A work queue must key on the former.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DayShape {
+    /// Things the owner DID (activation signals): visits, calls, meetings, messages.
+    pub acted: usize,
+    /// Of those, the ones with a beginning and an END — what a day can be cut along.
+    pub shaped: usize,
+}
+
+impl DayShape {
+    pub fn of(sources: &[DaySource]) -> Self {
+        let activation: Vec<&str> = virtues_registry::ontologies::activation_source_types();
+        let spans: Vec<&str> = virtues_registry::ontologies::span_source_types();
+        let acted = sources
+            .iter()
+            .filter(|s| activation.contains(&s.source_type.as_str()))
+            .count();
+        // Shape: something with a beginning and an end. An event IS a span, and you
+        // cannot cut a day into spans using things that have no duration — a thousand
+        // text messages never say when anything started. Asked to segment a day of pure
+        // moments, the model invents the boundaries, and the boundaries are the one
+        // thing it must not invent.
+        let shaped = sources
+            .iter()
+            .filter(|s| spans.contains(&s.source_type.as_str()))
+            .count();
+        Self { acted, shaped }
+    }
+
+    /// Enough of a day to hand to the detective. `MIN_SPANS` documents the
+    /// doctrine; `MIN_ACTIVATION_SOURCES` is the gate that has always been applied.
+    pub fn is_enough(&self) -> bool {
+        self.acted >= MIN_ACTIVATION_SOURCES && self.shaped > 0
+    }
+}
+
+/// Does this day hold enough raw evidence for the segmenter to accept it?
+///
+/// Reads the sources, not the events — see [`DayShape`]. This is what the
+/// catch-up queue consults, so it must stay the same test the segmenter applies,
+/// or the queue will offer days the segmenter refuses (and jam on them) or refuse
+/// days the segmenter would take (and lose them).
+pub async fn day_has_enough_to_segment(pool: &PgPool, date: NaiveDate) -> Result<bool> {
+    let sources = get_day_sources(pool, date, None).await?;
+    Ok(DayShape::of(&sources).is_enough())
+}
+
+// ── The catch-up queue ───────────────────────────────────────────────────────
+
+/// How far back automatic catch-up reaches, counted from the day before
+/// yesterday. This is a repair path for missed and failed nights, not a backfill
+/// tool: a box that imports a year of history should not silently spend a year
+/// of best-model calls writing an autobiography nobody asked for — that is an
+/// explicit-date decision (`config.date`, the chat tool, the CLI).
+///
+/// It was 14. A day that failed every hour for a fortnight then aged out of the
+/// window and was never tried again — on the box this was written against, a
+/// day with 14 good events sat un-narrated for 16 days that way. Within the
+/// window, the ATTEMPT BUDGET below is what bounds retries, not the horizon; the
+/// horizon only bounds how old a never-attempted day can be and still be picked
+/// up. Ninety days is long enough that every day with evidence is either
+/// narrated or loudly parked long before it can fall off the edge.
+pub const CATCHUP_HORIZON_DAYS: i64 = 90;
+
+/// Automatic attempts a day gets before the queue stops offering it.
+///
+/// Between attempts the queue waits `2^(n-1)` hours: 1h, 2h, 4h, … 64h — about
+/// five days from the first failure to the last retry. A provider outage or a
+/// box rebooting through its maintenance hour is long healed by then; a
+/// deterministic failure (a model cap the day's dossier does not fit under)
+/// costs eight calls instead of one an hour forever, and then the day is PARKED:
+/// `narrated_at` stays NULL, the attempt count tells anyone who looks why, and an
+/// explicit-date run or a re-cut on new evidence revives it.
+pub const MAX_NARRATION_ATTEMPTS: i32 = 8;
+
+/// Days strictly before `before` that are un-narrated and DUE — inside the
+/// horizon, not parked, and past their backoff — oldest first. Pure bookkeeping:
+/// this says nothing about whether a day has evidence; [`next_catchup_day`]
+/// layers that on. Separated so the SQL can be tested against the real schema
+/// without ontology fixtures.
+///
+/// A day with no `wiki_days` row at all is a candidate too (the `generate_series`
+/// LEFT JOIN): a night the box slept through never created one, and a queue that
+/// only looked at existing rows could never find it.
+pub async fn catchup_candidates(pool: &PgPool, before: NaiveDate) -> Result<Vec<NaiveDate>> {
+    let end = before - chrono::Duration::days(1);
+    let start = before - chrono::Duration::days(CATCHUP_HORIZON_DAYS);
+    if end < start {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<NaiveDate> = sqlx::query_scalar(
+        "SELECT d::date \
+         FROM generate_series($1::date, $2::date, interval '1 day') AS d \
+         LEFT JOIN wiki_days w ON w.date = d::date \
+         WHERE w.narrated_at IS NULL \
+           AND COALESCE(w.narration_attempts, 0) < $3 \
+           AND (w.narration_attempted_at IS NULL \
+                OR w.narration_attempted_at \
+                   + interval '1 hour' * power(2, GREATEST(w.narration_attempts, 1) - 1) <= now()) \
+         ORDER BY d ASC",
+    )
+    .bind(start)
+    .bind(end)
+    .bind(MAX_NARRATION_ATTEMPTS)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// The oldest due day that has enough raw evidence to be worth a model call.
+///
+/// Strictly BEFORE `before` (the caller passes yesterday): the freshest day
+/// belongs to the maintenance-hour path so its late collector data keeps its
+/// settle window. Days older than that are definitively settled and can be fused
+/// at any hour.
+///
+/// Evidence is checked in Rust, per candidate, oldest first, stopping at the first
+/// hit — `get_day_sources` is a dozen indexed range queries, cheap enough to run
+/// over a ninety-day window every hour, and the alternative (mirroring the
+/// ontology registry's activation/span sets into SQL) is a second source of
+/// truth that would drift. A sparse day is never offered and never counted as an
+/// attempt, so if its collectors fill it in later it is simply picked up.
+pub async fn next_catchup_day(pool: &PgPool, before: NaiveDate) -> Result<Option<NaiveDate>> {
+    for date in catchup_candidates(pool, before).await? {
+        if day_has_enough_to_segment(pool, date).await? {
+            return Ok(Some(date));
+        }
+    }
+    Ok(None)
+}
+
+/// Count one automatic attempt against a day, BEFORE the chain runs for it.
+///
+/// Before, not after: a run that times out or is killed mid-chain must still
+/// count, or the queue offers the same day back next hour exactly as if nothing
+/// had happened. Returns the new count so the caller can say when a day is on
+/// its last try.
+pub async fn record_narration_attempt(pool: &PgPool, date: NaiveDate) -> Result<i32> {
+    // Creates the row if a never-attempted day has none yet.
+    get_or_create_day(pool, date).await?;
+    let n: i32 = sqlx::query_scalar(
+        "UPDATE wiki_days \
+         SET narration_attempts = narration_attempts + 1, narration_attempted_at = now() \
+         WHERE date = $1 \
+         RETURNING narration_attempts",
+    )
+    .bind(date)
+    .fetch_one(pool)
+    .await?;
+    Ok(n)
+}
+
 pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     // 1. Gather structured sources (calendar, locations, transactions, chats, pages, etc.)
     let sources = get_day_sources(pool, date, None).await?;
@@ -223,28 +382,12 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     // beginning and read by nobody — its doc comment describes exactly this. A day
     // needs things you DID (a visit, a call, a meeting, a message) — not a sensor
     // noticing that you exist.
-    let activation: Vec<&str> = virtues_registry::ontologies::activation_source_types();
-    let spans: Vec<&str> = virtues_registry::ontologies::span_source_types();
-
-    let acted = sources
-        .iter()
-        .filter(|s| activation.contains(&s.source_type.as_str()))
-        .count();
-    // Shape: something with a beginning and an end. An event IS a span, and you
-    // cannot cut a day into spans using things that have no duration — a thousand
-    // text messages never say when anything started. Asked to segment a day of pure
-    // moments, the model invents the boundaries, and the boundaries are the one
-    // thing it must not invent.
-    let shaped = sources
-        .iter()
-        .filter(|s| spans.contains(&s.source_type.as_str()))
-        .count();
-
-    if acted < MIN_ACTIVATION_SOURCES || shaped == 0 {
+    let shape = DayShape::of(&sources);
+    if !shape.is_enough() {
         tracing::info!(
             date = %date,
-            did = acted,
-            spans = shaped,
+            did = shape.acted,
+            spans = shape.shaped,
             total_sources = sources.len(),
             "not enough of a day to narrate — skipping summary (no LLM call)"
         );
@@ -356,11 +499,21 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
     let n = events.len() as u32;
 
     let day_stub = get_or_create_day(pool, date).await?;
-    store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events).await;
+    store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events).await?;
 
+    // Only now is the day settled. The fingerprint used to be written whether or
+    // not the store above had succeeded — and the store swallowed its own errors —
+    // so a cut whose inserts failed left ZERO events under a fingerprint that said
+    // "done", which is a day the catch-up queue could never see again.
+    //
+    // A successful re-cut also resets the attempt budget: new evidence made a new
+    // day of it, and the failures counted against the old cut say nothing about
+    // whether this one narrates.
     sqlx::query(
         "UPDATE wiki_days SET sources_fingerprint = $1, \
-         start_timezone = COALESCE(start_timezone, $2) WHERE date = $3",
+         start_timezone = COALESCE(start_timezone, $2), \
+         narration_attempts = 0 \
+         WHERE date = $3",
     )
     .bind(&fingerprint)
     .bind(timezone.as_deref())
@@ -1975,40 +2128,53 @@ fn parse_virtues_api_response(response: &str) -> ParsedDaySummary {
     }
 }
 
-/// Store LLM-identified events as wiki_events rows.
+/// Store LLM-identified events as wiki_events rows — delete the old cut and land
+/// the new one in ONE transaction.
 ///
-/// Creates events in DB with location extraction. Embedding and novelty scoring
-/// are handled separately by the dayline novelty pipeline (Phase 1).
+/// It used to delete, then insert row by row against the pool, warning on each
+/// failure and returning nothing. So when the inserts failed the day was left
+/// EMPTY, the caller wrote the fingerprint anyway, and — because the catch-up
+/// queue selected days by their event count — the day vanished from the queue
+/// for good. Four consecutive days went that way on a production box.
+///
+/// Now either the whole replacement set lands or the old events stand, and the
+/// caller hears about it. Location lookups run before the transaction opens so
+/// no pool read waits on a connection the transaction is holding.
+///
+/// Embedding and novelty scoring are handled separately by the dayline novelty
+/// pipeline.
 async fn store_structured_events(
     pool: &PgPool,
     day: &WikiDay,
     date: NaiveDate,
     timezone: Option<&str>,
     events: &[LlmEvent],
-) {
-    // Clear previous auto events
-    if let Err(e) = delete_auto_events_for_day(pool, day.id.clone()).await {
-        tracing::warn!(error = %e, "Failed to delete existing auto events");
-        return;
-    }
-
+) -> Result<u32> {
     let tz: Option<Tz> = timezone.and_then(|s| s.parse().ok());
 
     // Backfill gaps to ensure perfect 24h coverage (00:00–24:00)
     let all_events = backfill_24h_events(events, date, tz.as_ref());
 
-    let mut created_count = 0;
-
+    // Extract auto_location from location_visit data (longest visit in time range)
+    let mut locations = Vec::with_capacity(all_events.len());
     for event in &all_events {
         let start_rfc = event.start_utc.to_rfc3339();
         let end_rfc = event.end_utc.to_rfc3339();
+        locations.push(extract_event_location(pool, &start_rfc, &end_rfc).await);
+    }
 
-        // Extract auto_location from location_visit data (longest visit in time range)
-        let auto_location = extract_event_location(pool, &start_rfc, &end_rfc).await;
+    let mut tx = pool.begin().await?;
 
-        // Create the event row
+    // Clear previous auto events. Spares user-added, user-edited and hidden
+    // events — see `delete_auto_events_for_day`.
+    delete_auto_events_for_day(&mut *tx, day.id.clone()).await?;
+
+    let mut created_count = 0u32;
+    let mut preserved_count = 0u32;
+
+    for (event, auto_location) in all_events.iter().zip(locations) {
         let created = create_temporal_event(
-            pool,
+            &mut *tx,
             CreateTemporalEventRequest {
                 day_id: day.id.clone(),
                 start_time: event.start_utc,
@@ -2034,18 +2200,31 @@ async fn store_structured_events(
 
         match created {
             Ok(_) => created_count += 1,
+            // The cut landed on exactly the span of an event the delete spared:
+            // the user's version stands, and that is not a failure of the cut.
+            Err(crate::Error::InvalidInput(_)) => preserved_count += 1,
             Err(e) => {
-                tracing::warn!(error = %e, label = event.label, "Failed to create temporal event");
+                tracing::error!(
+                    date = %date,
+                    label = event.label,
+                    error = %e,
+                    "could not store an event — rolling back the re-cut, the old events stand"
+                );
+                return Err(e);
             }
         }
     }
+
+    tx.commit().await?;
 
     tracing::info!(
         date = %date,
         event_count = all_events.len(),
         created_count,
+        preserved_count,
         "Stored structured events"
     );
+    Ok(created_count)
 }
 
 /// Extract the primary location for an event's time range from location_visit data.
@@ -2224,6 +2403,206 @@ fn parse_hhmm_to_utc(
     }
 }
 
+#[cfg(test)]
+mod queue_tests {
+    //! The catch-up queue and the transactional store, against the schema the
+    //! migrations actually build. `sqlx::query` is untyped, so this is the only
+    //! place a renamed column or a wrong `generate_series` cast would show up
+    //! before production.
+    use super::*;
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    async fn set_attempts(pool: &PgPool, date: NaiveDate, attempts: i32, hours_ago: i64) {
+        get_or_create_day(pool, date).await.unwrap();
+        sqlx::query(
+            "UPDATE wiki_days SET narration_attempts = $2, \
+             narration_attempted_at = now() - make_interval(hours => $3) WHERE date = $1",
+        )
+        .bind(date)
+        .bind(attempts)
+        .bind(hours_ago as i32)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Every day in the window is due when nothing has ever been tried — a box
+    /// that never created a `wiki_days` row for a night it slept through must
+    /// still see that night. Narrated, parked and cooling-off days drop out;
+    /// a day whose backoff has elapsed comes back; `before` itself is never
+    /// offered.
+    #[sqlx::test]
+    async fn catchup_candidates_are_due_un_narrated_days_oldest_first(pool: PgPool) {
+        let before = d(2026, 9, 9);
+        let all = catchup_candidates(&pool, before).await.unwrap();
+        assert_eq!(all.len(), CATCHUP_HORIZON_DAYS as usize);
+        assert_eq!(
+            all[0],
+            before - chrono::Duration::days(CATCHUP_HORIZON_DAYS)
+        );
+        assert_eq!(*all.last().unwrap(), before - chrono::Duration::days(1));
+
+        let narrated = before - chrono::Duration::days(3);
+        get_or_create_day(&pool, narrated).await.unwrap();
+        sqlx::query("UPDATE wiki_days SET narrated_at = now() WHERE date = $1")
+            .bind(narrated)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let parked = before - chrono::Duration::days(4);
+        set_attempts(&pool, parked, MAX_NARRATION_ATTEMPTS, 24 * 30).await;
+        // attempt 3 → waits 4h; tried 1h ago
+        let cooling = before - chrono::Duration::days(5);
+        set_attempts(&pool, cooling, 3, 1).await;
+        // attempt 3 → waits 4h; tried 5h ago
+        let due = before - chrono::Duration::days(6);
+        set_attempts(&pool, due, 3, 5).await;
+        // attempt 1 → waits 1h; tried 2h ago
+        let due_first = before - chrono::Duration::days(7);
+        set_attempts(&pool, due_first, 1, 2).await;
+
+        let c = catchup_candidates(&pool, before).await.unwrap();
+        assert!(!c.contains(&narrated), "a written-up day is not offered");
+        assert!(!c.contains(&parked), "a day out of attempts is parked");
+        assert!(!c.contains(&cooling), "inside its backoff window");
+        assert!(c.contains(&due), "backoff elapsed — offered again");
+        assert!(c.contains(&due_first));
+        assert!(
+            !c.contains(&before),
+            "the freshest day belongs to the maintenance hour"
+        );
+        assert_eq!(c.len(), CATCHUP_HORIZON_DAYS as usize - 3);
+        assert!(c.windows(2).all(|w| w[0] < w[1]), "oldest first");
+    }
+
+    /// An empty scratch database has no evidence for any day, so the queue
+    /// offers nothing — the SQL alone offers ninety candidates, and every one
+    /// must be refused by the same gate the segmenter applies.
+    #[sqlx::test]
+    async fn next_catchup_day_refuses_days_without_evidence(pool: PgPool) {
+        let got = next_catchup_day(&pool, d(2026, 9, 9)).await.unwrap();
+        assert_eq!(got, None);
+    }
+
+    #[sqlx::test]
+    async fn record_narration_attempt_counts_and_creates_the_row(pool: PgPool) {
+        let date = d(2026, 8, 24);
+        assert_eq!(record_narration_attempt(&pool, date).await.unwrap(), 1);
+        assert_eq!(record_narration_attempt(&pool, date).await.unwrap(), 2);
+        let (n, at): (i32, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+            "SELECT narration_attempts, narration_attempted_at FROM wiki_days WHERE date = $1",
+        )
+        .bind(date)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(n, 2);
+        assert!(at.is_some());
+    }
+
+    fn req(
+        day: &WikiDay,
+        s: chrono::DateTime<chrono::Utc>,
+        e: chrono::DateTime<chrono::Utc>,
+        label: &str,
+    ) -> CreateTemporalEventRequest {
+        CreateTemporalEventRequest {
+            day_id: day.id.clone(),
+            start_time: s,
+            end_time: e,
+            auto_label: Some(label.to_string()),
+            auto_location: None,
+            user_label: None,
+            user_location: None,
+            user_notes: None,
+            source_ontologies: None,
+            is_unknown: Some(false),
+            is_transit: Some(false),
+            is_user_added: Some(false),
+            event_summary: None,
+            topics: None,
+        }
+    }
+
+    /// A re-cut replaces the old auto events, spares the one the owner edited
+    /// even when the new cut lands on exactly its span (same content-addressed
+    /// id), and reports only what it actually created.
+    #[sqlx::test]
+    async fn store_replaces_auto_events_and_spares_the_owners(pool: PgPool) {
+        let date = d(2026, 8, 25);
+        let day = get_or_create_day(&pool, date).await.unwrap();
+        let at = |h: u32| date.and_hms_opt(h, 0, 0).unwrap().and_utc();
+
+        create_temporal_event(&pool, req(&day, at(8), at(9), "old cut"))
+            .await
+            .unwrap();
+        let kept = create_temporal_event(&pool, req(&day, at(9), at(10), "kept"))
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE wiki_events SET is_user_edited = true, user_label = 'kept by owner' WHERE id = $1",
+        )
+        .bind(&kept.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let cut = vec![
+            LlmEvent {
+                start: "09:00".into(),
+                end: "10:00".into(),
+                label: "Morning".into(),
+                summary: None,
+                topics: vec![],
+            },
+            LlmEvent {
+                start: "12:00".into(),
+                end: "13:00".into(),
+                label: "Lunch".into(),
+                summary: None,
+                topics: vec![],
+            },
+        ];
+        let created = store_structured_events(&pool, &day, date, Some("UTC"), &cut)
+            .await
+            .unwrap();
+
+        let rows: Vec<(String, Option<String>, Option<String>, bool)> = sqlx::query_as(
+            "SELECT id, auto_label, user_label, is_unknown FROM wiki_events \
+             WHERE day_id = $1 ORDER BY started_at",
+        )
+        .bind(&day.id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let labels: Vec<&str> = rows.iter().map(|r| r.1.as_deref().unwrap_or("")).collect();
+        assert!(
+            !labels.contains(&"old cut"),
+            "the previous auto cut is gone: {labels:?}"
+        );
+        assert!(labels.contains(&"Lunch"), "the new cut landed: {labels:?}");
+        let kept_row = rows
+            .iter()
+            .find(|r| r.0 == kept.id)
+            .expect("the owner's event survives");
+        assert_eq!(kept_row.2.as_deref(), Some("kept by owner"));
+        assert!(
+            !labels.contains(&"Morning"),
+            "the colliding span defers to the owner's version"
+        );
+        // 00–09 unknown, kept 09–10, 10–12 unknown, Lunch 12–13, 13–24 unknown
+        assert_eq!(rows.len(), 5, "{labels:?}");
+        assert_eq!(rows.iter().filter(|r| r.3).count(), 3);
+        assert_eq!(
+            created, 4,
+            "Lunch + three Unknown fillers; the spared span is not counted"
+        );
+    }
+}
 
 #[cfg(test)]
 mod dossier_tests {
