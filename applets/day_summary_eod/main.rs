@@ -63,7 +63,30 @@ async fn main() -> Result<()> {
             // One day per tick, oldest first: the chain is two LLM calls deep, and
             // an hourly cron drains a backlog soon enough without risking a run
             // that blows its timeout.
-            if let Some(pending) = oldest_unnarrated_day(&pool, yesterday).await {
+            //
+            // The queue lives in `day_summary` (next to the segmenter's own gate,
+            // which it reuses) and keys on three things — none of them the day's
+            // EVENT COUNT, which is what the first version keyed on and how it
+            // lost days:
+            //   1. `narrated_at IS NULL` — the day has not been written up;
+            //   2. raw EVIDENCE — the same sources/shape test the segmenter
+            //      applies, so a sparse day is never offered (and never jams the
+            //      oldest-first queue), while a day whose cut failed and left zero
+            //      events is still seen, because its visits and audio are still
+            //      there;
+            //   3. an ATTEMPT BUDGET with exponential backoff — a deterministic
+            //      failure costs `MAX_NARRATION_ATTEMPTS` calls spread over days,
+            //      not one an hour until the day silently ages out.
+            let pending = match virtues::api::day_summary::next_catchup_day(&pool, yesterday).await
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    // Never let the repair path take down the normal path.
+                    tracing::warn!(error = %e, "catch-up scan failed; falling back to the maintenance hour");
+                    None
+                }
+            };
+            let date = if let Some(pending) = pending {
                 tracing::info!(date = %pending, "catching up an unnarrated day");
                 pending
             } else {
@@ -80,7 +103,28 @@ async fn main() -> Result<()> {
                 }
                 // The maintenance hour: yesterday is complete. Run the whole chain.
                 yesterday
+            };
+
+            // Count the attempt BEFORE the chain runs, so a run that times out or
+            // dies mid-way still counts and the backoff still applies. Yesterday's
+            // maintenance-hour run counts too: if it fails, the day enters the
+            // catch-up queue tomorrow already on attempt two. Explicit-date runs
+            // never reach here — they are the owner's decision, not the queue's.
+            match virtues::api::day_summary::record_narration_attempt(&pool, date).await {
+                Ok(n) if n >= virtues::api::day_summary::MAX_NARRATION_ATTEMPTS => {
+                    tracing::warn!(
+                        date = %date,
+                        attempts = n,
+                        "last automatic attempt for this day — if it fails again the day \
+                         is PARKED (narrated_at stays NULL) until an explicit-date run or \
+                         new evidence re-cuts it"
+                    );
+                }
+                Ok(n) => tracing::info!(date = %date, attempts = n, "automatic attempt"),
+                // Bookkeeping must not stop the work; the worst case is one extra retry.
+                Err(e) => tracing::warn!(error = %e, date = %date, "could not record the attempt"),
             }
+            date
         }
     };
 
@@ -89,7 +133,7 @@ async fn main() -> Result<()> {
     // ─────────────────────────────────────────────────────────────────────
     // ORDER IS LOad-BEARING. Do not move a scoring step above step 1.
     //
-    // `generate_day_summary` SEGMENTS the day: it deletes every auto event
+    // `segment_day_events` SEGMENTS the day: it deletes every auto event
     // (`delete_auto_events_for_day` — `WHERE is_user_added = false`) and
     // re-inserts fresh rows carrying only 14 columns, none of which is a
     // score. So anything computed before it is written to rows that are about
@@ -121,8 +165,10 @@ async fn main() -> Result<()> {
 
     // 1. Segment the day into events — THE DETECTIVE (LLM, Chat slot). Fuses the
     //    dossier of clean rollups into a gapless timeline. DESTRUCTIVE — replaces
-    //    all auto events. Idempotent: if the day's sources are unchanged since the
-    //    last cut, this returns 0 immediately and makes no model call.
+    //    all auto events, in one transaction, so a failed cut leaves the old events
+    //    standing rather than an empty day. Idempotent: if the day's sources are
+    //    unchanged since the last cut, this returns 0 immediately and makes no
+    //    model call.
     let events = virtues::api::day_summary::segment_day_events(&pool, date)
         .await
         .context("day segmentation failed")?;
@@ -215,55 +261,6 @@ async fn resolve_user_yesterday(pool: &sqlx::PgPool) -> NaiveDate {
     let (tz, _hour) = load_user_maintenance(pool).await;
     let now_local = chrono::Utc::now().with_timezone(&tz);
     now_local.date_naive() - chrono::Duration::days(1)
-}
-
-/// How far back catch-up will reach. Bounded on purpose: this is a repair path
-/// for a missed maintenance hour, not a backfill tool. A box returning from a
-/// month offline should not silently spend a month of LLM calls reconstructing
-/// autobiography nobody asked for — that is an explicit-date decision.
-const CATCHUP_HORIZON_DAYS: i64 = 14;
-
-/// Narration's own floor, mirrored from `day_summary::MIN_EVENTS_TO_NARRATE`.
-/// The queue must not offer a day narration would refuse, or catch-up jams.
-const MIN_EVENTS_TO_NARRATE: i64 = 4;
-
-/// The oldest settled day inside the horizon that *should* have narrated and
-/// didn't — i.e. it has a real day's worth of events but no `narrated_at`.
-///
-/// Strictly BEFORE `yesterday`: yesterday belongs to the maintenance-hour path
-/// so its late-arriving collector data keeps its settle window.
-///
-/// The event-count floor is load-bearing, not a nicety. Narration refuses a day
-/// under `MIN_EVENTS_TO_NARRATE` and — correctly — leaves `narrated_at` NULL. A
-/// queue that selected on `narrated_at IS NULL` alone would therefore hand the
-/// same empty day back every hour forever and, being oldest-first, block every
-/// real failure behind it. On the box this was written against, five such days
-/// (0–1 events, from setup week) sat exactly where that jam would form.
-async fn oldest_unnarrated_day(pool: &sqlx::PgPool, yesterday: NaiveDate) -> Option<NaiveDate> {
-    let start = yesterday - chrono::Duration::days(CATCHUP_HORIZON_DAYS);
-    let end = yesterday - chrono::Duration::days(1);
-    if end < start {
-        return None;
-    }
-    sqlx::query_scalar::<_, NaiveDate>(
-        "SELECT w.date \
-         FROM wiki_days w \
-         WHERE w.date BETWEEN $1 AND $2 \
-           AND w.narrated_at IS NULL \
-           AND (SELECT count(*) FROM wiki_events e \
-                WHERE e.day_id = w.id AND NOT e.is_unknown AND NOT e.user_hidden) >= $3 \
-         ORDER BY w.date ASC LIMIT 1",
-    )
-    .bind(start)
-    .bind(end)
-    .bind(MIN_EVENTS_TO_NARRATE)
-    .fetch_optional(pool)
-    .await
-    .unwrap_or_else(|e| {
-        // Never let the repair path take down the normal path.
-        tracing::warn!(error = %e, "catch-up scan failed; falling back to the maintenance hour");
-        None
-    })
 }
 
 /// The local hour the nightly chain runs at. 4am: the day is definitively over,
