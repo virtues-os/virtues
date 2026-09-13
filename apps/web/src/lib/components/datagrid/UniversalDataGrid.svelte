@@ -71,14 +71,10 @@
 		pageSize?: number;
 		/** Default view mode when no stored preference exists for this entityType. */
 		defaultViewMode?: ViewMode;
-		/** Column key to group by when no stored preference exists. '' = ungrouped. */
-		defaultGroupBy?: string;
 		/** Minimum card width in grid mode (CSS value). Default: '200px'. */
 		gridMinWidth?: string;
 		/** If provided, row click toggles an inline detail row instead of firing onItemClick. */
 		expandDetail?: Snippet<[T, RowMeta]>;
-		/** Auto-refresh interval in ms. If set, shows a toggle in the toolbar. */
-		refreshInterval?: number;
 		/** Diagonal fade-in stagger on first paint and on dataset identity change.
 		 *  Default false: a per-cell staggered animation makes every list feel slow
 		 *  and replays on each sort/filter change. Opt in per grid. */
@@ -117,7 +113,6 @@
 		selectable?: boolean;
 		/** Rendered in the bulk bar while rows are selected. */
 		bulkActions?: Snippet<[T[], () => void]>;
-		onSelectionChange?: (items: T[]) => void;
 		/** Trailing per-row controls, revealed on hover/focus. Discoverable in a
 		 *  way a right-click-only menu never is. */
 		rowActions?: Snippet<[T]>;
@@ -152,10 +147,8 @@
 		searchPlaceholder = 'Search...',
 		pageSize = 16,
 		defaultViewMode = 'table',
-		defaultGroupBy,
 		gridMinWidth = '200px',
 		expandDetail,
-		refreshInterval,
 		animateMount = false,
 		sortable = true,
 		filters,
@@ -171,7 +164,6 @@
 		toolbarActions,
 		selectable = false,
 		bulkActions,
-		onSelectionChange,
 		rowActions,
 		rowIcon,
 		rowHref
@@ -596,7 +588,6 @@
 
 	function setSelection(next: Set<string>) {
 		selectedIds = next;
-		onSelectionChange?.(displayedItems.filter((i) => next.has(i.id)));
 	}
 
 	function toggleSelected(item: T, index: number, extend = false) {
@@ -717,27 +708,6 @@
 	});
 
 	// ────────────────────────────────────────────────────────────────────────
-	// Auto-refresh
-	// ────────────────────────────────────────────────────────────────────────
-	let autoRefresh = $state(false);
-
-	$effect(() => {
-		if (!autoRefresh || !refreshInterval) return;
-		// Server mode refreshes itself: drop the page cache and refetch the
-		// current query. Client mode delegates to the consumer's onRefresh.
-		if (serverMode) {
-			const timer = setInterval(() => {
-				pageCache.clear();
-				refreshTick++;
-			}, refreshInterval);
-			return () => clearInterval(timer);
-		}
-		if (!onRefresh) return;
-		const timer = setInterval(onRefresh, refreshInterval);
-		return () => clearInterval(timer);
-	});
-
-	// ────────────────────────────────────────────────────────────────────────
 	// Mount-stagger key: bumps when dataset identity changes so the
 	// {#key mountToken} block remounts and replays the fade. Hover/expand
 	// re-renders within the same dataset don't bump it.
@@ -790,7 +760,7 @@
 		groupInitialized = true;
 		const stored = dataGridPrefs.hasGroupBy(entityType)
 			? dataGridPrefs.getGroupBy(entityType)
-			: (defaultGroupBy ?? '');
+			: '';
 		// A stored key whose column has since gone away must not strand the grid
 		// in a grouping the user can no longer see or clear.
 		groupKey = groupableCols.some((c) => String(c.key) === stored) ? stored : '';
@@ -903,12 +873,6 @@
 						{totalCount} {totalCount === 1 ? 'item' : 'items'}
 					{/if}
 				</span>
-				{#if refreshInterval && (onRefresh || serverMode)}
-					<label class="refresh-toggle">
-						<input type="checkbox" bind:checked={autoRefresh} />
-						<span>Auto-refresh</span>
-					</label>
-				{/if}
 				{#if filters && filters.length > 0 && availableFilters.length > 0}
 					<div class="filter-add">
 						<Popover bind:open={addOpen} placement="bottom-end" offset={4}>
@@ -2227,21 +2191,6 @@
 	.expand-row td {
 		padding: 0;
 		border-bottom: 1px solid var(--color-border, #e5e7eb);
-	}
-
-	/* Auto-refresh toggle */
-	.refresh-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted, #6b7280);
-		cursor: pointer;
-		user-select: none;
-	}
-	.refresh-toggle input {
-		margin: 0;
-		cursor: pointer;
 	}
 
 	/* Pagination */
