@@ -326,7 +326,7 @@ async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::result::Result<s
     )
     .execute(&mut *tx)
     .await
-    .ok();
+    .map_err(|e| e.to_string())?;
     sqlx::query("SET LOCAL ROLE virtues_face_reader")
         .execute(&mut *tx)
         .await

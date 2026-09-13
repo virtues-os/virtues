@@ -389,11 +389,16 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // Claimed = at least one device has paired (the pair token was consumed
     // by an owner's browser or phone). Ownership-by-proximity, see
     // agents/build/onboarding.md "trust on first boot".
+    //
+    // Every gate below is `?`, not `.unwrap_or(0|false)`. These are counts and
+    // EXISTS checks: an empty table already answers 0 / false, so the only way
+    // they fail is a broken query or a dead pool — and then "no devices, no
+    // sync, nothing named" is not a state, it is a lie that walks the owner
+    // back to the start of setup.
     let claimed: i64 =
         sqlx::query_scalar("SELECT count(*) FROM app_device WHERE revoked_at IS NULL")
             .fetch_one(pool)
-            .await
-            .unwrap_or(0);
+            .await?;
 
     // First source = an active user-connected credential (OAuth, api-key
     // import) — not a device's, not the BYO-key pseudo-source, and not the
@@ -442,8 +447,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
          WHERE kind = 'mobile_app' AND revoked_at IS NULL",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    .await?;
 
     // Chat history imported = the one-time chat_import applet has at least one
     // successful run. Server-backed (not a client-local flag) so skipping it is
@@ -454,16 +458,14 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
          WHERE applet_id = 'applet_chat_import' AND status = 'success')",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
 
     // First sync = any action run has ever succeeded (data actually landed).
     let first_sync: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM app_applet_runs WHERE status = 'success'",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    .await?;
 
     // Narrative-identity reveal: ready once the "In your own words" article
     // exists (written up from the interview — the machine never writes it
@@ -475,8 +477,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
          WHERE subject_type = 'narrative_identity')",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
 
     // Tier 2: a living (cloud/OAuth) source that has actually synced — i.e. a
     // non-device, non-BYO credential with at least one successful run. Stronger
@@ -502,8 +503,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
          WHERE named_at IS NOT NULL AND revoked_at IS NULL)",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
 
     // Tier 0/1: a paired device finished its initial backfill. The FDA gate for
     // the Mac (daemon running + Full Disk Access) is enforced client-side in the
@@ -514,16 +514,14 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
          WHERE init_sync_completed_at IS NOT NULL AND revoked_at IS NULL)",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
     let device_sync_started: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_device \
          WHERE init_sync_started_at IS NOT NULL AND init_sync_completed_at IS NULL \
            AND revoked_at IS NULL)",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
 
     // Dev convenience: `make dev` sets VIRTUES_DEV_SKIP_SETUP=1 so the required
     // setup wizard is pre-satisfied and the browser lands straight in the app
