@@ -1108,14 +1108,21 @@ pub async fn device_applet_runs_handler(
 ) -> Response {
     // Ownership: the action must belong to this device. EXISTS returns a
     // non-null bool, so a missing action and a foreign action both → false.
-    let owned: bool = sqlx::query_scalar(
+    // A failed query is neither: it used to read as `false` and hand the real
+    // owner a 403 for their own applet.
+    let owned: bool = match sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_applets WHERE id = $1 AND device_id = $2)",
     )
     .bind(&applet_id)
     .bind(&user.device_id)
     .fetch_one(state.db.pool())
     .await
-    .unwrap_or(false);
+    {
+        Ok(owned) => owned,
+        Err(e) => {
+            return error_response(Error::Database(format!("applet ownership check: {e}")))
+        }
+    };
 
     if !owned {
         return (

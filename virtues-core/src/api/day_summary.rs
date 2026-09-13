@@ -443,12 +443,12 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
         timezone.as_deref(),
         tz_for_display.as_ref(),
     )
-    .await;
+    .await?;
 
     // 4. A light recency signal — the last few days' event labels — to disambiguate
     //    an ambiguous stretch. The detective's job is cutting, not remembering, so
     //    this stays small.
-    let recent = recent_event_labels(pool, date, tz_for_display.as_ref()).await;
+    let recent = recent_event_labels(pool, date, tz_for_display.as_ref()).await?;
 
     let mut prompt = dossier;
     if !recent.is_empty() {
@@ -656,14 +656,14 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         prompt.push('\n');
     }
 
-    if let Some(h) = build_health_snapshot(pool, &start_str, &end_str).await {
+    if let Some(h) = build_health_snapshot(pool, &start_str, &end_str).await? {
         append_section(&mut prompt, &h);
     }
 
     // The last 14 days — only to recognise a real recurrence or a genuine first
     // ("first kayak in months", "same thread as Saturday"), never to invent a
     // pattern. Empty on a cold start.
-    let case_file = recent_event_case_file(pool, date, tz.as_ref()).await;
+    let case_file = recent_event_case_file(pool, date, tz.as_ref()).await?;
     if !case_file.is_empty() {
         prompt.push_str("\n## Recent days (the last two weeks)\n\n");
         prompt.push_str(&case_file);
@@ -672,7 +672,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     // The day's resolved people + places, each as its exact ref-link, so the
     // biography can cite them the way chat/pages do — `[Name](/person/person_x)` —
     // which the day page renders as an entity pill (link-when-reading).
-    let entities = day_entities_for_refs(pool, &start_str, &end_str).await;
+    let entities = day_entities_for_refs(pool, &start_str, &end_str).await?;
     if !entities.is_empty() {
         prompt.push_str("\n## Entities you may link (copy the exact markdown link)\n");
         prompt.push_str(&entities.join("\n"));
@@ -815,62 +815,60 @@ async fn build_health_snapshot(
     pool: &PgPool,
     start_str: &str,
     end_str: &str,
-) -> Option<PromptSection> {
-    let mut lines = Vec::new();
+) -> Result<Option<PromptSection>> {
+    Ok({
+        let mut lines = Vec::new();
 
-    // Heart rate
-    let hr: Option<(Option<i32>, Option<i32>, Option<f64>, i32)> = sqlx::query_as(
-        r#"
+        // Heart rate
+        let hr: Option<(Option<i32>, Option<i32>, Option<f64>, i32)> = sqlx::query_as(
+            r#"
         SELECT MIN(bpm), MAX(bpm), ROUND(AVG(bpm)), COUNT(*)
         FROM data_health_heart_rate
         WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz
         "#,
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_optional(pool)
+        .await?;
 
-    if let Some((Some(min_hr), Some(max_hr), Some(avg_hr), count)) = hr {
-        if count > 0 {
-            lines.push(format!(
-                "- Heart rate: avg {:.0}, min {}, max {} ({} readings)",
-                avg_hr, min_hr, max_hr, count
-            ));
+        if let Some((Some(min_hr), Some(max_hr), Some(avg_hr), count)) = hr {
+            if count > 0 {
+                lines.push(format!(
+                    "- Heart rate: avg {:.0}, min {}, max {} ({} readings)",
+                    avg_hr, min_hr, max_hr, count
+                ));
+            }
         }
-    }
 
-    // Steps
-    let steps: Option<(Option<i64>,)> = sqlx::query_as(
-        r#"
+        // Steps
+        let steps: Option<(Option<i64>,)> = sqlx::query_as(
+            r#"
         SELECT SUM(step_count)
         FROM data_health_steps
         WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz
         "#,
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_optional(pool)
+        .await?;
 
-    if let Some((Some(total_steps),)) = steps {
-        if total_steps > 0 {
-            lines.push(format!("- Steps: {}", total_steps));
+        if let Some((Some(total_steps),)) = steps {
+            if total_steps > 0 {
+                lines.push(format!("- Steps: {}", total_steps));
+            }
         }
-    }
 
-    if lines.is_empty() {
-        None
-    } else {
-        Some(PromptSection {
-            heading: "Health Snapshot".to_string(),
-            body: lines.join("\n"),
-        })
-    }
+        if lines.is_empty() {
+            None
+        } else {
+            Some(PromptSection {
+                heading: "Health Snapshot".to_string(),
+                body: lines.join("\n"),
+            })
+        }
+    })
 }
 
 /// Append a section to the prompt string
@@ -894,10 +892,15 @@ struct DayEventRow {
 /// The day's resolved people + places, each as its exact ref-link route, so the
 /// biography can cite them the way chat/pages do — `[Name](/person/person_x)` — and
 /// the day page renders them as entity pills.
-async fn day_entities_for_refs(pool: &PgPool, start_str: &str, end_str: &str) -> Vec<String> {
-    use sqlx::Row;
-    let rows = sqlx::query(
-        "SELECT 'person' AS kind, pe.id AS id, pe.name AS name \
+async fn day_entities_for_refs(
+    pool: &PgPool,
+    start_str: &str,
+    end_str: &str,
+) -> Result<Vec<String>> {
+    Ok({
+        use sqlx::Row;
+        let rows = sqlx::query(
+            "SELECT 'person' AS kind, pe.id AS id, pe.name AS name \
          FROM wiki_refs er JOIN wiki_people pe ON pe.id = er.entity_id \
          WHERE er.entity_type = 'person' \
            AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz \
@@ -911,24 +914,24 @@ async fn day_entities_for_refs(pool: &PgPool, start_str: &str, end_str: &str) ->
          FROM wiki_refs er JOIN wiki_orgs o ON o.id = er.entity_id \
          WHERE er.entity_type = 'organization' \
            AND er.occurred_at >= $1::timestamptz AND er.occurred_at <= $2::timestamptz",
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    rows.iter()
-        .filter_map(|r| {
-            let kind: String = r.get("kind");
-            let id: String = r.get("id");
-            let name = r
-                .try_get::<Option<String>, _>("name")
-                .ok()
-                .flatten()
-                .filter(|s| !s.trim().is_empty())?;
-            Some(format!("- [{name}](/{kind}/{id})"))
-        })
-        .collect()
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_all(pool)
+        .await?;
+        rows.iter()
+            .filter_map(|r| {
+                let kind: String = r.get("kind");
+                let id: String = r.get("id");
+                let name = r
+                    .try_get::<Option<String>, _>("name")
+                    .ok()
+                    .flatten()
+                    .filter(|s| !s.trim().is_empty())?;
+                Some(format!("- [{name}](/{kind}/{id})"))
+            })
+            .collect()
+    })
 }
 
 /// Cap a free-text field to `n` chars, appending an ellipsis when it was clipped.
@@ -956,111 +959,115 @@ async fn day_movement_segments(
     pool: &PgPool,
     start_str: &str,
     end_str: &str,
-) -> Vec<(
-    chrono::DateTime<chrono::Utc>,
-    chrono::DateTime<chrono::Utc>,
-    f64,
-    Option<f64>,
-)> {
-    use sqlx::Row;
-    let rows = sqlx::query(
-        "SELECT occurred_at, latitude, longitude, speed FROM data_location_point \
+) -> Result<
+    Vec<(
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+        f64,
+        Option<f64>,
+    )>,
+> {
+    Ok({
+        use sqlx::Row;
+        let rows = sqlx::query(
+            "SELECT occurred_at, latitude, longitude, speed FROM data_location_point \
          WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz \
          ORDER BY occurred_at",
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_all(pool)
+        .await?;
 
-    let pts: Vec<(chrono::DateTime<chrono::Utc>, f64, f64, Option<f64>)> = rows
-        .iter()
-        .map(|r| {
-            (
-                r.get::<chrono::DateTime<chrono::Utc>, _>("occurred_at"),
-                r.get::<f64, _>("latitude"),
-                r.get::<f64, _>("longitude"),
-                r.try_get::<Option<f64>, _>("speed").ok().flatten(),
-            )
-        })
-        .collect();
-
-    const MOVING_MPS: f64 = 1.0; // ~3.6 km/h — above GPS jitter, still catches a walk
-    const MERGE_GAP_S: i64 = 180; // fold still-pauses under 3 min into one trip
-    const MIN_DIST_M: f64 = 150.0; // discard jitter that never really went anywhere
-
-    let haversine = |a: (f64, f64), b: (f64, f64)| -> f64 {
-        let (lat1, lon1) = (a.0.to_radians(), a.1.to_radians());
-        let (lat2, lon2) = (b.0.to_radians(), b.1.to_radians());
-        let (dlat, dlon) = (lat2 - lat1, lon2 - lon1);
-        let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
-        6_371_000.0 * 2.0 * h.sqrt().asin()
-    };
-    // Effective speed per fix: the device's reported `speed` when present, else
-    // derived from the previous fix (distance / time). So movement is detected from
-    // the raw trace even when the `speed` column is absent — historical rows before
-    // migration 0047, or any source that doesn't report per-fix speed.
-    let eff: Vec<f64> = (0..pts.len())
-        .map(|i| {
-            pts[i].3.unwrap_or_else(|| {
-                if i == 0 {
-                    return 0.0;
-                }
-                let d = haversine((pts[i - 1].1, pts[i - 1].2), (pts[i].1, pts[i].2));
-                let dt = (pts[i].0 - pts[i - 1].0).num_seconds().max(1) as f64;
-                d / dt
+        let pts: Vec<(chrono::DateTime<chrono::Utc>, f64, f64, Option<f64>)> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.get::<chrono::DateTime<chrono::Utc>, _>("occurred_at"),
+                    r.get::<f64, _>("latitude"),
+                    r.get::<f64, _>("longitude"),
+                    r.try_get::<Option<f64>, _>("speed").ok().flatten(),
+                )
             })
-        })
-        .collect();
-    let moving: Vec<bool> = eff.iter().map(|&s| s > MOVING_MPS).collect();
+            .collect();
 
-    let mut segs = Vec::new();
-    let mut i = 0;
-    while i < pts.len() {
-        if !moving[i] {
-            i += 1;
-            continue;
-        }
-        // Grow a run from i, bridging still-gaps shorter than MERGE_GAP_S.
-        let start = i;
-        let mut end = i;
-        let mut j = i + 1;
-        while j < pts.len() {
-            if moving[j] {
-                end = j;
-                j += 1;
-            } else {
-                let mut k = j;
-                while k < pts.len() && !moving[k] {
-                    k += 1;
-                }
-                if k < pts.len() && (pts[k].0 - pts[end].0).num_seconds() <= MERGE_GAP_S {
-                    j = k; // brief pause — same trip
+        const MOVING_MPS: f64 = 1.0; // ~3.6 km/h — above GPS jitter, still catches a walk
+        const MERGE_GAP_S: i64 = 180; // fold still-pauses under 3 min into one trip
+        const MIN_DIST_M: f64 = 150.0; // discard jitter that never really went anywhere
+
+        let haversine = |a: (f64, f64), b: (f64, f64)| -> f64 {
+            let (lat1, lon1) = (a.0.to_radians(), a.1.to_radians());
+            let (lat2, lon2) = (b.0.to_radians(), b.1.to_radians());
+            let (dlat, dlon) = (lat2 - lat1, lon2 - lon1);
+            let h =
+                (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+            6_371_000.0 * 2.0 * h.sqrt().asin()
+        };
+        // Effective speed per fix: the device's reported `speed` when present, else
+        // derived from the previous fix (distance / time). So movement is detected from
+        // the raw trace even when the `speed` column is absent — historical rows before
+        // migration 0047, or any source that doesn't report per-fix speed.
+        let eff: Vec<f64> = (0..pts.len())
+            .map(|i| {
+                pts[i].3.unwrap_or_else(|| {
+                    if i == 0 {
+                        return 0.0;
+                    }
+                    let d = haversine((pts[i - 1].1, pts[i - 1].2), (pts[i].1, pts[i].2));
+                    let dt = (pts[i].0 - pts[i - 1].0).num_seconds().max(1) as f64;
+                    d / dt
+                })
+            })
+            .collect();
+        let moving: Vec<bool> = eff.iter().map(|&s| s > MOVING_MPS).collect();
+
+        let mut segs = Vec::new();
+        let mut i = 0;
+        while i < pts.len() {
+            if !moving[i] {
+                i += 1;
+                continue;
+            }
+            // Grow a run from i, bridging still-gaps shorter than MERGE_GAP_S.
+            let start = i;
+            let mut end = i;
+            let mut j = i + 1;
+            while j < pts.len() {
+                if moving[j] {
+                    end = j;
+                    j += 1;
                 } else {
-                    break;
+                    let mut k = j;
+                    while k < pts.len() && !moving[k] {
+                        k += 1;
+                    }
+                    if k < pts.len() && (pts[k].0 - pts[end].0).num_seconds() <= MERGE_GAP_S {
+                        j = k; // brief pause — same trip
+                    } else {
+                        break;
+                    }
                 }
             }
-        }
-        // Distance over the run, and average speed of its moving fixes.
-        let mut dist = 0.0;
-        for w in start..end {
-            dist += haversine((pts[w].1, pts[w].2), (pts[w + 1].1, pts[w + 1].2));
-        }
-        let (mut sspeed, mut nspeed) = (0.0, 0usize);
-        for w in start..=end {
-            if eff[w] > MOVING_MPS {
-                sspeed += eff[w];
-                nspeed += 1;
+            // Distance over the run, and average speed of its moving fixes.
+            let mut dist = 0.0;
+            for w in start..end {
+                dist += haversine((pts[w].1, pts[w].2), (pts[w + 1].1, pts[w + 1].2));
             }
+            let (mut sspeed, mut nspeed) = (0.0, 0usize);
+            for w in start..=end {
+                if eff[w] > MOVING_MPS {
+                    sspeed += eff[w];
+                    nspeed += 1;
+                }
+            }
+            if dist >= MIN_DIST_M {
+                let avg_kmh = (nspeed > 0).then(|| sspeed / nspeed as f64 * 3.6);
+                segs.push((pts[start].0, pts[end].0, dist / 1000.0, avg_kmh));
+            }
+            i = end + 1;
         }
-        if dist >= MIN_DIST_M {
-            let avg_kmh = (nspeed > 0).then(|| sspeed / nspeed as f64 * 3.6);
-            segs.push((pts[start].0, pts[end].0, dist / 1000.0, avg_kmh));
-        }
-        i = end + 1;
-    }
-    segs
+        segs
+    })
 }
 
 /// Runs of time the owner was demonstrably AT a machine.
@@ -1083,115 +1090,118 @@ async fn day_device_presence(
     pool: &PgPool,
     start_str: &str,
     end_str: &str,
-) -> Vec<(
-    chrono::DateTime<chrono::Utc>,
-    chrono::DateTime<chrono::Utc>,
-    Vec<String>,
-    bool,
-    String,
-)> {
-    use sqlx::Row;
+) -> Result<
+    Vec<(
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+        Vec<String>,
+        bool,
+        String,
+    )>,
+> {
+    Ok({
+        use sqlx::Row;
 
-    /// A short break is still presence — someone who steps away for coffee and
-    /// comes back never left the building. Longer than this and the gap is real,
-    /// so the runs stay separate and the stretch between them is genuinely open.
-    const MERGE_GAP_S: i64 = 600;
-    /// A run this short is a glance at a notification, not evidence of anything.
-    const MIN_RUN_S: i64 = 120;
-    /// Enough to characterise a stretch; more is noise in a prompt.
-    const TOP_APPS: usize = 4;
+        /// A short break is still presence — someone who steps away for coffee and
+        /// comes back never left the building. Longer than this and the gap is real,
+        /// so the runs stay separate and the stretch between them is genuinely open.
+        const MERGE_GAP_S: i64 = 600;
+        /// A run this short is a glance at a notification, not evidence of anything.
+        const MIN_RUN_S: i64 = 120;
+        /// Enough to characterise a stretch; more is noise in a prompt.
+        const TOP_APPS: usize = 4;
 
-    let rows = sqlx::query(
-        "SELECT app_name, started_at, ended_at, attention, closed_by, is_open \
+        let rows = sqlx::query(
+            "SELECT app_name, started_at, ended_at, attention, closed_by, is_open \
          FROM data_activity_app_session \
          WHERE ended_at >= $1::timestamptz AND started_at <= $2::timestamptz \
          ORDER BY started_at",
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_all(pool)
+        .await?;
 
-    struct Run {
-        start: chrono::DateTime<chrono::Utc>,
-        end: chrono::DateTime<chrono::Utc>,
-        apps: Vec<(String, i64)>,
-        /// `active` means keys and clicks — a person, present. `watching` means
-        /// the app merely held the display awake, which a video can do to an
-        /// empty room. Both are usage; only one is a body. Worth a word in the
-        /// dossier, because a run with no input at all is much weaker evidence
-        /// of where someone was.
-        any_active: bool,
-        ended: String,
-    }
-    let mut runs: Vec<Run> = Vec::new();
-
-    for r in &rows {
-        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
-        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
-        if e < s {
-            continue;
+        struct Run {
+            start: chrono::DateTime<chrono::Utc>,
+            end: chrono::DateTime<chrono::Utc>,
+            apps: Vec<(String, i64)>,
+            /// `active` means keys and clicks — a person, present. `watching` means
+            /// the app merely held the display awake, which a video can do to an
+            /// empty room. Both are usage; only one is a body. Worth a word in the
+            /// dossier, because a run with no input at all is much weaker evidence
+            /// of where someone was.
+            any_active: bool,
+            ended: String,
         }
-        let app: String = r.try_get("app_name").unwrap_or_default();
-        let secs = (e - s).num_seconds().max(0);
-        let active = r
-            .try_get::<String, _>("attention")
-            .map(|a| a == "active")
-            .unwrap_or(true);
-        // `closed_by` explains the gap that FOLLOWS the run, which is the whole
-        // reason it is worth carrying: `stale` means the collector died, so the
-        // silence after it is our failure and not the owner walking away. Reading
-        // that silence as absence would be the same category error this file
-        // exists to stop, just pointed at a different source.
-        let ended = if r.try_get::<bool, _>("is_open").unwrap_or(false) {
-            "open".to_string()
-        } else {
-            r.try_get::<Option<String>, _>("closed_by")
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "unknown".to_string())
-        };
+        let mut runs: Vec<Run> = Vec::new();
 
-        let extend = runs
-            .last()
-            .is_some_and(|last| (s - last.end).num_seconds() <= MERGE_GAP_S);
-        if extend {
-            let last = runs.last_mut().expect("checked by `extend`");
-            if e > last.end {
-                last.end = e;
+        for r in &rows {
+            let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+            let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
+            if e < s {
+                continue;
             }
-            last.ended = ended;
-            last.any_active |= active;
-            match last.apps.iter_mut().find(|(n, _)| n == &app) {
-                Some((_, t)) => *t += secs,
-                None => last.apps.push((app, secs)),
+            let app: String = r.try_get("app_name").unwrap_or_default();
+            let secs = (e - s).num_seconds().max(0);
+            let active = r
+                .try_get::<String, _>("attention")
+                .map(|a| a == "active")
+                .unwrap_or(true);
+            // `closed_by` explains the gap that FOLLOWS the run, which is the whole
+            // reason it is worth carrying: `stale` means the collector died, so the
+            // silence after it is our failure and not the owner walking away. Reading
+            // that silence as absence would be the same category error this file
+            // exists to stop, just pointed at a different source.
+            let ended = if r.try_get::<bool, _>("is_open").unwrap_or(false) {
+                "open".to_string()
+            } else {
+                r.try_get::<Option<String>, _>("closed_by")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "unknown".to_string())
+            };
+
+            let extend = runs
+                .last()
+                .is_some_and(|last| (s - last.end).num_seconds() <= MERGE_GAP_S);
+            if extend {
+                let last = runs.last_mut().expect("checked by `extend`");
+                if e > last.end {
+                    last.end = e;
+                }
+                last.ended = ended;
+                last.any_active |= active;
+                match last.apps.iter_mut().find(|(n, _)| n == &app) {
+                    Some((_, t)) => *t += secs,
+                    None => last.apps.push((app, secs)),
+                }
+            } else {
+                runs.push(Run {
+                    start: s,
+                    end: e,
+                    apps: vec![(app, secs)],
+                    any_active: active,
+                    ended,
+                });
             }
-        } else {
-            runs.push(Run {
-                start: s,
-                end: e,
-                apps: vec![(app, secs)],
-                any_active: active,
-                ended,
-            });
         }
-    }
 
-    runs.into_iter()
-        .filter(|r| (r.end - r.start).num_seconds() >= MIN_RUN_S)
-        .map(|mut r| {
-            r.apps.sort_by(|a, b| b.1.cmp(&a.1));
-            let apps = r
-                .apps
-                .into_iter()
-                .take(TOP_APPS)
-                .map(|(n, _)| n)
-                .filter(|n| !n.trim().is_empty())
-                .collect();
-            (r.start, r.end, apps, r.any_active, r.ended)
-        })
-        .collect()
+        runs.into_iter()
+            .filter(|r| (r.end - r.start).num_seconds() >= MIN_RUN_S)
+            .map(|mut r| {
+                r.apps.sort_by(|a, b| b.1.cmp(&a.1));
+                let apps = r
+                    .apps
+                    .into_iter()
+                    .take(TOP_APPS)
+                    .map(|(n, _)| n)
+                    .filter(|n| !n.trim().is_empty())
+                    .collect();
+                (r.start, r.end, apps, r.any_active, r.ended)
+            })
+            .collect()
+    })
 }
 
 /// One run of messages in a single thread, with the text that makes it legible.
@@ -1229,28 +1239,29 @@ async fn day_message_bursts(
     pool: &PgPool,
     start_str: &str,
     end_str: &str,
-) -> Vec<MessageBurst> {
-    use sqlx::Row;
+) -> Result<Vec<MessageBurst>> {
+    Ok({
+        use sqlx::Row;
 
-    /// Messages further apart than this in one thread are separate bursts. A
-    /// conversation has pauses; a reply the next afternoon is a new occasion.
-    const BURST_GAP_MINUTES: i64 = 45;
-    /// A burst this small is a logistics ping, not a stretch of the day. It
-    /// still counts toward its burst — this only stops single acknowledgements
-    /// from each claiming a spine line.
-    const MIN_BURST_MESSAGES: usize = 2;
-    /// Bursts on the spine. Beyond this the dossier stops being a dossier.
-    const MAX_BURSTS: usize = 24;
-    /// Excerpts carried per burst, and the cap on each. Enough to show what the
-    /// exchange was ABOUT; far short of reproducing a conversation.
-    const MAX_EXCERPTS_PER_BURST: usize = 4;
-    const EXCERPT_CHARS: usize = 140;
+        /// Messages further apart than this in one thread are separate bursts. A
+        /// conversation has pauses; a reply the next afternoon is a new occasion.
+        const BURST_GAP_MINUTES: i64 = 45;
+        /// A burst this small is a logistics ping, not a stretch of the day. It
+        /// still counts toward its burst — this only stops single acknowledgements
+        /// from each claiming a spine line.
+        const MIN_BURST_MESSAGES: usize = 2;
+        /// Bursts on the spine. Beyond this the dossier stops being a dossier.
+        const MAX_BURSTS: usize = 24;
+        /// Excerpts carried per burst, and the cap on each. Enough to show what the
+        /// exchange was ABOUT; far short of reproducing a conversation.
+        const MAX_EXCERPTS_PER_BURST: usize = 4;
+        const EXCERPT_CHARS: usize = 140;
 
-    // DISTINCT ON (m.id): the refs join can match twice (a message carrying both
-    // a sender and a recipient ref), which would double-count the burst. Order
-    // the tiebreak so a row WITH a resolved name wins over one without.
-    let rows = sqlx::query(
-        "SELECT DISTINCT ON (m.id) \
+        // DISTINCT ON (m.id): the refs join can match twice (a message carrying both
+        // a sender and a recipient ref), which would double-count the burst. Order
+        // the tiebreak so a row WITH a resolved name wins over one without.
+        let rows = sqlx::query(
+            "SELECT DISTINCT ON (m.id) \
                 m.id, m.thread_id, m.body, m.occurred_at, m.from_name, m.from_identifier, \
                 COALESCE((m.metadata->>'is_from_me')::boolean, false) AS from_me, \
                 pe.name AS resolved_name \
@@ -1261,118 +1272,123 @@ async fn day_message_bursts(
          LEFT JOIN wiki_people pe ON pe.id = er.entity_id \
          WHERE m.occurred_at >= $1::timestamptz AND m.occurred_at <= $2::timestamptz \
          ORDER BY m.id, (pe.name IS NULL)",
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_all(pool)
+        .await?;
 
-    struct Msg {
-        thread: String,
-        ts: chrono::DateTime<chrono::Utc>,
-        body: Option<String>,
-        from_me: bool,
-        who: Option<String>,
-    }
-
-    let mut msgs: Vec<Msg> = rows
-        .iter()
-        .map(|r| {
-            let from_me: bool = r.try_get("from_me").unwrap_or(false);
-            // A message you SENT has no `from_name` (people.rs fills it only for
-            // the sender of a received message), so the counterpart of an
-            // outbound message is only ever known via the resolved ref or the
-            // thread it sits in — which is why grouping happens first.
-            let who = r
-                .try_get::<Option<String>, _>("resolved_name")
-                .ok()
-                .flatten()
-                .or_else(|| r.try_get::<Option<String>, _>("from_name").ok().flatten())
-                .filter(|s| !s.trim().is_empty());
-            // Threadless channels exist; fall back to the handle so a
-            // conversation still groups, and only then to the message itself.
-            let thread = r
-                .try_get::<Option<String>, _>("thread_id")
-                .ok()
-                .flatten()
-                .filter(|s| !s.trim().is_empty())
-                .or_else(|| r.try_get::<Option<String>, _>("from_identifier").ok().flatten())
-                .unwrap_or_else(|| r.get::<String, _>("id"));
-            Msg {
-                thread,
-                ts: r.get("occurred_at"),
-                body: r.try_get::<Option<String>, _>("body").ok().flatten(),
-                from_me,
-                who,
-            }
-        })
-        .collect();
-
-    msgs.sort_by(|a, b| a.thread.cmp(&b.thread).then(a.ts.cmp(&b.ts)));
-
-    let mut bursts: Vec<MessageBurst> = Vec::new();
-    let mut current: Option<(String, Vec<&Msg>)> = None;
-
-    let flush = |acc: &(String, Vec<&Msg>), out: &mut Vec<MessageBurst>| {
-        let group = &acc.1;
-        if group.len() < MIN_BURST_MESSAGES {
-            return;
+        struct Msg {
+            thread: String,
+            ts: chrono::DateTime<chrono::Utc>,
+            body: Option<String>,
+            from_me: bool,
+            who: Option<String>,
         }
-        // The counterpart is a property of the THREAD, not of any one message —
-        // recovered from whichever message in the burst carried a name.
-        let counterpart = group
-            .iter()
-            .find_map(|m| m.who.clone())
-            .unwrap_or_else(|| "unknown".to_string());
-        let sent = group.iter().filter(|m| m.from_me).count();
-        let excerpts = group
-            .iter()
-            .filter_map(|m| {
-                m.body
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|b| !b.is_empty())
-                    .map(|b| (m.from_me, cap(b, EXCERPT_CHARS)))
-            })
-            .take(MAX_EXCERPTS_PER_BURST)
-            .collect();
-        out.push(MessageBurst {
-            start: group[0].ts,
-            end: group[group.len() - 1].ts,
-            counterpart,
-            sent,
-            received: group.len() - sent,
-            excerpts,
-        });
-    };
 
-    for m in &msgs {
-        match &mut current {
-            Some((thread, group))
-                if *thread == m.thread
-                    && (m.ts - group[group.len() - 1].ts).num_minutes() <= BURST_GAP_MINUTES =>
-            {
-                group.push(m);
-            }
-            _ => {
-                if let Some(acc) = &current {
-                    flush(acc, &mut bursts);
+        let mut msgs: Vec<Msg> = rows
+            .iter()
+            .map(|r| {
+                let from_me: bool = r.try_get("from_me").unwrap_or(false);
+                // A message you SENT has no `from_name` (people.rs fills it only for
+                // the sender of a received message), so the counterpart of an
+                // outbound message is only ever known via the resolved ref or the
+                // thread it sits in — which is why grouping happens first.
+                let who = r
+                    .try_get::<Option<String>, _>("resolved_name")
+                    .ok()
+                    .flatten()
+                    .or_else(|| r.try_get::<Option<String>, _>("from_name").ok().flatten())
+                    .filter(|s| !s.trim().is_empty());
+                // Threadless channels exist; fall back to the handle so a
+                // conversation still groups, and only then to the message itself.
+                let thread = r
+                    .try_get::<Option<String>, _>("thread_id")
+                    .ok()
+                    .flatten()
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| {
+                        r.try_get::<Option<String>, _>("from_identifier")
+                            .ok()
+                            .flatten()
+                    })
+                    .unwrap_or_else(|| r.get::<String, _>("id"));
+                Msg {
+                    thread,
+                    ts: r.get("occurred_at"),
+                    body: r.try_get::<Option<String>, _>("body").ok().flatten(),
+                    from_me,
+                    who,
                 }
-                current = Some((m.thread.clone(), vec![m]));
+            })
+            .collect();
+
+        msgs.sort_by(|a, b| a.thread.cmp(&b.thread).then(a.ts.cmp(&b.ts)));
+
+        let mut bursts: Vec<MessageBurst> = Vec::new();
+        let mut current: Option<(String, Vec<&Msg>)> = None;
+
+        let flush = |acc: &(String, Vec<&Msg>), out: &mut Vec<MessageBurst>| {
+            let group = &acc.1;
+            if group.len() < MIN_BURST_MESSAGES {
+                return;
+            }
+            // The counterpart is a property of the THREAD, not of any one message —
+            // recovered from whichever message in the burst carried a name.
+            let counterpart = group
+                .iter()
+                .find_map(|m| m.who.clone())
+                .unwrap_or_else(|| "unknown".to_string());
+            let sent = group.iter().filter(|m| m.from_me).count();
+            let excerpts = group
+                .iter()
+                .filter_map(|m| {
+                    m.body
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|b| !b.is_empty())
+                        .map(|b| (m.from_me, cap(b, EXCERPT_CHARS)))
+                })
+                .take(MAX_EXCERPTS_PER_BURST)
+                .collect();
+            out.push(MessageBurst {
+                start: group[0].ts,
+                end: group[group.len() - 1].ts,
+                counterpart,
+                sent,
+                received: group.len() - sent,
+                excerpts,
+            });
+        };
+
+        for m in &msgs {
+            match &mut current {
+                Some((thread, group))
+                    if *thread == m.thread
+                        && (m.ts - group[group.len() - 1].ts).num_minutes()
+                            <= BURST_GAP_MINUTES =>
+                {
+                    group.push(m);
+                }
+                _ => {
+                    if let Some(acc) = &current {
+                        flush(acc, &mut bursts);
+                    }
+                    current = Some((m.thread.clone(), vec![m]));
+                }
             }
         }
-    }
-    if let Some(acc) = &current {
-        flush(acc, &mut bursts);
-    }
+        if let Some(acc) = &current {
+            flush(acc, &mut bursts);
+        }
 
-    // Busiest first for the cap, so a budget cut drops the thinnest exchanges
-    // rather than the afternoon's; then back into time order for the spine.
-    bursts.sort_by(|a, b| (b.sent + b.received).cmp(&(a.sent + a.received)));
-    bursts.truncate(MAX_BURSTS);
-    bursts.sort_by_key(|b| b.start);
-    bursts
+        // Busiest first for the cap, so a budget cut drops the thinnest exchanges
+        // rather than the afternoon's; then back into time order for the spine.
+        bursts.sort_by(|a, b| (b.sent + b.received).cmp(&(a.sent + a.received)));
+        bursts.truncate(MAX_BURSTS);
+        bursts.sort_by_key(|b| b.start);
+        bursts
+    })
 }
 
 /// Build the DOSSIER: one compact, time-ordered feature list of the day's
@@ -1387,20 +1403,21 @@ async fn build_dossier(
     end_str: &str,
     tz_label: Option<&str>,
     tz: Option<&Tz>,
-) -> String {
-    use sqlx::Row;
+) -> Result<String> {
+    Ok({
+        use sqlx::Row;
 
-    let fmt = |t: &chrono::DateTime<chrono::Utc>| match tz {
-        Some(z) => t.with_timezone(z).format("%H:%M").to_string(),
-        None => t.format("%H:%M").to_string(),
-    };
+        let fmt = |t: &chrono::DateTime<chrono::Utc>| match tz {
+            Some(z) => t.with_timezone(z).format("%H:%M").to_string(),
+            None => t.format("%H:%M").to_string(),
+        };
 
-    // The time-ordered spine — everything with a start (and usually an end).
-    let mut spine: Vec<(chrono::DateTime<chrono::Utc>, String)> = Vec::new();
+        // The time-ordered spine — everything with a start (and usually an end).
+        let mut spine: Vec<(chrono::DateTime<chrono::Utc>, String)> = Vec::new();
 
-    // Visits — place resolved through wiki_places, arrival→departure.
-    let visits = sqlx::query(
-        "SELECT COALESCE(p.name, v.place_name) AS place, v.started_at, v.ended_at \
+        // Visits — place resolved through wiki_places, arrival→departure.
+        let visits = sqlx::query(
+            "SELECT COALESCE(p.name, v.place_name) AS place, v.started_at, v.ended_at \
          FROM data_location_visit v \
          LEFT JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' AND er.source_id = v.id \
@@ -1408,56 +1425,60 @@ async fn build_dossier(
          LEFT JOIN wiki_places p ON p.id = er.entity_id \
          WHERE v.started_at >= $1::timestamptz AND v.started_at <= $2::timestamptz \
          ORDER BY v.started_at",
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    for r in &visits {
-        let place = r
-            .try_get::<Option<String>, _>("place")
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "Unknown place".to_string());
-        let arr: chrono::DateTime<chrono::Utc> = r.get("started_at");
-        let dep: Option<chrono::DateTime<chrono::Utc>> =
-            r.try_get("ended_at").ok().flatten();
-        let span = match dep {
-            Some(d) => format!("{}–{}", fmt(&arr), fmt(&d)),
-            None => format!("{}–?", fmt(&arr)),
-        };
-        spine.push((arr, format!("- [visit] {} — {}", span, cap(&place, 80))));
-    }
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_all(pool)
+        .await?;
+        for r in &visits {
+            let place = r
+                .try_get::<Option<String>, _>("place")
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "Unknown place".to_string());
+            let arr: chrono::DateTime<chrono::Utc> = r.get("started_at");
+            let dep: Option<chrono::DateTime<chrono::Utc>> = r.try_get("ended_at").ok().flatten();
+            let span = match dep {
+                Some(d) => format!("{}–{}", fmt(&arr), fmt(&d)),
+                None => format!("{}–?", fmt(&arr)),
+            };
+            spine.push((arr, format!("- [visit] {} — {}", span, cap(&place, 80))));
+        }
 
-    // Movement — MOVING stretches of the day's GPS trace, computed from `speed`
-    // (never stored). This is the ONLY evidence the detective may use for HOW the
-    // owner travelled; without it the model fabricates a mode (the "tram" over a real
-    // walk). Keyed on the raw trace, not visits, so movement is grounded even where
-    // no visit was clustered — and a mostly-stationary window yields NO stretch, so
-    // it can never be called transit.
-    for (s, e, km, avg_kmh) in day_movement_segments(pool, start_str, end_str).await {
-        let line = match avg_kmh {
-            Some(kmh) => format!(
-                "- [movement] {}–{} — {:.1} km at ~{:.0} km/h",
-                fmt(&s),
-                fmt(&e),
-                km,
-                kmh,
-            ),
-            None => format!("- [movement] {}–{} — {:.1} km, pace unknown", fmt(&s), fmt(&e), km),
-        };
-        spine.push((s, line));
-    }
+        // Movement — MOVING stretches of the day's GPS trace, computed from `speed`
+        // (never stored). This is the ONLY evidence the detective may use for HOW the
+        // owner travelled; without it the model fabricates a mode (the "tram" over a real
+        // walk). Keyed on the raw trace, not visits, so movement is grounded even where
+        // no visit was clustered — and a mostly-stationary window yields NO stretch, so
+        // it can never be called transit.
+        for (s, e, km, avg_kmh) in day_movement_segments(pool, start_str, end_str).await? {
+            let line = match avg_kmh {
+                Some(kmh) => format!(
+                    "- [movement] {}–{} — {:.1} km at ~{:.0} km/h",
+                    fmt(&s),
+                    fmt(&e),
+                    km,
+                    kmh,
+                ),
+                None => format!(
+                    "- [movement] {}–{} — {:.1} km, pace unknown",
+                    fmt(&s),
+                    fmt(&e),
+                    km
+                ),
+            };
+            spine.push((s, line));
+        }
 
-    // Device presence — the negative instrument. A keyboard in use is a body that
-    // was not at whatever the calendar scheduled for that hour.
-    for (s, e, apps, any_active, ended) in day_device_presence(pool, start_str, end_str).await {
-        // Spell the close reason out. `stale` in particular MUST read as "we
-        // stopped watching", never as "they left" — the sessionizer went to real
-        // trouble to keep those two apart and a terse code would throw it away.
-        let tail = match ended.as_str() {
+        // Device presence — the negative instrument. A keyboard in use is a body that
+        // was not at whatever the calendar scheduled for that hour.
+        for (s, e, apps, any_active, ended) in day_device_presence(pool, start_str, end_str).await?
+        {
+            // Spell the close reason out. `stale` in particular MUST read as "we
+            // stopped watching", never as "they left" — the sessionizer went to real
+            // trouble to keep those two apart and a terse code would throw it away.
+            let tail = match ended.as_str() {
             "lock" => " — ended: screen locked",
             "suspend" => " — ended: machine slept",
             "idle" => " — ended: went idle",
@@ -1466,33 +1487,33 @@ async fn build_dossier(
             "open" => " — still open at the day's end",
             _ => "",
         };
-        let what = if apps.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", apps.join(", "))
-        };
-        let presence = if any_active {
-            "typing/clicking at a machine"
-        } else {
-            "a machine held awake, NO input observed — weaker: a video plays to an empty room too"
-        };
-        spine.push((
-            s,
-            format!(
-                "- [device] {}–{} — {}{}{}",
-                fmt(&s),
-                fmt(&e),
-                presence,
-                what,
-                tail
-            ),
-        ));
-    }
+            let what = if apps.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", apps.join(", "))
+            };
+            let presence = if any_active {
+                "typing/clicking at a machine"
+            } else {
+                "a machine held awake, NO input observed — weaker: a video plays to an empty room too"
+            };
+            spine.push((
+                s,
+                format!(
+                    "- [device] {}–{} — {}{}{}",
+                    fmt(&s),
+                    fmt(&e),
+                    presence,
+                    what,
+                    tail
+                ),
+            ));
+        }
 
-    // Calendar — title, start→end, plus the two tags that say whether this line
-    // is even ABOUT the owner. All-day events bound nothing; flag them so the
-    // detective does not treat a 24h block as a boundary.
-    let cal = sqlx::query(
+        // Calendar — title, start→end, plus the two tags that say whether this line
+        // is even ABOUT the owner. All-day events bound nothing; flag them so the
+        // detective does not treat a 24h block as a boundary.
+        let cal = sqlx::query(
         "SELECT title, started_at, ended_at, is_all_day, calendar_access_role, response_status \
          FROM data_calendar_event \
          WHERE started_at >= $1::timestamptz AND started_at <= $2::timestamptz \
@@ -1502,288 +1523,295 @@ async fn build_dossier(
     .bind(start_str)
     .bind(end_str)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    for r in &cal {
-        let title: String = r.try_get("title").unwrap_or_default();
-        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
-        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
-        let all_day: bool = r.try_get("is_all_day").unwrap_or(false);
-        let access: Option<String> = r.try_get("calendar_access_role").ok().flatten();
-        let rsvp: Option<String> = r.try_get("response_status").ok().flatten();
+    .await?;
+        for r in &cal {
+            let title: String = r.try_get("title").unwrap_or_default();
+            let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+            let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
+            let all_day: bool = r.try_get("is_all_day").unwrap_or(false);
+            let access: Option<String> = r.try_get("calendar_access_role").ok().flatten();
+            let rsvp: Option<String> = r.try_get("response_status").ok().flatten();
 
-        let mut tags: Vec<&str> = vec!["calendar"];
-        // Both tags are OMITTED when unknown rather than defaulted. An iOS-synced
-        // row has no access role and most events have no RSVP, and inventing
-        // "own calendar" or "no reply" for those would manufacture exactly the
-        // false confidence this whole line is meant to remove.
-        match access.as_deref() {
-            Some("reader") | Some("freeBusyReader") => {
-                tags.push("SUBSCRIBED — someone else's calendar")
+            let mut tags: Vec<&str> = vec!["calendar"];
+            // Both tags are OMITTED when unknown rather than defaulted. An iOS-synced
+            // row has no access role and most events have no RSVP, and inventing
+            // "own calendar" or "no reply" for those would manufacture exactly the
+            // false confidence this whole line is meant to remove.
+            match access.as_deref() {
+                Some("reader") | Some("freeBusyReader") => {
+                    tags.push("SUBSCRIBED — someone else's calendar")
+                }
+                Some("owner") | Some("writer") => tags.push("own calendar"),
+                _ => {}
             }
-            Some("owner") | Some("writer") => tags.push("own calendar"),
-            _ => {}
-        }
-        match rsvp.as_deref() {
-            Some("declined") => tags.push("owner DECLINED"),
-            Some("accepted") => tags.push("owner accepted the invite in advance"),
-            Some("tentative") => tags.push("owner replied tentative"),
-            Some("needsAction") => tags.push("owner never replied — means nothing either way"),
-            _ => {}
-        }
-        if all_day {
-            tags.push("all-day, bounds nothing");
+            match rsvp.as_deref() {
+                Some("declined") => tags.push("owner DECLINED"),
+                Some("accepted") => tags.push("owner accepted the invite in advance"),
+                Some("tentative") => tags.push("owner replied tentative"),
+                Some("needsAction") => tags.push("owner never replied — means nothing either way"),
+                _ => {}
+            }
+            if all_day {
+                tags.push("all-day, bounds nothing");
+            }
+
+            let line = if all_day {
+                format!("- [{}] {}", tags.join(", "), cap(&title, 100))
+            } else {
+                format!(
+                    "- [{}] {}–{} — {}",
+                    tags.join(", "),
+                    fmt(&s),
+                    fmt(&e),
+                    cap(&title, 100)
+                )
+            };
+            spine.push((s, line));
         }
 
-        let line = if all_day {
-            format!("- [{}] {}", tags.join(", "), cap(&title, 100))
-        } else {
-            format!(
-                "- [{}] {}–{} — {}",
-                tags.join(", "),
-                fmt(&s),
-                fmt(&e),
-                cap(&title, 100)
-            )
-        };
-        spine.push((s, line));
-    }
-
-    // Sleep — a hard boundary. Overlap the window (sleep starts the night before).
-    let sleep = sqlx::query(
-        "SELECT started_at, ended_at, duration_minutes \
+        // Sleep — a hard boundary. Overlap the window (sleep starts the night before).
+        let sleep = sqlx::query(
+            "SELECT started_at, ended_at, duration_minutes \
          FROM data_health_sleep \
          WHERE ended_at >= $1::timestamptz AND started_at <= $2::timestamptz \
          ORDER BY started_at",
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    for r in &sleep {
-        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
-        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
-        let dur: Option<i32> = r.try_get("duration_minutes").ok().flatten();
-        let dur_str = dur
-            .map(|m| format!(" ({}h{:02}m)", m / 60, m % 60))
-            .unwrap_or_default();
-        spine.push((s, format!("- [sleep] {}–{}{}", fmt(&s), fmt(&e), dur_str)));
-    }
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_all(pool)
+        .await?;
+        for r in &sleep {
+            let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+            let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
+            let dur: Option<i32> = r.try_get("duration_minutes").ok().flatten();
+            let dur_str = dur
+                .map(|m| format!(" ({}h{:02}m)", m / 60, m % 60))
+                .unwrap_or_default();
+            spine.push((s, format!("- [sleep] {}–{}{}", fmt(&s), fmt(&e), dur_str)));
+        }
 
-    // Audio sessions — the coarse context rollup. Content (the stitched summaries)
-    // is the reasoning material that lets the detective name a location-less day,
-    // capped so a talkative day cannot bloat the prompt.
-    let audio = sqlx::query(
-        "SELECT started_at, ended_at, speaker_mode, content \
+        // Audio sessions — the coarse context rollup. Content (the stitched summaries)
+        // is the reasoning material that lets the detective name a location-less day,
+        // capped so a talkative day cannot bloat the prompt.
+        let audio = sqlx::query(
+            "SELECT started_at, ended_at, speaker_mode, content \
          FROM data_audio_session \
          WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz \
          ORDER BY started_at",
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    for r in &audio {
-        let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
-        let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
-        let mode: i16 = r.try_get("speaker_mode").unwrap_or(0);
-        let who = match mode {
-            0 => "silent/ambient",
-            1 => "solo voice",
-            2 => "conversation",
-            _ => "group",
-        };
-        let content: Option<String> = r.try_get("content").ok().flatten();
-        let content_part = content
-            .as_deref()
-            .filter(|c| !c.trim().is_empty())
-            .map(|c| format!(" — {}", cap(c, 400)))
-            .unwrap_or_default();
-        spine.push((
-            s,
-            format!("- [audio, {}] {}–{}{}", who, fmt(&s), fmt(&e), content_part),
-        ));
-    }
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_all(pool)
+        .await?;
+        for r in &audio {
+            let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+            let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
+            let mode: i16 = r.try_get("speaker_mode").unwrap_or(0);
+            let who = match mode {
+                0 => "silent/ambient",
+                1 => "solo voice",
+                2 => "conversation",
+                _ => "group",
+            };
+            let content: Option<String> = r.try_get("content").ok().flatten();
+            let content_part = content
+                .as_deref()
+                .filter(|c| !c.trim().is_empty())
+                .map(|c| format!(" — {}", cap(c, 400)))
+                .unwrap_or_default();
+            spine.push((
+                s,
+                format!("- [audio, {}] {}–{}{}", who, fmt(&s), fmt(&e), content_part),
+            ));
+        }
 
-    // Assistant chats — the user's own conversations with Virtues that day. A weak
-    // boundary signal but real "what was I doing / thinking" context. Bounded by
-    // LIMIT and the title cap.
-    let chats = sqlx::query(
-        "SELECT title, message_count, created_at \
+        // Assistant chats — the user's own conversations with Virtues that day. A weak
+        // boundary signal but real "what was I doing / thinking" context. Bounded by
+        // LIMIT and the title cap.
+        let chats = sqlx::query(
+            "SELECT title, message_count, created_at \
          FROM app_chats \
          WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz \
          ORDER BY created_at LIMIT 12",
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    for r in &chats {
-        let title = r
-            .try_get::<Option<String>, _>("title")
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "(untitled)".to_string());
-        let mc: i64 = r.try_get("message_count").unwrap_or(0);
-        let s: chrono::DateTime<chrono::Utc> = r.get("created_at");
-        spine.push((
-            s,
-            format!("- [assistant chat] {} — \"{}\" ({mc} msgs)", fmt(&s), cap(&title, 80)),
-        ));
-    }
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_all(pool)
+        .await?;
+        for r in &chats {
+            let title = r
+                .try_get::<Option<String>, _>("title")
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "(untitled)".to_string());
+            let mc: i64 = r.try_get("message_count").unwrap_or(0);
+            let s: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            spine.push((
+                s,
+                format!(
+                    "- [assistant chat] {} — \"{}\" ({mc} msgs)",
+                    fmt(&s),
+                    cap(&title, 80)
+                ),
+            ));
+        }
 
-    // Purchases — discrete, high-meaning events, passed INDIVIDUALLY (not aggregated:
-    // there are a handful a day and the merchant IS the signal). Each names what a
-    // stretch actually was — a meal, a shop, a checkout — grounding windows the audio
-    // alone leaves ambiguous.
-    let txns = sqlx::query(
-        "SELECT occurred_at, amount, currency, merchant_name, description \
+        // Purchases — discrete, high-meaning events, passed INDIVIDUALLY (not aggregated:
+        // there are a handful a day and the merchant IS the signal). Each names what a
+        // stretch actually was — a meal, a shop, a checkout — grounding windows the audio
+        // alone leaves ambiguous.
+        let txns = sqlx::query(
+            "SELECT occurred_at, amount, currency, merchant_name, description \
          FROM data_financial_transaction \
          WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz \
            AND is_archived IS NOT TRUE \
          ORDER BY occurred_at",
-    )
-    .bind(start_str)
-    .bind(end_str)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    for r in &txns {
-        let ts: chrono::DateTime<chrono::Utc> = r.get("occurred_at");
-        let cents: i64 = r.try_get("amount").unwrap_or(0);
-        let currency = r
-            .try_get::<Option<String>, _>("currency")
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "USD".to_string());
-        let merchant = r
-            .try_get::<Option<String>, _>("merchant_name")
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| r.try_get::<Option<String>, _>("description").ok().flatten())
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "unknown merchant".to_string());
-        // Plaid signs amounts: positive = money out (a purchase), negative = money in
-        // (a refund / credit). Label by direction and show the magnitude in its own
-        // currency — never a bare "$" (which would misstate a EUR/GBP charge).
-        let kind = if cents < 0 { "refund" } else { "purchase" };
-        let magnitude = cents.unsigned_abs() as f64 / 100.0;
-        let amount = if currency == "USD" {
-            format!("${magnitude:.2}")
-        } else {
-            format!("{magnitude:.2} {currency}")
-        };
-        spine.push((
-            ts,
-            format!("- [{kind}] {} — {} at {}", fmt(&ts), amount, cap(&merchant, 60)),
-        ));
-    }
-
-    // Messages — time-placed BURSTS carrying their text, onto the spine.
-    //
-    // This used to be `GROUP BY who` over the whole day, rendered as
-    // `- 14 with <name>` in a `## Messages` block appended AFTER the spine was
-    // sorted — off the timeline entirely. Two
-    // faults, and they compounded: the detective could not read a single word
-    // anyone wrote, and it could not place a single message in time — so
-    // messages could never corroborate a window, which is the one thing a
-    // boundary needs. Every other source on the spine carries content and a
-    // timestamp; the richest human-intent source in the lake carried neither.
-    // A coffee arranged by text, walked to, and paid for read as an unnamed
-    // purchase next to an unnamed conversation.
-    for b in day_message_bursts(pool, start_str, end_str).await {
-        let mut line = format!(
-            "- [messages] {}–{} — {} with {} ({} sent, {} received)",
-            fmt(&b.start),
-            fmt(&b.end),
-            b.sent + b.received,
-            cap(&b.counterpart, 60),
-            b.sent,
-            b.received
-        );
-        for (from_me, text) in &b.excerpts {
-            line.push_str(&format!(
-                "\n    {} {}",
-                if *from_me { "you:" } else { "them:" },
-                text
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_all(pool)
+        .await?;
+        for r in &txns {
+            let ts: chrono::DateTime<chrono::Utc> = r.get("occurred_at");
+            let cents: i64 = r.try_get("amount").unwrap_or(0);
+            let currency = r
+                .try_get::<Option<String>, _>("currency")
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "USD".to_string());
+            let merchant = r
+                .try_get::<Option<String>, _>("merchant_name")
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| r.try_get::<Option<String>, _>("description").ok().flatten())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "unknown merchant".to_string());
+            // Plaid signs amounts: positive = money out (a purchase), negative = money in
+            // (a refund / credit). Label by direction and show the magnitude in its own
+            // currency — never a bare "$" (which would misstate a EUR/GBP charge).
+            let kind = if cents < 0 { "refund" } else { "purchase" };
+            let magnitude = cents.unsigned_abs() as f64 / 100.0;
+            let amount = if currency == "USD" {
+                format!("${magnitude:.2}")
+            } else {
+                format!("{magnitude:.2} {currency}")
+            };
+            spine.push((
+                ts,
+                format!(
+                    "- [{kind}] {} — {} at {}",
+                    fmt(&ts),
+                    amount,
+                    cap(&merchant, 60)
+                ),
             ));
         }
-        spine.push((b.start, line));
-    }
-    spine.sort_by_key(|(k, _)| *k);
 
-    // ── Assemble ──
-    let day_of_week = date.format("%A").to_string();
-    let date_display = date.format("%B %e, %Y").to_string();
-    let tz_name = tz_label.unwrap_or("UTC");
-    let mut out = format!(
-        "Date: {}, {} ({} local time)\n\
+        // Messages — time-placed BURSTS carrying their text, onto the spine.
+        //
+        // This used to be `GROUP BY who` over the whole day, rendered as
+        // `- 14 with <name>` in a `## Messages` block appended AFTER the spine was
+        // sorted — off the timeline entirely. Two
+        // faults, and they compounded: the detective could not read a single word
+        // anyone wrote, and it could not place a single message in time — so
+        // messages could never corroborate a window, which is the one thing a
+        // boundary needs. Every other source on the spine carries content and a
+        // timestamp; the richest human-intent source in the lake carried neither.
+        // A coffee arranged by text, walked to, and paid for read as an unnamed
+        // purchase next to an unnamed conversation.
+        for b in day_message_bursts(pool, start_str, end_str).await? {
+            let mut line = format!(
+                "- [messages] {}–{} — {} with {} ({} sent, {} received)",
+                fmt(&b.start),
+                fmt(&b.end),
+                b.sent + b.received,
+                cap(&b.counterpart, 60),
+                b.sent,
+                b.received
+            );
+            for (from_me, text) in &b.excerpts {
+                line.push_str(&format!(
+                    "\n    {} {}",
+                    if *from_me { "you:" } else { "them:" },
+                    text
+                ));
+            }
+            spine.push((b.start, line));
+        }
+        spine.sort_by_key(|(k, _)| *k);
+
+        // ── Assemble ──
+        let day_of_week = date.format("%A").to_string();
+        let date_display = date.format("%B %e, %Y").to_string();
+        let tz_name = tz_label.unwrap_or("UTC");
+        let mut out = format!(
+            "Date: {}, {} ({} local time)\n\
          All times below are the user's local timezone ({}). \
          Emit event start/end times in the same local timezone.\n\n\
          ## Timeline evidence\n",
-        day_of_week, date_display, tz_name, tz_name
-    );
-    if spine.is_empty() {
-        out.push_str("(no located visits, calendar blocks, sleep, or audio for this day)\n");
-    } else {
-        for (_, line) in &spine {
-            out.push_str(line);
-            out.push('\n');
+            day_of_week, date_display, tz_name, tz_name
+        );
+        if spine.is_empty() {
+            out.push_str("(no located visits, calendar blocks, sleep, or audio for this day)\n");
+        } else {
+            for (_, line) in &spine {
+                out.push_str(line);
+                out.push('\n');
+            }
         }
-    }
 
-    if let Some(h) = build_health_snapshot(pool, start_str, end_str).await {
-        append_section(&mut out, &h);
-    }
+        if let Some(h) = build_health_snapshot(pool, start_str, end_str).await? {
+            append_section(&mut out, &h);
+        }
 
-    out
+        out
+    })
 }
 
 /// The detective's LIGHT recency signal — the last few days' event labels, grouped
 /// by day. Just enough to disambiguate an ambiguous stretch; the detective's job
 /// is cutting, not remembering. Empty string on a cold start.
-async fn recent_event_labels(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) -> String {
-    let _ = tz;
-    let rows = sqlx::query_as::<_, (NaiveDate, String)>(
-        "SELECT d.date, COALESCE(e.user_label, e.auto_label, '(unlabeled)') AS label \
+async fn recent_event_labels(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) -> Result<String> {
+    Ok({
+        let _ = tz;
+        let rows = sqlx::query_as::<_, (NaiveDate, String)>(
+            "SELECT d.date, COALESCE(e.user_label, e.auto_label, '(unlabeled)') AS label \
          FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id \
          WHERE d.date >= $1 AND d.date < $2 AND NOT e.is_unknown AND NOT e.user_hidden \
          ORDER BY d.date, e.started_at",
-    )
-    .bind(date - chrono::Duration::days(3))
-    .bind(date)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+        )
+        .bind(date - chrono::Duration::days(3))
+        .bind(date)
+        .fetch_all(pool)
+        .await?;
 
-    if rows.is_empty() {
-        return String::new();
-    }
+        if rows.is_empty() {
+            return Ok(String::new());
+        }
 
-    use std::collections::BTreeMap;
-    let mut by_day: BTreeMap<NaiveDate, Vec<String>> = BTreeMap::new();
-    for (d, label) in rows {
-        by_day.entry(d).or_default().push(label);
-    }
-    by_day
-        .into_iter()
-        .map(|(d, labels)| format!("- {}: {}", d.format("%a %b %-d"), labels.join(", ")))
-        .collect::<Vec<_>>()
-        .join("\n")
+        use std::collections::BTreeMap;
+        let mut by_day: BTreeMap<NaiveDate, Vec<String>> = BTreeMap::new();
+        for (d, label) in rows {
+            by_day.entry(d).or_default().push(label);
+        }
+        by_day
+            .into_iter()
+            .map(|(d, labels)| format!("- {}: {}", d.format("%a %b %-d"), labels.join(", ")))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
 }
 
 /// The day-summary's FULL case file — the last 14 days of events, label + summary,
 /// grouped by day. This is where recent context earns its keep, for voice and for
 /// dated temporal echoes. Empty string on a cold start.
-async fn recent_event_case_file(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) -> String {
-    let _ = tz;
-    let rows = sqlx::query_as::<_, (NaiveDate, String, Option<String>)>(
+async fn recent_event_case_file(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>) -> Result<String> {
+    Ok({
+        let _ = tz;
+        let rows = sqlx::query_as::<_, (NaiveDate, String, Option<String>)>(
         "SELECT d.date, COALESCE(e.user_label, e.auto_label, '(unlabeled)') AS label, e.event_summary \
          FROM wiki_events e JOIN wiki_days d ON d.id = e.day_id \
          WHERE d.date >= $1 AND d.date < $2 AND NOT e.is_unknown AND NOT e.user_hidden \
@@ -1792,27 +1820,27 @@ async fn recent_event_case_file(pool: &PgPool, date: NaiveDate, tz: Option<&Tz>)
     .bind(date - chrono::Duration::days(14))
     .bind(date)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
 
-    if rows.is_empty() {
-        return String::new();
-    }
+        if rows.is_empty() {
+            return Ok(String::new());
+        }
 
-    use std::collections::BTreeMap;
-    let mut by_day: BTreeMap<NaiveDate, Vec<String>> = BTreeMap::new();
-    for (d, label, summary) in rows {
-        let line = match summary.as_deref().filter(|s| !s.trim().is_empty()) {
-            Some(s) => format!("  - {}: {}", label, cap(s, 200)),
-            None => format!("  - {}", label),
-        };
-        by_day.entry(d).or_default().push(line);
-    }
-    by_day
-        .into_iter()
-        .map(|(d, lines)| format!("{}\n{}", d.format("%A, %B %-d"), lines.join("\n")))
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        use std::collections::BTreeMap;
+        let mut by_day: BTreeMap<NaiveDate, Vec<String>> = BTreeMap::new();
+        for (d, label, summary) in rows {
+            let line = match summary.as_deref().filter(|s| !s.trim().is_empty()) {
+                Some(s) => format!("  - {}: {}", label, cap(s, 200)),
+                None => format!("  - {}", label),
+            };
+            by_day.entry(d).or_default().push(line);
+        }
+        by_day
+            .into_iter()
+            .map(|(d, lines)| format!("{}\n{}", d.format("%A, %B %-d"), lines.join("\n")))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    })
 }
 
 
@@ -2160,7 +2188,7 @@ async fn store_structured_events(
     for event in &all_events {
         let start_rfc = event.start_utc.to_rfc3339();
         let end_rfc = event.end_utc.to_rfc3339();
-        locations.push(extract_event_location(pool, &start_rfc, &end_rfc).await);
+        locations.push(extract_event_location(pool, &start_rfc, &end_rfc).await?);
     }
 
     let mut tx = pool.begin().await?;
@@ -2229,14 +2257,15 @@ async fn store_structured_events(
 
 /// Extract the primary location for an event's time range from location_visit data.
 /// Returns the place name with the longest visit duration, or None if no location data.
-async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Option<String> {
-    use sqlx::Row;
-    // `data_location_visit.place_name` is never populated by entity resolution —
-    // the resolved name lives in `wiki_places`, linked via `wiki_refs`
-    // (same shape the timeline reader uses). JOIN through to get the real name;
-    // selecting the visit's own `place_name` column always returned NULL.
-    let row: Option<sqlx::postgres::PgRow> = sqlx::query(
-        "SELECT p.name AS place_name \
+async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Result<Option<String>> {
+    Ok({
+        use sqlx::Row;
+        // `data_location_visit.place_name` is never populated by entity resolution —
+        // the resolved name lives in `wiki_places`, linked via `wiki_refs`
+        // (same shape the timeline reader uses). JOIN through to get the real name;
+        // selecting the visit's own `place_name` column always returned NULL.
+        let row: Option<sqlx::postgres::PgRow> = sqlx::query(
+            "SELECT p.name AS place_name \
          FROM data_location_visit v \
          JOIN wiki_refs er \
            ON er.source_table = 'data_location_visit' \
@@ -2245,16 +2274,15 @@ async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Option
          JOIN wiki_places p ON p.id = er.entity_id \
          WHERE v.started_at >= $1::timestamptz AND v.started_at <= $2::timestamptz \
          ORDER BY v.duration_minutes DESC LIMIT 1",
-    )
-    .bind(start)
-    .bind(end)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+        )
+        .bind(start)
+        .bind(end)
+        .fetch_optional(pool)
+        .await?;
 
-    row.and_then(|r| r.try_get::<Option<String>, _>("place_name").ok().flatten())
-        .filter(|s| !s.is_empty())
+        row.and_then(|r| r.try_get::<Option<String>, _>("place_name").ok().flatten())
+            .filter(|s| !s.is_empty())
+    })
 }
 
 /// An event with pre-computed UTC times (either from LLM or gap-filled).
@@ -2714,8 +2742,9 @@ mod dossier_tests {
             .expect("seed session");
         }
 
-        let dossier =
-            build_dossier(&pool, date, &start_str, &end_str, Some("UTC"), None).await;
+        let dossier = build_dossier(&pool, date, &start_str, &end_str, Some("UTC"), None)
+            .await
+            .unwrap();
         println!("{dossier}");
 
         assert!(
@@ -2805,7 +2834,9 @@ mod dossier_tests {
             .expect("seed message");
         }
 
-        let dossier = build_dossier(&pool, date, &start_str, &end_str, Some("UTC"), None).await;
+        let dossier = build_dossier(&pool, date, &start_str, &end_str, Some("UTC"), None)
+            .await
+            .unwrap();
         println!("{dossier}");
 
         assert!(

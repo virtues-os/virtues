@@ -828,7 +828,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
     if let Some(row) = existing {
         let (ne, nt) = get_day_novelty_counts(pool, &date_str).await?;
         let mut day = wiki_day_from_row_with_counts(&row, date, ne, nt)?;
-        day.sleep_cycles = compute_sleep_cycles(pool, date).await;
+        day.sleep_cycles = compute_sleep_cycles(pool, date).await?;
         return Ok(day);
     }
 
@@ -890,153 +890,158 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
 /// Compute scored sleep cycles for a day from sleep stage data + heart rate readings.
 /// Derives cycle boundaries by splitting sleep_stages at "awake" entries,
 /// then computes avg HR per cycle and z-scores against a 14-day sleep HR baseline.
-async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleepCycle> {
-    use sqlx::Row;
+async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Result<Vec<ScoredSleepCycle>> {
+    Ok({
+        use sqlx::Row;
 
-    let start = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let end = (date + chrono::Duration::days(1)).and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let start = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let end = (date + chrono::Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
 
-    // 1. Get sleep record for this night (overlaps with this calendar day)
-    let sleep_row: Option<sqlx::postgres::PgRow> = sqlx::query(
-        r#"SELECT sleep_stages FROM data_health_sleep
+        // 1. Get sleep record for this night (overlaps with this calendar day)
+        let sleep_row: Option<sqlx::postgres::PgRow> = sqlx::query(
+            r#"SELECT sleep_stages FROM data_health_sleep
            WHERE started_at >= $1
              AND started_at < $2
            ORDER BY started_at ASC LIMIT 1"#,
-    )
-    .bind(start)
-    .bind(end)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+        )
+        .bind(start)
+        .bind(end)
+        .fetch_optional(pool)
+        .await?;
 
-    // sleep_stages is JSONB in pg — sqlx decodes directly into serde_json::Value.
-    let stages: Vec<serde_json::Value> = match sleep_row {
-        Some(row) => match row.try_get::<Option<serde_json::Value>, _>("sleep_stages") {
-            Ok(Some(serde_json::Value::Array(arr))) => arr,
-            _ => return vec![],
-        },
-        None => return vec![],
-    };
+        // sleep_stages is JSONB in pg — sqlx decodes directly into serde_json::Value.
+        let stages: Vec<serde_json::Value> = match sleep_row {
+            Some(row) => match row.try_get::<Option<serde_json::Value>, _>("sleep_stages") {
+                Ok(Some(serde_json::Value::Array(arr))) => arr,
+                _ => return Ok(vec![]),
+            },
+            None => return Ok(vec![]),
+        };
 
-    // Group consecutive non-awake stages into cycles
-    let mut cycles: Vec<(String, String, String)> = vec![]; // (start, end, dominant_stage)
-    let mut cycle_start: Option<String> = None;
-    let mut cycle_end: Option<String> = None;
-    let mut stage_durations: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        // Group consecutive non-awake stages into cycles
+        let mut cycles: Vec<(String, String, String)> = vec![]; // (start, end, dominant_stage)
+        let mut cycle_start: Option<String> = None;
+        let mut cycle_end: Option<String> = None;
+        let mut stage_durations: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
 
-    for stage in &stages {
-        let stage_name = stage["stage"].as_str().unwrap_or("unknown");
-        let start = stage["start"].as_str().unwrap_or("");
-        let end = stage["end"].as_str().unwrap_or("");
+        for stage in &stages {
+            let stage_name = stage["stage"].as_str().unwrap_or("unknown");
+            let start = stage["start"].as_str().unwrap_or("");
+            let end = stage["end"].as_str().unwrap_or("");
 
-        if stage_name == "awake" {
-            // Close current cycle if we have one
-            if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
-                let dominant = stage_durations
-                    .iter()
-                    .max_by_key(|(_, v)| *v)
-                    .map(|(k, _)| k.clone())
-                    .unwrap_or_else(|| "core".to_string());
-                cycles.push((cs.clone(), ce.clone(), dominant));
-                cycle_start = None;
-                cycle_end = None;
-                stage_durations.clear();
-            }
-        } else {
-            if cycle_start.is_none() {
-                cycle_start = Some(start.to_string());
-            }
-            cycle_end = Some(end.to_string());
+            if stage_name == "awake" {
+                // Close current cycle if we have one
+                if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
+                    let dominant = stage_durations
+                        .iter()
+                        .max_by_key(|(_, v)| *v)
+                        .map(|(k, _)| k.clone())
+                        .unwrap_or_else(|| "core".to_string());
+                    cycles.push((cs.clone(), ce.clone(), dominant));
+                    cycle_start = None;
+                    cycle_end = None;
+                    stage_durations.clear();
+                }
+            } else {
+                if cycle_start.is_none() {
+                    cycle_start = Some(start.to_string());
+                }
+                cycle_end = Some(end.to_string());
 
-            // Estimate duration in minutes for dominant stage calculation
-            if let (Ok(s), Ok(e)) = (
-                DateTime::parse_from_rfc3339(start),
-                DateTime::parse_from_rfc3339(end),
-            ) {
-                let mins = (e - s).num_minutes();
-                let key = stage_name.replace("asleep_", "");
-                *stage_durations.entry(key).or_insert(0) += mins;
+                // Estimate duration in minutes for dominant stage calculation
+                if let (Ok(s), Ok(e)) = (
+                    DateTime::parse_from_rfc3339(start),
+                    DateTime::parse_from_rfc3339(end),
+                ) {
+                    let mins = (e - s).num_minutes();
+                    let key = stage_name.replace("asleep_", "");
+                    *stage_durations.entry(key).or_insert(0) += mins;
+                }
             }
         }
-    }
-    // Close final cycle
-    if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
-        let dominant = stage_durations
-            .iter()
-            .max_by_key(|(_, v)| *v)
-            .map(|(k, _)| k.clone())
-            .unwrap_or_else(|| "core".to_string());
-        cycles.push((cs.clone(), ce.clone(), dominant));
-    }
+        // Close final cycle
+        if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
+            let dominant = stage_durations
+                .iter()
+                .max_by_key(|(_, v)| *v)
+                .map(|(k, _)| k.clone())
+                .unwrap_or_else(|| "core".to_string());
+            cycles.push((cs.clone(), ce.clone(), dominant));
+        }
 
-    if cycles.is_empty() {
-        return vec![];
-    }
+        if cycles.is_empty() {
+            return Ok(vec![]);
+        }
 
-    // 3. Get 14-day sleep HR baseline (median of nightly avg HRs)
-    let baseline_start = (date - chrono::Duration::days(14))
-        .and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let baseline_hrs: Vec<f64> = sqlx::query_scalar(
-        r#"SELECT AVG(CAST(hr.bpm AS REAL))
+        // 3. Get 14-day sleep HR baseline (median of nightly avg HRs)
+        let baseline_start = (date - chrono::Duration::days(14))
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+        let baseline_hrs: Vec<f64> = sqlx::query_scalar(
+            r#"SELECT AVG(CAST(hr.bpm AS REAL))
            FROM data_health_heart_rate hr
            INNER JOIN data_health_sleep s
              ON hr.occurred_at >= s.started_at AND hr.occurred_at < s.ended_at
            WHERE s.started_at >= $1
              AND s.started_at < $2
            GROUP BY s.id"#,
-    )
-    .bind(baseline_start)
-    .bind(end)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-
-    let (baseline_mean, baseline_std) = if baseline_hrs.len() >= 2 {
-        let mean = baseline_hrs.iter().sum::<f64>() / baseline_hrs.len() as f64;
-        let variance =
-            baseline_hrs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / baseline_hrs.len() as f64;
-        let std = variance.sqrt().max(1.0); // floor at 1 bpm to avoid div-by-zero
-        (mean, std)
-    } else {
-        (0.0, 0.0) // insufficient baseline
-    };
-
-    // 4. Score each cycle
-    let mut scored: Vec<ScoredSleepCycle> = vec![];
-    for (start, end, dominant) in &cycles {
-        // Get avg HR during this cycle window
-        let avg_hr: Option<f64> = sqlx::query_scalar(
-            r#"SELECT AVG(CAST(bpm AS REAL))
-               FROM data_health_heart_rate
-               WHERE occurred_at >= $1 AND occurred_at < $2"#,
         )
-        .bind(start)
+        .bind(baseline_start)
         .bind(end)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
+        .fetch_all(pool)
+        .await?;
 
-        let autonomic_z = match (avg_hr, baseline_std > 0.0) {
-            (Some(hr), true) => {
-                // For sleep: lower HR = better recovery = more negative z
-                let z = (hr - baseline_mean) / baseline_std;
-                Some(z.clamp(-3.0, 3.0))
-            }
-            _ => None,
+        let (baseline_mean, baseline_std) = if baseline_hrs.len() >= 2 {
+            let mean = baseline_hrs.iter().sum::<f64>() / baseline_hrs.len() as f64;
+            let variance = baseline_hrs.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+                / baseline_hrs.len() as f64;
+            let std = variance.sqrt().max(1.0); // floor at 1 bpm to avoid div-by-zero
+            (mean, std)
+        } else {
+            (0.0, 0.0) // insufficient baseline
         };
 
-        scored.push(ScoredSleepCycle {
-            start_time: start.clone(),
-            end_time: end.clone(),
-            dominant_stage: dominant.clone(),
-            avg_hr,
-            autonomic_z,
-        });
-    }
+        // 4. Score each cycle
+        let mut scored: Vec<ScoredSleepCycle> = vec![];
+        for (start, end, dominant) in &cycles {
+            // Get avg HR during this cycle window
+            let avg_hr: Option<f64> = sqlx::query_scalar(
+                r#"SELECT AVG(CAST(bpm AS REAL))
+               FROM data_health_heart_rate
+               WHERE occurred_at >= $1 AND occurred_at < $2"#,
+            )
+            .bind(start)
+            .bind(end)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
 
-    scored
+            let autonomic_z = match (avg_hr, baseline_std > 0.0) {
+                (Some(hr), true) => {
+                    // For sleep: lower HR = better recovery = more negative z
+                    let z = (hr - baseline_mean) / baseline_std;
+                    Some(z.clamp(-3.0, 3.0))
+                }
+                _ => None,
+            };
+
+            scored.push(ScoredSleepCycle {
+                start_time: start.clone(),
+                end_time: end.clone(),
+                dominant_stage: dominant.clone(),
+                avg_hr,
+                autonomic_z,
+            });
+        }
+
+        scored
+    })
 }
 
 /// Count new entities and new topics for a date.
@@ -1062,7 +1067,7 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
     .bind(&next_date)
     .fetch_one(pool)
     .await
-    .unwrap_or(0);
+    .map_err(|e| Error::Database(format!("Failed to count new entities: {}", e)))?;
 
     // New topics: count topics from this day's events that don't appear in prior days
     let new_topics: i64 = sqlx::query_scalar(
@@ -1080,7 +1085,7 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
     .bind(date_str)
     .fetch_one(pool)
     .await
-    .unwrap_or(0);
+    .map_err(|e| Error::Database(format!("Failed to count new topics: {}", e)))?;
 
     Ok((new_entities, new_topics))
 }
@@ -1453,7 +1458,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
         .bind(*end)
         .fetch_all(pool)
         .await
-        .unwrap_or_default();
+        .map_err(|e| Error::Database(format!("Failed to load entity refs for day events: {}", e)))?;
 
         if !ref_rows.is_empty() {
             let map: serde_json::Map<String, serde_json::Value> = ref_rows
