@@ -531,8 +531,8 @@
 	   Red stays at 255: pulling it down to desaturate turns the composite
 	   olive, which reads as stain rather than marker. The paleness comes from
 	   the blue channel and the alpha instead, so over the ivory ground this
-	   lands at a clean #FEF4AE, over white at #FFF4B0. */
-	--highlight: rgba(255, 238, 112, 0.55);
+	   lands at a clean #FEF6C2, over white at #FFF8C6. */
+	--highlight: rgba(255, 238, 112, 0.4);
 	--highlight-foreground: #1A2030;
 
 	/* Diff Colors */
