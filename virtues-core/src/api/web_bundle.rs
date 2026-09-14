@@ -6,13 +6,23 @@
 //! update server for every paired client — no CDN, no cloud, over whatever
 //! transport already reaches the box.
 //!
-//! **Why the box is the only source.** A client that can only ever run a bundle
-//! the box handed it cannot get ahead of the box. That kills a whole class of
-//! bug by construction: on 2026-08-05 a TestFlight build shipped UI calling
-//! `/api/wiki/day/{date}/heart-rate?tz=…` against a box with no `tz` handler,
-//! and the box silently ignored the unknown parameter — wrong midnight, no
-//! error, unfindable from the UI. The bundle carrying that call can only ship
-//! from a box that also has the handler.
+//! **Why the box is the only source.** Because it is the only source certain to
+//! have the API the UI calls. On 2026-08-05 a TestFlight build shipped UI
+//! calling `/api/wiki/day/{date}/heart-rate?tz=…` against a box with no `tz`
+//! handler, and the box silently ignored the unknown parameter — wrong
+//! midnight, no error, unfindable from the UI. A bundle carrying that call can
+//! only be served by a box that also has the handler.
+//!
+//! **This no longer kills that class by construction**, and the comment here
+//! claimed it did until 2026-09-14. The claim rested on a client never being
+//! able to get ahead of its box, which stopped being true when the client
+//! learned to refuse a downgrade: a phone updates on Apple's cadence and a box
+//! when its owner runs `virtues upgrade`, so a shell carrying UI newer than the
+//! box's is ordinary, and it now keeps that UI instead of taking the box's
+//! older one. See the "Forward only" section in
+//! `apps/web/src-tauri/src/web_bundle.rs` for the trade and what would close
+//! the class properly (a bundle declaring a minimum BOX, mirroring
+//! `minShellVersion`). Nothing on this side enforces it today.
 //!
 //! **What is NOT here.** Applying a bundle — unpack, atomic flip, rollback —
 //! is the client's job, and the `minShellVersion` in the manifest is what stops
