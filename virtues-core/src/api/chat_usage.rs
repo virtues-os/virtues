@@ -280,11 +280,15 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
     let usage_row = sqlx::query(
         r#"
         SELECT
-            COALESCE(SUM(input_tokens), 0) as "input_tokens",
-            COALESCE(SUM(output_tokens), 0) as "output_tokens",
-            COALESCE(SUM(reasoning_tokens), 0) as "reasoning_tokens",
-            COALESCE(SUM(cache_read_tokens), 0) as "cache_read_tokens",
-            COALESCE(SUM(cache_write_tokens), 0) as "cache_write_tokens",
+            -- `::bigint` on each SUM: Postgres widens SUM(bigint) to NUMERIC,
+            -- which sqlx will not decode as i64 — and `get` below panics on
+            -- a decode error rather than returning it. `estimated_cost_usd`
+            -- is float8 and sums to float8, so it needs no cast.
+            COALESCE(SUM(input_tokens), 0)::bigint as "input_tokens",
+            COALESCE(SUM(output_tokens), 0)::bigint as "output_tokens",
+            COALESCE(SUM(reasoning_tokens), 0)::bigint as "reasoning_tokens",
+            COALESCE(SUM(cache_read_tokens), 0)::bigint as "cache_read_tokens",
+            COALESCE(SUM(cache_write_tokens), 0)::bigint as "cache_write_tokens",
             COALESCE(SUM(estimated_cost_usd), 0.0) as "total_cost"
         FROM app_chat_usage
         WHERE chat_id = $1
