@@ -2765,13 +2765,12 @@
 		width: 100%;
 		max-width: 48rem;
 		padding: 0 2rem 2rem 2rem;
-		/* 78px is what this measured when it was written as "1rem plus the
-		   floating tab bar's reserve": the bar is gone, but on desktop — where
-		   no bar ever rendered — that sum had become the composer's resting
-		   inset off the window edge, so the number stays and the derivation
-		   goes. The phone override below is where the bar's room actually
-		   came out. */
-		padding-bottom: 78px;
+		/* The composer's resting inset off the window edge. It sat at 78px,
+		   a leftover of "1rem plus the floating tab bar's reserve" kept after
+		   the bar went; on a desktop window that read as the composer
+		   floating a hand's width above the bottom (Adam, 2026-09-14). The
+		   phone override below sets its own. */
+		padding-bottom: 1.5rem;
 		background-color: var(--color-surface);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
