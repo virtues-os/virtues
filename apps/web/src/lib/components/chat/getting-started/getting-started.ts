@@ -104,7 +104,7 @@ function askLine(s: GettingStartedStep, first: boolean): string {
 	const lead = first ? "First" : "Next";
 	switch (s.id) {
 		case "connect_ai":
-			return `${lead}, give your server a mind. A Virtues subscription covers the models, web search, maps, and bank links, metered per request and never kept; an endpoint of your own covers the models alone. Until one is connected this room cannot answer, and nothing typed here goes anywhere.`;
+			return "Before anything can be set up, your server needs AI to think with. Use Virtues' models, the best of Claude, Gemini, GPT, Grok and more, every one under zero data retention, metered per request and never kept. Or sign in to an existing account, or bring an endpoint of your own. Until one is connected this room cannot answer, and nothing typed here goes anywhere.";
 		case "introductions":
 			return `${lead}, introductions. What should I call you, what will you call me, where is home, and when were you born? Say it below in your own words, all at once is fine. The story of your life comes later, in its own conversation.`;
 		case "connect_world":
