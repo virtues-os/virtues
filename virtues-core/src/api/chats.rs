@@ -840,7 +840,13 @@ pub async fn generate_title(
             .map_err(|e| Error::Database(format!("read interview title: {e}")))?
             // absent-ok: the error path is handled by the `?` above; this
             // default only covers a chat that has no title yet.
-            .unwrap_or_else(|| "In your own words".to_string());
+            .unwrap_or_else(|| {
+                if chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
+                    "First things first".to_string()
+                } else {
+                    "In your own words".to_string()
+                }
+            });
         return Ok(GenerateTitleResponse { chat_id, title });
     }
     // Build conversation summary (first few messages)

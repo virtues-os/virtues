@@ -78,9 +78,11 @@ pub async fn seed_production_data(db: &Database) -> Result<()> {
 
     // Getting started's room — the same shape: one fixed chat, forced into
     // its mode by id, waiting when the person walks in from the letter.
+    // The title is the id's, so a rename lands on boxes that already carry
+    // the row: DO UPDATE, unlike the interview's DO NOTHING.
     sqlx::query(
-        "INSERT INTO app_chats (id, title, message_count) VALUES ($1, 'Getting started', 0) \
-         ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO app_chats (id, title, message_count) VALUES ($1, 'First things first', 0) \
+         ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title",
     )
     .bind(crate::api::getting_started::GETTING_STARTED_CHAT_ID)
     .execute(db.pool())
