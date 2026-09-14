@@ -9,7 +9,6 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
-	import { INTERVIEW_CHAT_ID } from "$lib/components/chat/interview/interview";
 	import ConnectAiActions from "./ConnectAiActions.svelte";
 	import type { GettingStartedStepId } from "$lib/api/client";
 
@@ -19,6 +18,17 @@
 	let { step }: Props = $props();
 
 	const status = $derived(step === "promise" ? "open" : (gettingStarted.step(step)?.status ?? "open"));
+	const worldDone = $derived(gettingStarted.step("connect_world")?.status === "done");
+	let starting = $state(false);
+	async function startInterview() {
+		if (starting) return;
+		starting = true;
+		try {
+			await gettingStarted.startInterview();
+		} finally {
+			starting = false;
+		}
+	}
 	const underway = $derived(gettingStarted.step("interview")?.underway ?? false);
 	const firstDay = $derived(gettingStarted.state?.first_day ?? null);
 
@@ -31,24 +41,28 @@
 	}
 </script>
 
-{#if status === "open"}
+{#if status === "open" || step === "connect_world"}
 	<div class="actions">
 		{#if step === "connect_ai"}
 			<ConnectAiActions />
 		{:else if step === "connect_world"}
-			<button type="button" class="btn" onclick={() => beside("/sources", "Sources")}>Connect a source</button>
+			<button type="button" class="btn" class:quiet={worldDone} onclick={() => beside("/sources", "Sources")}>
+				{worldDone ? "Add an integration" : "Connect an integration"}
+			</button>
 			{#if mobileLayout.isMobile}
 				<button type="button" class="btn quiet" onclick={() => mobileLayout.openOnboarding()}>Set up this phone</button>
 			{:else}
 				<button type="button" class="btn quiet" onclick={() => beside("/sources", "Sources")}>Pair your phone</button>
 			{/if}
+			<!-- The step's own verb, not a skip: the walk moves on when the
+			     person says so, whether or not anything is connected yet. -->
+			<button type="button" class="btn" class:quiet={!worldDone} onclick={() => void gettingStarted.skip("connect_world", true)}>
+				{worldDone ? "Continue" : "Continue without"}
+			</button>
 		{:else if step === "interview"}
-			<button
-				type="button"
-				class="btn"
-				onclick={() => windowShellStore.openTabFromRoute(`/chat/${INTERVIEW_CHAT_ID}`, { label: "In your own words" })}
-			>
-				{underway ? "Continue the interview" : "Start the interview"}
+			<!-- The interview begins here, in this thread; nothing opens. -->
+			<button type="button" class="btn" onclick={startInterview} disabled={starting || underway}>
+				{starting ? "Starting…" : "Start the interview"}
 				<Icon icon="ri:arrow-right-line" width="14" />
 			</button>
 		{:else if step === "promise" && firstDay}

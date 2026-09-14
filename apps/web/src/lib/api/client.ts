@@ -2251,8 +2251,10 @@ export interface GettingStartedStep {
 	via?: string;
 	/** Server-authored copy for the step's current state — render verbatim. */
 	detail?: string;
-	/** Started but not done (the interview has replies, no document yet). */
+	/** Started but not done (the interview has begun, no document yet). */
 	underway?: boolean;
+	/** The person moved past this step themselves (skip/continue). */
+	acknowledged?: boolean;
 }
 
 export interface GettingStartedState {
@@ -2261,6 +2263,8 @@ export interface GettingStartedState {
 	steps: GettingStartedStep[];
 	first_day: string | null;
 	graduated: boolean;
+	/** The interview has begun inside the room, at this instant (ISO). */
+	interview_started_at: string | null;
 }
 
 export async function getGettingStarted(): Promise<GettingStartedState> {
@@ -2280,6 +2284,13 @@ export async function skipGettingStartedStep(
 		body: JSON.stringify({ step, skipped })
 	});
 	if (!res.ok) throw new Error(`Failed to skip step: ${res.statusText}`);
+	return res.json();
+}
+
+/** Begin the interview inside the getting-started room. Answers with the new state. */
+export async function startGettingStartedInterview(): Promise<GettingStartedState> {
+	const res = await fetch(`${API_BASE}/getting-started/interview`, { method: 'POST' });
+	if (!res.ok) throw new Error(`Failed to start the interview: ${res.statusText}`);
 	return res.json();
 }
 

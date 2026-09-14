@@ -669,11 +669,16 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     let onboarding_status = onboarding_status(pool).await;
 
+    let (source_chat, since) = crate::api::getting_started::interview_source(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("interview source: {e}"))?;
     let interview_started: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_chat_messages \
-         WHERE chat_id = $1 AND role = 'user')",
+         WHERE chat_id = $1 AND role = 'user' \
+           AND ($2::timestamptz IS NULL OR created_at >= $2))",
     )
-    .bind(crate::api::narrative_draft::INTERVIEW_CHAT_ID)
+    .bind(source_chat)
+    .bind(since)
     .fetch_one(pool)
     .await?;
 

@@ -17,6 +17,7 @@
  */
 import type { Chat } from "@ai-sdk/svelte";
 import type { GettingStartedState, GettingStartedStep, GettingStartedStepId } from "$lib/api/client";
+import { INTERVIEW_OPENING_BODY, INTERVIEW_OPENING_ASK } from "$lib/components/chat/interview/interview";
 
 /** Mirrors getting_started::GETTING_STARTED_CHAT_ID on the server. */
 export const GETTING_STARTED_CHAT_ID = "chat_getting_started";
@@ -28,6 +29,11 @@ export const GS_WELCOME_ID = "gs-welcome";
 export const GS_NOW_PREFIX = "gs-now-";
 export const GS_PROMISE_ID = "gs-now-promise";
 export const GS_SETTLED_ID = "gs-now-settled";
+/** The interview's opening, placed in the thread where the interview began:
+ *  the h2 (the lifeline plate renders under it), the example, the ask. */
+export const GS_INTERVIEW_OPENING_ID = "gs-iv-opening";
+export const GS_INTERVIEW_BODY_ID = "gs-iv-body";
+export const GS_INTERVIEW_ASK_ID = "gs-iv-ask";
 
 export const STEP_ORDER: GettingStartedStepId[] = [
 	"connect_ai",
@@ -103,7 +109,9 @@ function askLine(s: GettingStartedStep): string {
 		case "introductions":
 			return "Now that it can think, your server would like to know who it is talking to. Tell it what you like to be called, what you will call it, where home is, and when you were born, all in one message if you like. The birthday is not idle curiosity; it is the ruler your whole life is drawn against. The longer story of your life comes later, in a conversation of its own.";
 		case "connect_world":
-			return "The record is written from what your accounts, this computer, and your phone already hold, and nothing they hold ever leaves your server. Connect one of them now, and tonight the first page will be written.";
+			return s.status === "done"
+				? `Next, your integrations. ${s.detail ? s.detail.charAt(0).toUpperCase() + s.detail.slice(1) : "Some are already in place"}, and the record is written from what they hold; nothing they hold ever leaves your server. Add your phone or another account now, or continue.`
+				: "Next, your integrations. The record is written from what your accounts, this computer, and your phone already hold, and nothing they hold ever leaves your server. Connect one of them now, and tonight the first page will be written.";
 		case "interview":
 			return s.underway
 				? "Last comes your story, and the interview is already underway. It has kept your place; pick it up wherever you like."
@@ -149,8 +157,15 @@ export function applyGettingStartedOpening(
 	const steps = STEP_ORDER.map((id) => state.steps.find((s) => s.id === id)).filter(
 		(s): s is GettingStartedStep => !!s,
 	);
-	const nowIndex = steps.findIndex((s) => s.status === "open");
+	// The walk stops at every step that is open — and at integrations even
+	// when rows already satisfy it, until the person has continued past it
+	// once: accounts connected before the walk got there are still worth a
+	// sentence and an offer of more.
+	const stopsHere = (s: GettingStartedStep) =>
+		s.status === "open" || (s.id === "connect_world" && s.status === "done" && !s.acknowledged);
+	const nowIndex = steps.findIndex(stopsHere);
 	const now = nowIndex >= 0 ? steps[nowIndex] : undefined;
+	const interviewUnderway = !!state.interview_started_at && steps.find((s) => s.id === "interview")?.status !== "done";
 
 	// The history follows the walk, not the rows: a step that happens to be
 	// done AHEAD of the one being asked (sources connected before AI on a
@@ -163,25 +178,48 @@ export function applyGettingStartedOpening(
 		}
 	});
 
+	// The interview, once begun, lives in this thread: its opening sits at
+	// the boundary — after the turns that came before it began, before the
+	// turns of the interview itself. Stored turns carry `createdAt` (mapped
+	// from the server's timestamp on load); a live turn has none and is
+	// after the boundary by construction.
+	const boundary = state.interview_started_at ? new Date(state.interview_started_at).getTime() : null;
+	const before: typeof stored = [];
+	const after: typeof stored = [];
+	for (const m of stored) {
+		const at = (m as { createdAt?: Date | string }).createdAt;
+		const t = at ? new Date(at).getTime() : Number.POSITIVE_INFINITY;
+		(boundary !== null && t >= boundary ? after : before).push(m);
+	}
+	const opening: ReturnType<typeof textMessage>[] = [];
+	if (boundary !== null) {
+		opening.push(
+			textMessage(GS_INTERVIEW_OPENING_ID, "## The story of your life: chapters & identity"),
+			textMessage(GS_INTERVIEW_BODY_ID, INTERVIEW_OPENING_BODY),
+			textMessage(GS_INTERVIEW_ASK_ID, INTERVIEW_OPENING_ASK),
+		);
+	}
+
 	const bottom: ReturnType<typeof textMessage>[] = [];
 	const world = steps.find((s) => s.id === "connect_world");
 	// The first day is written by a model, so the promise waits for one.
 	if (state.ai_connected && (world?.status === "done" || state.first_day) && (nowIndex < 0 || nowIndex > 2)) {
 		bottom.push(textMessage(GS_PROMISE_ID, promiseLine(state.first_day)));
 	}
-	if (now) {
+	// While the interview is underway the interviewer asks; the room does not.
+	if (now && !(now.id === "interview" && interviewUnderway)) {
 		bottom.push(textMessage(`${GS_NOW_PREFIX}${now.id}`, askLine(now)));
-	} else if (state.graduated) {
+	} else if (!now && state.graduated) {
 		bottom.push(textMessage(GS_SETTLED_ID, SETTLED));
 	}
 
-	const want = [...top, ...bottom].map((m) => m.id).join("|");
+	const want = [...top, ...opening, ...bottom].map((m) => m.id).join("|");
 	const have = chat.messages
 		.filter((m) => m.id.startsWith(GS_PREFIX))
 		.map((m) => m.id)
 		.join("|");
 	if (want === have) return;
-	chat.messages = [...top, ...stored, ...bottom] as unknown as typeof chat.messages;
+	chat.messages = [...top, ...before, ...opening, ...after, ...bottom] as unknown as typeof chat.messages;
 }
 
 /** Before the person's turn goes out: the bottom asks come off, so the

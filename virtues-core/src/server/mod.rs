@@ -324,6 +324,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/getting-started/skip",
             post(crate::api::getting_started::skip_handler),
         )
+        .route(
+            "/api/getting-started/interview",
+            post(crate::api::getting_started::start_interview_handler),
+        )
         // What the attached 7" display renders. Registered here because the
         // kiosk draws before any device is paired, but UNLIKE its neighbours
         // above it carries the live pair code — so the handler itself refuses
