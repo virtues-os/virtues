@@ -302,13 +302,19 @@
 	/// button is a plain pause control and the interstitial never returns.
 	let audioConsentOpen = $state(false);
 
+	/// "The user has recording switched on" — capturing, or paused for a
+	/// reason they did not choose (CarPlay). One derivation for the toggle
+	/// and its label, so they cannot disagree: a label reading Resume over a
+	/// handler that calls disable is exactly the re-evict this guards.
+	const audioOn = $derived(!!(audio?.recording || audio?.pausedReason));
+
 	/// Audio is toggleable (its toggle doubles as the pause control): Enable
 	/// prompts + starts; once authorized the button stops/resumes recording.
 	async function toggleAudio() {
 		togglingAudio = true;
 		error = null;
 		try {
-			if (audio?.recording || audio?.pausedReason) {
+			if (audioOn) {
 				audio = await invoke<AudioStatus>("plugin:audio|disable");
 			} else {
 				audio = await invoke<AudioStatus>("plugin:audio|enable");
@@ -583,7 +589,7 @@
 				}}
 				disabled={togglingAudio}
 			>
-				{#if togglingAudio}…{:else if audio?.recording || audio?.pausedReason}Stop{:else if audio?.authorized}Resume{:else}Enable{/if}
+				{#if togglingAudio}…{:else if audioOn}Stop{:else if audio?.authorized}Resume{:else}Enable{/if}
 			</button>
 		</div>
 		{#if audioConsentOpen && !audio?.authorized}
