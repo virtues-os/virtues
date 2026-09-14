@@ -16,6 +16,16 @@
 	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { invoke } from "@tauri-apps/api/core";
 	import { getVersion } from "@tauri-apps/api/app";
+	import { listPlaces, getUnnamedPlaces, type UnnamedPlace, type WikiPlaceListItem } from "$lib/wiki/api";
+	import {
+		createMutedPlace,
+		placeDetails,
+		setPlaceMuted,
+		suggestPlaces,
+		syncMutedPlaces,
+		type MutedPlace,
+		type PlaceSuggestion,
+	} from "$lib/mobile/audioPlaces";
 	import { onMount } from "svelte";
 
 	interface ProbeRow {
@@ -63,6 +73,21 @@
 		 * resumes when the car disconnects). Recording is still ON — the toggle
 		 * offers Stop, not Resume, and a Resume would just re-evict the car. */
 		pausedReason?: string;
+		/** The weekly mute schedule. Absent on a native build that predates it;
+		 * the editor keys on presence and falls back to the quiet-hours pair. */
+		schedule?: MuteSchedule;
+		/** The plugin's cache of the box's muted places. Same absence rule. */
+		places?: MutedPlace[];
+		/** Why chunk writing is paused right now: "schedule" or "place". */
+		mutedBy?: string;
+	}
+
+	/** One default, and windows that invert it. Minutes since local midnight;
+	 * start > end wraps past midnight. See the plan. */
+	interface MuteSchedule {
+		v?: number;
+		default_muted: boolean;
+		days: Record<string, [number, number][]>;
 	}
 
 	/** Radio-hygiene counters — the battery A/B harness (reach plugin). */
@@ -340,6 +365,8 @@
 	}
 
 	// Quiet hours (mute-don't-release). Window is minutes since local midnight.
+	// Kept for a native build that predates the schedule (no `schedule` in
+	// status); on a current build the schedule editor below replaces it.
 	const quietOn = $derived(
 		audio != null && (audio.quietStart ?? -1) >= 0 && (audio.quietEnd ?? -1) >= 0,
 	);
@@ -363,6 +390,260 @@
 		if (quietOn) void setQuietHours(-1, -1);
 		else void setQuietHours(22 * 60, 7 * 60);
 	}
+
+	// Schedule (mute-don't-release). One default, windows that invert it: the
+	// same store and gate serve "record, except at night" and "don't record,
+	// except 9–5". The UI edits one window per day; the store allows more.
+	const DAYS: [string, string][] = [
+		["mon", "Mon"],
+		["tue", "Tue"],
+		["wed", "Wed"],
+		["thu", "Thu"],
+		["fri", "Fri"],
+		["sat", "Sat"],
+		["sun", "Sun"],
+	];
+	const DEFAULT_WINDOW: [number, number] = [22 * 60, 7 * 60];
+	const sched = $derived(audio?.schedule ?? null);
+	const hasSchedule = $derived(sched != null);
+	const windowsExist = $derived(
+		sched != null && Object.values(sched.days).some((w) => w.length > 0),
+	);
+	const scheduleOn = $derived(sched != null && (sched.default_muted || windowsExist));
+	/// The one window shared by all seven days, if that is what this is.
+	const uniform = $derived.by((): [number, number] | null => {
+		if (!sched) return null;
+		const lists = DAYS.map(([k]) => sched.days[k] ?? []);
+		const first = lists[0];
+		if (first.length !== 1) return null;
+		const same = lists.every((l) => l.length === 1 && l[0][0] === first[0][0] && l[0][1] === first[0][1]);
+		return same ? first[0] : null;
+	});
+	let byDay = $state(false);
+	const showByDay = $derived(byDay || (windowsExist && uniform == null));
+
+	async function setSchedule(doc: MuteSchedule) {
+		try {
+			audio = await invoke<AudioStatus>("plugin:audio|set_schedule", {
+				schedule: { v: 1, default_muted: doc.default_muted, days: doc.days },
+			});
+		} catch (e) {
+			error = String(e);
+		}
+	}
+	function uniformDoc(w: [number, number] | null, defaultMuted: boolean): MuteSchedule {
+		const days: Record<string, [number, number][]> = {};
+		for (const [k] of DAYS) days[k] = w ? [w] : [];
+		return { default_muted: defaultMuted, days };
+	}
+	function toggleSchedule() {
+		if (!sched) return;
+		if (scheduleOn) void setSchedule(uniformDoc(null, false));
+		else void setSchedule(uniformDoc(DEFAULT_WINDOW, false));
+	}
+	function setDefaultMuted(muted: boolean) {
+		if (!sched) return;
+		void setSchedule({ ...sched, default_muted: muted });
+	}
+	function setUniform(start: number, end: number) {
+		if (!sched) return;
+		void setSchedule(uniformDoc([start, end], sched.default_muted));
+	}
+	function setDay(day: string, w: [number, number] | null) {
+		if (!sched) return;
+		void setSchedule({ ...sched, days: { ...sched.days, [day]: w ? [w] : [] } });
+	}
+	function dayWindow(day: string): [number, number] | null {
+		return sched?.days[day]?.[0] ?? null;
+	}
+	function toggleByDay() {
+		if (showByDay) {
+			// Collapsing back: the first day's window (or none) becomes every day's.
+			byDay = false;
+			const w = DAYS.map(([k]) => dayWindow(k)).find((x) => x != null) ?? null;
+			if (sched) void setSchedule(uniformDoc(w, sched.default_muted));
+		} else {
+			byDay = true;
+		}
+	}
+
+	// Places. A muted place IS a wiki place: the flag lives on the box's row,
+	// the plugin caches the muted subset, and this screen is one of two
+	// places to flip it (the other is the place's own page on the desktop).
+	const mutedPlaces = $derived(audio?.places ?? []);
+	const hasPlaces = $derived(audio?.places != null);
+	let placeQuery = $state("");
+	let placeBusy = $state(false);
+	let placeError = $state<string | null>(null);
+	let namedPlaces = $state<WikiPlaceListItem[]>([]);
+	let unnamedPlaces = $state<UnnamedPlace[]>([]);
+	let suggestions = $state<PlaceSuggestion[]>([]);
+	/// An unnamed cluster picked from the results: it needs a name before it
+	/// can be muted (a muted "Location 30.27, -97.74" is no place at all).
+	let naming = $state<UnnamedPlace | null>(null);
+	let newName = $state("");
+	/// "Mute here" — a name for a place minted at the current fix.
+	let hereOpen = $state(false);
+	let hereName = $state("");
+	let suggestTimer: ReturnType<typeof setTimeout> | null = null;
+
+	const q = $derived(placeQuery.trim().toLowerCase());
+	const mutedIds = $derived(new Set(mutedPlaces.map((p) => p.id)));
+	const namedHits = $derived(
+		q.length === 0
+			? []
+			: namedPlaces.filter((p) => !mutedIds.has(p.id) && p.name.toLowerCase().includes(q)).slice(0, 6),
+	);
+	const unnamedHits = $derived(
+		q.length === 0 ? [] : unnamedPlaces.filter((p) => !mutedIds.has(p.id)).slice(0, 4),
+	);
+
+	async function loadPlaceSources() {
+		const [named, unnamed] = await Promise.all([
+			listPlaces().catch(() => []),
+			getUnnamedPlaces(20).catch(() => []),
+		]);
+		namedPlaces = named;
+		unnamedPlaces = unnamed.filter((p) => p.latitude != null && p.longitude != null);
+	}
+
+	/// The box's rows → the plugin's cache, when they differ.
+	async function refreshMutedPlaces() {
+		const s = await syncMutedPlaces<AudioStatus>(audio?.places);
+		if (s) audio = s;
+	}
+
+	function onPlaceQuery() {
+		placeError = null;
+		naming = null;
+		if (suggestTimer) clearTimeout(suggestTimer);
+		const query = placeQuery.trim();
+		if (query.length < 3) {
+			suggestions = [];
+			return;
+		}
+		// The Google door is metered; debounce it well past typing speed.
+		suggestTimer = setTimeout(async () => {
+			const got = await suggestPlaces(query);
+			if (placeQuery.trim() === query) suggestions = got.slice(0, 4);
+		}, 500);
+	}
+
+	async function muteNamed(p: WikiPlaceListItem) {
+		placeBusy = true;
+		placeError = null;
+		try {
+			if (!(await setPlaceMuted(p.id, true))) throw new Error("The server did not take that");
+			await refreshMutedPlaces();
+			placeQuery = "";
+			suggestions = [];
+		} catch (e) {
+			placeError = e instanceof Error ? e.message : String(e);
+		} finally {
+			placeBusy = false;
+		}
+	}
+
+	async function muteUnnamed() {
+		const p = naming;
+		const name = newName.trim();
+		if (!p || !name) return;
+		placeBusy = true;
+		placeError = null;
+		try {
+			if (!(await setPlaceMuted(p.id, true, name))) throw new Error("The server did not take that");
+			await Promise.all([refreshMutedPlaces(), loadPlaceSources()]);
+			naming = null;
+			newName = "";
+			placeQuery = "";
+			suggestions = [];
+		} catch (e) {
+			placeError = e instanceof Error ? e.message : String(e);
+		} finally {
+			placeBusy = false;
+		}
+	}
+
+	async function muteSuggestion(sug: PlaceSuggestion) {
+		placeBusy = true;
+		placeError = null;
+		try {
+			const d = await placeDetails(sug.place_id);
+			if (!d) throw new Error("Could not look that place up");
+			const ok = await createMutedPlace(sug.main_text || sug.description, d.latitude, d.longitude, d.formatted_address);
+			if (!ok) throw new Error("The server did not take that");
+			await Promise.all([refreshMutedPlaces(), loadPlaceSources()]);
+			placeQuery = "";
+			suggestions = [];
+		} catch (e) {
+			placeError = e instanceof Error ? e.message : String(e);
+		} finally {
+			placeBusy = false;
+		}
+	}
+
+	async function muteHere() {
+		const name = hereName.trim();
+		const fix = rows[0];
+		if (!name) return;
+		if (!fix) {
+			placeError = "No location fix yet";
+			return;
+		}
+		placeBusy = true;
+		placeError = null;
+		try {
+			// Prefer an existing wiki place that already covers this fix over
+			// minting a twin: the named list carries no coordinates, so the
+			// unnamed clusters (which do) are the ones checked here.
+			const near = unnamedPlaces.find(
+				(p) => distanceM(fix.lat, fix.lon, p.latitude as number, p.longitude as number) < 100,
+			);
+			const ok = near
+				? await setPlaceMuted(near.id, true, name)
+				: await createMutedPlace(name, fix.lat, fix.lon);
+			if (!ok) throw new Error("The server did not take that");
+			await Promise.all([refreshMutedPlaces(), loadPlaceSources()]);
+			hereOpen = false;
+			hereName = "";
+		} catch (e) {
+			placeError = e instanceof Error ? e.message : String(e);
+		} finally {
+			placeBusy = false;
+		}
+	}
+
+	async function unmute(p: MutedPlace) {
+		placeBusy = true;
+		placeError = null;
+		try {
+			if (!(await setPlaceMuted(p.id, false))) throw new Error("The server did not take that");
+			await refreshMutedPlaces();
+		} catch (e) {
+			placeError = e instanceof Error ? e.message : String(e);
+		} finally {
+			placeBusy = false;
+		}
+	}
+
+	function distanceM(lat1: number, lon1: number, lat2: number, lon2: number): number {
+		const r = 6371000;
+		const dLat = ((lat2 - lat1) * Math.PI) / 180;
+		const dLon = ((lon2 - lon1) * Math.PI) / 180;
+		const a =
+			Math.sin(dLat / 2) ** 2 +
+			Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+		return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+	}
+
+	// The box's rows are the authority; copy them into the plugin whenever
+	// this screen learns the plugin's state, and load the search sources once
+	// the mic is on (they are only offered then).
+	$effect(() => {
+		if (!hasPlaces) return;
+		void refreshMutedPlaces();
+		void loadPlaceSources();
+	});
 
 	/// Unpair this device: clear the Keychain-stored pairing (seed + box info), so
 	/// the app forgets the box entirely. Since the pairing survives app deletion
@@ -602,9 +883,10 @@
 					transcripts go to your server and nowhere else.
 				</p>
 				<p>
-					Quiet hours can silence any part of the day. And other people's
-					voices will be in the record: in some places, recording a
-					conversation needs everyone's consent. That part is yours to honor.
+					A schedule can silence any part of the week, and a place can be
+					marked "don't record here". Other people's voices will still be
+					in the record: in some places, recording a conversation needs
+					everyone's consent. That part is yours to honor.
 				</p>
 				<div class="s-consent-actions">
 					<button
@@ -628,27 +910,192 @@
 				<span class="s-subrow-label">Notify me if recording stops</span>
 				<span class="switch" class:on={audio?.notify} aria-hidden="true"></span>
 			</button>
-			<button class="s-subrow" onclick={toggleQuietHours} type="button">
-				<span class="s-subrow-label">Quiet hours</span>
-				<span class="switch" class:on={quietOn} aria-hidden="true"></span>
-			</button>
-			{#if quietOn && audio}
-				<div class="s-subrow s-times">
-					<input
-						class="s-time"
-						type="time"
-						value={minToTime(audio.quietStart ?? 0)}
-						onchange={(e) => setQuietHours(timeToMin(e.currentTarget.value), audio?.quietEnd ?? 0)}
-					/>
-					<span class="s-subrow-label">to</span>
-					<input
-						class="s-time"
-						type="time"
-						value={minToTime(audio.quietEnd ?? 0)}
-						onchange={(e) => setQuietHours(audio?.quietStart ?? 0, timeToMin(e.currentTarget.value))}
-					/>
-					<span class="s-subrow-label s-times-note">mic stays on, nothing is kept</span>
+			{#if hasSchedule && sched}
+				<button class="s-subrow" onclick={toggleSchedule} type="button">
+					<span class="s-subrow-label">Schedule</span>
+					<span class="switch" class:on={scheduleOn} aria-hidden="true"></span>
+				</button>
+				{#if scheduleOn}
+					<div class="s-subrow s-times">
+						<span class="s-subrow-label">Outside these hours</span>
+						<select
+							class="s-time"
+							value={sched.default_muted ? "muted" : "record"}
+							onchange={(e) => setDefaultMuted(e.currentTarget.value === "muted")}
+						>
+							<option value="record">record</option>
+							<option value="muted">don't record</option>
+						</select>
+					</div>
+					<button class="s-subrow" onclick={toggleByDay} type="button">
+						<span class="s-subrow-label">Different each day</span>
+						<span class="switch" class:on={showByDay} aria-hidden="true"></span>
+					</button>
+					{#if !showByDay}
+						<div class="s-subrow s-times">
+							<input
+								class="s-time"
+								type="time"
+								value={minToTime(uniform?.[0] ?? DEFAULT_WINDOW[0])}
+								onchange={(e) => setUniform(timeToMin(e.currentTarget.value), uniform?.[1] ?? DEFAULT_WINDOW[1])}
+							/>
+							<span class="s-subrow-label">to</span>
+							<input
+								class="s-time"
+								type="time"
+								value={minToTime(uniform?.[1] ?? DEFAULT_WINDOW[1])}
+								onchange={(e) => setUniform(uniform?.[0] ?? DEFAULT_WINDOW[0], timeToMin(e.currentTarget.value))}
+							/>
+							<span class="s-subrow-label s-times-note">
+								{sched.default_muted ? "recording only then" : "mic stays on, nothing is kept"}
+							</span>
+						</div>
+					{:else}
+						{#each DAYS as [key, label] (key)}
+							{@const w = dayWindow(key)}
+							<div class="s-subrow s-times s-day">
+								<button
+									class="s-day-toggle"
+									type="button"
+									onclick={() => setDay(key, w ? null : DEFAULT_WINDOW)}
+								>
+									<span class="s-subrow-label s-day-label">{label}</span>
+									<span class="switch small" class:on={w != null} aria-hidden="true"></span>
+								</button>
+								{#if w}
+									<input
+										class="s-time"
+										type="time"
+										value={minToTime(w[0])}
+										onchange={(e) => setDay(key, [timeToMin(e.currentTarget.value), w[1]])}
+									/>
+									<span class="s-subrow-label">to</span>
+									<input
+										class="s-time"
+										type="time"
+										value={minToTime(w[1])}
+										onchange={(e) => setDay(key, [w[0], timeToMin(e.currentTarget.value)])}
+									/>
+								{/if}
+							</div>
+						{/each}
+					{/if}
+				{/if}
+			{:else}
+				<button class="s-subrow" onclick={toggleQuietHours} type="button">
+					<span class="s-subrow-label">Quiet hours</span>
+					<span class="switch" class:on={quietOn} aria-hidden="true"></span>
+				</button>
+				{#if quietOn && audio}
+					<div class="s-subrow s-times">
+						<input
+							class="s-time"
+							type="time"
+							value={minToTime(audio.quietStart ?? 0)}
+							onchange={(e) => setQuietHours(timeToMin(e.currentTarget.value), audio?.quietEnd ?? 0)}
+						/>
+						<span class="s-subrow-label">to</span>
+						<input
+							class="s-time"
+							type="time"
+							value={minToTime(audio.quietEnd ?? 0)}
+							onchange={(e) => setQuietHours(audio?.quietStart ?? 0, timeToMin(e.currentTarget.value))}
+						/>
+						<span class="s-subrow-label s-times-note">mic stays on, nothing is kept</span>
+					</div>
+				{/if}
+			{/if}
+			{#if hasPlaces}
+				<!-- Places that mute. The answer to "everyone in the room": a
+				     place is where the people you should not record are. -->
+				<div class="s-subrow s-times s-places-head">
+					<span class="s-subrow-label">Don't record at</span>
+					{#if audio?.mutedBy === "place"}
+						<span class="s-subrow-label s-times-note">muted here now</span>
+					{/if}
 				</div>
+				{#each mutedPlaces as p (p.id)}
+					<div class="s-subrow s-times s-place">
+						<span class="s-place-name">{p.name || "Unnamed place"}</span>
+						<span class="s-subrow-label">{Math.round(p.radiusM)} m</span>
+						<button class="s-linkish" type="button" onclick={() => unmute(p)} disabled={placeBusy}>
+							Remove
+						</button>
+					</div>
+				{/each}
+				<div class="s-subrow s-times s-place-search">
+					<input
+						class="s-time s-place-input"
+						type="search"
+						placeholder="Search a place by name"
+						bind:value={placeQuery}
+						oninput={onPlaceQuery}
+						disabled={placeBusy}
+					/>
+					<button class="s-linkish" type="button" onclick={() => (hereOpen = !hereOpen)} disabled={placeBusy}>
+						Mute here
+					</button>
+				</div>
+				{#if hereOpen}
+					<div class="s-subrow s-times">
+						<input
+							class="s-time s-place-input"
+							type="text"
+							placeholder="Name this place"
+							bind:value={hereName}
+							disabled={placeBusy}
+						/>
+						<button class="s-linkish" type="button" onclick={muteHere} disabled={placeBusy || !hereName.trim()}>
+							Save
+						</button>
+					</div>
+				{/if}
+				{#each namedHits as p (p.id)}
+					<button class="s-subrow s-result" type="button" onclick={() => muteNamed(p)} disabled={placeBusy}>
+						<span class="s-place-name">{p.name}</span>
+						{#if p.address}<span class="s-subrow-label">{p.address}</span>{/if}
+					</button>
+				{/each}
+				{#each unnamedHits as p (p.id)}
+					{#if naming?.id === p.id}
+						<div class="s-subrow s-times">
+							<input
+								class="s-time s-place-input"
+								type="text"
+								placeholder="Name this place"
+								bind:value={newName}
+								disabled={placeBusy}
+							/>
+							<button class="s-linkish" type="button" onclick={muteUnnamed} disabled={placeBusy || !newName.trim()}>
+								Save
+							</button>
+						</div>
+					{:else}
+						<button
+							class="s-subrow s-result"
+							type="button"
+							onclick={() => {
+								naming = p;
+								newName = "";
+							}}
+							disabled={placeBusy}
+						>
+							<span class="s-place-name">Somewhere you've been {p.ref_count} times</span>
+							<span class="s-subrow-label">
+								{(p.latitude as number).toFixed(3)}, {(p.longitude as number).toFixed(3)} · name it to mute it
+							</span>
+						</button>
+					{/if}
+				{/each}
+				{#each suggestions as sug (sug.place_id)}
+					<button class="s-subrow s-result" type="button" onclick={() => muteSuggestion(sug)} disabled={placeBusy}>
+						<span class="s-place-name">{sug.main_text || sug.description}</span>
+						{#if sug.secondary_text}<span class="s-subrow-label">{sug.secondary_text}</span>{/if}
+					</button>
+				{/each}
+				{#if placeError}
+					<div class="s-subrow s-times"><span class="s-subrow-label">{placeError}</span></div>
+				{/if}
 			{/if}
 		{/if}
 	</div>
@@ -882,6 +1329,73 @@
 	.s-times-note {
 		margin-left: auto;
 		font-size: 11px;
+	}
+	.s-day {
+		gap: 8px;
+	}
+	.s-day-toggle {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		border: none;
+		background: transparent;
+		padding: 0;
+		cursor: pointer;
+	}
+	.s-day-label {
+		width: 30px;
+	}
+	.switch.small {
+		width: 30px;
+		height: 18px;
+		border-radius: 9px;
+	}
+	.switch.small::after {
+		width: 14px;
+		height: 14px;
+	}
+	.switch.small.on::after {
+		transform: translateX(12px);
+	}
+	.s-places-head {
+		justify-content: space-between;
+	}
+	.s-place {
+		gap: 10px;
+	}
+	.s-place-name {
+		font-size: 13px;
+		color: var(--color-foreground);
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.s-place-search {
+		gap: 10px;
+	}
+	.s-place-input {
+		flex: 1;
+		min-width: 0;
+	}
+	.s-linkish {
+		border: none;
+		background: transparent;
+		padding: 0;
+		font: inherit;
+		font-size: 13px;
+		color: var(--color-primary, #2b6cff);
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.s-linkish:disabled {
+		opacity: 0.5;
+	}
+	.s-result {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 2px;
 	}
 	.switch {
 		flex: none;

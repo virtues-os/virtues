@@ -1235,6 +1235,15 @@ pub async fn stream_days_handler(
 // Places API Handlers (Google Places proxy)
 // =============================================================================
 
+/// Resolve an autocomplete prediction to coordinates (the phone's "mute a
+/// place I have never been" door creates the place from this).
+pub async fn places_details_handler(
+    State(state): State<AppState>,
+    Query(request): Query<crate::api::places::PlaceDetailsRequest>,
+) -> Response {
+    api_response(crate::api::get_place_details(state.db.pool(), request).await)
+}
+
 /// Get autocomplete predictions for an address query
 pub async fn places_autocomplete_handler(
     State(state): State<AppState>,
@@ -1697,6 +1706,14 @@ pub async fn unsplash_search_handler(
 /// List all known places
 pub async fn list_places_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::list_places(state.db.pool()).await)
+}
+
+/// Create a place by hand — the phone's "Mute here" and its Google-places door.
+pub async fn create_place_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CreatePlaceRequest>,
+) -> Response {
+    api_response(crate::api::create_place(state.db.pool(), request).await)
 }
 
 /// Get a specific place by ID

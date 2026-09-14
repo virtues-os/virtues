@@ -16,6 +16,13 @@ private func virtues_enqueue(_ stream: UnsafePointer<CChar>, _ json: UnsafePoint
 @_silgen_name("virtues_location_audio_state")
 private func virtues_location_audio_state(_ state: Int32)
 
+// Hand the muted places to the location plugin as OS regions (its @_cdecl,
+// same linkage). JSON array of {id, lat, lon, radius_m}; empty clears them.
+// The OS then reports enter/exit for them even while location runs coarse,
+// and on a cold relaunch whose first fix is too fuzzy to resolve a circle.
+@_silgen_name("virtues_location_set_regions")
+private func virtues_location_set_regions(_ json: UnsafePointer<CChar>)
+
 private let isoMillis: ISO8601DateFormatter = {
   let f = ISO8601DateFormatter()
   f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -87,25 +94,339 @@ public final class AudioRecorder: NSObject {
   private var cachedQuietStart: Int = -1
   private var cachedQuietEnd: Int = -1
 
-  private func quietHoursActive(_ now: Date) -> Bool {
-    let start = cachedQuietStart, end = cachedQuietEnd
-    if start < 0 || end < 0 || start == end { return false }
-    let c = Calendar.current.dateComponents([.hour, .minute], from: now)
-    let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
-    return start < end ? (m >= start && m < end) : (m >= start || m < end)
-  }
-
   public func quietHours() -> (start: Int, end: Int) {
     (cachedQuietStart, cachedQuietEnd)
   }
 
+  /// Legacy door, kept for an SPA older than the schedule: one window on every
+  /// day. Writes the schedule; the two old keys mirror it (see applySchedule).
   public func setQuietHours(start: Int, end: Int) {
-    cachedQuietStart = start
-    cachedQuietEnd = end
+    applySchedule(MuteSchedule.uniform(start: start, end: end), source: "quiet-hours")
+  }
+
+  // MARK: - Mute policy: schedule + places (mute-don't-release)
+  //
+  // One gate, two reasons. The tap asks `muteReason(at:)` once per buffer and
+  // the answer is nil, "schedule" or "place". Neither ever stops the session:
+  // iOS will not restart a background audio session for us when a window
+  // ends or the owner walks out, so the graph stays armed and only chunk
+  // writing pauses — the quiet-hours contract, generalized. While muted, a
+  // metadata-only MARKER ships every chunk interval naming the reason (never
+  // the place), so the box can tell a chosen silence from a dead collector;
+  // without it both are the same thing: no rows.
+
+  /// The weekly schedule. `defaultMuted` is what happens outside every window;
+  /// a window inverts it. `false` + 22:00→07:00 every day is quiet hours;
+  /// `true` + 09:00→17:00 on weekdays is record-at-work-only. Windows are
+  /// [start, end] minutes since local midnight; start > end wraps past
+  /// midnight and belongs to the day it starts on. Days keyed mon..sun.
+  private struct MuteSchedule: Equatable {
+    var defaultMuted = false
+    var days: [String: [[Int]]] = [:]
+    /// Indexed by `Calendar.weekday - 1` (1 = Sunday).
+    static let dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+
+    init() {}
+    init(json: [String: Any]) {
+      defaultMuted = json["default_muted"] as? Bool ?? false
+      var out: [String: [[Int]]] = [:]
+      if let d = json["days"] as? [String: Any] {
+        for (k, v) in d {
+          guard MuteSchedule.dayKeys.contains(k), let ws = v as? [[Any]] else { continue }
+          out[k] = ws.compactMap { w in
+            guard w.count == 2,
+                  let a = (w[0] as? NSNumber)?.intValue, let b = (w[1] as? NSNumber)?.intValue,
+                  (0...1440).contains(a), (0...1440).contains(b), a != b else { return nil }
+            return [a, b]
+          }
+        }
+      }
+      days = out
+    }
+    var json: [String: Any] { ["v": 1, "default_muted": defaultMuted, "days": days] }
+
+    /// One window on every day — what quiet hours is. -1/-1 or start==end = none.
+    static func uniform(start: Int, end: Int) -> MuteSchedule {
+      var s = MuteSchedule()
+      if start >= 0, end >= 0, start != end {
+        for k in dayKeys { s.days[k] = [[start, end]] }
+      }
+      return s
+    }
+
+    /// The single window shared by all seven days, if that is what this is;
+    /// the legacy quiet-hours readout reports it, and -1/-1 for anything else.
+    var uniformWindow: (Int, Int)? {
+      guard !defaultMuted else { return nil }
+      let lists = MuteSchedule.dayKeys.map { days[$0] ?? [] }
+      guard let first = lists.first, first.count == 1, lists.allSatisfy({ $0 == first }) else { return nil }
+      return (first[0][0], first[0][1])
+    }
+
+    func muted(at now: Date, calendar: Calendar) -> Bool {
+      let c = calendar.dateComponents([.weekday, .hour, .minute], from: now)
+      let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+      let wd = ((c.weekday ?? 1) - 1 + 7) % 7
+      let today = MuteSchedule.dayKeys[wd]
+      let yesterday = MuteSchedule.dayKeys[(wd + 6) % 7]
+      var inWindow = false
+      for w in days[today] ?? [] {
+        let a = w[0], b = w[1]
+        if a < b ? (m >= a && m < b) : (m >= a) { inWindow = true; break }
+      }
+      if !inWindow {
+        // A window that started yesterday and wraps past midnight covers the
+        // early part of today.
+        for w in days[yesterday] ?? [] where w[0] > w[1] && m < w[1] { inWindow = true; break }
+      }
+      return inWindow != defaultMuted
+    }
+  }
+
+  /// A muted place — the phone's copy of a `wiki_places` row with
+  /// `is_audio_muted`. The row is the authority; this cache is what lets the
+  /// gate run with no network.
+  private struct MutedPlace {
+    let id: String
+    let name: String
+    let lat: Double
+    let lon: Double
+    let radiusM: Double
+
+    init?(json: [String: Any]) {
+      guard let id = json["id"] as? String,
+            let lat = (json["lat"] as? NSNumber)?.doubleValue,
+            let lon = (json["lon"] as? NSNumber)?.doubleValue,
+            lat.isFinite, lon.isFinite else { return nil }
+      self.id = id
+      name = json["name"] as? String ?? ""
+      self.lat = lat
+      self.lon = lon
+      radiusM = (json["radiusM"] as? NSNumber)?.doubleValue
+        ?? (json["radius_m"] as? NSNumber)?.doubleValue ?? 100
+    }
+    var json: [String: Any] { ["id": id, "name": name, "lat": lat, "lon": lon, "radiusM": radiusM] }
+    /// The enter radius: a user-created place is 50 m on the box, which loses
+    /// to GPS jitter, so nothing tighter than 100 m is ever tested.
+    var enterRadius: Double { max(radiusM, 100) }
+    /// The exit radius, wider, so the writer cannot flap at the boundary.
+    var exitRadius: Double { max(enterRadius * 1.5, enterRadius + 50) }
+  }
+
+  private let scheduleKey = "virtues.audio.schedule"
+  private let placesKey = "virtues.audio.places"
+  /// Everything the gate reads on the realtime tap while other threads write
+  /// it (location pushes, plugin commands) sits behind this one lock. The
+  /// critical sections are a few comparisons; the tap never blocks for long.
+  private let policyLock = NSLock()
+  private var schedule = MuteSchedule()
+  private var places: [MutedPlace] = []
+  /// Sticky place state: changes only when a fix or a region verdict proves
+  /// it. A stale or coarse fix changes nothing — someone who walked into the
+  /// clinic and then sat still stays muted until something proves they left.
+  private var insidePlaceId: String?
+  private var lastFix: (lat: Double, lon: Double, acc: Double, at: Date)?
+  /// What the tap decided on its last buffer, for status ("schedule"/"place").
+  private var currentMuteReason: String?
+  // Marker bookkeeping — tap thread only (and `stopEngine` on q, after the
+  // tap is removed, so never concurrently).
+  private var markerStart: Date?
+  private var markerReason: String?
+
+  public func scheduleJSON() -> [String: Any] {
+    policyLock.lock(); defer { policyLock.unlock() }
+    return schedule.json
+  }
+
+  public func placesJSON() -> [[String: Any]] {
+    policyLock.lock(); defer { policyLock.unlock() }
+    return places.map { $0.json }
+  }
+
+  public func mutedBy() -> String? {
+    policyLock.lock(); defer { policyLock.unlock() }
+    return currentMuteReason
+  }
+
+  public func setSchedule(json: [String: Any]) {
+    applySchedule(MuteSchedule(json: json), source: "schedule")
+  }
+
+  private func applySchedule(_ s: MuteSchedule, source: String) {
+    policyLock.lock()
+    schedule = s
+    policyLock.unlock()
     let d = UserDefaults.standard
-    d.set(start, forKey: quietStartKey)
-    d.set(end, forKey: quietEndKey)
-    NSLog("[Audio] quiet hours set %d..%d (minutes, -1=off)", start, end)
+    if let data = try? JSONSerialization.data(withJSONObject: s.json),
+       let str = String(data: data, encoding: .utf8) {
+      d.set(str, forKey: scheduleKey)
+    }
+    // The two legacy keys mirror the schedule so an older SPA's quiet-hours
+    // readout stays honest: one window on every day IS quiet hours; anything
+    // richer reads as "off" there rather than as a window that is not the
+    // whole truth.
+    let u = s.uniformWindow
+    cachedQuietStart = u?.0 ?? -1
+    cachedQuietEnd = u?.1 ?? -1
+    d.set(cachedQuietStart, forKey: quietStartKey)
+    d.set(cachedQuietEnd, forKey: quietEndKey)
+    let n = s.days.values.reduce(0) { $0 + $1.count }
+    NSLog("[Audio] schedule set (%@): default %@, %d windows", source,
+          s.defaultMuted ? "muted" : "recording", n)
+  }
+
+  /// Replace the cached muted places (the box's rows, copied by the SPA).
+  public func setPlaces(json: [[String: Any]]) {
+    let ps = json.compactMap(MutedPlace.init(json:))
+    policyLock.lock()
+    places = ps
+    // A place that is no longer muted cannot keep us muted.
+    if let cur = insidePlaceId, !ps.contains(where: { $0.id == cur }) { insidePlaceId = nil }
+    let fix = lastFix
+    policyLock.unlock()
+    let d = UserDefaults.standard
+    if let data = try? JSONSerialization.data(withJSONObject: ps.map { $0.json }),
+       let str = String(data: data, encoding: .utf8) {
+      d.set(str, forKey: placesKey)
+    }
+    NSLog("[Audio] muted places set: %d", ps.count)
+    pushRegions(ps)
+    // A place added while standing in it ("Mute here") should mute now, not on
+    // the next fix: re-run the last fix if it is fresh enough to mean anything.
+    if let f = fix, Date().timeIntervalSince(f.at) < 900 {
+      updateLocation(lat: f.lat, lon: f.lon, accuracy: f.acc)
+    }
+  }
+
+  private func pushRegions(_ ps: [MutedPlace]) {
+    let arr: [[String: Any]] = ps.map {
+      ["id": $0.id, "lat": $0.lat, "lon": $0.lon, "radius_m": $0.enterRadius]
+    }
+    guard let data = try? JSONSerialization.data(withJSONObject: arr),
+          let str = String(data: data, encoding: .utf8) else { return }
+    str.withCString { virtues_location_set_regions($0) }
+  }
+
+  /// A fix from the location plugin (any thread). Enter when the circle
+  /// provably contains the fix (`distance + accuracy < enter radius`); exit
+  /// when it provably does not (`distance − accuracy > exit radius`). A fix
+  /// that proves neither — coarse mode's 3 km cell fixes — changes nothing.
+  public func updateLocation(lat: Double, lon: Double, accuracy: Double) {
+    guard lat.isFinite, lon.isFinite, accuracy.isFinite, accuracy >= 0 else { return }
+    policyLock.lock()
+    lastFix = (lat, lon, accuracy, Date())
+    let ps = places
+    let before = insidePlaceId
+    var after = before
+    if let cur = before, let p = ps.first(where: { $0.id == cur }) {
+      if haversine(lat, lon, p.lat, p.lon) - accuracy > p.exitRadius { after = nil }
+    }
+    if after == nil {
+      var best: (id: String, d: Double)?
+      for p in ps {
+        let d = haversine(lat, lon, p.lat, p.lon)
+        if d + accuracy < p.enterRadius, best == nil || d < best!.d { best = (p.id, d) }
+      }
+      after = best?.id
+    }
+    insidePlaceId = after
+    policyLock.unlock()
+    if before != after {
+      NSLog("[Audio] place %@ → %@ (fix ±%.0fm)", before ?? "-", after ?? "-", accuracy)
+    }
+  }
+
+  /// A region verdict from the OS (any thread) — the location plugin monitors
+  /// the muted places as geofences. Treated as proof, like a fix of accuracy
+  /// zero: it is what covers coarse mode and a cold relaunch.
+  public func regionEvent(placeId: String, inside: Bool) {
+    policyLock.lock()
+    let before = insidePlaceId
+    if inside {
+      if places.contains(where: { $0.id == placeId }) { insidePlaceId = placeId }
+    } else if insidePlaceId == placeId {
+      insidePlaceId = nil
+    }
+    let after = insidePlaceId
+    policyLock.unlock()
+    if before != after {
+      NSLog("[Audio] region %@ %@ → inside %@", placeId, inside ? "enter" : "exit", after ?? "-")
+    }
+  }
+
+  private func haversine(_ lat1: Double, _ lon1: Double, _ lat2: Double, _ lon2: Double) -> Double {
+    let r = 6_371_000.0
+    let dLat = (lat2 - lat1) * .pi / 180
+    let dLon = (lon2 - lon1) * .pi / 180
+    let a = sin(dLat / 2) * sin(dLat / 2)
+      + cos(lat1 * .pi / 180) * cos(lat2 * .pi / 180) * sin(dLon / 2) * sin(dLon / 2)
+    return 2 * r * atan2(sqrt(a), sqrt(1 - a))
+  }
+
+  /// Why the tap must not keep this buffer; nil to record. Schedule first (no
+  /// location needed), then place.
+  private func muteReason(at now: Date) -> String? {
+    policyLock.lock(); defer { policyLock.unlock() }
+    if schedule.muted(at: now, calendar: Calendar.current) { return "schedule" }
+    if insidePlaceId != nil { return "place" }
+    return nil
+  }
+
+  // Markers. Every `chunkSeconds` of continuous mute ships one metadata-only
+  // record on the silent path (no bytes, 30-minute deferred drain, NULL
+  // audio_url on the box) with `muted_by`. One per would-be chunk: ≤288 rows
+  // a day, the same order as a quiet home's silent chunks. The reason is
+  // named; the place never is — location already recorded where we were.
+
+  private func noteMuted(_ why: String, at now: Date) {
+    if markerReason != why {
+      flushMarker(at: now)
+      markerStart = now
+      markerReason = why
+      setMuteReason(why)
+      NSLog("[Audio] muted by %@", why)
+    } else if let s = markerStart, now.timeIntervalSince(s) >= chunkSeconds {
+      enqueueMarker(start: s, end: now, why: why)
+      markerStart = now
+    }
+  }
+
+  private func noteRecording(at now: Date) {
+    guard markerReason != nil else { return }
+    flushMarker(at: now)
+    NSLog("[Audio] mute ended")
+  }
+
+  /// Close the open span. A sub-minute sliver is not worth a row.
+  private func flushMarker(at now: Date) {
+    if let s = markerStart, let why = markerReason, now.timeIntervalSince(s) >= 60 {
+      enqueueMarker(start: s, end: now, why: why)
+    }
+    markerStart = nil
+    markerReason = nil
+    setMuteReason(nil)
+  }
+
+  private func setMuteReason(_ r: String?) {
+    policyLock.lock(); currentMuteReason = r; policyLock.unlock()
+  }
+
+  private func enqueueMarker(start: Date, end: Date, why: String) {
+    let rec: [String: Any] = [
+      "id": UUID().uuidString,
+      "audio_format": "m4a",
+      "timestamp_start": isoMillis.string(from: start),
+      "timestamp_end": isoMillis.string(from: end),
+      "duration_seconds": end.timeIntervalSince(start),
+      "is_silent": true,
+      "muted_by": why,
+    ]
+    q.async {
+      guard let json = try? JSONSerialization.data(withJSONObject: rec),
+            let str = String(data: json, encoding: .utf8) else { return }
+      let rc = "microphone".withCString { s in str.withCString { j in virtues_enqueue(s, j) } }
+      NSLog("[Audio] muted marker (%@) %.0fs rc=%d", why, end.timeIntervalSince(start), rc)
+    }
   }
 
   private let session = AVAudioSession.sharedInstance()
@@ -220,6 +541,21 @@ public final class AudioRecorder: NSObject {
     cachedLastGood = d.double(forKey: lastGoodKey)
     cachedQuietStart = d.object(forKey: quietStartKey) == nil ? -1 : d.integer(forKey: quietStartKey)
     cachedQuietEnd = d.object(forKey: quietEndKey) == nil ? -1 : d.integer(forKey: quietEndKey)
+    if let raw = d.string(forKey: scheduleKey), let data = raw.data(using: .utf8),
+       let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+      schedule = MuteSchedule(json: obj)
+    } else if cachedQuietStart >= 0, cachedQuietEnd >= 0 {
+      // First launch of a build that has the schedule: the quiet-hours window
+      // becomes its seven-day form, so nothing changes for the user.
+      schedule = MuteSchedule.uniform(start: cachedQuietStart, end: cachedQuietEnd)
+    }
+    if let raw = d.string(forKey: placesKey), let data = raw.data(using: .utf8),
+       let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] {
+      places = arr.compactMap(MutedPlace.init(json:))
+    }
+    // The OS keeps monitored regions across launches, but the location
+    // plugin's own list starts empty; hand it ours again.
+    pushRegions(places)
     let nc = NotificationCenter.default
     nc.addObserver(self, selector: #selector(handleInterruption),
       name: AVAudioSession.interruptionNotification, object: session)
@@ -533,6 +869,9 @@ public final class AudioRecorder: NSObject {
   private func stopEngine(finalize: Bool) {
     if finalize { rotate(restart: false) }
     if tapInstalled { engine.inputNode.removeTap(onBus: 0); tapInstalled = false }
+    // No tap fires after this line, so the marker span is ours to close: left
+    // open, the next armed buffer would extend it across the whole stop.
+    flushMarker(at: Date())
     if engine.isRunning { engine.stop() }
     recording = false
     NSLog("[Audio] engine stopped")
@@ -724,12 +1063,12 @@ public final class AudioRecorder: NSObject {
       DispatchQueue.main.async { [weak self] in self?.clearNudge() }
     }
     interruptionHoldUntil = nil  // audio is flowing — any interruption is over
-    // Quiet hours: mute, don't release. Everything above still ran — the
+    // Schedule / place mute: mute, don't release. Everything above still ran — the
     // heartbeat and lastGood stamps say "capture is HEALTHY, just muted", which
     // keeps the watchdog quiet, the gap nudge silent, and location in its cheap
     // mode. On window entry the partial chunk finalizes once (outFile goes nil);
     // on exit the next buffer reopens a chunk and capture resumes seamlessly.
-    if quietHoursActive(now) {
+    if let why = muteReason(at: now) {
       if let f = outFile {
         if sampleCount > 0 {
           rotate(restart: false)
@@ -744,8 +1083,10 @@ public final class AudioRecorder: NSObject {
           try? FileManager.default.removeItem(at: url)
         }
       }
+      noteMuted(why, at: now)
       return
     }
+    noteRecording(at: now)
     if outFile == nil { try? openChunk() }
     guard let converter = converter else { return }
     let ratio = targetSampleRate / (hwFormat?.sampleRate ?? targetSampleRate)
