@@ -1136,12 +1136,22 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         use tower_http::services::{ServeDir, ServeFile};
 
         let fallback_file = static_path.join("200.html");
+        // `precompressed_gzip`: the build writes a `.gz` beside every
+        // compressible asset (apps/web/scripts/precompress.mjs), and ServeDir
+        // hands that sibling to a client that accepts gzip and the original to
+        // one that does not. The box never compresses at runtime; the Mac,
+        // which fetches the SPA from the box on every cold start, moves ~0.8 MB
+        // instead of ~2.6 MB. A build without siblings serves exactly as before.
         let serve_dir = if fallback_file.exists() {
-            ServeDir::new(&static_dir).fallback(ServeFile::new(fallback_file))
+            ServeDir::new(&static_dir)
+                .precompressed_gzip()
+                .fallback(ServeFile::new(fallback_file))
         } else {
             // Try index.html as fallback if 200.html doesn't exist
             let index_file = static_path.join("index.html");
-            ServeDir::new(&static_dir).fallback(ServeFile::new(index_file))
+            ServeDir::new(&static_dir)
+                .precompressed_gzip()
+                .fallback(ServeFile::new(index_file))
         };
 
         tracing::info!("Static file serving enabled from: {}", static_dir);
@@ -1154,11 +1164,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // one, and the only symptom is a screen that quietly lies about its own
         // version.
         //
-        // Scoped to documents on purpose: `/_app/immutable/*` is content-hashed
-        // and *should* be cached hard. It is the shell that must always be
-        // re-fetched, because it is the thing that names the rest.
+        // The other half of that rule: `/_app/immutable/*` is content-hashed
+        // and IS cached hard. Until 2026-09-14 nothing set that header either,
+        // so every hashed chunk was heuristically cached and re-fetched — a
+        // cold Mac start pulled the whole SPA from the box each time. The
+        // shell is the only thing that must be re-fetched, because it is the
+        // thing that names the rest.
         app.fallback_service(tower::ServiceBuilder::new()
-            .layer(axum::middleware::from_fn(no_store_for_documents))
+            .layer(axum::middleware::from_fn(static_cache_policy))
             .service(serve_dir))
     } else {
         tracing::info!(
@@ -1340,13 +1353,19 @@ fn validate_environment() -> Result<()> {
 /// heuristically, and the appliance's kiosk did — pinning the panel to a
 /// three-day-old UI across an upgrade, a service restart, and a power cycle.
 ///
-/// Keyed on the response's own content type rather than the request path, so it
-/// covers the SPA fallback (`200.html`, served for arbitrary routes) without
-/// having to enumerate which paths are documents.
-async fn no_store_for_documents(
+/// Documents are keyed on the response's own content type rather than the
+/// request path, so the rule covers the SPA fallback (`200.html`, served for
+/// arbitrary routes) without having to enumerate which paths are documents.
+///
+/// Hashed assets are keyed on the request path, because that is what makes
+/// them safe to cache for a year: a byte of change is a new name, and the
+/// (never cached) shell is what names them. Fonts are not hashed, so they get
+/// a week and revalidate on `last-modified` after that.
+async fn static_cache_policy(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    let path = req.uri().path().to_owned();
     let mut res = next.run(req).await;
     let is_document = res
         .headers()
@@ -1362,8 +1381,140 @@ async fn no_store_for_documents(
         // caches honour the weaker half.
         res.headers_mut().remove(axum::http::header::LAST_MODIFIED);
         res.headers_mut().remove(axum::http::header::ETAG);
+    } else if res.status().is_success() {
+        if let Some(policy) = static_cache_control(&path) {
+            res.headers_mut().insert(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static(policy),
+            );
+        }
     }
     res
+}
+
+/// The `cache-control` a successful non-document static response gets, by path.
+fn static_cache_control(path: &str) -> Option<&'static str> {
+    if path.starts_with("/_app/immutable/") {
+        Some("public, max-age=31536000, immutable")
+    } else if path.starts_with("/fonts/") {
+        Some("public, max-age=604800")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod static_cache_policy_tests {
+    use super::*;
+    use axum::{routing::get, Router};
+    // `tower::Service` alone: the crate does not enable tower's `util`
+    // feature, and a Router is always ready, so `call` needs no `oneshot`.
+    use tower::Service;
+
+    async fn probe(path: &str, content_type: &'static str) -> axum::http::HeaderMap {
+        let mut app = Router::new()
+            .route(
+                path,
+                get(move || async move {
+                    (
+                        [
+                            (axum::http::header::CONTENT_TYPE, content_type),
+                            (axum::http::header::LAST_MODIFIED, "Mon, 01 Jan 2024 00:00:00 GMT"),
+                        ],
+                        "x",
+                    )
+                }),
+            )
+            .layer(axum::middleware::from_fn(static_cache_policy));
+        let res = app
+            .call(
+                axum::http::Request::builder()
+                    .uri(path)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        res.headers().clone()
+    }
+
+    fn cache(h: &axum::http::HeaderMap) -> Option<&str> {
+        h.get(axum::http::header::CACHE_CONTROL).and_then(|v| v.to_str().ok())
+    }
+
+    #[tokio::test]
+    async fn documents_are_never_cached_wherever_they_live() {
+        let h = probe("/anything/at/all", "text/html; charset=utf-8").await;
+        assert_eq!(cache(&h), Some("no-store"));
+        assert!(h.get(axum::http::header::LAST_MODIFIED).is_none());
+    }
+
+    #[tokio::test]
+    async fn hashed_chunks_are_immutable_for_a_year() {
+        let h = probe("/_app/immutable/chunks/Cd0FKR9-.js", "text/javascript").await;
+        assert_eq!(cache(&h), Some("public, max-age=31536000, immutable"));
+        // The validator stays: harmless beside `immutable`, useful to a proxy.
+        assert!(h.get(axum::http::header::LAST_MODIFIED).is_some());
+    }
+
+    #[tokio::test]
+    async fn fonts_get_a_week_and_revalidate() {
+        let h = probe("/fonts/JJannon-Display-Regular.woff2", "font/woff2").await;
+        assert_eq!(cache(&h), Some("public, max-age=604800"));
+    }
+
+    #[tokio::test]
+    async fn other_static_files_keep_the_default() {
+        let h = probe("/favicon.png", "image/png").await;
+        assert_eq!(cache(&h), None);
+    }
+
+    /// The real serving stack: ServeDir with a `.gz` sibling on disk hands the
+    /// sibling to a client that accepts gzip, the original to one that does
+    /// not, and the immutable header rides on both.
+    #[tokio::test]
+    async fn precompressed_sibling_is_served_by_negotiation() {
+        use tower_http::services::ServeDir;
+        let dir = std::env::temp_dir().join(format!("virtues-static-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("_app/immutable/chunks")).unwrap();
+        let raw = b"console.log('raw')";
+        std::fs::write(dir.join("_app/immutable/chunks/a.js"), raw).unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        std::io::Write::write_all(&mut gz, raw).unwrap();
+        let gz = gz.finish().unwrap();
+        std::fs::write(dir.join("_app/immutable/chunks/a.js.gz"), &gz).unwrap();
+
+        let mut app = Router::new().fallback_service(
+            tower::ServiceBuilder::new()
+                .layer(axum::middleware::from_fn(static_cache_policy))
+                .service(ServeDir::new(&dir).precompressed_gzip()),
+        );
+
+        let req = |accept: Option<&'static str>| {
+            let mut b = axum::http::Request::builder().uri("/_app/immutable/chunks/a.js");
+            if let Some(a) = accept {
+                b = b.header(axum::http::header::ACCEPT_ENCODING, a);
+            }
+            b.body(axum::body::Body::empty()).unwrap()
+        };
+
+        let res = app.call(req(Some("gzip, br"))).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            res.headers().get(axum::http::header::CONTENT_ENCODING).map(|v| v.to_str().unwrap()),
+            Some("gzip")
+        );
+        assert_eq!(cache(res.headers()), Some("public, max-age=31536000, immutable"));
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], &gz[..], "the sibling's bytes, untouched");
+
+        let res = app.call(req(None)).await.unwrap();
+        assert!(res.headers().get(axum::http::header::CONTENT_ENCODING).is_none());
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], raw);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
 
 /// Stamp every response with the running build identity, so an open page can
