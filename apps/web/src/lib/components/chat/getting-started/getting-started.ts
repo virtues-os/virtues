@@ -59,12 +59,12 @@ export const SKIP_COMMAND = "/dangerously-skip-onboarding";
 function heading(stepIndex: number | null): string {
 	const where =
 		stepIndex === null
-			? "All four done."
-			: `Step ${stepIndex + 1} of 4 · about ten minutes in all`;
+			? "All four are done."
+			: `Step ${stepIndex + 1} of 4 · a few minutes here, then a longer conversation when you are ready`;
 	return (
 		"# Getting started\n\n" +
-		"Your server keeps the record of your life, but it cannot connect itself, does not know your name, and cannot tell your story. " +
-		"Four things, done here, one at a time. Nothing expires; leave and come back any time.\n\n" +
+		"Your server will keep the record of your life. It cannot begin on its own: it has no mind yet, does not know your name, has nothing to read, and has never heard your story. " +
+		"Four things, one at a time. Nothing here expires.\n\n" +
 		where
 	);
 }
@@ -74,28 +74,28 @@ function settledLine(s: GettingStartedStep): string {
 	if (s.status === "skipped") {
 		switch (s.id) {
 			case "introductions":
-				return "Introductions, skipped for now. Say the word to come back to it.";
+				return "Introductions, skipped. Say so and they come back.";
 			case "connect_world":
-				return "Connecting your world, skipped for now. Sources stay in Settings.";
+				return "The record, skipped for now. Sources wait in Settings.";
 			case "interview":
-				return "The story of your life, skipped for now. The interview waits under Chats whenever you want it.";
+				return "Your story, skipped for now. The interview waits under Chats.";
 			default:
-				return "Connecting AI, skipped for now. Your server shows its record but cannot answer until AI is connected in Settings.";
+				return "A mind, skipped. Your server can show its record but cannot answer until AI is connected in Settings.";
 		}
 	}
 	switch (s.id) {
 		case "connect_ai":
 			return s.via === "byo"
-				? "AI is connected, through an endpoint of your own."
-				: "AI is connected, through your Virtues subscription.";
+				? "Your server has a mind: an endpoint of your own."
+				: "Your server has a mind: the Virtues subscription.";
 		case "introductions":
-			return "Introductions are recorded.";
+			return "Introductions made.";
 		case "connect_world":
 			return s.detail
-				? `Your world is connected, with one thing to see to: ${s.detail}.`
-				: "Your world is connected. The record has begun.";
+				? `The record has begun, with one thing to see to: ${s.detail}.`
+				: "The record has begun.";
 		case "interview":
-			return "Your story is written up, in your own words.";
+			return "Your story is written, in your own words.";
 	}
 }
 
@@ -104,26 +104,25 @@ function askLine(s: GettingStartedStep, first: boolean): string {
 	const lead = first ? "First" : "Next";
 	switch (s.id) {
 		case "connect_ai":
-			return "Before anything can be set up, your server needs AI to think with. Use Virtues' models, the best of Claude, Gemini, GPT, Grok and more, every one under zero data retention, metered per request and never kept. Or sign in to an existing account, or bring an endpoint of your own. Until one is connected this room cannot answer, and nothing typed here goes anywhere.";
+			return "Nothing can begin until your server has a mind. The Virtues subscription brings the best of Claude, Gemini, GPT and Grok, every one under zero data retention: metered per request, never kept, never trained on. Or sign in to an account you already have, or point your server at an endpoint of your own. Until then this room cannot answer, and nothing typed here leaves it.";
 		case "introductions":
-			return `${lead}, introductions. What should I call you, what will you call me, where is home, and when were you born? Say it below in your own words, all at once is fine. The story of your life comes later, in its own conversation.`;
+			return `${lead}, introductions. Your name as you like to hear it, the name you will call your server by, where home is, and the day you were born. Say it below in your own words, all at once is fine; the date sets the ruler your life is drawn against. Your story comes later, in its own conversation.`;
 		case "connect_world":
-			return `${lead}, your world: your accounts, this computer, your phone. Your server reads them from here on, and writes up your first day overnight from what they hold.`;
+			return `${lead}, the record itself. Your accounts, this computer, your phone: your server reads them from here on, and nothing it reads leaves it. Connect one, and the first page is written tonight.`;
 		case "interview":
 			return s.underway
-				? "Last, your story. The interview is underway; pick it up where you left it, one question at a time."
-				: "Last, your story. A conversation about your life, about twenty minutes, one question at a time. Stop anywhere; it keeps your place.";
+				? "Last, your story. The interview is underway; it kept your place."
+				: "Last, your story. The record holds what happened; only you can say what it meant. A conversation of about twenty minutes, one question at a time. Stop anywhere; it keeps your place.";
 	}
 }
 
 function promiseLine(firstDay: string | null): string {
 	return firstDay
-		? "Your first day is written up."
-		: "Your first day is written overnight from what your sources hold, and every day after writes itself.";
+		? "Your first page is written: yesterday, written down."
+		: "Every day, a page will be waiting for you: yesterday, written down. The first one comes tomorrow morning.";
 }
 
-const SETTLED =
-	"All four are settled. This room stays for questions about the setup; the rest of the app is yours.";
+const SETTLED = "All four are done. This room stays for questions about the setup. The rest is yours.";
 
 /** The text a synthetic message carries (ChatView renders it as markdown). */
 function textMessage(id: string, text: string) {
