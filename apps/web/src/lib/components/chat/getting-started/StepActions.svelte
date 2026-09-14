@@ -10,6 +10,7 @@
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ConnectAiActions from "./ConnectAiActions.svelte";
+	import IntegrationsPicker from "./IntegrationsPicker.svelte";
 	import type { GettingStartedStepId } from "$lib/api/client";
 
 	interface Props {
@@ -46,19 +47,20 @@
 		{#if step === "connect_ai"}
 			<ConnectAiActions />
 		{:else if step === "connect_world"}
-			<button type="button" class="btn" class:quiet={worldDone} onclick={() => beside("/sources", "Sources")}>
-				{worldDone ? "Add an integration" : "Connect an integration"}
-			</button>
-			{#if mobileLayout.isMobile}
-				<button type="button" class="btn quiet" onclick={() => mobileLayout.openOnboarding()}>Set up this phone</button>
-			{:else}
-				<button type="button" class="btn quiet" onclick={() => beside("/sources", "Sources")}>Pair your phone</button>
-			{/if}
-			<!-- The step's own verb, not a skip: the walk moves on when the
-			     person says so, whether or not anything is connected yet. -->
-			<button type="button" class="btn" class:quiet={!worldDone} onclick={() => void gettingStarted.skip("connect_world", true)}>
-				{worldDone ? "Continue" : "Continue without"}
-			</button>
+			<!-- The integrations themselves, in the thread. -->
+			<div class="stack">
+				<IntegrationsPicker />
+				<div class="row">
+					{#if mobileLayout.isMobile}
+						<button type="button" class="btn quiet" onclick={() => mobileLayout.openOnboarding()}>Set up this phone</button>
+					{/if}
+					<!-- The step's own verb, not a skip: the walk moves on when the
+					     person says so, whether or not anything is connected yet. -->
+					<button type="button" class="btn" class:quiet={!worldDone} onclick={() => void gettingStarted.skip("connect_world", true)}>
+						{worldDone ? "Continue" : "Continue without"}
+					</button>
+				</div>
+			</div>
 		{:else if step === "interview"}
 			<!-- The interview begins here, in this thread; nothing opens. -->
 			<button type="button" class="btn" onclick={startInterview} disabled={starting || underway}>
@@ -75,6 +77,18 @@
 {/if}
 
 <style>
+	.stack {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		width: 100%;
+	}
+	.row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
