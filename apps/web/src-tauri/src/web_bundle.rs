@@ -10,11 +10,12 @@
 //! ready today waits days. The box already has the newer build; this is the
 //! path from one to the other.
 //!
-//! **Why the box and nothing else?** A client that can only run a bundle the
-//! box handed it cannot get ahead of the box, which kills the whole class of
-//! "UI calls an endpoint the box does not have" by construction.
+//! **Why the box and nothing else?** Because the box is the only source that
+//! is guaranteed to have the API the UI calls. That was once the stronger claim
+//! "a client that can only run a bundle the box handed it cannot get ahead of
+//! the box" — see the next section for why it is no longer true.
 //!
-//! # Forward only
+//! # Forward only, and what it costs
 //!
 //! That same property, unguarded, is a downgrade machine. The phone updates on
 //! Apple's cadence; the box updates when its owner runs `sudo virtues upgrade`.
@@ -26,7 +27,22 @@
 //! binary paired with a downgraded SPA loses the hand-over between them (the
 //! launch-mark work of 2026-09-14 split exactly along that seam).
 //!
-//! So the bundle only ever moves forward — see `version_gate`.
+//! So the bundle only ever moves forward: `version_gate` refuses an offer that
+//! is not provably newer than what this device can already serve, and
+//! `drop_stale_overlay` puts a device back on its baked build when an App Store
+//! update has overtaken the overlay it was running.
+//!
+//! **This retires the invariant the module was designed around.** "The client
+//! can never outrun the box" is now "the client runs whichever of {baked,
+//! box-served} is newer", and the class that invariant killed by construction —
+//! UI calling an endpoint the box does not have, the wrong-midnight `tz` bug of
+//! 2026-08-05 — is back in play whenever a phone is ahead of its box. The trade
+//! was made knowingly: the alternative is silently downgrading a freshly
+//! installed app onto UI its own airlock was not built against, which breaks a
+//! device that is otherwise fine. `minShellVersion` has no mirror image today
+//! (a bundle cannot declare a minimum BOX), and `shellSupports()` gates
+//! commands against the shell, not endpoints against the box. If the class
+//! comes back, that mirror is the structural answer.
 //!
 //! # Fail-safe by construction
 //!
@@ -257,6 +273,63 @@ pub fn resolve_pending_at_startup(app_data: &Path) -> bool {
     }
     let _ = fs::remove_dir_all(root.join(&pending));
     true
+}
+
+/// Abandon an active overlay that is OLDER than the build baked into this
+/// binary, and return the version dropped.
+///
+/// The other half of the forward-only rule, and the half the download gate
+/// cannot reach. An App Store update replaces the binary but keeps the app
+/// container, so the overlay applied weeks ago survives into a shell whose
+/// baked build is newer — and since `active_bundle` is consulted on every asset
+/// request, that stale overlay goes on shadowing the newer build it shipped
+/// with. `version_gate` stops the device taking anything worse; only this puts
+/// it back on what it already has.
+///
+/// # Why startup, and nowhere else
+///
+/// This clears the pointer the running session serves from, so it must happen
+/// before a page exists. Doing it from the mid-session check thread would swap
+/// the bundle under a live page: the `index.html` already loaded from the old
+/// overlay goes on requesting its own content-hashed chunks, which by
+/// construction are not in the baked build, and the app 404s its way into a
+/// white screen. Same reason `apply` only ever takes effect at the next launch.
+///
+/// # Fail-safe
+///
+/// Every ambiguity keeps the overlay: no baked version, no active pointer, an
+/// unreadable bundle manifest, either side unparseable, or versions merely
+/// equal. Only a *strictly* newer baked build displaces one — equal versions
+/// mean the overlay is a rebuild of the same release, which is the ordinary
+/// state after any OTA and must be left alone.
+///
+/// Pointers only; the directories stay for `prune` to sweep on the next apply,
+/// so reclaiming disk never delays a launch.
+pub fn drop_stale_overlay(app_data: &Path, baked_version: Option<&str>) -> Option<String> {
+    let baked = baked_version?;
+    let root = bundles_root(app_data);
+    let active = read_pointer(&root, PTR_ACTIVE)?;
+    let have = bundle_version(&root, &active)?;
+
+    let (Ok(baked), Ok(overlay)) = (
+        semver::Version::parse(baked),
+        semver::Version::parse(&have),
+    ) else {
+        return None;
+    };
+    if baked <= overlay {
+        return None;
+    }
+
+    // Back to the baked build outright, not to `previous`: if the active
+    // overlay is behind the binary, whatever it replaced is further behind
+    // still. Pending and booting go too — they describe a bundle this device
+    // has just stopped serving, and left behind they would have the next launch
+    // "roll back" something that is no longer active.
+    for ptr in [PTR_ACTIVE, PTR_PENDING, PTR_BOOTING, PTR_PREVIOUS] {
+        clear_pointer(&root, ptr);
+    }
+    Some(have)
 }
 
 /// Called by the SPA once it has actually rendered. `booted` is the bundle id
@@ -849,6 +922,65 @@ mod tests {
         let v = last_outcome(&d).expect("recorded");
         assert_eq!(v["state"], "version_unreadable");
         assert!(v["have"].is_null());
+    }
+
+    #[test]
+    fn an_app_update_drops_an_overlay_it_has_overtaken() {
+        // The state a TestFlight update leaves behind: the container survives,
+        // so the overlay fetched by the OLD binary is still active inside a new
+        // one whose own build is newer. Nothing else notices — `active_bundle`
+        // just keeps serving it.
+        let d = tmp();
+        let root = bundles_root(&d);
+        plant_at(&root, "older1", "0.1.4");
+        plant_at(&root, "oldest0", "0.1.2");
+        write_pointer(&root, PTR_ACTIVE, "older1").unwrap();
+        write_pointer(&root, PTR_PREVIOUS, "oldest0").unwrap();
+        write_pointer(&root, PTR_PENDING, "older1").unwrap();
+
+        assert_eq!(drop_stale_overlay(&d, Some("0.1.7")).as_deref(), Some("0.1.4"));
+        assert_eq!(active_bundle(&d), None, "serves the build it shipped with");
+        // `previous` goes too: if the active overlay is behind the binary,
+        // what it replaced is further behind still.
+        assert_eq!(read_pointer(&root, PTR_PREVIOUS), None);
+        // And so do pending/booting, which named a bundle we no longer serve —
+        // left behind, the next launch would "roll back" what is not active.
+        assert_eq!(read_pointer(&root, PTR_PENDING), None);
+        assert!(!resolve_pending_at_startup(&d), "nothing left to resolve");
+    }
+
+    #[test]
+    fn a_current_overlay_is_left_alone() {
+        let d = tmp();
+        let root = bundles_root(&d);
+        plant_at(&root, "ahead1", "0.1.7");
+        write_pointer(&root, PTR_ACTIVE, "ahead1").unwrap();
+
+        // Newer than the baked build — the ordinary, working state.
+        assert_eq!(drop_stale_overlay(&d, Some("0.1.4")), None);
+        // Equal is a rebuild of the same release, not a stale overlay. Only a
+        // STRICTLY newer baked build displaces one.
+        assert_eq!(drop_stale_overlay(&d, Some("0.1.7")), None);
+        assert!(active_bundle(&d).is_some(), "still served");
+    }
+
+    #[test]
+    fn an_overlay_survives_every_ambiguity() {
+        let d = tmp();
+        let root = bundles_root(&d);
+        plant_at(&root, "kept1", "0.1.4");
+        write_pointer(&root, PTR_ACTIVE, "kept1").unwrap();
+
+        assert_eq!(drop_stale_overlay(&d, None), None, "no baked version");
+        assert_eq!(drop_stale_overlay(&d, Some("dev")), None, "unparseable baked");
+        assert!(active_bundle(&d).is_some());
+
+        // An unreadable overlay manifest is the rollback path's business, not
+        // this one's — dropping the pointer on a read error would turn a
+        // transient failure into a downgrade of its own.
+        fs::write(root.join("kept1").join(MANIFEST_NAME), "not json").unwrap();
+        assert_eq!(drop_stale_overlay(&d, Some("9.9.9")), None);
+        assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("kept1"));
     }
 
     #[test]

@@ -418,6 +418,19 @@ pub fn run() {
         if web_bundle::resolve_pending_at_startup(&dir) {
           eprintln!("[ota] a staged bundle failed to confirm; rolled back");
         }
+        // Then drop an overlay the App Store has overtaken. An app update keeps
+        // the container, so a bundle applied weeks ago outlives the binary that
+        // fetched it and goes on shadowing the newer build THIS binary ships
+        // with. After the rollback above, so a revert to `previous` is judged
+        // too; before the window, because this moves the pointer a live page
+        // would be serving from.
+        let baked = baked_bundle_version(app.handle());
+        if let Some(dropped) = web_bundle::drop_stale_overlay(&dir, baked.as_deref()) {
+          eprintln!(
+            "[ota] overlay {dropped} is older than this app's own UI — \
+             back to the build it shipped with"
+          );
+        }
         // Freeze this process's boot identity NOW, while the active pointer
         // still names what this launch will serve — the check thread below
         // can move the pointer mid-session, and boot-ok is judged against
