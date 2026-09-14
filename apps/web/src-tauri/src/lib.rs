@@ -194,7 +194,8 @@ fn ota_check_now(app: tauri::AppHandle) {
 fn ota_check(app: &tauri::AppHandle) {
   use tauri::Manager;
   let Ok(dir) = app.path().app_data_dir() else { return };
-  match web_bundle::check_and_apply(&dir, COMMAND_SURFACE_VERSION) {
+  let baked = baked_bundle_version(app);
+  match web_bundle::check_and_apply(&dir, COMMAND_SURFACE_VERSION, baked.as_deref()) {
     Ok(outcome) => {
       match &outcome {
         web_bundle::Outcome::Applied { content_hash } => {
@@ -204,12 +205,43 @@ fn ota_check(app: &tauri::AppHandle) {
           "[ota] box bundle needs shell surface {needs}, this app has {have} — \
            staying on the bundled build (update the app from the App Store)"
         ),
+        web_bundle::Outcome::BoxBehind { box_version, have } => eprintln!(
+          "[ota] box serves UI {box_version}, this app already runs {have} — \
+           staying put (upgrade the box with `sudo virtues upgrade`)"
+        ),
+        // Loud, because this one refuses every bundle until it is fixed: it
+        // means a build went out without its version stamped (see
+        // tools/ios-release.sh) and OTA is inert on that binary.
+        web_bundle::Outcome::VersionUnreadable { box_version, have } => eprintln!(
+          "[ota] cannot order box UI {box_version} against this app's {} — \
+           refusing rather than risk a downgrade",
+          have.as_deref().unwrap_or("(unstamped)")
+        ),
         _ => {}
       }
       web_bundle::record_outcome(&dir, &outcome);
     }
     Err(e) => eprintln!("[ota] check failed (harmless, will retry): {e}"),
   }
+}
+
+/// The `version` of the UI build compiled into THIS binary, read off the
+/// manifest that build stamped for itself.
+///
+/// Read rather than asserted. `.virtues-bundle.json` is written by
+/// `apps/web/scripts/write-bundle-manifest.mjs` into the same `build/` that
+/// `tauri.ios.conf.json` bakes as `frontendDist`, so the asset resolver hands
+/// back the binary's own copy of exactly the document the box serves at
+/// `/api/web-bundle/version`. Baking the version into Rust separately would be
+/// a second number to keep in step, and the delivery plan's fourth invariant is
+/// that no component asserts a fact it did not observe.
+///
+/// `None` when the manifest is missing — a build whose SPA was never stamped.
+/// The gate treats that as ambiguous and refuses, which is the safe direction.
+#[cfg(mobile)]
+fn baked_bundle_version(app: &tauri::AppHandle) -> Option<String> {
+  let asset = app.asset_resolver().get(".virtues-bundle.json".into())?;
+  web_bundle::Manifest::parse(&String::from_utf8_lossy(&asset.bytes)).map(|m| m.version)
 }
 
 #[cfg(mobile)]

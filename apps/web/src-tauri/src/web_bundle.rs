@@ -14,6 +14,20 @@
 //! box handed it cannot get ahead of the box, which kills the whole class of
 //! "UI calls an endpoint the box does not have" by construction.
 //!
+//! # Forward only
+//!
+//! That same property, unguarded, is a downgrade machine. The phone updates on
+//! Apple's cadence; the box updates when its owner runs `sudo virtues upgrade`.
+//! A shell NEWER than its box is therefore the ordinary state of affairs, not a
+//! rare window — and "take whatever the box serves" then means a fresh
+//! TestFlight build OTAs itself backwards onto the box's older SPA on its first
+//! launch, silently. The airlock lives through this: `ui/connect.html` is baked
+//! into the binary while `app.html` and the views ride the bundle, so a new
+//! binary paired with a downgraded SPA loses the hand-over between them (the
+//! launch-mark work of 2026-09-14 split exactly along that seam).
+//!
+//! So the bundle only ever moves forward — see `version_gate`.
+//!
 //! # Fail-safe by construction
 //!
 //! Every lookup here answers "use the baked bundle" unless an overlay is
@@ -75,10 +89,11 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// Parse, requiring the two fields decisions are made on. A manifest
-    /// missing `contentHash` or `minShellVersion` is unusable rather than
-    /// defaulted: defaulting `minShellVersion` to 0 would let an
-    /// unrunnable bundle install itself.
+    /// Parse, requiring the three fields decisions are made on. A manifest
+    /// missing `version`, `contentHash` or `minShellVersion` is unusable rather
+    /// than defaulted: defaulting `minShellVersion` to 0 would let an
+    /// unrunnable bundle install itself, and defaulting `version` would let an
+    /// older bundle pass the forward-only gate.
     pub fn parse(s: &str) -> Option<Self> {
         let v: serde_json::Value = serde_json::from_str(s).ok()?;
         Some(Manifest {
@@ -107,6 +122,18 @@ pub enum Outcome {
     /// to boot here once and is not given a second attempt. Clears itself when
     /// the box serves anything else.
     RolledBack { content_hash: String },
+    /// Box offers an OLDER release than this device already runs. The normal
+    /// case, not an error: the phone updates on Apple's cadence and the box
+    /// when its owner asks it to. Clears itself when the box is upgraded.
+    BoxBehind { box_version: String, have: String },
+    /// Neither forward nor backward could be established — one side's version
+    /// is not semver and the two are not the same string. Refuse: an update
+    /// that cannot be shown to move forward is not taken. `have` is `None` when
+    /// this device could not read its own version at all.
+    VersionUnreadable {
+        box_version: String,
+        have: Option<String>,
+    },
 }
 
 /// `<app-data>/web-bundles`.
@@ -314,6 +341,12 @@ pub fn record_outcome(app_data: &Path, outcome: &Outcome) {
         Outcome::RolledBack { content_hash } => serde_json::json!({
             "state": "rolled_back", "contentHash": content_hash,
         }),
+        Outcome::BoxBehind { box_version, have } => serde_json::json!({
+            "state": "box_behind", "boxVersion": box_version, "have": have,
+        }),
+        Outcome::VersionUnreadable { box_version, have } => serde_json::json!({
+            "state": "version_unreadable", "boxVersion": box_version, "have": have,
+        }),
     };
     let root = bundles_root(app_data);
     if fs::create_dir_all(&root).is_ok() {
@@ -327,28 +360,139 @@ pub fn last_outcome(app_data: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&raw).ok()
 }
 
-/// Check the box and apply a newer bundle if there is one this shell can run.
-///
-/// `shell_surface` is `COMMAND_SURFACE_VERSION` — the contract the bundle is
-/// checked against before it is allowed anywhere near the active pointer.
-pub fn check_and_apply(app_data: &Path, shell_surface: u32) -> std::io::Result<Outcome> {
-    let Some(body) = http_get(&box_addr(), "/api/web-bundle/version")? else {
-        return Ok(Outcome::NoBundleOnBox);
-    };
-    let Some(remote) = Manifest::parse(&String::from_utf8_lossy(&body)) else {
-        return Ok(Outcome::NoBundleOnBox);
-    };
+// ─── Forward-only ───────────────────────────────────────────────────────────
 
+/// How a version the box offers relates to one this device can already serve.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Step {
+    /// Provably not a downgrade — apply.
+    Forward,
+    /// Provably a downgrade — refuse.
+    Backward,
+    /// Not orderable. Refuse, because "cannot tell" is not "forward".
+    Unreadable,
+}
+
+/// Order one version string against another.
+///
+/// `version` is whatever the build was stamped with
+/// (`apps/web/scripts/write-bundle-manifest.mjs`: `GIT_DESCRIBE`, else
+/// `VIRTUES_BUILD_VERSION`, else the literal `dev`, with a leading `v`
+/// stripped). So ordering is semver, the same rule the box's own downgrade
+/// guard uses for release tags (`virtues-core/src/cli/upgrade.rs`). Two
+/// deliberate differences from that guard:
+///
+///   • **An unparseable version refuses here, where `virtues upgrade` waves it
+///     through.** That guard runs because an operator typed the command, and
+///     blocking them over an odd version string would be worse than the risk it
+///     guards. This one runs on a background thread with nobody watching, so
+///     the safe default is to do nothing and stay on what we have.
+///   • **Byte-equal strings count as forward.** A same-tag rebuild must still
+///     update — that is precisely why the manifest carries a content hash
+///     *as well as* a version, and it is what keeps the dev loop working, where
+///     both sides are stamped the literal `dev` and nothing is orderable.
+///     Equality is decided by the content hash before this is ever consulted;
+///     reaching here with equal versions means the builds genuinely differ.
+fn step(remote: &str, have: &str) -> Step {
+    if remote == have {
+        return Step::Forward;
+    }
+    match (semver::Version::parse(remote), semver::Version::parse(have)) {
+        (Ok(r), Ok(h)) if r >= h => Step::Forward,
+        (Ok(_), Ok(_)) => Step::Backward,
+        _ => Step::Unreadable,
+    }
+}
+
+/// Refuse a bundle that cannot be shown to move forward against **every**
+/// version this device can already serve, or `None` to let it through.
+///
+/// `have` carries up to two entries and both matter:
+///
+///   • the build baked into this binary — the one an App Store update just
+///     replaced, and the floor the device can always fall back to;
+///   • the overlay bundle currently active, if any — which can be *older* than
+///     the baked build right after the app updates, and must not be treated as
+///     the ceiling.
+///
+/// Empty `have` is not a free pass. No version information at all is the
+/// ambiguous case, and ambiguity stays put; the refusal is recorded, so it
+/// reads as a stated reason rather than as OTA quietly not working.
+fn version_gate(remote: &str, have: &[String]) -> Option<Outcome> {
+    if have.is_empty() {
+        return Some(Outcome::VersionUnreadable {
+            box_version: remote.to_string(),
+            have: None,
+        });
+    }
+    // A proven downgrade is the more useful thing to report, so it wins over an
+    // unorderable sibling rather than being masked by it.
+    let mut unreadable = None;
+    for h in have {
+        match step(remote, h) {
+            Step::Forward => {}
+            Step::Backward => {
+                return Some(Outcome::BoxBehind {
+                    box_version: remote.to_string(),
+                    have: h.clone(),
+                })
+            }
+            Step::Unreadable => unreadable = unreadable.or(Some(h)),
+        }
+    }
+    unreadable.map(|h| Outcome::VersionUnreadable {
+        box_version: remote.to_string(),
+        have: Some(h.clone()),
+    })
+}
+
+/// The version recorded inside a bundle directory, if it is readable.
+fn bundle_version(root: &Path, hash: &str) -> Option<String> {
+    let raw = fs::read_to_string(root.join(hash).join(MANIFEST_NAME)).ok()?;
+    Manifest::parse(&raw).map(|m| m.version)
+}
+
+/// Every version this device can already serve, for `version_gate`.
+fn have_versions(root: &Path, baked: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = baked.map(str::to_string).into_iter().collect();
+    if let Some(active) = read_pointer(root, PTR_ACTIVE) {
+        if let Some(v) = bundle_version(root, &active) {
+            if !out.contains(&v) {
+                out.push(v);
+            }
+        }
+    }
+    out
+}
+
+/// Every reason to stop before the tarball is downloaded, in order.
+///
+/// `Some(outcome)` means stay on what we have and record why; `None` means the
+/// offer is good and worth the bytes. Split out from [`check_and_apply`] so the
+/// whole decision is testable without a box on the other end of a socket —
+/// which is the half of this module that decides what a device runs.
+fn decide(
+    root: &Path,
+    remote: &Manifest,
+    shell_surface: u32,
+    baked_version: Option<&str>,
+) -> Option<Outcome> {
     if remote.min_shell_version > shell_surface {
-        return Ok(Outcome::ShellTooOld {
+        return Some(Outcome::ShellTooOld {
             needs: remote.min_shell_version,
             have: shell_surface,
         });
     }
 
-    let root = bundles_root(app_data);
-    if read_pointer(&root, PTR_ACTIVE).as_deref() == Some(remote.content_hash.as_str()) {
-        return Ok(Outcome::UpToDate);
+    if read_pointer(root, PTR_ACTIVE).as_deref() == Some(remote.content_hash.as_str()) {
+        return Some(Outcome::UpToDate);
+    }
+
+    // Forward only. After the content-hash equality above, so the bundle we
+    // already run is "up to date" whatever its version string says, and before
+    // the download, so a downgrade costs nothing on the wire.
+    if let Some(refused) = version_gate(&remote.version, &have_versions(root, baked_version)) {
+        return Some(refused);
     }
 
     // A bundle this device already rolled back gets no second download — the
@@ -357,9 +501,38 @@ pub fn check_and_apply(app_data: &Path, shell_surface: u32) -> std::io::Result<O
     if fs::read_to_string(root.join(POISON_FILE)).ok().as_deref()
         == Some(remote.content_hash.as_str())
     {
-        return Ok(Outcome::RolledBack {
-            content_hash: remote.content_hash,
+        return Some(Outcome::RolledBack {
+            content_hash: remote.content_hash.clone(),
         });
+    }
+
+    None
+}
+
+/// Check the box and apply a newer bundle if there is one this shell can run.
+///
+/// `shell_surface` is `COMMAND_SURFACE_VERSION` — the contract the bundle is
+/// checked against before it is allowed anywhere near the active pointer.
+///
+/// `baked_version` is the `version` of the build compiled into this binary,
+/// read off its own `.virtues-bundle.json` rather than asserted — the shell
+/// reports what it observed, per the delivery plan's invariant 4. `None` means
+/// it could not be read, which the gate treats as ambiguous, not as consent.
+pub fn check_and_apply(
+    app_data: &Path,
+    shell_surface: u32,
+    baked_version: Option<&str>,
+) -> std::io::Result<Outcome> {
+    let Some(body) = http_get(&box_addr(), "/api/web-bundle/version")? else {
+        return Ok(Outcome::NoBundleOnBox);
+    };
+    let Some(remote) = Manifest::parse(&String::from_utf8_lossy(&body)) else {
+        return Ok(Outcome::NoBundleOnBox);
+    };
+
+    let root = bundles_root(app_data);
+    if let Some(stop) = decide(&root, &remote, shell_surface, baked_version) {
+        return Ok(stop);
     }
 
     let Some(tar_gz) = http_get(&box_addr(), "/api/web-bundle/tarball")? else {
@@ -538,14 +711,26 @@ mod tests {
     }
 
     fn plant(root: &Path, hash: &str) {
+        plant_at(root, hash, "0.1.0");
+    }
+
+    fn plant_at(root: &Path, hash: &str, version: &str) {
         let d = root.join(hash);
         fs::create_dir_all(&d).unwrap();
         fs::write(d.join("index.html"), "<html></html>").unwrap();
         fs::write(
             d.join(MANIFEST_NAME),
-            format!(r#"{{"version":"1","contentHash":"{hash}","minShellVersion":1}}"#),
+            format!(r#"{{"version":"{version}","contentHash":"{hash}","minShellVersion":1}}"#),
         )
         .unwrap();
+    }
+
+    fn offer(version: &str, hash: &str) -> Manifest {
+        Manifest {
+            version: version.into(),
+            content_hash: hash.into(),
+            min_shell_version: 1,
+        }
     }
 
     #[test]
@@ -556,6 +741,139 @@ mod tests {
         assert!(Manifest::parse(r#"{"version":"1","contentHash":"a"}"#).is_none());
         assert!(Manifest::parse(r#"{"version":"1","minShellVersion":2}"#).is_none());
         assert!(Manifest::parse("not json").is_none());
+    }
+
+    // ── forward only ────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_newer_box_is_taken() {
+        let d = tmp();
+        let root = bundles_root(&d);
+        // Nothing applied yet: this device runs the build baked into the app.
+        assert_eq!(decide(&root, &offer("0.1.5", "new1"), 4, Some("0.1.4")), None);
+        // Prereleases order below their release, exactly as semver intends —
+        // the whole reason the version line was reset to 0.1.0 (Cargo.toml).
+        assert_eq!(
+            decide(&root, &offer("0.1.5", "new1"), 4, Some("0.1.5-staging.7")),
+            None
+        );
+    }
+
+    #[test]
+    fn an_older_box_is_refused_and_recorded() {
+        let d = tmp();
+        let root = bundles_root(&d);
+        // The ordinary state: the phone updated through TestFlight, the box has
+        // not been upgraded yet. Without this it OTAs itself backwards.
+        let stop = decide(&root, &offer("0.1.4", "old9"), 4, Some("0.1.6"));
+        assert_eq!(
+            stop,
+            Some(Outcome::BoxBehind {
+                box_version: "0.1.4".into(),
+                have: "0.1.6".into(),
+            })
+        );
+
+        record_outcome(&d, &stop.unwrap());
+        let v = last_outcome(&d).expect("recorded");
+        assert_eq!(v["state"], "box_behind");
+        assert_eq!(v["boxVersion"], "0.1.4");
+        assert_eq!(v["have"], "0.1.6");
+    }
+
+    #[test]
+    fn an_overlay_does_not_shadow_a_newer_baked_build() {
+        // An App Store update can land a baked build NEWER than the overlay
+        // applied weeks ago. The offer is ordered against both, so the stale
+        // overlay cannot vouch for a bundle the baked build has already passed.
+        let d = tmp();
+        let root = bundles_root(&d);
+        plant_at(&root, "stale1", "0.1.3");
+        write_pointer(&root, PTR_ACTIVE, "stale1").unwrap();
+
+        assert_eq!(
+            decide(&root, &offer("0.1.4", "next2"), 4, Some("0.1.6")),
+            Some(Outcome::BoxBehind {
+                box_version: "0.1.4".into(),
+                have: "0.1.6".into(),
+            }),
+            "forward against the overlay, backward against the baked build"
+        );
+    }
+
+    #[test]
+    fn the_bundle_we_run_is_up_to_date_whatever_its_version_says() {
+        let d = tmp();
+        let root = bundles_root(&d);
+        plant_at(&root, "same3", "0.1.4");
+        write_pointer(&root, PTR_ACTIVE, "same3").unwrap();
+        // Content-hash equality answers first — it is the only thing that
+        // actually says "this is the build you are running".
+        assert_eq!(
+            decide(&root, &offer("0.1.4", "same3"), 4, Some("0.1.6")),
+            Some(Outcome::UpToDate)
+        );
+    }
+
+    #[test]
+    fn an_unorderable_version_refuses_rather_than_risking_a_downgrade() {
+        let d = tmp();
+        let root = bundles_root(&d);
+        // A box build that was never stamped. `virtues upgrade` waves this case
+        // through because an operator asked; nobody asked for this one.
+        assert_eq!(
+            decide(&root, &offer("dev", "odd4"), 4, Some("0.1.6")),
+            Some(Outcome::VersionUnreadable {
+                box_version: "dev".into(),
+                have: Some("0.1.6".into()),
+            })
+        );
+        // Our own side unstamped is the same answer from the other direction.
+        assert_eq!(
+            decide(&root, &offer("0.1.6", "odd4"), 4, Some("dev")),
+            Some(Outcome::VersionUnreadable {
+                box_version: "0.1.6".into(),
+                have: Some("dev".into()),
+            })
+        );
+        // And no version information at all is ambiguity, not consent.
+        assert_eq!(
+            decide(&root, &offer("0.1.6", "odd4"), 4, None),
+            Some(Outcome::VersionUnreadable {
+                box_version: "0.1.6".into(),
+                have: None,
+            })
+        );
+
+        record_outcome(&d, &decide(&root, &offer("dev", "odd4"), 4, None).unwrap());
+        let v = last_outcome(&d).expect("recorded");
+        assert_eq!(v["state"], "version_unreadable");
+        assert!(v["have"].is_null());
+    }
+
+    #[test]
+    fn a_same_tag_rebuild_still_updates() {
+        // Byte-equal versions are forward: a rebuild at one tag changes the
+        // content hash and nothing else, and the dev loop stamps the literal
+        // `dev` on both sides forever. Refusing here would freeze both.
+        let d = tmp();
+        let root = bundles_root(&d);
+        assert_eq!(decide(&root, &offer("0.1.5", "rebuilt"), 4, Some("0.1.5")), None);
+        assert_eq!(decide(&root, &offer("dev", "rebuilt"), 4, Some("dev")), None);
+    }
+
+    #[test]
+    fn a_too_new_bundle_is_still_refused_first() {
+        // The shell-surface guard answers before the version gate: a bundle
+        // that is both newer AND unrunnable should say why it cannot run.
+        let d = tmp();
+        let root = bundles_root(&d);
+        let mut m = offer("0.9.0", "future5");
+        m.min_shell_version = 9;
+        assert_eq!(
+            decide(&root, &m, 4, Some("0.1.6")),
+            Some(Outcome::ShellTooOld { needs: 9, have: 4 })
+        );
     }
 
     #[test]
@@ -598,6 +916,11 @@ mod tests {
         write_pointer(&root, PTR_PENDING, "new2").unwrap();
         write_pointer(&root, PTR_PREVIOUS, "old1").unwrap();
 
+        // First launch after the apply: this IS the attempt, so it is marked
+        // and served, not rolled back.
+        assert!(!resolve_pending_at_startup(&d), "first launch attempts it");
+        assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("new2"));
+        // Second launch with the attempt still unconfirmed: it does not boot.
         assert!(resolve_pending_at_startup(&d));
         assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("old1"));
         assert!(!root.join("new2").exists(), "bad bundle is removed");
@@ -612,6 +935,7 @@ mod tests {
         write_pointer(&root, PTR_PENDING, "new2").unwrap();
         // No previous: this overlaid the baked bundle.
 
+        assert!(!resolve_pending_at_startup(&d), "first launch attempts it");
         assert!(resolve_pending_at_startup(&d));
         assert_eq!(read_pointer(&root, PTR_ACTIVE), None);
         assert_eq!(active_bundle(&d), None, "serves the baked bundle again");
@@ -625,7 +949,7 @@ mod tests {
         write_pointer(&root, PTR_ACTIVE, "good3").unwrap();
         write_pointer(&root, PTR_PENDING, "good3").unwrap();
 
-        mark_boot_ok(&d); // the SPA rendered
+        mark_boot_ok(&d, Some("good3")); // the SPA rendered, from that bundle
         assert!(!resolve_pending_at_startup(&d), "nothing pending to resolve");
         assert_eq!(read_pointer(&root, PTR_ACTIVE).as_deref(), Some("good3"));
     }
