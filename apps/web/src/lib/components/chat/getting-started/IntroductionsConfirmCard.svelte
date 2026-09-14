@@ -1,12 +1,14 @@
 <!--
-	What `record_introductions` played back, as one line under the model's
-	turn with one button. THE BUTTON WRITES, through the same profile
-	endpoints the old form used; the tool wrote nothing. Corrections are a
-	reply, not a form: the model plays the facts back again.
+	What `record_introductions` heard, played back under the model's turn:
+	one line, then one button on its own row. THE BUTTON WRITES, through the
+	same profile endpoints the old form used; the tool wrote nothing. A
+	correction is a reply, not a form.
 -->
 <script lang="ts">
 	import { updateProfile, updateAssistantProfile, type Profile } from "$lib/api/client";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
+	import Act from "./ui/Act.svelte";
+	import Choices from "./ui/Choices.svelte";
 
 	interface Fields {
 		preferred_name?: string | null;
@@ -15,26 +17,18 @@
 		home_timezone?: string | null;
 		birth_date?: string | null;
 	}
-	interface Props {
-		fields: Fields;
-	}
-	let { fields }: Props = $props();
+	let { fields }: { fields: Fields } = $props();
 
 	let saving = $state(false);
 	let saved = $state(false);
 	let error = $state<string | null>(null);
-	// A line from history, after the step is done: settled.
-	const alreadyDone = $derived(gettingStarted.step("introductions")?.status === "done");
+	const settled = $derived(saved || gettingStarted.step("introductions")?.status === "done");
 
 	const summary = $derived(
 		[
 			fields.preferred_name ? `you are ${fields.preferred_name}` : null,
 			fields.assistant_name ? `I am ${fields.assistant_name}` : null,
-			fields.home_timezone
-				? `home is ${fields.home_place ? `${fields.home_place} (${fields.home_timezone})` : fields.home_timezone}`
-				: fields.home_place
-					? `home is ${fields.home_place}`
-					: null,
+			fields.home_place ?? fields.home_timezone ? `home is ${fields.home_place ?? fields.home_timezone}` : null,
 			fields.birth_date ? `born ${fields.birth_date}` : null,
 		]
 			.filter(Boolean)
@@ -64,49 +58,21 @@
 	}
 </script>
 
-<div class="confirm">
-	{#if saved || alreadyDone}
-		<span class="line">Recorded: {summary}.</span>
-	{:else}
-		<span class="line">So: {summary}.</span>
-		<button type="button" class="btn" onclick={save} disabled={saving}>{saving ? "Saving…" : "That's right"}</button>
-		<span class="note">Reply to correct anything.</span>
-		{#if error}<span class="error">{error}</span>{/if}
-	{/if}
-</div>
+<p class="said">{settled ? "Recorded" : "So"}: {summary}.</p>
+{#if !settled}
+	<Choices>
+		{#snippet foot()}
+			{#if error}<span class="error">{error}</span>{:else}Reply to correct anything.{/if}
+		{/snippet}
+		<Act variant="primary" disabled={saving} onclick={save}>{saving ? "Saving…" : "That's right"}</Act>
+	</Choices>
+{/if}
 
 <style>
-	.confirm {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.5rem 0.75rem;
-		margin: 0.5rem 0 0.25rem;
-		font-size: 0.9375rem;
-	}
-	.line {
-		color: var(--color-foreground);
-	}
-	.btn {
-		font: inherit;
-		font-size: 0.875rem;
-		padding: 0.35rem 0.9rem;
-		border-radius: 6px;
-		border: 1px solid var(--color-foreground);
-		background: var(--color-foreground);
-		color: var(--color-background);
-		cursor: pointer;
-	}
-	.btn:disabled {
-		opacity: 0.4;
-	}
-	.note {
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
+	.said {
+		margin: 0.5rem 0 0;
 	}
 	.error {
-		font-size: 0.875rem;
 		color: var(--color-error, #9a2b2e);
-		flex-basis: 100%;
 	}
 </style>
