@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { serializeComposer } from "$lib/utils/composerText";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
 	import { Spring } from "svelte/motion";
@@ -105,51 +106,27 @@
 		}
 	});
 
-	// Get text content with mentions expanded to markdown format
+	// The composer is a contenteditable, so line structure lives in the DOM
+	// (blocks, <br>, U+00A0) rather than in `\n`. `textContent` and a
+	// text-node-only walk drop all of it — three typed bullet lines reached
+	// the model as one run-on line. serializeComposer reads blocks as lines.
+	const PILL = {
+		className: "ref-pill",
+		serialize: (el: HTMLElement) => {
+			const entityUrl = el.dataset.entityUrl;
+			const name = el.textContent?.replace(/^@/, "") || "";
+			return entityUrl ? `[${name}](${entityUrl})` : null;
+		},
+	};
+
+	// Text with mentions expanded to markdown links — what gets sent.
 	function getExpandedContent(): string {
-		if (!inputEl) return "";
-
-		let result = "";
-		const walker = document.createTreeWalker(inputEl, NodeFilter.SHOW_ALL);
-		let node: Node | null = walker.currentNode;
-
-		while (node) {
-			if (node.nodeType === Node.TEXT_NODE) {
-				result += node.textContent || "";
-			} else if (node.nodeType === Node.ELEMENT_NODE) {
-				const el = node as HTMLElement;
-				if (el.classList.contains("ref-pill")) {
-					const entityUrl = el.dataset.entityUrl;
-					const name = el.textContent?.replace(/^@/, "") || "";
-					if (entityUrl) {
-						result += `[${name}](${entityUrl})`;
-					} else {
-						result += el.textContent || "";
-					}
-					// Skip children of mention chip
-					const next = walker.nextSibling();
-					if (next) {
-						node = next;
-						continue;
-					} else {
-						let parent = walker.parentNode();
-						while (parent && !walker.nextSibling()) {
-							parent = walker.parentNode();
-						}
-						node = walker.currentNode;
-						continue;
-					}
-				}
-			}
-			node = walker.nextNode();
-		}
-
-		return result;
+		return inputEl ? serializeComposer(inputEl, PILL) : "";
 	}
 
-	// Get plain text content (for value binding)
+	// Text with mentions as their visible label — for the value binding.
 	function getPlainContent(): string {
-		return inputEl?.textContent || "";
+		return inputEl ? serializeComposer(inputEl) : "";
 	}
 
 	function updateHeight() {
