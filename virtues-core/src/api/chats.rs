@@ -842,7 +842,7 @@ pub async fn generate_title(
             // default only covers a chat that has no title yet.
             .unwrap_or_else(|| {
                 if chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
-                    "First things first".to_string()
+                    "Getting started".to_string()
                 } else {
                     "In your own words".to_string()
                 }
