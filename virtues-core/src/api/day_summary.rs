@@ -817,9 +817,13 @@ async fn build_health_snapshot(
         let mut lines = Vec::new();
 
         // Heart rate
-        let hr: Option<(Option<i32>, Option<i32>, Option<f64>, i32)> = sqlx::query_as(
+        // `AVG` over an integer column is NUMERIC in Postgres, which sqlx
+        // will not decode as f64, and `COUNT(*)` is INT8, not INT4 — both
+        // failed at row decode, and the `?` on every caller took the whole
+        // narration down with them. Cast at the boundary; the count is i64.
+        let hr: Option<(Option<i32>, Option<i32>, Option<f64>, i64)> = sqlx::query_as(
             r#"
-        SELECT MIN(bpm), MAX(bpm), ROUND(AVG(bpm)), COUNT(*)
+        SELECT MIN(bpm), MAX(bpm), ROUND(AVG(bpm))::float8, COUNT(*)
         FROM data_health_heart_rate
         WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz
         "#,
@@ -2919,5 +2923,46 @@ mod dossier_tests {
             .await
             .expect("narration must not die on its own SQL");
         assert!(out.is_none(), "an empty day earns no story");
+    }
+
+    /// The heart-rate snapshot decodes. `ROUND(AVG(bpm))` over an integer
+    /// column is NUMERIC and `COUNT(*)` is INT8 in Postgres; read as f64 and
+    /// i32 they fail at decode time, and both callers propagate with `?` — so
+    /// every day that had events lost its narration to this one row. An empty
+    /// table does not dodge it: the aggregate row always exists and its types
+    /// are fixed at plan time.
+    #[sqlx::test]
+    async fn health_snapshot_decodes_with_and_without_readings(pool: PgPool) {
+        let (start, end) = ("2026-09-10T00:00:00Z", "2026-09-11T00:00:00Z");
+        let empty = build_health_snapshot(&pool, start, end)
+            .await
+            .expect("the aggregate row must decode over an empty table");
+        assert!(empty.is_none(), "no readings, no section");
+
+        for (i, bpm) in [60, 70, 80].iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO data_health_heart_rate \
+                 (id, bpm, occurred_at, source_stream_id, source_table, source_provider) \
+                 VALUES ($1, $2, '2026-09-10T08:00:00Z'::timestamptz + make_interval(mins => $3), \
+                         $4, 't', 'p')",
+            )
+            .bind(format!("hr{i}"))
+            .bind(bpm)
+            .bind(i as i32)
+            // source_stream_id is unique per row.
+            .bind(format!("src{i}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let section = build_health_snapshot(&pool, start, end)
+            .await
+            .expect("the aggregate row must decode over readings")
+            .expect("three readings earn a section");
+        assert!(
+            section.body.contains("avg 70, min 60, max 80 (3 readings)"),
+            "{}",
+            section.body
+        );
     }
 }
