@@ -350,7 +350,21 @@ of which this plan already does, and one it refuses.
   forbids ([narrative-identity.md](../build/narrative-identity.md)). The room
   knows what the box holds and nothing about who they are until they say.
 
-## Where this stands (2026-09-13)
+## Where this stands (2026-09-14)
+
+**The room is one thread now** (Adam, 09-14, on seeing the first build: "no
+message within messages… the main view is way too crazy, and the checklist
+too"). The mast, the checklist, and the stacked cards are gone. The top of
+the room is a welcome line plus one line per settled step; the bottom is the
+ask for the first open step only, with a single row of buttons where a
+button is needed (the subscription's doors, the source and phone doors, the
+interview's door, the first day's page) and a quiet Skip. Introductions has
+no control at all: the person types in the one composer, the model plays it
+back as a line with one confirm button, and the button writes. The door
+lives in the chat header. While locked there is no sidebar at all; after,
+the sidebar card is the title and the count, no list. The section below
+predates that and describes the first build.
+
 
 Steps 1–6 of the build order are BUILT on `wave` (see the commit log for
 `getting_started`). Three deviations from the text above, all deliberate:

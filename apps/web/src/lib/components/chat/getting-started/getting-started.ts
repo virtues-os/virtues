@@ -2,26 +2,32 @@
  * Getting started — the room after the founder's letter.
  *
  * One fixed conversation, seeded at boot; the server forces its mode by id
- * (see chat_handler) and refuses to delete or retitle it. Everything above
- * the first stored message is SYNTHETIC: the mast, one card per open step,
- * the promise line, the authored first line. They are rebuilt from the
- * derived state on every load and every state change, never persisted, so a
- * person back after a week sees today, not a replay of cards that no longer
- * apply. The interview room does the same with its opening
+ * (see chat_handler) and refuses to delete or retitle it. It reads as ONE
+ * thread: the assistant says what has been settled and asks the next thing
+ * at the bottom, the person answers in the one composer, and a button
+ * appears only where a button is genuinely needed (a subscription, a source,
+ * the interview's door).
+ *
+ * Everything not typed by the person or answered by the model is SYNTHETIC
+ * and never persisted: a welcome line and the settled steps at the top, the
+ * current step's ask at the bottom. Rebuilt from the derived state on every
+ * load and every state change, so someone back after a week sees today.
+ * The interview room does the same with its opening
  * (chat/interview/interview.ts); this module is that pattern's second use.
  */
 import type { Chat } from "@ai-sdk/svelte";
-import type { GettingStartedState, GettingStartedStepId } from "$lib/api/client";
+import type { GettingStartedState, GettingStartedStep, GettingStartedStepId } from "$lib/api/client";
 
 /** Mirrors getting_started::GETTING_STARTED_CHAT_ID on the server. */
 export const GETTING_STARTED_CHAT_ID = "chat_getting_started";
 
-/** Every synthetic message id starts with this; the room renders them as
- *  cards, and the opening strips and rebuilds them by it. */
+/** Every synthetic message id starts with this. */
 export const GS_PREFIX = "gs-";
-export const GS_MAST_ID = "gs-mast";
-export const GS_PROMISE_ID = "gs-promise";
-export const GS_FIRST_LINE_ID = "gs-first-line";
+export const GS_WELCOME_ID = "gs-welcome";
+/** The bottom of the thread: the current ask, the promise, the close. */
+export const GS_NOW_PREFIX = "gs-now-";
+export const GS_PROMISE_ID = "gs-now-promise";
+export const GS_SETTLED_ID = "gs-now-settled";
 
 export const STEP_ORDER: GettingStartedStepId[] = [
 	"connect_ai",
@@ -30,37 +36,98 @@ export const STEP_ORDER: GettingStartedStepId[] = [
 	"interview",
 ];
 
-export function gsCardId(step: GettingStartedStepId): string {
-	return `${GS_PREFIX}card-${step}`;
-}
-
-export function gsCardStep(id: string): GettingStartedStepId | null {
-	const m = id.match(/^gs-card-(connect_ai|introductions|connect_world|interview)$/);
-	return (m?.[1] as GettingStartedStepId | undefined) ?? null;
-}
-
 export function isGettingStartedChat(convId: string | null | undefined): boolean {
 	return convId === GETTING_STARTED_CHAT_ID;
+}
+
+/** The step a bottom ask belongs to, if the id is one. */
+export function gsNowStep(id: string): GettingStartedStepId | null {
+	const m = id.match(/^gs-now-(connect_ai|introductions|connect_world|interview)$/);
+	return (m?.[1] as GettingStartedStepId | undefined) ?? null;
 }
 
 /** The slash command that does what the door does. Typed, not discovered:
  *  the one place "onboarding" survives in the visible vocabulary. */
 export const SKIP_COMMAND = "/dangerously-skip-onboarding";
 
-/** The authored first line: shown the moment AI is connected and the room
- *  has no stored messages. No model call — the model speaks on the reply. */
-export const FIRST_LINE =
-	"Your server can think now. I’m here for the rest of the setup: " +
-	"say what you’d like to be called, ask why any of this matters, or " +
-	"just work through the cards above. Nothing here expires.";
+// ── the authored lines ───────────────────────────────────────────────────
+// The room's own voice: plain, no flattery, one thing at a time. The model
+// speaks only in stored turns; these are the box's.
 
-/** Rebuild the synthetic top of the room from the derived state.
+const WELCOME =
+	"Your server keeps the record of your life. There are four things it cannot do for itself, and we do them here, one at a time. Nothing here expires.";
+
+/** What a settled step reads as, in the thread's history. */
+function settledLine(s: GettingStartedStep): string {
+	if (s.status === "skipped") {
+		switch (s.id) {
+			case "introductions":
+				return "Introductions, skipped for now. Say the word to come back to it.";
+			case "connect_world":
+				return "Connecting your world, skipped for now. Sources stay in Settings.";
+			case "interview":
+				return "The story of your life, skipped for now. The interview waits under Chats whenever you want it.";
+			default:
+				return "Connecting AI, skipped for now. Your server shows its record but cannot answer until AI is connected in Settings.";
+		}
+	}
+	switch (s.id) {
+		case "connect_ai":
+			return s.via === "byo"
+				? "AI is connected, through an endpoint of your own."
+				: "AI is connected, through your Virtues subscription.";
+		case "introductions":
+			return "Introductions are recorded.";
+		case "connect_world":
+			return s.detail
+				? `Your world is connected, with one thing to see to: ${s.detail}.`
+				: "Your world is connected. The record has begun.";
+		case "interview":
+			return "Your story is written up, in your own words.";
+	}
+}
+
+/** The ask for the step that is up now. */
+function askLine(s: GettingStartedStep, first: boolean): string {
+	const lead = first ? "First" : "Next";
+	switch (s.id) {
+		case "connect_ai":
+			return `${lead}, the models your server thinks with: a Virtues subscription, or an endpoint of your own. Until then this room cannot answer, and nothing typed here goes anywhere.`;
+		case "introductions":
+			return `${lead}, introductions. What should I call you, what will you call me, where is home, and when were you born? Say it below in your own words, all at once is fine. The story of your life comes later, in its own conversation.`;
+		case "connect_world":
+			return `${lead}, your world: your accounts, this computer, your phone. Your server reads them from here on, and writes up your first day overnight from what they hold.`;
+		case "interview":
+			return s.underway
+				? "Last, your story. The interview is underway; pick it up where you left it, one question at a time."
+				: "Last, your story. A conversation about your life, about twenty minutes, one question at a time. Stop anywhere; it keeps your place.";
+	}
+}
+
+function promiseLine(firstDay: string | null): string {
+	return firstDay
+		? "Your first day is written up."
+		: "Your first day is written overnight from what your sources hold, and every day after writes itself.";
+}
+
+const SETTLED =
+	"All four are settled. This room stays for questions about the setup; the rest of the app is yours.";
+
+/** The text a synthetic message carries (ChatView renders it as markdown). */
+function textMessage(id: string, text: string) {
+	return { id, role: "assistant" as const, parts: [{ type: "text" as const, text }] };
+}
+
+/** Rebuild the synthetic top and bottom of the room from the derived state.
  *
- *  PREPENDS after stripping: the load paths replace `chat.messages`
- *  wholesale, and the state changes underneath (a source lands, the
- *  interview closes in its own room), so this must be safe to run any
- *  number of times. `state === null` (not loaded, or an older box without
- *  the endpoint) leaves the stored transcript alone. */
+ *  Top: the welcome, then one line per settled step, in walking order.
+ *  Bottom: the ask for the first open step (and only that one), the promise
+ *  once something is flowing, or the close once everything is settled.
+ *  Stored turns sit between. Safe to run any number of times; rebuilds only
+ *  when the synthetic set actually changed, and never while a turn streams
+ *  (the caller checks status) — reassigning the transcript under the SDK
+ *  mid-stream once lost a streamed tool part. `state === null` (not loaded,
+ *  or an older box without the endpoint) leaves the stored transcript alone. */
 export function applyGettingStartedOpening(
 	chat: Chat,
 	convId: string | null | undefined,
@@ -69,37 +136,43 @@ export function applyGettingStartedOpening(
 	if (!isGettingStartedChat(convId)) return;
 	const stored = chat.messages.filter((m) => !m.id.startsWith(GS_PREFIX));
 	if (!state) {
-		if (stored.length !== chat.messages.length) {
-			chat.messages = stored as typeof chat.messages;
-		}
+		if (stored.length !== chat.messages.length) chat.messages = stored as typeof chat.messages;
 		return;
 	}
-	// A single space, not empty: an assistant message with no text reads as
-	// "loading" to the room's chrome. The card branch never renders it.
-	const blank = { type: "text", text: " " } as const;
-	const synthetic: { id: string; role: "assistant"; parts: (typeof blank)[] }[] = [];
-	synthetic.push({ id: GS_MAST_ID, role: "assistant", parts: [blank] });
-	for (const step of STEP_ORDER) {
-		const s = state.steps.find((x) => x.id === step);
-		if (s?.status === "open") synthetic.push({ id: gsCardId(step), role: "assistant", parts: [blank] });
+
+	const top = [textMessage(GS_WELCOME_ID, WELCOME)];
+	const steps = STEP_ORDER.map((id) => state.steps.find((s) => s.id === id)).filter(
+		(s): s is GettingStartedStep => !!s,
+	);
+	for (const s of steps) {
+		if (s.status !== "open") top.push(textMessage(`gs-done-${s.id}`, settledLine(s)));
 	}
-	const world = state.steps.find((s) => s.id === "connect_world");
+
+	const bottom: ReturnType<typeof textMessage>[] = [];
+	const world = steps.find((s) => s.id === "connect_world");
 	if (world?.status === "done" || state.first_day) {
-		synthetic.push({ id: GS_PROMISE_ID, role: "assistant", parts: [blank] });
+		bottom.push(textMessage(GS_PROMISE_ID, promiseLine(state.first_day)));
 	}
-	if (state.ai_connected && stored.length === 0) {
-		synthetic.push({ id: GS_FIRST_LINE_ID, role: "assistant", parts: [blank] });
+	const now = steps.find((s) => s.status === "open");
+	if (now) {
+		bottom.push(textMessage(`${GS_NOW_PREFIX}${now.id}`, askLine(now, now.id === "connect_ai")));
+	} else if (state.graduated) {
+		bottom.push(textMessage(GS_SETTLED_ID, SETTLED));
 	}
-	// Reassign ONLY when the synthetic set actually changed. The store's poll
-	// hands out a fresh state object every 30s, and reassigning the transcript
-	// on each one replaced the live message under the SDK's feet mid-stream:
-	// a streamed tool part landed in the SDK's own object and was gone from
-	// the copy the room rendered (the introductions card never appeared until
-	// a reload).
-	const currentSynthetic = chat.messages
+
+	const want = [...top, ...bottom].map((m) => m.id).join("|");
+	const have = chat.messages
 		.filter((m) => m.id.startsWith(GS_PREFIX))
 		.map((m) => m.id)
 		.join("|");
-	if (currentSynthetic === synthetic.map((m) => m.id).join("|")) return;
-	chat.messages = [...synthetic, ...stored] as unknown as typeof chat.messages;
+	if (want === have) return;
+	chat.messages = [...top, ...stored, ...bottom] as unknown as typeof chat.messages;
+}
+
+/** Before the person's turn goes out: the bottom asks come off, so the
+ *  reply lands under their message and the ask returns beneath it after. */
+export function stripGettingStartedBottom(chat: Chat, convId: string | null | undefined): void {
+	if (!isGettingStartedChat(convId)) return;
+	const kept = chat.messages.filter((m) => !m.id.startsWith(GS_NOW_PREFIX));
+	if (kept.length !== chat.messages.length) chat.messages = kept as typeof chat.messages;
 }

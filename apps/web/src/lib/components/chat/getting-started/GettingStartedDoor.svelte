@@ -54,6 +54,7 @@
 		border: 1px solid transparent;
 		border-radius: 6px;
 		padding: 0.25rem 0.5rem;
+		margin-right: 0.25rem;
 		font: inherit;
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
