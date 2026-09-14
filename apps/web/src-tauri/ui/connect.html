@@ -664,7 +664,14 @@
         app.innerHTML = '';
         chromeEl.style.visibility = 'hidden';
         try {
-          const surface = localStorage.getItem('virtues-theme-surface');
+          // The same fallback chain app.html uses, in the same order. Not just
+          // the surface key: a device whose cache predates it has only
+          // `virtues-theme-bg`, and app.html would paint THAT while this page
+          // painted its own white — the very step this is here to remove, on
+          // the one launch after an update.
+          const surface =
+            localStorage.getItem('virtues-theme-surface') ||
+            localStorage.getItem('virtues-theme-bg');
           if (surface) document.body.style.backgroundColor = surface;
         } catch { /* no storage: this page's own paper is the fallback */ }
       }
