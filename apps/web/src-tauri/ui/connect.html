@@ -265,8 +265,8 @@
                 /* Armed a frame late, deliberately — see `renderSplash`. */
                 opacity: 0; }
       /* `opacity: 1` matters as much as the animation: it is the underlying
-         value `splash-out`'s implicit `from` reads on the way out, and with the
-         base rule at 0 the exit would fade from nothing to nothing. */
+         value `splash-settle`'s implicit `from` reads on the way out, and with
+         the base rule at 0 the exit would fade from nothing to nothing. */
       #splash.ready { opacity: 1; animation: splash-fade .14s var(--ease) both; }
       /* The live region's text, for a screen reader only. */
       #splash .offscreen { position: absolute; width: 1px; height: 1px;
@@ -277,27 +277,26 @@
          swings it through an arc on its way in (4-5px, measurable). Scaling the
          mark about itself leaves it exactly where the app's is.
 
-         .14s, not .22s: the entrance has to be FINISHED inside MARK_BEAT, or
-         the exit replaces it mid-fade and `splash-out`'s implicit `from` snaps
-         the opacity back to 1 for a frame on its way down. */
+         .14s, not .22s: the entrance has to be FINISHED inside MARK_BEAT. An
+         airlock screen replacing it mid-fade snaps the opacity back to 1 for a
+         frame on its way down, and handing over to the app mid-fade passes a
+         partly-drawn mark to one that is fully drawn. */
       #splash svg { overflow: visible; }
       #splash.ready svg { animation: splash-mark .14s var(--ease) both; }
-      /* LEAVING FOR THE APP: a fade IN PLACE, no scale. The mark is standing
-         where the app's own mark is about to assemble, so anything that moves
-         it first would make the handoff a jump cut with two positions in it. */
-      #splash.leaving { animation: splash-out .16s var(--ease) both; }
-      /* LEAVING FOR THE AIRLOCK: nothing is about to stand here, so the mark
+      /* LEAVING FOR THE AIRLOCK — the only exit there is. The app path does not
+         fade at all: the SPA's shell paints this same mark in this same place,
+         so the navigation IS the transition. Here nothing is about to stand
+         here, so the mark
          is free to recede — and should, because the screen that follows rises
          into the space it leaves. */
       #splash.settling { animation: splash-settle .2s var(--ease) both; }
       @keyframes splash-fade { from { opacity: 0; } }
       @keyframes splash-mark { from { transform: scale(.94); } }
-      @keyframes splash-out  { to   { opacity: 0; } }
       @keyframes splash-settle { to { opacity: 0; transform: scale(.9); } }
       /* Vestibular comfort: the fork still happens, it just cuts. */
       @media (prefers-reduced-motion: reduce) {
         #splash.ready, #splash.ready svg,
-        #splash.leaving, #splash.settling { animation-duration: .01ms; }
+        #splash.settling { animation-duration: .01ms; }
       }
       .steps { margin: 26px 0 0; padding: 0; list-style: none; }
       .steps li { font-size: 13px; color: var(--ink-subtle); line-height: 1.6;
@@ -711,7 +710,11 @@
       // MARK_BEAT is a floor, not a delay — it stops a box that answers in
       // 80ms from flashing the mark for three frames. Beat plus exit is ~280ms
       // on the common path, under what the probe cost even at its fastest.
-      const MARK_BEAT = 150;        // the mark holds at least this long
+      // MARK_BEAT has to outlast arming (two frames) plus the .14s entrance,
+      // or the handover happens while the mark is still fading up and the SPA
+      // continues it at full ink — a step, in the one place the whole point is
+      // that nothing steps.
+      const MARK_BEAT = 240;        // the mark holds at least this long
       const OPTIMISTIC_AFTER = 500; // past here, stop waiting and just open
 
       // Not `window.chrome` via the id-becomes-a-global rule: that name is a
@@ -754,11 +757,40 @@
         // it is invisible, and on a device it reads as a twitch you cannot
         // quite name. Two frames of `opacity: 0` cost ~32ms of a 150ms beat and
         // buy a mark that is never in the wrong place.
-        requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('ready')));
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          el.classList.add('ready');
+          publishSafeTop();
+        }));
         // The fixed chrome carries its own small ∴; two marks on screen at
         // once reads as a placeholder over a page, not as the app opening.
         chromeEl.style.visibility = 'hidden';
         return el;
+      }
+
+      /**
+       * Leave the resolved top inset where the SPA's shell can find it.
+       *
+       * `app.html`'s `#boot-mark` continues this mark across the navigation and
+       * so has to place itself on ITS first frame — the one frame where
+       * `env(safe-area-inset-top)` is still 0. It cannot wait two frames of its
+       * own the way this screen can; by then the hole it exists to cover has
+       * already been on screen. So this page, which has waited, hands the
+       * number over. Same origin, same shelf as `virtues-just-paired`.
+       *
+       * Measured off a probe rather than `#chrome`'s padding: that is
+       * `max(20px, env(...))`, which reports 20 on a device whose inset is 0.
+       */
+      function publishSafeTop() {
+        try {
+          const probe = document.createElement('div');
+          probe.style.cssText =
+            'position:fixed;top:0;left:0;width:1px;visibility:hidden;' +
+            'height:env(safe-area-inset-top)';
+          document.body.appendChild(probe);
+          const top = Math.round(probe.getBoundingClientRect().height);
+          probe.remove();
+          localStorage.setItem('virtues-safe-top', String(top));
+        } catch { /* best effort — app.html falls back to env() */ }
       }
 
       /** Dismiss the splash into an airlock screen, then draw it. */
@@ -784,11 +816,13 @@
 
         Promise.all([held, raced]).then(([, verdict]) => {
           switch (verdict) {
+            // NO EXIT. The SPA's shell paints this same mark, in this same
+            // place, on its own first frame (`#boot-mark` in `app.html`), so
+            // the handover is the navigation itself — fading out first would
+            // put a hole in the middle of it, and the 130ms that fade cost is
+            // 130ms the app is not opening in.
             case null:   // the clock won: paired, box slow, open anyway
-            case 'open':
-              splash.classList.add('leaving');
-              setTimeout(openBox, 130);
-              break;
+            case 'open': openBox(); break;
             case 'forgot-us':   splashSettle(splash, renderBoxForgotUs); break;
             case 'unreachable': splashSettle(splash, renderBoxUnreachable); break;
             default:            splashSettle(splash, renderEntry); break;
