@@ -100,6 +100,16 @@ Read against the code on 2026-09-09.
    by slice 0. Flip to opt-in later if wanted; nothing here depends on it.
 2. **Clients forward `warn`+ only.** Anything finer is the browser console's
    job.
+3. **Open: what the beacon's journal tail may contain.** Found while doing
+   slice 0, not fixed by it. The tail is 50 unfiltered lines, and a crashing
+   box's last 50 lines are exactly where a path, a filename, a query, or an
+   error quoting user text is most likely to appear. `agents/build/virtues-api.md`
+   answers "can you see my notes, location, or health data?" with "that data
+   never leaves your box" — true of the tables, and the tail is the one place
+   that could make it accidentally false. Three options, in increasing cost:
+   send only lines from `virtues` at `ERROR`; redact anything that looks like
+   a path under the state root; or send no tail at all and rely on the owner
+   pasting one. Decide before the beacon is ever used in anger.
 
 ## Deferred, and what would un-defer it
 
