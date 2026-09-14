@@ -1388,7 +1388,7 @@
 						chat.clearError();
 					}
 				}
-			}, 300000); // 5 minutes to match backend streaming timeout
+			}, 300000); // 5 minutes: the box's stream has no total timeout any more, only a 300s idle one
 
 			return () => {
 				if (thinkingTimeout) {
