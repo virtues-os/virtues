@@ -190,7 +190,18 @@ async fn serve_face_file(applet_id: &str, raw_path: &str, req_headers: &HeaderMa
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let full = face_dir.join(rel);
+    // Second pass, and the one that holds: resolve the real path and require
+    // it to still be inside the face folder. The segment check cannot see a
+    // symlink whose target escapes — a package could ship
+    // `face/env -> /var/lib/virtues/virtues.env`, and this route is public on
+    // the LAN. Same guard as `api/applet_source.rs`.
+    let candidate = face_dir.join(rel);
+    let (Ok(full), Ok(real_dir)) = (candidate.canonicalize(), face_dir.canonicalize()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !full.starts_with(&real_dir) || !full.is_file() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let Ok(bytes) = tokio::fs::read(&full).await else {
         return StatusCode::NOT_FOUND.into_response();
     };

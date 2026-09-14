@@ -110,7 +110,8 @@ pub async fn terminal_ws_handler(
 /// send `Origin` on a WebSocket handshake.
 fn check_same_origin(headers: &HeaderMap) -> Option<Response> {
     let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok())?;
-    if crate::server::origin_is_ours(origin) {
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+    if crate::server::origin_is_ours(origin, host) {
         None
     } else {
         tracing::warn!("Terminal WS rejected: foreign origin {:?}", origin);
@@ -616,11 +617,11 @@ mod tests {
         h
     }
 
-    /// The app's own origins must pass even though none of them equals `Host`:
-    /// the phone's bundle scheme, the Mac's loopback splice on its own port.
+    /// The app's own origins must pass: the phone's bundle scheme, and a
+    /// loopback page served by the very authority it dials.
     #[test]
     fn our_origins_pass_regardless_of_host() {
-        for o in ["virtues://localhost", "tauri://localhost", "http://127.0.0.1:7117"] {
+        for o in ["virtues://localhost", "tauri://localhost", "http://127.0.0.1:8000"] {
             assert!(check_same_origin(&headers_with_origin(o)).is_none(), "{o}");
         }
     }
@@ -628,7 +629,7 @@ mod tests {
     /// A remote page must not ride a paired session to a shell.
     #[test]
     fn a_foreign_origin_is_refused() {
-        for o in ["https://evil.example", "http://localhost.evil.example"] {
+        for o in ["https://evil.example", "http://localhost.evil.example", "http://localhost:8888"] {
             assert!(check_same_origin(&headers_with_origin(o)).is_some(), "{o}");
         }
     }
