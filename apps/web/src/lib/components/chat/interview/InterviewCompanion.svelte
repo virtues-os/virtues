@@ -5,11 +5,12 @@
 	no ThinkingBlock, because the model's reasoning about the person must
 	never surface as chrome in a room built on their own account.
 
-	AT REST IT IS THE MARK: ∴, three dots, therefore. A face sitting in the
-	margin pulls the eye to itself and away from the page (Adam, 2026-09-14),
-	so the resident only comes out while the model is composing, or for a
-	blip when someone puts a pointer on it. Engine vendored from bloub (MIT)
-	— see lib/bloub/README.md.
+	AT REST IT HOLDS ITS OWN MARK: the `sleep` state, which in this fork is
+	the virtues ∴ — three dots breathing in a slow ripple (see bot/states.ts).
+	A face sitting in the margin pulls the eye to itself and away from the
+	page (Adam, 2026-09-14), so the resident's face only comes out while the
+	model is composing, or for a blip when someone puts a pointer on it.
+	Engine vendored from bloub (MIT) — see lib/bloub/README.md.
 -->
 
 <script lang="ts">
@@ -21,11 +22,8 @@
 	interface Props {
 		/** The chat's status; "submitted" and "streaming" read as thinking. */
 		status: string;
-		/** Anything that changes here rouses the bot — the message count is
-		 *  what ChatView passes, so a new turn wakes it. */
-		activity: unknown;
 	}
-	let { status, activity }: Props = $props();
+	let { status }: Props = $props();
 
 	const thinking = $derived(status === "submitted" || status === "streaming");
 
@@ -42,7 +40,6 @@
 	let shape = $state<string | null>(null);
 	let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 	function poke() {
-		rouse();
 		visiting = true;
 		clearTimeout(visitTimer);
 		const others = EXPRESSIONS.filter((e) => e.id !== "neutre" && e.id !== expression);
@@ -63,26 +60,10 @@
 		}, 1000);
 	}
 
-	// After a quiet stretch the bot dozes off instead of blinking at an empty
-	// room forever. Anything happening — a hover, a send, the model speaking —
-	// rouses it and re-arms the timer.
-	const DOZE_MS = 90_000;
-	let asleep = $state(false);
-	let sleepTimer: ReturnType<typeof setTimeout> | undefined;
-	function rouse() {
-		asleep = false;
-		clearTimeout(sleepTimer);
-		sleepTimer = setTimeout(() => (asleep = true), DOZE_MS);
-	}
-
-	// The activity feed: a new message or a status change wakes it and
-	// re-arms the doze timer.
-	$effect(() => {
-		void activity;
-		void status;
-		rouse();
-		return () => clearTimeout(sleepTimer);
-	});
+	// The doze timer went with the resting state it used to reach after 90
+	// seconds: resting IS the mark now, and a turn arriving shows the face by
+	// way of `thinking`. Nothing is left to wake, so the `activity` prop that
+	// fed it went too.
 
 	// While the bot thinks, one rotating gerund rides beside it — the bot's
 	// three-dot morph is already the ellipsis, so the word comes bare.
@@ -104,18 +85,14 @@
 		onmouseenter={poke}
 		onmouseleave={settle}
 	>
-		{#if out}
-			<Bloub
-				size={54}
-				state={thinking ? "thinking" : asleep ? "sleep" : "idle"}
-				shape={shape ?? DEFAULT_SHAPE}
-				expression={expression ?? "neutre"}
-				ink="var(--color-foreground)"
-				paper="var(--color-background)"
-			/>
-		{:else}
-			<span class="mark" aria-hidden="true">∴</span>
-		{/if}
+		<Bloub
+			size={54}
+			state={thinking ? "thinking" : out ? "idle" : "sleep"}
+			shape={shape ?? DEFAULT_SHAPE}
+			expression={expression ?? "neutre"}
+			ink="var(--color-foreground)"
+			paper="var(--color-background)"
+		/>
 		{#if thinking}
 			<span class="companion-word">{word}</span>
 		{/if}
@@ -134,25 +111,6 @@
 		   conversation's tail. Keep the px in step with the size= prop. */
 		margin-left: calc(54px * -58 / 316);
 		margin-top: calc(54px * -58 / 316);
-	}
-
-	/* The mark stands in the ball's place, so nothing shifts when the
-	   resident comes and goes. */
-	.mark {
-		width: 54px;
-		height: 54px;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.5rem;
-		line-height: 1;
-		color: var(--color-foreground);
-		opacity: 0.35;
-		transition: opacity 0.2s ease;
-	}
-	.interview-companion:hover .mark {
-		opacity: 0.7;
 	}
 
 	.companion-word {

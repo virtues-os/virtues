@@ -2166,9 +2166,9 @@
 									     the chapters the person just named. -->
 									<ChapterLifelineLive />
 								{/if}
-								<InterviewCompanion status={chat.status} activity={uniqueMessages.length} />
+								<InterviewCompanion status={chat.status} />
 							{:else if inInterview}
-								<InterviewCompanion status={chat.status} activity={uniqueMessages.length} />
+								<InterviewCompanion status={chat.status} />
 							{:else if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">
 									<div class="message-wrapper" data-role="assistant">
