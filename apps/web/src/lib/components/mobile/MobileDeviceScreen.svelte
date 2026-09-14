@@ -11,7 +11,6 @@
 	 * Storage size, health, and the shared upload queue land in the next pass.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
-	import MobileKeyboardProbe from "$lib/components/mobile/MobileKeyboardProbe.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { invoke } from "@tauri-apps/api/core";
@@ -128,7 +127,6 @@
 	let radio = $state<RadioStats | null>(null);
 	let togglingAudio = $state(false);
 	let forgetting = $state(false);
-	let probeOpen = $state(false);
 	let version = $state<string>("");
 	let loading = $state(true);
 	let starting = $state(false);
@@ -1178,20 +1176,12 @@
 		<div class="about">
 			<span>Recorded points</span><span class="v">{rows.length}</span>
 		</div>
-		<!-- Temporary dev tooling: the Phase-1a keyboard spike (mobile-ux-plan). -->
-		<button class="probe-row" onclick={() => (probeOpen = true)} type="button">
-			Keyboard probe
-		</button>
 		<button class="danger-row" onclick={unpairDevice} disabled={forgetting} type="button">
 			{forgetting ? "Unpairing…" : "Unpair this device"}
 		</button>
 	</div>
 
 </div>
-
-{#if probeOpen}
-	<MobileKeyboardProbe close={() => (probeOpen = false)} />
-{/if}
 
 <style>
 	.device {
@@ -1508,18 +1498,6 @@
 		color: var(--color-error);
 		font-size: 14px;
 		font-weight: 600;
-		text-align: left;
-		cursor: pointer;
-	}
-	.probe-row {
-		display: block;
-		width: 100%;
-		padding: 12px 14px;
-		border: none;
-		border-top: 1px solid var(--color-border);
-		background: transparent;
-		color: var(--color-foreground-muted);
-		font-size: 14px;
 		text-align: left;
 		cursor: pointer;
 	}
