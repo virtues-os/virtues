@@ -23,8 +23,8 @@ export function isInterviewChat(convId: string | null | undefined): boolean {
 /** The opening, in three parts: the heading alone (the lifeline plate
  *  renders right after it, bleeding past the column — see the message
  *  template in ChatView), then the intro and the example table, then the ask. */
-const INTERVIEW_OPENING = "# The story of your life: chapters & identity";
-const INTERVIEW_OPENING_BODY =
+export const INTERVIEW_OPENING = "# The story of your life: chapters & identity";
+export const INTERVIEW_OPENING_BODY =
 	"In order to help the Virtues platform generate more powerful insights " +
 	"in your life, we’ll guide you in briefly describing your past " +
 	"chapters.\n\n" +
@@ -46,7 +46,7 @@ const INTERVIEW_OPENING_BODY =
 /** The ask comes last, after the shape has been seen; the retention
  *  promise rides with it because it is the one thing to know before
  *  answering. */
-const INTERVIEW_OPENING_ASK =
+export const INTERVIEW_OPENING_ASK =
 	"Yours will look nothing like these. What would your chapters be? " +
 	"Rough names and rough years are enough; months and dates are welcome " +
 	"where you remember them.\n\n" +

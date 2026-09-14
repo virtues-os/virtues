@@ -109,13 +109,16 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
     // drafter's prompt firewalls the interviewer's turns (scaffolding, never
     // material), but they stay in the input because a person's answer often
     // only makes sense against the question it answered.
+    let (source_chat, since) = crate::api::getting_started::interview_source(pool).await?;
     let turns: Vec<(String, String)> = sqlx::query_as(
         "SELECT role, content FROM app_chat_messages \
          WHERE chat_id = $1 AND role IN ('user', 'assistant') \
            AND content <> '' \
+           AND ($2::timestamptz IS NULL OR created_at >= $2) \
          ORDER BY sequence_num ASC",
     )
-    .bind(INTERVIEW_CHAT_ID)
+    .bind(source_chat)
+    .bind(since)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("read interview transcript: {e}")))?;
@@ -334,11 +337,14 @@ pub fn close_gate(req: &CloseRequest, their_replies: usize) -> std::result::Resu
 
 /// The person's replies so far in the interview transcript.
 pub async fn their_reply_count(pool: &PgPool) -> Result<usize> {
+    let (source_chat, since) = crate::api::getting_started::interview_source(pool).await?;
     let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM app_chat_messages \
-         WHERE chat_id = $1 AND role = 'user' AND content <> ''",
+         WHERE chat_id = $1 AND role = 'user' AND content <> '' \
+           AND ($2::timestamptz IS NULL OR created_at >= $2)",
     )
-    .bind(INTERVIEW_CHAT_ID)
+    .bind(source_chat)
+    .bind(since)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("count interview replies: {e}")))?;
@@ -405,13 +411,16 @@ async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
         return Ok(0);
     }
 
+    let (source_chat, since) = crate::api::getting_started::interview_source(pool).await?;
     let turns: Vec<(String, String)> = sqlx::query_as(
         "SELECT role, content FROM app_chat_messages \
          WHERE chat_id = $1 AND role IN ('user', 'assistant') \
            AND content <> '' \
+           AND ($2::timestamptz IS NULL OR created_at >= $2) \
          ORDER BY sequence_num ASC",
     )
-    .bind(INTERVIEW_CHAT_ID)
+    .bind(source_chat)
+    .bind(since)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("read interview transcript: {e}")))?;

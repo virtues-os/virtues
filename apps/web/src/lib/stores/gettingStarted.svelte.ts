@@ -12,6 +12,7 @@
 import {
 	getGettingStarted,
 	skipGettingStartedStep,
+	startGettingStartedInterview,
 	type GettingStartedState,
 	type GettingStartedStepId,
 } from "$lib/api/client";
@@ -71,6 +72,16 @@ class GettingStartedStore {
 
 	async skip(step: GettingStartedStepId, skipped = true): Promise<void> {
 		this.state = await skipGettingStartedStep(step, skipped);
+	}
+
+	/** The interview begins, inside the room. */
+	async startInterview(): Promise<void> {
+		this.state = await startGettingStartedInterview();
+	}
+
+	/** The interview is the conversation now: begun, and no document yet. */
+	get interviewUnderway(): boolean {
+		return !!this.state?.interview_started_at && this.step("interview")?.status !== "done";
 	}
 
 	/** Poll while anything is open: sources land on cron, the interview

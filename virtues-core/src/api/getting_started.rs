@@ -54,9 +54,15 @@ pub struct Step {
     /// Server-authored copy for the step's current state — render verbatim.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
-    /// Started but not done (the interview has replies, no document yet).
+    /// Started but not done (the interview has begun, no document yet).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub underway: bool,
+    /// The person has moved past this step themselves (the dismissed list
+    /// carries it). Read for a step that is done by rows before the walk
+    /// reached it — integrations already in place — so the room can still
+    /// stop there once and offer more, rather than skip it silently.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub acknowledged: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,11 +78,31 @@ pub struct GettingStartedState {
     pub first_day: Option<chrono::NaiveDate>,
     /// Every step done or skipped: the sidebar card goes, the mast collapses.
     pub graduated: bool,
+    /// The interview has begun, inside this room. Set once by
+    /// `POST /api/getting-started/interview`; the drafter reads the room's
+    /// transcript from this instant on.
+    pub interview_started_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl GettingStartedState {
     pub fn step(&self, id: &str) -> Option<&Step> {
         self.steps.iter().find(|s| s.id == id)
+    }
+
+    /// The interview is the conversation now: started, and no document yet.
+    pub fn interview_underway(&self) -> bool {
+        self.interview_started_at.is_some()
+            && self.step("interview").map(|s| s.status != StepStatus::Done).unwrap_or(false)
+    }
+
+    /// Which prompt answers the room's next turn: the interviewer's while
+    /// the interview is underway, the setup guest's otherwise.
+    pub fn agent_mode(&self) -> &'static str {
+        if self.interview_underway() {
+            "interview"
+        } else {
+            AGENT_MODE
+        }
     }
 
     /// The state as the model reads it: one short block, regenerated per
@@ -162,14 +188,14 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     let account = done("account");
     let ai_connected = account || byo;
 
-    let profile = sqlx::query_as::<_, (Option<String>, Vec<String>)>(
-        "SELECT preferred_name, getting_started_dismissed FROM app_user_profile LIMIT 1",
+    let profile = sqlx::query_as::<_, (Option<String>, Vec<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+        "SELECT preferred_name, getting_started_dismissed, interview_started_at FROM app_user_profile LIMIT 1",
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("read profile for getting started: {e}")))?;
     // absent-ok: no profile row yet IS the fresh box — nothing named, nothing skipped.
-    let (preferred_name, dismissed) = profile.unwrap_or((None, Vec::new()));
+    let (preferred_name, dismissed, interview_started_at) = profile.unwrap_or((None, Vec::new(), None));
     let skipped = |id: &str| dismissed.iter().any(|d| d == id);
 
     let status = |id: &str, is_done: bool| {
@@ -186,8 +212,25 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     // a source row, or a device that has landed data. A collector running
     // with a denied permission is said, not hidden behind the check.
     let world = done("first_source") || done("device_collecting");
+    // What is already in place, said in the ask when the walk reaches this
+    // step with rows already there: "3 integrations connected".
+    let integrations: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credentials WHERE status = 'active' \
+           AND source_id NOT IN ($1, $2, '__device__')",
+    )
+    .bind(crate::api::settings_byo::BYO_SOURCE_ID)
+    .bind(crate::virtues_api::renew::SOURCE_ID)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("count integrations: {e}")))?;
     let world_detail = if setup.degraded.is_empty() {
-        None
+        (integrations > 0).then(|| {
+            if integrations == 1 {
+                "1 integration connected".to_string()
+            } else {
+                format!("{integrations} integrations connected")
+            }
+        })
     } else {
         let names: Vec<String> = setup
             .degraded
@@ -204,6 +247,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     };
 
     let interview_done = done("narrative_identity_ready");
+    let interview_started = interview_started_at.is_some();
 
     let steps = vec![
         Step {
@@ -219,6 +263,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             },
             detail: None,
             underway: false,
+            acknowledged: skipped("connect_ai"),
         },
         Step {
             id: "introductions",
@@ -230,6 +275,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             via: None,
             detail: None,
             underway: false,
+            acknowledged: skipped("introductions"),
         },
         Step {
             id: "connect_world",
@@ -238,6 +284,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             via: None,
             detail: world_detail,
             underway: false,
+            acknowledged: skipped("connect_world"),
         },
         Step {
             id: "interview",
@@ -245,7 +292,8 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             status: status("interview", interview_done),
             via: None,
             detail: None,
-            underway: setup.interview_started && !interview_done,
+            underway: interview_started && !interview_done,
+            acknowledged: skipped("interview"),
         },
     ];
 
@@ -261,7 +309,60 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
         steps,
         first_day,
         graduated,
+        interview_started_at,
     })
+}
+
+/// The interview begins, inside this room: the instant is recorded once, and
+/// from here the room's turns are the interviewer's and the drafter's material.
+pub async fn start_interview(pool: &PgPool) -> Result<()> {
+    sqlx::query(
+        "UPDATE app_user_profile SET interview_started_at = COALESCE(interview_started_at, now())",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("start interview: {e}")))?;
+    Ok(())
+}
+
+/// Where the interview's transcript lives and where it starts: the
+/// getting-started room from `interview_started_at` on, or, on a box that
+/// held its interview in the old standalone room, that room whole.
+pub async fn interview_source(
+    pool: &PgPool,
+) -> Result<(&'static str, Option<chrono::DateTime<chrono::Utc>>)> {
+    let since: Option<Option<chrono::DateTime<chrono::Utc>>> =
+        sqlx::query_scalar("SELECT interview_started_at FROM app_user_profile LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Database(format!("read interview start: {e}")))?;
+    Ok(match since.flatten() {
+        Some(ts) => (GETTING_STARTED_CHAT_ID, Some(ts)),
+        None => (crate::api::narrative_draft::INTERVIEW_CHAT_ID, None),
+    })
+}
+
+/// `POST /api/getting-started/interview` — begin the interview here.
+pub async fn start_interview_handler(
+    State(state): State<AppState>,
+    _user: AuthUser,
+) -> impl IntoResponse {
+    let pool = state.db.pool();
+    if let Err(e) = start_interview(pool).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
+    match compute(pool).await {
+        Ok(s) => (StatusCode::OK, Json(s)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 /// Skip (or un-skip) a step: the one stored fact about getting started.
@@ -353,6 +454,7 @@ mod tests {
                 via: None,
                 detail: None,
                 underway: false,
+                acknowledged: false,
             })
             .collect::<Vec<_>>();
         GettingStartedState {
@@ -361,6 +463,7 @@ mod tests {
             graduated: steps.iter().all(|s| s.status != StepStatus::Open),
             steps,
             first_day: None,
+            interview_started_at: None,
         }
     }
 

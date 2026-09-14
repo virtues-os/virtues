@@ -854,6 +854,13 @@
 	// Chat instance - fetched from shared store to survive remounts
 	let chat = $state<Chat>(null!);
 	let currentChatConversationId = $state<string | null>(null);
+	// The interview's chrome (no thinking block, the resident companion)
+	// applies in the old standalone room and in the getting-started room
+	// while the interview is underway there.
+	const inInterview = $derived(
+		currentChatConversationId === INTERVIEW_CHAT_ID ||
+			(isGettingStartedChat(currentChatConversationId) && gettingStarted.interviewUnderway),
+	);
 
 	// The id that goes on the wire — ONLY when the person moved the picker off
 	// what we prefilled for them. What the picker is showing is not a choice.
@@ -983,6 +990,9 @@
 								id: msg.id,
 								role: msg.role as "user" | "assistant" | "checkpoint",
 								parts: convertMessageToParts(msg),
+								// When the turn happened — the getting-started room
+								// places the interview's opening by it.
+								createdAt: msg.timestamp ? new Date(msg.timestamp) : undefined,
 							})) as unknown as typeof chat.messages;
 							applyInterviewOpening(chat, currentTabConversationId);
 							applyGettingStartedOpening(chat, currentTabConversationId, gettingStarted.state);
@@ -1424,7 +1434,7 @@
 		// summary of it in the sidebar — this chat had renamed itself after
 		// the person's own childhood. The server refuses this too (the id
 		// decides, never the client); this only saves the round trip.
-		if (conversationId === INTERVIEW_CHAT_ID) {
+		if (conversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(conversationId)) {
 			titleGenerated = true;
 			return;
 		}
@@ -1844,7 +1854,7 @@
 								>
 									<div
 										class="message-wrapper"
-										class:bleeds={message.id === INTERVIEW_OPENING_ID}
+										class:bleeds={message.id === INTERVIEW_OPENING_ID || message.id === "gs-iv-opening"}
 										class:gs={message.id.startsWith(GS_PREFIX)}
 										class:user-has-attachment={isUserMessage &&
 											message.parts.some((p: any) => p.type === "file")}
@@ -1922,7 +1932,7 @@
 												/>
 											{/if}
 
-											{#if currentChatConversationId !== INTERVIEW_CHAT_ID && (hasThinkingContent || (isStreaming && isLastMessage))}
+											{#if !inInterview && (hasThinkingContent || (isStreaming && isLastMessage))}
 												<!-- Interview room excluded: the companion below is
 												     its one indicator, and the model's reasoning
 												     about the person must never surface as chrome
@@ -1979,6 +1989,16 @@
 											{:else if part.type === "tool-record_introductions" && (part as any).state === "output-available" && (part as any).output?.fields}
 												<!-- The four facts as heard, for confirmation; the card writes. -->
 												<IntroductionsConfirmCard fields={(part as any).output.fields} />
+											{:else if part.type === "tool-write_it_up" && isGettingStartedChat(currentChatConversationId) && (part as any).state === "output-available" && (part as any).output?.document_page_id}
+												<!-- In the getting-started room the interview closes inline
+												     and the thread goes on: the two doors, here. -->
+												{@const out = (part as any).output}
+												<InterviewClosedCard
+													pageId={out.document_page_id}
+													chaptersWritten={out.chapters_written ?? 0}
+													alreadyExisted={out.document_already_existed ?? false}
+													chaptersError={out.chapters_error ?? null}
+												/>
 											{:else if part.type === "tool-write_it_up"}
 												<!-- Nothing inline: the standing card in place of the composer
 												     holds the two doors (it used to render here as well, so the
@@ -2126,6 +2146,8 @@
 									     the chapters the person just named. -->
 									<ChapterLifelineLive />
 								{/if}
+								<InterviewCompanion status={chat.status} activity={uniqueMessages.length} />
+							{:else if inInterview}
 								<InterviewCompanion status={chat.status} activity={uniqueMessages.length} />
 							{:else if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">

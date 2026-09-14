@@ -40,7 +40,7 @@
 	}
 
 	function openInterview() {
-		windowShellStore.openRouteBeside('/chat/chat_narrative_interview');
+		windowShellStore.openRouteBeside('/chat/chat_getting_started');
 	}
 
 	const updatedLabel = $derived(

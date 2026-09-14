@@ -350,7 +350,22 @@ of which this plan already does, and one it refuses.
   forbids ([narrative-identity.md](../build/narrative-identity.md)). The room
   knows what the box holds and nothing about who they are until they say.
 
-## Where this stands (2026-09-14)
+## Where this stands (2026-09-14, evening)
+
+**The interview happens inside the room now** (Adam: "start the interview
+button went to a new chat… it should continue in that one"). Pressing Start
+records `app_user_profile.interview_started_at` (migration 0020) and the
+room's next turns are the interviewer's: `chat_handler` picks the mode from
+the derived state (`GettingStartedState::agent_mode`), and the drafter, the
+close gate, and the reply count read the room's transcript from that instant
+on (`getting_started::interview_source`), never the setup talk before it.
+The interview's opening (the h2, the lifeline plate, the example table, the
+ask) is placed in the thread at the boundary, by the stored turns'
+timestamps. A box that held its interview in the old standalone room keeps
+it as the source; the old room is no longer seeded. The wiki's doors point
+at the room. **Integrations are always asked**, even when accounts already
+exist: the walk stops there once with what is in place and a Continue.
+
 
 **The room is one thread now** (Adam, 09-14, on seeing the first build: "no
 message within messages… the main view is way too crazy, and the checklist

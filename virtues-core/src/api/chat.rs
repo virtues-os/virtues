@@ -1128,9 +1128,16 @@ pub async fn chat_handler(
     if request.chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID {
         request.agent_mode = "interview".to_string();
     }
-    // Getting started is the same kind of room: its mode is the chat id's.
+    // Getting started is the same kind of room: its mode is the chat id's —
+    // and, once the interview has begun inside it, the interviewer's.
     if request.chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
-        request.agent_mode = crate::api::getting_started::AGENT_MODE.to_string();
+        request.agent_mode = match crate::api::getting_started::compute(&pool).await {
+            Ok(s) => s.agent_mode().to_string(),
+            Err(e) => {
+                tracing::warn!(error = %e, "getting-started state unavailable; setup mode");
+                crate::api::getting_started::AGENT_MODE.to_string()
+            }
+        };
     }
 
     // No model, no turn — said in one sentence here, not as whatever the
