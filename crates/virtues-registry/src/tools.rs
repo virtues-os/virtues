@@ -72,6 +72,9 @@ pub fn default_tools() -> Vec<ToolConfig> {
         think_tool(),
         propose_narrative_identity_tool(),
         write_it_up_tool(),
+        show_step_tool(),
+        skip_step_tool(),
+        record_introductions_tool(),
         update_memory_tool(),
         set_user_name_tool(),
         set_assistant_name_tool(),
@@ -215,6 +218,76 @@ A refused call is not an error: it returns the sentence to act on, and the inter
         tool_type: ToolType::Builtin,
         category: ToolCategory::Edit,
         icon: "ri:quill-pen-line".to_string(),
+        display_order: 0,
+        is_system: true,
+    }
+}
+
+/// Getting started's tools. Mode-only (see get_tools_for_agent_mode);
+/// is_system keeps them out of every other room. None writes anything: they
+/// return markers the client renders as cards, and the cards do the work.
+fn show_step_tool() -> ToolConfig {
+    ToolConfig {
+        id: "show_step".to_string(),
+        name: "Open a getting-started step".to_string(),
+        description: "Open one step's card in the getting-started conversation".to_string(),
+        llm_description: "Open the card for one getting-started step (introductions, connect_world, interview). The card is the person's way to do the step; you cannot do it for them. Refused for a step that is already done.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "step": { "type": "string", "enum": ["introductions", "connect_world", "interview"] }
+            },
+            "required": ["step"]
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:layout-top-line".to_string(),
+        display_order: 0,
+        is_system: true,
+    }
+}
+
+fn skip_step_tool() -> ToolConfig {
+    ToolConfig {
+        id: "skip_step".to_string(),
+        name: "Skip a getting-started step".to_string(),
+        description: "Mark one getting-started step skipped, on the person's ask".to_string(),
+        llm_description: "Skip one getting-started step because the person asked to. Only on their ask, never suggested. connect_ai cannot be skipped here. Pass skipped=false to un-skip.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "step": { "type": "string", "enum": ["introductions", "connect_world", "interview"] },
+                "skipped": { "type": "boolean", "default": true }
+            },
+            "required": ["step"]
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:skip-forward-line".to_string(),
+        display_order: 0,
+        is_system: true,
+    }
+}
+
+fn record_introductions_tool() -> ToolConfig {
+    ToolConfig {
+        id: "record_introductions".to_string(),
+        name: "Play introductions back".to_string(),
+        description: "Show the introductions the person gave on a card for them to confirm".to_string(),
+        llm_description: "Play back what the person said about themselves as a confirmation card: what to call them, what they will call you, home time zone (an IANA name you resolve from the place they named), and birth date (YYYY-MM-DD). Include only fields they gave; leave the rest out rather than guessing. The card writes when they confirm; this tool writes nothing.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "preferred_name": { "type": "string" },
+                "assistant_name": { "type": "string" },
+                "home_place": { "type": "string", "description": "The place as they said it, for the card's label." },
+                "home_timezone": { "type": "string", "description": "IANA time zone, e.g. America/Chicago." },
+                "birth_date": { "type": "string", "description": "YYYY-MM-DD" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:user-smile-line".to_string(),
         display_order: 0,
         is_system: true,
     }

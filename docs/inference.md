@@ -10,14 +10,14 @@ Search over your own life needs two small models running near your data: an
 the model that writes — that one is remote, and this page has nothing to do
 with it.
 
-On hardware we build, both are provisioned for you and there is nothing to
-read here. On your own machine they are **yours to run**, and standing them
-up is worth doing *before* you install, because the installer asks for their
-URLs and refuses to guess.
+Skip this page if you're on hardware we build - both are set up for you. On
+your own machine they are **yours to run**, and standing them up is worth
+doing *before* you install, because the installer asks for their URLs and
+refuses to guess.
 
 ## What Virtues consumes
 
-Two HTTP contracts, and nothing else:
+Two HTTP contracts:
 
 | Endpoint | Required | Used for |
 |---|---|---|

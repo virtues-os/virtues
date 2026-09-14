@@ -70,4 +70,20 @@ impl<R: Runtime> Audio<R> {
       .run_mobile_plugin("setQuietHours", SetQuietHoursRequest { start, end })
       .map_err(Into::into)
   }
+
+  /// Replace the weekly mute schedule.
+  pub fn set_schedule(&self, schedule: serde_json::Value) -> crate::Result<AudioStatus> {
+    self
+      .0
+      .run_mobile_plugin("setSchedule", SetScheduleRequest { schedule })
+      .map_err(Into::into)
+  }
+
+  /// Replace the cached muted places.
+  pub fn set_places(&self, places: Vec<MutedPlace>) -> crate::Result<AudioStatus> {
+    self
+      .0
+      .run_mobile_plugin("setPlaces", SetPlacesRequest { places })
+      .map_err(Into::into)
+  }
 }

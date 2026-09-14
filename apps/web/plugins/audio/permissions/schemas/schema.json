@@ -343,6 +343,18 @@
           "markdownDescription": "Denies the set_notify command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_places command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-places",
+          "markdownDescription": "Enables the set_places command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_places command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-places",
+          "markdownDescription": "Denies the set_places command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_quiet_hours command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-quiet-hours",
@@ -353,6 +365,18 @@
           "type": "string",
           "const": "deny-set-quiet-hours",
           "markdownDescription": "Denies the set_quiet_hours command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_schedule command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-schedule",
+          "markdownDescription": "Enables the set_schedule command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_schedule command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-schedule",
+          "markdownDescription": "Denies the set_schedule command without any pre-configured scope."
         },
         {
           "description": "Enables the status command without any pre-configured scope.",
@@ -367,10 +391,10 @@
           "markdownDescription": "Denies the status command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the audio plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-resume`\n- `allow-status`\n- `allow-set-notify`\n- `allow-set-quiet-hours`",
+          "description": "Default permissions for the audio plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-resume`\n- `allow-status`\n- `allow-set-notify`\n- `allow-set-quiet-hours`\n- `allow-set-schedule`\n- `allow-set-places`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the audio plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-resume`\n- `allow-status`\n- `allow-set-notify`\n- `allow-set-quiet-hours`"
+          "markdownDescription": "Default permissions for the audio plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-resume`\n- `allow-status`\n- `allow-set-notify`\n- `allow-set-quiet-hours`\n- `allow-set-schedule`\n- `allow-set-places`"
         }
       ]
     }

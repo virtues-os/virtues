@@ -13,14 +13,14 @@
 
 use axum::response::{sse::Event as SseEvent, IntoResponse, Response, Sse};
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::convert::Infallible;
 use std::future::Future;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     config::Config,
-    providers::{calculate_cost, get_provider_config},
+    providers::{calculate_cost, get_provider_config, upstream_body},
     proxy::ProxyError,
 };
 
@@ -61,76 +61,31 @@ pub struct StreamUsage {
     pub cost: Option<f64>,
 }
 
-/// Internal request format for streaming
-#[derive(Clone, Serialize)]
-pub struct StreamingRequest {
-    pub model: String,
-    pub messages: Vec<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-    /// Tool definitions for function calling
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<serde_json::Value>>,
-    /// Tool choice: "auto", "none", "required", or specific tool
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<serde_json::Value>,
-    /// Optional reasoning budget hint forwarded to the gateway.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
-}
-
 /// Create SSE streaming response with caller-supplied charge callback.
 ///
 /// `on_complete` is called once with the resolved `cost_micros` after the
 /// upstream stream emits `[DONE]`. The bearer-auth AI route wires this to
 /// `entitlement::charge()`. The streaming hot path knows nothing about
 /// budget storage.
+///
+/// `request` is the caller's body, opaque; `model` is the id the route
+/// already read from it. See `routes/ai.rs`.
 pub async fn create_streaming_response<F, Fut>(
     client: &reqwest::Client,
     config: &Config,
     catalog: &crate::catalog::Catalog,
-    request: StreamingRequest,
+    model: &str,
+    request: serde_json::Value,
     on_complete: F,
 ) -> Result<Response, ProxyError>
 where
     F: FnOnce(i64) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
-    let provider = get_provider_config(&request.model, config);
+    let provider = get_provider_config(model, config);
 
-    // Build OpenAI-compatible request body with stream_options for usage tracking
-    let mut body = serde_json::json!({
-        "model": provider.model_name,
-        "messages": request.messages,
-        "max_tokens": request.max_tokens.unwrap_or(4096),
-        "temperature": request.temperature.unwrap_or(0.7),
-        "stream": true,
-        "stream_options": { "include_usage": true }
-    });
-
-    if let Some(ref effort) = request.reasoning_effort {
-        body["reasoning_effort"] = serde_json::json!(effort);
-    }
-
-    // Same zero-retention enforcement as the non-streaming path. Chat streams,
-    // so omitting it here would have left the single highest-volume, most
-    // personal route as the one that never asked.
-    if catalog.enforce_zdr(&request.model) {
-        body["providerOptions"] =
-            serde_json::json!({ "gateway": { "zeroDataRetention": true } });
-    }
-
-    // Only include tools if present and non-empty (providers reject null/empty arrays)
-    if let Some(ref tools) = request.tools {
-        if !tools.is_empty() {
-            body["tools"] = serde_json::json!(tools);
-            if let Some(ref choice) = request.tool_choice {
-                body["tool_choice"] = choice.clone();
-            }
-        }
-    }
+    // One pass-through for both paths; `stream: true` adds stream_options.
+    let body = upstream_body(request, &provider.model_name, true, catalog.enforce_zdr(model));
 
     let response = client
         .post(&provider.endpoint)
@@ -152,7 +107,7 @@ where
         // UpstreamError below, not to tracing.
         tracing::warn!(
             status = status.as_u16(),
-            model = %request.model,
+            model = %model,
             endpoint = %provider.endpoint,
             "AI Gateway returned error"
         );
@@ -163,7 +118,7 @@ where
         });
     }
 
-    let model = request.model.clone();
+    let model = model.to_string();
     // Owned handle: the fallback price is resolved inside the spawned stream
     // task, long after this fn returns. Cheap — it's an Arc.
     let catalog = catalog.clone();

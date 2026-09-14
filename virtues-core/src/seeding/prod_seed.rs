@@ -76,6 +76,16 @@ pub async fn seed_production_data(db: &Database) -> Result<()> {
     .execute(db.pool())
     .await?;
 
+    // Getting started's room — the same shape: one fixed chat, forced into
+    // its mode by id, waiting when the person walks in from the letter.
+    sqlx::query(
+        "INSERT INTO app_chats (id, title, message_count) VALUES ($1, 'Getting started', 0) \
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(crate::api::getting_started::GETTING_STARTED_CHAT_ID)
+    .execute(db.pool())
+    .await?;
+
     info!("✅ Production seeding completed successfully");
     Ok(())
 }

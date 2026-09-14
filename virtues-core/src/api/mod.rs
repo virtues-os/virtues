@@ -52,6 +52,7 @@ pub mod search_local;
 pub mod places;
 pub mod profile;
 pub mod census;
+pub mod getting_started;
 pub mod identity;
 pub mod setup_phrase;
 pub mod network;
@@ -194,10 +195,9 @@ pub use pins::{
     UpdatePinRequest,
 };
 pub use annotations::{
-    create_annotation, delete_annotation, export_file_annotations_md,
-    export_notebook_annotations_md, get_annotation, list_annotations,
-    list_notebook_annotations, update_annotation,
-    Annotation, CreateAnnotationRequest, UpdateAnnotationRequest,
+    create_annotation, delete_annotation, export_file_annotations_md, get_annotation,
+    list_annotations, update_annotation, Annotation, CreateAnnotationRequest,
+    UpdateAnnotationRequest,
 };
 pub use notebooks::{
     add_notebook_item, create_notebook, delete_notebook, get_notebook, list_notebooks,

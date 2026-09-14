@@ -72,8 +72,7 @@ pub async fn create_pin(db: &PgPool, req: CreatePinRequest) -> Result<Pin> {
     let id = generate_id(PIN_PREFIX, &[&req.url]);
     let next_sort: i32 = sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_pins")
         .fetch_one(db)
-        .await
-        .unwrap_or(0);
+        .await?;
 
     sqlx::query(
         r#"INSERT INTO app_pins (id, url, label, icon, sort_order, color)

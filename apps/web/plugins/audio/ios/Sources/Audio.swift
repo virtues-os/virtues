@@ -16,6 +16,13 @@ private func virtues_enqueue(_ stream: UnsafePointer<CChar>, _ json: UnsafePoint
 @_silgen_name("virtues_location_audio_state")
 private func virtues_location_audio_state(_ state: Int32)
 
+// Hand the muted places to the location plugin as OS regions (its @_cdecl,
+// same linkage). JSON array of {id, lat, lon, radius_m}; empty clears them.
+// The OS then reports enter/exit for them even while location runs coarse,
+// and on a cold relaunch whose first fix is too fuzzy to resolve a circle.
+@_silgen_name("virtues_location_set_regions")
+private func virtues_location_set_regions(_ json: UnsafePointer<CChar>)
+
 private let isoMillis: ISO8601DateFormatter = {
   let f = ISO8601DateFormatter()
   f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -35,9 +42,10 @@ private let isoMillis: ISO8601DateFormatter = {
 /// Session: `.playAndRecord` + [.mixWithOthers, .allowBluetoothA2DP], built-in mic
 /// pinned. The WWDC-lab coexistence recipe: A2DP is output-only so our mic uses the
 /// built-in mic while the user's music stays high-quality on their AirPods, and
-/// mixing means we're never interrupted → the session stays live 24/7 (only phone
-/// calls gap us). No `.defaultToSpeaker`/`.allowBluetooth` — those were the poison
-/// pills that forced the speaker / tugged AirPods in our earlier tests.
+/// mixing means we're never interrupted → the session stays live 24/7 (phone
+/// calls gap us, and CarPlay pauses us by design — see `pausePorts`). No
+/// `.defaultToSpeaker`/`.allowBluetooth` — those were the poison pills that
+/// forced the speaker / tugged AirPods in our earlier tests.
 ///
 /// Resurrection (safety net for the rare hard interruptions — calls / Siri / media
 /// reset): re-arm on interruption-end / foreground / location wake / config-change,
@@ -86,25 +94,339 @@ public final class AudioRecorder: NSObject {
   private var cachedQuietStart: Int = -1
   private var cachedQuietEnd: Int = -1
 
-  private func quietHoursActive(_ now: Date) -> Bool {
-    let start = cachedQuietStart, end = cachedQuietEnd
-    if start < 0 || end < 0 || start == end { return false }
-    let c = Calendar.current.dateComponents([.hour, .minute], from: now)
-    let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
-    return start < end ? (m >= start && m < end) : (m >= start || m < end)
-  }
-
   public func quietHours() -> (start: Int, end: Int) {
     (cachedQuietStart, cachedQuietEnd)
   }
 
+  /// Legacy door, kept for an SPA older than the schedule: one window on every
+  /// day. Writes the schedule; the two old keys mirror it (see applySchedule).
   public func setQuietHours(start: Int, end: Int) {
-    cachedQuietStart = start
-    cachedQuietEnd = end
+    applySchedule(MuteSchedule.uniform(start: start, end: end), source: "quiet-hours")
+  }
+
+  // MARK: - Mute policy: schedule + places (mute-don't-release)
+  //
+  // One gate, two reasons. The tap asks `muteReason(at:)` once per buffer and
+  // the answer is nil, "schedule" or "place". Neither ever stops the session:
+  // iOS will not restart a background audio session for us when a window
+  // ends or the owner walks out, so the graph stays armed and only chunk
+  // writing pauses — the quiet-hours contract, generalized. While muted, a
+  // metadata-only MARKER ships every chunk interval naming the reason (never
+  // the place), so the box can tell a chosen silence from a dead collector;
+  // without it both are the same thing: no rows.
+
+  /// The weekly schedule. `defaultMuted` is what happens outside every window;
+  /// a window inverts it. `false` + 22:00→07:00 every day is quiet hours;
+  /// `true` + 09:00→17:00 on weekdays is record-at-work-only. Windows are
+  /// [start, end] minutes since local midnight; start > end wraps past
+  /// midnight and belongs to the day it starts on. Days keyed mon..sun.
+  private struct MuteSchedule: Equatable {
+    var defaultMuted = false
+    var days: [String: [[Int]]] = [:]
+    /// Indexed by `Calendar.weekday - 1` (1 = Sunday).
+    static let dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+
+    init() {}
+    init(json: [String: Any]) {
+      defaultMuted = json["default_muted"] as? Bool ?? false
+      var out: [String: [[Int]]] = [:]
+      if let d = json["days"] as? [String: Any] {
+        for (k, v) in d {
+          guard MuteSchedule.dayKeys.contains(k), let ws = v as? [[Any]] else { continue }
+          out[k] = ws.compactMap { w in
+            guard w.count == 2,
+                  let a = (w[0] as? NSNumber)?.intValue, let b = (w[1] as? NSNumber)?.intValue,
+                  (0...1440).contains(a), (0...1440).contains(b), a != b else { return nil }
+            return [a, b]
+          }
+        }
+      }
+      days = out
+    }
+    var json: [String: Any] { ["v": 1, "default_muted": defaultMuted, "days": days] }
+
+    /// One window on every day — what quiet hours is. -1/-1 or start==end = none.
+    static func uniform(start: Int, end: Int) -> MuteSchedule {
+      var s = MuteSchedule()
+      if start >= 0, end >= 0, start != end {
+        for k in dayKeys { s.days[k] = [[start, end]] }
+      }
+      return s
+    }
+
+    /// The single window shared by all seven days, if that is what this is;
+    /// the legacy quiet-hours readout reports it, and -1/-1 for anything else.
+    var uniformWindow: (Int, Int)? {
+      guard !defaultMuted else { return nil }
+      let lists = MuteSchedule.dayKeys.map { days[$0] ?? [] }
+      guard let first = lists.first, first.count == 1, lists.allSatisfy({ $0 == first }) else { return nil }
+      return (first[0][0], first[0][1])
+    }
+
+    func muted(at now: Date, calendar: Calendar) -> Bool {
+      let c = calendar.dateComponents([.weekday, .hour, .minute], from: now)
+      let m = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+      let wd = ((c.weekday ?? 1) - 1 + 7) % 7
+      let today = MuteSchedule.dayKeys[wd]
+      let yesterday = MuteSchedule.dayKeys[(wd + 6) % 7]
+      var inWindow = false
+      for w in days[today] ?? [] {
+        let a = w[0], b = w[1]
+        if a < b ? (m >= a && m < b) : (m >= a) { inWindow = true; break }
+      }
+      if !inWindow {
+        // A window that started yesterday and wraps past midnight covers the
+        // early part of today.
+        for w in days[yesterday] ?? [] where w[0] > w[1] && m < w[1] { inWindow = true; break }
+      }
+      return inWindow != defaultMuted
+    }
+  }
+
+  /// A muted place — the phone's copy of a `wiki_places` row with
+  /// `is_audio_muted`. The row is the authority; this cache is what lets the
+  /// gate run with no network.
+  private struct MutedPlace {
+    let id: String
+    let name: String
+    let lat: Double
+    let lon: Double
+    let radiusM: Double
+
+    init?(json: [String: Any]) {
+      guard let id = json["id"] as? String,
+            let lat = (json["lat"] as? NSNumber)?.doubleValue,
+            let lon = (json["lon"] as? NSNumber)?.doubleValue,
+            lat.isFinite, lon.isFinite else { return nil }
+      self.id = id
+      name = json["name"] as? String ?? ""
+      self.lat = lat
+      self.lon = lon
+      radiusM = (json["radiusM"] as? NSNumber)?.doubleValue
+        ?? (json["radius_m"] as? NSNumber)?.doubleValue ?? 100
+    }
+    var json: [String: Any] { ["id": id, "name": name, "lat": lat, "lon": lon, "radiusM": radiusM] }
+    /// The enter radius: a user-created place is 50 m on the box, which loses
+    /// to GPS jitter, so nothing tighter than 100 m is ever tested.
+    var enterRadius: Double { max(radiusM, 100) }
+    /// The exit radius, wider, so the writer cannot flap at the boundary.
+    var exitRadius: Double { max(enterRadius * 1.5, enterRadius + 50) }
+  }
+
+  private let scheduleKey = "virtues.audio.schedule"
+  private let placesKey = "virtues.audio.places"
+  /// Everything the gate reads on the realtime tap while other threads write
+  /// it (location pushes, plugin commands) sits behind this one lock. The
+  /// critical sections are a few comparisons; the tap never blocks for long.
+  private let policyLock = NSLock()
+  private var schedule = MuteSchedule()
+  private var places: [MutedPlace] = []
+  /// Sticky place state: changes only when a fix or a region verdict proves
+  /// it. A stale or coarse fix changes nothing — someone who walked into the
+  /// clinic and then sat still stays muted until something proves they left.
+  private var insidePlaceId: String?
+  private var lastFix: (lat: Double, lon: Double, acc: Double, at: Date)?
+  /// What the tap decided on its last buffer, for status ("schedule"/"place").
+  private var currentMuteReason: String?
+  // Marker bookkeeping — tap thread only (and `stopEngine` on q, after the
+  // tap is removed, so never concurrently).
+  private var markerStart: Date?
+  private var markerReason: String?
+
+  public func scheduleJSON() -> [String: Any] {
+    policyLock.lock(); defer { policyLock.unlock() }
+    return schedule.json
+  }
+
+  public func placesJSON() -> [[String: Any]] {
+    policyLock.lock(); defer { policyLock.unlock() }
+    return places.map { $0.json }
+  }
+
+  public func mutedBy() -> String? {
+    policyLock.lock(); defer { policyLock.unlock() }
+    return currentMuteReason
+  }
+
+  public func setSchedule(json: [String: Any]) {
+    applySchedule(MuteSchedule(json: json), source: "schedule")
+  }
+
+  private func applySchedule(_ s: MuteSchedule, source: String) {
+    policyLock.lock()
+    schedule = s
+    policyLock.unlock()
     let d = UserDefaults.standard
-    d.set(start, forKey: quietStartKey)
-    d.set(end, forKey: quietEndKey)
-    NSLog("[Audio] quiet hours set %d..%d (minutes, -1=off)", start, end)
+    if let data = try? JSONSerialization.data(withJSONObject: s.json),
+       let str = String(data: data, encoding: .utf8) {
+      d.set(str, forKey: scheduleKey)
+    }
+    // The two legacy keys mirror the schedule so an older SPA's quiet-hours
+    // readout stays honest: one window on every day IS quiet hours; anything
+    // richer reads as "off" there rather than as a window that is not the
+    // whole truth.
+    let u = s.uniformWindow
+    cachedQuietStart = u?.0 ?? -1
+    cachedQuietEnd = u?.1 ?? -1
+    d.set(cachedQuietStart, forKey: quietStartKey)
+    d.set(cachedQuietEnd, forKey: quietEndKey)
+    let n = s.days.values.reduce(0) { $0 + $1.count }
+    NSLog("[Audio] schedule set (%@): default %@, %d windows", source,
+          s.defaultMuted ? "muted" : "recording", n)
+  }
+
+  /// Replace the cached muted places (the box's rows, copied by the SPA).
+  public func setPlaces(json: [[String: Any]]) {
+    let ps = json.compactMap(MutedPlace.init(json:))
+    policyLock.lock()
+    places = ps
+    // A place that is no longer muted cannot keep us muted.
+    if let cur = insidePlaceId, !ps.contains(where: { $0.id == cur }) { insidePlaceId = nil }
+    let fix = lastFix
+    policyLock.unlock()
+    let d = UserDefaults.standard
+    if let data = try? JSONSerialization.data(withJSONObject: ps.map { $0.json }),
+       let str = String(data: data, encoding: .utf8) {
+      d.set(str, forKey: placesKey)
+    }
+    NSLog("[Audio] muted places set: %d", ps.count)
+    pushRegions(ps)
+    // A place added while standing in it ("Mute here") should mute now, not on
+    // the next fix: re-run the last fix if it is fresh enough to mean anything.
+    if let f = fix, Date().timeIntervalSince(f.at) < 900 {
+      updateLocation(lat: f.lat, lon: f.lon, accuracy: f.acc)
+    }
+  }
+
+  private func pushRegions(_ ps: [MutedPlace]) {
+    let arr: [[String: Any]] = ps.map {
+      ["id": $0.id, "lat": $0.lat, "lon": $0.lon, "radius_m": $0.enterRadius]
+    }
+    guard let data = try? JSONSerialization.data(withJSONObject: arr),
+          let str = String(data: data, encoding: .utf8) else { return }
+    str.withCString { virtues_location_set_regions($0) }
+  }
+
+  /// A fix from the location plugin (any thread). Enter when the circle
+  /// provably contains the fix (`distance + accuracy < enter radius`); exit
+  /// when it provably does not (`distance − accuracy > exit radius`). A fix
+  /// that proves neither — coarse mode's 3 km cell fixes — changes nothing.
+  public func updateLocation(lat: Double, lon: Double, accuracy: Double) {
+    guard lat.isFinite, lon.isFinite, accuracy.isFinite, accuracy >= 0 else { return }
+    policyLock.lock()
+    lastFix = (lat, lon, accuracy, Date())
+    let ps = places
+    let before = insidePlaceId
+    var after = before
+    if let cur = before, let p = ps.first(where: { $0.id == cur }) {
+      if haversine(lat, lon, p.lat, p.lon) - accuracy > p.exitRadius { after = nil }
+    }
+    if after == nil {
+      var best: (id: String, d: Double)?
+      for p in ps {
+        let d = haversine(lat, lon, p.lat, p.lon)
+        if d + accuracy < p.enterRadius, best == nil || d < best!.d { best = (p.id, d) }
+      }
+      after = best?.id
+    }
+    insidePlaceId = after
+    policyLock.unlock()
+    if before != after {
+      NSLog("[Audio] place %@ → %@ (fix ±%.0fm)", before ?? "-", after ?? "-", accuracy)
+    }
+  }
+
+  /// A region verdict from the OS (any thread) — the location plugin monitors
+  /// the muted places as geofences. Treated as proof, like a fix of accuracy
+  /// zero: it is what covers coarse mode and a cold relaunch.
+  public func regionEvent(placeId: String, inside: Bool) {
+    policyLock.lock()
+    let before = insidePlaceId
+    if inside {
+      if places.contains(where: { $0.id == placeId }) { insidePlaceId = placeId }
+    } else if insidePlaceId == placeId {
+      insidePlaceId = nil
+    }
+    let after = insidePlaceId
+    policyLock.unlock()
+    if before != after {
+      NSLog("[Audio] region %@ %@ → inside %@", placeId, inside ? "enter" : "exit", after ?? "-")
+    }
+  }
+
+  private func haversine(_ lat1: Double, _ lon1: Double, _ lat2: Double, _ lon2: Double) -> Double {
+    let r = 6_371_000.0
+    let dLat = (lat2 - lat1) * .pi / 180
+    let dLon = (lon2 - lon1) * .pi / 180
+    let a = sin(dLat / 2) * sin(dLat / 2)
+      + cos(lat1 * .pi / 180) * cos(lat2 * .pi / 180) * sin(dLon / 2) * sin(dLon / 2)
+    return 2 * r * atan2(sqrt(a), sqrt(1 - a))
+  }
+
+  /// Why the tap must not keep this buffer; nil to record. Schedule first (no
+  /// location needed), then place.
+  private func muteReason(at now: Date) -> String? {
+    policyLock.lock(); defer { policyLock.unlock() }
+    if schedule.muted(at: now, calendar: Calendar.current) { return "schedule" }
+    if insidePlaceId != nil { return "place" }
+    return nil
+  }
+
+  // Markers. Every `chunkSeconds` of continuous mute ships one metadata-only
+  // record on the silent path (no bytes, 30-minute deferred drain, NULL
+  // audio_url on the box) with `muted_by`. One per would-be chunk: ≤288 rows
+  // a day, the same order as a quiet home's silent chunks. The reason is
+  // named; the place never is — location already recorded where we were.
+
+  private func noteMuted(_ why: String, at now: Date) {
+    if markerReason != why {
+      flushMarker(at: now)
+      markerStart = now
+      markerReason = why
+      setMuteReason(why)
+      NSLog("[Audio] muted by %@", why)
+    } else if let s = markerStart, now.timeIntervalSince(s) >= chunkSeconds {
+      enqueueMarker(start: s, end: now, why: why)
+      markerStart = now
+    }
+  }
+
+  private func noteRecording(at now: Date) {
+    guard markerReason != nil else { return }
+    flushMarker(at: now)
+    NSLog("[Audio] mute ended")
+  }
+
+  /// Close the open span. A sub-minute sliver is not worth a row.
+  private func flushMarker(at now: Date) {
+    if let s = markerStart, let why = markerReason, now.timeIntervalSince(s) >= 60 {
+      enqueueMarker(start: s, end: now, why: why)
+    }
+    markerStart = nil
+    markerReason = nil
+    setMuteReason(nil)
+  }
+
+  private func setMuteReason(_ r: String?) {
+    policyLock.lock(); currentMuteReason = r; policyLock.unlock()
+  }
+
+  private func enqueueMarker(start: Date, end: Date, why: String) {
+    let rec: [String: Any] = [
+      "id": UUID().uuidString,
+      "audio_format": "m4a",
+      "timestamp_start": isoMillis.string(from: start),
+      "timestamp_end": isoMillis.string(from: end),
+      "duration_seconds": end.timeIntervalSince(start),
+      "is_silent": true,
+      "muted_by": why,
+    ]
+    q.async {
+      guard let json = try? JSONSerialization.data(withJSONObject: rec),
+            let str = String(data: json, encoding: .utf8) else { return }
+      let rc = "microphone".withCString { s in str.withCString { j in virtues_enqueue(s, j) } }
+      NSLog("[Audio] muted marker (%@) %.0fs rc=%d", why, end.timeIntervalSince(start), rc)
+    }
   }
 
   private let session = AVAudioSession.sharedInstance()
@@ -142,6 +464,70 @@ public final class AudioRecorder: NSObject {
   private var interruptionHoldUntil: Date?
   private let interruptedRetryInterval: TimeInterval = 60
 
+  // CarPlay — RELEASE, DON'T COEXIST. CarPlay is a coupled input+output port,
+  // and a `.playAndRecord` session on that route evicts the car's audio: with
+  // the built-in mic pinned iOS moves every app's output to the phone speaker,
+  // and with the car mic it drops the car to mono (Apple forum 732202). Our
+  // recipe re-runs `configureSession` on every re-arm — watchdog, hold retry,
+  // route/config change — so in a car the eviction recurred every couple of
+  // minutes and the user's music kept jumping to the handset. Coexisting is a
+  // guess about route arbitration we cannot test without a car; a released
+  // session has one predictable outcome (CarPlay behaves as for any app that
+  // is not recording). So while any output port in `pausePorts` is present the
+  // engine stops, the session deactivates, and EVERY re-arm vector is gated —
+  // foreground included, unlike the interruption hold, or opening the app in
+  // the car re-evicts it. The cost is the known one: a background arm after
+  // our own deactivation may be refused, and the gap nudge + foreground are
+  // the recovery. This path is dead code on any phone not connected to a car
+  // (`.carAudio` never appears otherwise), which is what makes it shippable
+  // without CarPlay QA. Same non-atomic-Bool discipline as `recording`.
+  //
+  // Route reads are asymmetric while paused. A POSITIVE read (the car port is
+  // listed) is trusted anywhere: nothing lists a car that is not there. A
+  // NEGATIVE read is not: the session is INACTIVE for the whole pause, and an
+  // inactive session's currentRoute has been seen to omit CarPlay (Apple
+  // forum 715244). So the pause enters on any positive read but exits only on
+  // an `.oldDeviceUnavailable` whose PREVIOUS route (the system's own record)
+  // listed the car — never on a bare negative, which our own category/override
+  // notifications would otherwise turn into an activate/evict/release loop.
+  // The one deliberate negative read is the foreground backstop in
+  // `handleForeground`: the user is holding the phone, and a missed edge must
+  // not strand them on "Paused · CarPlay" at home.
+  //
+  // QA stand-in without a car: wired EarPods are the same coupled shape —
+  // flip the set to `[.headphones]` in a debug build to exercise the pause,
+  // release and resume seams, then flip it back before release.
+  private let pausePorts: Set<AVAudioSession.Port> = [.carAudio]
+  private var carPlayPaused = false
+  // The foreground backstop is rate-limited: didBecomeActive fires on every
+  // unlock and Control Center dismissal, and if the foreground read is ALSO
+  // wrong about the car (the same forum report says it can be), each one
+  // would be an activation/eviction/release for a passenger using the phone.
+  private var lastForegroundBackstopAt: Date?
+  private let foregroundBackstopInterval: TimeInterval = 600
+
+  private func hasPausePort(_ route: AVAudioSessionRouteDescription) -> Bool {
+    route.outputs.contains { pausePorts.contains($0.portType) }
+  }
+
+  private func carPlayRoute() -> Bool {
+    hasPausePort(session.currentRoute)
+  }
+
+  /// The shared session carries OUR configuration (some arm has run
+  /// configureSession since launch). A never-enabled user's session is the
+  /// default category, and it is not ours to deactivate or re-pin — the
+  /// webview's own playback rides the same shared instance.
+  private func sessionIsOurs() -> Bool {
+    session.category == .playAndRecord
+  }
+
+  /// Why capture is paused for a reason the user did not choose, for the UI;
+  /// nil when recording, off, or paused by the user. Only "carplay" today.
+  public func pausedReason() -> String? {
+    (carPlayPaused && cachedEnabled && authorized()) ? "carplay" : nil
+  }
+
   // Serialize engine lifecycle (start/stop/restart) off the realtime tap thread.
   private let q = DispatchQueue(label: "com.virtues.audio", qos: .userInitiated)
 
@@ -155,6 +541,21 @@ public final class AudioRecorder: NSObject {
     cachedLastGood = d.double(forKey: lastGoodKey)
     cachedQuietStart = d.object(forKey: quietStartKey) == nil ? -1 : d.integer(forKey: quietStartKey)
     cachedQuietEnd = d.object(forKey: quietEndKey) == nil ? -1 : d.integer(forKey: quietEndKey)
+    if let raw = d.string(forKey: scheduleKey), let data = raw.data(using: .utf8),
+       let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+      schedule = MuteSchedule(json: obj)
+    } else if cachedQuietStart >= 0, cachedQuietEnd >= 0 {
+      // First launch of a build that has the schedule: the quiet-hours window
+      // becomes its seven-day form, so nothing changes for the user.
+      schedule = MuteSchedule.uniform(start: cachedQuietStart, end: cachedQuietEnd)
+    }
+    if let raw = d.string(forKey: placesKey), let data = raw.data(using: .utf8),
+       let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] {
+      places = arr.compactMap(MutedPlace.init(json:))
+    }
+    // The OS keeps monitored regions across launches, but the location
+    // plugin's own list starts empty; hand it ours again.
+    pushRegions(places)
     let nc = NotificationCenter.default
     nc.addObserver(self, selector: #selector(handleInterruption),
       name: AVAudioSession.interruptionNotification, object: session)
@@ -239,6 +640,11 @@ public final class AudioRecorder: NSObject {
       return
     }
     guard authorized(), cachedEnabled else { return }
+    // CarPlay pause outranks every re-arm vector, including the foreground and
+    // explicit-resume paths that clear the interruption hold: any arm here
+    // re-runs configureSession on the car route and evicts its audio again.
+    // Cleared only by the route-change handler when the car port is gone.
+    if carPlayPaused { return }
     // Liveness: if we think we're recording but no tap buffer has arrived within the
     // timeout, the tap silently died — drop the flag so armEngine does a full
     // rebuild instead of short-circuiting on `recording == true`.
@@ -248,7 +654,12 @@ public final class AudioRecorder: NSObject {
       recording = false
     }
     if recording {
-      checkGapAndNudge()  // healthy, but still evaluate (clears a stale nudge fast)
+      // Healthy, but still evaluate (clears a stale nudge fast). Not on the
+      // CarPlay exit's staggered attempts: `recording` goes true one IO
+      // buffer (~90ms) before the first buffer refreshes lastGood, and a
+      // staggered call landing in that window would fire the drive-stale
+      // nudge only for the buffer to retract it.
+      if reason != "carplay-disconnect" { checkGapAndNudge() }
       return  // already live — don't churn a bg-task assertion (watchdog)
     }
     // Notified interruption in progress: don't fight the interrupter (see the hold's
@@ -262,8 +673,12 @@ public final class AudioRecorder: NSObject {
     armEngine(reason: reason)
     // Evaluate the gap AFTER attempting recovery: if the arm just succeeded a buffer
     // will land and clear things; if it failed (killed / bg-start wall / exotic
-    // takeover), this is where we decide to nudge.
-    checkGapAndNudge()
+    // takeover), this is where we decide to nudge. Not on the CarPlay exit:
+    // lastGood is a whole drive stale by design, so the nudge would fire here
+    // synchronously and be retracted by the first buffer ~100ms later — a
+    // banner flash at the end of every commute. A refused arm still nudges,
+    // from the watchdog's next tick.
+    if reason != "carplay-disconnect" { checkGapAndNudge() }
   }
 
   // MARK: - Gap nudge
@@ -294,6 +709,7 @@ public final class AudioRecorder: NSObject {
     guard cachedEnabled, cachedNotify else { return }
     if nudgeFired { return }              // already showing — once-and-done per episode
     if callActive() { return }            // legit call gap — never nudge
+    if carPlayPaused { return }           // deliberate pause — nudge after the drive, not during
     // Gap measured from the persisted last-good-capture (survives kill→relaunch), so
     // a nudge fires ~gapThreshold after recording ACTUALLY died, not after relaunch.
     let lastGood = cachedLastGood
@@ -355,7 +771,7 @@ public final class AudioRecorder: NSObject {
       // (ensureRecording bails on the flag without tearing down). The q block
       // that ran disable's stop has acquired the flag write, so this read is
       // ordered.
-      if self.cachedEnabled, !self.recording {
+      if self.cachedEnabled, !self.recording, !self.carPlayPaused {
         self.startEngine(reason: reason)
       }
       if bg != .invalid { UIApplication.shared.endBackgroundTask(bg); bg = .invalid }
@@ -363,8 +779,24 @@ public final class AudioRecorder: NSObject {
   }
 
   private func startEngine(reason: String) {
+    // CarPlay gate, checked twice. Before activation covers a launch that
+    // happens inside the car (no route-change notification ever fires for a
+    // route that was already there); after activation is the authoritative
+    // read — an inactive session's currentRoute has been seen to miss CarPlay
+    // from the background (Apple forum 715244) — at the cost of one activation
+    // that is released a few lines later.
+    if carPlayRoute() {
+      enterCarPlayPause(reason: "arm/\(reason)")
+      releaseSession()
+      return
+    }
     do {
       try configureSession()
+      if carPlayRoute() {
+        enterCarPlayPause(reason: "post-activate/\(reason)")
+        releaseSession()
+        return
+      }
       let input = engine.inputNode
       // ALWAYS tear down and reinstall the tap. After an interruption iOS can leave
       // the engine "running" (start() succeeds) while the old tap silently stops
@@ -437,9 +869,99 @@ public final class AudioRecorder: NSObject {
   private func stopEngine(finalize: Bool) {
     if finalize { rotate(restart: false) }
     if tapInstalled { engine.inputNode.removeTap(onBus: 0); tapInstalled = false }
+    // No tap fires after this line, so the marker span is ours to close: left
+    // open, the next armed buffer would extend it across the whole stop.
+    flushMarker(at: Date())
     if engine.isRunning { engine.stop() }
     recording = false
     NSLog("[Audio] engine stopped")
+  }
+
+  // MARK: - CarPlay pause (see `carPlayPaused`)
+
+  /// Flag the pause. Callable from any thread; the teardown itself is
+  /// `releaseSession`, which is q-confined like every other engine mutation.
+  /// Location gets state 0 ("nothing to re-arm"), NOT 1: state 1 opens
+  /// location's 600s precise heartbeat window, and the window only restarts
+  /// on a 0/2→1 edge — pushed at entry it would be spent on a drive during
+  /// which every re-arm is gated, leaving nothing for the moment that needs
+  /// it. From 0, the exit's refused arm pushes 1 via bailArm and opens a
+  /// fresh window exactly then.
+  private func enterCarPlayPause(reason: String) {
+    carPlayPaused = true
+    NSLog("[Audio] CarPlay route (%@) — releasing the session until the car disconnects", reason)
+    virtues_location_audio_state(0)
+  }
+
+  /// Stop the graph and DEACTIVATE — the one place this class ever calls
+  /// `setActive(false)`. Everywhere else the session stays active by design
+  /// (a background re-arm only works as a continuation); here the point is
+  /// to be absent from the car's route entirely. Released for a STOPPED
+  /// recorder too: Stop never deactivates, so it leaves the session active
+  /// with the mic pinned, and that is the state that evicts the car. Not for
+  /// a never-enabled one: that session is not ours (see sessionIsOurs), and
+  /// deactivating it would cut the webview's own playback or throw IsBusy.
+  /// The watchdog stops with the engine: every tick for the length of a drive
+  /// would be a guaranteed dead hop to main, and the exit restarts it.
+  private func releaseSession() {
+    stopWatchdog()
+    stopEngine(finalize: true)
+    guard sessionIsOurs() else { return }
+    do {
+      try session.setActive(false)
+      NSLog("[Audio] session released")
+    } catch {
+      // A refused deactivation (IsBusy while some IO winds down) would leave
+      // the session active with the mic pinned for the whole drive — the
+      // exact state the pause exists to end — and nothing else re-tries it:
+      // every later route event while paused returns before this runs. One
+      // delayed retry, still on q, still gated on the pause holding.
+      NSLog("[Audio] session release failed: %@ — retrying in 1s", error.localizedDescription)
+      q.asyncAfter(deadline: .now() + 1) { [weak self] in
+        guard let self = self, self.carPlayPaused, self.sessionIsOurs() else { return }
+        do {
+          try self.session.setActive(false)
+          NSLog("[Audio] session released on retry")
+        } catch {
+          NSLog("[Audio] session release retry failed: %@", error.localizedDescription)
+        }
+      }
+    }
+  }
+
+  /// The car port is gone. Same shape as the device-switch recovery below:
+  /// clear any standing hold (a call that began before the car connected
+  /// left one, and the pause gated every tick that would have expired it),
+  /// then staggered attempts while the route settles. Then, if still down,
+  /// the interruption-hold cadence: a refused background arm after our own
+  /// deactivation (iOS may say no — it is not a continuation) would otherwise
+  /// spin the 5s watchdog for the rest of the day. A success clears the hold
+  /// with its first buffer; foreground clears it too, so opening the app is
+  /// the sure resume. The watchdog is restarted so that cadence has a driver
+  /// even for a process that launched inside the car and never armed.
+  private func exitCarPlayPause() {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      self.carPlayPaused = false
+      self.interruptionHoldUntil = nil
+      NSLog("[Audio] CarPlay route gone — attempting resume")
+      // Flag read ON q, next to the start, so a Stop that lands between a
+      // main-thread read and the enqueue cannot leave a timer running for a
+      // recorder that is off (disable's stop block would already have run).
+      self.q.async { [weak self] in
+        guard let self = self, self.cachedEnabled else { return }
+        self.startWatchdog()
+      }
+      for delay in [0.0, 0.7, 2.5] {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+          self?.ensureRecording(reason: "carplay-disconnect")
+        }
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+        guard let self = self, self.cachedEnabled, !self.recording else { return }
+        self.interruptionHoldUntil = Date().addingTimeInterval(self.interruptedRetryInterval)
+      }
+    }
   }
 
   private func configureSession() throws {
@@ -541,12 +1063,12 @@ public final class AudioRecorder: NSObject {
       DispatchQueue.main.async { [weak self] in self?.clearNudge() }
     }
     interruptionHoldUntil = nil  // audio is flowing — any interruption is over
-    // Quiet hours: mute, don't release. Everything above still ran — the
+    // Schedule / place mute: mute, don't release. Everything above still ran — the
     // heartbeat and lastGood stamps say "capture is HEALTHY, just muted", which
     // keeps the watchdog quiet, the gap nudge silent, and location in its cheap
     // mode. On window entry the partial chunk finalizes once (outFile goes nil);
     // on exit the next buffer reopens a chunk and capture resumes seamlessly.
-    if quietHoursActive(now) {
+    if let why = muteReason(at: now) {
       if let f = outFile {
         if sampleCount > 0 {
           rotate(restart: false)
@@ -561,8 +1083,10 @@ public final class AudioRecorder: NSObject {
           try? FileManager.default.removeItem(at: url)
         }
       }
+      noteMuted(why, at: now)
       return
     }
+    noteRecording(at: now)
     if outFile == nil { try? openChunk() }
     guard let converter = converter else { return }
     let ratio = targetSampleRate / (hwFormat?.sampleRate ?? targetSampleRate)
@@ -816,6 +1340,28 @@ public final class AudioRecorder: NSObject {
   @objc private func handleRouteChange(_ note: Notification) {
     guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
       let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+    // CarPlay gate, before the reason switch. ENTER on any positive read, on
+    // any reason: the car can arrive as newDeviceAvailable,
+    // routeConfigurationChange or override depending on wired/wireless and on
+    // what else was routed. EXIT only on the system's own word that the car
+    // left — `.oldDeviceUnavailable` with the car in the previous route —
+    // never on a bare negative read (see the asymmetry at `pausePorts`).
+    // While paused, every other route event is swallowed: each would
+    // otherwise re-pin the mic on the car route.
+    let car = carPlayRoute()
+    if car, !carPlayPaused {
+      enterCarPlayPause(reason: "route-change")
+      q.async { [weak self] in self?.releaseSession() }
+      return
+    }
+    if carPlayPaused {
+      let prev = note.userInfo?[AVAudioSessionRouteChangePreviousRouteKey]
+        as? AVAudioSessionRouteDescription
+      if reason == .oldDeviceUnavailable, !car, let p = prev, hasPausePort(p) {
+        exitCarPlayPause()
+      }
+      return
+    }
     switch reason {
     case .newDeviceAvailable, .oldDeviceUnavailable:
       // A device switch (e.g. plugging into / out of AirPods) deactivates our
@@ -827,7 +1373,20 @@ public final class AudioRecorder: NSObject {
       // backstop. This turns a ~10s recovery (old: wait for the slow location poll)
       // into <1s.
       interruptionHoldUntil = nil
-      q.async { [weak self] in try? self?.configureSession() }
+      // Only a session that is already ours gets re-pinned. Unguarded, this
+      // activated a playAndRecord session with the built-in mic pinned on
+      // every device switch for users who had NEVER enabled recording — a
+      // route mutation nobody asked for. A STOPPED recorder's session is
+      // still ours and still active, and this refresh is what restores its
+      // speaker override after a device switch resets it (otherwise other
+      // apps' output lands in the receiver), so it deliberately keeps
+      // running for that case. Re-checked against the CarPlay flag ON q: a
+      // block queued by the AirPods coming out as the user gets in the car
+      // would otherwise run ahead of the pause's release and evict once.
+      q.async { [weak self] in
+        guard let self = self, self.sessionIsOurs(), !self.carPlayPaused else { return }
+        try? self.configureSession()
+      }
       for delay in [0.7, 2.5] {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
           self?.ensureRecording(reason: "route-change")
@@ -855,6 +1414,22 @@ public final class AudioRecorder: NSObject {
 
   @objc private func handleForeground() {
     interruptionHoldUntil = nil
+    // The one deliberate negative route read (see `pausePorts`): a missed
+    // disconnect edge must not strand a user at home on "Paused · CarPlay".
+    // If the read is wrong and the car is in fact there, the cost is one
+    // activation that the post-activate check releases — with the user
+    // holding the phone, not every couple of minutes in the background.
+    if carPlayPaused, !carPlayRoute() {
+      let now = Date()
+      if let last = lastForegroundBackstopAt,
+         now.timeIntervalSince(last) < foregroundBackstopInterval {
+        return  // recently tried and the car was in fact still there
+      }
+      lastForegroundBackstopAt = now
+      NSLog("[Audio] foreground with no car port while paused — treating as disconnect")
+      exitCarPlayPause()
+      return
+    }
     ensureRecording(reason: "foreground")
   }
 }

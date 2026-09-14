@@ -82,6 +82,9 @@ pub struct WikiPlace {
     pub seen_count: Option<i32>,
     pub first_seen: Option<DateTime<Utc>>,
     pub last_seen: Option<DateTime<Utc>>,
+    /// The phone keeps no audio while the owner is inside this place.
+    #[serde(default)]
+    pub is_audio_muted: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -246,6 +249,8 @@ pub struct UpdateWikiPlaceRequest {
     pub cover_image: Option<String>,
     pub category: Option<String>,
     pub address: Option<String>,
+    /// Mute the phone's audio collector inside this place.
+    pub is_audio_muted: Option<bool>,
 }
 
 /// Request to update an organization wiki page
@@ -508,7 +513,7 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
         SELECT
             id, name, content, article, article_updated_at, cover_image, category, address,
             latitude, longitude,
-            seen_count, first_seen, last_seen,
+            seen_count, first_seen, last_seen, is_audio_muted,
             created_at, updated_at
         FROM wiki_places
         WHERE id = $1
@@ -538,6 +543,7 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
         seen_count: Some(row.seen_count as i32),
         first_seen: row.first_seen,
         last_seen: row.last_seen,
+        is_audio_muted: row.is_audio_muted,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -590,6 +596,7 @@ pub async fn update_wiki_place(
             cover_image = COALESCE($4, cover_image),
             category = COALESCE($5, category),
             address = COALESCE($6, address),
+            is_audio_muted = COALESCE($7, is_audio_muted),
             updated_at = now()
         WHERE id = $1
         "#,
@@ -598,7 +605,8 @@ pub async fn update_wiki_place(
         req.content,
         req.cover_image,
         req.category,
-        req.address
+        req.address,
+        req.is_audio_muted
     )
     .execute(pool)
     .await
@@ -828,7 +836,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
     if let Some(row) = existing {
         let (ne, nt) = get_day_novelty_counts(pool, &date_str).await?;
         let mut day = wiki_day_from_row_with_counts(&row, date, ne, nt)?;
-        day.sleep_cycles = compute_sleep_cycles(pool, date).await;
+        day.sleep_cycles = compute_sleep_cycles(pool, date).await?;
         return Ok(day);
     }
 
@@ -890,153 +898,158 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
 /// Compute scored sleep cycles for a day from sleep stage data + heart rate readings.
 /// Derives cycle boundaries by splitting sleep_stages at "awake" entries,
 /// then computes avg HR per cycle and z-scores against a 14-day sleep HR baseline.
-async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Vec<ScoredSleepCycle> {
-    use sqlx::Row;
+async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Result<Vec<ScoredSleepCycle>> {
+    Ok({
+        use sqlx::Row;
 
-    let start = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let end = (date + chrono::Duration::days(1)).and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let start = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let end = (date + chrono::Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
 
-    // 1. Get sleep record for this night (overlaps with this calendar day)
-    let sleep_row: Option<sqlx::postgres::PgRow> = sqlx::query(
-        r#"SELECT sleep_stages FROM data_health_sleep
+        // 1. Get sleep record for this night (overlaps with this calendar day)
+        let sleep_row: Option<sqlx::postgres::PgRow> = sqlx::query(
+            r#"SELECT sleep_stages FROM data_health_sleep
            WHERE started_at >= $1
              AND started_at < $2
            ORDER BY started_at ASC LIMIT 1"#,
-    )
-    .bind(start)
-    .bind(end)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+        )
+        .bind(start)
+        .bind(end)
+        .fetch_optional(pool)
+        .await?;
 
-    // sleep_stages is JSONB in pg — sqlx decodes directly into serde_json::Value.
-    let stages: Vec<serde_json::Value> = match sleep_row {
-        Some(row) => match row.try_get::<Option<serde_json::Value>, _>("sleep_stages") {
-            Ok(Some(serde_json::Value::Array(arr))) => arr,
-            _ => return vec![],
-        },
-        None => return vec![],
-    };
+        // sleep_stages is JSONB in pg — sqlx decodes directly into serde_json::Value.
+        let stages: Vec<serde_json::Value> = match sleep_row {
+            Some(row) => match row.try_get::<Option<serde_json::Value>, _>("sleep_stages") {
+                Ok(Some(serde_json::Value::Array(arr))) => arr,
+                _ => return Ok(vec![]),
+            },
+            None => return Ok(vec![]),
+        };
 
-    // Group consecutive non-awake stages into cycles
-    let mut cycles: Vec<(String, String, String)> = vec![]; // (start, end, dominant_stage)
-    let mut cycle_start: Option<String> = None;
-    let mut cycle_end: Option<String> = None;
-    let mut stage_durations: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        // Group consecutive non-awake stages into cycles
+        let mut cycles: Vec<(String, String, String)> = vec![]; // (start, end, dominant_stage)
+        let mut cycle_start: Option<String> = None;
+        let mut cycle_end: Option<String> = None;
+        let mut stage_durations: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
 
-    for stage in &stages {
-        let stage_name = stage["stage"].as_str().unwrap_or("unknown");
-        let start = stage["start"].as_str().unwrap_or("");
-        let end = stage["end"].as_str().unwrap_or("");
+        for stage in &stages {
+            let stage_name = stage["stage"].as_str().unwrap_or("unknown");
+            let start = stage["start"].as_str().unwrap_or("");
+            let end = stage["end"].as_str().unwrap_or("");
 
-        if stage_name == "awake" {
-            // Close current cycle if we have one
-            if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
-                let dominant = stage_durations
-                    .iter()
-                    .max_by_key(|(_, v)| *v)
-                    .map(|(k, _)| k.clone())
-                    .unwrap_or_else(|| "core".to_string());
-                cycles.push((cs.clone(), ce.clone(), dominant));
-                cycle_start = None;
-                cycle_end = None;
-                stage_durations.clear();
-            }
-        } else {
-            if cycle_start.is_none() {
-                cycle_start = Some(start.to_string());
-            }
-            cycle_end = Some(end.to_string());
+            if stage_name == "awake" {
+                // Close current cycle if we have one
+                if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
+                    let dominant = stage_durations
+                        .iter()
+                        .max_by_key(|(_, v)| *v)
+                        .map(|(k, _)| k.clone())
+                        .unwrap_or_else(|| "core".to_string());
+                    cycles.push((cs.clone(), ce.clone(), dominant));
+                    cycle_start = None;
+                    cycle_end = None;
+                    stage_durations.clear();
+                }
+            } else {
+                if cycle_start.is_none() {
+                    cycle_start = Some(start.to_string());
+                }
+                cycle_end = Some(end.to_string());
 
-            // Estimate duration in minutes for dominant stage calculation
-            if let (Ok(s), Ok(e)) = (
-                DateTime::parse_from_rfc3339(start),
-                DateTime::parse_from_rfc3339(end),
-            ) {
-                let mins = (e - s).num_minutes();
-                let key = stage_name.replace("asleep_", "");
-                *stage_durations.entry(key).or_insert(0) += mins;
+                // Estimate duration in minutes for dominant stage calculation
+                if let (Ok(s), Ok(e)) = (
+                    DateTime::parse_from_rfc3339(start),
+                    DateTime::parse_from_rfc3339(end),
+                ) {
+                    let mins = (e - s).num_minutes();
+                    let key = stage_name.replace("asleep_", "");
+                    *stage_durations.entry(key).or_insert(0) += mins;
+                }
             }
         }
-    }
-    // Close final cycle
-    if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
-        let dominant = stage_durations
-            .iter()
-            .max_by_key(|(_, v)| *v)
-            .map(|(k, _)| k.clone())
-            .unwrap_or_else(|| "core".to_string());
-        cycles.push((cs.clone(), ce.clone(), dominant));
-    }
+        // Close final cycle
+        if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
+            let dominant = stage_durations
+                .iter()
+                .max_by_key(|(_, v)| *v)
+                .map(|(k, _)| k.clone())
+                .unwrap_or_else(|| "core".to_string());
+            cycles.push((cs.clone(), ce.clone(), dominant));
+        }
 
-    if cycles.is_empty() {
-        return vec![];
-    }
+        if cycles.is_empty() {
+            return Ok(vec![]);
+        }
 
-    // 3. Get 14-day sleep HR baseline (median of nightly avg HRs)
-    let baseline_start = (date - chrono::Duration::days(14))
-        .and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let baseline_hrs: Vec<f64> = sqlx::query_scalar(
-        r#"SELECT AVG(CAST(hr.bpm AS REAL))
+        // 3. Get 14-day sleep HR baseline (median of nightly avg HRs)
+        let baseline_start = (date - chrono::Duration::days(14))
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+        let baseline_hrs: Vec<f64> = sqlx::query_scalar(
+            r#"SELECT AVG(CAST(hr.bpm AS REAL))
            FROM data_health_heart_rate hr
            INNER JOIN data_health_sleep s
              ON hr.occurred_at >= s.started_at AND hr.occurred_at < s.ended_at
            WHERE s.started_at >= $1
              AND s.started_at < $2
            GROUP BY s.id"#,
-    )
-    .bind(baseline_start)
-    .bind(end)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-
-    let (baseline_mean, baseline_std) = if baseline_hrs.len() >= 2 {
-        let mean = baseline_hrs.iter().sum::<f64>() / baseline_hrs.len() as f64;
-        let variance =
-            baseline_hrs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / baseline_hrs.len() as f64;
-        let std = variance.sqrt().max(1.0); // floor at 1 bpm to avoid div-by-zero
-        (mean, std)
-    } else {
-        (0.0, 0.0) // insufficient baseline
-    };
-
-    // 4. Score each cycle
-    let mut scored: Vec<ScoredSleepCycle> = vec![];
-    for (start, end, dominant) in &cycles {
-        // Get avg HR during this cycle window
-        let avg_hr: Option<f64> = sqlx::query_scalar(
-            r#"SELECT AVG(CAST(bpm AS REAL))
-               FROM data_health_heart_rate
-               WHERE occurred_at >= $1 AND occurred_at < $2"#,
         )
-        .bind(start)
+        .bind(baseline_start)
         .bind(end)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
+        .fetch_all(pool)
+        .await?;
 
-        let autonomic_z = match (avg_hr, baseline_std > 0.0) {
-            (Some(hr), true) => {
-                // For sleep: lower HR = better recovery = more negative z
-                let z = (hr - baseline_mean) / baseline_std;
-                Some(z.clamp(-3.0, 3.0))
-            }
-            _ => None,
+        let (baseline_mean, baseline_std) = if baseline_hrs.len() >= 2 {
+            let mean = baseline_hrs.iter().sum::<f64>() / baseline_hrs.len() as f64;
+            let variance = baseline_hrs.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+                / baseline_hrs.len() as f64;
+            let std = variance.sqrt().max(1.0); // floor at 1 bpm to avoid div-by-zero
+            (mean, std)
+        } else {
+            (0.0, 0.0) // insufficient baseline
         };
 
-        scored.push(ScoredSleepCycle {
-            start_time: start.clone(),
-            end_time: end.clone(),
-            dominant_stage: dominant.clone(),
-            avg_hr,
-            autonomic_z,
-        });
-    }
+        // 4. Score each cycle
+        let mut scored: Vec<ScoredSleepCycle> = vec![];
+        for (start, end, dominant) in &cycles {
+            // Get avg HR during this cycle window
+            let avg_hr: Option<f64> = sqlx::query_scalar(
+                r#"SELECT AVG(CAST(bpm AS REAL))
+               FROM data_health_heart_rate
+               WHERE occurred_at >= $1 AND occurred_at < $2"#,
+            )
+            .bind(start)
+            .bind(end)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
 
-    scored
+            let autonomic_z = match (avg_hr, baseline_std > 0.0) {
+                (Some(hr), true) => {
+                    // For sleep: lower HR = better recovery = more negative z
+                    let z = (hr - baseline_mean) / baseline_std;
+                    Some(z.clamp(-3.0, 3.0))
+                }
+                _ => None,
+            };
+
+            scored.push(ScoredSleepCycle {
+                start_time: start.clone(),
+                end_time: end.clone(),
+                dominant_stage: dominant.clone(),
+                avg_hr,
+                autonomic_z,
+            });
+        }
+
+        scored
+    })
 }
 
 /// Count new entities and new topics for a date.
@@ -1062,7 +1075,7 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
     .bind(&next_date)
     .fetch_one(pool)
     .await
-    .unwrap_or(0);
+    .map_err(|e| Error::Database(format!("Failed to count new entities: {}", e)))?;
 
     // New topics: count topics from this day's events that don't appear in prior days
     let new_topics: i64 = sqlx::query_scalar(
@@ -1080,7 +1093,7 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
     .bind(date_str)
     .fetch_one(pool)
     .await
-    .unwrap_or(0);
+    .map_err(|e| Error::Database(format!("Failed to count new topics: {}", e)))?;
 
     Ok((new_entities, new_topics))
 }
@@ -1453,7 +1466,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
         .bind(*end)
         .fetch_all(pool)
         .await
-        .unwrap_or_default();
+        .map_err(|e| Error::Database(format!("Failed to load entity refs for day events: {}", e)))?;
 
         if !ref_rows.is_empty() {
             let map: serde_json::Map<String, serde_json::Value> = ref_rows
@@ -1522,8 +1535,19 @@ pub async fn get_events_by_date(pool: &PgPool, date: NaiveDate) -> Result<Vec<Te
 }
 
 /// Create a temporal event
-pub async fn create_temporal_event(
-    pool: &PgPool,
+///
+/// Takes any executor so the segmenter can run every insert of a re-cut inside
+/// ONE transaction with the delete that precedes them (see
+/// `day_summary::store_structured_events`). The id is content-addressed from the
+/// boundaries, so a fresh cut can land on exactly the span of an event the user
+/// edited, hid, or added — the delete deliberately spares those rows. In that
+/// case the insert is a no-op (`ON CONFLICT DO NOTHING`) rather than a unique
+/// violation: a violation would abort the transaction and throw away the whole
+/// cut, and the user's judgement outranks the model's anyway. It surfaces as
+/// `Error::InvalidInput` so the caller can tell "already there" from a real
+/// failure; the API caller treats it as the duplicate it is.
+pub async fn create_temporal_event<'e>(
+    exec: impl sqlx::PgExecutor<'e>,
     req: CreateTemporalEventRequest,
 ) -> Result<TemporalEvent> {
     use sqlx::Row;
@@ -1567,6 +1591,7 @@ pub async fn create_temporal_event(
             source_ontologies, kind, is_user_added, event_summary,
             topics
         ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14::jsonb)
+        ON CONFLICT (id) DO NOTHING
         RETURNING
             id, is_user_edited, created_at, updated_at
         "#,
@@ -1585,9 +1610,14 @@ pub async fn create_temporal_event(
     .bind(req.is_user_added)
     .bind(&req.event_summary)
     .bind(req.topics.clone().unwrap_or_else(|| serde_json::json!([])))
-    .fetch_one(pool)
+    .fetch_optional(exec)
     .await
     .map_err(|e| Error::Database(format!("Failed to create temporal event: {}", e)))?;
+    let Some(row) = row else {
+        return Err(Error::InvalidInput(format!(
+            "an event already spans {start_time_str}–{end_time_str} on this day ({event_id})"
+        )));
+    };
 
     let id: String = row
         .try_get("id")
@@ -1730,7 +1760,14 @@ pub async fn delete_temporal_event(pool: &PgPool, id: String) -> Result<()> {
 /// Preserved events can now overlap the fresh cut — but that was already true
 /// of `is_user_added` events, so this widens an accepted condition rather than
 /// introducing one. A user's judgement outranks a gapless timeline.
-pub async fn delete_auto_events_for_day(pool: &PgPool, day_id: String) -> Result<u64> {
+///
+/// Any executor: the segmenter runs this inside the same transaction as the
+/// inserts that replace the deleted rows, so a failed re-cut leaves the old
+/// events standing instead of an empty day.
+pub async fn delete_auto_events_for_day<'e>(
+    exec: impl sqlx::PgExecutor<'e>,
+    day_id: String,
+) -> Result<u64> {
     let day_id_str = day_id;
 
     let result = sqlx::query!(
@@ -1743,7 +1780,7 @@ pub async fn delete_auto_events_for_day(pool: &PgPool, day_id: String) -> Result
         "#,
         day_id_str
     )
-    .execute(pool)
+    .execute(exec)
     .await
     .map_err(|e| Error::Database(format!("Failed to delete auto events: {}", e)))?;
 
