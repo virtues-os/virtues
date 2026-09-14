@@ -119,11 +119,13 @@
 		   When he wakes, the ball now overhangs the column slightly, which is
 		   the usual optical treatment for a round shape at a text edge.
 
-		   The +3px is the last step: 114.5 puts the dot's ink on the text BOX,
-		   but a paragraph's first glyph starts a hair inside that on its side
-		   bearing, and a circle flush to an edge reads further left than a
-		   stem does. Three pixels back and the two left edges look like one. */
-		margin-left: calc(54px * -114.5 / 316 + 3px);
+		   MEASURED, not judged by eye: at size=54 a viewBox unit is 54/316 px,
+		   the resting foot's center stands 30 units left of the SVG's center
+		   and its ink 13.47 further, so this lands the mark's left edge on the
+		   column to within 0.01px. An optical nudge of +3px was tried and read
+		   as a visible indent — at this size the dot is 4.6px across, so three
+		   of them is most of a dot. */
+		margin-left: calc(54px * -114.5 / 316);
 		margin-top: calc(54px * -58 / 316);
 	}
 
