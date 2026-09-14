@@ -49,6 +49,9 @@ pub mod web_bundle;
 /// |   | apply, for the sidebar's "Relaunch to X" chip (desktop-only commands;
 /// |   | mobile at 3 still rejects them and the UI treats that as silence) |
 /// | 4 | `check_app_update_cmd` — manual check trigger for This Mac's ledger |
+/// | 5 | `send_imessage` / `open_messages_thread` / `take_pending_route` —
+/// |   | replies from the record: send a draft through Messages, or open the
+/// |   | thread with it typed in (macOS-only; the reply view checks first) |
 ///
 /// Note `bundle-contract.json` stays at `minShellVersion: 1`: every addition
 /// so far is called best-effort and the UI works fine without it, so requiring
@@ -56,7 +59,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 4;
+pub const COMMAND_SURFACE_VERSION: u32 = 5;
 
 /// What the native shell knows about itself.
 ///

@@ -633,6 +633,12 @@
           "markdownDescription": "Enables the open_full_disk_access command without any pre-configured scope."
         },
         {
+          "description": "Enables the open_messages_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-messages-thread",
+          "markdownDescription": "Enables the open_messages_thread command without any pre-configured scope."
+        },
+        {
           "description": "Enables the ota_check_now command without any pre-configured scope.",
           "type": "string",
           "const": "allow-ota-check-now",
@@ -669,6 +675,12 @@
           "markdownDescription": "Enables the resume_collector command without any pre-configured scope."
         },
         {
+          "description": "Enables the send_imessage command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-send-imessage",
+          "markdownDescription": "Enables the send_imessage command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_appearance command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-appearance",
@@ -691,6 +703,12 @@
           "type": "string",
           "const": "allow-stop-collector",
           "markdownDescription": "Enables the stop_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the take_pending_route command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-take-pending-route",
+          "markdownDescription": "Enables the take_pending_route command without any pre-configured scope."
         },
         {
           "description": "Enables the uninstall_collector command without any pre-configured scope.",
@@ -789,6 +807,12 @@
           "markdownDescription": "Denies the open_full_disk_access command without any pre-configured scope."
         },
         {
+          "description": "Denies the open_messages_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-messages-thread",
+          "markdownDescription": "Denies the open_messages_thread command without any pre-configured scope."
+        },
+        {
           "description": "Denies the ota_check_now command without any pre-configured scope.",
           "type": "string",
           "const": "deny-ota-check-now",
@@ -825,6 +849,12 @@
           "markdownDescription": "Denies the resume_collector command without any pre-configured scope."
         },
         {
+          "description": "Denies the send_imessage command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-send-imessage",
+          "markdownDescription": "Denies the send_imessage command without any pre-configured scope."
+        },
+        {
           "description": "Denies the set_appearance command without any pre-configured scope.",
           "type": "string",
           "const": "deny-set-appearance",
@@ -847,6 +877,12 @@
           "type": "string",
           "const": "deny-stop-collector",
           "markdownDescription": "Denies the stop_collector command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the take_pending_route command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-take-pending-route",
+          "markdownDescription": "Denies the take_pending_route command without any pre-configured scope."
         },
         {
           "description": "Denies the uninstall_collector command without any pre-configured scope.",

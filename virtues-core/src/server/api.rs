@@ -2813,8 +2813,23 @@ pub async fn chat_handler(
         axum::extract::State(state.db.pool().clone()),
         axum::extract::State(state.yjs_state.clone()),
         axum::extract::State(state.chat_cancel_state.clone()),
+        axum::extract::State(state.live_turns.clone()),
         user,
         Json(request),
+    )
+    .await
+}
+
+/// GET /api/chat/:id/stream - Rejoin the turn still running for a chat (VIR-323)
+pub async fn live_turn_stream_handler(
+    State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
+    axum::extract::Path(chat_id): axum::extract::Path<String>,
+) -> Response {
+    crate::api::chat::live_turn_stream_handler(
+        axum::extract::State(state.live_turns.clone()),
+        user,
+        axum::extract::Path(chat_id),
     )
     .await
 }
@@ -3932,6 +3947,40 @@ pub async fn reorder_pins_handler(
         Ok(_) => success_message("Pins reordered"),
         Err(e) => error_response(e),
     }
+}
+
+// ============================================================================
+// Message reply handlers (drafts the box is holding for a device to send)
+// ============================================================================
+
+/// GET /api/message-replies/pending — drafts awaiting the owner, newest first.
+pub async fn list_pending_message_replies_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_pending_message_replies(state.db.pool()).await)
+}
+
+/// GET /api/message-replies/:id
+pub async fn get_message_reply_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_message_reply(state.db.pool(), &id).await)
+}
+
+/// POST /api/message-replies/:id/sent — the device sent it (possibly edited).
+pub async fn mark_message_reply_sent_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::MarkSentRequest>,
+) -> Response {
+    api_response(crate::api::mark_message_reply_sent(state.db.pool(), &id, request).await)
+}
+
+/// POST /api/message-replies/:id/dismiss
+pub async fn dismiss_message_reply_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::dismiss_message_reply(state.db.pool(), &id).await)
 }
 
 // ============================================================================

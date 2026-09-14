@@ -4,6 +4,8 @@
 //! they all repeated: tracing init, an HTTP client, `AppletInput`
 //! credential/config accessors, and the send→error_for_status→json fetch dance.
 
+pub mod message_reply;
+
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use std::time::Duration;

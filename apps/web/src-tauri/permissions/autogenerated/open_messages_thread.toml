@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-messages-thread"
+description = "Enables the open_messages_thread command without any pre-configured scope."
+commands.allow = ["open_messages_thread"]
+
+[[permission]]
+identifier = "deny-open-messages-thread"
+description = "Denies the open_messages_thread command without any pre-configured scope."
+commands.deny = ["open_messages_thread"]
