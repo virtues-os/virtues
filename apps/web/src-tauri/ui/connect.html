@@ -220,84 +220,6 @@
                    flex: none; animation: pulse 1.6s ease-in-out infinite; }
       @keyframes pulse { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
 
-      /* ── THE SPLASH ──
-         What a paired device sees instead of a sentence. Two branches leave
-         from here — the app, or one of the airlock's own screens — and both
-         start from the same mark, so the launch reads as one motion that forks
-         rather than as a screen that got replaced.
-
-         THE MARK IS THE APP'S, AT THE APP'S SIZE, IN THE APP'S PLACE. Not the
-         chrome's ∴ glyph set large: `ChatView`'s `.init-hero` draws three
-         circles in a 12 × 10.5 viewBox at 30 × 26.25, and a text glyph at a
-         matching width still renders visibly thinner dots (measured 15px tall
-         against the app's 22px on a 3x phone). Same markup, same numbers, so
-         the mark the app assembles is the one already standing there.
-
-         PLACE, measured rather than derived. `.init-hero` sits `bottom: calc(50%
-         + 72px)` inside the CHAT BODY, not the window — the mobile shell's 48px
-         top bar and the safe area are above it — and the mark rides above that
-         on the hero's 14px gap and its wordmark. Rather than chase that stack
-         through three components, mirror the box (top bar and safe area off the
-         top, the window's own bottom edge for the bottom) and read the one
-         remaining number off a screenshot of the empty chat: the mark's ink sits
-         132px above that box's center. The padding is what does the lifting,
-         because centering a flex box inside `2 x rise` of bottom padding moves
-         its content up by exactly `rise`. Ink and box share a center here — the
-         circles sit symmetrically in the viewBox — so either can be measured.
-
-         Two numbers, one job each, and a screenshot is how you check them: a
-         cold launch against the empty chat, not arithmetic. Phone-shaped
-         numbers in a file desktop shares, which is fine because only a phone
-         ever reaches this screen — `main.rs` decides the landing state before
-         the window exists and injects no `__VIRTUES_PAIRED__`, so
-         `bootDestination` can only return `probe-paired` on mobile.
-
-         `position: fixed` and its own paint: #app's `rise` animation would
-         otherwise slide the mark up from nowhere, which is a different gesture
-         from the one this wants. */
-      #splash { position: fixed; inset: 0; z-index: 20;
-                display: flex; align-items: center; justify-content: center;
-                background: var(--paper); color: var(--ink);
-                --shell-bar: 48px;   /* MobileShell `.topbar` */
-                --hero-rise: 132px;  /* `.init-hero`'s mark above that box's center */
-                padding-bottom: calc(2 * var(--hero-rise)
-                                     - var(--shell-bar) - env(safe-area-inset-top));
-                /* Armed a frame late, deliberately — see `renderSplash`. */
-                opacity: 0; }
-      /* `opacity: 1` matters as much as the animation: it is the underlying
-         value `splash-settle`'s implicit `from` reads on the way out, and with
-         the base rule at 0 the exit would fade from nothing to nothing. */
-      #splash.ready { opacity: 1; animation: splash-fade .14s var(--ease) both; }
-      /* The live region's text, for a screen reader only. */
-      #splash .offscreen { position: absolute; width: 1px; height: 1px;
-                           overflow: hidden; clip-path: inset(50%); }
-      /* The entrance scales the MARK, not the full-screen box. Both read the
-         same when the mark is dead center, which is where this started — but
-         the mark is deliberately off-center now, and a transform on the box
-         swings it through an arc on its way in (4-5px, measurable). Scaling the
-         mark about itself leaves it exactly where the app's is.
-
-         .14s, not .22s: the entrance has to be FINISHED inside MARK_BEAT. An
-         airlock screen replacing it mid-fade snaps the opacity back to 1 for a
-         frame on its way down, and handing over to the app mid-fade passes a
-         partly-drawn mark to one that is fully drawn. */
-      #splash svg { overflow: visible; }
-      #splash.ready svg { animation: splash-mark .14s var(--ease) both; }
-      /* LEAVING FOR THE AIRLOCK — the only exit there is. The app path does not
-         fade at all: the SPA's shell paints this same mark in this same place,
-         so the navigation IS the transition. Here nothing is about to stand
-         here, so the mark
-         is free to recede — and should, because the screen that follows rises
-         into the space it leaves. */
-      #splash.settling { animation: splash-settle .2s var(--ease) both; }
-      @keyframes splash-fade { from { opacity: 0; } }
-      @keyframes splash-mark { from { transform: scale(.94); } }
-      @keyframes splash-settle { to { opacity: 0; transform: scale(.9); } }
-      /* Vestibular comfort: the fork still happens, it just cuts. */
-      @media (prefers-reduced-motion: reduce) {
-        #splash.ready, #splash.ready svg,
-        #splash.settling { animation-duration: .01ms; }
-      }
       .steps { margin: 26px 0 0; padding: 0; list-style: none; }
       .steps li { font-size: 13px; color: var(--ink-subtle); line-height: 1.6;
                   padding-left: 18px; position: relative; margin-bottom: 6px; }
@@ -673,10 +595,15 @@
       // paired phone: a sentence the owner read every time, telling them what
       // they had just asked for. Arriving is the whole ask (2026-09-14).
       //
-      // So: ONE MARK, AND A RACE. The mark is what both branches leave from,
-      // which is what makes the fork read as one motion rather than as a screen
-      // being replaced. The probe runs, and whichever of it and a short clock
-      // finishes first decides where we go.
+      // So the paired path shows NOTHING — bare paper, chrome hidden — and
+      // races the probe against a short clock. Nothing is drawn because
+      // nothing here is worth drawing: whatever went on this screen would be
+      // a placeholder for the app, and a placeholder has to be handed over to
+      // the real thing, across a document navigation, in a position the two
+      // agree on. That was built and then removed the same day: three
+      // painters (this page, `app.html`, `ChatView`) each holding a copy of a
+      // hand-measured offset, kept in step by a comment. The seam cost more
+      // than the paper it covered.
       //
       // WHAT MAKES RACING SAFE IS WHICH ANSWERS ARE SLOW. `Reach::status` only
       // makes a round trip when the device IS paired — `is_paired()` is a local
@@ -707,14 +634,8 @@
       //     `(app)/+layout.ts` treats a transport failure as offline and keeps
       //     the shell mounted, so nothing strands.
       //
-      // MARK_BEAT is a floor, not a delay — it stops a box that answers in
-      // 80ms from flashing the mark for three frames. Beat plus exit is ~280ms
-      // on the common path, under what the probe cost even at its fastest.
-      // MARK_BEAT has to outlast arming (two frames) plus the .14s entrance,
-      // or the handover happens while the mark is still fading up and the SPA
-      // continues it at full ink — a step, in the one place the whole point is
-      // that nothing steps.
-      const MARK_BEAT = 240;        // the mark holds at least this long
+      // There is no minimum hold. A floor exists to stop something being shown
+      // for three frames; with nothing shown, waiting is only ever cost.
       const OPTIMISTIC_AFTER = 500; // past here, stop waiting and just open
 
       // Not `window.chrome` via the id-becomes-a-global rule: that name is a
@@ -722,110 +643,35 @@
       // it is the kind of thing that works here and breaks on Android.
       const chromeEl = document.getElementById('chrome');
 
-      function renderSplash() {
+      /** Bare paper while we decide: no chrome, no content, nothing to hand over. */
+      function blankForDecision() {
         setServer('');
         app.innerHTML = '';
-        // Idempotent: `renderBoxUnreachable`'s "Try again" re-enters
-        // `bootPaired`, and two stacked splashes would never both be removed.
-        const existing = document.getElementById('splash');
-        if (existing) existing.remove();
-        const el = document.createElement('div');
-        el.id = 'splash';
-        el.setAttribute('role', 'status');
-        // `ChatView`'s `.init-hero` mark, verbatim — same viewBox, same radii,
-        // same rendered size. It does NOT assemble here: the app plays that
-        // entrance when it mounts, and a second one would read as the mark
-        // being drawn twice.
-        //
-        // The sentence beside it is the one this screen stopped saying out
-        // loud. A live region announces its CONTENT, not its `aria-label`, so
-        // it is real text held off-screen rather than an attribute: the mark
-        // says "opening" to anyone who can see it, and a silent blank screen
-        // would be a step backwards for anyone who cannot.
-        el.innerHTML =
-          '<svg viewBox="0 0 12 10.5" width="30" height="26.25" fill="currentColor" aria-hidden="true">' +
-          '<circle cx="6" cy="2.4" r="1.5" />' +
-          '<circle cx="2.6" cy="8.1" r="1.5" />' +
-          '<circle cx="9.4" cy="8.1" r="1.5" /></svg>' +
-          '<span class="offscreen">Opening Virtues</span>';
-        document.body.appendChild(el);
-        // ARMED ON THE SECOND FRAME, because `env(safe-area-inset-top)` is not
-        // worth anything on the first one. WKWebView lays this page out before
-        // it knows the window's insets, so the padding above resolves against
-        // an inset of 0 for exactly one frame — which puts the mark 31pt high
-        // and then drops it. Caught on a 30fps capture of a real launch; at 20
-        // it is invisible, and on a device it reads as a twitch you cannot
-        // quite name. Two frames of `opacity: 0` cost ~32ms of a 150ms beat and
-        // buy a mark that is never in the wrong place.
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          el.classList.add('ready');
-          publishSafeTop();
-        }));
-        // The fixed chrome carries its own small ∴; two marks on screen at
-        // once reads as a placeholder over a page, not as the app opening.
         chromeEl.style.visibility = 'hidden';
-        return el;
       }
 
-      /**
-       * Leave the resolved top inset where the SPA's shell can find it.
-       *
-       * `app.html`'s `#boot-mark` continues this mark across the navigation and
-       * so has to place itself on ITS first frame — the one frame where
-       * `env(safe-area-inset-top)` is still 0. It cannot wait two frames of its
-       * own the way this screen can; by then the hole it exists to cover has
-       * already been on screen. So this page, which has waited, hands the
-       * number over. Same origin, same shelf as `virtues-just-paired`.
-       *
-       * Measured off a probe rather than `#chrome`'s padding: that is
-       * `max(20px, env(...))`, which reports 20 on a device whose inset is 0.
-       */
-      function publishSafeTop() {
-        try {
-          const probe = document.createElement('div');
-          probe.style.cssText =
-            'position:fixed;top:0;left:0;width:1px;visibility:hidden;' +
-            'height:env(safe-area-inset-top)';
-          document.body.appendChild(probe);
-          const top = Math.round(probe.getBoundingClientRect().height);
-          probe.remove();
-          localStorage.setItem('virtues-safe-top', String(top));
-        } catch { /* best effort — app.html falls back to env() */ }
-      }
-
-      /** Dismiss the splash into an airlock screen, then draw it. */
-      function splashSettle(el, draw) {
+      /** Give the page back its chrome, then draw an airlock screen. */
+      function showAirlock(draw) {
         chromeEl.style.visibility = '';
-        if (!el || !el.isConnected) return draw();
-        el.classList.add('settling');
-        setTimeout(() => { el.remove(); draw(); }, 140);
+        draw();
       }
 
       function bootPaired() {
-        const splash = renderSplash();
-        const held = new Promise((r) => setTimeout(r, MARK_BEAT));
-        // `null` is the timeout's answer, and is distinguishable from every
-        // real verdict — `catch` resolves to 'entry', which is a verdict.
-        const probe = invoke('plugin:reach|reach_status')
-          .then((s) => Router.pairedProbe(s))
-          .catch(() => 'entry');
-        const raced = Promise.race([
-          probe,
+        blankForDecision();
+        // `null` is the clock's answer, and is distinguishable from every real
+        // verdict — `catch` resolves to 'entry', which is a verdict.
+        Promise.race([
+          invoke('plugin:reach|reach_status')
+            .then((s) => Router.pairedProbe(s))
+            .catch(() => 'entry'),
           new Promise((r) => setTimeout(() => r(null), OPTIMISTIC_AFTER)),
-        ]);
-
-        Promise.all([held, raced]).then(([, verdict]) => {
+        ]).then((verdict) => {
           switch (verdict) {
-            // NO EXIT. The SPA's shell paints this same mark, in this same
-            // place, on its own first frame (`#boot-mark` in `app.html`), so
-            // the handover is the navigation itself — fading out first would
-            // put a hole in the middle of it, and the 130ms that fade cost is
-            // 130ms the app is not opening in.
             case null:   // the clock won: paired, box slow, open anyway
             case 'open': openBox(); break;
-            case 'forgot-us':   splashSettle(splash, renderBoxForgotUs); break;
-            case 'unreachable': splashSettle(splash, renderBoxUnreachable); break;
-            default:            splashSettle(splash, renderEntry); break;
+            case 'forgot-us':   showAirlock(renderBoxForgotUs); break;
+            case 'unreachable': showAirlock(renderBoxUnreachable); break;
+            default:            showAirlock(renderEntry); break;
           }
         });
       }

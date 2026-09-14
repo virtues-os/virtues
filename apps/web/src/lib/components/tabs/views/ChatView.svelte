@@ -1380,22 +1380,6 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
-	// Is there already a mark standing where `.init-hero`'s is about to be?
-	//
-	// On a cold launch the phone has been looking at this exact mark since the
-	// airlock — carried across the navigation by `app.html`'s `#boot-mark`, which
-	// the root layout dissolves a moment from now. Assembling it again in front
-	// of the owner contradicts the entrance's own premise: the dots settle into
-	// the trivet ONE BY ONE because the room is empty and nothing has been drawn
-	// yet. Here it has. Adopting the mark instead makes the hand-over invisible —
-	// two identical marks in the same place, one fading out under the other.
-	//
-	// Read at init, not in `onMount`: the value has to be known for the hero's
-	// first paint. A child mounts before its parent's `onMount`, so the boot mark
-	// is still in the tree when this runs, and gone for every later mount.
-	const adoptedMark =
-		typeof document !== "undefined" && !!document.getElementById("boot-mark");
-
 	// The interview's close. Three witnesses, any one suffices: the tool
 	// result in this session (the transient data part — see chatInstances),
 	// a write_it_up part in the loaded transcript (a reload after the close),
@@ -2284,12 +2268,7 @@
 						     composer instead; the phone docks it permanently, which
 						     left this expanse truly blank. Decorative, so hidden
 						     from the tree and transparent to touches. -->
-						<div
-							class="init-hero"
-							class:adopted={adoptedMark}
-							aria-hidden="true"
-							out:fade={{ duration: 200 }}
-						>
+						<div class="init-hero" aria-hidden="true" out:fade={{ duration: 200 }}>
 							<svg class="init-mark" viewBox="0 0 12 10.5" width="30" height="26.25" fill="currentColor">
 								<circle class="init-dot init-dot-1" cx="6" cy="2.4" r="1.5" />
 								<circle class="init-dot init-dot-2" cx="2.6" cy="8.1" r="1.5" />
@@ -2807,17 +2786,6 @@
 		}
 		.init-word {
 			animation: init-word-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.75s backwards;
-		}
-
-		/* ADOPTED: the mark is already on screen (see `adoptedMark`), so it does
-		   not get drawn a second time — it simply becomes this one. The word
-		   still surfaces, just without the wait that existed to let three dots
-		   land first. */
-		.init-hero.adopted .init-dot {
-			animation: none;
-		}
-		.init-hero.adopted .init-word {
-			animation-delay: 0.12s;
 		}
 	}
 
