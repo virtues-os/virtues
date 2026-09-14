@@ -19,9 +19,9 @@ class AudioPlugin: Plugin {
       "quietStart": quiet.start,
       "quietEnd": quiet.end,
     ]
-    // Absent, not null, when there is no reason: Rust reads it as
-    // Option<String> with a serde default, so the key may be missing but a
-    // JSON null would still be a value to decode.
+    // Absent when there is no reason. Rust's Option<String> would decode a
+    // JSON null just as well; absent keeps the common payload identical to
+    // what shipped before the field existed.
     if let reason = r.pausedReason() { status["pausedReason"] = reason }
     return status
   }
