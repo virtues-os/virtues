@@ -82,6 +82,9 @@ pub struct WikiPlace {
     pub seen_count: Option<i32>,
     pub first_seen: Option<DateTime<Utc>>,
     pub last_seen: Option<DateTime<Utc>>,
+    /// The phone keeps no audio while the owner is inside this place.
+    #[serde(default)]
+    pub is_audio_muted: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -246,6 +249,8 @@ pub struct UpdateWikiPlaceRequest {
     pub cover_image: Option<String>,
     pub category: Option<String>,
     pub address: Option<String>,
+    /// Mute the phone's audio collector inside this place.
+    pub is_audio_muted: Option<bool>,
 }
 
 /// Request to update an organization wiki page
@@ -508,7 +513,7 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
         SELECT
             id, name, content, article, article_updated_at, cover_image, category, address,
             latitude, longitude,
-            seen_count, first_seen, last_seen,
+            seen_count, first_seen, last_seen, is_audio_muted,
             created_at, updated_at
         FROM wiki_places
         WHERE id = $1
@@ -538,6 +543,7 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
         seen_count: Some(row.seen_count as i32),
         first_seen: row.first_seen,
         last_seen: row.last_seen,
+        is_audio_muted: row.is_audio_muted,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -590,6 +596,7 @@ pub async fn update_wiki_place(
             cover_image = COALESCE($4, cover_image),
             category = COALESCE($5, category),
             address = COALESCE($6, address),
+            is_audio_muted = COALESCE($7, is_audio_muted),
             updated_at = now()
         WHERE id = $1
         "#,
@@ -598,7 +605,8 @@ pub async fn update_wiki_place(
         req.content,
         req.cover_image,
         req.category,
-        req.address
+        req.address,
+        req.is_audio_muted
     )
     .execute(pool)
     .await

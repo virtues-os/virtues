@@ -10,6 +10,8 @@ Default permissions for the audio plugin
 - `allow-status`
 - `allow-set-notify`
 - `allow-set-quiet-hours`
+- `allow-set-schedule`
+- `allow-set-places`
 
 ## Permission Table
 
@@ -127,6 +129,32 @@ Denies the set_notify command without any pre-configured scope.
 <tr>
 <td>
 
+`audio:allow-set-places`
+
+</td>
+<td>
+
+Enables the set_places command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`audio:deny-set-places`
+
+</td>
+<td>
+
+Denies the set_places command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `audio:allow-set-quiet-hours`
 
 </td>
@@ -146,6 +174,32 @@ Enables the set_quiet_hours command without any pre-configured scope.
 <td>
 
 Denies the set_quiet_hours command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`audio:allow-set-schedule`
+
+</td>
+<td>
+
+Enables the set_schedule command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`audio:deny-set-schedule`
+
+</td>
+<td>
+
+Denies the set_schedule command without any pre-configured scope.
 
 </td>
 </tr>

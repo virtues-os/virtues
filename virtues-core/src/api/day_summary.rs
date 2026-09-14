@@ -40,6 +40,7 @@ The dossier is a time-ordered list of the day's evidence, each item formatted fo
 - **Sleep** spans are hard boundaries, BUT DO NOT EMIT YOUR OWN "Sleep" EVENT. The system stamps the authoritative sleep block separately from deterministic sleep-tracking data. Treat the overnight sleep span as a boundary and leave that stretch as "Unknown" — do not label it "Sleep" yourself.
 - **Audio sessions** color the day and are CANDIDATE boundaries — weigh them, do not obey them. An audio session's content tells you what a stretch actually was (a conversation, a drive, airport noise, quiet work, sickness in bed) even when there is no location or calendar to anchor it. This is how you name a day spent entirely at home, or entirely on the road, where location never changes.
 - **Messages** (`[messages]` lines) are a burst of a single thread, placed in time, with a few excerpts. `you:` is the owner; `them:` is the other person. Content here is the strongest evidence of INTENT in the whole dossier — it says what something was FOR, which no other source can. Read it that way, and read the two rules below before you use it: MESSAGES ARE PLANS, and DO NOT QUOTE PEOPLE.
+- **Muted audio** (`[audio MUTED by schedule]` / `[audio MUTED by place]` lines) is a stretch the owner chose not to record. It is COVERAGE — the phone was alive and present — but it is not evidence of anything, and it is not a gap to explain. Never name a stretch by it, never call it a blind spot, never guess what was happening inside it.
 - **Health** (heart rate, steps) is texture, never a boundary on its own.
 - **Purchases** (`[purchase]` / `[refund]` lines) are precise evidence of what a stretch was — a meal, a shop, a checkout; the merchant names the activity.
 - **Movement** (`[movement]` lines) tell you when, and how fast, the owner was actually travelling — see MOVEMENT AND TRANSIT.
@@ -1623,6 +1624,61 @@ async fn build_dossier(
                 s,
                 format!("- [audio, {}] {}–{}{}", who, fmt(&s), fmt(&e), content_part),
             ));
+        }
+
+        // Muted markers — the phone was inside a muted place or a muted schedule
+        // window and kept nothing on purpose. Without these a chosen silence and a
+        // dead collector look identical (no rows), and the detective would file an
+        // afternoon at the clinic as a blind spot. Metadata-only rows, coalesced
+        // into runs so a 3-hour mute is one line, not thirty-six. The reason is
+        // named; the place never is.
+        let muted = sqlx::query(
+            "SELECT started_at, ended_at, metadata->>'muted_by' AS muted_by \
+         FROM data_audio_recording \
+         WHERE metadata->>'muted_by' IS NOT NULL \
+           AND started_at >= $1::timestamptz AND started_at < $2::timestamptz \
+         ORDER BY started_at",
+        )
+        .bind(start_str)
+        .bind(end_str)
+        .fetch_all(pool)
+        .await?;
+        {
+            /// Markers rotate every 5 minutes and drain on a 30-minute grid; a
+            /// gap wider than this between two markers is a real break in the
+            /// mute, not jitter.
+            const MERGE_GAP_S: i64 = 900;
+            let mut runs: Vec<(
+                chrono::DateTime<chrono::Utc>,
+                chrono::DateTime<chrono::Utc>,
+                String,
+            )> = Vec::new();
+            for r in &muted {
+                let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
+                let e: Option<chrono::DateTime<chrono::Utc>> = r.try_get("ended_at")?;
+                let e = e.unwrap_or(s + chrono::Duration::minutes(5));
+                let why: String = r.get("muted_by");
+                match runs.last_mut() {
+                    Some((_, last_e, last_why))
+                        if *last_why == why && (s - *last_e).num_seconds() <= MERGE_GAP_S =>
+                    {
+                        *last_e = (*last_e).max(e);
+                    }
+                    _ => runs.push((s, e, why)),
+                }
+            }
+            for (s, e, why) in runs {
+                spine.push((
+                    s,
+                    format!(
+                        "- [audio MUTED by {}] {}–{} — the owner chose not to record here; \
+                         this is coverage, not a blind spot, and not evidence of anything",
+                        why,
+                        fmt(&s),
+                        fmt(&e)
+                    ),
+                ));
+            }
         }
 
         // Assistant chats — the user's own conversations with Virtues that day. A weak

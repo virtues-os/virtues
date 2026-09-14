@@ -57,6 +57,8 @@ export interface WikiPlaceApi {
 	seen_count: number | null;
 	first_seen: string | null;
 	last_seen: string | null;
+	/** The phone keeps no audio while you are inside this place. */
+	is_audio_muted?: boolean;
 	created_at: string;
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */

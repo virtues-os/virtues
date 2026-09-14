@@ -13,12 +13,34 @@
 	import NotesRail from "./NotesRail.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
+	import { updatePlace } from "$lib/wiki/api";
 
 	interface Props {
 		page: PlacePageType;
 	}
 
 	let { page }: Props = $props();
+
+	// "Don't record here": the phone keeps no audio while you are inside this
+	// place. The flag lives on the place row; the phone caches the muted
+	// places when the app opens and honors them offline, so a flip here
+	// reaches the mic the next time the app is opened, not this instant.
+	let muted = $state(page.isAudioMuted ?? false);
+	let muteFailed = $state<string | null>(null);
+	$effect(() => {
+		muted = page.isAudioMuted ?? false;
+	});
+
+	async function toggleMuted() {
+		const next = !muted;
+		muted = next;
+		muteFailed = null;
+		const ok = await updatePlace(page.id, { is_audio_muted: next });
+		if (!ok) {
+			muted = !next;
+			muteFailed = "Could not change that";
+		}
+	}
 
 	function formatDate(date: Date): string {
 		return date.toLocaleDateString("en-US", {
@@ -137,6 +159,33 @@
 								</dd>
 							</div>
 						{/if}
+					</dl>
+				</section>
+			{/if}
+
+			<!-- Recording: the one thing a place can ask of the phone -->
+			{#if page.coordinates}
+				<section class="section" id="recording">
+					<h2 class="section-title">Recording</h2>
+					<dl class="info-list">
+						<div class="info-item">
+							<dt>Microphone</dt>
+							<dd>
+								<button
+									type="button"
+									class="linkish"
+									title={muted
+										? "The phone keeps no audio while you are here. Turn this off to record here again."
+										: "Ask the phone to keep no audio while you are here. The mic stays on; nothing is kept."}
+									onclick={toggleMuted}
+								>
+									{muted ? "Not recording here" : "Don't record here"}
+								</button>
+								{#if muteFailed}
+									<span class="mute-failed">{muteFailed}</span>
+								{/if}
+							</dd>
+						</div>
 					</dl>
 				</section>
 			{/if}
@@ -339,6 +388,28 @@
 		margin: 0;
 		font-size: 0.875rem;
 		color: var(--color-foreground);
+	}
+
+	.linkish {
+		background: none;
+		border: 0;
+		padding: 0;
+		font: inherit;
+		color: var(--color-foreground);
+		text-decoration: underline;
+		text-underline-offset: 0.15em;
+		text-decoration-color: var(--color-border);
+		cursor: pointer;
+	}
+
+	.linkish:hover {
+		text-decoration-color: currentColor;
+	}
+
+	.mute-failed {
+		margin-left: 0.5rem;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
 	}
 
 	.coords {

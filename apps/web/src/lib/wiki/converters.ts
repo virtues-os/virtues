@@ -107,6 +107,7 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 		visitCount: api.seen_count ?? 0,
 		firstVisit: api.first_seen ? new Date(api.first_seen) : undefined,
 		lastVisit: api.last_seen ? new Date(api.last_seen) : undefined,
+		isAudioMuted: api.is_audio_muted ?? false,
 
 		// Content
 		content: api.content ?? "",
