@@ -76,8 +76,10 @@ function syncMessageInPlace(target: any, src: any): void {
         }
 
         if (sp.type === 'text' || sp.type === 'reasoning') {
-            // Hot path: only the growing text changes — mutate just that string.
+            // Hot path: only the growing text changes — mutate just that string
+            // (and the part's state once, when it settles).
             if (tp.text !== sp.text) tp.text = sp.text;
+            if (tp.state !== sp.state) tp.state = sp.state;
         } else {
             // Tool/other parts update rarely. Skip the JSON compare when this
             // source part hasn't changed shape since we last synced it.
@@ -310,6 +312,19 @@ class ChatInstanceStore {
         // on its own and earlier paragraphs / tool cards / thinking block stay put.
         const internalState = (chat as any).state;
         const originalReplace = internalState.replaceMessage.bind(internalState);
+        // The FIRST write of a new assistant message is `pushMessage(live)`,
+        // not replaceMessage — and if the live object goes in, Svelte proxies
+        // it in place: the SDK's later `parts.push(toolPart)` lands in the
+        // proxy's own target behind its cached length, and the sync below
+        // then finds the slot already occupied (`'1' in target`) and never
+        // bumps the length either. Result: a tool part that streamed in was
+        // invisible until a reload, in every room (found 2026-09-13 on the
+        // getting-started introductions card; create_page and the permission
+        // cards were equally blind). Push a decoupled clone, as replace does.
+        const originalPush = internalState.pushMessage.bind(internalState);
+        internalState.pushMessage = (message: any) => {
+            originalPush(snapshotMessage(message));
+        };
         internalState.replaceMessage = (index: number, message: any) => {
             const existing = internalState.messages[index];
             if (
