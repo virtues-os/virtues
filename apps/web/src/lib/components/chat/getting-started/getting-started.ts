@@ -175,6 +175,12 @@ export function applyGettingStartedOpening(
 	steps.forEach((s, i) => {
 		if (s.status !== "open" && (nowIndex < 0 || i < nowIndex)) {
 			top.push(textMessage(`gs-done-${s.id}`, settledLine(s)));
+			// The first day is what integrations bought, so the promise follows
+			// that line rather than trailing the whole thread — during the
+			// interview it would otherwise sit below the interviewer's ask.
+			if (s.id === "connect_world" && state.ai_connected) {
+				top.push(textMessage(GS_PROMISE_ID, promiseLine(state.first_day)));
+			}
 		}
 	});
 
@@ -201,11 +207,6 @@ export function applyGettingStartedOpening(
 	}
 
 	const bottom: ReturnType<typeof textMessage>[] = [];
-	const world = steps.find((s) => s.id === "connect_world");
-	// The first day is written by a model, so the promise waits for one.
-	if (state.ai_connected && (world?.status === "done" || state.first_day) && (nowIndex < 0 || nowIndex > 2)) {
-		bottom.push(textMessage(GS_PROMISE_ID, promiseLine(state.first_day)));
-	}
 	// While the interview is underway the interviewer asks; the room does not.
 	if (now && !(now.id === "interview" && interviewUnderway)) {
 		bottom.push(textMessage(`${GS_NOW_PREFIX}${now.id}`, askLine(now)));
