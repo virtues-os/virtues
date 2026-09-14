@@ -572,7 +572,21 @@ public final class AudioRecorder: NSObject {
       try session.setActive(false)
       NSLog("[Audio] session released")
     } catch {
-      NSLog("[Audio] session release failed: %@", error.localizedDescription)
+      // A refused deactivation (IsBusy while some IO winds down) would leave
+      // the session active with the mic pinned for the whole drive — the
+      // exact state the pause exists to end — and nothing else re-tries it:
+      // every later route event while paused returns before this runs. One
+      // delayed retry, still on q, still gated on the pause holding.
+      NSLog("[Audio] session release failed: %@ — retrying in 1s", error.localizedDescription)
+      q.asyncAfter(deadline: .now() + 1) { [weak self] in
+        guard let self = self, self.carPlayPaused, self.sessionIsOurs() else { return }
+        do {
+          try self.session.setActive(false)
+          NSLog("[Audio] session released on retry")
+        } catch {
+          NSLog("[Audio] session release retry failed: %@", error.localizedDescription)
+        }
+      }
     }
   }
 
