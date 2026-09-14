@@ -768,11 +768,9 @@
 		try {
 			const data = await getChat<{ messages?: any[] }>(conversationId);
 			loadedMessages = data.messages || [];
-			chat.messages = deduplicateMessages(loadedMessages).map((msg: any) => ({
-				id: msg.id,
-				role: msg.role as "user" | "assistant" | "checkpoint",
-				parts: convertMessageToParts(msg),
-			})) as unknown as typeof chat.messages;
+			chat.messages = deduplicateMessages(loadedMessages).map(
+				toUiMessage,
+			) as unknown as typeof chat.messages;
 		} catch {
 			// Non-critical refresh — leave the current messages in place on failure.
 		}
@@ -839,6 +837,19 @@
 	}
 
 	// Helper function to deduplicate messages by ID
+	/** One stored turn as the view holds it. `createdAt` rides along because
+	 *  the getting-started room places the interview's opening among the
+	 *  turns by time — all three load paths must carry it, and only one did
+	 *  (2026-09-14: the opening landed above turns that preceded it). */
+	function toUiMessage(msg: any) {
+		return {
+			id: msg.id,
+			role: msg.role as "user" | "assistant" | "checkpoint",
+			parts: convertMessageToParts(msg),
+			createdAt: msg.timestamp ? new Date(msg.timestamp) : undefined,
+		};
+	}
+
 	function deduplicateMessages(messages: any[]): any[] {
 		if (!messages || messages.length === 0) return [];
 		const seen = new Set<string>();
@@ -986,14 +997,7 @@
 							loadedMessages = data.messages || [];
 							chat.messages = deduplicateMessages(
 								loadedMessages,
-							).map((msg: any) => ({
-								id: msg.id,
-								role: msg.role as "user" | "assistant" | "checkpoint",
-								parts: convertMessageToParts(msg),
-								// When the turn happened — the getting-started room
-								// places the interview's opening by it.
-								createdAt: msg.timestamp ? new Date(msg.timestamp) : undefined,
-							})) as unknown as typeof chat.messages;
+							).map(toUiMessage) as unknown as typeof chat.messages;
 							applyInterviewOpening(chat, currentTabConversationId);
 							applyGettingStartedOpening(chat, currentTabConversationId, gettingStarted.state);
 							// The picker is deliberately left alone on a tab
@@ -1096,11 +1100,7 @@
 					}>(tabConversationId);
 					loadedMessages = data.messages || [];
 					chat.messages = deduplicateMessages(loadedMessages).map(
-						(msg: any) => ({
-							id: msg.id,
-							role: msg.role as "user" | "assistant" | "checkpoint",
-							parts: convertMessageToParts(msg),
-						}),
+						toUiMessage,
 					) as unknown as typeof chat.messages;
 				} catch (error) {
 					console.error("[ChatView] Error loading conversation:", error);
