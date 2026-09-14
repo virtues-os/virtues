@@ -69,14 +69,6 @@ pub fn hold_secs() -> Option<u64> {
     }
 }
 
-fn note_hold(secs: u64) {
-    HELD_FOR.store(secs as i64, Ordering::Relaxed);
-}
-
-fn clear_hold() {
-    HELD_FOR.store(-1, Ordering::Relaxed);
-}
-
 #[cfg(target_os = "linux")]
 pub use imp::spawn;
 
@@ -89,7 +81,18 @@ pub fn spawn(_pool: sqlx::PgPool) {}
 mod imp {
     use sqlx::PgPool;
     use std::io::Read;
+    use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    /// The writer side of `super::hold_secs` — only the evdev thread, which
+    /// only exists here, ever writes it.
+    fn note_hold(secs: u64) {
+        super::HELD_FOR.store(secs as i64, Ordering::Relaxed);
+    }
+
+    fn clear_hold() {
+        super::HELD_FOR.store(-1, Ordering::Relaxed);
+    }
 
     /// `KEY_POWER` from the kernel's `input-event-codes.h`.
     const KEY_POWER: u16 = 116;
@@ -232,7 +235,7 @@ mod imp {
                 1 => {
                     down_at = Some(Instant::now());
                     fired = false;
-                    super::note_hold(0);
+                    note_hold(0);
                 }
                 // Autorepeat, which is how we learn the button is still down
                 // without polling. Boards differ on whether they send these, so
@@ -240,7 +243,7 @@ mod imp {
                 2 => {
                     if let (Some(start), false) = (down_at, fired) {
                         let held = start.elapsed();
-                        super::note_hold(held.as_secs());
+                        note_hold(held.as_secs());
                         if held >= HOLD {
                             fired = true;
                             do_reset(handle, pool);
@@ -257,7 +260,7 @@ mod imp {
                     }
                     down_at = None;
                     fired = false;
-                    super::clear_hold();
+                    clear_hold();
                 }
                 _ => {}
             }
@@ -283,7 +286,7 @@ mod imp {
                 Err(e) => tracing::error!("reset_button: revoke failed: {e:#}"),
             }
         });
-        super::clear_hold();
+        clear_hold();
     }
 
     #[cfg(test)]
