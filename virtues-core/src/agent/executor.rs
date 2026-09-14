@@ -168,10 +168,15 @@ async fn execute_single(
     // killed mid-research (the workers have their own step + per-call limits as the real bounds).
     // `write_it_up` chains two model calls (document, chapters) over a full interview
     // transcript — ~40s+ observed for the document alone, so the 30s default would kill every run.
+    // `generate_image` is one image-model call: ~18s per attempt measured on the box 2026-09-14,
+    // and the gateway client may resend an empty completion up to three times, so 30s cut it off
+    // after the first billed attempt — every image was paid for and none reached the chat.
     let tool_timeout = if tool_call.name == "dispatch_subagents" {
         Duration::from_secs(600)
     } else if tool_call.name == "write_it_up" {
         Duration::from_secs(240)
+    } else if tool_call.name == "generate_image" {
+        Duration::from_secs(120)
     } else {
         config.tool_timeout
     };
@@ -200,12 +205,13 @@ async fn execute_single(
             Err(ToolExecutionError::from(e))
         }
         Err(_) => {
+            // Report the ceiling this tool actually ran under, not the default.
             tracing::warn!(
                 tool_call_id = %tool_call.id,
-                timeout = ?config.tool_timeout,
+                timeout = ?tool_timeout,
                 "Tool execution timed out"
             );
-            Err(ToolExecutionError::Timeout(config.tool_timeout))
+            Err(ToolExecutionError::Timeout(tool_timeout))
         }
     };
 
