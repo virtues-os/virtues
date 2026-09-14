@@ -219,6 +219,40 @@
       .wait .pip { width: 7px; height: 7px; border-radius: 50%; background: var(--blue);
                    flex: none; animation: pulse 1.6s ease-in-out infinite; }
       @keyframes pulse { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
+
+      /* ── THE SPLASH ──
+         What a paired device sees instead of a sentence. Two branches leave
+         from here — the app, or the airlock's entry — and both start from the
+         same mark, so the launch reads as one motion that forks rather than as
+         a screen that got replaced.
+
+         The mark is set BIG and centered, in the chrome's own glyph and face,
+         and the fixed chrome's copy is hidden underneath it: two ∴ on screen
+         at once (one large, one small) is the tell that this is a placeholder
+         rather than the product opening.
+
+         `position: fixed` and its own paint: #app's `rise` animation would
+         otherwise slide the mark up from nowhere, which is a different gesture
+         from the one this wants. */
+      #splash { position: fixed; inset: 0; display: flex; align-items: center;
+                justify-content: center; background: var(--paper); z-index: 20;
+                animation: splash-in .22s var(--ease) both; }
+      #splash .mk { font-family: var(--sans); font-size: 56px; line-height: 1;
+                    color: var(--ink); }
+      /* LEAVING FOR THE APP: the mark grows through the plane and dissolves, so
+         the SPA's own first paint arrives at the end of a gesture instead of
+         after a cut. */
+      #splash.leaving { animation: splash-out .16s var(--ease) both; }
+      /* LEAVING FOR THE AIRLOCK: the opposite — the mark recedes to where the
+         chrome's copy sits, and the entry cards rise into the space. */
+      #splash.settling { animation: splash-settle .2s var(--ease) both; }
+      @keyframes splash-in  { from { opacity: 0; transform: scale(.94); } }
+      @keyframes splash-out { to   { opacity: 0; transform: scale(1.08); } }
+      @keyframes splash-settle { to { opacity: 0; transform: scale(.9); } }
+      /* Vestibular comfort: the fork still happens, it just cuts. */
+      @media (prefers-reduced-motion: reduce) {
+        #splash, #splash.leaving, #splash.settling { animation-duration: .01ms; }
+      }
       .steps { margin: 26px 0 0; padding: 0; list-style: none; }
       .steps li { font-size: 13px; color: var(--ink-subtle); line-height: 1.6;
                   padding-left: 18px; position: relative; margin-bottom: 6px; }
@@ -580,32 +614,115 @@
       // in the hash. Mobile can't: its window is built before reach is up, so
       // it probes from here. Same three destinations either way.
 
-      // A paired phone gets a "opening your box" screen IMMEDIATELY — not the
-      // connect UI. reach_status runs a live probe that can take 10-15s when
-      // the direct path is blocked (office networks) and the tailnet/relay
-      // route has to be found; rendering the connect screen during that
-      // window reads as "your pairing is gone" (it did, live, 2026-08-11,
-      // minutes after the first successful office pairing).
+      // ── A PAIRED DEVICE ARRIVES; IT IS NOT TOLD THAT IT IS ARRIVING ───────
       //
-      // The probe's three answers get three DIFFERENT screens, and only
-      // 'authed' opens the SPA. Loading the SPA on anything less lands on its
-      // legacy connect page — the "old path" that must never appear on a
-      // phone (seen live 2026-08-11, twice, two different ways).
-      function bootPaired() {
+      // The airlock must never render its connect UI while a paired device is
+      // still working out where it stands: that reads as "your pairing is
+      // gone", and it did, live, minutes after the first successful office
+      // pairing (2026-08-11). `reach_status` runs a LIVE probe that can take
+      // 10-15s when the direct path is blocked and the relay route has to be
+      // found, so for a while this screen covered that wait with a headline —
+      // "Opening your server…" and a pip.
+      //
+      // Which made the airlock a stop on every single launch of an ordinary
+      // paired phone: a sentence the owner read every time, telling them what
+      // they had just asked for. Arriving is the whole ask (2026-09-14).
+      //
+      // So: ONE MARK, AND A RACE. The mark is what both branches leave from,
+      // which is what makes the fork read as one motion rather than as a screen
+      // being replaced. The probe runs, and whichever of it and a short clock
+      // finishes first decides where we go.
+      //
+      // WHAT MAKES RACING SAFE IS WHICH ANSWERS ARE SLOW. `Reach::status` only
+      // makes a round trip when the device IS paired — `is_paired()` is a local
+      // store read, and an unpaired device short-circuits to `session:
+      // "unpaired"` with no network at all. So the one answer that must never
+      // be guessed at — "you unpaired in this session, the injected
+      // `__VIRTUES_PAIRED__` is lying, do not drop them back into the app they
+      // just left" — is also the one that always lands in single-digit ms. A
+      // timeout means paired-and-the-box-is-slow, and nothing else.
+      //
+      // PAST THE WINDOW, THE APP'S OWN STATES TAKE OVER, and that is the real
+      // change: the probe's verdicts stop being the only way these situations
+      // get told.
+      //
+      //   * `rejected` — the box refused our key. Opening the SPA on that used
+      //     to land on `/pair`, the "old path" that must never appear on a
+      //     phone (seen live 2026-08-11, twice, two different ways). That is
+      //     now closed where it belongs: `(auth)/pair/+page.ts` bounces a
+      //     mobile shell straight back here to `#reset`. Closing it there
+      //     rather than by pre-flighting a probe is what buys every other
+      //     launch its half-second.
+      //
+      //   * `unreachable` — timing-dependent by design. Airplane mode fails
+      //     instantly and gets this page's screen, which carries the "forget
+      //     this server" escape; a box that is merely off or far away takes
+      //     seconds to fail, so the app opens and its own "Can't reach your
+      //     server" banner says the same thing with a door into the diagnosis.
+      //     `(app)/+layout.ts` treats a transport failure as offline and keeps
+      //     the shell mounted, so nothing strands.
+      //
+      // MARK_BEAT is a floor, not a delay — it stops a box that answers in
+      // 80ms from flashing the mark for three frames. Beat plus exit is ~280ms
+      // on the common path, under what the probe cost even at its fastest.
+      const MARK_BEAT = 150;        // the mark holds at least this long
+      const OPTIMISTIC_AFTER = 500; // past here, stop waiting and just open
+
+      // Not `window.chrome` via the id-becomes-a-global rule: that name is a
+      // real API surface in Chromium webviews, and a header element shadowing
+      // it is the kind of thing that works here and breaks on Android.
+      const chromeEl = document.getElementById('chrome');
+
+      function renderSplash() {
         setServer('');
-        app.innerHTML = `
-          <h1>Opening your server…</h1>
-          <div class="wait"><span class="pip"></span><span>Connecting</span></div>`;
-        invoke('plugin:reach|reach_status')
-          .then((s) => {
-            switch (Router.pairedProbe(s)) {
-              case 'open':        openBox(); break;
-              case 'forgot-us':   renderBoxForgotUs(); break;
-              case 'unreachable': renderBoxUnreachable(); break;
-              default:            renderEntry(); break;
-            }
-          })
-          .catch(() => { renderEntry(); });
+        app.innerHTML = '';
+        // Idempotent: `renderBoxUnreachable`'s "Try again" re-enters
+        // `bootPaired`, and two stacked splashes would never both be removed.
+        const existing = document.getElementById('splash');
+        if (existing) existing.remove();
+        const el = document.createElement('div');
+        el.id = 'splash';
+        el.innerHTML = '<span class="mk">∴</span>';
+        document.body.appendChild(el);
+        // The fixed chrome carries its own small ∴; two marks on screen at
+        // once reads as a placeholder over a page, not as the app opening.
+        chromeEl.style.visibility = 'hidden';
+        return el;
+      }
+
+      /** Dismiss the splash into an airlock screen, then draw it. */
+      function splashSettle(el, draw) {
+        chromeEl.style.visibility = '';
+        if (!el || !el.isConnected) return draw();
+        el.classList.add('settling');
+        setTimeout(() => { el.remove(); draw(); }, 140);
+      }
+
+      function bootPaired() {
+        const splash = renderSplash();
+        const held = new Promise((r) => setTimeout(r, MARK_BEAT));
+        // `null` is the timeout's answer, and is distinguishable from every
+        // real verdict — `catch` resolves to 'entry', which is a verdict.
+        const probe = invoke('plugin:reach|reach_status')
+          .then((s) => Router.pairedProbe(s))
+          .catch(() => 'entry');
+        const raced = Promise.race([
+          probe,
+          new Promise((r) => setTimeout(() => r(null), OPTIMISTIC_AFTER)),
+        ]);
+
+        Promise.all([held, raced]).then(([, verdict]) => {
+          switch (verdict) {
+            case null:   // the clock won: paired, box slow, open anyway
+            case 'open':
+              splash.classList.add('leaving');
+              setTimeout(openBox, 130);
+              break;
+            case 'forgot-us':   splashSettle(splash, renderBoxForgotUs); break;
+            case 'unreachable': splashSettle(splash, renderBoxUnreachable); break;
+            default:            splashSettle(splash, renderEntry); break;
+          }
+        });
       }
 
       function renderBoxUnreachable() {
