@@ -75,8 +75,20 @@ pub const CONNECT_TIMEOUT_SECS: u64 = 10;
 /// Request timeout for regular (non-streaming) requests in seconds
 pub const REQUEST_TIMEOUT_SECS: u64 = 60;
 
-/// Request timeout for streaming requests in seconds (longer for SSE)
-pub const STREAMING_TIMEOUT_SECS: u64 = 300;
+/// Idle timeout for streaming requests, in seconds: the longest a stream may
+/// go without delivering a byte before it is declared dead.
+///
+/// NOT a total-request timeout. A streamed reply has no natural upper bound —
+/// a long, thinking-heavy answer runs as long as it runs — and reqwest's
+/// `timeout()` counts body streaming too, so the 300s total this replaced cut
+/// any reply still producing tokens at five minutes, and `stream.rs` then
+/// treated the cut as the model finishing (VIR-334). What a dead stream
+/// actually looks like is silence: the gateway sends an SSE keep-alive every
+/// 15s while the upstream lives, so three minutes without a byte on the
+/// wallet path is a broken pipe, not a slow model. A BYO endpoint sends no
+/// keep-alive, which is why this is minutes and not seconds: a model that
+/// reasons without streaming its reasoning is silent for exactly that long.
+pub const STREAM_IDLE_TIMEOUT_SECS: u64 = 180;
 
 /// Request timeout for non-streaming AI completions in seconds.
 ///
@@ -85,9 +97,9 @@ pub const STREAMING_TIMEOUT_SECS: u64 = 300;
 /// — a 4000-token structured extraction routinely runs 45–90s, and reasoning
 /// models (Grok reasons on every turn, untunably) push past that. At 60s the
 /// nightly day-summary segmentation died at exactly the timeout three days
-/// running (2026-08-09..11), after months of 46–60s near-misses. Matches
-/// STREAMING_TIMEOUT_SECS: the same generation over SSE is already allowed
-/// this long.
+/// running (2026-08-09..11), after months of 46–60s near-misses. A total
+/// timeout is right HERE and only here: nothing arrives until the end, so
+/// silence carries no signal and the wall clock is the only one there is.
 pub const AI_COMPLETION_TIMEOUT_SECS: u64 = 300;
 
 /// Shared rooted builder: installs the rustls crypto provider and loads the OS
@@ -133,12 +145,12 @@ pub fn virtues_api_completion_client() -> reqwest::Client {
 
 /// Create an HTTP client for streaming virtues-api requests (SSE)
 ///
-/// Uses longer timeouts to accommodate streaming responses that
-/// may take several minutes to complete.
+/// A connect timeout and an idle timeout between bytes, and deliberately no
+/// total — see [`STREAM_IDLE_TIMEOUT_SECS`].
 pub fn virtues_api_streaming_client() -> reqwest::Client {
     base_builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(STREAMING_TIMEOUT_SECS))
+        .read_timeout(Duration::from_secs(STREAM_IDLE_TIMEOUT_SECS))
         .build()
         .expect("Failed to build streaming HTTP client")
 }

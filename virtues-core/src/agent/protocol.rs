@@ -158,6 +158,12 @@ pub enum ErrorCode {
     ToolError,
     /// Request was cancelled
     Cancelled,
+    /// The stream ended before the model finished (dropped connection, idle
+    /// timeout, gateway error frame). What streamed is kept; it is partial.
+    Interrupted,
+    /// The model hit its output cap (`finish_reason: length`) before it
+    /// finished. What streamed is kept; it is partial.
+    OutputLimit,
     /// Rate limited
     RateLimited,
     /// Invalid request
