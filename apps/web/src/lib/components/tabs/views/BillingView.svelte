@@ -74,7 +74,7 @@
 				subscribeErrorCode = data.code ?? null;
 			}
 		} catch (e) {
-			subscribeError = e instanceof ApiError ? e.message : 'Failed to connect to billing service';
+			subscribeError = e instanceof ApiError ? e.message : 'Could not reach the Virtues billing service.';
 			subscribeErrorCode = e instanceof ApiError ? `http_${e.status}` : 'unreachable';
 		} finally {
 			subscribeLoading = false;
@@ -130,7 +130,7 @@
 					stopPolling();
 					linkPolling = false;
 					linkInfo = null;
-					linkError = 'The link expired before checkout completed — please try again.';
+					linkError = 'The link expired before checkout finished. Connect again for a new code.';
 				}
 			} catch {
 				// transient; keep polling
@@ -158,7 +158,7 @@
 		try {
 			const data = await startBillingLink<LinkInfo & { error?: unknown }>();
 			if (data.error) {
-				linkError = typeof data.error === 'string' ? data.error : 'Failed to start subscription link';
+				linkError = typeof data.error === 'string' ? data.error : 'Could not start the link to your Virtues account.';
 				return;
 			}
 			linkInfo = data;
@@ -168,7 +168,7 @@
 		} catch (e) {
 			// Surface any server-provided error body (ApiError.message extracts it),
 			// mirroring the old code that read data.error even on non-2xx.
-			linkError = e instanceof ApiError ? e.message : 'Failed to connect to billing service';
+			linkError = e instanceof ApiError ? e.message : 'Could not reach the Virtues billing service.';
 		} finally {
 			linkLoading = false;
 		}
@@ -194,14 +194,14 @@
 			if (data.url) {
 				openExternal(data.url);
 			} else if (data.error) {
-				portalError = typeof data.error === 'string' ? data.error : data.error.message || 'Failed to open billing portal';
+				portalError = typeof data.error === 'string' ? data.error : data.error.message || 'Could not open Stripe.';
 				portalErrorCode = data.code ?? null;
 			}
 		} catch (e) {
 			// The endpoint answers 200 on every handled refusal, so landing here
 			// means the box itself did not answer — the status is the only code
 			// there is.
-			portalError = e instanceof ApiError ? e.message : 'Failed to connect to billing service';
+			portalError = e instanceof ApiError ? e.message : 'Could not reach the Virtues billing service.';
 			portalErrorCode = e instanceof ApiError ? `http_${e.status}` : 'unreachable';
 		} finally {
 			portalLoading = false;
@@ -236,7 +236,7 @@
 		try {
 			local = await getBillingState<LocalBillingState>();
 		} catch (e) {
-			localError = e instanceof ApiError ? e.message : 'Could not read this box’s wallet settings.';
+			localError = e instanceof ApiError ? e.message : 'Could not read your server’s wallet settings.';
 		}
 		localLoading = false;
 	}
@@ -332,20 +332,20 @@
 	 * ship boxes, so guidance belongs somewhere a copy edit can fix.
 	 */
 	const SLOT_FIELDS = [
-		{ key: 'chat', label: 'Chat', placeholder: 'x-ai/grok-4.5', note: '' },
-		{ key: 'coding', label: 'Coding', placeholder: 'x-ai/grok-4.5', note: '' },
+		{ key: 'chat', label: 'Chat', placeholder: 'provider/model', note: '' },
+		{ key: 'coding', label: 'Coding', placeholder: 'provider/model', note: '' },
 		{
 			key: 'lite',
 			label: 'Lite',
-			placeholder: 'z-ai/glm-4.7',
-			note: 'Titles, summaries, background jobs — high volume, so favor something cheap and quick.',
+			placeholder: 'provider/model',
+			note: 'Titles, summaries, and background jobs. High volume, so favor something cheap and quick.',
 		},
-		{ key: 'image', label: 'Image', placeholder: 'google/gemini-3-pro-image', note: '' },
+		{ key: 'image', label: 'Image', placeholder: 'provider/model', note: '' },
 		{
 			key: 'omni',
 			label: 'Audio',
-			placeholder: 'google/gemini-3.5-flash',
-			note: 'Transcription, and usually the largest line item. In practice Gemini 3 flash or flash-lite is the only workable choice: it has to hear muffled, in-pocket audio and reason about it, and the alternatives either reject audio outright or return words with no sense of the scene. Speech-to-text models will not do.',
+			placeholder: 'provider/model',
+			note: 'Transcription, and usually the largest line item. The model has to hear muffled, in-pocket audio and make sense of the scene. Speech-to-text models will not do, and most chat models refuse audio outright. In practice a Gemini Flash model is the one workable choice.',
 		},
 	] as const;
 
@@ -369,7 +369,7 @@
 			// a slot must leave that field bound to '' rather than undefined.
 			byoModels = { ...blankSlots(), ...(byoStatus?.models ?? {}) };
 		} catch (e) {
-			byoLoadError = e instanceof Error ? e.message : 'Failed to load BYO status';
+			byoLoadError = e instanceof Error ? e.message : 'Could not read your endpoint settings.';
 		} finally {
 			byoLoading = false;
 		}
@@ -382,11 +382,11 @@
 
 	function startByoSave() {
 		if (!byoEndpointUrl.trim()) {
-			toast.error('Paste the endpoint URL to send chat to');
+			toast.error('Enter the endpoint URL first.');
 			return;
 		}
 		if (!byoApiKey.trim()) {
-			toast.error('Paste an API key first');
+			toast.error('Enter the API key first.');
 			return;
 		}
 		showSudoSave = true;
@@ -410,11 +410,11 @@
 				endpoint_url: byoEndpointUrl,
 				models,
 			});
-			toast.success('BYO key saved');
+			toast.success('Key saved. AI calls now go to your endpoint.');
 			byoApiKey = '';
 			await Promise.all([loadByo(), loadLocal()]);
 		} catch (e) {
-			toast.error('Save failed', {
+			toast.error('Could not save the key', {
 				description: e instanceof Error ? e.message : 'Unknown error',
 			});
 		}
@@ -427,10 +427,10 @@
 	async function performByoDelete(sudoRequestId: string) {
 		try {
 			await deleteByoKey(sudoRequestId);
-			toast.success('BYO key removed — chat is back on your Virtues wallet');
+			toast.success('Key removed. AI calls are back on the subscription.');
 			await Promise.all([loadByo(), loadLocal()]);
 		} catch (e) {
-			toast.error('Delete failed', {
+			toast.error('Could not remove the key', {
 				description: e instanceof Error ? e.message : 'Unknown error',
 			});
 		}
@@ -497,7 +497,7 @@
 		try {
 			summary = await getUsageSummary<Summary>();
 		} catch (e) {
-			summaryError = e instanceof ApiError ? e.message : 'Could not read this box’s call log.';
+			summaryError = e instanceof ApiError ? e.message : 'Could not read your server’s call log.';
 		}
 	}
 	$effect(() => { void loadSummary(); });
@@ -604,7 +604,7 @@
 -->
 <Page
 	title="Billing"
-	description="What AI costs you, and how it's paid for."
+	description="What AI costs you, and how it is paid for."
 	maxWidth="wide"
 >
 <div class="plan-sections">
@@ -637,9 +637,9 @@
 				</div>
 			</div>
 			<p class="chapter-lede">
-				Your account is connected; there is no subscription behind it yet. Hosted AI, web
-				search, places, and bank data are off until there is. One subscription covers all
-				four, $20 a month — or bring your own AI key below, which covers the first.
+				Your account is connected, but there is no subscription behind it yet. Hosted AI,
+				web search, places, and bank data stay off until there is. One subscription covers
+				all four for $20 a month. Your own AI key, set below, covers the first on its own.
 			</p>
 			{#if subscribeError}
 				<p class="note note-error">
@@ -648,7 +648,7 @@
 				</p>
 			{/if}
 			{#if subscribeWaiting}
-				<p class="note">Checkout is open in your browser — this page updates on its own once it completes.</p>
+				<p class="note">Checkout is open in your browser. This page updates on its own once you finish.</p>
 			{:else}
 				<button class="btn-quiet" onclick={openSubscribe} disabled={subscribeLoading}>
 					{subscribeLoading ? 'Opening…' : 'Subscribe · $20/mo'}
@@ -659,16 +659,16 @@
 		<section class="chapter">
 			<h2 class="settings-label">Standing</h2>
 			<p class="chapter-lede">
-				We couldn't reach the Virtues billing service just now, so this page can't say
-				where your subscription stands. Your server is unaffected — nothing here gates it.
-				Check your connection and reload.
+				We could not reach the Virtues billing service just now, so this page cannot say
+				where your subscription stands. Your server keeps working either way. Check your
+				connection and reload.
 			</p>
 		</section>
 	{:else}
 		<section class="chapter">
 			<h2 class="settings-label">Connect your Virtues account</h2>
 			<p class="chapter-lede">
-				Link this server to your Virtues account. Sign in if you have one; creating one
+				Link this server to your Virtues account. Sign in if you have one. Creating one
 				takes you through Stripe for the subscription. Your server never sees a payment
 				key.
 			</p>
@@ -686,13 +686,13 @@
 					<p class="panel-lede">
 						Continue opens a new tab at
 						<strong>{checkoutHost || 'the Virtues billing page'}</strong>
-						to complete checkout on Stripe, then sends you back here automatically.
+						to finish checkout on Stripe. It sends you back here when you are done.
 					</p>
 					<div class="code-block">
 						<div class="code-caption">Your pairing code</div>
 						<div class="code-figure mono">{linkInfo.user_code}</div>
 						<div class="code-caption">
-							It should match the code shown on the checkout page. Expires in about 15
+							It should match the code on the checkout page. It expires in about 15
 							minutes.
 						</div>
 					</div>
@@ -706,7 +706,7 @@
 						<span class="mono">{linkInfo.verification_uri}</span> and enter the code above.
 					</p>
 					{#if linkPolling}
-						<p class="panel-foot">Waiting for checkout to complete…</p>
+						<p class="panel-foot">Waiting for checkout to finish…</p>
 					{/if}
 				</div>
 			{:else}
@@ -726,14 +726,21 @@
 	     reader had no reason to connect to the balance above it. -->
 	<section class="chapter chapter-figures">
 		{#if usageLoading && !usage && !usageError}
-			<p class="chapter-lede">Reading the wallet…</p>
+			<p class="chapter-lede">Reading your wallet…</p>
 		{:else if usageError}
 			<!-- The report stands where the number would be. An empty space is
 			     not a report — and a placeholder dash at figure size read as a
-			     stray rule, so the note takes the slot instead. -->
+			     stray rule, so the note takes the slot instead. One plain line,
+			     then the server's words small: a Rust type string never sits at
+			     reading size. The retry is offered only where a retry can help —
+			     with no subscription there is no balance to fetch, and the
+			     Standing chapter above already says what to do. -->
 			<p class="note note-error note-figure">
-				{usageError}
-				<button class="link-btn" onclick={() => void loadUsage()}>Try again</button>
+				The balance could not be read.
+				<span class="error-code">{usageError}</span>
+				{#if isSubscribed || standingUnknown}
+					<button class="link-btn" onclick={() => void loadUsage()}>Check again</button>
+				{/if}
 			</p>
 		{:else if usage}
 			<!-- Two figures, Apple-large, the cents receding. The delta is
@@ -767,7 +774,7 @@
 							{#if local.auto_topup.enabled}
 								Adds <span class="mono">$10</span> when the balance reaches <span class="mono">$0</span>.
 							{:else}
-								Off — AI stops when the balance reaches <span class="mono">$0</span>.
+								Off. AI stops when the balance reaches <span class="mono">$0</span>.
 							{/if}
 						</div>
 					</div>
@@ -784,21 +791,23 @@
 
 			{#if local && !local.auto_topup.enabled && local.auto_topup.disabled_at}
 				<p class="note note-error">
-					Auto top-up switched itself off after {local.auto_topup.failures_24h} failed charges
-					in 24 hours. Update your payment method through Stripe below, then turn it back
-					on.
+					Auto top-up turned itself off after {local.auto_topup.failures_24h} failed charges
+					in 24 hours. Update your payment method in Stripe below, then turn it back on.
 				</p>
 			{:else if local && local.auto_topup.failures_24h > 0}
 				<p class="note note-warning">
 					{local.auto_topup.failures_24h} failed top-up{local.auto_topup.failures_24h === 1
 						? ''
-						: 's'} in the last 24 hours. {3 - local.auto_topup.failures_24h} more before it
-					switches itself off.
+						: 's'} in the last 24 hours. After {3 - local.auto_topup.failures_24h} more it
+					turns itself off.
 				</p>
 			{/if}
 
 			{#if localError}
-				<p class="note note-error">{localError}</p>
+				<p class="note note-error">
+					Auto top-up and your own key could not be read.
+					<span class="error-code">{localError}</span>
+				</p>
 			{/if}
 
 			<!-- Money in and out. The itemized AI calls that make up the
@@ -819,7 +828,7 @@
 					{/each}
 				</div>
 			{:else}
-				<p class="chapter-lede">Nothing has moved yet. Top-ups and charges appear here.</p>
+				<p class="chapter-lede">Nothing has moved yet. Top-ups and charges will appear here.</p>
 			{/if}
 		{/if}
 	</section>
@@ -830,15 +839,24 @@
 	     gateway's. Own-key calls are counted and never priced. -->
 	<section class="chapter">
 		<div class="chapter-head">
-			<h2 class="settings-label">Usage</h2>
+			<div>
+				<h2 class="settings-label">Usage</h2>
+				<p class="chapter-lede">
+					Here is what this month cost, day by day and by what it was for. Calls on your
+					own key are counted, not priced, since only your provider knows the price.
+				</p>
+			</div>
 			{#if totalCalls > 0}
 				<a class="see-all" href="#calls">See all {totalCalls} calls →</a>
 			{/if}
 		</div>
 		{#if summaryError}
-			<p class="note note-error">{summaryError}</p>
+			<p class="note note-error">
+				The call log could not be read.
+				<span class="error-code">{summaryError}</span>
+			</p>
 		{:else if summary}
-			<svg class="chart" viewBox="0 0 640 146" role="img" aria-label="Wallet spend per day, the last fourteen days">
+			<svg class="chart" viewBox="0 0 640 146" role="img" aria-label="Spending per day for the last fourteen days">
 				<g>
 					{#each days as d, i (d.day)}
 						<rect
@@ -857,7 +875,7 @@
 					<text class="v" x={barX(13) + 17} y={118 - barH(days[13].cost) - 8} text-anchor="middle">{formatMicrosPrecise(days[13].cost)}</text>
 				{/if}
 				{#if monthLocalMicros === 0 && days.every((d) => d.cost === 0)}
-					<text class="empty" x="316" y="72" text-anchor="middle">Nothing has drawn on the wallet in two weeks</text>
+					<text class="empty" x="316" y="72" text-anchor="middle">Nothing charged in the last two weeks</text>
 				{/if}
 				<text x="6" y="138">{days[0]?.label}</text>
 				<text x="625" y="138" text-anchor="end">Today</text>
@@ -870,11 +888,18 @@
 							<span class="kind-n">{kindLabelOf(b.label)}</span>
 							<div class="track"><div class="fill" style="width:{(b.cost_micros / kindMax) * 100}%"></div></div>
 							<!-- A bucket that is all own-key has a count and no price;
-							     "$0.00" there would be a number we invented. -->
+							     "$0.00" there would be a number we invented. A mixed
+							     bucket shows the wallet price and says how many calls
+							     it leaves out, so the price is not read as the whole. -->
 							{#if b.byo_calls === b.calls}
-								<span class="kind-amt dim">own key</span>
+								<span class="kind-amt dim">on your key</span>
 							{:else}
-								<span class="kind-amt mono">{formatMicrosPrecise(b.cost_micros)}</span>
+								<span class="kind-amt mono">
+									{formatMicrosPrecise(b.cost_micros)}
+									{#if b.byo_calls > 0}
+										<span class="block font-sans text-[11px] leading-tight text-foreground-subtle">{b.byo_calls} on your key</span>
+									{/if}
+								</span>
 							{/if}
 						</div>
 					{/each}
@@ -896,12 +921,12 @@
 					<h2 class="settings-label">Bring your own AI</h2>
 					<p class="chapter-lede">
 						{#if local.byo.configured}
-							Every AI call leaves by {local.byo.endpoint_url
+							Every AI call goes to {local.byo.endpoint_url
 								? byoHost(local.byo.endpoint_url)
-								: (local.byo.provider ?? 'your endpoint')}{#if local.byo.default_model}, defaulting
-								to {local.byo.default_model}{/if}.
+								: (local.byo.provider ?? 'your endpoint')}{#if local.byo.default_model}, using
+								{local.byo.default_model} by default{/if}.
 						{:else}
-							Send every AI call to an endpoint of your own instead of the Virtues subscription.
+							Send every AI call to an endpoint of your own instead of the subscription.
 						{/if}
 					</p>
 				</div>
@@ -913,30 +938,33 @@
 			{#if byoOpen}
 				<div class="byo-body">
 					<p class="prose-note">
-						Any endpoint that speaks OpenAI-style chat completions with a bearer token will
-						do: a gateway such as Vercel AI Gateway, OpenRouter or LiteLLM reaches every
-						provider through one key; a provider's own API works directly; so does a local
-						Ollama, LM Studio or llama.cpp. AWS Bedrock signs requests instead of taking a
-						key, so it needs a gateway in front. The key is stored encrypted on your server
-						and changes only with an approval at its command line. Maps, web search, photos
-						and bank connections are not AI calls and stay on the subscription.
+						Any endpoint that speaks OpenAI-style chat completions with a bearer token works.
+						That covers gateways like Vercel AI Gateway, OpenRouter, and LiteLLM, a provider's
+						own API, and a local server such as Ollama or llama.cpp. AWS Bedrock signs
+						requests instead of taking a key, so it needs a gateway in front. Your key is
+						stored encrypted on your server. It changes only with an approval at the command
+						line, so a browser session alone cannot swap it. Maps, web search, photos, and
+						bank connections are not AI calls and stay on the subscription.
 					</p>
 					<p class="prose-note warn">
-						One caution: a key from your employer routes your personal life through
-						infrastructure they can read. Your own key gives you the vendor and the bill; it
-						does not, by itself, give you more privacy.
+						One caution. A key from your employer sends your personal life through systems
+						they can read. Your own key gives you the vendor and the bill, not more privacy.
+						Whoever runs the endpoint still sees every call.
 					</p>
 
 					{#if byoLoading}
-						<p class="chapter-lede">Loading…</p>
+						<p class="chapter-lede">Checking for a key…</p>
 					{:else if byoLoadError}
-						<p class="note note-error">{byoLoadError}</p>
+						<p class="note note-error">
+							Your endpoint settings could not be read.
+							<span class="error-code">{byoLoadError}</span>
+						</p>
 					{:else if byoStatus?.configured}
 						<div class="panel">
 							<div class="panel-head">
 								<div class="panel-mark"><Icon icon="ri:key-line" /></div>
 								<div class="panel-body">
-									<div class="panel-title">AI is going to your own endpoint</div>
+									<div class="panel-title">AI calls go to your endpoint</div>
 									<div class="panel-facts">
 										{#if byoStatus.endpoint_url}
 											<!-- The host, not a chosen label: it says where traffic
@@ -949,8 +977,8 @@
 										{/if}
 									</div>
 									<p class="panel-foot">
-										Every AI call goes from your server straight to this endpoint. The
-										subscription is not in the path and is not charged for it.
+										Every AI call goes straight from your server to this endpoint. The
+										subscription is not in the path and is not charged.
 									</p>
 								</div>
 								<Button variant="ghost" onclick={startByoDelete}>
@@ -971,8 +999,8 @@
 						<div class="panel">
 							<div class="panel-title">No key set</div>
 							<p class="panel-lede">
-								Everything currently runs on the Virtues subscription. Set an endpoint to
-								send AI calls to it instead.
+								Everything runs on the Virtues subscription right now. Set an endpoint to
+								send AI calls there instead.
 							</p>
 							{@render byoKeyForm()}
 							<div class="panel-actions">
@@ -993,11 +1021,11 @@
 			<div>
 				<h2 class="settings-label">Payment</h2>
 				<p class="chapter-lede">
-					Your payment method, invoices, and plan changes are handled by Stripe.
+					Your payment method, invoices, and plan changes live in Stripe.
 				</p>
 			</div>
 			<button class="btn-quiet" onclick={openBillingPortal} disabled={portalLoading}>
-				{portalLoading ? 'Opening…' : 'Open Stripe portal'}
+				{portalLoading ? 'Opening…' : 'Manage in Stripe'}
 			</button>
 		</div>
 		{#if portalError}
@@ -1033,7 +1061,7 @@
 				placeholder="https://ai-gateway.vercel.sh/v1/chat/completions"
 			/>
 			<p class="text-xs text-foreground-muted mt-1.5">
-				Any endpoint speaking OpenAI-style <code>/chat/completions</code> with a bearer token.
+				Any endpoint that speaks OpenAI-style <code>/chat/completions</code> with a bearer token.
 			</p>
 		</div>
 		<div>
@@ -1050,8 +1078,8 @@
 		<div class="pt-1">
 			<div class="text-xs font-medium mb-1">What your endpoint calls each model</div>
 			<p class="text-xs text-foreground-muted mb-3">
-				Optional. If your endpoint names models differently from Vercel AI Gateway, say
-				what it calls each of these. A blank row uses the same id we do.
+				Optional. If your endpoint names models differently, say what it calls each of
+				these. A blank row uses the same id Virtues does.
 			</p>
 			<div class="space-y-2">
 				{#each SLOT_FIELDS as slot (slot.key)}
@@ -1082,16 +1110,16 @@
 <SudoModal
 	bind:show={showSudoSave}
 	action="change_byo_key"
-	title="Save BYO AI key"
-	description="Every AI call will route through this endpoint instead of the subscription. Confirm at the server's command line."
+	title="Save your AI key"
+	description="Every AI call will go to this endpoint instead of the subscription. Approve at your server's command line."
 	onApproved={performByoSave}
 />
 
 <SudoModal
 	bind:show={showSudoDelete}
 	action="change_byo_key"
-	title="Remove BYO AI key"
-	description="Sensitive action — chat will switch back to the Virtues wallet. Confirm at the server's CLI."
+	title="Remove your AI key"
+	description="AI calls will go back to the Virtues subscription. Approve at your server's command line."
 	onApproved={performByoDelete}
 />
 
