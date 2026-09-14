@@ -574,7 +574,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Entities API - Places
         .route(
             "/api/entities/places",
-            get(api::list_places_handler),
+            get(api::list_places_handler).post(api::create_place_handler),
         )
         .route(
             "/api/entities/places/:id",
@@ -663,6 +663,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/places/autocomplete",
             get(api::places_autocomplete_handler),
+        )
+        .route(
+            "/api/places/details",
+            get(api::places_details_handler),
         )
         // Assistant Profile API
         .route(

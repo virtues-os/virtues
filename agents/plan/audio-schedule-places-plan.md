@@ -1,18 +1,22 @@
 # When and where the mic listens: schedule and places
 
-> Status: **Partly built, 2026-09-14.** Written after a read of the audio
-> plugin, the location probe, the ingest applet, and the day-summary dossier
-> (the facts table below is that read). Built the same day, box side first:
-> migration 0018 (`wiki_places.is_audio_muted`), the flag through both place
-> APIs and the place wiki page's "Don't record here", `muted_by` carried into
-> `data_audio_recording.metadata` on ingest, muted runs in the day dossier
-> with a prompt rule, and the plugin's Rust command surface (`set_schedule`,
-> `set_places`, `schedule`/`places`/`muted_by` on status). **Not built:** the
-> Swift gate, schedule store, place cache, location→audio push, regions, the
-> mobile screen's editor and place search, and the muted marker emitter —
-> all of slice 1 and the phone half of slices 2–3. Delete this file when
-> slice 3 ships; what survives is a page under `docs/` for the phone's
-> recording settings and a record of what was built.
+> Status: **Built, unverified on a device, 2026-09-14.** Written after a read
+> of the audio plugin, the location probe, the ingest applet, and the
+> day-summary dossier (the facts table below is that read), and built the
+> same day in two commits: the box side (migration 0018, the flag through
+> both place APIs and the place page's "Don't record here", `muted_by` into
+> `data_audio_recording.metadata`, muted runs in the day dossier with a
+> prompt rule, the plugin's Rust surface), then the phone half (the
+> `muteReason` gate, schedule store with the quiet-hours migration, place
+> cache, location→audio fix push, OS regions for the muted places, muted
+> markers, the mobile screen's schedule editor and place search, `POST
+> /api/entities/places` and `GET /api/places/details`). **Not done:** a
+> native iOS build and the device walk in the slice gates below; the
+> "sync on app open" hook (the muted places copy onto the phone when the
+> device screen loads, not yet at launch — the app layout was mid-edit by
+> another change); census counting muted minutes (census.rs was likewise
+> claimed). Delete this file once the device gates pass; what survives is a
+> page under `docs/` for the phone's recording settings and a record.
 
 ## The story, in one paragraph
 

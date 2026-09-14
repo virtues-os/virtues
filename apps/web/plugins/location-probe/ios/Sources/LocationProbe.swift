@@ -23,6 +23,16 @@ private func virtues_drain_blocking(_ timeoutSecs: Int32) -> Int32
 @_silgen_name("virtues_ensure_recording")
 private func virtues_ensure_recording()
 
+// Hand the latest fix to the audio plugin for its place gate (any thread; it
+// locks). Cheap — a few comparisons — so it runs on every callback, before
+// the log throttle: the gate wants the freshest fix, not one per 15 s.
+@_silgen_name("virtues_audio_location")
+private func virtues_audio_location(_ lat: Double, _ lon: Double, _ accuracyM: Double)
+
+// A geofence verdict for one muted place: 1 = inside, 0 = outside.
+@_silgen_name("virtues_audio_region")
+private func virtues_audio_region(_ placeId: UnsafePointer<CChar>, _ inside: Int32)
+
 /// ISO-8601 with fractional seconds so distinct fixes get distinct timestamps
 /// (the outbox derives a per-record id from the record, incl. this).
 private let isoMillis: ISO8601DateFormatter = {
@@ -165,6 +175,7 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     updating = true
     manager.startMonitoringSignificantLocationChanges()
     manager.startUpdatingLocation()
+    applyRegions(around: manager.location)
     startDrainTimer()
     writeMarker(source: "start(reason=\(launchReason))")
   }
@@ -184,11 +195,122 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     return CLLocationManager.authorizationStatus()
   }
 
+  // MARK: - Muted-place regions (the audio plugin's places, as OS geofences)
+  //
+  // The audio plugin gates chunk writing on "inside a muted place", fed by the
+  // fixes above. Fixes alone miss two cases: coarse mode (a stationary phone's
+  // 3 km cell fix proves nothing about a 100 m circle) and a cold relaunch
+  // whose first fix is fuzzy. A monitored `CLCircularRegion` covers both — the
+  // OS resolves the crossing with whatever radios it has and relaunches the
+  // app for it. iOS allows 20 regions per app, so the 20 nearest the last fix
+  // are registered and the pick is redone once we have moved a kilometer.
+  // Regions only inform the gate; nothing here starts recording.
+
+  struct MutedRegion {
+    let id: String
+    let center: CLLocationCoordinate2D
+    let radius: CLLocationDistance
+  }
+  private let regionPrefix = "virtues.place."
+  private let maxRegions = 20
+  private let regionRepickDistance: CLLocationDistance = 1000
+  private var wantedRegions: [MutedRegion] = []
+  private var regionsPickedAt: CLLocation?
+
+  /// Replace the wanted set. Main-thread confined like the rest of the manager.
+  func setRegions(_ rs: [MutedRegion]) {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.setRegions(rs) }
+      return
+    }
+    wantedRegions = rs
+    regionsPickedAt = nil
+    applyRegions(around: manager.location)
+  }
+
+  private func refreshRegions(around l: CLLocation) {
+    guard !wantedRegions.isEmpty else { return }
+    if let at = regionsPickedAt, l.distance(from: at) < regionRepickDistance { return }
+    applyRegions(around: l)
+  }
+
+  private func applyRegions(around l: CLLocation?) {
+    guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return }
+    var pick = wantedRegions
+    if pick.count > maxRegions, let l = l {
+      pick.sort {
+        l.distance(from: CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude))
+          < l.distance(from: CLLocation(latitude: $1.center.latitude, longitude: $1.center.longitude))
+      }
+      pick = Array(pick.prefix(maxRegions))
+    } else if pick.count > maxRegions {
+      pick = Array(pick.prefix(maxRegions))
+    }
+    regionsPickedAt = l
+    let wantIds = Set(pick.map { regionPrefix + $0.id })
+    // Only our own regions are touched; the manager may hold others some day.
+    let ours = manager.monitoredRegions.filter { $0.identifier.hasPrefix(regionPrefix) }
+    for r in ours where !wantIds.contains(r.identifier) {
+      manager.stopMonitoring(for: r)
+    }
+    let have = Set(ours.map { $0.identifier })
+    let cap = manager.maximumRegionMonitoringDistance
+    for p in pick {
+      let ident = regionPrefix + p.id
+      let region = CLCircularRegion(center: p.center, radius: min(p.radius, cap), identifier: ident)
+      region.notifyOnEntry = true
+      region.notifyOnExit = true
+      if !have.contains(ident) { manager.startMonitoring(for: region) }
+      // A verdict now, not on the next crossing: the phone may already be
+      // inside (a place muted while standing in it, or a relaunch there).
+      manager.requestState(for: region)
+    }
+    writeMarker(source: "regions=\(pick.count)/\(wantedRegions.count)")
+  }
+
+  private func placeId(of region: CLRegion) -> String? {
+    guard region.identifier.hasPrefix(regionPrefix) else { return nil }
+    return String(region.identifier.dropFirst(regionPrefix.count))
+  }
+
+  private func pushVerdict(_ region: CLRegion, inside: Bool) {
+    guard let id = placeId(of: region) else { return }
+    id.withCString { virtues_audio_region($0, inside ? 1 : 0) }
+  }
+
+  public func locationManager(_ m: CLLocationManager, didEnterRegion region: CLRegion) {
+    pushVerdict(region, inside: true)
+    writeMarker(source: "region-enter=\(region.identifier)")
+    // Same piggyback as a fix: the OS woke us, so give the mic its chance.
+    virtues_ensure_recording()
+  }
+
+  public func locationManager(_ m: CLLocationManager, didExitRegion region: CLRegion) {
+    pushVerdict(region, inside: false)
+    writeMarker(source: "region-exit=\(region.identifier)")
+    virtues_ensure_recording()
+  }
+
+  public func locationManager(_ m: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
+    switch state {
+    case .inside: pushVerdict(region, inside: true)
+    case .outside: pushVerdict(region, inside: false)
+    case .unknown: break
+    @unknown default: break
+    }
+  }
+
+  public func locationManager(_ m: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
+    writeMarker(source: "region-fail=\(region?.identifier ?? "?") \(error.localizedDescription)")
+  }
+
   // MARK: - CLLocationManagerDelegate
 
   public func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
     guard let l = locs.last else { return }
     updateMotion(l)  // mode logic sees every callback, before the log throttle
+    virtues_audio_location(l.coordinate.latitude, l.coordinate.longitude, l.horizontalAccuracy)
+    refreshRegions(around: l)
     let now = Date()
     if let last = lastFixAt, now.timeIntervalSince(last) < minFixInterval { return }
     lastFixAt = now
@@ -483,4 +605,26 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
 @_cdecl("virtues_location_audio_state")
 func virtues_location_audio_state(_ state: Int32) {
   LocationProbe.shared.setAudioState(state)
+}
+
+/// C-ABI push from the audio plugin: the muted places to monitor as regions.
+/// JSON array of {id, lat, lon, radius_m}; an empty array clears them.
+@_cdecl("virtues_location_set_regions")
+func virtues_location_set_regions(_ json: UnsafePointer<CChar>) {
+  let str = String(cString: json)
+  guard let data = str.data(using: .utf8),
+        let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+    NSLog("[LocationProbe] set_regions: unparseable payload")
+    return
+  }
+  let rs: [LocationProbe.MutedRegion] = arr.compactMap { o in
+    guard let id = o["id"] as? String,
+          let lat = (o["lat"] as? NSNumber)?.doubleValue,
+          let lon = (o["lon"] as? NSNumber)?.doubleValue,
+          CLLocationCoordinate2DIsValid(CLLocationCoordinate2D(latitude: lat, longitude: lon)) else { return nil }
+    let radius = (o["radius_m"] as? NSNumber)?.doubleValue ?? 100
+    return LocationProbe.MutedRegion(
+      id: id, center: CLLocationCoordinate2D(latitude: lat, longitude: lon), radius: radius)
+  }
+  LocationProbe.shared.setRegions(rs)
 }
