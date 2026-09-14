@@ -54,8 +54,20 @@ export const SKIP_COMMAND = "/dangerously-skip-onboarding";
 // The room's own voice: plain, no flattery, one thing at a time. The model
 // speaks only in stored turns; these are the box's.
 
-const WELCOME =
-	"Your server keeps the record of your life. There are four things it cannot do for itself, and we do them here, one at a time. Nothing here expires.";
+/** The heading: what this is and why, in two lines, and where you are in
+ *  it. The one place the room says "step N of 4" — a sentence, not a list. */
+function heading(stepIndex: number | null): string {
+	const where =
+		stepIndex === null
+			? "All four done."
+			: `Step ${stepIndex + 1} of 4 · about ten minutes in all`;
+	return (
+		"# Getting started\n\n" +
+		"Your server keeps the record of your life, but it cannot connect itself, does not know your name, and cannot tell your story. " +
+		"Four things, done here, one at a time. Nothing expires; leave and come back any time.\n\n" +
+		where
+	);
+}
 
 /** What a settled step reads as, in the thread's history. */
 function settledLine(s: GettingStartedStep): string {
@@ -92,7 +104,7 @@ function askLine(s: GettingStartedStep, first: boolean): string {
 	const lead = first ? "First" : "Next";
 	switch (s.id) {
 		case "connect_ai":
-			return `${lead}, the models your server thinks with: a Virtues subscription, or an endpoint of your own. Until then this room cannot answer, and nothing typed here goes anywhere.`;
+			return `${lead}, give your server a mind. A Virtues subscription covers the models, web search, maps, and bank links, metered per request and never kept; an endpoint of your own covers the models alone. Until one is connected this room cannot answer, and nothing typed here goes anywhere.`;
 		case "introductions":
 			return `${lead}, introductions. What should I call you, what will you call me, where is home, and when were you born? Say it below in your own words, all at once is fine. The story of your life comes later, in its own conversation.`;
 		case "connect_world":
@@ -140,20 +152,29 @@ export function applyGettingStartedOpening(
 		return;
 	}
 
-	const top = [textMessage(GS_WELCOME_ID, WELCOME)];
 	const steps = STEP_ORDER.map((id) => state.steps.find((s) => s.id === id)).filter(
 		(s): s is GettingStartedStep => !!s,
 	);
-	for (const s of steps) {
-		if (s.status !== "open") top.push(textMessage(`gs-done-${s.id}`, settledLine(s)));
-	}
+	const nowIndex = steps.findIndex((s) => s.status === "open");
+	const now = nowIndex >= 0 ? steps[nowIndex] : undefined;
+
+	// The history follows the walk, not the rows: a step that happens to be
+	// done AHEAD of the one being asked (sources connected before AI on a
+	// dev checkout, say) is not narrated yet, or the room would say "your
+	// world is connected" before it has asked for anything.
+	const top = [textMessage(GS_WELCOME_ID, heading(now ? nowIndex : null))];
+	steps.forEach((s, i) => {
+		if (s.status !== "open" && (nowIndex < 0 || i < nowIndex)) {
+			top.push(textMessage(`gs-done-${s.id}`, settledLine(s)));
+		}
+	});
 
 	const bottom: ReturnType<typeof textMessage>[] = [];
 	const world = steps.find((s) => s.id === "connect_world");
-	if (world?.status === "done" || state.first_day) {
+	// The first day is written by a model, so the promise waits for one.
+	if (state.ai_connected && (world?.status === "done" || state.first_day) && (nowIndex < 0 || nowIndex > 2)) {
 		bottom.push(textMessage(GS_PROMISE_ID, promiseLine(state.first_day)));
 	}
-	const now = steps.find((s) => s.status === "open");
 	if (now) {
 		bottom.push(textMessage(`${GS_NOW_PREFIX}${now.id}`, askLine(now, now.id === "connect_ai")));
 	} else if (state.graduated) {
