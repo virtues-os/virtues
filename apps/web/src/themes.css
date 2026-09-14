@@ -524,8 +524,15 @@
 	--border-strong: #D4D1CC;
 	--border-focus: #1E3159;
 
-	/* Selection/Highlight - Soft claret wash */
-	--highlight: rgba(154, 43, 46, 0.14);
+	/* Selection/Highlight - A classic yellow highlighter, a little desaturated.
+	   The claret wash that was here borrowed the signature accent, so a marked
+	   passage read as an error state rather than as something someone marked.
+	   Yellow is what a pen does to paper, and the hue is nobody else's here:
+	   held at ~53° so it stays yellow rather than drifting into the goldenrod
+	   that --warning already owns. Laid on at 50% so it composites to a mellow
+	   #F5EDAC over the ivory ground rather than the fluorescent it would be at
+	   full strength. */
+	--highlight: rgba(238, 222, 96, 0.5);
 	--highlight-foreground: #1A2030;
 
 	/* Diff Colors */
