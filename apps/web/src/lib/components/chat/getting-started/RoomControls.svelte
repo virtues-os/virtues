@@ -56,11 +56,11 @@
 {/if}
 
 <style>
+	/* No width, no gutter of its own: this sits INSIDE .messages-container,
+	   which already holds the column to 48rem and its 2rem gutters. Setting
+	   them again here indented every button by a full gutter past the prose
+	   it belongs to. */
 	.controls {
-		max-width: 48rem;
-		margin: 0 auto;
-		padding: 0 2rem 0.5rem;
 		width: 100%;
-		box-sizing: border-box;
 	}
 </style>
