@@ -311,21 +311,55 @@ h6 {
 	background: transparent;
 }
 
+/* Lists sit closer to the margin and closer to each other than they did.
+   2em of indent and 0.5rem between items reads as five separate paragraphs
+   that happen to have dots; a list is one thought in parts, and should look
+   like one block. The reference points: GitHub indents 2em and spaces items
+   0.25em, Tailwind's prose indents 1.625em, Stripe's docs about 1.25em —
+   1.5em and 0.35em sits inside that range, in `em` so it tracks the type.
+   Block margins stay at the paragraph's own rhythm. */
 .markdown ul {
-	@apply list-disc mb-4 space-y-2;
-	padding-left: 2em;
+	@apply list-disc mb-4;
+	/* Streamdown ships its own `ml-4` on every list, which stacked 16px on top
+	   of whatever we set here — the reason a five-line list sat 40px in from
+	   its own paragraph. Padding is the one knob; the margin is zeroed so
+	   there is nothing to stack with. */
+	margin-left: 0;
+	padding-left: 1.5em;
 	list-style-position: outside;
 }
 
 .markdown ol {
-	@apply list-decimal mb-4 space-y-2;
-	padding-left: 2em;
+	@apply list-decimal mb-4;
+	margin-left: 0;
+	padding-left: 1.5em;
 	list-style-position: outside;
 }
 
 .markdown li {
 	line-height: var(--md-body-lh);
 	contain: layout;
+}
+
+.markdown li + li {
+	margin-top: 0.35em;
+}
+
+/* A nested list is part of its parent item, not a new block after it. */
+.markdown li > ul,
+.markdown li > ol {
+	margin-top: 0.35em;
+	margin-bottom: 0;
+}
+
+/* A paragraph inside a list item is the item, not a block in its own right —
+   markdown makes these the moment any item in the list has a blank line. */
+.markdown li > p {
+	margin-bottom: 0;
+}
+
+.markdown li > p + p {
+	margin-top: 0.5em;
 }
 
 .markdown blockquote {
