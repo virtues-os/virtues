@@ -527,12 +527,12 @@
 	/* Selection/Highlight - A classic yellow highlighter, a little desaturated.
 	   The claret wash that was here borrowed the signature accent, so a marked
 	   passage read as an error state rather than as something someone marked.
-	   Yellow is what a pen does to paper, and the hue is nobody else's here:
-	   held at ~53° so it stays yellow rather than drifting into the goldenrod
-	   that --warning already owns. Laid on at 50% so it composites to a mellow
-	   #F5EDAC over the ivory ground rather than the fluorescent it would be at
-	   full strength. */
-	--highlight: rgba(238, 222, 96, 0.5);
+	   Yellow is what a pen does to paper, and the hue is nobody else's here.
+	   Red stays at 255: pulling it down to desaturate turns the composite
+	   olive, which reads as stain rather than marker. The paleness comes from
+	   the blue channel and the alpha instead, so over the ivory ground this
+	   lands at a clean #FEF4AE, over white at #FFF4B0. */
+	--highlight: rgba(255, 238, 112, 0.55);
 	--highlight-foreground: #1A2030;
 
 	/* Diff Colors */
