@@ -3248,30 +3248,10 @@
 		margin-bottom: 0;
 	}
 
-	/* ── A step that is settled says so ──
-	   Every line the room speaks used to be the same paragraph, so someone
-	   coming back from the browser tab where they had just subscribed found
-	   more prose and no way to tell what had changed or what was still being
-	   asked of them. A settled step now carries a check in the margin: the
-	   eye finds the checks, and the last line without one is where you are.
-
-	   `contain: layout` rather than the default `layout paint`, or the
-	   margin's check is clipped by the wrapper's own box — the same exemption
-	   `.bleeds` takes for the lifeline plate. */
-	.messages-container.room .message-wrapper.settled {
-		contain: layout;
-	}
-	.messages-container.room .message-wrapper.settled::before {
-		content: "✓";
-		position: absolute;
-		left: -1.35rem;
-		top: 0;
-		font-size: 0.8125rem;
-		/* Sat on the first line's baseline: --md-body-lh of a 1rem body. */
-		line-height: var(--md-body-lh, 1.7);
-		color: var(--color-success, #3f7d58);
-		pointer-events: none;
-	}
+	/* `.settled` is still set on every line the room speaks about a step that
+	   is already done — the hook is kept, the check that hung in the margin is
+	   not. It read as a UI artifact stuck onto prose, in a green nothing else
+	   in the room uses, and it broke the column's left edge. */
 
 	.message-wrapper :global(h1),
 	.message-wrapper :global(h2),
