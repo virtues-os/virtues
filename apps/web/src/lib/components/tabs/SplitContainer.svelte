@@ -8,6 +8,7 @@
 		type ZoneId,
 	} from "$lib/stores/dndManager.svelte";
 	import WindowTabBar from "./WindowTabBar.svelte";
+	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import TabContent from "./TabContent.svelte";
 	import ChatView from "./views/ChatView.svelte";
 
@@ -131,6 +132,7 @@
 
 <div
 	class="split-container"
+	class:bare={gettingStarted.locked}
 	bind:this={containerRef}
 	class:dragging={isResizing}
 	class:split-enabled={isSplitEnabled}
@@ -184,7 +186,10 @@
 		tabindex="0"
 		aria-label="Left pane"
 	>
-		<WindowTabBar paneId={isSplitEnabled ? "left" : undefined} />
+		<!-- While the app is one room (no AI yet), there are no tabs to show. -->
+		{#if !gettingStarted.locked}
+			<WindowTabBar paneId={isSplitEnabled ? "left" : undefined} />
+		{/if}
 	</div>
 
 	<!-- Resize Handle (only interactive in split mode) -->
@@ -345,6 +350,11 @@
 		flex-direction: column;
 		overflow: hidden;
 		transition: width 150ms var(--ease-premium);
+	}
+
+	/* No tab bar while the app is one room: the content takes the top. */
+	.split-container.bare {
+		--tab-bar-h: 0px;
 	}
 
 	/* In split mode, tab-bar-h is offset by container padding */
