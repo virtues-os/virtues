@@ -528,11 +528,12 @@
 	   The claret wash that was here borrowed the signature accent, so a marked
 	   passage read as an error state rather than as something someone marked.
 	   Yellow is what a pen does to paper, and the hue is nobody else's here.
-	   Red stays at 255: pulling it down to desaturate turns the composite
-	   olive, which reads as stain rather than marker. The paleness comes from
-	   the blue channel and the alpha instead, so over the ivory ground this
-	   lands at a clean #FEF6C2, over white at #FFF8C6. */
-	--highlight: rgba(255, 238, 112, 0.4);
+	   Red stays near 255 (HSL 53°, 95%, 72%): pulling it down further to
+	   desaturate turns the composite olive, which reads as stain rather than
+	   marker. The paleness comes from the blue channel and the alpha instead,
+	   so over the ivory ground this lands at a clean #FCF5C4, over white at
+	   #FDF7C7. */
+	--highlight: rgba(251, 235, 116, 0.4);
 	--highlight-foreground: #1A2030;
 
 	/* Diff Colors */
