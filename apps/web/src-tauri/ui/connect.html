@@ -222,36 +222,82 @@
 
       /* ── THE SPLASH ──
          What a paired device sees instead of a sentence. Two branches leave
-         from here — the app, or the airlock's entry — and both start from the
-         same mark, so the launch reads as one motion that forks rather than as
-         a screen that got replaced.
+         from here — the app, or one of the airlock's own screens — and both
+         start from the same mark, so the launch reads as one motion that forks
+         rather than as a screen that got replaced.
 
-         The mark is set BIG and centered, in the chrome's own glyph and face,
-         and the fixed chrome's copy is hidden underneath it: two ∴ on screen
-         at once (one large, one small) is the tell that this is a placeholder
-         rather than the product opening.
+         THE MARK IS THE APP'S, AT THE APP'S SIZE, IN THE APP'S PLACE. Not the
+         chrome's ∴ glyph set large: `ChatView`'s `.init-hero` draws three
+         circles in a 12 × 10.5 viewBox at 30 × 26.25, and a text glyph at a
+         matching width still renders visibly thinner dots (measured 15px tall
+         against the app's 22px on a 3x phone). Same markup, same numbers, so
+         the mark the app assembles is the one already standing there.
+
+         PLACE, measured rather than derived. `.init-hero` sits `bottom: calc(50%
+         + 72px)` inside the CHAT BODY, not the window — the mobile shell's 48px
+         top bar and the safe area are above it — and the mark rides above that
+         on the hero's 14px gap and its wordmark. Rather than chase that stack
+         through three components, mirror the box (top bar and safe area off the
+         top, the window's own bottom edge for the bottom) and read the one
+         remaining number off a screenshot of the empty chat: the mark's ink sits
+         132px above that box's center. The padding is what does the lifting,
+         because centering a flex box inside `2 x rise` of bottom padding moves
+         its content up by exactly `rise`. Ink and box share a center here — the
+         circles sit symmetrically in the viewBox — so either can be measured.
+
+         Two numbers, one job each, and a screenshot is how you check them: a
+         cold launch against the empty chat, not arithmetic. Phone-shaped
+         numbers in a file desktop shares, which is fine because only a phone
+         ever reaches this screen — `main.rs` decides the landing state before
+         the window exists and injects no `__VIRTUES_PAIRED__`, so
+         `bootDestination` can only return `probe-paired` on mobile.
 
          `position: fixed` and its own paint: #app's `rise` animation would
          otherwise slide the mark up from nowhere, which is a different gesture
          from the one this wants. */
-      #splash { position: fixed; inset: 0; display: flex; align-items: center;
-                justify-content: center; background: var(--paper); z-index: 20;
-                animation: splash-in .22s var(--ease) both; }
-      #splash .mk { font-family: var(--sans); font-size: 56px; line-height: 1;
-                    color: var(--ink); }
-      /* LEAVING FOR THE APP: the mark grows through the plane and dissolves, so
-         the SPA's own first paint arrives at the end of a gesture instead of
-         after a cut. */
+      #splash { position: fixed; inset: 0; z-index: 20;
+                display: flex; align-items: center; justify-content: center;
+                background: var(--paper); color: var(--ink);
+                --shell-bar: 48px;   /* MobileShell `.topbar` */
+                --hero-rise: 132px;  /* `.init-hero`'s mark above that box's center */
+                padding-bottom: calc(2 * var(--hero-rise)
+                                     - var(--shell-bar) - env(safe-area-inset-top));
+                /* Armed a frame late, deliberately — see `renderSplash`. */
+                opacity: 0; }
+      /* `opacity: 1` matters as much as the animation: it is the underlying
+         value `splash-out`'s implicit `from` reads on the way out, and with the
+         base rule at 0 the exit would fade from nothing to nothing. */
+      #splash.ready { opacity: 1; animation: splash-fade .14s var(--ease) both; }
+      /* The live region's text, for a screen reader only. */
+      #splash .offscreen { position: absolute; width: 1px; height: 1px;
+                           overflow: hidden; clip-path: inset(50%); }
+      /* The entrance scales the MARK, not the full-screen box. Both read the
+         same when the mark is dead center, which is where this started — but
+         the mark is deliberately off-center now, and a transform on the box
+         swings it through an arc on its way in (4-5px, measurable). Scaling the
+         mark about itself leaves it exactly where the app's is.
+
+         .14s, not .22s: the entrance has to be FINISHED inside MARK_BEAT, or
+         the exit replaces it mid-fade and `splash-out`'s implicit `from` snaps
+         the opacity back to 1 for a frame on its way down. */
+      #splash svg { overflow: visible; }
+      #splash.ready svg { animation: splash-mark .14s var(--ease) both; }
+      /* LEAVING FOR THE APP: a fade IN PLACE, no scale. The mark is standing
+         where the app's own mark is about to assemble, so anything that moves
+         it first would make the handoff a jump cut with two positions in it. */
       #splash.leaving { animation: splash-out .16s var(--ease) both; }
-      /* LEAVING FOR THE AIRLOCK: the opposite — the mark recedes to where the
-         chrome's copy sits, and the entry cards rise into the space. */
+      /* LEAVING FOR THE AIRLOCK: nothing is about to stand here, so the mark
+         is free to recede — and should, because the screen that follows rises
+         into the space it leaves. */
       #splash.settling { animation: splash-settle .2s var(--ease) both; }
-      @keyframes splash-in  { from { opacity: 0; transform: scale(.94); } }
-      @keyframes splash-out { to   { opacity: 0; transform: scale(1.08); } }
+      @keyframes splash-fade { from { opacity: 0; } }
+      @keyframes splash-mark { from { transform: scale(.94); } }
+      @keyframes splash-out  { to   { opacity: 0; } }
       @keyframes splash-settle { to { opacity: 0; transform: scale(.9); } }
       /* Vestibular comfort: the fork still happens, it just cuts. */
       @media (prefers-reduced-motion: reduce) {
-        #splash, #splash.leaving, #splash.settling { animation-duration: .01ms; }
+        #splash.ready, #splash.ready svg,
+        #splash.leaving, #splash.settling { animation-duration: .01ms; }
       }
       .steps { margin: 26px 0 0; padding: 0; list-style: none; }
       .steps li { font-size: 13px; color: var(--ink-subtle); line-height: 1.6;
@@ -682,8 +728,33 @@
         if (existing) existing.remove();
         const el = document.createElement('div');
         el.id = 'splash';
-        el.innerHTML = '<span class="mk">∴</span>';
+        el.setAttribute('role', 'status');
+        // `ChatView`'s `.init-hero` mark, verbatim — same viewBox, same radii,
+        // same rendered size. It does NOT assemble here: the app plays that
+        // entrance when it mounts, and a second one would read as the mark
+        // being drawn twice.
+        //
+        // The sentence beside it is the one this screen stopped saying out
+        // loud. A live region announces its CONTENT, not its `aria-label`, so
+        // it is real text held off-screen rather than an attribute: the mark
+        // says "opening" to anyone who can see it, and a silent blank screen
+        // would be a step backwards for anyone who cannot.
+        el.innerHTML =
+          '<svg viewBox="0 0 12 10.5" width="30" height="26.25" fill="currentColor" aria-hidden="true">' +
+          '<circle cx="6" cy="2.4" r="1.5" />' +
+          '<circle cx="2.6" cy="8.1" r="1.5" />' +
+          '<circle cx="9.4" cy="8.1" r="1.5" /></svg>' +
+          '<span class="offscreen">Opening Virtues</span>';
         document.body.appendChild(el);
+        // ARMED ON THE SECOND FRAME, because `env(safe-area-inset-top)` is not
+        // worth anything on the first one. WKWebView lays this page out before
+        // it knows the window's insets, so the padding above resolves against
+        // an inset of 0 for exactly one frame — which puts the mark 31pt high
+        // and then drops it. Caught on a 30fps capture of a real launch; at 20
+        // it is invisible, and on a device it reads as a twitch you cannot
+        // quite name. Two frames of `opacity: 0` cost ~32ms of a 150ms beat and
+        // buy a mark that is never in the wrong place.
+        requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('ready')));
         // The fixed chrome carries its own small ∴; two marks on screen at
         // once reads as a placeholder over a page, not as the app opening.
         chromeEl.style.visibility = 'hidden';
