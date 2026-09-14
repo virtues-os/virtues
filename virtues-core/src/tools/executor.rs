@@ -847,7 +847,7 @@ impl ToolExecutor {
             _ => Ok(ToolResult::success(serde_json::json!({
                 "card": "step",
                 "step": step,
-                "message": "The card is open below for them to do it."
+                "message": "Its controls are under your turn for them to use."
             }))),
         }
     }
@@ -922,7 +922,7 @@ impl ToolExecutor {
         Ok(ToolResult::success(serde_json::json!({
             "card": "introductions",
             "fields": fields,
-            "message": "The card is below; they confirm or correct it, and the card writes."
+            "message": "The line and its confirm button are under your turn; they confirm or reply to correct, and the button writes."
         })))
     }
 

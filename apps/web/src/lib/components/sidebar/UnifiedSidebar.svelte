@@ -205,6 +205,7 @@
 	);
 </script>
 
+{#if !gettingStarted.locked}
 <aside class={sidebarClass}>
 	<!-- Book Spine: When collapsed, show expand button on hover -->
 	{#if isCollapsed}
@@ -245,12 +246,6 @@
 					<Icon icon="ri:loader-4-line" width="16" class="spinner" />
 					<span>Loading...</span>
 				</div>
-			{:else if gettingStarted.locked}
-				<!-- No model yet: the app is a room and a door. The card is the
-				     room's only entry; nothing else is on the shelf. -->
-				{#if !isCollapsed}
-					<GettingStartedCard />
-				{/if}
 			{:else}
 				<!-- One swap, not eleven. The two panels are stacked in a single
 				     grid cell so the outgoing one can leave while the incoming
@@ -314,18 +309,17 @@
 			{/if}
 		</nav>
 
-		{#if !gettingStarted.locked}
-			{#if !isCollapsed && gettingStarted.loaded && !gettingStarted.unsupported && !gettingStarted.graduated}
-				<!-- The progress card: the one mention of getting started
-				     outside its room, from step 1 to graduation. -->
-				<GettingStartedCard />
-			{/if}
-			<SidebarFooter
-				collapsed={isCollapsed}
-			/>
+		{#if !isCollapsed && gettingStarted.loaded && !gettingStarted.unsupported && !gettingStarted.graduated}
+			<!-- The progress card: the one mention of getting started
+			     outside its room, from step 1 to graduation. -->
+			<GettingStartedCard />
 		{/if}
+		<SidebarFooter
+			collapsed={isCollapsed}
+		/>
 	</div>
 </aside>
+{/if}
 
 <style>
 	@reference "../../../app.css";

@@ -231,7 +231,7 @@ fn show_step_tool() -> ToolConfig {
         id: "show_step".to_string(),
         name: "Open a getting-started step".to_string(),
         description: "Open one step's card in the getting-started conversation".to_string(),
-        llm_description: "Open the card for one getting-started step (introductions, connect_world, interview). The card is the person's way to do the step; you cannot do it for them. Refused for a step that is already done.".to_string(),
+        llm_description: "Put one getting-started step's controls under your turn (connect_world: the source and phone doors; interview: its door; introductions: nothing to show, they just reply). The controls are the person's way to do the step; you cannot do it for them. Refused for a step that is already done.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -274,7 +274,7 @@ fn record_introductions_tool() -> ToolConfig {
         id: "record_introductions".to_string(),
         name: "Play introductions back".to_string(),
         description: "Show the introductions the person gave on a card for them to confirm".to_string(),
-        llm_description: "Play back what the person said about themselves as a confirmation card: what to call them, what they will call you, home time zone (an IANA name you resolve from the place they named), and birth date (YYYY-MM-DD). Include only fields they gave; leave the rest out rather than guessing. The card writes when they confirm; this tool writes nothing.".to_string(),
+        llm_description: "Play back what the person said about themselves as one line with a confirm button under your turn: what to call them, what they will call you, home time zone (an IANA name you resolve from the place they named), and birth date (YYYY-MM-DD). Include only fields they gave; leave the rest out rather than guessing. The button writes when they confirm; this tool writes nothing.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
