@@ -4,7 +4,7 @@
 	import { Spring } from "svelte/motion";
 	import RefPicker, { type EntityResult } from "./RefPicker.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
-	import { createComposerEditor, type ComposerEditor } from "$lib/codemirror/composer";
+	import { closeOpenFence, createComposerEditor, type ComposerEditor } from "$lib/codemirror/composer";
 	import { createRefPicker, insertRef } from "$lib/codemirror/extensions/ref-picker";
 
 	let {
@@ -143,19 +143,22 @@
 		editor?.view.focus();
 	}
 
-	// What gets sent. The document is already markdown; two transforms only.
+	// What gets sent. The document is already markdown; three transforms only.
 	// The ref label: the picker writes `[@Label](url)` (the Pages form) and
 	// the thread and the model have always seen `[Label](url)`, so the `@`
-	// comes off here. And a trailing empty list marker: on the phone Return
+	// comes off here. A trailing empty list marker: on the phone Return
 	// continues the list, so the natural last keystroke before Send leaves a
-	// bare `- ` on its own line, which is never intended content.
+	// bare `- ` on its own line, which is never intended content. And a fence
+	// left open gets its closing line, so the message is well-formed markdown
+	// for anything that renders it later.
 	const TRAILING_EMPTY_MARKER = /\n\s*(?:[-*+]|\d+[.)])(?:\s+\[[ xX]\])?\s*$/;
 	function outgoingContent(): string {
-		return docText
+		const text = docText
 			.replace(/\[@([^\]]+)\]\(/g, "[$1](")
 			.replace(/\s+$/, "")
 			.replace(TRAILING_EMPTY_MARKER, "")
 			.trim();
+		return closeOpenFence(text);
 	}
 
 	function handleSubmit() {
