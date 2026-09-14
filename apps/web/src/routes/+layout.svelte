@@ -34,29 +34,6 @@
 		document.addEventListener("drop", swallowStrayDrop);
 		return () => document.removeEventListener("drop", swallowStrayDrop);
 	});
-
-	// Dissolve the shell's boot mark (app.html) — the ∴ the airlock handed over
-	// so the launch never shows bare paper. THIS layout rather than (app)'s,
-	// because every route group is a place the phone can land: the getting-
-	// started chat, the founder's letter, /pair. And `onMount` rather than
-	// anything earlier, because with `ssr: false` SvelteKit resolves the
-	// route's `load` before it renders, so the first mount IS the app arriving.
-	//
-	// A frame before removing it, and a fade rather than a cut: the empty
-	// chat's `.init-hero` assembles its own mark in exactly this spot, and
-	// these two overlapping is the handover. On a chat with messages there is
-	// nothing underneath, and the fade is just a fade.
-	onMount(() => {
-		const boot = document.getElementById("boot-mark");
-		if (!boot) return;
-		requestAnimationFrame(() => {
-			boot.classList.add("done");
-			// Long enough for the 0.32s transition, then gone for good — a
-			// fixed full-screen element left in the tree is a trap even with
-			// `pointer-events: none`.
-			setTimeout(() => boot.remove(), 500);
-		});
-	});
 </script>
 
 {@render children()}

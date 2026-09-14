@@ -27,108 +27,11 @@
 				} catch (e) {
 					/* private mode / storage disabled — the stylesheet still wins */
 				}
-				// The boot mark, and ONLY on the phone shell: it exists to
-				// continue what the airlock was showing, and nothing else
-				// loads this document through an airlock. `__VIRTUES_MOBILE__`
-				// is on the window before any page script (Tauri injects it at
-				// document start), so this runs early enough to gate the paint.
-				try {
-					if (window.__VIRTUES_MOBILE__) {
-						document.documentElement.classList.add("is-shell");
-						// `env(safe-area-inset-top)` reads 0 on a webview's first
-						// frame — it lays out before it knows the window's insets
-						// — which would put the mark 31pt high for exactly the
-						// paint this is here to get right. The airlock resolved
-						// it a moment ago and left it here; `env()` is the
-						// fallback for a launch that did not come through one.
-						var t = localStorage.getItem("virtues-safe-top");
-						if (t) {
-							document.documentElement.style.setProperty("--boot-safe-top", t + "px");
-						}
-						// Ink legible on whatever paper the theme last painted.
-						// Only the background is cached (theme.ts), and half the
-						// sixteen themes are dark — a mark hardcoded to ink would
-						// be invisible on Asgard. Luminance off that one cached
-						// value is enough for a placeholder that stands for
-						// 300ms; the real mark arrives with the real token.
-						var m = /^#?([0-9a-f]{6})$/i.exec(bg);
-						if (m) {
-							var v = parseInt(m[1], 16);
-							var lum = 0.299 * (v >> 16) + 0.587 * ((v >> 8) & 255) + 0.114 * (v & 255);
-							document.documentElement.style.setProperty(
-								"--boot-ink",
-								lum < 128 ? "#f5f5f4" : "#17171a"
-							);
-						}
-					}
-				} catch (e) {
-					/* no storage: the CSS fallback still places it */
-				}
 			})();
 		</script>
-		<!-- THE MARK THAT CROSSES THE NAVIGATION.
-		     A phone reaches this document from the airlock (src-tauri/ui/
-		     connect.html), which has been showing the ∴ mark while it decided
-		     where to send you. WebKit paints this shell ~10ms after the
-		     navigation commits, but the app itself is not on screen for another
-		     ~160ms — SvelteKit start, hydrate, the layout's gate fetches, the
-		     component tree — and the empty chat's own mark waits a further
-		     ~190ms behind `.init-hero`'s assemble delay. That was 400ms of bare
-		     paper in the middle of opening the app, measured frame by frame on
-		     a real launch (2026-09-14).
-
-		     So the shell paints the mark itself, at the same size and the same
-		     place, and the airlock hands straight over to it: the mark never
-		     leaves the screen, and nothing had to be made faster. The root
-		     layout dissolves it once the app has rendered, by which time either
-		     the empty chat's `.init-hero` is assembling in the same spot or
-		     there is a conversation to look at instead.
-
-		     PRE-PAINT, like the theme above, and for the same reason: anything
-		     that waits for a module is too late to be worth having. -->
-		<style>
-			#boot-mark {
-				display: none;
-				position: fixed;
-				inset: 0;
-				z-index: 40;
-				align-items: center;
-				justify-content: center;
-				/* Mirrors the chat body's box and lifts to `.init-hero`'s mark —
-				   the same two numbers connect.html's #splash carries, for the
-				   same reason. Keep the three in step. */
-				padding-bottom: calc(2 * 132px - 48px - var(--boot-safe-top, env(safe-area-inset-top)));
-				/* No paper of its own: <html> is already painted the theme's
-				   background by the script above, and staying transparent means
-				   the app fades UP THROUGH this mark rather than out from
-				   behind a tile that had to match a color it cannot read yet. */
-				color: var(--boot-ink, #17171a);
-				pointer-events: none;
-				/* LINEAR, and the one easing in this file that is not the house
-				   curve. `cubic-bezier(.22,1,.36,1)` is an ARRIVAL easing: it
-				   spends most of its distance in its first quarter, which is
-				   what you want for something appearing and exactly wrong for
-				   something leaving. At 0.22s it put this mark below half ink
-				   in 50ms and gone in 110 — so it had finished before the empty
-				   chat's own mark began, and left a 133ms hole between them
-				   (measured). Linear over 0.32s still has ink on screen when
-				   `.init-dot-1` starts drawing, which is what makes the two a
-				   handover rather than a gap. */
-				transition: opacity 0.32s linear;
-			}
-			html.is-shell #boot-mark { display: flex; }
-			#boot-mark.done { opacity: 0; }
-		</style>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
-		<div id="boot-mark" role="status" aria-label="Opening Virtues">
-			<svg viewBox="0 0 12 10.5" width="30" height="26.25" fill="currentColor" aria-hidden="true">
-				<circle cx="6" cy="2.4" r="1.5" />
-				<circle cx="2.6" cy="8.1" r="1.5" />
-				<circle cx="9.4" cy="8.1" r="1.5" />
-			</svg>
-		</div>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>
