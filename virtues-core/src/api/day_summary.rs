@@ -1529,7 +1529,7 @@ async fn build_dossier(
             let title: String = r.try_get("title").unwrap_or_default();
             let s: chrono::DateTime<chrono::Utc> = r.get("started_at");
             let e: chrono::DateTime<chrono::Utc> = r.get("ended_at");
-            let all_day: bool = r.try_get("is_all_day").unwrap_or(false);
+            let all_day: bool = r.try_get("is_all_day")?;
             let access: Option<String> = r.try_get("calendar_access_role").ok().flatten();
             let rsvp: Option<String> = r.try_get("response_status").ok().flatten();
 
@@ -2663,6 +2663,7 @@ mod queue_tests {
         .await
         .unwrap();
 
+        // absent-ok: auto_label is nullable; a missing label reads as "" for the assert.
         let labels: Vec<&str> = rows.iter().map(|r| r.1.as_deref().unwrap_or("")).collect();
         assert!(
             !labels.contains(&"old cut"),

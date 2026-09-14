@@ -1,8 +1,6 @@
 ---
 title: What Virtues is
-description:
-  Virtues is a server that holds the data of your life under your own roof, and
-  the software that turns it into a readable record. Start here.
+description: Virtues is a server that holds the data of your life under your own roof, and the software that turns it into a readable record. Start here.
 updated: 2026-08-28
 ---
 

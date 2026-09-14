@@ -168,6 +168,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("read profile for getting started: {e}")))?;
+    // absent-ok: no profile row yet IS the fresh box — nothing named, nothing skipped.
     let (preferred_name, dismissed) = profile.unwrap_or((None, Vec::new()));
     let skipped = |id: &str| dismissed.iter().any(|d| d == id);
 
@@ -398,6 +399,7 @@ mod tests {
         sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
             .execute(&pool)
             .await
+            // absent-ok: the migrations may already seed the one profile row.
             .ok();
         let s = compute(&pool).await.expect("compute on a fresh box");
         assert!(!s.ai_connected);
@@ -419,6 +421,7 @@ mod tests {
         sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
             .execute(&pool)
             .await
+            // absent-ok: the migrations may already seed the one profile row.
             .ok();
         set_skipped(&pool, "introductions", true).await.unwrap();
         set_skipped(&pool, "introductions", true).await.unwrap();
