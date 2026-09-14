@@ -901,7 +901,7 @@
 								: (local.byo.provider ?? 'your endpoint')}{#if local.byo.default_model}, defaulting
 								to {local.byo.default_model}{/if}.
 						{:else}
-							Send every AI call to your own endpoint instead of the Virtues wallet.
+							Send every AI call to an endpoint of your own instead of the Virtues subscription.
 						{/if}
 					</p>
 				</div>
@@ -913,21 +913,18 @@
 			{#if byoOpen}
 				<div class="byo-body">
 					<p class="prose-note">
-						Point your box at any endpoint that speaks OpenAI-style
-						<code>/chat/completions</code> with a bearer token. The key is stored on your
-						box, encrypted, behind a sudo approval at the CLI.
-					</p>
-					<p class="prose-note">
-						<strong>This covers every AI call</strong> — chat, compaction, day summaries,
-						image generation and transcription all leave by your endpoint. The wallet stays
-						live for the things that aren't AI and that your key can't pay for: maps, web
-						search, photos, and bank connections.
+						Any endpoint that speaks OpenAI-style chat completions with a bearer token will
+						do: a gateway such as Vercel AI Gateway, OpenRouter or LiteLLM reaches every
+						provider through one key; a provider's own API works directly; so does a local
+						Ollama, LM Studio or llama.cpp. AWS Bedrock signs requests instead of taking a
+						key, so it needs a gateway in front. The key is stored encrypted on your server
+						and changes only with an approval at its command line. Maps, web search, photos
+						and bank connections are not AI calls and stay on the subscription.
 					</p>
 					<p class="prose-note warn">
-						<strong>Consider whose key it is.</strong> Routing through an employer's account
-						means your personal life passes through infrastructure they can read. Bringing
-						your own key gives you control of the vendor and the bill; it does not, by
-						itself, give you more privacy.
+						One caution: a key from your employer routes your personal life through
+						infrastructure they can read. Your own key gives you the vendor and the bill; it
+						does not, by itself, give you more privacy.
 					</p>
 
 					{#if byoLoading}
@@ -952,9 +949,8 @@
 										{/if}
 									</div>
 									<p class="panel-foot">
-										Every AI call goes box → your endpoint, so Virtues is not in the path
-										and your wallet isn't charged for it. The wallet stays live for maps,
-										web search, photos and bank connections.
+										Every AI call goes from your server straight to this endpoint. The
+										subscription is not in the path and is not charged for it.
 									</p>
 								</div>
 								<Button variant="ghost" onclick={startByoDelete}>
@@ -975,8 +971,8 @@
 						<div class="panel">
 							<div class="panel-title">No key set</div>
 							<p class="panel-lede">
-								Everything routes through the Virtues wallet ($20/mo subscription plus
-								usage). Set a key to send AI calls direct instead.
+								Everything currently runs on the Virtues subscription. Set an endpoint to
+								send AI calls to it instead.
 							</p>
 							{@render byoKeyForm()}
 							<div class="panel-actions">
@@ -985,24 +981,6 @@
 						</div>
 					{/if}
 
-					<div class="byo-help">
-						<p>
-							<strong>A gateway is usually the best answer.</strong> Vercel AI Gateway,
-							OpenRouter, LiteLLM or your work's proxy each reach every provider through
-							one key — including models we pick that yours may not carry otherwise.
-							Point this at theirs.
-						</p>
-						<p>
-							Provider APIs work directly too: OpenAI, xAI, Groq, DeepSeek, Mistral, and
-							Anthropic and Google on their OpenAI-compatible endpoints. So does a local
-							Ollama, LM Studio or llama.cpp on <code>http://localhost</code>.
-						</p>
-						<p>
-							<strong>AWS Bedrock needs a gateway in front.</strong> It signs requests
-							rather than taking a bearer token, so a pasted key can't reach it — but every
-							gateway above can.
-						</p>
-					</div>
 				</div>
 			{/if}
 		</section>
@@ -1072,12 +1050,8 @@
 		<div class="pt-1">
 			<div class="text-xs font-medium mb-1">What your endpoint calls each model</div>
 			<p class="text-xs text-foreground-muted mb-3">
-				Optional. A model id is an address on one gateway, not a portable
-				name — the same model we call <code>spacexai/grok-4.5</code>
-				is <code>x-ai/grok-4.5</code> on
-				OpenRouter. Leave a row blank if your endpoint uses the same ids we do,
-				which is true for Vercel AI Gateway. Blank rows that your endpoint
-				doesn't carry will fail with its own error naming the model.
+				Optional. If your endpoint names models differently from Vercel AI Gateway, say
+				what it calls each of these. A blank row uses the same id we do.
 			</p>
 			<div class="space-y-2">
 				{#each SLOT_FIELDS as slot (slot.key)}
@@ -1109,7 +1083,7 @@
 	bind:show={showSudoSave}
 	action="change_byo_key"
 	title="Save BYO AI key"
-	description="Sensitive action — chat will route through this key instead of the Virtues wallet. Background AI still bills the wallet. Confirm at the server's CLI."
+	description="Every AI call will route through this endpoint instead of the subscription. Confirm at the server's command line."
 	onApproved={performByoSave}
 />
 
@@ -1386,19 +1360,6 @@
 		max-width: 68ch;
 	}
 	.prose-note.warn { color: var(--color-warning); }
-	.byo-help {
-		margin-top: 16px;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-	}
-	.byo-help p {
-		font-size: 12px;
-		line-height: 1.6;
-		color: var(--color-foreground-muted);
-		margin: 0;
-		max-width: 68ch;
-	}
 
 	code {
 		font-family: var(--font-mono, ui-monospace, monospace);

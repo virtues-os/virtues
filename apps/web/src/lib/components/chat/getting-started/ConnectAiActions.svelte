@@ -10,11 +10,11 @@
 	import { onDestroy } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { openExternal } from "$lib/tauri/bridge";
-	import { setupLinkPoll, setupSubscribeStart, setupLoginStart } from "$lib/api/client";
-	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { setupLinkPoll, setupSubscribeStart, setupLoginStart, setByoKey } from "$lib/api/client";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
+	import SudoModal from "$lib/components/SudoModal.svelte";
 
-	type Mode = "choose" | "login" | "sending" | "waiting" | "subscribe";
+	type Mode = "choose" | "login" | "sending" | "waiting" | "subscribe" | "endpoint" | "saving";
 	let mode = $state<Mode>("choose");
 	let email = $state("");
 	let error = $state<string | null>(null);
@@ -90,19 +90,50 @@
 		mode = "choose";
 	}
 	onDestroy(stop);
+
+	// An endpoint of your own, in place. The same contract Billing's form
+	// speaks: a URL that answers OpenAI-style chat completions with a bearer
+	// token, the key, and optionally what the endpoint calls our chat model.
+	// The save is sudo-gated (change_byo_key): the modal mints the request
+	// and hands back its id on approval at the server's command line.
+	let endpointUrl = $state("");
+	let apiKey = $state("");
+	let chatModel = $state("");
+	let showSudo = $state(false);
+	let urlField = $state<HTMLInputElement | null>(null);
+	const endpointValid = $derived(/^https?:\/\/\S+/.test(endpointUrl.trim()) && apiKey.trim().length > 0);
+	$effect(() => {
+		if (mode === "endpoint") urlField?.focus();
+	});
+	function startEndpointSave() {
+		if (!endpointValid) return;
+		error = null;
+		showSudo = true;
+	}
+	async function saveEndpoint(sudoRequestId: string) {
+		mode = "saving";
+		try {
+			const models = chatModel.trim() ? { chat: chatModel.trim() } : {};
+			await setByoKey({
+				sudo_request_id: sudoRequestId,
+				endpoint_url: endpointUrl.trim(),
+				api_key: apiKey,
+				models,
+			});
+			apiKey = "";
+			await gettingStarted.refresh();
+		} catch (e) {
+			mode = "endpoint";
+			error = e instanceof Error ? e.message : "That didn't save. Try again.";
+		}
+	}
 </script>
 
 {#if mode === "choose"}
 	<div class="row rise">
 		<button type="button" class="btn" onclick={subscribe}>Subscribe · $20/mo</button>
 		<button type="button" class="btn quiet" onclick={() => (mode = "login")}>Sign in</button>
-		<button
-			type="button"
-			class="btn quiet"
-			onclick={() => windowShellStore.openRouteBeside("/virtues/billing", "Billing")}
-		>
-			Own endpoint
-		</button>
+		<button type="button" class="btn quiet" onclick={() => (mode = "endpoint")}>Own endpoint</button>
 	</div>
 {:else if mode === "login" || mode === "sending"}
 	<form
@@ -131,6 +162,57 @@
 		</button>
 		<button type="button" class="back" onclick={back}>Back</button>
 	</form>
+{:else if mode === "endpoint" || mode === "saving"}
+	<form
+		class="endpoint rise"
+		class:sending={mode === "saving"}
+		onsubmit={(e) => {
+			e.preventDefault();
+			startEndpointSave();
+		}}
+	>
+		<p class="help">
+			Any endpoint that answers OpenAI-style chat completions with a bearer token: a gateway such as Vercel AI Gateway or OpenRouter, a provider's own API, or a local Ollama. The key is stored encrypted on your server, and saving it asks for an approval at the server's command line.
+		</p>
+		<input
+			class="field"
+			type="url"
+			spellcheck="false"
+			placeholder="https://ai-gateway.vercel.sh/v1/chat/completions"
+			bind:value={endpointUrl}
+			bind:this={urlField}
+			disabled={mode === "saving"}
+		/>
+		<input
+			class="field"
+			type="password"
+			autocomplete="off"
+			placeholder="API key"
+			bind:value={apiKey}
+			disabled={mode === "saving"}
+		/>
+		<input
+			class="field"
+			type="text"
+			spellcheck="false"
+			placeholder="Chat model id, if your endpoint names it differently (optional)"
+			bind:value={chatModel}
+			disabled={mode === "saving"}
+		/>
+		<div class="row">
+			<button type="submit" class="btn" disabled={!endpointValid || mode === "saving"}>
+				{mode === "saving" ? "Saving…" : "Save the endpoint"}
+			</button>
+			<button type="button" class="back" onclick={back}>Back</button>
+		</div>
+	</form>
+	<SudoModal
+		bind:show={showSudo}
+		action="change_byo_key"
+		title="Save your endpoint"
+		description="Every AI call will route through this endpoint. Confirm at the server's command line."
+		onApproved={saveEndpoint}
+	/>
 {:else if mode === "waiting"}
 	<p class="line rise">
 		<span class="dot" aria-hidden="true"></span>
@@ -258,6 +340,22 @@
 	}
 	.back:hover {
 		color: var(--color-foreground);
+	}
+
+	/* An endpoint of your own: three hairline fields, one paragraph. */
+	.endpoint {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		max-width: 34rem;
+	}
+	.endpoint.sending {
+		opacity: 0.6;
+	}
+	.help {
+		margin: 0 0 0.25rem;
+		font-size: 0.875rem;
+		color: var(--color-foreground-muted);
 	}
 
 	/* Waiting: a line and a breathing dot. */

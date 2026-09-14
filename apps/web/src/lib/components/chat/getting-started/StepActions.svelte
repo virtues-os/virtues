@@ -57,9 +57,6 @@
 				<Icon icon="ri:arrow-right-line" width="14" />
 			</button>
 		{/if}
-		{#if step !== "connect_ai" && step !== "promise"}
-			<button type="button" class="skip" onclick={() => void gettingStarted.skip(step, true)}>Skip</button>
-		{/if}
 	</div>
 {/if}
 
@@ -91,18 +88,5 @@
 	}
 	.btn.quiet:hover {
 		border-color: var(--color-foreground);
-	}
-	.skip {
-		margin-left: auto;
-		background: none;
-		border: 0;
-		padding: 0.25rem 0;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-	}
-	.skip:hover {
-		color: var(--color-foreground);
 	}
 </style>

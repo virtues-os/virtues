@@ -59,7 +59,7 @@ export const SKIP_COMMAND = "/dangerously-skip-onboarding";
 function heading(stepIndex: number | null): string {
 	void stepIndex;
 	return (
-		"# Getting started\n\n" +
+		"# First things first\n\n" +
 		"Virtues keeps the record of your life on this server and writes it up for you, one day at a time. " +
 		"Before it can begin, it needs four things from you that it has no way of discovering on its own: something to think with, your name, something to read, and the story of your life so far. " +
 		"This conversation walks through them in order. The first three take a few minutes; the last is a longer conversation, for whenever you are ready. You can leave at any point and pick up where you stopped."
