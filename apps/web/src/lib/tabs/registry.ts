@@ -33,8 +33,6 @@ import BookmarkDetailView from '$lib/components/tabs/views/BookmarkDetailView.sv
 import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svelte';
 import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
-import OntologyIndexView from '$lib/components/tabs/views/OntologyIndexView.svelte';
-import OntologyDetailView from '$lib/components/tabs/views/OntologyDetailView.svelte';
 import DataView from '$lib/components/tabs/views/DataView.svelte';
 
 export interface TabDefinition {
@@ -626,41 +624,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		detailComponent: AppletDetailView,
 	},
 
-	// ========================================================================
-	// ONTOLOGY NAMESPACE: /ontologies, /ontologies/{name}
-	// ========================================================================
-	ontology: {
-		match: (path) => path === '/ontologies' || /^\/ontologies\/[a-z_]+$/.test(path),
-		parse: (path) => {
-			if (path === '/ontologies') {
-				return {
-					type: 'ontology',
-					label: 'Ontologies',
-					icon: 'ri:table-line',
-				};
-			}
-			const match = path.match(/^\/ontologies\/([a-z_]+)$/);
-			const name = match?.[1] || '';
-			const displayName = name
-				.replace(/_/g, ' ')
-				.replace(/\b\w/g, (c) => c.toUpperCase());
-			return {
-				type: 'ontology',
-				label: displayName,
-				icon: 'ri:table-line',
-				entityId: name,
-			};
-		},
-		serialize: (id) => (id ? `ontology_${id}` : 'ontologies'),
-		deserialize: (serialized) => {
-			if (serialized.startsWith('ontology_')) return `/ontologies/${serialized.slice(9)}`;
-			return '/ontologies';
-		},
-		icon: 'ri:table-line',
-		defaultLabel: 'Ontologies',
-		component: OntologyIndexView,
-		detailComponent: OntologyDetailView,
-	},
 	record: {
 		// /record/<ontology>/<id> — a single raw life-graph record. The ontology
 		// is a lowercase_underscore name; the id is everything after it.
@@ -888,7 +851,6 @@ export function parseRoute(route: string): ParsedRoute {
 		'applets', // Applets list page (must come before singular 'applet')
 		'applet-view', // Applet full-page face (must come before 'applet')
 		'applet', // Applet detail page
-		'ontology', // Ontology data browsing
 		'record', // /record/<ontology>/<id> — single raw record
 		'virtues', // Has /virtues/* pattern
 		'storage', // /storage — Drive surface (unified bytes view)

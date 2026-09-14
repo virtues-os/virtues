@@ -1092,81 +1092,6 @@ pub async fn device_applet_ids_handler(
     }
 }
 
-/// GET /api/devices/actions/:id/runs — a paired device reads the run history of
-/// one of ITS OWN actions, so the app can show real server-side outcome
-/// (success/failure/timing/error) per stream rather than just "did the POST
-/// return 2xx."
-///
-/// Authenticated by the proven iroh key. The action's `device_id` must match the
-/// caller's device or it's 403 — one device can't read another's run history.
-/// Device-scoped sibling of the session-authed `list_applet_runs_handler`.
-pub async fn device_applet_runs_handler(
-    State(state): State<AppState>,
-    Path(applet_id): Path<String>,
-    axum::extract::Query(q): axum::extract::Query<RunsQuery>,
-    user: crate::middleware::auth::AuthUser,
-) -> Response {
-    // Ownership: the action must belong to this device. EXISTS returns a
-    // non-null bool, so a missing action and a foreign action both → false.
-    // A failed query is neither: it used to read as `false` and hand the real
-    // owner a 403 for their own applet.
-    let owned: bool = match sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM app_applets WHERE id = $1 AND device_id = $2)",
-    )
-    .bind(&applet_id)
-    .bind(&user.device_id)
-    .fetch_one(state.db.pool())
-    .await
-    {
-        Ok(owned) => owned,
-        Err(e) => {
-            return error_response(Error::Database(format!("applet ownership check: {e}")))
-        }
-    };
-
-    if !owned {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "Applet not found for this device" })),
-        )
-            .into_response();
-    }
-
-    let limit = q.limit.unwrap_or(10).clamp(1, 50);
-    match crate::scheduler::applets::query_runs(
-        state.db.pool(),
-        Some(&applet_id),
-        q.status.as_deref(),
-        limit,
-    )
-    .await
-    {
-        Ok(runs) => (StatusCode::OK, Json(runs)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-/// Health check endpoint for devices to validate their authentication.
-///
-/// Lightweight, side-effect-free: a device confirms it can still reach + auth to
-/// the box before syncing. It lives behind the `AuthUser` route_layer, so simply
-/// reaching this handler means the proven iroh key (or loopback / dev) already
-/// authenticated — no bearer needed. Returns the resolved device identity.
-pub async fn device_health_check_handler(user: crate::middleware::auth::AuthUser) -> Response {
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "status": "active",
-            "device_id": user.device_id,
-        })),
-    )
-        .into_response()
-}
-
 // =============================================================================
 // Profile API
 // =============================================================================
@@ -1316,19 +1241,6 @@ pub async fn places_autocomplete_handler(
     Query(request): Query<crate::api::AutocompleteRequest>,
 ) -> Response {
     match crate::api::autocomplete(state.db.pool(), request).await {
-        Ok(response) => {
-            (StatusCode::OK, Json(response)).into_response()
-        }
-        Err(e) => error_response(e),
-    }
-}
-
-/// Get details for a specific place by ID
-pub async fn places_details_handler(
-    State(state): State<AppState>,
-    Query(request): Query<crate::api::PlaceDetailsRequest>,
-) -> Response {
-    match crate::api::get_place_details(state.db.pool(), request).await {
         Ok(response) => {
             (StatusCode::OK, Json(response)).into_response()
         }
@@ -1795,17 +1707,6 @@ pub async fn get_place_handler(
     api_response(crate::api::get_place(state.db.pool(), place_id).await)
 }
 
-/// Create a new place
-pub async fn create_place_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::CreatePlaceRequest>,
-) -> Response {
-    match crate::api::create_place(state.db.pool(), request).await {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
 /// Update an existing place
 pub async fn update_place_handler(
     State(state): State<AppState>,
@@ -1839,19 +1740,6 @@ pub async fn create_person_handler(
     match crate::api::entities::create_person(state.db.pool(), &b.name).await {
         Ok(id) => api_response(Ok::<_, crate::error::Error>(
             serde_json::json!({ "id": id, "route": format!("/person/{id}") }),
-        )),
-        Err(e) => error_response(e),
-    }
-}
-
-/// Create an organization by hand.
-pub async fn create_org_handler(
-    State(state): State<AppState>,
-    Json(b): Json<CreateEntityBody>,
-) -> Response {
-    match crate::api::entities::create_organization(state.db.pool(), &b.name).await {
-        Ok(id) => api_response(Ok::<_, crate::error::Error>(
-            serde_json::json!({ "id": id, "route": format!("/org/{id}") }),
         )),
         Err(e) => error_response(e),
     }
@@ -2274,28 +2162,9 @@ pub async fn reclassify_person_handler(
     }
 }
 
-/// Set a place as the user's home
-pub async fn set_place_as_home_handler(
-    State(state): State<AppState>,
-    Path(place_id): Path<String>,
-) -> Response {
-    match crate::api::set_home_place_entity(state.db.pool(), place_id).await {
-        Ok(_) => success_message("Home place updated"),
-        Err(e) => error_response(e),
-    }
-}
-
 // ============================================================================
 // Wiki API Handlers
 // ============================================================================
-
-/// Resolve an entity ID to its type
-pub async fn wiki_resolve_id_handler(
-    State(_state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::resolve_id(&id))
-}
 
 // --- Person ---
 
@@ -3253,32 +3122,12 @@ pub async fn list_annotations_handler(
     api_response(crate::api::list_annotations(state.db.pool(), &q.file_id).await)
 }
 
-/// GET /api/notebooks/:id/annotations — every highlight across the notebook's
-/// library documents, enriched with filenames (researcher-plan D2.5).
-pub async fn list_notebook_annotations_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::list_notebook_annotations(state.db.pool(), &id).await)
-}
-
 /// GET /api/annotations/export?file_id=… — a file's highlights as markdown.
 pub async fn export_file_annotations_handler(
     State(state): State<AppState>,
     Query(q): Query<ListAnnotationsQuery>,
 ) -> Response {
     match crate::api::export_file_annotations_md(state.db.pool(), &q.file_id).await {
-        Ok(md) => markdown_response(md),
-        Err(e) => error_response(e),
-    }
-}
-
-/// GET /api/notebooks/:id/annotations/export — notebook highlights as markdown.
-pub async fn export_notebook_annotations_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    match crate::api::export_notebook_annotations_md(state.db.pool(), &id).await {
         Ok(md) => markdown_response(md),
         Err(e) => error_response(e),
     }

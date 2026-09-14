@@ -29,7 +29,6 @@ const KNOWN_TYPES: TabType[] = [
 	'source',
 	'applet',
 	'applets',
-	'ontology',
 	'record',
 	'wiki',
 	'storage',
