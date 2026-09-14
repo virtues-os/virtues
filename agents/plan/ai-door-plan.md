@@ -1,10 +1,10 @@
 # One AI door: the plan for the model and API layer
 
-> Status: **Planned, v2.** Written 2026-09-08 after the interview drafter and
-> the day summary failed the same way four days apart; revised the same day
-> after review (the review register is at the bottom). The two 16k hotfixes
-> on `wave` are the interim; this plan is what replaces them. Delete this file
-> when Phase 3 ships.
+> Status: **Phase 1 built on `wave` 2026-09-08, not yet deployed.** Written
+> the same day after the interview drafter and the day summary failed the same
+> way four days apart; revised after review (the review register is at the
+> bottom). The two 16k hotfixes are the interim; this plan is what replaces
+> them. Delete this file when Phase 3 ships.
 
 ## The story, in one paragraph
 
@@ -131,6 +131,22 @@ mechanical, at compile time, with no compatibility cliff. The two proxy body
 builders (`streaming.rs:105` and `ai.rs:141`) collapse into one function that
 takes the wire type.
 
+> **Amended 2026-09-08, same day.** The shared crate treated the symptom. The
+> proxy re-typed a body it only needs to touch in five places, and rebuilt the
+> outgoing JSON field by field in `upstream_body`, so a field added to the
+> shared struct still compiled on both ends and still never reached the
+> gateway: the allowlist had moved one function over. The fix is that the
+> proxy does not have a request type at all. It forwards the body as opaque
+> JSON and rewrites only what it owns (`model`, `stream_options`, the
+> `temperature` default, `provider_options` → `providerOptions` + ZDR, the
+> empty-tools guard, and stripping `thought_signature`). A field the box adds
+> reaches the gateway with no proxy edit; a field the gateway rejects returns
+> its 400, loudly. `crates/virtues-ai-wire` is deleted: the request builder is
+> the box's alone (`virtues_api/request.rs`), `ReasoningFacts` sits in the
+> registry beside the slots it feeds (a shape, not a fact; the guard test
+> still passes), and the provider display literals and the ZDR merge live in
+> the proxy. The proxy's tests now assert an unknown field passes through.
+
 **1e. The catalog learns who thinks.** Parse `reasoning_options` from
 `GET /v1/models` into `GatewayModel`, and derive on `CuratedModel`:
 
@@ -162,11 +178,27 @@ with `can_disable: true`.
 only per-request spend ceiling. Removing it means a 20-step tool loop can spend
 the model's full output window per step. The bounds that remain are the step
 limit (`AgentConfig::max_steps`, 20), the wallet gate (pre-flight, balance
-only), and the model's own window. **Decision: the proxy applies the catalog's
-`max_tokens` for the model as an explicit ceiling when the caller sends none.**
-That is the same number the provider would use, so it changes nothing today,
-but it is a fact the proxy owns rather than a guess, and a per-request ceiling
-a future budget rule can lower. Record it in the same body builder as ZDR.
+only), and the model's own window. **Decision, revised while building: the
+proxy sends no `max_tokens` when the caller sends none.** The first draft had
+it apply the catalog's per-model `max_tokens` explicitly, but the gateway's
+`/endpoints` view shows that number can exceed a serving endpoint's own
+`max_completion_tokens`, and an explicit value above the endpoint's limit is
+a 400 where an absent one is the endpoint's default. Same bound, no new
+failure. A future per-request budget rule goes in the one body builder
+(`providers::upstream_body`), beside ZDR.
+
+**Built 2026-09-08 (wave).** Phase 1 as amended, then re-amended the same
+day (see 1d): the proxy's two body builders collapsed into
+`providers::upstream_body`, which is a pass-through on opaque JSON, no
+`max_tokens` default, every unknown field forwarded, `providerOptions`
+merged; the catalog parses `reasoning_options` and serves `reasoning`
+(`virtues_registry::ReasoningFacts`) on every picker entry; the box builds
+`virtues_api::request::ChatCompletionRequest` at the chat, background, and
+inline-edit sites, and `build_provider_options` is deleted. The two output ceilings (titles at 50, inline edit at 512) are gone
+with it, one phase early, because the catalog's `can_disable` turned out to
+be a claim (it lists a toggle for Fable 5) and no ceiling is safe on a claim.
+Temperature keeps its proxy default until 2d, as decided in 1a. Not yet
+deployed: the ECR push and EC2 roll are the human's.
 
 ## Phase 2. The box asks for thinking, not tokens (`virtues-core`)
 
@@ -189,19 +221,17 @@ pub enum Thinking {
 }
 ```
 
-**2b. The helper resolves the cap.** `system_completion` drops `max_tokens`
-and `reasoning_effort` and takes `Thinking` plus an optional
-`output_ceiling: Option<u32>`. The `reasoning` object is a gateway extension,
-and the helper also serves the BYO route, which never touches the gateway. On
-`Route::Byo` the helper sends at most `reasoning_effort`, never the object,
-and applies no ceiling logic it cannot verify (a BYO endpoint has no catalog
-entry, so `Thinking::Off` degrades to "send nothing"). The ceiling is for jobs whose output size IS the
-feature (a chat title is fifty tokens because a title is short). The helper
-applies it only when thinking is `Off` and the model's catalog entry says
-`can_disable`; otherwise the ceiling would be spent on thinking, so the helper
-ignores it and logs once. With no ceiling, the helper sends no `max_tokens`
-at all and the model's window applies. The gateway `max_tokens` from the
-catalog is a fact for display; it is not resent as a request cap.
+**2b. The helper resolves the request.** `system_completion` drops
+`max_tokens` and `reasoning_effort` and takes `Thinking`. There are no output
+ceilings any more: the two that existed went with Phase 1 (see 1f), because a
+ceiling is only safe when thinking is verifiably off and the catalog's
+`can_disable` is a claim. Output size is bounded by the prompt. The helper
+sends no `max_tokens` at all; the model's window applies. The gateway
+`max_tokens` from the catalog is a fact for display; it is not resent as a
+request cap. The `reasoning` object is a gateway extension, and the helper
+also serves the BYO route, which never touches the gateway. On `Route::Byo`
+the helper sends at most `reasoning_effort`, never the object (a BYO endpoint
+has no catalog entry, so `Thinking::Off` degrades to "send nothing").
 
 **2c. Every caller migrates.** The literal disappears from each site.
 
@@ -213,10 +243,10 @@ catalog is a fact for display; it is not resent as a request cap.
 | `narrative_draft` chapters | Off | none | Strict JSON extraction |
 | `entity_article_gen` | Off | none | The 900 literal goes |
 | `compaction` | Off | none | Currently a raw body at 1000 on the Lite pin; moves onto the helper |
-| `chats` title | Off | 50 | Ceiling honored only when thinking is off |
+| `chats` title | Off | none | The 50 went with Phase 1 |
 | `bookmark_enrichment` | Off | none | Moves onto the helper |
 | `image_gen` | n/a | none | Image slot; raw body stays, cap literal goes |
-| `ai_complete` | Off | 512 | Inline editing; the ceiling is the feature |
+| `ai_complete` | Off | none | The 512 went with Phase 1 |
 
 The Lite slot honors the owner's background pin, so a thinking model pinned
 there used to put compaction and titles in the same hole. After 2b that cannot
@@ -373,7 +403,7 @@ model fails less often, and a cap that never fails is what Phase 2 provides.
 ## What "correct" means at the end
 
 - A `grep` for `max_tokens` in `virtues-core/src` finds the helper and nothing
-  that hands it a number except the two output ceilings.
+  that hands it a number.
 - Changing the Chat slot to any model in the catalog cannot make a background
   job return nothing. The helper reads the new model's facts.
 - Changing the Lite pin to a thinking model cannot break titles or compaction.
@@ -406,8 +436,8 @@ model fails less often, and a cap that never fails is what Phase 2 provides.
 
 ## Review register (2026-09-08)
 
-Raised against v1 and folded in: the 400-on-unknown-fields cliff (now 1d, a
-shared wire crate); the hidden temperature change (1a, decided: box sends it);
+Raised against v1 and folded in: the 400-on-unknown-fields cliff (now 1d, an
+opaque pass-through; the shared crate it first became lasted a day); the hidden temperature change (1a, decided: box sends it);
 the `reasoning` object on the BYO route (2b); the vanished cost bound (1f);
 the finish-reason migration (3b); thinking text for chat (2d, decided: on);
 the thought-signature question (2d, `reasoning_details` echo then delete);

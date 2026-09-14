@@ -146,7 +146,11 @@ pub async fn ai_complete_handler(
                 &[],   // no tools — pure prose
                 None,  // no provider options (no reasoning)
                 None,  // no thought signature
-                Some(512), // cap output so a misread prompt can't fill the doc
+                // No output ceiling. The 512 that sat here was "so a misread
+                // prompt can't fill the doc"; on a model that thinks, a
+                // ceiling sized for the answer is spent on the thinking and
+                // returns nothing. The prompt bounds the edit.
+                None,
                 move |event| {
                     if let AgentEvent::TextDelta { content } = event {
                         let _ = tx.send(content);

@@ -49,3 +49,22 @@ pub(crate) async fn set_quiet_hours<R: Runtime>(
 ) -> Result<AudioStatus> {
   app.audio().set_quiet_hours(start, end)
 }
+
+/// Replace the weekly mute schedule (see `SetScheduleRequest`). Mute-don't-
+/// release, like quiet hours: the graph stays armed, chunk writing pauses.
+#[command]
+pub(crate) async fn set_schedule<R: Runtime>(
+  app: AppHandle<R>,
+  schedule: serde_json::Value,
+) -> Result<AudioStatus> {
+  app.audio().set_schedule(schedule)
+}
+
+/// Replace the cached muted places (copied from the box's `wiki_places`).
+#[command]
+pub(crate) async fn set_places<R: Runtime>(
+  app: AppHandle<R>,
+  places: Vec<MutedPlace>,
+) -> Result<AudioStatus> {
+  app.audio().set_places(places)
+}

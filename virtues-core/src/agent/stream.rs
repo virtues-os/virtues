@@ -77,29 +77,24 @@ pub async fn stream_llm_response<F>(
 where
     F: FnMut(AgentEvent),
 {
-    // Build request body
-    let mut body = serde_json::json!({
-        "model": model,
-        "messages": messages,
-        "stream": true
-    });
-
-    if let Some(mt) = max_tokens {
-        body["max_tokens"] = serde_json::json!(mt);
-    }
-
-    if !tools.is_empty() {
-        body["tools"] = serde_json::json!(tools);
-        body["tool_choice"] = serde_json::json!("auto");
-    }
-
-    if let Some(opts) = provider_options {
-        body["provider_options"] = opts;
-    }
-
-    if let Some(sig) = thought_signature {
-        body["thought_signature"] = serde_json::json!(sig);
-    }
+    // One builder for every site that posts a chat completion; the proxy
+    // forwards the body opaquely, so what is set here is what the gateway
+    // sees. (The hand-built JSON this replaced sent `provider_options` to a
+    // proxy that re-typed the body without that field, for three months,
+    // silently.)
+    let request = crate::virtues_api::request::ChatCompletionRequest {
+        model: model.to_string(),
+        messages: messages.to_vec(),
+        stream: Some(true),
+        max_tokens,
+        tools: if tools.is_empty() { None } else { Some(tools.to_vec()) },
+        tool_choice: if tools.is_empty() { None } else { Some(serde_json::json!("auto")) },
+        provider_options,
+        thought_signature,
+        ..Default::default()
+    };
+    let body = serde_json::to_value(&request)
+        .map_err(|e| StreamError::ParseError(format!("encode chat request: {e}")))?;
 
     // Stream through the device api_key. Any auto-top-up-and-retry on a 402
     // happens before the body opens; mid-stream top-up is impossible.
@@ -334,24 +329,3 @@ pub enum StreamError {
     Interrupted,
 }
 
-/// Build provider options for reasoning models
-pub fn build_provider_options(model: &str) -> Option<Value> {
-    // Check if model supports extended thinking (Claude 3.5+ with thinking, DeepSeek)
-    let supports_thinking = model.contains("claude-3")
-        || model.contains("deepseek")
-        || model.contains("o1")
-        || model.contains("o3");
-
-    if supports_thinking {
-        Some(serde_json::json!({
-            "anthropic": {
-                "thinking": {
-                    "type": "enabled",
-                    "budget_tokens": 10000
-                }
-            }
-        }))
-    } else {
-        None
-    }
-}

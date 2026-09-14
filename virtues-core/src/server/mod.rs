@@ -314,6 +314,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/setup/skip-onboarding",
             post(crate::api::box_status::skip_onboarding_handler),
         )
+        // Getting started, derived: the four steps, the lock, the first day.
+        // Authenticated, unlike /api/setup/state — it reads the profile.
+        .route(
+            "/api/getting-started",
+            get(crate::api::getting_started::state_handler),
+        )
+        .route(
+            "/api/getting-started/skip",
+            post(crate::api::getting_started::skip_handler),
+        )
         // What the attached 7" display renders. Registered here because the
         // kiosk draws before any device is paired, but UNLIKE its neighbours
         // above it carries the live pair code — so the handler itself refuses
@@ -426,14 +436,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/devices/applet-ids",
             get(api::device_applet_ids_handler),
-        )
-        // Device-scoped run history for one of the caller's own applets, so the
-        // app can show real server-side outcome per stream. Device-token bearer
-        // auth + credential-ownership check (see handler). Distinct from the
-        // session-authed /api/applets/:id/runs.
-        .route(
-            "/api/devices/applets/:id/runs",
-            get(api::device_applet_runs_handler),
         );
 
     // ============================================================
@@ -514,8 +516,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/box/status",
             get(crate::api::box_status::box_status_handler),
         )
-        // Device-health endpoint (used by mobile/admin UIs).
-        .route("/api/devices/health", get(api::device_health_check_handler))
         // Actions API
         .route(
             "/api/applets",
@@ -652,10 +652,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             axum::routing::delete(api::delete_person_handler),
         )
         .route(
-            "/api/entities/orgs",
-            axum::routing::post(api::create_org_handler),
-        )
-        .route(
             "/api/entities/orgs/:id",
             axum::routing::delete(api::delete_org_handler),
         )
@@ -663,16 +659,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/entities/people/:id/reclassify-as-org",
             axum::routing::post(api::reclassify_person_handler),
         )
-        .route(
-            "/api/entities/places/:id/set-home",
-            post(api::set_place_as_home_handler),
-        )
         // Places API (Google Places proxy)
         .route(
             "/api/places/autocomplete",
             get(api::places_autocomplete_handler),
         )
-        .route("/api/places/details", get(api::places_details_handler))
+        .route(
+            "/api/places/details",
+            get(api::places_details_handler),
+        )
         // Assistant Profile API
         .route(
             "/api/assistant-profile",
@@ -742,18 +737,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/annotations/:id",
             patch(api::update_annotation_handler).delete(api::delete_annotation_handler),
         )
-        .route(
-            "/api/notebooks/:id/annotations",
-            get(api::list_notebook_annotations_handler),
-        )
         // Bulk annotation export as markdown (D4.3)
         .route(
             "/api/annotations/export",
             get(api::export_file_annotations_handler),
-        )
-        .route(
-            "/api/notebooks/:id/annotations/export",
-            get(api::export_notebook_annotations_handler),
         )
         // Drive API (user file storage)
         .route(
@@ -800,7 +787,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/media/upload", post(api::upload_media_handler))
         .route("/api/media/:id", get(api::get_media_handler))
         // Wiki API
-        .route("/api/wiki/resolve/:id", get(api::wiki_resolve_id_handler))
         // Wiki - Person
         // Mention review queue (entity resolution HITL)
         .route("/api/wiki/people", get(api::wiki_list_people_handler))
@@ -1221,7 +1207,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                         // the face routes only: a face carries no ambient
                         // authority (face token + face_reader role), and
                         // everything else keeps rejecting "null".
-                        face_origin_allowed(o, req.uri.path())
+                        face_origin_allowed(
+                            o,
+                            req.uri.path(),
+                            req.headers
+                                .get(axum::http::header::HOST)
+                                .and_then(|h| h.to_str().ok()),
+                        )
                     })
                 },
             ))
@@ -1464,9 +1456,10 @@ fn is_face_path(path: &str) -> bool {
 }
 
 /// The CORS predicate, named so it can be tested: our own origins anywhere,
-/// and the opaque origin `null` only on the face routes.
-fn face_origin_allowed(origin: &str, path: &str) -> bool {
-    origin_is_ours(origin) || (origin == "null" && is_face_path(path))
+/// and the opaque origin `null` only on the face routes. `request_host` is the
+/// request's `Host` header — a loopback origin must be that authority.
+fn face_origin_allowed(origin: &str, path: &str, request_host: Option<&str>) -> bool {
+    origin_is_ours(origin, request_host) || (origin == "null" && is_face_path(path))
 }
 
 /// Is this `Origin` one of ours?
@@ -1478,7 +1471,7 @@ fn face_origin_allowed(origin: &str, path: &str) -> bool {
 /// Allowed: the app's `tauri://` origin, loopback on any port (the desktop
 /// proxy on 7117, the box's own UI, `pnpm dev` on 5173), and the box's `.virtues`
 /// name. A page served from a remote host has none of these origins.
-fn origin_is_ours(origin: &str) -> bool {
+pub(crate) fn origin_is_ours(origin: &str, request_host: Option<&str>) -> bool {
     // The app's own origin: `tauri://localhost` on macOS/iOS,
     // `https://tauri.localhost` on Windows — and `virtues://` on the phone,
     // which registers its OWN scheme so an OTA bundle can answer requests
@@ -1521,9 +1514,16 @@ fn origin_is_ours(origin: &str) -> bool {
 
     // Exact matches only. `localhost.evil.example` must NOT pass, which is why
     // this is not a `contains` or a suffix test.
-    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
-        || host == "virtues"
-        || host.ends_with(".virtues")
+    if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
+        // Loopback on ANY port used to pass. That was a hole, not a
+        // convenience: the desktop app splices 127.0.0.1:7117 to the box as
+        // the owner, so a page served by any other local process — a dev
+        // server, a notebook, another app's UI — could call it and read the
+        // reply. The app's own pages are always served by the authority they
+        // dial, so a loopback origin must equal the request's Host, exactly.
+        return request_host == Some(rest);
+    }
+    host == "virtues" || host.ends_with(".virtues")
 }
 
 #[cfg(test)]
@@ -1555,7 +1555,7 @@ mod cors_tests {
             "file://",
             "data:text/html,x",
         ] {
-            assert!(!origin_is_ours(o), "must refuse {o}");
+            assert!(!origin_is_ours(o, Some("127.0.0.1:7117")), "must refuse {o}");
         }
     }
 
@@ -1563,21 +1563,36 @@ mod cors_tests {
     /// breaks and someone reverts the whole fix.
     #[test]
     fn our_own_origins_are_allowed() {
-        for o in [
-            "tauri://localhost",
+        for (o, host) in [
+            ("tauri://localhost", None),
             // The iOS app's own scheme. Absent from this list until
             // 2026-08-28, which is exactly how the phone lost every data
             // request for ten days without a single test going red.
-            "virtues://localhost",
-            "https://tauri.localhost",
-            "http://localhost:5173",
-            "http://127.0.0.1:7117",
-            "http://[::1]:8000",
-            "http://localhost",
-            "http://box.virtues:8000",
-            "http://virtues:8000",
+            ("virtues://localhost", None),
+            ("https://tauri.localhost", None),
+            // Loopback: the page is served by the authority it dials.
+            ("http://localhost:5173", Some("localhost:5173")),
+            ("http://127.0.0.1:7117", Some("127.0.0.1:7117")),
+            ("http://[::1]:8000", Some("[::1]:8000")),
+            ("http://localhost", Some("localhost")),
+            ("http://box.virtues:8000", None),
+            ("http://virtues:8000", None),
         ] {
-            assert!(origin_is_ours(o), "must allow {o}");
+            assert!(origin_is_ours(o, host), "must allow {o} for host {host:?}");
+        }
+    }
+
+    /// Loopback on a DIFFERENT port is another process's page, not ours.
+    /// The desktop splice on 7117 is the owner; a dev server on 8888 is not.
+    #[test]
+    fn a_loopback_origin_on_another_port_is_refused() {
+        for (o, host) in [
+            ("http://localhost:8888", Some("127.0.0.1:7117")),
+            ("http://127.0.0.1:8888", Some("127.0.0.1:7117")),
+            ("http://127.0.0.1:7117", Some("127.0.0.1:8000")),
+            ("http://127.0.0.1:7117", None),
+        ] {
+            assert!(!origin_is_ours(o, host), "must refuse {o} for host {host:?}");
         }
     }
 
@@ -1592,7 +1607,7 @@ mod cors_tests {
             "/face/applet_dot_cloud/virtues.js",
             "/api/face/query",
         ] {
-            assert!(face_origin_allowed("null", p), "must allow null on {p}");
+            assert!(face_origin_allowed("null", p, None), "must allow null on {p}");
         }
     }
 
@@ -1608,7 +1623,7 @@ mod cors_tests {
             "/faces/x",
             "/face",
         ] {
-            assert!(!face_origin_allowed("null", p), "must refuse null on {p}");
+            assert!(!face_origin_allowed("null", p, None), "must refuse null on {p}");
         }
     }
 }

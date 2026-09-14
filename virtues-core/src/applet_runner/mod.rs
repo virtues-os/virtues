@@ -756,6 +756,20 @@ const JAILED_MEMORY_MAX: &str = "1G";
 
 /// Build the spawn command, jailing it when the code did not ship with the box.
 ///
+/// **What the jail is, and is not.** It limits blast radius: no route to root
+/// through the box user's passwordless sudo, a read-only filesystem outside
+/// the applet's own paths, memory and time ceilings. It is NOT an authority
+/// boundary. An applet reaches Postgres with the box's own pool role and can
+/// dial the API on loopback, which `middleware/auth.rs` treats as the owner —
+/// so a running applet can do what the owner can do. That is the position,
+/// not an oversight: the trust decision is made ONCE, at import, behind the
+/// sudo gate (`api/sudo.rs`), and a chat-authored applet is the owner's own
+/// instruction. Separating applets from the owner would take a second uid, a
+/// scoped database login, and Postgres over a unix socket, rolled out to
+/// fielded boxes that do not auto-update — machinery this appliance has
+/// chosen not to carry. If that position ever changes, this paragraph is the
+/// first thing to delete.
+///
 /// The routing, not a ban, is the policy: a package may run native code, it
 /// just does not get to run it as a user with passwordless sudo. `systemd-run`
 /// is the same mechanism `code_interpreter` already uses (api/code.rs), which

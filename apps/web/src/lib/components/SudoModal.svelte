@@ -4,12 +4,11 @@
   Usage from a gated-action handler:
 
       <SudoModal
-        action="export_data"
-        title="Export all data"
-        description="This will produce a single archive of everything Virtues
-                     has indexed about you. Confirm at the box CLI."
+        action="change_byo_key"
+        title="Change your AI key"
+        description="Confirm at the box CLI."
         bind:show={showSudo}
-        onApproved={(requestId) => actuallyExport(requestId)}
+        onApproved={(requestId) => actuallySave(requestId)}
       />
 
   Lifecycle:
@@ -31,12 +30,7 @@
 	import { toast } from "svelte-sonner";
 
 	type Props = {
-		action:
-			| "export_data"
-			| "change_byo_key"
-			| "wipe_box"
-			| "revoke_last_device"
-			| "import_applet_package";
+		action: "change_byo_key" | "import_applet_package";
 		title: string;
 		description: string;
 		actionPayload?: Record<string, unknown>;

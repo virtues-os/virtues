@@ -78,18 +78,19 @@ pub async fn system_completion(
         .with_purpose(Purpose::System)
         .with_feature(feature);
 
-    let mut body = json!({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+    let request = super::request::ChatCompletionRequest {
+        model: model.clone(),
+        messages: vec![
+            json!({"role": "system", "content": system_prompt}),
+            json!({"role": "user", "content": user_prompt}),
         ],
-        "max_tokens": max_tokens,
-        "temperature": temperature
-    });
-    if let Some(effort) = reasoning_effort {
-        body["reasoning_effort"] = json!(effort);
-    }
+        max_tokens: Some(max_tokens),
+        temperature: Some(temperature),
+        reasoning_effort: reasoning_effort.map(str::to_string),
+        ..Default::default()
+    };
+    let body = serde_json::to_value(&request)
+        .map_err(|e| Error::Other(format!("encode completion request: {e}")))?;
 
     let response = client
         .post_json("/v1/ai/chat/completions", &body)

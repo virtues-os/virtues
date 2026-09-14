@@ -23,6 +23,7 @@
 	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
+	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import Icon from "$lib/components/Icon.svelte";
@@ -189,6 +190,9 @@
 		// Start polling for setup/onboarding state (next-wins checklist,
 		// remote-access flip toast). Stops itself once everything is done.
 		setupStateStore.start();
+		// Getting started's derived state: the sidebar card, the lock, the
+		// room. Polls while anything is open, stops itself at graduation.
+		gettingStarted.start();
 
 		// Post-update toast: show once per session if the server was updated
 		if (typeof sessionStorage !== "undefined") {
@@ -266,6 +270,7 @@
 		windowShellStore.destroyUrlSync();
 		subscriptionStore.stop();
 		setupStateStore.stop();
+		gettingStarted.stop();
 
 		// (workspace switching keyboard shortcuts removed — single workspace now)
 	});

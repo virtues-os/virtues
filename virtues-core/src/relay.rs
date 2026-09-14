@@ -15,8 +15,6 @@
 //! land in Steps 4/5):
 //! - `VIRTUES_RELAY_URL`   — our relay, e.g. `https://relay.virtues.ch`. Unset =
 //!   dev mode (n0 relays + discovery).
-//! - `VIRTUES_IROH_ALLOW`  — comma-separated device EndpointIds allowed to connect
-//!   (interim until pairing populates `app_device.node_id`).
 
 use anyhow::{Context, Result};
 use sqlx::PgPool;
@@ -532,9 +530,10 @@ async fn load_or_create_secret(db: &PgPool) -> Result<SecretKey> {
 /// `serve` share the same inner set).
 static ALLOW: OnceLock<StaticAllow> = OnceLock::new();
 
-/// Non-revoked device EndpointIds from the DB, plus any `VIRTUES_IROH_ALLOW`
-/// (dev/manual). The box's own EndpointId is implicitly trusted (it never dials
-/// itself) so it's not included.
+/// Non-revoked device EndpointIds from the DB. The box's own EndpointId is
+/// implicitly trusted (it never dials itself) so it's not included. There is no
+/// env-var side door: `VIRTUES_IROH_ALLOW` used to add ids here that revocation
+/// could not remove, and nothing ever set it.
 ///
 /// **Returns `Err` rather than an empty list when the query fails.** This used
 /// to log a warning and hand back whatever it had accumulated — which is
@@ -554,14 +553,6 @@ async fn allowed_ids(db: &PgPool) -> Result<Vec<EndpointId>, sqlx::Error> {
     for (nid,) in rows {
         if let Ok(id) = EndpointId::from_str(nid.trim()) {
             ids.push(id);
-        }
-    }
-    if let Ok(raw) = std::env::var("VIRTUES_IROH_ALLOW") {
-        for tok in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            match EndpointId::from_str(tok) {
-                Ok(id) => ids.push(id),
-                Err(e) => tracing::warn!(error = %e, token = %tok, "VIRTUES_IROH_ALLOW: skipping invalid EndpointId"),
-            }
         }
     }
     Ok(ids)

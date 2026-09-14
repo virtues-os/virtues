@@ -2179,67 +2179,6 @@ export async function getPageBacklinks(pageId: string): Promise<Backlink[]> {
 }
 
 // ============================================================================
-// Ontologies API
-// ============================================================================
-
-export interface OntologyColumnInfo {
-	name: string;
-	data_type: string;
-	is_nullable: boolean;
-}
-
-export interface OntologyDataResponse {
-	table_name: string;
-	display_name: string;
-	domain: string;
-	columns: OntologyColumnInfo[];
-	key_columns: string[];
-	timestamp_column: string;
-	rows: Record<string, unknown>[];
-	total_count: number;
-	limit: number;
-	offset: number;
-}
-
-export interface OntologyOverview {
-	name: string;
-	domain: string;
-	record_count: number;
-	sample_record: Record<string, unknown> | null;
-}
-
-export async function getOntologiesOverview(): Promise<OntologyOverview[]> {
-	const res = await fetch(`${API_BASE}/ontologies/overview`);
-	if (!res.ok) throw new Error(`Failed to get ontologies overview: ${res.statusText}`);
-	return res.json();
-}
-
-export async function queryOntologyData(
-	tableName: string,
-	params?: {
-		limit?: number;
-		offset?: number;
-		sort?: string;
-		dir?: string;
-		date?: string;
-		search?: string;
-	},
-): Promise<OntologyDataResponse> {
-	const searchParams = new URLSearchParams();
-	if (params?.limit != null) searchParams.set('limit', String(params.limit));
-	if (params?.offset != null) searchParams.set('offset', String(params.offset));
-	if (params?.sort) searchParams.set('sort', params.sort);
-	if (params?.dir) searchParams.set('dir', params.dir);
-	if (params?.date) searchParams.set('date', params.date);
-	if (params?.search) searchParams.set('search', params.search);
-
-	const qs = searchParams.toString();
-	const res = await fetch(`${API_BASE}/ontologies/${tableName}/data${qs ? `?${qs}` : ''}`);
-	if (!res.ok) throw new Error(`Failed to query ontology data: ${res.statusText}`);
-	return res.json();
-}
-
-// ============================================================================
 // Setup state API
 // ============================================================================
 
@@ -2296,6 +2235,50 @@ export async function skipOnboarding(skipped = true): Promise<void> {
 		body: JSON.stringify({ skipped }),
 	});
 	if (!res.ok) throw new Error(`Failed to record onboarding choice: ${res.statusText}`);
+}
+
+// ---- Getting started: one room, one derived truth (api/getting_started.rs) ----
+
+export type GettingStartedStepId = 'connect_ai' | 'introductions' | 'connect_world' | 'interview';
+
+export interface GettingStartedStep {
+	id: GettingStartedStepId;
+	title: string;
+	status: 'done' | 'open' | 'skipped';
+	/** How a done step got done, where it matters ("subscription" | "byo"). */
+	via?: string;
+	/** Server-authored copy for the step's current state — render verbatim. */
+	detail?: string;
+	/** Started but not done (the interview has replies, no document yet). */
+	underway?: boolean;
+}
+
+export interface GettingStartedState {
+	ai_connected: boolean;
+	locked: boolean;
+	steps: GettingStartedStep[];
+	first_day: string | null;
+	graduated: boolean;
+}
+
+export async function getGettingStarted(): Promise<GettingStartedState> {
+	const res = await fetch(`${API_BASE}/getting-started`);
+	if (!res.ok) throw new Error(`Failed to get getting-started state: ${res.statusText}`);
+	return res.json();
+}
+
+/** Skip (or un-skip) one step. Answers with the new state. */
+export async function skipGettingStartedStep(
+	step: GettingStartedStepId,
+	skipped = true
+): Promise<GettingStartedState> {
+	const res = await fetch(`${API_BASE}/getting-started/skip`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ step, skipped })
+	});
+	if (!res.ok) throw new Error(`Failed to skip step: ${res.statusText}`);
+	return res.json();
 }
 
 export async function getSetupState(): Promise<SetupState> {

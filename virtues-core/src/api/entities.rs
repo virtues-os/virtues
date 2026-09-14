@@ -26,6 +26,10 @@ pub struct Place {
     pub longitude: Option<f64>,
     pub radius_m: Option<f64>,
     pub seen_count: Option<i32>,
+    /// The phone keeps no audio while the owner is inside this place. Read by
+    /// the audio collector's place cache, set from the place's wiki page or
+    /// the phone; never inferred.
+    pub is_audio_muted: bool,
     pub metadata: Option<serde_json::Value>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -48,6 +52,8 @@ pub struct CreatePlaceRequest {
     pub category: Option<String>,
     /// Whether to set this place as home (updates user_profile.home_place_id)
     pub set_as_home: Option<bool>,
+    /// Mute the phone's audio collector inside this place ("Mute here").
+    pub is_audio_muted: Option<bool>,
 }
 
 /// Request to update an existing place
@@ -59,6 +65,8 @@ pub struct UpdatePlaceRequest {
     pub longitude: Option<f64>,
     pub google_place_id: Option<String>,
     pub category: Option<String>,
+    /// Mute the phone's audio collector inside this place.
+    pub is_audio_muted: Option<bool>,
 }
 
 /// Response for created place
@@ -86,11 +94,13 @@ pub async fn list_places(pool: &PgPool) -> Result<Vec<Place>> {
             longitude,
             radius_m,
             seen_count,
+            is_audio_muted,
             metadata,
             created_at,
             updated_at
         FROM wiki_places
         WHERE (metadata->>'is_known_location')::boolean = true
+           OR is_audio_muted
         ORDER BY created_at ASC
         "#
     )
@@ -109,6 +119,7 @@ pub async fn list_places(pool: &PgPool) -> Result<Vec<Place>> {
             longitude: row.longitude,
             radius_m: Some(row.radius_m),
             seen_count: Some(row.seen_count as i32),
+            is_audio_muted: row.is_audio_muted,
             metadata: Some(row.metadata),
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -132,6 +143,7 @@ pub async fn get_place(pool: &PgPool, id: String) -> Result<Place> {
             longitude,
             radius_m,
             seen_count,
+            is_audio_muted,
             metadata,
             created_at,
             updated_at
@@ -154,6 +166,7 @@ pub async fn get_place(pool: &PgPool, id: String) -> Result<Place> {
         longitude: row.longitude,
         radius_m: Some(row.radius_m),
         seen_count: Some(row.seen_count as i32),
+        is_audio_muted: row.is_audio_muted,
         metadata: Some(row.metadata),
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -188,9 +201,10 @@ pub async fn create_place(
             latitude,
             longitude,
             radius_m,
-            metadata
+            metadata,
+            is_audio_muted
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, 50.0, $7
+            $1, $2, $3, $4, $5, $6, 50.0, $7, $8
         )
         "#,
         id_str,
@@ -200,6 +214,7 @@ pub async fn create_place(
         req.latitude,
         req.longitude,
         metadata,
+        req.is_audio_muted.unwrap_or(false),
     )
     .execute(pool)
     .await
@@ -241,6 +256,7 @@ pub async fn update_place(pool: &PgPool, id: String, req: UpdatePlaceRequest) ->
             latitude = COALESCE($5, latitude),
             longitude = COALESCE($6, longitude),
             metadata = $7,
+            is_audio_muted = COALESCE($8, is_audio_muted),
             updated_at = now()
         WHERE id = $1
         "#,
@@ -251,6 +267,7 @@ pub async fn update_place(pool: &PgPool, id: String, req: UpdatePlaceRequest) ->
         req.latitude,
         req.longitude,
         metadata,
+        req.is_audio_muted,
     )
     .execute(pool)
     .await

@@ -34,4 +34,3 @@ export { default as OrganizationPage } from './OrganizationPage.svelte';
 export { default as PersonTable } from './PersonTable.svelte';
 export { default as PlaceTable } from './PlaceTable.svelte';
 export { default as OrganizationTable } from './OrganizationTable.svelte';
-export { default as OntologyDataTable } from './OntologyDataTable.svelte';

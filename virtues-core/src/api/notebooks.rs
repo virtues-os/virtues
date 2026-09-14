@@ -462,7 +462,7 @@ pub async fn reorder_notebook_items(
         .bind(notebook_id)
         .execute(&mut *tx)
         .await
-        .ok();
+        .map_err(|e| Error::Database(format!("Failed to touch notebook: {}", e)))?;
 
     tx.commit()
         .await

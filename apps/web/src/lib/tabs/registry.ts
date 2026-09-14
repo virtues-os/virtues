@@ -23,7 +23,6 @@ import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailVie
 import AppletsView from '$lib/components/tabs/views/AppletsView.svelte';
 import AppletDetailView from '$lib/components/tabs/views/AppletDetailView.svelte';
 import AppletView from '$lib/components/tabs/views/AppletView.svelte';
-import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
 import SettingsView from '$lib/components/tabs/views/SettingsView.svelte';
 import StorageView from '$lib/components/tabs/views/StorageView.svelte';
 import AssetView from '$lib/components/tabs/views/AssetView.svelte';
@@ -34,8 +33,6 @@ import BookmarkDetailView from '$lib/components/tabs/views/BookmarkDetailView.sv
 import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svelte';
 import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
-import OntologyIndexView from '$lib/components/tabs/views/OntologyIndexView.svelte';
-import OntologyDetailView from '$lib/components/tabs/views/OntologyDetailView.svelte';
 import DataView from '$lib/components/tabs/views/DataView.svelte';
 
 export interface TabDefinition {
@@ -627,60 +624,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		detailComponent: AppletDetailView,
 	},
 
-	// ========================================================================
-	// DEVELOPERS: /developers
-	// Tab group containing SQL, Terminal, and Lake sub-views (selected via #hash).
-	// ========================================================================
-	developers: {
-		match: (path) =>
-			path === '/developers' || /^\/developers\/(sql|terminal|lake)$/.test(path),
-		parse: () => ({
-			type: 'developers',
-			label: 'Developers',
-			icon: 'ri:code-s-slash-line',
-		}),
-		serialize: () => 'developers',
-		deserialize: () => '/developers',
-		icon: 'ri:code-s-slash-line',
-		defaultLabel: 'Developers',
-		component: DevelopersView,
-	},
-
-	// ========================================================================
-	// ONTOLOGY NAMESPACE: /ontologies, /ontologies/{name}
-	// ========================================================================
-	ontology: {
-		match: (path) => path === '/ontologies' || /^\/ontologies\/[a-z_]+$/.test(path),
-		parse: (path) => {
-			if (path === '/ontologies') {
-				return {
-					type: 'ontology',
-					label: 'Ontologies',
-					icon: 'ri:table-line',
-				};
-			}
-			const match = path.match(/^\/ontologies\/([a-z_]+)$/);
-			const name = match?.[1] || '';
-			const displayName = name
-				.replace(/_/g, ' ')
-				.replace(/\b\w/g, (c) => c.toUpperCase());
-			return {
-				type: 'ontology',
-				label: displayName,
-				icon: 'ri:table-line',
-				entityId: name,
-			};
-		},
-		serialize: (id) => (id ? `ontology_${id}` : 'ontologies'),
-		deserialize: (serialized) => {
-			if (serialized.startsWith('ontology_')) return `/ontologies/${serialized.slice(9)}`;
-			return '/ontologies';
-		},
-		icon: 'ri:table-line',
-		defaultLabel: 'Ontologies',
-		component: OntologyIndexView,
-		detailComponent: OntologyDetailView,
-	},
 	record: {
 		// /record/<ontology>/<id> — a single raw life-graph record. The ontology
 		// is a lowercase_underscore name; the id is everything after it.
@@ -908,8 +851,6 @@ export function parseRoute(route: string): ParsedRoute {
 		'applets', // Applets list page (must come before singular 'applet')
 		'applet-view', // Applet full-page face (must come before 'applet')
 		'applet', // Applet detail page
-		'developers', // Developers tab group (SQL/Terminal/Lake)
-		'ontology', // Ontology data browsing
 		'record', // /record/<ontology>/<id> — single raw record
 		'virtues', // Has /virtues/* pattern
 		'storage', // /storage — Drive surface (unified bytes view)
