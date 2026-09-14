@@ -60,16 +60,19 @@
 		display: flex;
 		flex-direction: column;
 		align-items: flex-end;
-		gap: 0.1rem;
+		gap: 0.4rem;
 		user-select: none;
 	}
+	/* The room's control size — the same as every button in it — with real
+	   air between rows. At 0.75rem and a tenth of a rem apart it read as a
+	   footnote, thin and weak; this is chrome, not small print. */
 	button {
 		display: flex;
 		align-items: baseline;
-		gap: 0.35rem;
+		gap: 0.4rem;
 		font: inherit;
-		font-size: 0.75rem;
-		line-height: 1.4;
+		font-size: 0.875rem;
+		line-height: 1.5;
 		border: 0;
 		background: none;
 		padding: 0;
@@ -88,7 +91,7 @@
 		width: 0.85em;
 		text-align: left;
 		color: var(--color-success);
-		font-size: 0.7rem;
+		font-size: 0.8125rem;
 	}
 
 	.current .label {
