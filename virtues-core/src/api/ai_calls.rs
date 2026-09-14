@@ -1,6 +1,13 @@
 //! Box-local per-call AI cost log (`app_ai_calls`).
 //!
-//! Virtues collects no central telemetry. The cloud wallet (virtues-api ledger)
+//! Nothing in here is reported anywhere. (This line used to open "Virtues
+//! collects no central telemetry", which was a claim about the whole product
+//! made from inside one module, and it was not true: a crash beacon posts an
+//! exit status and a journal tail to atlas by default — see `cli/diag.rs`.
+//! That is the only egress, it carries none of this table, and a module
+//! header is the wrong place to characterize the product anyway.)
+//!
+//! The cloud wallet (virtues-api ledger)
 //! is the authoritative money truth, but it has no per-call breakdown the user
 //! can see on their own box. This module records one row per paid AI call with
 //! the AUTHORITATIVE `usage.cost` the gateway returns — never re-estimated — so
