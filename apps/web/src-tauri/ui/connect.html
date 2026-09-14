@@ -643,15 +643,35 @@
       // it is the kind of thing that works here and breaks on Android.
       const chromeEl = document.getElementById('chrome');
 
-      /** Bare paper while we decide: no chrome, no content, nothing to hand over. */
+      /**
+       * Bare paper while we decide: no chrome, no content, nothing to hand over
+       * — and in the colour the app is about to be, not this page's own white.
+       *
+       * The blank IS the launch now, so its colour is the only thing on screen,
+       * and a step in it is the only event. `app.html` paints the theme's
+       * `--surface` from `virtues-theme-surface`; we share that origin (the
+       * same shelf `virtues-just-paired` crosses on), so reading the same key
+       * makes the navigation invisible instead of a tint change. White is the
+       * fallback, which is also this page's own paper: a device that has never
+       * reached the app has nothing cached and nothing to match.
+       *
+       * ONLY THE BLANK. Every airlock SCREEN stays on the light register this
+       * page hardcodes — `--ink` on `--paper`, Pemberley by hand. Painting a
+       * dark theme's surface behind those would be graphite text on graphite.
+       */
       function blankForDecision() {
         setServer('');
         app.innerHTML = '';
         chromeEl.style.visibility = 'hidden';
+        try {
+          const surface = localStorage.getItem('virtues-theme-surface');
+          if (surface) document.body.style.backgroundColor = surface;
+        } catch { /* no storage: this page's own paper is the fallback */ }
       }
 
-      /** Give the page back its chrome, then draw an airlock screen. */
+      /** Give the page back its own paper and chrome, then draw an airlock screen. */
       function showAirlock(draw) {
+        document.body.style.backgroundColor = '';
         chromeEl.style.visibility = '';
         draw();
       }
