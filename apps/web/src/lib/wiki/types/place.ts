@@ -82,6 +82,13 @@ export interface PlacePage extends WikiPageBase {
 	 */
 	visitCount?: number;
 
+	/**
+	 * The phone keeps no audio while you are inside this place. Set here or
+	 * from the phone; the phone caches the muted places and honors them
+	 * offline.
+	 */
+	isAudioMuted?: boolean;
+
 	// ─────────────────────────────────────────────────────────────
 	// Narrative
 	// ─────────────────────────────────────────────────────────────

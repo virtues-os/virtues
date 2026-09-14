@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE wiki_places\n        SET\n            name = COALESCE($2, name),\n            content = COALESCE($3, content),\n            cover_image = COALESCE($4, cover_image),\n            category = COALESCE($5, category),\n            address = COALESCE($6, address),\n            is_audio_muted = COALESCE($7, is_audio_muted),\n            updated_at = now()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a9da8dec1ed9755b4d0cd98a87c1207a91e240858dc4361708660d66e57d524a"
+}

@@ -32,4 +32,10 @@ impl<R: Runtime> Audio<R> {
   pub fn set_quiet_hours(&self, _start: i32, _end: i32) -> crate::Result<AudioStatus> {
     Ok(AudioStatus::default())
   }
+  pub fn set_schedule(&self, _schedule: serde_json::Value) -> crate::Result<AudioStatus> {
+    Ok(AudioStatus::default())
+  }
+  pub fn set_places(&self, _places: Vec<MutedPlace>) -> crate::Result<AudioStatus> {
+    Ok(AudioStatus::default())
+  }
 }
