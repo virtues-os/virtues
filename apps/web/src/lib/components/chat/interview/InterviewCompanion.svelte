@@ -117,8 +117,13 @@
 		   leaving 114.5 units of air to its left. Aligning the ball's edge
 		   instead — 58 units — left the mark visibly indented from the prose.
 		   When he wakes, the ball now overhangs the column slightly, which is
-		   the usual optical treatment for a round shape at a text edge. */
-		margin-left: calc(54px * -114.5 / 316);
+		   the usual optical treatment for a round shape at a text edge.
+
+		   The +3px is the last step: 114.5 puts the dot's ink on the text BOX,
+		   but a paragraph's first glyph starts a hair inside that on its side
+		   bearing, and a circle flush to an edge reads further left than a
+		   stem does. Three pixels back and the two left edges look like one. */
+		margin-left: calc(54px * -114.5 / 316 + 3px);
 		margin-top: calc(54px * -58 / 316);
 	}
 
