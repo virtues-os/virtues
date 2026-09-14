@@ -57,15 +57,12 @@ export const SKIP_COMMAND = "/dangerously-skip-onboarding";
 /** The heading: what this is and why, in two lines, and where you are in
  *  it. The one place the room says "step N of 4" — a sentence, not a list. */
 function heading(stepIndex: number | null): string {
-	const where =
-		stepIndex === null
-			? "All four are done."
-			: `Step ${stepIndex + 1} of 4 · a few minutes here, then a longer conversation when you are ready`;
+	void stepIndex;
 	return (
 		"# Getting started\n\n" +
-		"Your server will keep the record of your life. It cannot begin on its own: it has no AI yet, does not know your name, has nothing to read, and has never heard your story. " +
-		"Four things, one at a time. Nothing here expires.\n\n" +
-		where
+		"Virtues keeps the record of your life on this server and writes it up for you, one day at a time. " +
+		"Before it can begin, it needs four things from you that it has no way of discovering on its own: something to think with, your name, something to read, and the story of your life so far. " +
+		"This conversation walks through them in order. The first three take a few minutes; the last is a longer conversation, for whenever you are ready. You can leave at any point and pick up where you stopped."
 	);
 }
 
@@ -74,45 +71,44 @@ function settledLine(s: GettingStartedStep): string {
 	if (s.status === "skipped") {
 		switch (s.id) {
 			case "introductions":
-				return "Introductions, skipped. Say so and they come back.";
+				return "You set introductions aside for now. Say the word whenever you would like to return to them.";
 			case "connect_world":
-				return "The record, skipped for now. Sources wait in Settings.";
+				return "You set the record aside for now. Your sources are waiting in Settings whenever you want them.";
 			case "interview":
-				return "Your story, skipped for now. The interview waits under Chats.";
+				return "You set your story aside for now. The interview is waiting under Chats whenever you want it.";
 			default:
-				return "AI, skipped. Your server can show its record but cannot answer until AI is connected in Settings.";
+				return "You went on without connecting AI. Your server can show you its record, but it cannot answer you until a model is connected in Settings.";
 		}
 	}
 	switch (s.id) {
 		case "connect_ai":
 			return s.via === "byo"
-				? "AI connected: an endpoint of your own."
-				: "AI connected: the Virtues subscription.";
+				? "Your server is connected to an endpoint of your own, and can think."
+				: "Your server is connected to your Virtues subscription, and can think.";
 		case "introductions":
-			return "Introductions made.";
+			return "Introductions are made.";
 		case "connect_world":
 			return s.detail
-				? `The record has begun, with one thing to see to: ${s.detail}.`
+				? `The record has begun, with one thing still to see to: ${s.detail}.`
 				: "The record has begun.";
 		case "interview":
-			return "Your story is written, in your own words.";
+			return "Your story is written down, in your own words.";
 	}
 }
 
 /** The ask for the step that is up now. */
-function askLine(s: GettingStartedStep, first: boolean): string {
-	const lead = first ? "First" : "Next";
+function askLine(s: GettingStartedStep): string {
 	switch (s.id) {
 		case "connect_ai":
-			return "Nothing begins until AI is connected. The Virtues subscription brings the best of Claude, Gemini, GPT and Grok, every one under zero data retention: metered per request, never kept, never trained on. Or sign in to an account you already have, or point your server at an endpoint of your own. Until then this room cannot answer, and nothing typed here leaves it.";
+			return "Everything Virtues does begins with a model to think with. A Virtues subscription gives you the best of Claude, Gemini, GPT and Grok, all of them under zero data retention, which means each request is metered and nothing you send is kept or trained on. If you already have an account, sign in. If you run models of your own, you can point your server at them instead. Until one of these is in place, this room cannot answer you.";
 		case "introductions":
-			return `${lead}, introductions. Your name as you like to hear it, the name you will call your server by, where home is, and the day you were born. Say it below in your own words, all at once is fine; the date sets the ruler your life is drawn against. Your story comes later, in its own conversation.`;
+			return "Now that it can think, your server would like to know who it is talking to. Tell it what you like to be called, what you will call it, where home is, and when you were born, all in one message if you like. The birthday is not idle curiosity; it is the ruler your whole life is drawn against. The longer story of your life comes later, in a conversation of its own.";
 		case "connect_world":
-			return `${lead}, the record itself. Your accounts, this computer, your phone: your server reads them from here on, and nothing it reads leaves it. Connect one, and the first page is written tonight.`;
+			return "The record is written from what your accounts, this computer, and your phone already hold, and nothing they hold ever leaves your server. Connect one of them now, and tonight the first page will be written.";
 		case "interview":
 			return s.underway
-				? "Last, your story. The interview is underway; it kept your place."
-				: "Last, your story. The record holds what happened; only you can say what it meant. A conversation of about twenty minutes, one question at a time. Stop anywhere; it keeps your place.";
+				? "Last comes your story, and the interview is already underway. It has kept your place; pick it up wherever you like."
+				: "Last comes your story. The record can hold what happened, but only you can say what it meant. This is a conversation of about twenty minutes, one question at a time; stop wherever you like, and it will keep your place.";
 	}
 }
 
@@ -122,7 +118,7 @@ function promiseLine(firstDay: string | null): string {
 		: "Every day, a page will be waiting for you: yesterday, written down. The first one comes tomorrow morning.";
 }
 
-const SETTLED = "All four are done. This room stays for questions about the setup. The rest is yours.";
+const SETTLED = "That is all four. This room stays open for any question about the setup, and the rest of Virtues is yours.";
 
 /** The text a synthetic message carries (ChatView renders it as markdown). */
 function textMessage(id: string, text: string) {
@@ -175,7 +171,7 @@ export function applyGettingStartedOpening(
 		bottom.push(textMessage(GS_PROMISE_ID, promiseLine(state.first_day)));
 	}
 	if (now) {
-		bottom.push(textMessage(`${GS_NOW_PREFIX}${now.id}`, askLine(now, now.id === "connect_ai")));
+		bottom.push(textMessage(`${GS_NOW_PREFIX}${now.id}`, askLine(now)));
 	} else if (state.graduated) {
 		bottom.push(textMessage(GS_SETTLED_ID, SETTLED));
 	}

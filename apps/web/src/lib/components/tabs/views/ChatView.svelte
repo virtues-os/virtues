@@ -1372,7 +1372,9 @@
 	});
 
 	// A real, saved chat the user can act on (not the empty new-chat state, not a ghost).
-	const canManageChat = $derived(!isEmpty && !isGhost);
+	// Getting started has no menu: it cannot be deleted or renamed, and its
+	// header holds one control, the door.
+	const canManageChat = $derived(!isEmpty && !isGhost && !isGettingStartedChat(currentChatConversationId));
 
 	async function deleteThisChat() {
 		try {
@@ -1701,7 +1703,7 @@
 
 <svelte:window onmouseup={handleWindowMouseup} />
 
-{#if selectionDraft}
+{#if selectionDraft && !isGettingStartedChat(currentChatConversationId)}
 	<SelectionPopover
 		rect={selectionDraft.rect}
 		onAdd={addStagedRef}
@@ -1770,7 +1772,7 @@
 			<div class="chat-area" class:ghost={isGhost}>
 				<!-- Top-right chrome: temporary-chat toggle + live context ring -->
 				<div class="chat-topbar-right">
-					{#if !isGhost && contextUsage && extractConversationId(tab.route)}
+					{#if !isGhost && contextUsage && extractConversationId(tab.route) && !isGettingStartedChat(currentChatConversationId)}
 						<ContextIndicator
 							conversationId={extractConversationId(tab.route)!}
 							usagePercentage={contextUsage.percentage}
