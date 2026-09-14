@@ -2,30 +2,26 @@
 	/**
 	 * "This device" — the native collector dashboard (iOS/Android shell only).
 	 *
-	 * A stripped-down descendant of the old native app: this phone as a data
-	 * collector. Shows the real state the plugins already expose — location
-	 * events recorded (incl. background/cold-relaunch rows), with a toggle to
-	 * start the collector — plus a live recent-activity log.
+	 * This phone as a data collector. The list keeps every stream to one line
+	 * — name, state, a chevron — and each stream's controls (enable, stop,
+	 * when, where, notify) live on its own page (`MobileStreamPage`). The
+	 * page and the list read the same status objects, so they cannot
+	 * disagree.
 	 *
-	 * Reads through the location-probe plugin (`read_rows` / `start_probe`).
-	 * Storage size, health, and the shared upload queue land in the next pass.
+	 * Below the streams: the link to the server, a short recent-activity
+	 * strip (three runs in words, the rest as dots), and About. The radio
+	 * counters that used to headline the Sync card are the battery bench's
+	 * instruments, not settings; they sit under About now.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { invoke } from "@tauri-apps/api/core";
 	import { getVersion } from "@tauri-apps/api/app";
-	import { listPlaces, getUnnamedPlaces, type UnnamedPlace, type WikiPlaceListItem } from "$lib/wiki/api";
-	import {
-		createMutedPlace,
-		placeDetails,
-		setPlaceMuted,
-		suggestPlaces,
-		syncMutedPlaces,
-		type MutedPlace,
-		type PlaceSuggestion,
-	} from "$lib/mobile/audioPlaces";
 	import { onMount } from "svelte";
+	import MobileStreamPage from "./MobileStreamPage.svelte";
+	import MobileAudioSettings from "./MobileAudioSettings.svelte";
+	import type { AudioStatus, OutboxStats, StreamKey, StreamStatus } from "$lib/mobile/deviceTypes";
 
 	interface ProbeRow {
 		ts: string;
@@ -38,55 +34,9 @@
 
 	interface ReachStatus {
 		paired: boolean;
-		session: string; // authed | rejected | unknown | unpaired
-		loopbackUrl: string;
+		session?: string;
 		reachable: boolean; // live: box actually answered a probe just now
-		path: string; // live: direct | relay | offline
-	}
-
-	interface OutboxStats {
-		queued: number;
-		failing: number;
-		oldest: number; // unix seconds, 0 if empty
-	}
-
-	interface HealthStatus {
-		authorized: boolean;
-		collecting: boolean;
-	}
-	// Same shape for the other opt-in collectors.
-	type StreamStatus = HealthStatus;
-
-	interface AudioStatus {
-		authorized: boolean;
-		recording: boolean;
-		notify: boolean;
-		/** Chunks shipped metadata-only because they measured silent. */
-		silentDropped?: number;
-		/** Quiet-hours window, minutes since local midnight; -1 or absent = off.
-		 * Mute-don't-release: the mic stays armed, chunks stop being written. */
-		quietStart?: number;
-		quietEnd?: number;
-		/** Paused for a reason the user did not choose: "carplay" while a car
-		 * audio route is present (session released so the car keeps its audio;
-		 * resumes when the car disconnects). Recording is still ON — the toggle
-		 * offers Stop, not Resume, and a Resume would just re-evict the car. */
-		pausedReason?: string;
-		/** The weekly mute schedule. Absent on a native build that predates it;
-		 * the editor keys on presence and falls back to the quiet-hours pair. */
-		schedule?: MuteSchedule;
-		/** The plugin's cache of the box's muted places. Same absence rule. */
-		places?: MutedPlace[];
-		/** Why chunk writing is paused right now: "schedule" or "place". */
-		mutedBy?: string;
-	}
-
-	/** One default, and windows that invert it. Minutes since local midnight;
-	 * start > end wraps past midnight. See the plan. */
-	interface MuteSchedule {
-		v?: number;
-		default_muted: boolean;
-		days: Record<string, [number, number][]>;
+		path?: string;
 	}
 
 	/** Radio-hygiene counters — the battery A/B harness (reach plugin). */
@@ -114,7 +64,7 @@
 	let rows = $state<ProbeRow[]>([]);
 	let reach = $state<ReachStatus | null>(null);
 	let sync = $state<OutboxStats | null>(null);
-	let health = $state<HealthStatus | null>(null);
+	let health = $state<StreamStatus | null>(null);
 	let healthSync = $state<OutboxStats | null>(null);
 	let cal = $state<StreamStatus | null>(null);
 	let calSync = $state<OutboxStats | null>(null);
@@ -135,9 +85,15 @@
 	let enablingContacts = $state(false);
 	let enablingFinance = $state(false);
 	let error = $state<string | null>(null);
+	/** Which stream's page is open, if any. */
+	let open = $state<StreamKey | null>(null);
 
-	const enabled = $derived(rows.length > 0);
-	const lastTs = $derived(rows[0]?.ts ?? null);
+	/** Location fixes only — the probe also writes 0,0 marker rows (start,
+	 * mode changes, regions) for the field log, which are not places. */
+	const fixes = $derived(rows.filter((r) => !(r.lat === 0 && r.lon === 0)));
+	const enabled = $derived(fixes.length > 0);
+	const lastTs = $derived(fixes[0]?.ts ?? null);
+	const lastFix = $derived(fixes[0] ? { lat: fixes[0].lat, lon: fixes[0].lon } : null);
 
 	// Connection verdict from LIVE reach status (probe + iroh path), not just the
 	// stored "paired" flag — so it can't claim "connected" when the box is
@@ -150,7 +106,6 @@
 			return { label: "Access rejected", sub: "Re-pair this phone", tone: "off" };
 		if (!reach.reachable)
 			return { label: "Can’t reach your server", sub: "Paired, but offline right now", tone: "off" };
-		// Reachable — show HOW we're connected.
 		const via =
 			reach.path === "direct"
 				? "Direct · on your network"
@@ -164,7 +119,7 @@
 	// so a stationary phone shows "7 fixes" not 30 identical lines.
 	const runs = $derived.by<LogRun[]>(() => {
 		const out: LogRun[] = [];
-		for (const r of rows) {
+		for (const r of fixes) {
 			const last = out[out.length - 1];
 			const sameSpot =
 				last &&
@@ -186,6 +141,11 @@
 		}
 		return out;
 	});
+	/** Three runs in words; the rest as a strip of dots. */
+	const SHOWN_RUNS = 3;
+	let activityExpanded = $state(false);
+	const shownRuns = $derived(activityExpanded ? runs : runs.slice(0, SHOWN_RUNS));
+	const dotRuns = $derived(activityExpanded ? [] : runs.slice(SHOWN_RUNS));
 
 	async function load() {
 		if (!mobileLayout.isNativeShell) {
@@ -212,24 +172,24 @@
 				radioResp,
 				ver,
 			] = await Promise.all([
-					invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
-						payload: { limit: 50 },
-					}),
-					invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
-					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
-					invoke<HealthStatus>("plugin:health|status").catch(() => null),
-					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "healthkit" }).catch(() => null),
-					invoke<StreamStatus>("plugin:eventkit|status").catch(() => null),
-					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "eventkit" }).catch(() => null),
-					invoke<StreamStatus>("plugin:contacts|status").catch(() => null),
-					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "contacts" }).catch(() => null),
-					invoke<StreamStatus>("plugin:finance|status").catch(() => null),
-					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "financekit" }).catch(() => null),
-					invoke<AudioStatus>("plugin:audio|status").catch(() => null),
-					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "microphone" }).catch(() => null),
-					invoke<RadioStats>("plugin:reach|radio_stats").catch(() => null),
-					getVersion().catch(() => ""),
-				]);
+				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
+					payload: { limit: 60 },
+				}),
+				invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
+				invoke<StreamStatus>("plugin:health|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "healthkit" }).catch(() => null),
+				invoke<StreamStatus>("plugin:eventkit|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "eventkit" }).catch(() => null),
+				invoke<StreamStatus>("plugin:contacts|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "contacts" }).catch(() => null),
+				invoke<StreamStatus>("plugin:finance|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "financekit" }).catch(() => null),
+				invoke<AudioStatus>("plugin:audio|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "microphone" }).catch(() => null),
+				invoke<RadioStats>("plugin:reach|radio_stats").catch(() => null),
+				getVersion().catch(() => ""),
+			]);
 			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
 			reach = reachResp;
 			sync = syncResp;
@@ -257,7 +217,6 @@
 		error = null;
 		try {
 			await invoke("plugin:location-probe|start_probe");
-			// Give the first fix a beat, then refresh.
 			setTimeout(load, 800);
 		} catch (e) {
 			error = String(e);
@@ -270,8 +229,7 @@
 		enablingHealth = true;
 		error = null;
 		try {
-			health = await invoke<HealthStatus>("plugin:health|enable");
-			// Backfill takes a moment to start enqueuing; refresh shortly after.
+			health = await invoke<StreamStatus>("plugin:health|enable");
 			setTimeout(load, 1500);
 		} catch (e) {
 			error = String(e);
@@ -320,28 +278,23 @@
 	}
 
 	/// The one stream that records people who never consented gets a real
-	/// consent beat before the OS dialog: first Enable opens the interstitial;
-	/// only its confirm actually starts recording. Once authorized, the
-	/// button is a plain pause control and the interstitial never returns.
+	/// consent beat before the OS dialog: the first Enable opens the
+	/// interstitial; only its confirm actually starts recording. Once
+	/// authorized, the button is a plain pause control and the interstitial
+	/// never returns.
 	let audioConsentOpen = $state(false);
 
 	/// "The user has recording switched on" — capturing, or paused for a
-	/// reason they did not choose (CarPlay). One derivation for the toggle
+	/// reason they did not choose (CarPlay). One derivation for the control
 	/// and its label, so they cannot disagree: a label reading Resume over a
 	/// handler that calls disable is exactly the re-evict this guards.
 	const audioOn = $derived(!!(audio?.recording || audio?.pausedReason));
 
-	/// Audio is toggleable (its toggle doubles as the pause control): Enable
-	/// prompts + starts; once authorized the button stops/resumes recording.
 	async function toggleAudio() {
 		togglingAudio = true;
 		error = null;
 		try {
-			if (audioOn) {
-				audio = await invoke<AudioStatus>("plugin:audio|disable");
-			} else {
-				audio = await invoke<AudioStatus>("plugin:audio|enable");
-			}
+			audio = await invoke<AudioStatus>(audioOn ? "plugin:audio|disable" : "plugin:audio|enable");
 			setTimeout(load, 2000);
 		} catch (e) {
 			error = String(e);
@@ -350,298 +303,10 @@
 		}
 	}
 
-	/// Toggle the "notify me if recording stops" gap-nudge (default on).
-	async function toggleAudioNotify() {
-		if (!audio) return;
-		try {
-			audio = await invoke<AudioStatus>("plugin:audio|set_notify", {
-				enabled: !audio.notify,
-			});
-		} catch (e) {
-			error = String(e);
-		}
+	function audioAction() {
+		if (!audio?.authorized) audioConsentOpen = !audioConsentOpen;
+		else void toggleAudio();
 	}
-
-	// Quiet hours (mute-don't-release). Window is minutes since local midnight.
-	// Kept for a native build that predates the schedule (no `schedule` in
-	// status); on a current build the schedule editor below replaces it.
-	const quietOn = $derived(
-		audio != null && (audio.quietStart ?? -1) >= 0 && (audio.quietEnd ?? -1) >= 0,
-	);
-	function minToTime(m: number): string {
-		const h = Math.floor(m / 60) % 24;
-		return `${String(h).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-	}
-	function timeToMin(t: string): number {
-		const [h, m] = t.split(":").map(Number);
-		return (h || 0) * 60 + (m || 0);
-	}
-	async function setQuietHours(start: number, end: number) {
-		try {
-			audio = await invoke<AudioStatus>("plugin:audio|set_quiet_hours", { start, end });
-		} catch (e) {
-			error = String(e);
-		}
-	}
-	/// Toggle: default window 22:00 → 07:00 on first enable.
-	function toggleQuietHours() {
-		if (quietOn) void setQuietHours(-1, -1);
-		else void setQuietHours(22 * 60, 7 * 60);
-	}
-
-	// Schedule (mute-don't-release). One default, windows that invert it: the
-	// same store and gate serve "record, except at night" and "don't record,
-	// except 9–5". The UI edits one window per day; the store allows more.
-	const DAYS: [string, string][] = [
-		["mon", "Mon"],
-		["tue", "Tue"],
-		["wed", "Wed"],
-		["thu", "Thu"],
-		["fri", "Fri"],
-		["sat", "Sat"],
-		["sun", "Sun"],
-	];
-	const DEFAULT_WINDOW: [number, number] = [22 * 60, 7 * 60];
-	const sched = $derived(audio?.schedule ?? null);
-	const hasSchedule = $derived(sched != null);
-	const windowsExist = $derived(
-		sched != null && Object.values(sched.days).some((w) => w.length > 0),
-	);
-	const scheduleOn = $derived(sched != null && (sched.default_muted || windowsExist));
-	/// The one window shared by all seven days, if that is what this is.
-	const uniform = $derived.by((): [number, number] | null => {
-		if (!sched) return null;
-		const lists = DAYS.map(([k]) => sched.days[k] ?? []);
-		const first = lists[0];
-		if (first.length !== 1) return null;
-		const same = lists.every((l) => l.length === 1 && l[0][0] === first[0][0] && l[0][1] === first[0][1]);
-		return same ? first[0] : null;
-	});
-	let byDay = $state(false);
-	const showByDay = $derived(byDay || (windowsExist && uniform == null));
-
-	async function setSchedule(doc: MuteSchedule) {
-		try {
-			audio = await invoke<AudioStatus>("plugin:audio|set_schedule", {
-				schedule: { v: 1, default_muted: doc.default_muted, days: doc.days },
-			});
-		} catch (e) {
-			error = String(e);
-		}
-	}
-	function uniformDoc(w: [number, number] | null, defaultMuted: boolean): MuteSchedule {
-		const days: Record<string, [number, number][]> = {};
-		for (const [k] of DAYS) days[k] = w ? [w] : [];
-		return { default_muted: defaultMuted, days };
-	}
-	function toggleSchedule() {
-		if (!sched) return;
-		if (scheduleOn) void setSchedule(uniformDoc(null, false));
-		else void setSchedule(uniformDoc(DEFAULT_WINDOW, false));
-	}
-	function setDefaultMuted(muted: boolean) {
-		if (!sched) return;
-		void setSchedule({ ...sched, default_muted: muted });
-	}
-	function setUniform(start: number, end: number) {
-		if (!sched) return;
-		void setSchedule(uniformDoc([start, end], sched.default_muted));
-	}
-	function setDay(day: string, w: [number, number] | null) {
-		if (!sched) return;
-		void setSchedule({ ...sched, days: { ...sched.days, [day]: w ? [w] : [] } });
-	}
-	function dayWindow(day: string): [number, number] | null {
-		return sched?.days[day]?.[0] ?? null;
-	}
-	function toggleByDay() {
-		if (showByDay) {
-			// Collapsing back: the first day's window (or none) becomes every day's.
-			byDay = false;
-			const w = DAYS.map(([k]) => dayWindow(k)).find((x) => x != null) ?? null;
-			if (sched) void setSchedule(uniformDoc(w, sched.default_muted));
-		} else {
-			byDay = true;
-		}
-	}
-
-	// Places. A muted place IS a wiki place: the flag lives on the box's row,
-	// the plugin caches the muted subset, and this screen is one of two
-	// places to flip it (the other is the place's own page on the desktop).
-	const mutedPlaces = $derived(audio?.places ?? []);
-	const hasPlaces = $derived(audio?.places != null);
-	let placeQuery = $state("");
-	let placeBusy = $state(false);
-	let placeError = $state<string | null>(null);
-	let namedPlaces = $state<WikiPlaceListItem[]>([]);
-	let unnamedPlaces = $state<UnnamedPlace[]>([]);
-	let suggestions = $state<PlaceSuggestion[]>([]);
-	/// An unnamed cluster picked from the results: it needs a name before it
-	/// can be muted (a muted "Location 30.27, -97.74" is no place at all).
-	let naming = $state<UnnamedPlace | null>(null);
-	let newName = $state("");
-	/// "Mute here" — a name for a place minted at the current fix.
-	let hereOpen = $state(false);
-	let hereName = $state("");
-	let suggestTimer: ReturnType<typeof setTimeout> | null = null;
-
-	const q = $derived(placeQuery.trim().toLowerCase());
-	const mutedIds = $derived(new Set(mutedPlaces.map((p) => p.id)));
-	const namedHits = $derived(
-		q.length === 0
-			? []
-			: namedPlaces.filter((p) => !mutedIds.has(p.id) && p.name.toLowerCase().includes(q)).slice(0, 6),
-	);
-	const unnamedHits = $derived(
-		q.length === 0 ? [] : unnamedPlaces.filter((p) => !mutedIds.has(p.id)).slice(0, 4),
-	);
-
-	async function loadPlaceSources() {
-		const [named, unnamed] = await Promise.all([
-			listPlaces().catch(() => []),
-			getUnnamedPlaces(20).catch(() => []),
-		]);
-		namedPlaces = named;
-		unnamedPlaces = unnamed.filter((p) => p.latitude != null && p.longitude != null);
-	}
-
-	/// The box's rows → the plugin's cache, when they differ.
-	async function refreshMutedPlaces() {
-		const s = await syncMutedPlaces<AudioStatus>(audio?.places);
-		if (s) audio = s;
-	}
-
-	function onPlaceQuery() {
-		placeError = null;
-		naming = null;
-		if (suggestTimer) clearTimeout(suggestTimer);
-		const query = placeQuery.trim();
-		if (query.length < 3) {
-			suggestions = [];
-			return;
-		}
-		// The Google door is metered; debounce it well past typing speed.
-		suggestTimer = setTimeout(async () => {
-			const got = await suggestPlaces(query);
-			if (placeQuery.trim() === query) suggestions = got.slice(0, 4);
-		}, 500);
-	}
-
-	async function muteNamed(p: WikiPlaceListItem) {
-		placeBusy = true;
-		placeError = null;
-		try {
-			if (!(await setPlaceMuted(p.id, true))) throw new Error("The server did not take that");
-			await refreshMutedPlaces();
-			placeQuery = "";
-			suggestions = [];
-		} catch (e) {
-			placeError = e instanceof Error ? e.message : String(e);
-		} finally {
-			placeBusy = false;
-		}
-	}
-
-	async function muteUnnamed() {
-		const p = naming;
-		const name = newName.trim();
-		if (!p || !name) return;
-		placeBusy = true;
-		placeError = null;
-		try {
-			if (!(await setPlaceMuted(p.id, true, name))) throw new Error("The server did not take that");
-			await Promise.all([refreshMutedPlaces(), loadPlaceSources()]);
-			naming = null;
-			newName = "";
-			placeQuery = "";
-			suggestions = [];
-		} catch (e) {
-			placeError = e instanceof Error ? e.message : String(e);
-		} finally {
-			placeBusy = false;
-		}
-	}
-
-	async function muteSuggestion(sug: PlaceSuggestion) {
-		placeBusy = true;
-		placeError = null;
-		try {
-			const d = await placeDetails(sug.place_id);
-			if (!d) throw new Error("Could not look that place up");
-			const ok = await createMutedPlace(sug.main_text || sug.description, d.latitude, d.longitude, d.formatted_address);
-			if (!ok) throw new Error("The server did not take that");
-			await Promise.all([refreshMutedPlaces(), loadPlaceSources()]);
-			placeQuery = "";
-			suggestions = [];
-		} catch (e) {
-			placeError = e instanceof Error ? e.message : String(e);
-		} finally {
-			placeBusy = false;
-		}
-	}
-
-	async function muteHere() {
-		const name = hereName.trim();
-		const fix = rows[0];
-		if (!name) return;
-		if (!fix) {
-			placeError = "No location fix yet";
-			return;
-		}
-		placeBusy = true;
-		placeError = null;
-		try {
-			// Prefer an existing wiki place that already covers this fix over
-			// minting a twin: the named list carries no coordinates, so the
-			// unnamed clusters (which do) are the ones checked here.
-			const near = unnamedPlaces.find(
-				(p) => distanceM(fix.lat, fix.lon, p.latitude as number, p.longitude as number) < 100,
-			);
-			const ok = near
-				? await setPlaceMuted(near.id, true, name)
-				: await createMutedPlace(name, fix.lat, fix.lon);
-			if (!ok) throw new Error("The server did not take that");
-			await Promise.all([refreshMutedPlaces(), loadPlaceSources()]);
-			hereOpen = false;
-			hereName = "";
-		} catch (e) {
-			placeError = e instanceof Error ? e.message : String(e);
-		} finally {
-			placeBusy = false;
-		}
-	}
-
-	async function unmute(p: MutedPlace) {
-		placeBusy = true;
-		placeError = null;
-		try {
-			if (!(await setPlaceMuted(p.id, false))) throw new Error("The server did not take that");
-			await refreshMutedPlaces();
-		} catch (e) {
-			placeError = e instanceof Error ? e.message : String(e);
-		} finally {
-			placeBusy = false;
-		}
-	}
-
-	function distanceM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-		const r = 6371000;
-		const dLat = ((lat2 - lat1) * Math.PI) / 180;
-		const dLon = ((lon2 - lon1) * Math.PI) / 180;
-		const a =
-			Math.sin(dLat / 2) ** 2 +
-			Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-		return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-	}
-
-	// The box's rows are the authority; copy them into the plugin whenever
-	// this screen learns the plugin's state, and load the search sources once
-	// the mic is on (they are only offered then).
-	$effect(() => {
-		if (!hasPlaces) return;
-		void refreshMutedPlaces();
-		void loadPlaceSources();
-	});
 
 	/// Unpair this device: clear the Keychain-stored pairing (seed + box info), so
 	/// the app forgets the box entirely. Since the pairing survives app deletion
@@ -672,7 +337,6 @@
 			// unpaired, with no way to pair, and the only escape was force
 			// quitting. The shell confirms pairing with the plugin before it
 			// redirects, so landing here after a forget stays here.
-			// (connect.html absorbed mobile-pair.html on 2026-08-11.)
 			window.location.replace("/connect.html");
 		} catch (e) {
 			error = String(e);
@@ -685,7 +349,6 @@
 		syncingNow = true;
 		error = null;
 		try {
-			// Grab the latest samples from each collector, then drain to the box.
 			if (health?.authorized) await invoke("plugin:health|collect").catch(() => {});
 			if (cal?.authorized) await invoke("plugin:eventkit|collect").catch(() => {});
 			if (contacts?.authorized) await invoke("plugin:contacts|collect").catch(() => {});
@@ -718,9 +381,157 @@
 		return `${Math.round(h / 24)}d ago`;
 	}
 
-	function isBackground(r: ProbeRow): boolean {
-		return r.appState !== "active";
+	// ── The streams, as the list and the pages both see them ────────────
+	function syncWord(s: OutboxStats | null): string {
+		if (!s) return "";
+		if (s.failing > 0) return ` · ${s.failing} retrying`;
+		if (s.queued > 0) return ` · ${s.queued} syncing`;
+		return " · synced";
 	}
+
+	interface StreamMeta {
+		key: StreamKey;
+		title: string;
+		icon: string;
+		/** What it collects — the sub-line while off, and the page's sentence. */
+		what: string;
+		description: string;
+	}
+	const STREAMS: StreamMeta[] = [
+		{
+			key: "location",
+			title: "Location",
+			icon: "ri:map-pin-line",
+			what: "Where you are, through the day",
+			description:
+				"Fixes from the phone's location services, including while the app is in the background. They become the visits and movements in your record, and they keep the app alive for the other streams.",
+		},
+		{
+			key: "health",
+			title: "Health",
+			icon: "ri:heart-pulse-line",
+			what: "Steps, sleep, heart rate",
+			description: "What the Health app already keeps — steps, sleep, heart rate, workouts — copied to your server as it lands.",
+		},
+		{
+			key: "calendar",
+			title: "Calendar",
+			icon: "ri:calendar-line",
+			what: "Events & invitations",
+			description: "Your calendars' events and invitations. They are plans, not evidence; the record checks them against what actually happened.",
+		},
+		{
+			key: "contacts",
+			title: "Contacts",
+			icon: "ri:contacts-book-line",
+			what: "Names for the people in your record",
+			description: "Your address book, so the people in messages, calls and calendars are known by name.",
+		},
+		{
+			key: "finance",
+			title: "Finance",
+			icon: "ri:bank-card-line",
+			what: "Accounts & transactions",
+			description: "Accounts and transactions from Apple Wallet and Apple Card, through the phone's Finance framework.",
+		},
+		{
+			key: "audio",
+			title: "Audio",
+			icon: "ri:mic-line",
+			what: "Ambient sound & transcripts",
+			description:
+				"The microphone stays on while your phone is with you and records the sound of your day. Recordings are transcribed on your server and become part of each day's record.",
+		},
+	];
+
+	function streamOn(k: StreamKey): boolean {
+		switch (k) {
+			case "location":
+				return enabled;
+			case "health":
+				return !!health?.authorized;
+			case "calendar":
+				return !!cal?.authorized;
+			case "contacts":
+				return !!contacts?.authorized;
+			case "finance":
+				return !!finance?.authorized;
+			case "audio":
+				return !!audio?.recording;
+		}
+	}
+
+	function streamStatus(k: StreamKey): string {
+		const meta = STREAMS.find((s) => s.key === k)!;
+		if (loading && k === "location") return "Checking…";
+		switch (k) {
+			case "location":
+				return enabled ? `On · ${fixes.length} recent${lastTs ? ` · ${rel(lastTs)}` : ""}` : "Off";
+			case "health":
+				return health?.authorized ? `On${syncWord(healthSync)}` : meta.what;
+			case "calendar":
+				return cal?.authorized ? `On${syncWord(calSync)}` : meta.what;
+			case "contacts":
+				return contacts?.authorized ? `On${syncWord(contactsSync)}` : meta.what;
+			case "finance":
+				return finance?.authorized ? `On${syncWord(financeSync)}` : meta.what;
+			case "audio":
+				if (audio?.mutedBy === "schedule") return "On · not recording now (hours)";
+				if (audio?.mutedBy === "place") return "On · not recording here";
+				if (audio?.recording) return `Recording${syncWord(audioSync)}`;
+				if (audio?.pausedReason === "carplay") return "Paused · CarPlay";
+				if (audio?.authorized) return "Paused";
+				return meta.what;
+		}
+	}
+
+	function streamSync(k: StreamKey): OutboxStats | null {
+		switch (k) {
+			case "location":
+				return sync;
+			case "health":
+				return healthSync;
+			case "calendar":
+				return calSync;
+			case "contacts":
+				return contactsSync;
+			case "finance":
+				return financeSync;
+			case "audio":
+				return audioSync;
+		}
+	}
+
+	function streamAction(k: StreamKey): { label: string; onclick: () => void; disabled?: boolean } | null {
+		switch (k) {
+			case "location":
+				return enabled ? null : { label: starting ? "Enabling…" : "Enable", onclick: enableLocation, disabled: starting };
+			case "health":
+				return health?.authorized
+					? null
+					: { label: enablingHealth ? "Enabling…" : "Enable", onclick: enableHealth, disabled: enablingHealth };
+			case "calendar":
+				return cal?.authorized
+					? null
+					: { label: enablingCal ? "Enabling…" : "Enable", onclick: enableCalendar, disabled: enablingCal };
+			case "contacts":
+				return contacts?.authorized
+					? null
+					: { label: enablingContacts ? "Enabling…" : "Enable", onclick: enableContacts, disabled: enablingContacts };
+			case "finance":
+				return finance?.authorized
+					? null
+					: { label: enablingFinance ? "Enabling…" : "Enable", onclick: enableFinance, disabled: enablingFinance };
+			case "audio":
+				return {
+					label: togglingAudio ? "…" : audioOn ? "Stop" : audio?.authorized ? "Resume" : "Enable",
+					onclick: audioAction,
+					disabled: togglingAudio,
+				};
+		}
+	}
+
+	const openMeta = $derived(open ? STREAMS.find((s) => s.key === open)! : null);
 
 	onMount(load);
 </script>
@@ -734,9 +545,7 @@
 			</div>
 			<div class="s-body">
 				<div class="s-title">{conn.label}</div>
-				<div class="s-sub">
-					{conn.sub}
-				</div>
+				<div class="s-sub">{conn.sub}</div>
 			</div>
 			<span class="dot" class:on={conn.tone === "on"} class:off={conn.tone === "off"}></span>
 		</div>
@@ -744,369 +553,33 @@
 
 	<div class="group-label">Streams</div>
 	<div class="card">
-		<div class="stream">
-			<div class="s-icon" class:on={enabled}><Icon icon="ri:map-pin-line" width={18} /></div>
-			<div class="s-body">
-				<div class="s-title">Location</div>
-				<div class="s-sub">
-					{#if loading}Checking…{:else if enabled}On · {rows.length} recent
-						{#if lastTs}· {rel(lastTs)}{/if}{:else}Off{/if}
+		{#each STREAMS as s (s.key)}
+			{@const on = streamOn(s.key)}
+			<button class="stream link" type="button" onclick={() => (open = s.key)}>
+				<div class="s-icon" class:on>
+					<Icon icon={s.icon} width={18} />
 				</div>
-			</div>
-			{#if !enabled}
-				<button class="s-action" onclick={enableLocation} disabled={starting}>
-					{starting ? "Enabling…" : "Enable"}
-				</button>
-			{:else}
-				<span class="dot on"></span>
-			{/if}
-		</div>
-		<div class="stream">
-			<div class="s-icon" class:on={health?.authorized}>
-				<Icon icon="ri:heart-pulse-line" width={18} />
-			</div>
-			<div class="s-body">
-				<div class="s-title">Health</div>
-				<div class="s-sub">
-					{#if health?.authorized}
-						On{#if healthSync && healthSync.queued > 0} · {healthSync.queued} syncing{:else} · synced{/if}
-					{:else}Heart rate, steps, sleep &amp; more{/if}
+				<div class="s-body">
+					<div class="s-title">{s.title}</div>
+					<div class="s-sub">{streamStatus(s.key)}</div>
 				</div>
-			</div>
-			{#if !health?.authorized}
-				<button class="s-action" onclick={enableHealth} disabled={enablingHealth}>
-					{enablingHealth ? "Enabling…" : "Enable"}
-				</button>
-			{:else}
-				<span class="dot on"></span>
-			{/if}
-		</div>
-		<div class="stream">
-			<div class="s-icon" class:on={cal?.authorized}>
-				<Icon icon="ri:calendar-line" width={18} />
-			</div>
-			<div class="s-body">
-				<div class="s-title">Calendar</div>
-				<div class="s-sub">
-					{#if cal?.authorized}
-						On{#if calSync && calSync.queued > 0} · {calSync.queued} syncing{:else} · synced{/if}
-					{:else}Events, past &amp; upcoming{/if}
-				</div>
-			</div>
-			{#if !cal?.authorized}
-				<button class="s-action" onclick={enableCalendar} disabled={enablingCal}>
-					{enablingCal ? "Enabling…" : "Enable"}
-				</button>
-			{:else}
-				<span class="dot on"></span>
-			{/if}
-		</div>
-		<div class="stream">
-			<div class="s-icon" class:on={contacts?.authorized}>
-				<Icon icon="ri:contacts-book-line" width={18} />
-			</div>
-			<div class="s-body">
-				<div class="s-title">Contacts</div>
-				<div class="s-sub">
-					{#if contacts?.authorized}
-						On{#if contactsSync && contactsSync.queued > 0} · {contactsSync.queued} syncing{:else} · synced{/if}
-					{:else}The people in your life{/if}
-				</div>
-			</div>
-			{#if !contacts?.authorized}
-				<button class="s-action" onclick={enableContacts} disabled={enablingContacts}>
-					{enablingContacts ? "Enabling…" : "Enable"}
-				</button>
-			{:else}
-				<span class="dot on"></span>
-			{/if}
-		</div>
-		<div class="stream">
-			<div class="s-icon" class:on={finance?.authorized}>
-				<Icon icon="ri:bank-card-line" width={18} />
-			</div>
-			<div class="s-body">
-				<div class="s-title">Finance</div>
-				<div class="s-sub">
-					{#if finance?.authorized}
-						On{#if financeSync && financeSync.queued > 0} · {financeSync.queued} syncing{:else} · synced{/if}
-					{:else}Accounts &amp; transactions{/if}
-				</div>
-			</div>
-			{#if !finance?.authorized}
-				<button class="s-action" onclick={enableFinance} disabled={enablingFinance}>
-					{enablingFinance ? "Enabling…" : "Enable"}
-				</button>
-			{:else}
-				<span class="dot on"></span>
-			{/if}
-		</div>
-		<div class="stream">
-			<div class="s-icon" class:on={audio?.recording}>
-				<Icon icon="ri:mic-line" width={18} />
-			</div>
-			<div class="s-body">
-				<div class="s-title">Audio</div>
-				<div class="s-sub">
-					{#if audio?.recording}
-						Recording{#if audioSync && audioSync.queued > 0} · {audioSync.queued} syncing{:else} · synced{/if}
-					{:else if audio?.pausedReason === "carplay"}
-						Paused · CarPlay
-					{:else if audio?.authorized}
-						Paused
-					{:else}Ambient sound &amp; transcripts{/if}
-				</div>
-			</div>
-			<button
-				class="s-action"
-				onclick={() => {
-					if (!audio?.authorized) {
-						audioConsentOpen = !audioConsentOpen;
-					} else {
-						void toggleAudio();
-					}
-				}}
-				disabled={togglingAudio}
-			>
-				{#if togglingAudio}…{:else if audioOn}Stop{:else if audio?.authorized}Resume{:else}Enable{/if}
+				{#if on}
+					<span class="dot on" class:hollow={s.key === "audio" && !!audio?.mutedBy}></span>
+				{/if}
+				<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
 			</button>
-		</div>
-		{#if audioConsentOpen && !audio?.authorized}
-			<!-- The consent beat this one stream earns. Four words and a stock
-			     OS dialog were the whole answer before; this is the honest one. -->
-			<div class="s-consent">
-				<p>
-					The microphone stays on while your phone is with you. It records the
-					sound of your day — and everyone in the room. Recordings and
-					transcripts go to your server and nowhere else.
-				</p>
-				<p>
-					A schedule can silence any part of the week, and a place can be
-					marked "don't record here". Other people's voices will still be
-					in the record: in some places, recording a conversation needs
-					everyone's consent. That part is yours to honor.
-				</p>
-				<div class="s-consent-actions">
-					<button
-						class="s-action"
-						onclick={() => {
-							audioConsentOpen = false;
-							void toggleAudio();
-						}}
-						disabled={togglingAudio}
-					>
-						Turn the microphone on
-					</button>
-					<button class="s-action quiet" onclick={() => (audioConsentOpen = false)}>
-						Not now
-					</button>
-				</div>
-			</div>
-		{/if}
-		{#if audio?.authorized}
-			<button class="s-subrow" onclick={toggleAudioNotify} type="button">
-				<span class="s-subrow-label">Notify me if recording stops</span>
-				<span class="switch" class:on={audio?.notify} aria-hidden="true"></span>
-			</button>
-			{#if hasSchedule && sched}
-				<button class="s-subrow" onclick={toggleSchedule} type="button">
-					<span class="s-subrow-label">Schedule</span>
-					<span class="switch" class:on={scheduleOn} aria-hidden="true"></span>
-				</button>
-				{#if scheduleOn}
-					<div class="s-subrow s-times">
-						<span class="s-subrow-label">Outside these hours</span>
-						<select
-							class="s-time"
-							value={sched.default_muted ? "muted" : "record"}
-							onchange={(e) => setDefaultMuted(e.currentTarget.value === "muted")}
-						>
-							<option value="record">record</option>
-							<option value="muted">don't record</option>
-						</select>
-					</div>
-					<button class="s-subrow" onclick={toggleByDay} type="button">
-						<span class="s-subrow-label">Different each day</span>
-						<span class="switch" class:on={showByDay} aria-hidden="true"></span>
-					</button>
-					{#if !showByDay}
-						<div class="s-subrow s-times">
-							<input
-								class="s-time"
-								type="time"
-								value={minToTime(uniform?.[0] ?? DEFAULT_WINDOW[0])}
-								onchange={(e) => setUniform(timeToMin(e.currentTarget.value), uniform?.[1] ?? DEFAULT_WINDOW[1])}
-							/>
-							<span class="s-subrow-label">to</span>
-							<input
-								class="s-time"
-								type="time"
-								value={minToTime(uniform?.[1] ?? DEFAULT_WINDOW[1])}
-								onchange={(e) => setUniform(uniform?.[0] ?? DEFAULT_WINDOW[0], timeToMin(e.currentTarget.value))}
-							/>
-							<span class="s-subrow-label s-times-note">
-								{sched.default_muted ? "recording only then" : "mic stays on, nothing is kept"}
-							</span>
-						</div>
-					{:else}
-						{#each DAYS as [key, label] (key)}
-							{@const w = dayWindow(key)}
-							<div class="s-subrow s-times s-day">
-								<button
-									class="s-day-toggle"
-									type="button"
-									onclick={() => setDay(key, w ? null : DEFAULT_WINDOW)}
-								>
-									<span class="s-subrow-label s-day-label">{label}</span>
-									<span class="switch small" class:on={w != null} aria-hidden="true"></span>
-								</button>
-								{#if w}
-									<input
-										class="s-time"
-										type="time"
-										value={minToTime(w[0])}
-										onchange={(e) => setDay(key, [timeToMin(e.currentTarget.value), w[1]])}
-									/>
-									<span class="s-subrow-label">to</span>
-									<input
-										class="s-time"
-										type="time"
-										value={minToTime(w[1])}
-										onchange={(e) => setDay(key, [w[0], timeToMin(e.currentTarget.value)])}
-									/>
-								{/if}
-							</div>
-						{/each}
-					{/if}
-				{/if}
-			{:else}
-				<button class="s-subrow" onclick={toggleQuietHours} type="button">
-					<span class="s-subrow-label">Quiet hours</span>
-					<span class="switch" class:on={quietOn} aria-hidden="true"></span>
-				</button>
-				{#if quietOn && audio}
-					<div class="s-subrow s-times">
-						<input
-							class="s-time"
-							type="time"
-							value={minToTime(audio.quietStart ?? 0)}
-							onchange={(e) => setQuietHours(timeToMin(e.currentTarget.value), audio?.quietEnd ?? 0)}
-						/>
-						<span class="s-subrow-label">to</span>
-						<input
-							class="s-time"
-							type="time"
-							value={minToTime(audio.quietEnd ?? 0)}
-							onchange={(e) => setQuietHours(audio?.quietStart ?? 0, timeToMin(e.currentTarget.value))}
-						/>
-						<span class="s-subrow-label s-times-note">mic stays on, nothing is kept</span>
-					</div>
-				{/if}
-			{/if}
-			{#if hasPlaces}
-				<!-- Places that mute. The answer to "everyone in the room": a
-				     place is where the people you should not record are. -->
-				<div class="s-subrow s-times s-places-head">
-					<span class="s-subrow-label">Don't record at</span>
-					{#if audio?.mutedBy === "place"}
-						<span class="s-subrow-label s-times-note">muted here now</span>
-					{/if}
-				</div>
-				{#each mutedPlaces as p (p.id)}
-					<div class="s-subrow s-times s-place">
-						<span class="s-place-name">{p.name || "Unnamed place"}</span>
-						<span class="s-subrow-label">{Math.round(p.radiusM)} m</span>
-						<button class="s-linkish" type="button" onclick={() => unmute(p)} disabled={placeBusy}>
-							Remove
-						</button>
-					</div>
-				{/each}
-				<div class="s-subrow s-times s-place-search">
-					<input
-						class="s-time s-place-input"
-						type="search"
-						placeholder="Search a place by name"
-						bind:value={placeQuery}
-						oninput={onPlaceQuery}
-						disabled={placeBusy}
-					/>
-					<button class="s-linkish" type="button" onclick={() => (hereOpen = !hereOpen)} disabled={placeBusy}>
-						Mute here
-					</button>
-				</div>
-				{#if hereOpen}
-					<div class="s-subrow s-times">
-						<input
-							class="s-time s-place-input"
-							type="text"
-							placeholder="Name this place"
-							bind:value={hereName}
-							disabled={placeBusy}
-						/>
-						<button class="s-linkish" type="button" onclick={muteHere} disabled={placeBusy || !hereName.trim()}>
-							Save
-						</button>
-					</div>
-				{/if}
-				{#each namedHits as p (p.id)}
-					<button class="s-subrow s-result" type="button" onclick={() => muteNamed(p)} disabled={placeBusy}>
-						<span class="s-place-name">{p.name}</span>
-						{#if p.address}<span class="s-subrow-label">{p.address}</span>{/if}
-					</button>
-				{/each}
-				{#each unnamedHits as p (p.id)}
-					{#if naming?.id === p.id}
-						<div class="s-subrow s-times">
-							<input
-								class="s-time s-place-input"
-								type="text"
-								placeholder="Name this place"
-								bind:value={newName}
-								disabled={placeBusy}
-							/>
-							<button class="s-linkish" type="button" onclick={muteUnnamed} disabled={placeBusy || !newName.trim()}>
-								Save
-							</button>
-						</div>
-					{:else}
-						<button
-							class="s-subrow s-result"
-							type="button"
-							onclick={() => {
-								naming = p;
-								newName = "";
-							}}
-							disabled={placeBusy}
-						>
-							<span class="s-place-name">Somewhere you've been {p.ref_count} times</span>
-							<span class="s-subrow-label">
-								{(p.latitude as number).toFixed(3)}, {(p.longitude as number).toFixed(3)} · name it to mute it
-							</span>
-						</button>
-					{/if}
-				{/each}
-				{#each suggestions as sug (sug.place_id)}
-					<button class="s-subrow s-result" type="button" onclick={() => muteSuggestion(sug)} disabled={placeBusy}>
-						<span class="s-place-name">{sug.main_text || sug.description}</span>
-						{#if sug.secondary_text}<span class="s-subrow-label">{sug.secondary_text}</span>{/if}
-					</button>
-				{/each}
-				{#if placeError}
-					<div class="s-subrow s-times"><span class="s-subrow-label">{placeError}</span></div>
-				{/if}
-			{/if}
-		{/if}
+		{/each}
 	</div>
 
 	<div class="group-label">Sync</div>
 	<div class="card">
 		<div class="stream">
-			<div class="s-icon" class:on={sync != null && sync.queued === 0}>
+			<div class="s-icon" class:on={!!sync && sync.queued === 0}>
 				<Icon icon="ri:refresh-line" width={18} />
 			</div>
 			<div class="s-body">
 				<div class="s-title">
-					{#if !sync}—{:else if sync.queued === 0}Synced to your box{:else}{sync.queued} waiting to sync{/if}
+					{#if !sync}—{:else if sync.queued === 0}Synced to your server{:else}{sync.queued} waiting to sync{/if}
 				</div>
 				<div class="s-sub">
 					{#if sync && sync.failing > 0}{sync.failing} retrying{:else}Uploaded over your private link{/if}
@@ -1116,20 +589,6 @@
 				{syncingNow ? "Syncing…" : "Sync now"}
 			</button>
 		</div>
-		{#if radio}
-			<div class="stream">
-				<div class="s-icon" class:on={radio.parked}>
-					<Icon icon="ri:battery-charge-line" width={18} />
-				</div>
-				<div class="s-body">
-					<div class="s-title">{radio.parked ? "Radio resting" : "Link active"}</div>
-					<div class="s-sub">
-						{radio.drains} uploads · {radio.dials} dials · {fmtBytes(radio.bytes)} sent{#if audio?.silentDropped}
-							· {audio.silentDropped} silent chunks kept local{/if}
-					</div>
-				</div>
-			</div>
-		{/if}
 	</div>
 
 	<div class="group-label">
@@ -1143,19 +602,16 @@
 			<div class="empty">Loading…</div>
 		{:else if error}
 			<div class="empty err">{error}</div>
-		{:else if rows.length === 0}
-			<div class="empty">
-				No location events recorded yet. Enable Location above — events (including
-				background captures) will appear here.
-			</div>
+		{:else if runs.length === 0}
+			<div class="empty">No location fixes yet. Turn on Location to see them here.</div>
 		{:else}
-			{#each runs as r, i (i)}
+			{#each shownRuns as r, i (i)}
 				<div class="log">
-					<Icon icon="ri:pulse-line" width={15} />
+					<span class="l-dot" class:bg={r.appState !== "active"}></span>
 					<div class="l-body">
 						<div class="l-top">
 							<span class="l-time">{rel(r.ts)}</span>
-							<span class="l-badge" class:bg={r.appState !== "active"}>{r.appState}</span>
+							<span class="l-state">{r.appState === "active" ? "in use" : "background"}</span>
 							{#if r.count > 1}<span class="l-count">×{r.count}</span>{/if}
 						</div>
 						<div class="l-sub">
@@ -1165,6 +621,20 @@
 					</div>
 				</div>
 			{/each}
+			{#if dotRuns.length > 0}
+				<button class="dots" type="button" onclick={() => (activityExpanded = true)}>
+					<span class="dots-row">
+						{#each dotRuns as r, i (i)}
+							<span class="l-dot" class:bg={r.appState !== "active"} title={rel(r.ts)}></span>
+						{/each}
+					</span>
+					<span class="dots-cap">{dotRuns.length} earlier · back to {rel(dotRuns[dotRuns.length - 1].ts)}</span>
+				</button>
+			{:else if activityExpanded && runs.length > SHOWN_RUNS}
+				<button class="dots" type="button" onclick={() => (activityExpanded = false)}>
+					<span class="dots-cap">Show less</span>
+				</button>
+			{/if}
 		{/if}
 	</div>
 
@@ -1174,14 +644,76 @@
 			<span>App version</span><span class="v">{version || "—"}</span>
 		</div>
 		<div class="about">
-			<span>Recorded points</span><span class="v">{rows.length}</span>
+			<span>Recorded points</span><span class="v">{fixes.length}</span>
 		</div>
+		{#if radio}
+			<div class="about">
+				<span>{radio.parked ? "Radio resting" : "Link active"}</span>
+				<span class="v">{radio.drains} uploads · {fmtBytes(radio.bytes)}</span>
+			</div>
+		{/if}
 		<button class="danger-row" onclick={unpairDevice} disabled={forgetting} type="button">
 			{forgetting ? "Unpairing…" : "Unpair this device"}
 		</button>
 	</div>
-
 </div>
+
+{#if open && openMeta}
+	<MobileStreamPage
+		title={openMeta.title}
+		icon={openMeta.icon}
+		status={streamStatus(open)}
+		on={streamOn(open)}
+		description={openMeta.description}
+		action={streamAction(open)}
+		sync={streamSync(open)}
+		{error}
+		onBack={() => {
+			open = null;
+			audioConsentOpen = false;
+		}}
+	>
+		{#if open === "audio"}
+			{#if audioConsentOpen && !audio?.authorized}
+				<!-- The consent beat this one stream earns. -->
+				<div class="consent">
+					<p>
+						The microphone stays on while your phone is with you. It records the sound of
+						your day — and everyone in the room. Recordings and transcripts go to your
+						server and nowhere else.
+					</p>
+					<p>
+						Recording hours can silence any part of the week, and a place can be marked
+						"never record here". Other people's voices will still be in the record: in
+						some places, recording a conversation needs everyone's consent. That part is
+						yours to honor.
+					</p>
+					<div class="consent-actions">
+						<button
+							class="s-action"
+							onclick={() => {
+								audioConsentOpen = false;
+								void toggleAudio();
+							}}
+							disabled={togglingAudio}
+						>
+							Turn the microphone on
+						</button>
+						<button class="s-action quiet" onclick={() => (audioConsentOpen = false)}>Not now</button>
+					</div>
+				</div>
+			{/if}
+			{#if audio?.authorized}
+				<MobileAudioSettings
+					{audio}
+					fix={lastFix}
+					onStatus={(s) => (audio = s)}
+					onError={(m) => (error = m)}
+				/>
+			{/if}
+		{/if}
+	</MobileStreamPage>
+{/if}
 
 <style>
 	.device {
@@ -1219,8 +751,23 @@
 	.stream:last-child {
 		border-bottom: 0;
 	}
-	.stream.muted {
-		opacity: 0.55;
+	.stream.link {
+		width: 100%;
+		border-left: 0;
+		border-right: 0;
+		border-top: 0;
+		background: transparent;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+	.stream.link:last-child {
+		border-bottom: 0;
+	}
+	.stream :global(.chev) {
+		color: var(--color-foreground-muted);
+		flex: none;
+		margin-right: -4px;
 	}
 	.s-icon {
 		display: flex;
@@ -1228,16 +775,18 @@
 		justify-content: center;
 		width: 30px;
 		height: 30px;
+		flex: none;
 		border-radius: 8px;
 		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
 	.s-icon.on {
-		background: color-mix(in srgb, var(--color-primary, #2b6cff) 16%, transparent);
-		color: var(--color-primary, #2b6cff);
+		background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+		color: var(--color-primary);
 	}
 	.s-body {
 		flex: 1;
+		min-width: 0;
 	}
 	.s-title {
 		font-size: 15px;
@@ -1247,10 +796,13 @@
 		font-size: 12px;
 		color: var(--color-foreground-muted);
 		margin-top: 1px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.s-action {
-		border: 1px solid var(--color-primary, #2b6cff);
-		color: var(--color-primary, #2b6cff);
+		border: 1px solid var(--color-primary);
+		color: var(--color-primary);
 		background: transparent;
 		border-radius: 8px;
 		padding: 7px 14px;
@@ -1261,170 +813,46 @@
 	.s-action:disabled {
 		opacity: 0.5;
 	}
-	/* Secondary toggle row beneath a stream (e.g. audio gap-nudge). */
-	/* The audio consent interstitial: plain sentences, then the choice. */
-	.s-consent {
-		padding: 12px 14px 14px 48px;
-		border-top: 1px solid var(--color-border);
-	}
-
-	.s-consent p {
-		margin: 0 0 10px;
-		font-size: 13px;
-		line-height: 1.5;
-		color: var(--color-foreground-muted);
-	}
-
-	.s-consent-actions {
-		display: flex;
-		gap: 10px;
-		margin-top: 2px;
-	}
-
 	.s-action.quiet {
 		border-color: var(--color-border);
 		color: var(--color-foreground-muted);
 	}
-
-	.s-subrow {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		width: 100%;
-		gap: 12px;
-		padding: 11px 14px 11px 48px;
-		border: none;
-		border-top: 1px solid var(--color-border);
-		background: transparent;
-		cursor: pointer;
-		text-align: left;
-	}
-	.s-subrow-label {
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-	}
-	.s-times {
-		justify-content: flex-start;
-		cursor: default;
-	}
-	.s-time {
-		font: inherit;
-		font-size: 13px;
-		color: var(--color-foreground);
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		padding: 3px 6px;
-	}
-	.s-times-note {
-		margin-left: auto;
-		font-size: 11px;
-	}
-	.s-day {
-		gap: 8px;
-	}
-	.s-day-toggle {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		border: none;
-		background: transparent;
-		padding: 0;
-		cursor: pointer;
-	}
-	.s-day-label {
-		width: 30px;
-	}
-	.switch.small {
-		width: 30px;
-		height: 18px;
-		border-radius: 9px;
-	}
-	.switch.small::after {
-		width: 14px;
-		height: 14px;
-	}
-	.switch.small.on::after {
-		transform: translateX(12px);
-	}
-	.s-places-head {
-		justify-content: space-between;
-	}
-	.s-place {
-		gap: 10px;
-	}
-	.s-place-name {
-		font-size: 13px;
-		color: var(--color-foreground);
-		flex: 1;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.s-place-search {
-		gap: 10px;
-	}
-	.s-place-input {
-		flex: 1;
-		min-width: 0;
-	}
-	.s-linkish {
-		border: none;
-		background: transparent;
-		padding: 0;
-		font: inherit;
-		font-size: 13px;
-		color: var(--color-primary, #2b6cff);
-		cursor: pointer;
-		white-space: nowrap;
-	}
-	.s-linkish:disabled {
-		opacity: 0.5;
-	}
-	.s-result {
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 2px;
-	}
-	.switch {
-		flex: none;
-		width: 38px;
-		height: 22px;
-		border-radius: 11px;
-		background: var(--color-foreground-muted);
-		opacity: 0.4;
-		position: relative;
-		transition: background 0.15s, opacity 0.15s;
-	}
-	.switch::after {
-		content: "";
-		position: absolute;
-		top: 2px;
-		left: 2px;
-		width: 18px;
-		height: 18px;
-		border-radius: 50%;
-		background: #fff;
-		transition: transform 0.15s;
-	}
-	.switch.on {
-		background: var(--color-success);
-		opacity: 1;
-	}
-	.switch.on::after {
-		transform: translateX(16px);
-	}
 	.dot {
 		width: 8px;
 		height: 8px;
+		flex: none;
 		border-radius: 50%;
 		background: var(--color-foreground-muted);
 	}
 	.dot.on {
 		background: var(--color-success);
 	}
+	/* On, but deliberately keeping nothing right now (a muted place or hour). */
+	.dot.on.hollow {
+		background: transparent;
+		box-shadow: inset 0 0 0 2px var(--color-success);
+	}
 
+	/* The consent interstitial on the Audio page: plain sentences, then the choice. */
+	.consent {
+		margin-top: 16px;
+		padding: 14px;
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+	}
+	.consent p {
+		margin: 0 0 10px;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+	.consent-actions {
+		display: flex;
+		gap: 10px;
+		margin-top: 2px;
+	}
+
+	/* Recent activity: three runs in words, the rest as dots. */
 	.log {
 		display: flex;
 		align-items: flex-start;
@@ -1436,8 +864,20 @@
 	.log:last-child {
 		border-bottom: 0;
 	}
+	.l-dot {
+		width: 8px;
+		height: 8px;
+		flex: none;
+		border-radius: 50%;
+		margin-top: 6px;
+		background: color-mix(in srgb, var(--color-foreground) 22%, transparent);
+	}
+	.l-dot.bg {
+		background: var(--color-success);
+	}
 	.l-body {
 		flex: 1;
+		min-width: 0;
 	}
 	.l-top {
 		display: flex;
@@ -1449,17 +889,9 @@
 		color: var(--color-foreground);
 		font-weight: 500;
 	}
-	.l-badge {
-		font-size: 10px;
-		letter-spacing: 0.03em;
-		padding: 1px 6px;
-		border-radius: 5px;
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+	.l-state {
+		font-size: 11px;
 		color: var(--color-foreground-muted);
-	}
-	.l-badge.bg {
-		background: color-mix(in srgb, var(--color-success) 20%, transparent);
-		color: color-mix(in srgb, var(--color-success) 75%, #000);
 	}
 	.l-count {
 		font-size: 11px;
@@ -1472,28 +904,51 @@
 		font-variant-numeric: tabular-nums;
 		margin-top: 1px;
 	}
+	.dots {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		width: 100%;
+		padding: 10px 14px 12px;
+		border: 0;
+		border-top: 1px solid var(--color-border);
+		background: transparent;
+		cursor: pointer;
+		text-align: left;
+	}
+	.dots-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 5px;
+	}
+	.dots-row .l-dot {
+		margin-top: 0;
+	}
+	.dots-cap {
+		font-size: 11px;
+		color: var(--color-foreground-muted);
+	}
 
 	.about {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		gap: 12px;
 		padding: 12px 14px;
 		border-bottom: 1px solid var(--color-border);
 		font-size: 14px;
 	}
-	.about:last-child {
-		border-bottom: 0;
-	}
 	.about .v {
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
+		text-align: right;
 	}
 	.danger-row {
 		display: block;
 		width: 100%;
 		padding: 12px 14px;
 		border: none;
-		border-top: 1px solid var(--color-border);
 		background: transparent;
 		color: var(--color-error);
 		font-size: 14px;
@@ -1504,15 +959,12 @@
 	.danger-row:disabled {
 		opacity: 0.5;
 	}
-
 	.empty {
-		padding: 18px 14px;
+		padding: 14px;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
-		line-height: 1.4;
 	}
 	.empty.err {
-		color: var(--color-error);
-		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground);
 	}
 </style>
