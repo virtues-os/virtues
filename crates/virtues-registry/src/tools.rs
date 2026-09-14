@@ -272,9 +272,9 @@ fn skip_step_tool() -> ToolConfig {
 fn record_introductions_tool() -> ToolConfig {
     ToolConfig {
         id: "record_introductions".to_string(),
-        name: "Play introductions back".to_string(),
-        description: "Show the introductions the person gave on a card for them to confirm".to_string(),
-        llm_description: "Play back what the person said about themselves as a card with a confirm button under your turn: their full name, what to call them, what they will call you, the city they live in with the IANA time zone you resolve from it, and their birth date (YYYY-MM-DD). Include only what they gave; leave the rest out rather than guessing. If they left out the birth date, or gave a year without a day, ask for it once before playing anything back — the record is laid out against it. The button writes when they confirm; this tool writes nothing.".to_string(),
+        name: "Write the introductions down".to_string(),
+        description: "Record what the person said about themselves and show it back".to_string(),
+        llm_description: "Write down what the person said about themselves: their full name, what to call them, what they will call you, the city they live in with the IANA time zone you resolve from it, and their birth date (YYYY-MM-DD). Include only what they gave; leave the rest out rather than guessing, and each field you omit is left as it was. Call this the moment you have anything — it writes immediately and shows what it wrote under your turn, so do not ask them to confirm and do not list the fields back in your own words. If they left out the birth date, or gave a year without a day, ask for it once. If they correct something afterwards, call this again with only what changed.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {

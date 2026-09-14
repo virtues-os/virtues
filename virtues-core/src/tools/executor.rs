@@ -882,8 +882,12 @@ impl ToolExecutor {
         })))
     }
 
-    /// Play introductions back. Validates the shapes it can (a date, a time
-    /// zone name) and returns the fields as a card marker; writes nothing.
+    /// Write the introductions down. Validates the shapes it can (a date, a
+    /// time zone name), writes the profile, and returns what it wrote as a
+    /// receipt for the card. There is no confirm button: in a room whose
+    /// whole premise is one composer, a button asking "is this right?" makes
+    /// the person stop and wonder whether to type or to click. A correction
+    /// is a reply, and this tool called a second time.
     async fn execute_record_introductions(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
         let field = |k: &str| {
             arguments
@@ -907,23 +911,58 @@ impl ToolExecutor {
                 )));
             }
         }
+        let full_name = field("full_name");
+        let preferred_name = field("preferred_name");
+        let assistant_name = field("assistant_name");
+        let home_place = field("home_place");
         let fields = serde_json::json!({
-            "full_name": field("full_name"),
-            "preferred_name": field("preferred_name"),
-            "assistant_name": field("assistant_name"),
-            "home_place": field("home_place"),
+            "full_name": full_name,
+            "preferred_name": preferred_name,
+            "assistant_name": assistant_name,
+            "home_place": home_place,
             "home_timezone": home_timezone,
             "birth_date": birth_date,
         });
         if fields.as_object().is_some_and(|o| o.values().all(|v| v.is_null())) {
             return Err(ToolError::InvalidParameters(
-                "nothing to play back; ask for at least one of the five".into(),
+                "nothing to record; ask for at least one of the five".into(),
             ));
         }
+
+        // COALESCE per column, so calling this again to fix one thing cannot
+        // blank the four the person did not repeat.
+        sqlx::query(
+            "UPDATE app_user_profile SET \
+               full_name = COALESCE($1, full_name), \
+               preferred_name = COALESCE($2, preferred_name), \
+               birth_date = COALESCE($3::date, birth_date), \
+               home_timezone = COALESCE($4, home_timezone), \
+               updated_at = now() \
+             WHERE id = '00000000-0000-0000-0000-000000000001'",
+        )
+        .bind(&full_name)
+        .bind(&preferred_name)
+        .bind(&birth_date)
+        .bind(&home_timezone)
+        .execute(self._pool.as_ref())
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("record introductions: {e}")))?;
+
+        if let Some(name) = &assistant_name {
+            sqlx::query(
+                "UPDATE app_assistant_profile SET assistant_name = $1, updated_at = now() \
+                 WHERE id = '00000000-0000-0000-0000-000000000001'",
+            )
+            .bind(name)
+            .execute(self._pool.as_ref())
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("record assistant name: {e}")))?;
+        }
+
         Ok(ToolResult::success(serde_json::json!({
             "card": "introductions",
             "fields": fields,
-            "message": "The line and its confirm button are under your turn; they confirm or reply to correct, and the button writes."
+            "message": "Written down and shown under your turn. Say nothing further about it; if they correct anything, call this again with only what changed."
         })))
     }
 

@@ -39,7 +39,7 @@
 	} from "$lib/components/chat/getting-started/getting-started";
 	import RoomControls from "$lib/components/chat/getting-started/RoomControls.svelte";
 	import GettingStartedDoor from "$lib/components/chat/getting-started/GettingStartedDoor.svelte";
-	import IntroductionsConfirmCard from "$lib/components/chat/getting-started/IntroductionsConfirmCard.svelte";
+	import IntroductionsRecorded from "$lib/components/chat/getting-started/IntroductionsRecorded.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
@@ -1183,6 +1183,14 @@
 	});
 
 	// Deduplicated messages for rendering
+	/** What `record_introductions` wrote in this turn, if it was called. */
+	function introductionsRecorded(message: { parts?: any[] }): any | null {
+		const part = message.parts?.find(
+			(p) => p?.type === "tool-record_introductions" && p?.state === "output-available",
+		);
+		return part?.output?.fields ?? null;
+	}
+
 	const uniqueMessages = $derived(chat?.messages ? deduplicateMessages(chat.messages) : []);
 
 	// Get the last assistant message
@@ -2017,9 +2025,10 @@
 											{:else if part.type === "tool-show_step"}
 												<!-- Nothing inline: a step's controls stand in one
 												     place under the thread, where they always are. -->
-											{:else if part.type === "tool-record_introductions" && (part as any).state === "output-available" && (part as any).output?.fields}
-												<!-- The four facts as heard, for confirmation; the card writes. -->
-												<IntroductionsConfirmCard fields={(part as any).output.fields} />
+											{:else if part.type === "tool-record_introductions"}
+												<!-- Nothing here: the receipt goes under the whole
+												     turn, not wherever in it the model reached for
+												     the tool. See after this loop. -->
 											{:else if part.type === "tool-write_it_up" && isGettingStartedChat(currentChatConversationId) && (part as any).state === "output-available" && (part as any).output?.document_page_id}
 												<!-- In the getting-started room the interview closes inline
 												     and the thread goes on: the two doors, here. -->
@@ -2139,6 +2148,13 @@
 													</div>
 												{/if}
 											{/each}
+											{#if introductionsRecorded(message)}
+												<!-- Under the words, always: the model may call the
+												     tool before it writes its sentence, and a receipt
+												     printed above the sentence it belongs to is what
+												     made this read backwards. -->
+												<IntroductionsRecorded fields={introductionsRecorded(message)} />
+											{/if}
 											{#if messageMetadata.get(message.id)?.stopped}
 												<StoppedNotice />
 											{:else if messageMetadata.get(message.id)?.cutShort}
