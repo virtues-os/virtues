@@ -15,6 +15,7 @@
  */
 
 import { type ViewEntity } from '$lib/api/client';
+import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 import {
 	type Tab,
 	type TabType,
@@ -586,6 +587,23 @@ class WindowShellStore {
 	 * - focusExisting    → focus an already-open matching tab, else create (IDE model;
 	 *                       used by deep-link / popstate restore)
 	 */
+	/**
+	 * While the box has no AI the app is ONE ROOM: every route but that room
+	 * (and Billing, where an endpoint of your own is set) resolves to it.
+	 *
+	 * The route guard in `(app)/+layout.ts` only fires on a page load, so
+	 * anything moving inside the shell walked straight past it — ⌘N opened a
+	 * new chat, and the sidebar and cards could too (2026-09-14). Every way a
+	 * tab is opened passes through here.
+	 */
+	private roomIfLocked(route: string): string {
+		if (!gettingStarted.locked) return route;
+		if (route.startsWith('/chat/chat_getting_started') || route.startsWith('/virtues/billing')) {
+			return route;
+		}
+		return '/chat/chat_getting_started';
+	}
+
 	openTabFromRoute(route: string, options?: {
 		label?: string;
 		forceNew?: boolean;
@@ -593,6 +611,15 @@ class WindowShellStore {
 		preferEmptyPane?: boolean;
 		paneId?: 'left' | 'right';
 	}): string {
+		// One room means ONE tab of it: a new-tab gesture (⌘N, a card, the
+		// sidebar) focuses the room rather than making a second copy. The
+		// `focusExisting` guard keeps this from re-entering itself.
+		if (gettingStarted.locked && !options?.focusExisting) {
+			return this.openTabFromRoute(this.roomIfLocked(route), {
+				label: options?.label,
+				focusExisting: true,
+			});
+		}
 		if (options?.forceNew) {
 			return this.createTabFromRoute(route, options);
 		}
@@ -640,6 +667,7 @@ class WindowShellStore {
 		paneId?: 'left' | 'right';
 		preferEmptyPane?: boolean;
 	}): string {
+		route = this.roomIfLocked(route);
 		const { effectiveRoute, fields } = this.identityFromRoute(route, options?.label);
 
 		let targetPaneId = this.singleWindow ? 'left' : (options?.paneId ?? this.activePaneId);
@@ -1194,6 +1222,11 @@ class WindowShellStore {
 	 * the pane you were working in visible instead of burying it behind a tab.
 	 */
 	openRouteBeside(route: string, label?: string): string {
+		// Nothing opens beside anything while the app is one room: a second
+		// pane would just hold a second copy of it.
+		if (gettingStarted.locked) {
+			return this.openTabFromRoute(this.roomIfLocked(route), { label, focusExisting: true });
+		}
 		// Nothing is beside anything on a phone — "open" is just open.
 		if (this.singleWindow) return this.openTabFromRoute(route, { label });
 
