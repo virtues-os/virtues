@@ -63,7 +63,7 @@ function heading(stepIndex: number | null): string {
 			: `Step ${stepIndex + 1} of 4 · a few minutes here, then a longer conversation when you are ready`;
 	return (
 		"# Getting started\n\n" +
-		"Your server will keep the record of your life. It cannot begin on its own: it has no mind yet, does not know your name, has nothing to read, and has never heard your story. " +
+		"Your server will keep the record of your life. It cannot begin on its own: it has no AI yet, does not know your name, has nothing to read, and has never heard your story. " +
 		"Four things, one at a time. Nothing here expires.\n\n" +
 		where
 	);
@@ -80,14 +80,14 @@ function settledLine(s: GettingStartedStep): string {
 			case "interview":
 				return "Your story, skipped for now. The interview waits under Chats.";
 			default:
-				return "A mind, skipped. Your server can show its record but cannot answer until AI is connected in Settings.";
+				return "AI, skipped. Your server can show its record but cannot answer until AI is connected in Settings.";
 		}
 	}
 	switch (s.id) {
 		case "connect_ai":
 			return s.via === "byo"
-				? "Your server has a mind: an endpoint of your own."
-				: "Your server has a mind: the Virtues subscription.";
+				? "AI connected: an endpoint of your own."
+				: "AI connected: the Virtues subscription.";
 		case "introductions":
 			return "Introductions made.";
 		case "connect_world":
@@ -104,7 +104,7 @@ function askLine(s: GettingStartedStep, first: boolean): string {
 	const lead = first ? "First" : "Next";
 	switch (s.id) {
 		case "connect_ai":
-			return "Nothing can begin until your server has a mind. The Virtues subscription brings the best of Claude, Gemini, GPT and Grok, every one under zero data retention: metered per request, never kept, never trained on. Or sign in to an account you already have, or point your server at an endpoint of your own. Until then this room cannot answer, and nothing typed here leaves it.";
+			return "Nothing begins until AI is connected. The Virtues subscription brings the best of Claude, Gemini, GPT and Grok, every one under zero data retention: metered per request, never kept, never trained on. Or sign in to an account you already have, or point your server at an endpoint of your own. Until then this room cannot answer, and nothing typed here leaves it.";
 		case "introductions":
 			return `${lead}, introductions. Your name as you like to hear it, the name you will call your server by, where home is, and the day you were born. Say it below in your own words, all at once is fine; the date sets the ruler your life is drawn against. Your story comes later, in its own conversation.`;
 		case "connect_world":
