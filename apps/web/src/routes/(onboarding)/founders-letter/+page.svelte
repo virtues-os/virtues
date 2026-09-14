@@ -95,10 +95,23 @@
 				// never let a failed write hold someone out of their own app.
 			}
 		}
-		// Home, by name: getting started is Home's page until the record is
-		// set up. "/" is the chat tab in the window shell's registry, so the
-		// letter used to hand people to an empty chat.
-		void goto("/home");
+		// After the letter, getting started: the room, not Home, while any of
+		// its four steps is open. The route guard already lands a box with no
+		// model there; this covers the box that has one (BYO, or a dev checkout
+		// with the setup skip) and would otherwise skip straight to Home with
+		// the room only reachable from the sidebar card. A failed read falls
+		// back to Home: never let a blip hold someone in the letter.
+		let next = "/home";
+		try {
+			const res = await fetch("/api/getting-started");
+			if (res.ok) {
+				const gs = (await res.json()) as { graduated?: boolean };
+				if (gs.graduated === false) next = "/chat/chat_getting_started";
+			}
+		} catch {
+			/* Home */
+		}
+		void goto(next);
 	}
 </script>
 
