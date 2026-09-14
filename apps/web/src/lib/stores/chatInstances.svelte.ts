@@ -385,6 +385,11 @@ class ChatInstanceStore {
             entry.cleanupTimeout = setTimeout(() => {
                 // Double check refCount didn't go back up
                 if (entry.refCount <= 0) {
+                    // Let go of the wire. The box keeps the turn running on
+                    // its own (VIR-323); a view that comes back rejoins it
+                    // through `resumeStream`, so an orphan reader here would
+                    // only hold a socket nobody reads.
+                    void entry.chat.stop();
                     this.instances.delete(conversationId);
                     this.subagents.delete(conversationId);
                 }

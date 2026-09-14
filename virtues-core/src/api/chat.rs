@@ -13,7 +13,7 @@
 //! Streams responses through virtues-api for budget enforcement and usage tracking.
 
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response, Sse},
     Json,
@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::convert::Infallible;
 use std::pin::Pin;
+
+use crate::api::live_turn::{self, LiveTurns};
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 
@@ -1118,6 +1120,7 @@ pub async fn chat_handler(
     State(pool): State<PgPool>,
     State(yjs_state): State<YjsState>,
     State(cancel_state): State<ChatCancellationState>,
+    State(live_turns): State<LiveTurns>,
     _user: AuthUser,
     Json(mut request): Json<ChatRequest>,
 ) -> Response {
@@ -1517,34 +1520,75 @@ pub async fn chat_handler(
         Some(&system_prompt),
     );
 
-    let stream = {
-        create_agent_stream(
-            pool,
-            yjs_state,
-            cancel_state,
-            request,
-            model,
-            api_messages,
-            msg_id,
-            compaction_needed,
-        )
-    };
+    // The turn is driven by its own task and outlives this request: a tab
+    // switched or a phone locked used to drop the response, the loop with
+    // it, and the assistant row was never written (VIR-323). This response
+    // is one watcher on the turn; `GET /api/chat/{id}/stream` is another.
+    let turn = live_turns.start(&chat_id_str);
+    let agent_stream = create_agent_stream(
+        pool,
+        yjs_state,
+        cancel_state.clone(),
+        request,
+        model,
+        api_messages,
+        msg_id,
+        compaction_needed,
+    );
+    {
+        let turn = turn.clone();
+        let live_turns = live_turns.clone();
+        let chat_id = chat_id_str.clone();
+        tokio::spawn(async move {
+            let mut agent_stream = agent_stream;
+            while let Some(data) = agent_stream.next().await {
+                turn.push(data);
+                // Nobody watching for the cap: stop spending on a reply no
+                // one will read. The loop sees the token at its next step
+                // and the row is saved as a stop, like the button.
+                if turn.unattended_past(live_turn::UNATTENDED_CAP) {
+                    tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
+                    cancel_state.cancel(&chat_id);
+                }
+            }
+            // After the stream's own tail (row written, usage recorded), so
+            // a watcher that sees the end can reload and find the row.
+            live_turns.finish(&chat_id, &turn);
+        });
+    }
 
-    // AI SDK v6 requires this header for UI Message Stream Protocol
+    ui_stream_response(live_turn::watch(turn))
+}
+
+/// GET /api/chat/{id}/stream — the turn still running for this chat, from
+/// its first event: everything said so far, then the rest as it happens.
+/// `204 No Content` when nothing is running, which is what the AI SDK's
+/// `resumeStream` expects for "nothing to resume".
+pub async fn live_turn_stream_handler(
+    State(live_turns): State<LiveTurns>,
+    _user: AuthUser,
+    Path(chat_id): Path<String>,
+) -> Response {
+    match live_turns.get(&chat_id) {
+        Some(turn) => ui_stream_response(live_turn::watch(turn)),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
+/// An SSE response in the AI SDK's UI Message Stream protocol (the header
+/// is what the SDK keys on).
+fn ui_stream_response<S>(stream: S) -> Response
+where
+    S: Stream<Item = Result<SseEvent, Infallible>> + Send + 'static,
+{
     let mut response = Sse::new(stream)
         .keep_alive(axum::response::sse::KeepAlive::new())
         .into_response();
-
     response.headers_mut().insert(
         axum::http::header::HeaderName::from_static("x-vercel-ai-ui-message-stream"),
         axum::http::HeaderValue::from_static("v1"),
     );
-
-    // We can't easily send the signature in headers for a streaming response
-    // because it's discovered DURING the stream.
-    // However, the frontend can extract it from the stream itself if we emit a special event.
-
-    response.into_response()
+    response
 }
 
 /// Create the SSE stream using the AgentLoop for tool execution
@@ -1560,7 +1604,7 @@ fn create_agent_stream(
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
     compaction_needed: bool,
-) -> Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> {
+) -> Pin<Box<dyn Stream<Item = String> + Send>> {
     let chat_id = request.chat_id.clone();
     // Copied out for the stream block below, which reads `request` for a
     // few fields and must not persist a ghost turn either.
@@ -1585,7 +1629,7 @@ fn create_agent_stream(
                 Ok(_) => {
                     // Fetch the checkpoint message that was just created
                     if let Some(checkpoint_event) = get_latest_checkpoint(&pool, &chat_id).await {
-                        yield Ok(SseEvent::default().data(serialize_event(&checkpoint_event)));
+                        yield (serialize_event(&checkpoint_event));
                     }
                 }
                 Err(e) => {
@@ -1650,8 +1694,8 @@ fn create_agent_stream(
         // open parts at every finish-step, so a part that spans steps is a
         // delta with no home. (The turn used to stream as one text part
         // for its whole length, which is why it could never emit steps.)
-        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::Start { message_id: msg_id.clone() })));
-        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::StartStep)));
+        yield (serialize_event(&StreamEvent::Start { message_id: msg_id.clone() }));
+        yield (serialize_event(&StreamEvent::StartStep));
 
         // Track accumulated content
         let mut full_content = String::new();
@@ -1706,7 +1750,7 @@ fn create_agent_stream(
                     status: update.status.as_str().to_string(),
                     tokens: update.tokens,
                 };
-                yield Ok(SseEvent::default().data(serialize_event(&ev)));
+                yield (serialize_event(&ev));
             }
             maybe_event = agent_stream.next() => {
               let event = match maybe_event {
@@ -1719,11 +1763,11 @@ fn create_agent_stream(
                     if in_reasoning {
                         in_reasoning = false;
                         let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
-                        yield Ok(SseEvent::default().data(serialize_event(&event)));
+                        yield (serialize_event(&event));
                     }
                     if !text_open {
                         text_open = true;
-                        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::TextStart { id: msg_id.clone() })));
+                        yield (serialize_event(&StreamEvent::TextStart { id: msg_id.clone() }));
                     }
                     // Text resuming after a tool call: break the paragraph in
                     // the stored string so it doesn't butt against the previous
@@ -1737,21 +1781,21 @@ fn create_agent_stream(
                         id: msg_id.clone(),
                         delta: content,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 AgentEvent::ReasoningDelta { content } => {
                     if !in_reasoning {
                         in_reasoning = true;
                         let event = StreamEvent::ReasoningStart { id: msg_id.clone() };
-                        yield Ok(SseEvent::default().data(serialize_event(&event)));
+                        yield (serialize_event(&event));
                     }
                     reasoning_content.push_str(&content);
                     let event = StreamEvent::ReasoningDelta {
                         id: msg_id.clone(),
                         delta: content,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 AgentEvent::ToolCallStart { id, name, args } => {
@@ -1771,7 +1815,7 @@ fn create_agent_stream(
                         tool_call_id: id,
                         tool_name: name,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 AgentEvent::ToolCallArgsPartial { id, args_delta } => {
@@ -1780,7 +1824,7 @@ fn create_agent_stream(
                         tool_call_id: id,
                         input_text_delta: args_delta,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 AgentEvent::ToolCallArgsComplete { id, args } => {
@@ -1795,7 +1839,7 @@ fn create_agent_stream(
                         tool_name,
                         input: args,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 AgentEvent::ToolCallResult { id, result, success: false, error } => {
@@ -1810,7 +1854,7 @@ fn create_agent_stream(
                         tc.result = Some(serde_json::json!({ "error": error_text }));
                     }
                     let event = StreamEvent::ToolOutputError { tool_call_id: id, error_text };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 AgentEvent::ToolCallResult { id, result, success: true, error: _ } => {
@@ -1839,10 +1883,10 @@ fn create_agent_stream(
                         tool_call_id: id,
                         output: result,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                     if let Some(page_id) = narrative_page {
                         let event = StreamEvent::NarrativeDocumentReady { page_id };
-                        yield Ok(SseEvent::default().data(serialize_event(&event)));
+                        yield (serialize_event(&event));
                     }
                 }
 
@@ -1864,7 +1908,7 @@ fn create_agent_stream(
                 AgentEvent::Error { message, code: _, recoverable: _ } => {
                     interrupted = true;
                     let event = StreamEvent::Error { error_text: message };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 // A step ended. Close it on the wire; when the model asked for
@@ -1873,15 +1917,15 @@ fn create_agent_stream(
                     last_step_reason = Some(reason);
                     if in_reasoning {
                         in_reasoning = false;
-                        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::ReasoningEnd { id: msg_id.clone() })));
+                        yield (serialize_event(&StreamEvent::ReasoningEnd { id: msg_id.clone() }));
                     }
                     if text_open {
                         text_open = false;
-                        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::TextEnd { id: msg_id.clone() })));
+                        yield (serialize_event(&StreamEvent::TextEnd { id: msg_id.clone() }));
                     }
-                    yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::FinishStep)));
+                    yield (serialize_event(&StreamEvent::FinishStep));
                     if reason == StepReason::ToolCalls {
-                        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::StartStep)));
+                        yield (serialize_event(&StreamEvent::StartStep));
                     }
                 }
 
@@ -1907,18 +1951,18 @@ fn create_agent_stream(
                 status: update.status.as_str().to_string(),
                 tokens: update.tokens,
             };
-            yield Ok(SseEvent::default().data(serialize_event(&ev)));
+            yield (serialize_event(&ev));
         }
 
         // End reasoning if we were in it
         if in_reasoning {
             let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
-            yield Ok(SseEvent::default().data(serialize_event(&event)));
+            yield (serialize_event(&event));
         }
 
         // Close a text part a step left open (an error or a stop mid-step).
         if text_open {
-            yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::TextEnd { id: msg_id.clone() })));
+            yield (serialize_event(&StreamEvent::TextEnd { id: msg_id.clone() }));
         }
 
         // How it ended, in the SDK's words. A person's stop is an abort, not
@@ -1927,7 +1971,7 @@ fn create_agent_stream(
         let was_cancelled = cancel_token.is_cancelled();
         let cut_short = last_step_reason == Some(StepReason::MaxTokens);
         if was_cancelled || loop_finish == Some(FinishReason::Cancelled) {
-            yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::Abort { reason: Some("stopped".to_string()) })));
+            yield (serialize_event(&StreamEvent::Abort { reason: Some("stopped".to_string()) }));
         } else {
             let finish_reason = match (loop_finish, last_step_reason) {
                 (Some(FinishReason::Error), _) => "error",
@@ -1938,11 +1982,11 @@ fn create_agent_stream(
                 _ if interrupted => "error",
                 _ => "stop",
             };
-            yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::Finish { finish_reason: finish_reason.to_string() })));
+            yield (serialize_event(&StreamEvent::Finish { finish_reason: finish_reason.to_string() }));
         }
 
         // Send [DONE] marker
-        yield Ok(SseEvent::default().data("[DONE]"));
+        yield ("[DONE]".to_string());
 
         // Save assistant message to chat
         if !full_content.is_empty() {

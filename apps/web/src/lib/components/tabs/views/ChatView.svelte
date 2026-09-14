@@ -781,6 +781,21 @@
 	}
 	const handleCompacted = reloadMessages;
 
+	// A chat that opens with your message last and no reply may be a turn the
+	// box is still running (VIR-323): a turn outlives its request now, so ask
+	// for its live stream. The SDK replays what was said and follows the rest;
+	// a 204 means nothing is running and the load stands as it is. Never for a
+	// ghost: its transcript lives in this tab and nowhere the box could resume.
+	function resumeIfDangling() {
+		if (isGhost) return;
+		const last = chat.messages[chat.messages.length - 1];
+		if (!last || last.role !== "user") return;
+		if (chat.status !== "ready") return;
+		void chat.resumeStream().catch((e: unknown) => {
+			console.warn("[ChatView] could not rejoin the running turn:", e);
+		});
+	}
+
 	// Helper function to convert database messages to Chat parts
 	function convertMessageToParts(msg: any) {
 		// Carry agent/provider + the partial-reply flags so the notice under a
@@ -1034,6 +1049,7 @@
 							chat.messages = deduplicateMessages(
 								loadedMessages,
 							).map(toUiMessage) as unknown as typeof chat.messages;
+							resumeIfDangling();
 							applyInterviewOpening(chat, currentTabConversationId);
 							applyRoomInterviewOpening(chat, currentTabConversationId, gettingStarted.state);
 							// The picker is deliberately left alone on a tab
@@ -1138,6 +1154,7 @@
 					chat.messages = deduplicateMessages(loadedMessages).map(
 						toUiMessage,
 					) as unknown as typeof chat.messages;
+					resumeIfDangling();
 				} catch (error) {
 					console.error("[ChatView] Error loading conversation:", error);
 				}

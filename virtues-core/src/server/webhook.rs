@@ -42,6 +42,8 @@ pub struct AppState {
     pub tool_executor: Option<Arc<crate::tools::ToolExecutor>>,
     pub yjs_state: super::yjs::YjsState,
     pub chat_cancel_state: ChatCancellationState,
+    /// Turns running right now, by chat id (VIR-323).
+    pub live_turns: crate::api::live_turn::LiveTurns,
 }
 
 impl axum::extract::FromRef<AppState> for sqlx::PgPool {
@@ -59,6 +61,12 @@ impl axum::extract::FromRef<AppState> for super::yjs::YjsState {
 impl axum::extract::FromRef<AppState> for ChatCancellationState {
     fn from_ref(state: &AppState) -> Self {
         state.chat_cancel_state.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for crate::api::live_turn::LiveTurns {
+    fn from_ref(state: &AppState) -> Self {
+        state.live_turns.clone()
     }
 }
 
