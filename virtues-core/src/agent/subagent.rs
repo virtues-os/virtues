@@ -257,7 +257,7 @@ async fn run_one_worker(
     });
 
     // Pass the turn's cancel token so a stopped/disconnected chat actually halts the worker.
-    let mut stream = agent_loop.run(model.clone(), messages, tools, context, None, cancel);
+    let mut stream = agent_loop.run(model.clone(), messages, tools, context, cancel);
 
     let mut findings = String::new();
     let mut input_tokens: u32 = 0;

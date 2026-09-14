@@ -63,8 +63,12 @@ pub struct ChatMessage {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    #[serde(rename = "thoughtSignature", skip_serializing_if = "Option::is_none")]
-    pub thought_signature: Option<String>,
+    /// The gateway's normalized reasoning blocks for this assistant turn
+    /// (text plus provider signatures), as an array. Stored so the turn can
+    /// be resent with its thinking intact; today only the loop within a turn
+    /// echoes them, because history rebuilds assistant rows as text only.
+    #[serde(rename = "reasoningDetails", skip_serializing_if = "Option::is_none")]
+    pub reasoning_details: Option<serde_json::Value>,
     pub parts: Option<Vec<UIPart>>,
 }
 
@@ -180,8 +184,8 @@ pub struct MessageResponse {
     pub reasoning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    #[serde(rename = "thoughtSignature", skip_serializing_if = "Option::is_none")]
-    pub thought_signature: Option<String>,
+    #[serde(rename = "reasoningDetails", skip_serializing_if = "Option::is_none")]
+    pub reasoning_details: Option<serde_json::Value>,
     pub parts: Option<Vec<UIPart>>,
 }
 
@@ -352,7 +356,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
             r#"
             SELECT
                 id, role, content, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, thought_signature, created_at, parts
+                reasoning, tool_calls, intent, subject, reasoning_details, created_at, parts
             FROM app_chat_messages
             WHERE chat_id = $1
               AND (subject IS NULL OR subject != 'onboarding_synthetic')
@@ -377,7 +381,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
                 let reasoning: Option<String> = row.get("reasoning");
                 let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
                 let subject: Option<String> = row.get("subject");
-                let thought_signature: Option<String> = row.get("thought_signature");
+                let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
                 let timestamp: Timestamp = row.get("created_at");
                 let parts_raw: Option<serde_json::Value> = row.get("parts");
 
@@ -395,7 +399,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
                     tool_calls,
                     reasoning,
                     subject,
-                    thought_signature,
+                    reasoning_details,
                     parts,
                 }
             })
@@ -483,7 +487,7 @@ pub async fn create_chat(
             r#"
             INSERT INTO app_chat_messages (
                 id, chat_id, role, content, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, thought_signature, sequence_num, created_at, parts
+                reasoning, tool_calls, intent, subject, reasoning_details, sequence_num, created_at, parts
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             "#,
@@ -499,7 +503,7 @@ pub async fn create_chat(
         .bind(&tool_calls_json)
         .bind(&intent_json)
         .bind(&msg.subject)
-        .bind(&msg.thought_signature)
+        .bind(&msg.reasoning_details)
         .bind(sequence_num)
         .bind(&msg.timestamp)
         .bind(&parts_json)
@@ -642,7 +646,7 @@ pub async fn append_message(
         r#"
         INSERT INTO app_chat_messages (
             id, chat_id, role, content, model, provider, agent_id,
-            reasoning, tool_calls, intent, subject, thought_signature, sequence_num, created_at, parts
+            reasoning, tool_calls, intent, subject, reasoning_details, sequence_num, created_at, parts
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (id) DO NOTHING
@@ -659,7 +663,7 @@ pub async fn append_message(
     .bind(&tool_calls_json)
     .bind(&intent_json)
     .bind(&message.subject)
-    .bind(&message.thought_signature)
+    .bind(&message.reasoning_details)
     .bind(sequence_num)
     .bind(&message.timestamp)
     .bind(&parts_json)
@@ -723,7 +727,7 @@ pub async fn update_messages(
             r#"
             INSERT INTO app_chat_messages (
                 id, chat_id, role, content, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, thought_signature, sequence_num, created_at
+                reasoning, tool_calls, intent, subject, reasoning_details, sequence_num, created_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
@@ -739,7 +743,7 @@ pub async fn update_messages(
         .bind(&tool_calls_json)
         .bind(&intent_json)
         .bind(&msg.subject)
-        .bind(&msg.thought_signature)
+        .bind(&msg.reasoning_details)
         .bind(sequence_num)
         .bind(&msg.timestamp)
         .execute(pool)
@@ -839,9 +843,6 @@ pub async fn generate_title(
             .unwrap_or_else(|| "In your own words".to_string());
         return Ok(GenerateTitleResponse { chat_id, title });
     }
-    // Get background model from assistant profile
-    let background_model = crate::api::assistant_profile::get_background_model(pool).await?;
-
     // Build conversation summary (first few messages)
     let messages_to_include: Vec<&TitleMessage> =
         messages.iter().take(6.min(messages.len())).collect();
@@ -871,40 +872,31 @@ Conversation:
         conversation_summary
     );
 
-    // Call virtues-api with the device bearer (auto-renews on 402 expiry).
-    let client = crate::virtues_api::client::BearerClient::from_env(pool.clone());
-    let response = client
-        .post_json(
-            "/v1/ai/chat/completions",
-            &serde_json::json!({
-                "model": background_model,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ]
-                // No output ceiling. The prompt asks for a short title; the
-                // 50-token cap that sat here was spent thinking on a model
-                // that thinks and returned no title at all.
-            }),
-        )
-        .await
-        .map_err(|e| crate::Error::Network(format!("virtues-api request failed: {e}")))?;
-
-    if !response.is_success() {
-        // Provide user-friendly message for budget errors
-        let error_msg = match response.status {
-            402 => crate::virtues_api::client::payment_required_message(&response.body, "title generation"),
-            429 => "Rate limited. Please try again later.".to_string(),
-            _ => format!("virtues-api error: {}", response.body),
-        };
-        return Err(crate::Error::ExternalApi(error_msg));
+    // Through the shared background helper: the Lite slot via the owner's
+    // background pin, thinking off, no cap. The prompt bounds the title; the
+    // 50-token cap that sat here was spent thinking on a model that thinks
+    // and returned no title at all.
+    let mut title = crate::virtues_api::completion::system_completion(
+        pool,
+        virtues_registry::models::ModelSlot::Lite,
+        "chat_title",
+        "",
+        &prompt,
+        crate::virtues_api::request::Thinking::Off,
+        0.7,
+    )
+    .await
+    .map_err(|e| match e {
+        // The helper's messages are already the user-facing ones (wallet,
+        // rate limit); only the bucket name changes.
+        crate::Error::ExternalApi(m) => crate::Error::ExternalApi(m),
+        other => crate::Error::Network(format!("title generation failed: {other}")),
+    })?
+    .trim()
+    .to_string();
+    if title.is_empty() {
+        title = "New Chat".to_string();
     }
-
-    let response_json = response.body;
-    let mut title = response_json["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("New Chat")
-        .trim()
-        .to_string();
 
     // Strip the costume the model put on the title: markdown emphasis, a
     // leading heading marker, quotes. Trimmed as a set and repeatedly, because
@@ -966,7 +958,7 @@ mod tests {
             reasoning: None,
             intent: None,
             subject: None,
-            thought_signature: None,
+            reasoning_details: None,
             parts: None,
         };
 

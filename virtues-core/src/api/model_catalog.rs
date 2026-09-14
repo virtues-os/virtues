@@ -194,6 +194,20 @@ pub fn models() -> Vec<CatalogModel> {
         .collect()
 }
 
+/// Whether and how a model thinks, per the catalog. `None` is unknown: the
+/// compiled floor, or a proxy older than the field. The completion helper
+/// reads unknown as "thinks, and cannot be told not to".
+pub fn reasoning_facts(model_id: &str) -> Option<virtues_registry::ReasoningFacts> {
+    cache()
+        .read()
+        .ok()?
+        .models
+        .iter()
+        .find(|m| m.model_id == model_id)?
+        .reasoning
+        .clone()
+}
+
 /// Whether we have never seen a catalog — the picker is the compiled floor.
 /// The UI uses this to say so instead of presenting two models as the world.
 pub fn is_cold() -> bool {

@@ -27,7 +27,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 
-use crate::agent::{AgentConfig, AgentEvent, AgentLoop};
+use crate::agent::{AgentConfig, AgentEvent, AgentLoop, FinishReason, StepReason};
 use crate::api::chat_usage::{record_chat_usage, UsageData};
 use crate::api::chats::{append_message, ChatMessage, ToolCall};
 use crate::api::compaction::{build_context_for_llm, compact_chat, CompactionOptions};
@@ -134,9 +134,16 @@ pub struct ChatRequest {
     /// Optional active page context for AI page editing
     #[serde(rename = "activePage")]
     pub active_page: Option<ActivePageContext>,
-    /// Optional Gemini thought signature for subsequent tool calls
-    #[serde(rename = "thoughtSignature")]
-    pub thought_signature: Option<String>,
+    /// Why the client sent this request: `submit-message` (the default, and
+    /// what a client older than the field means) or `regenerate-message`
+    /// (SDK 7's spelling; the docs' `regenerate-assistant-message` is also
+    /// read). On regenerate the client has removed
+    /// its last assistant message and sends no new user turn, so the box
+    /// removes its own copy of that message and answers the last user turn
+    /// again. Before this the box kept the old answer in history, and the
+    /// model "regenerated" with its previous reply in front of it.
+    #[serde(default)]
+    pub trigger: Option<String>,
     /// User's timezone (IANA format, e.g., "America/Los_Angeles")
     #[serde(default)]
     pub timezone: Option<String>,
@@ -200,7 +207,7 @@ fn ghost_history(messages: &[UIMessage]) -> Vec<ChatMessage> {
                 reasoning: None,
                 intent: None,
                 subject: None,
-                thought_signature: None,
+                reasoning_details: None,
             }
         })
         .filter(|m| !m.content.is_empty() || m.parts.is_some())
@@ -368,16 +375,41 @@ pub enum StreamEvent {
         output: serde_json::Value,
     },
 
+    // Tool failure (AI SDK: tool-output-error). The UI's `output-error`
+    // branches waited on this for months while failures rode inside
+    // tool-output-available.
+    #[serde(rename = "tool-output-error")]
+    ToolOutputError {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "errorText")]
+        error_text: String,
+    },
+
     // Error handling
     Error {
         #[serde(rename = "errorText")]
         error_text: String,
     },
 
-    // Custom event to sync thought signature to client
-    #[serde(rename = "thought-signature")]
-    ThoughtSignature {
-        signature: String,
+    // Message and step framing. `start` opens the message; each agent-loop
+    // step is bracketed by start-step / finish-step (the SDK needs the
+    // boundary to keep a tool call and the text after it apart); `finish`
+    // says how the turn ended, and is the only place the client learns a
+    // reply was cut short. `abort` is the person's own stop.
+    Start {
+        #[serde(rename = "messageId")]
+        message_id: String,
+    },
+    StartStep,
+    FinishStep,
+    Finish {
+        #[serde(rename = "finishReason")]
+        finish_reason: String,
+    },
+    Abort {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
 
     // The interview's write_it_up finished: tell the client which page to open
@@ -446,12 +478,6 @@ struct CheckpointData {
     messages_summarized: i32,
     summary: String,
     timestamp: String,
-}
-
-/// Thought signature data payload for AI SDK v6 data event
-#[derive(Debug, Serialize)]
-struct ThoughtSignatureData {
-    signature: String,
 }
 
 /// Narrative-document-ready payload for AI SDK v6 data event
@@ -562,19 +588,6 @@ fn serialize_event(event: &StreamEvent) -> String {
             };
             serde_json::to_string(&wrapper).unwrap_or_else(|e| {
                 tracing::error!("Failed to serialize checkpoint event: {}", e);
-                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
-            })
-        }
-        // Wrap thought signature events in AI SDK v6 data event format
-        StreamEvent::ThoughtSignature { signature } => {
-            let wrapper = DataEvent {
-                event_type: "data-thought-signature".to_string(),
-                id: None,
-                data: ThoughtSignatureData { signature: signature.clone() },
-                transient: true, // Ephemeral - only needed during streaming session
-            };
-            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
-                tracing::error!("Failed to serialize thought-signature event: {}", e);
                 r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
             })
         }
@@ -1252,8 +1265,32 @@ pub async fn chat_handler(
         }
     }
 
-    // Save the last user message to the chat
-    if let Some(last_user_msg) = request.messages.iter().rev().find(|m| m.role == "user") {
+    // Regenerate: the client has dropped its last assistant message and is
+    // asking for the last user turn to be answered again. Drop the box's copy
+    // too, or the model answers with its previous reply in front of it.
+    let regenerating = matches!(
+        request.trigger.as_deref(),
+        Some("regenerate-message") | Some("regenerate-assistant-message")
+    );
+    if regenerating && !temporary {
+        if let Err(e) = sqlx::query(
+            "DELETE FROM app_chat_messages \
+             WHERE chat_id = $1 AND role = 'assistant' \
+               AND sequence_num > COALESCE((SELECT MAX(sequence_num) FROM app_chat_messages \
+                                            WHERE chat_id = $1 AND role = 'user'), 0)",
+        )
+        .bind(&chat_id_str)
+        .execute(&pool)
+        .await
+        {
+            tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not drop the previous answer");
+        }
+    }
+
+    // Save the last user message to the chat. Not on regenerate: there is no
+    // new user turn, and a client that still sends the full history would
+    // otherwise re-append the last one.
+    if let Some(last_user_msg) = request.messages.iter().rev().filter(|_| !regenerating).find(|m| m.role == "user") {
         // Normal flow: save the last user message from the request
         let user_content = last_user_msg.content.clone().unwrap_or_else(|| {
             last_user_msg
@@ -1284,7 +1321,7 @@ pub async fn chat_handler(
             reasoning: None,
             intent: None,
             subject: None,
-            thought_signature: None,
+            reasoning_details: None,
         };
 
         if temporary {
@@ -1345,7 +1382,7 @@ pub async fn chat_handler(
             r#"
             SELECT
                 id, role, content, created_at, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, thought_signature, parts
+                reasoning, tool_calls, intent, subject, reasoning_details, parts
             FROM app_chat_messages
             WHERE chat_id = $1
             ORDER BY sequence_num ASC
@@ -1385,7 +1422,7 @@ pub async fn chat_handler(
                 let tool_calls_raw: Option<serde_json::Value> = msg.get("tool_calls");
                 let intent_raw: Option<serde_json::Value> = msg.get("intent");
                 let subject: Option<String> = msg.get("subject");
-                let thought_signature: Option<String> = msg.get("thought_signature");
+                let reasoning_details: Option<serde_json::Value> = msg.get("reasoning_details");
                 let parts_raw: Option<serde_json::Value> = msg.get("parts");
 
                 // Parse JSON fields
@@ -1406,7 +1443,7 @@ pub async fn chat_handler(
                     tool_calls,
                     intent,
                     subject,
-                    thought_signature,
+                    reasoning_details,
                 }
             })
             .collect()
@@ -1601,22 +1638,33 @@ fn create_agent_stream(
 
         let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
 
-        // Send text-start event
-        let start_event = StreamEvent::TextStart { id: msg_id.clone() };
-        yield Ok(SseEvent::default().data(serialize_event(&start_event)));
+        // The message opens, then its first step. Text and reasoning parts
+        // open lazily inside a step and close with it: the SDK forgets its
+        // open parts at every finish-step, so a part that spans steps is a
+        // delta with no home. (The turn used to stream as one text part
+        // for its whole length, which is why it could never emit steps.)
+        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::Start { message_id: msg_id.clone() })));
+        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::StartStep)));
 
         // Track accumulated content
         let mut full_content = String::new();
         let mut reasoning_content = String::new();
         let mut in_reasoning = false;
-        // The whole turn streams as ONE text part (single TextStart/TextEnd), so
-        // text emitted across agent steps would otherwise concatenate with no
-        // separator ("…exact text.The earlier edit…"). When text resumes after a
-        // tool call, insert a paragraph break so each narration reads on its own.
+        let mut text_open = false;
+        // The row stores the turn's text as one string, so text that resumes
+        // after a tool call gets a paragraph break IN THE ROW ("…exact
+        // text.The earlier edit…" otherwise). On the wire each step's text is
+        // its own part and needs none.
         let mut needs_text_break = false;
         // Set by any error event mid-turn: the reply on screen is partial,
         // and the row must say so or a reload shows the stub as the answer.
         let mut interrupted = false;
+        // How the last LLM step ended, and how the loop ended: together they
+        // are the `finish` event's reason and the row's subject.
+        let mut last_step_reason: Option<StepReason> = None;
+        let mut loop_finish: Option<FinishReason> = None;
+        // The gateway's reasoning blocks across the turn's steps, for the row.
+        let mut reasoning_details: Vec<serde_json::Value> = Vec::new();
 
         // Token usage tracking
         let mut total_input_tokens: u32 = 0;
@@ -1635,13 +1683,6 @@ fn create_agent_stream(
             api_messages.clone(),
             tools,
             context,
-            request.thought_signature.clone().or_else(|| {
-                // Fallback: look for signature in the last assistant message of the history
-                api_messages.iter().rev()
-                    .filter_map(|m| m.get("thought_signature").and_then(|s| s.as_str()))
-                    .next()
-                    .map(|s| s.to_string())
-            }),
             Some(cancel_token.clone()),
         );
 
@@ -1673,21 +1714,21 @@ fn create_agent_stream(
                         let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
                         yield Ok(SseEvent::default().data(serialize_event(&event)));
                     }
-                    // Text resuming after a tool call: break the paragraph so it
-                    // doesn't butt against the previous segment's final sentence.
-                    let delta = if needs_text_break
-                        && !full_content.is_empty()
-                        && !full_content.ends_with('\n')
-                    {
-                        format!("\n\n{}", content)
-                    } else {
-                        content
-                    };
+                    if !text_open {
+                        text_open = true;
+                        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::TextStart { id: msg_id.clone() })));
+                    }
+                    // Text resuming after a tool call: break the paragraph in
+                    // the stored string so it doesn't butt against the previous
+                    // segment's final sentence.
+                    if needs_text_break && !full_content.is_empty() && !full_content.ends_with('\n') {
+                        full_content.push_str("\n\n");
+                    }
                     needs_text_break = false;
-                    full_content.push_str(&delta);
+                    full_content.push_str(&content);
                     let event = StreamEvent::TextDelta {
                         id: msg_id.clone(),
-                        delta,
+                        delta: content,
                     };
                     yield Ok(SseEvent::default().data(serialize_event(&event)));
                 }
@@ -1750,7 +1791,22 @@ fn create_agent_stream(
                     yield Ok(SseEvent::default().data(serialize_event(&event)));
                 }
 
-                AgentEvent::ToolCallResult { id, result, success: _, error: _ } => {
+                AgentEvent::ToolCallResult { id, result, success: false, error } => {
+                    // A failed tool is a tool error on the wire, not an output
+                    // with an error inside it. The model still sees the
+                    // failure text (executor::to_llm_content); the row keeps
+                    // it as the result so a reload shows the same.
+                    let error_text = error
+                        .or_else(|| result.get("error").and_then(|e| e.as_str()).map(str::to_string))
+                        .unwrap_or_else(|| "the tool reported a failure".to_string());
+                    if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
+                        tc.result = Some(serde_json::json!({ "error": error_text }));
+                    }
+                    let event = StreamEvent::ToolOutputError { tool_call_id: id, error_text };
+                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                }
+
+                AgentEvent::ToolCallResult { id, result, success: true, error: _ } => {
                     // Update the tracked tool call with the result
                     if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
                         tc.result = Some(result.clone());
@@ -1794,9 +1850,8 @@ fn create_agent_stream(
                     }
                 }
 
-                AgentEvent::ThoughtSignature { signature } => {
-                    let event = StreamEvent::ThoughtSignature { signature };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                AgentEvent::ReasoningDetails { details } => {
+                    reasoning_details.extend(details);
                 }
 
                 AgentEvent::Error { message, code: _, recoverable: _ } => {
@@ -1805,11 +1860,31 @@ fn create_agent_stream(
                     yield Ok(SseEvent::default().data(serialize_event(&event)));
                 }
 
+                // A step ended. Close it on the wire; when the model asked for
+                // tools, the next LLM call is a new step and opens one.
+                AgentEvent::StepComplete { reason, .. } => {
+                    last_step_reason = Some(reason);
+                    if in_reasoning {
+                        in_reasoning = false;
+                        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::ReasoningEnd { id: msg_id.clone() })));
+                    }
+                    if text_open {
+                        text_open = false;
+                        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::TextEnd { id: msg_id.clone() })));
+                    }
+                    yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::FinishStep)));
+                    if reason == StepReason::ToolCalls {
+                        yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::StartStep)));
+                    }
+                }
+
+                AgentEvent::Done { finish_reason, .. } => {
+                    loop_finish = Some(finish_reason);
+                }
+
                 // Events we don't need to forward to client
                 AgentEvent::LoopStarted { .. } |
-                AgentEvent::StepComplete { .. } |
-                AgentEvent::MessageId { .. } |
-                AgentEvent::Done { .. } => {}
+                AgentEvent::MessageId { .. } => {}
               }
             }
           }
@@ -1834,9 +1909,30 @@ fn create_agent_stream(
             yield Ok(SseEvent::default().data(serialize_event(&event)));
         }
 
-        // Send text-end event
-        let end_event = StreamEvent::TextEnd { id: msg_id.clone() };
-        yield Ok(SseEvent::default().data(serialize_event(&end_event)));
+        // Close a text part a step left open (an error or a stop mid-step).
+        if text_open {
+            yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::TextEnd { id: msg_id.clone() })));
+        }
+
+        // How it ended, in the SDK's words. A person's stop is an abort, not
+        // a finish. Otherwise the loop's verdict wins over the last step's,
+        // and the last step's over "stop".
+        let was_cancelled = cancel_token.is_cancelled();
+        let cut_short = last_step_reason == Some(StepReason::MaxTokens);
+        if was_cancelled || loop_finish == Some(FinishReason::Cancelled) {
+            yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::Abort { reason: Some("stopped".to_string()) })));
+        } else {
+            let finish_reason = match (loop_finish, last_step_reason) {
+                (Some(FinishReason::Error), _) => "error",
+                (Some(FinishReason::MaxSteps), _) | (Some(FinishReason::AwaitingUser), _) => "other",
+                (_, Some(StepReason::MaxTokens)) => "length",
+                (_, Some(StepReason::ContentFilter)) => "content-filter",
+                (_, Some(StepReason::ToolCalls)) => "tool-calls",
+                _ if interrupted => "error",
+                _ => "stop",
+            };
+            yield Ok(SseEvent::default().data(serialize_event(&StreamEvent::Finish { finish_reason: finish_reason.to_string() })));
+        }
 
         // Send [DONE] marker
         yield Ok(SseEvent::default().data("[DONE]"));
@@ -1844,9 +1940,8 @@ fn create_agent_stream(
         // Save assistant message to chat
         if !full_content.is_empty() {
             let provider = model.split('/').next().unwrap_or("unknown").to_string();
-            // Mark the message as user-stopped so the UI can show a "Stopped"
-            // notice on reload (the partial content is kept either way).
-            let was_cancelled = cancel_token.is_cancelled();
+            // The row says how the turn ended so a reload shows the same
+            // notice: the person's stop, the output cap, or an interruption.
             let assistant_message = ChatMessage {
                 id: None,
                 role: "assistant".to_string(),
@@ -1863,12 +1958,18 @@ fn create_agent_stream(
                 // and shows a notice under the stub; a person's stop wins.
                 subject: if was_cancelled {
                     Some("cancelled".to_string())
+                } else if cut_short {
+                    Some("length".to_string())
                 } else if interrupted {
                     Some("interrupted".to_string())
                 } else {
                     None
                 },
-                thought_signature: None,
+                reasoning_details: if reasoning_details.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::Value::Array(reasoning_details.clone()))
+                },
                 parts: None,
             };
 
@@ -2277,5 +2378,103 @@ mod ghost_tests {
         assert_eq!(history[0].role, "user");
         assert_eq!(history[0].content, "hello\nthere");
         assert_eq!(history[1].content, "hi");
+    }
+}
+
+/// The UI-message stream, as the box emits it, recorded for the frontend.
+///
+/// Two fixtures under `apps/web/src/lib/ai/fixtures/` are the exact JSON
+/// lines a browser receives for a canonical turn (two steps, a tool result,
+/// a tool error, reasoning, a data part, `finish`) and for a stopped turn
+/// (`abort`). A vitest there feeds them through the AI SDK's own transport
+/// and parser. This test fails when the fixture no longer matches what
+/// `serialize_event` produces, so a changed event shape cannot ship unseen;
+/// regenerate with `UPDATE_FIXTURES=1 cargo test -p virtues --lib ui_stream_fixture`
+/// and run `pnpm test:unit` in apps/web to see whether the SDK still parses it.
+#[cfg(test)]
+mod ui_stream_fixture {
+    use super::*;
+
+    fn canonical_turn() -> Vec<StreamEvent> {
+        let id = "msg_fixture".to_string();
+        vec![
+            StreamEvent::Start { message_id: id.clone() },
+            StreamEvent::StartStep,
+            StreamEvent::TextStart { id: id.clone() },
+            StreamEvent::ReasoningStart { id: id.clone() },
+            StreamEvent::ReasoningDelta { id: id.clone(), delta: "weighing the ask".into() },
+            StreamEvent::ReasoningEnd { id: id.clone() },
+            StreamEvent::TextDelta { id: id.clone(), delta: "Hello".into() },
+            StreamEvent::ToolInputStart { tool_call_id: "call_1".into(), tool_name: "web_search".into() },
+            StreamEvent::ToolInputDelta { tool_call_id: "call_1".into(), input_text_delta: "{\"query\":\"x\"}".into() },
+            StreamEvent::ToolInputAvailable {
+                tool_call_id: "call_1".into(),
+                tool_name: "web_search".into(),
+                input: serde_json::json!({"query": "x"}),
+            },
+            StreamEvent::ToolOutputAvailable {
+                tool_call_id: "call_1".into(),
+                output: serde_json::json!({"results": []}),
+            },
+            StreamEvent::TextEnd { id: id.clone() },
+            StreamEvent::FinishStep,
+            StreamEvent::StartStep,
+            StreamEvent::TextStart { id: id.clone() },
+            StreamEvent::TextDelta { id: id.clone(), delta: " world".into() },
+            StreamEvent::ToolInputStart { tool_call_id: "call_2".into(), tool_name: "create_page".into() },
+            StreamEvent::ToolInputAvailable {
+                tool_call_id: "call_2".into(),
+                tool_name: "create_page".into(),
+                input: serde_json::json!({"title": "t"}),
+            },
+            StreamEvent::ToolOutputError {
+                tool_call_id: "call_2".into(),
+                error_text: "the page could not be written".into(),
+            },
+            StreamEvent::NarrativeDocumentReady { page_id: "page_fixture".into() },
+            StreamEvent::TextEnd { id: id.clone() },
+            StreamEvent::FinishStep,
+            StreamEvent::Finish { finish_reason: "stop".into() },
+        ]
+    }
+
+    fn stopped_turn() -> Vec<StreamEvent> {
+        let id = "msg_fixture".to_string();
+        vec![
+            StreamEvent::Start { message_id: id.clone() },
+            StreamEvent::StartStep,
+            StreamEvent::TextStart { id: id.clone() },
+            StreamEvent::TextDelta { id: id.clone(), delta: "Partial".into() },
+            StreamEvent::TextEnd { id: id.clone() },
+            StreamEvent::Abort { reason: Some("stopped".into()) },
+        ]
+    }
+
+    fn check(name: &str, events: Vec<StreamEvent>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../apps/web/src/lib/ai/fixtures")
+            .join(name);
+        let want: String = events.iter().map(|e| serialize_event(e) + "\n").collect();
+        if std::env::var("UPDATE_FIXTURES").is_ok() {
+            std::fs::write(&path, &want).expect("write fixture");
+            return;
+        }
+        let have = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e} (run with UPDATE_FIXTURES=1 to write it)", path.display()));
+        assert_eq!(
+            have, want,
+            "{} is stale: the box's event shapes changed. Regenerate with UPDATE_FIXTURES=1 and run the vitest.",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn the_canonical_turn_fixture_is_current() {
+        check("box-ui-stream.jsonl", canonical_turn());
+    }
+
+    #[test]
+    fn the_stopped_turn_fixture_is_current() {
+        check("box-ui-stream-abort.jsonl", stopped_turn());
     }
 }

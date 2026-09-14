@@ -36,8 +36,11 @@
 		SKIP_COMMAND,
 		isGettingStartedChat,
 		applyGettingStartedOpening,
+		stripGettingStartedBottom,
 	} from "$lib/components/chat/getting-started/getting-started";
 	import GettingStartedMessage from "$lib/components/chat/getting-started/GettingStartedMessage.svelte";
+	import StepActions from "$lib/components/chat/getting-started/StepActions.svelte";
+	import GettingStartedDoor from "$lib/components/chat/getting-started/GettingStartedDoor.svelte";
 	import IntroductionsConfirmCard from "$lib/components/chat/getting-started/IntroductionsConfirmCard.svelte";
 	import LockedComposer from "$lib/components/chat/getting-started/LockedComposer.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -480,7 +483,7 @@
 
 	// Keep a map of message metadata (agentId, provider, etc.) for rendering
 	let messageMetadata = $state<
-		Map<string, { agentId?: string; provider?: string; stopped?: boolean; interrupted?: boolean }>
+		Map<string, { agentId?: string; provider?: string; stopped?: boolean; cutShort?: boolean; interrupted?: boolean }>
 	>(new Map());
 
 	// Citation panel state
@@ -780,14 +783,17 @@
 	function convertMessageToParts(msg: any) {
 		// Carry agent/provider + the partial-reply flags so the notice under a
 		// stub survives a reload: subject='cancelled' is the person's stop,
+		// subject='length' is the model's output window running out, and
 		// subject='interrupted' is the stream or the model quitting (VIR-334).
 		const stopped = msg.subject === "cancelled";
+		const cutShort = msg.subject === "length";
 		const interrupted = msg.subject === "interrupted";
-		if (msg.agentId || msg.provider || stopped || interrupted) {
+		if (msg.agentId || msg.provider || stopped || cutShort || interrupted) {
 			messageMetadata.set(msg.id, {
 				agentId: msg.agentId,
 				provider: msg.provider,
 				stopped,
+				cutShort,
 				interrupted,
 			});
 		}
@@ -1570,6 +1576,11 @@
 
 		if (!messageToSend && attachments.length === 0) return;
 
+		// Getting started: the ask at the bottom comes off before the turn,
+		// so the reply lands under the person's words and the ask returns
+		// beneath it once the turn settles (the state effect re-adds it).
+		stripGettingStartedBottom(chat, currentChatConversationId);
+
 		if (chat.status !== "ready") {
 			// Queue text; attachments stay staged and ride along when the drain
 			// effect re-sends this once the current turn finishes.
@@ -1770,6 +1781,11 @@
 							onclick={handleContextClick}
 						/>
 					{/if}
+					{#if isGettingStartedChat(currentChatConversationId)}
+						<!-- One door, two labels: the skip before AI, "come back
+						     to this later" after. -->
+						<GettingStartedDoor />
+					{/if}
 					<!-- On the phone the ghost toggle lives in the shell's top bar
 					     (the modal top-right slot), not here. -->
 					{#if (isEmpty || isGhost) && !mobileLayout.isMobile}
@@ -1828,6 +1844,7 @@
 									<div
 										class="message-wrapper"
 										class:bleeds={message.id === INTERVIEW_OPENING_ID}
+										class:gs={message.id.startsWith(GS_PREFIX)}
 										class:user-has-attachment={isUserMessage &&
 											message.parts.some((p: any) => p.type === "file")}
 										data-message-id={message.id}
@@ -1845,7 +1862,7 @@
 										{#if message.id.startsWith(GS_PREFIX)}
 											<!-- Getting started's synthetic top: mast, cards,
 											     the promise, the authored first line. -->
-											<GettingStartedMessage id={message.id} onSend={(t) => void handleChatSubmit(t)} />
+											<GettingStartedMessage id={message.id} text={(message.parts.find((p: any) => p.type === "text") as any)?.text ?? ""} />
 										{:else if message.role === "checkpoint"}
 											<!-- Compaction checkpoint message -->
 											{@const checkpointPart = message.parts.find((p: any) => p.type === "checkpoint")}
@@ -1957,7 +1974,7 @@
 												/>
 											{:else if part.type === "tool-show_step" && (part as any).state === "output-available" && (part as any).output?.step}
 												<!-- The model opened a step: the same card, opened here. -->
-												<GettingStartedMessage id={`gs-card-${(part as any).output.step}`} forceOpen onSend={(t) => void handleChatSubmit(t)} />
+												<StepActions step={(part as any).output.step} />
 											{:else if part.type === "tool-record_introductions" && (part as any).state === "output-available" && (part as any).output?.fields}
 												<!-- The four facts as heard, for confirmation; the card writes. -->
 												<IntroductionsConfirmCard fields={(part as any).output.fields} />
@@ -2024,7 +2041,7 @@
 											{/if}
 											{:else if part.type === "tool-code_interpreter"}
 												{@const toolPart = part as any}
-												{@const isRunning = toolPart.state === "pending" || toolPart.state === "input-available"}
+												{@const isRunning = toolPart.state === "input-streaming" || toolPart.state === "input-available"}
 												{@const isError = toolPart.state === "output-error"}
 												<CodeInterpreterCard
 													status={isRunning ? 'running' : isError ? 'error' : 'success'}
@@ -2072,6 +2089,8 @@
 											{/each}
 											{#if messageMetadata.get(message.id)?.stopped}
 												<StoppedNotice />
+											{:else if messageMetadata.get(message.id)?.cutShort}
+												<StoppedNotice reason="length" />
 											{:else if messageMetadata.get(message.id)?.interrupted}
 												<StoppedNotice reason="interrupted" />
 											{/if}
@@ -3086,6 +3105,12 @@
 
 	.message-wrapper.bleeds {
 		contain: layout;
+	}
+
+	/* Getting started's authored lines sit closer together than turns do:
+	   they are one voice saying a few short things, not an exchange. */
+	.message-wrapper.gs {
+		padding: 0.125rem 0;
 	}
 
 	.message-wrapper :global(h1),

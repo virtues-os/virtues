@@ -201,7 +201,7 @@ mod tests {
             reasoning: None,
             intent: None,
             subject: None,
-            thought_signature: None,
+            reasoning_details: None,
             parts: None,
         }];
 

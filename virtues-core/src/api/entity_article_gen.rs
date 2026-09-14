@@ -462,9 +462,11 @@ async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
         "entity_article",
         SYSTEM_PROMPT,
         user_prompt,
-        900,
+        // Arrangement of the person's own words: thinking off, no cap. The
+        // 900-token literal that sat here was a guess that stopped being
+        // true the day the model started thinking inside it.
+        crate::virtues_api::request::Thinking::Off,
         0.4,
-        None,
     )
     .await
 }
