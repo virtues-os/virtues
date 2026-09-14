@@ -2154,6 +2154,12 @@
 							<!-- Optimistic thinking indicator: shows immediately on submit,
 							     only until the AI SDK creates the assistant message (at text-start).
 							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
+							{#if isGettingStartedChat(currentChatConversationId)}
+								<!-- The step's controls, right under what the room
+								     just said: pinned above the composer they sat a
+								     screen away from it on a short thread. -->
+								<RoomControls />
+							{/if}
 							{#if currentChatConversationId === INTERVIEW_CHAT_ID}
 								{#if interviewClosed}
 									<!-- The close answers the opening: the same plate, drawn from
@@ -2321,10 +2327,6 @@
 									</div>
 								{/each}
 							</div>
-						{/if}
-						{#if isGettingStartedChat(currentChatConversationId)}
-							<!-- One place a person acts: whatever the open step needs. -->
-							<RoomControls />
 						{/if}
 						{#if interviewClosed}
 							<!-- The interview is over: no composer, the two doors instead. -->

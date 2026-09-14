@@ -1,12 +1,15 @@
 <!--
 	InterviewCompanion.svelte
 
-	The interview's resident, hanging out below the last turn: idle between
-	turns, the three-dot thinking morph while the model composes, asleep
-	after a quiet stretch. It is the room's ONE activity indicator — the
-	interview shows no ThinkingBlock, because the model's reasoning about the
-	person must never surface as chrome in the room built on their own
-	account. Engine vendored from bloub (MIT) — see lib/bloub/README.md.
+	The room's ONE activity indicator, below the last turn — these rooms show
+	no ThinkingBlock, because the model's reasoning about the person must
+	never surface as chrome in a room built on their own account.
+
+	AT REST IT IS THE MARK: ∴, three dots, therefore. A face sitting in the
+	margin pulls the eye to itself and away from the page (Adam, 2026-09-14),
+	so the resident only comes out while the model is composing, or for a
+	blip when someone puts a pointer on it. Engine vendored from bloub (MIT)
+	— see lib/bloub/README.md.
 -->
 
 <script lang="ts">
@@ -26,6 +29,11 @@
 
 	const thinking = $derived(status === "submitted" || status === "streaming");
 
+	/** The resident is out: composing, or roused by a pointer for a moment. */
+	let visiting = $state(false);
+	let visitTimer: ReturnType<typeof setTimeout> | undefined;
+	const out = $derived(thinking || visiting);
+
 	// A poke morphs the eyes to one random expression — and, roughly one poke
 	// in five, the body to one random shape, so the circle stays the norm.
 	// Both hold while the pointer stays and settle back to resting one second
@@ -35,6 +43,8 @@
 	let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 	function poke() {
 		rouse();
+		visiting = true;
+		clearTimeout(visitTimer);
 		const others = EXPRESSIONS.filter((e) => e.id !== "neutre" && e.id !== expression);
 		expression = others[Math.floor(Math.random() * others.length)].id;
 		const shapes = SHAPES.filter((s) => s.id !== DEFAULT_SHAPE && s.id !== shape);
@@ -44,6 +54,9 @@
 	}
 	function settle() {
 		clearTimeout(hoverTimer);
+		clearTimeout(visitTimer);
+		// A blip, not a stay: the mark comes back on its own.
+		visitTimer = setTimeout(() => (visiting = false), 1400);
 		hoverTimer = setTimeout(() => {
 			expression = null;
 			shape = null;
@@ -91,14 +104,18 @@
 		onmouseenter={poke}
 		onmouseleave={settle}
 	>
-		<Bloub
-			size={54}
-			state={thinking ? "thinking" : asleep ? "sleep" : "idle"}
-			shape={shape ?? DEFAULT_SHAPE}
-			expression={expression ?? "neutre"}
-			ink="var(--color-foreground)"
-			paper="var(--color-background)"
-		/>
+		{#if out}
+			<Bloub
+				size={54}
+				state={thinking ? "thinking" : asleep ? "sleep" : "idle"}
+				shape={shape ?? DEFAULT_SHAPE}
+				expression={expression ?? "neutre"}
+				ink="var(--color-foreground)"
+				paper="var(--color-background)"
+			/>
+		{:else}
+			<span class="mark" aria-hidden="true">∴</span>
+		{/if}
 		{#if thinking}
 			<span class="companion-word">{word}</span>
 		{/if}
@@ -117,6 +134,25 @@
 		   conversation's tail. Keep the px in step with the size= prop. */
 		margin-left: calc(54px * -58 / 316);
 		margin-top: calc(54px * -58 / 316);
+	}
+
+	/* The mark stands in the ball's place, so nothing shifts when the
+	   resident comes and goes. */
+	.mark {
+		width: 54px;
+		height: 54px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 1.5rem;
+		line-height: 1;
+		color: var(--color-foreground);
+		opacity: 0.35;
+		transition: opacity 0.2s ease;
+	}
+	.interview-companion:hover .mark {
+		opacity: 0.7;
 	}
 
 	.companion-word {
