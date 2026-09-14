@@ -1205,6 +1205,8 @@ export async function getPairingStatus(sourceId: string): Promise<PairingStatus>
 
 // Profile
 export interface Profile {
+	/** First and last, as the person gave it. */
+	full_name?: string | null;
 	preferred_name?: string | null;
 	/** `"YYYY-MM-DD"` — serde's NaiveDate wire form, same as an HTML date input. */
 	birth_date?: string | null;

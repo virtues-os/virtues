@@ -274,13 +274,14 @@ fn record_introductions_tool() -> ToolConfig {
         id: "record_introductions".to_string(),
         name: "Play introductions back".to_string(),
         description: "Show the introductions the person gave on a card for them to confirm".to_string(),
-        llm_description: "Play back what the person said about themselves as one line with a confirm button under your turn: what to call them, what they will call you, home time zone (an IANA name you resolve from the place they named), and birth date (YYYY-MM-DD). Include only fields they gave; leave the rest out rather than guessing. The button writes when they confirm; this tool writes nothing.".to_string(),
+        llm_description: "Play back what the person said about themselves as a card with a confirm button under your turn: their full name, what to call them, what they will call you, the city they live in with the IANA time zone you resolve from it, and their birth date (YYYY-MM-DD). Include only what they gave; leave the rest out rather than guessing. If they left out the birth date, or gave a year without a day, ask for it once before playing anything back — the record is laid out against it. The button writes when they confirm; this tool writes nothing.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "preferred_name": { "type": "string" },
+                "full_name": { "type": "string", "description": "First and last, as they gave it." },
+                "preferred_name": { "type": "string", "description": "What they like to be called." },
                 "assistant_name": { "type": "string" },
-                "home_place": { "type": "string", "description": "The place as they said it, for the card's label." },
+                "home_place": { "type": "string", "description": "The city as they said it, for the card's label." },
                 "home_timezone": { "type": "string", "description": "IANA time zone, e.g. America/Chicago." },
                 "birth_date": { "type": "string", "description": "YYYY-MM-DD" }
             }

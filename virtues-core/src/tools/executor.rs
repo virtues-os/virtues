@@ -908,6 +908,7 @@ impl ToolExecutor {
             }
         }
         let fields = serde_json::json!({
+            "full_name": field("full_name"),
             "preferred_name": field("preferred_name"),
             "assistant_name": field("assistant_name"),
             "home_place": field("home_place"),
@@ -916,7 +917,7 @@ impl ToolExecutor {
         });
         if fields.as_object().is_some_and(|o| o.values().all(|v| v.is_null())) {
             return Err(ToolError::InvalidParameters(
-                "nothing to play back; ask for at least one of the four".into(),
+                "nothing to play back; ask for at least one of the five".into(),
             ));
         }
         Ok(ToolResult::success(serde_json::json!({
