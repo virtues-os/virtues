@@ -928,6 +928,11 @@
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
 			});
+			// The draft this conversation left behind, if the composer is empty.
+			if (!isGhost && !input) {
+				const draft = readDraft(draftId);
+				if (draft) input = draft;
+			}
 			currentChatConversationId = conversationId;
 		}
 	}
@@ -1231,6 +1236,52 @@
 	// Local input state
 	let input = $state("");
 	let inputFocused = $state(false);
+
+	// Draft persistence. Each open tab already keeps its own composer; what
+	// was lost was the draft on a closed tab, a reload, or a quit. The
+	// composer's document is a string, so it is stored per conversation and
+	// removed the moment a send empties the input. Ghost chats persist
+	// nothing, drafts included.
+	const DRAFT_KEY = "virtues.draft.";
+	function readDraft(id: string): string {
+		try {
+			return localStorage.getItem(DRAFT_KEY + id) ?? "";
+		} catch {
+			return "";
+		}
+	}
+	function writeDraft(id: string, text: string) {
+		try {
+			if (text.trim()) localStorage.setItem(DRAFT_KEY + id, text);
+			else localStorage.removeItem(DRAFT_KEY + id);
+		} catch {
+			// Storage unavailable: a lost draft is the old behavior, not an error.
+		}
+	}
+	// A chat that has never been sent has no id anyone else will recognize:
+	// the route is bare `/chat` and the id above is minted per mount, so a
+	// reload would mint another and orphan the draft. Unsent chats share one
+	// key until the first send moves the route to `/chat/<id>`.
+	const draftId = $derived(extractConversationId(tab.route) ?? "new");
+	let draftTimer: ReturnType<typeof setTimeout> | null = null;
+	$effect(() => {
+		const id = draftId;
+		const text = input;
+		if (isGhost) return;
+		if (draftTimer) clearTimeout(draftTimer);
+		draftTimer = setTimeout(() => {
+			draftTimer = null;
+			writeDraft(id, text);
+		}, 250);
+	});
+	onDestroy(() => {
+		// A tab closed inside the debounce window still keeps its draft.
+		if (draftTimer) {
+			clearTimeout(draftTimer);
+			draftTimer = null;
+			if (!isGhost) writeDraft(draftId, input);
+		}
+	});
 
 	// Auto-focus chat input when new chat tab becomes active
 	$effect(() => {

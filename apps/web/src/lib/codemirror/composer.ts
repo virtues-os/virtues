@@ -18,6 +18,7 @@
 
 import { defaultKeymap, history, historyKeymap, insertNewline } from '@codemirror/commands';
 import { markdown, markdownKeymap } from '@codemirror/lang-markdown';
+import { syntaxTree } from '@codemirror/language';
 import { GFM } from '@lezer/markdown';
 import { Compartment, EditorState, type Extension, Prec } from '@codemirror/state';
 import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view';
@@ -32,6 +33,61 @@ import { virtuesTheme } from './theme';
 /** Pasted text longer than this becomes an attachment rather than a wall in
  *  the composer — the same threshold the contenteditable used. */
 const PASTE_AS_FILE_THRESHOLD = 1500;
+
+/** A fence line: three or more backticks or tildes, optionally an info string. */
+const FENCE_LINE = /^\s*(`{3,}|~{3,})/;
+
+/**
+ * Is the cursor inside a code fence, where Enter must mean "new line"?
+ *
+ * Verified failure without this: type three backticks, a line of code, press
+ * Enter — and the half-written fence went to the model, because Enter is Send
+ * on a desktop. Inside a fence the keys behave like a code editor: Enter and
+ * Shift+Enter both break the line, Tab indents, and nothing continues a list.
+ * Cmd+Enter still sends from anywhere, so a fence is never a trap.
+ *
+ * The cursor at the very end of a CLOSED fence (right after the closing
+ * backticks) counts as outside: the writer just finished the block and Enter
+ * should send. An unclosed fence runs to the end of the document, so the
+ * cursor at the end of the text is still inside it — which is exactly the
+ * case that used to send.
+ */
+export function inFencedCode(state: EditorState): boolean {
+	const pos = state.selection.main.head;
+	// The node type lives in @lezer/common, which is not a direct dependency;
+	// it is derived from the call instead of imported.
+	let node: ReturnType<ReturnType<typeof syntaxTree>['resolveInner']> | null =
+		syntaxTree(state).resolveInner(pos, -1);
+	for (; node; node = node.parent) {
+		if (node.name !== 'FencedCode' && node.name !== 'CodeBlock') continue;
+		if (pos < node.to) return true;
+		// At the fence's end: inside only if it never closed. A closing fence
+		// is a line of nothing but the fence characters.
+		const first = state.doc.lineAt(node.from);
+		const last = state.doc.lineAt(node.to);
+		const closed = last.number > first.number && /^(`{3,}|~{3,})$/.test(last.text.trim());
+		return !closed;
+	}
+	return false;
+}
+
+/**
+ * Close a fence the writer left open, so the message is well-formed markdown
+ * for every renderer that will ever see it. Walks lines the way CommonMark
+ * does: a fence opens on a backtick or tilde run and closes on a run of the
+ * same character at least as long.
+ */
+export function closeOpenFence(text: string): string {
+	let open: string | null = null;
+	for (const line of text.split('\n')) {
+		const m = FENCE_LINE.exec(line);
+		if (!m) continue;
+		const run = m[1];
+		if (open === null) open = run;
+		else if (run[0] === open[0] && run.length >= open.length && line.trim() === run) open = null;
+	}
+	return open === null ? text : `${text}\n${open}`;
+}
 
 export interface ComposerOptions {
 	parent: HTMLElement;
@@ -116,20 +172,42 @@ export function createComposerEditor(options: ComposerOptions): ComposerEditor {
 	// of markdownKeymap's Enter binding; calling markdownKeymap's commands by
 	// name keeps this in step with whatever Pages bind.
 	const continueOrBreak = (view: EditorView): boolean => {
+		// Code is literal: no list or quote continuation inside a fence.
+		if (inFencedCode(view.state)) return insertNewline(view);
 		for (const binding of markdownKeymap) {
 			if (binding.key === 'Enter' && binding.run && binding.run(view)) return true;
 		}
 		return insertNewline(view);
 	};
 
+	// Inside a fence Tab indents like a code editor. Outside, the shared
+	// markdown keybindings claim Tab only on list lines and otherwise leave it
+	// to move focus, which is what an accessible text box does.
+	const FENCE_INDENT = '  ';
+	const indentInFence = (view: EditorView): boolean => {
+		if (!inFencedCode(view.state)) return false;
+		view.dispatch(view.state.replaceSelection(FENCE_INDENT), { userEvent: 'input.indent' });
+		return true;
+	};
+	const dedentInFence = (view: EditorView): boolean => {
+		if (!inFencedCode(view.state)) return false;
+		const line = view.state.doc.lineAt(view.state.selection.main.head);
+		const spaces = /^ {1,2}/.exec(line.text)?.[0].length ?? 0;
+		if (spaces === 0) return true;
+		view.dispatch({ changes: { from: line.from, to: line.from + spaces }, userEvent: 'delete.dedent' });
+		return true;
+	};
+
 	const composerKeymap = Prec.highest(
 		keymap.of([
 			{
 				key: 'Enter',
-				run: (view) => (isMobile() ? continueOrBreak(view) : submit()),
+				run: (view) =>
+					isMobile() || inFencedCode(view.state) ? continueOrBreak(view) : submit(),
 			},
 			{ key: 'Shift-Enter', run: continueOrBreak },
 			{ key: 'Mod-Enter', run: submit },
+			{ key: 'Tab', run: indentInFence, shift: dedentInFence },
 			{
 				key: 'Escape',
 				run: (view) => {
