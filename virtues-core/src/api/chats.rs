@@ -774,6 +774,13 @@ pub async fn delete_chat(pool: &PgPool, chat_id: String) -> Result<DeleteChatRes
             "The interview conversation can't be deleted — it is the source of \"In your own words\".".into(),
         ));
     }
+    // Same for getting started: the room is seeded, and the sidebar's way
+    // back to any open step is this chat.
+    if chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
+        return Err(crate::Error::InvalidInput(
+            "The getting-started conversation can't be deleted.".into(),
+        ));
+    }
     let chat_id_str = chat_id;
     let result = sqlx::query(
         r#"
@@ -819,7 +826,9 @@ pub async fn generate_title(
     // on the box to a model to be summarised, and then print the summary in
     // the sidebar: this chat had already renamed itself after the person's
     // own childhood.
-    if chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID {
+    if chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID
+        || chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID
+    {
         let title: String = sqlx::query_scalar("SELECT title FROM app_chats WHERE id = $1")
             .bind(&chat_id)
             .fetch_optional(pool)

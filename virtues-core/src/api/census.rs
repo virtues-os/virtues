@@ -188,7 +188,7 @@ async fn earliest_names(pool: &PgPool) -> Vec<String> {
 
 /// The first narrated day's date. Absence quiet, failure loud — same rule as
 /// `count_of`, and same garnish status as `earliest_names`.
-async fn first_narrated_day(pool: &PgPool) -> Option<chrono::NaiveDate> {
+pub(crate) async fn first_narrated_day(pool: &PgPool) -> Option<chrono::NaiveDate> {
     sqlx::query_scalar::<_, Option<chrono::NaiveDate>>(
         "SELECT min(date) FROM wiki_days WHERE narrated_at IS NOT NULL",
     )

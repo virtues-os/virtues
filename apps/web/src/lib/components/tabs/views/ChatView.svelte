@@ -28,6 +28,19 @@
 		findWriteItUpOutput,
 	} from "$lib/components/chat/interview/interview";
 	import InterviewCompanion from "$lib/components/chat/interview/InterviewCompanion.svelte";
+	// Getting started — the room after the founder's letter. Same shape as
+	// the interview: the id decides everything, the top of the room is
+	// synthetic and rebuilt from derived state, the cards do the work.
+	import {
+		GS_PREFIX,
+		SKIP_COMMAND,
+		isGettingStartedChat,
+		applyGettingStartedOpening,
+	} from "$lib/components/chat/getting-started/getting-started";
+	import GettingStartedMessage from "$lib/components/chat/getting-started/GettingStartedMessage.svelte";
+	import IntroductionsConfirmCard from "$lib/components/chat/getting-started/IntroductionsConfirmCard.svelte";
+	import LockedComposer from "$lib/components/chat/getting-started/LockedComposer.svelte";
+	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
 	import { CitationPanel } from "$lib/components/citations";
@@ -36,7 +49,8 @@
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
 	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
-	import { onMount, onDestroy, tick } from "svelte";
+	import { onMount, onDestroy, tick, untrack } from "svelte";
+	import { goto } from "$app/navigation";
 	import { fade, fly } from "svelte/transition";
 	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
@@ -963,6 +977,7 @@
 								parts: convertMessageToParts(msg),
 							})) as unknown as typeof chat.messages;
 							applyInterviewOpening(chat, currentTabConversationId);
+							applyGettingStartedOpening(chat, currentTabConversationId, gettingStarted.state);
 							// The picker is deliberately left alone on a tab
 							// switch. It used to be re-seeded from the model
 							// that last answered THIS conversation, which is
@@ -1079,6 +1094,7 @@
 			// After the load, not inside it: a failed fetch must still leave
 			// the interview speaking rather than showing a blank room.
 			applyInterviewOpening(chat, tabConversationId);
+			applyGettingStartedOpening(chat, tabConversationId, gettingStarted.state);
 
 			// What the picker SHOWS, for every chat old or new: the owner's
 			// standing preference, else the Virtues default. Deliberately not
@@ -1289,6 +1305,23 @@
 	// transcript's tool part didn't survive). Once closed, the composer
 	// retires: the drafter runs once, so a message typed here now would reach
 	// nothing — the page is where corrections go.
+	// The getting-started room re-renders its top whenever the derived
+	// state changes (a source lands, the interview closes elsewhere, a skip).
+	// `untrack` on the transcript: the rebuild assigns it, and reading it
+	// tracked would re-run this effect on its own write.
+	$effect(() => {
+		const state = gettingStarted.state;
+		const convId = currentChatConversationId;
+		if (!isGettingStartedChat(convId)) return;
+		// Never while a turn is streaming: the transcript is the SDK's to
+		// write then. Reading `status` here re-runs this once it settles.
+		if (chat.status !== "ready") return;
+		untrack(() => applyGettingStartedOpening(chat, convId, state));
+	});
+	$effect(() => {
+		if (isGettingStartedChat(currentChatConversationId)) gettingStarted.start();
+	});
+
 	const interviewClosedPart = $derived(
 		currentChatConversationId === INTERVIEW_CHAT_ID ? findWriteItUpOutput(uniqueMessages) : null,
 	);
@@ -1414,14 +1447,31 @@
 		const composer = composerEl;
 		const scroller = scrollContainer;
 		if (!composer || !scroller) return;
+		// The composer overlays the scroller, so when a draft grows the composer's
+		// top edge climbs into the transcript. The transcript gets the same
+		// height back as padding (the CSS var), and the view scrolls by the same
+		// amount, so the line that sat just above the composer's old edge sits
+		// just above its new one — at any scroll position, not only pinned to
+		// the end. A reader who was at the end stays at the end; that case is
+		// kept explicit because at send time the new message lands while the
+		// composer is still collapsing, and "keep my offset" would leave them
+		// one message short of it (VIR-332).
+		let lastHeight = composer.offsetHeight;
+		scroller.style.setProperty("--composer-height", `${lastHeight}px`);
 		const observer = new ResizeObserver(() => {
-			// Measure "at the bottom" BEFORE the padding grows: the growth itself
-			// moves scrollHeight, and a reader who was pinned to the end would
-			// otherwise read as scrolled up and be left under the composer.
+			const height = composer.offsetHeight;
+			const delta = height - lastHeight;
+			if (delta === 0) return;
+			lastHeight = height;
+			// Both reads come BEFORE the padding moves. Shrinking the padding
+			// shrinks scrollHeight, and the browser clamps scrollTop to the new
+			// end on its own — adding the delta after that clamp would move the
+			// reader twice.
 			const wasAtBottom =
 				scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 8;
-			scroller.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
-			if (wasAtBottom) scroller.scrollTop = scroller.scrollHeight;
+			const kept = scroller.scrollTop + delta;
+			scroller.style.setProperty("--composer-height", `${height}px`);
+			scroller.scrollTop = wasAtBottom ? scroller.scrollHeight : kept;
 		});
 		observer.observe(composer);
 		return () => observer.disconnect();
@@ -1489,6 +1539,19 @@
 
 	async function handleChatSubmit(value: string) {
 		let messageToSend = value.trim();
+
+		// The one slash command: does what the door does. Deterministic and
+		// client-side; the model never sees it. Any other slash text sends.
+		if (messageToSend === SKIP_COMMAND) {
+			input = "";
+			try {
+				await gettingStarted.skip("connect_ai", true);
+			} catch {
+				/* the door will say why on its own attempt */
+			}
+			void goto("/home");
+			return;
+		}
 
 		// Track D: prepend any staged highlight references as quoted context +
 		// comments. Only present on a direct send (cleared before queue-drain).
@@ -1776,7 +1839,11 @@
 													p.type === "text" && p.text,
 											)}
 									>
-										{#if message.role === "checkpoint"}
+										{#if message.id.startsWith(GS_PREFIX)}
+											<!-- Getting started's synthetic top: mast, cards,
+											     the promise, the authored first line. -->
+											<GettingStartedMessage id={message.id} onSend={(t) => void handleChatSubmit(t)} />
+										{:else if message.role === "checkpoint"}
 											<!-- Compaction checkpoint message -->
 											{@const checkpointPart = message.parts.find((p: any) => p.type === "checkpoint")}
 											{#if checkpointPart}
@@ -1885,6 +1952,12 @@
 													onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
 													onDeny={() => handlePermissionDeny()}
 												/>
+											{:else if part.type === "tool-show_step" && (part as any).state === "output-available" && (part as any).output?.step}
+												<!-- The model opened a step: the same card, opened here. -->
+												<GettingStartedMessage id={`gs-card-${(part as any).output.step}`} forceOpen onSend={(t) => void handleChatSubmit(t)} />
+											{:else if part.type === "tool-record_introductions" && (part as any).state === "output-available" && (part as any).output?.fields}
+												<!-- The four facts as heard, for confirmation; the card writes. -->
+												<IntroductionsConfirmCard fields={(part as any).output.fields} />
 											{:else if part.type === "tool-write_it_up"}
 												<!-- Nothing inline: the standing card in place of the composer
 												     holds the two doors (it used to render here as well, so the
@@ -2197,6 +2270,9 @@
 								alreadyExisted={interviewClosedPart?.document_already_existed ?? false}
 								chaptersError={interviewClosedPart?.chapters_error ?? null}
 							/>
+						{:else if isGettingStartedChat(currentChatConversationId) && gettingStarted.locked}
+							<!-- No model yet: one line, not a dead input. -->
+							<LockedComposer />
 						{:else}
 						<ChatInput
 							allowEmptySubmit={stagedRefs.length > 0 || attachments.length > 0}

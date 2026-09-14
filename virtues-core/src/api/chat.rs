@@ -791,6 +791,19 @@ async fn build_system_prompt(
         return crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name, their_replies);
     }
 
+    // Getting started: its own prompt plus the derived state, regenerated per
+    // turn so the model never holds a step done that the rows say is open.
+    if agent_mode == crate::api::getting_started::AGENT_MODE {
+        let block = match crate::api::getting_started::compute(pool).await {
+            Ok(s) => s.render_prompt_block(),
+            Err(e) => {
+                tracing::warn!(error = %e, "getting-started state unavailable for the prompt");
+                "<getting_started>\n(state unavailable this turn; say so if asked, never guess)\n</getting_started>".to_string()
+            }
+        };
+        return crate::agent::prompt::build_getting_started_prompt(&assistant_name, &user_name, &block);
+    }
+
     build_system_prompt_blocks(
         pool,
         active_page,
@@ -1101,6 +1114,27 @@ pub async fn chat_handler(
     // opt the interview into tools by sending a different agentMode.
     if request.chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID {
         request.agent_mode = "interview".to_string();
+    }
+    // Getting started is the same kind of room: its mode is the chat id's.
+    if request.chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
+        request.agent_mode = crate::api::getting_started::AGENT_MODE.to_string();
+    }
+
+    // No model, no turn — said in one sentence here, not as whatever the
+    // gateway call fails with. Any room: the composer is inert while locked,
+    // but no client can be trusted to be.
+    if !crate::api::getting_started::ai_connected(&pool).await {
+        return (
+            StatusCode::CONFLICT,
+            Json(ChatError {
+                error: "AI is not connected".to_string(),
+                details: Some(
+                    "This server has nothing to answer with yet. Connect a Virtues subscription or your own AI endpoint in Getting started."
+                        .to_string(),
+                ),
+            }),
+        )
+            .into_response();
     }
 
     // Which model answers. One door — the box decides, from the mode and the
