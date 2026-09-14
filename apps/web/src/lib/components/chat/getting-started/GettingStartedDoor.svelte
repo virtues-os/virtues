@@ -41,7 +41,9 @@
 >
 	<Icon icon="ri:door-open-line" width="16" />
 	{#if connected}
-		<span class="label">Come back to this later</span>
+		<!-- Two words in the corner; the sentence stays in the tooltip. The
+		     full label ran nearly the width of the contents beneath it. -->
+		<span class="label">Finish later</span>
 	{/if}
 </button>
 
