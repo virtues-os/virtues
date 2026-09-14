@@ -142,6 +142,40 @@ public final class AudioRecorder: NSObject {
   private var interruptionHoldUntil: Date?
   private let interruptedRetryInterval: TimeInterval = 60
 
+  // CarPlay — RELEASE, DON'T COEXIST. CarPlay is a coupled input+output port,
+  // and a `.playAndRecord` session on that route evicts the car's audio: with
+  // the built-in mic pinned iOS moves every app's output to the phone speaker,
+  // and with the car mic it drops the car to mono (Apple forum 732202). Our
+  // recipe re-runs `configureSession` on every re-arm — watchdog, hold retry,
+  // route/config change — so in a car the eviction recurred every couple of
+  // minutes and the user's music kept jumping to the handset. Coexisting is a
+  // guess about route arbitration we cannot test without a car; a released
+  // session has one predictable outcome (CarPlay behaves as for any app that
+  // is not recording). So while any output port in `pausePorts` is present the
+  // engine stops, the session deactivates, and EVERY re-arm vector is gated —
+  // foreground included, unlike the interruption hold, or opening the app in
+  // the car re-evicts it. The cost is the known one: a background arm after
+  // our own deactivation may be refused, and the gap nudge + foreground are
+  // the recovery. This path is dead code on any phone not connected to a car
+  // (`.carAudio` never appears otherwise), which is what makes it shippable
+  // without CarPlay QA. Same non-atomic-Bool discipline as `recording`.
+  //
+  // QA stand-in without a car: wired EarPods are the same coupled shape —
+  // flip the set to `[.headphones]` in a debug build to exercise the pause,
+  // release and resume seams, then flip it back before release.
+  private let pausePorts: Set<AVAudioSession.Port> = [.carAudio]
+  private var carPlayPaused = false
+
+  private func carPlayRoute() -> Bool {
+    session.currentRoute.outputs.contains { pausePorts.contains($0.portType) }
+  }
+
+  /// Why capture is paused for a reason the user did not choose, for the UI;
+  /// nil when recording, off, or paused by the user. Only "carplay" today.
+  public func pausedReason() -> String? {
+    (carPlayPaused && cachedEnabled && authorized()) ? "carplay" : nil
+  }
+
   // Serialize engine lifecycle (start/stop/restart) off the realtime tap thread.
   private let q = DispatchQueue(label: "com.virtues.audio", qos: .userInitiated)
 
@@ -239,6 +273,11 @@ public final class AudioRecorder: NSObject {
       return
     }
     guard authorized(), cachedEnabled else { return }
+    // CarPlay pause outranks every re-arm vector, including the foreground and
+    // explicit-resume paths that clear the interruption hold: any arm here
+    // re-runs configureSession on the car route and evicts its audio again.
+    // Cleared only by the route-change handler when the car port is gone.
+    if carPlayPaused { return }
     // Liveness: if we think we're recording but no tap buffer has arrived within the
     // timeout, the tap silently died — drop the flag so armEngine does a full
     // rebuild instead of short-circuiting on `recording == true`.
@@ -294,6 +333,7 @@ public final class AudioRecorder: NSObject {
     guard cachedEnabled, cachedNotify else { return }
     if nudgeFired { return }              // already showing — once-and-done per episode
     if callActive() { return }            // legit call gap — never nudge
+    if carPlayPaused { return }           // deliberate pause — nudge after the drive, not during
     // Gap measured from the persisted last-good-capture (survives kill→relaunch), so
     // a nudge fires ~gapThreshold after recording ACTUALLY died, not after relaunch.
     let lastGood = cachedLastGood
@@ -355,7 +395,7 @@ public final class AudioRecorder: NSObject {
       // (ensureRecording bails on the flag without tearing down). The q block
       // that ran disable's stop has acquired the flag write, so this read is
       // ordered.
-      if self.cachedEnabled, !self.recording {
+      if self.cachedEnabled, !self.recording, !self.carPlayPaused {
         self.startEngine(reason: reason)
       }
       if bg != .invalid { UIApplication.shared.endBackgroundTask(bg); bg = .invalid }
@@ -363,8 +403,24 @@ public final class AudioRecorder: NSObject {
   }
 
   private func startEngine(reason: String) {
+    // CarPlay gate, checked twice. Before activation covers a launch that
+    // happens inside the car (no route-change notification ever fires for a
+    // route that was already there); after activation is the authoritative
+    // read — an inactive session's currentRoute has been seen to miss CarPlay
+    // from the background (Apple forum 715244) — at the cost of one activation
+    // that is released a few lines later.
+    if carPlayRoute() {
+      enterCarPlayPause(reason: "arm/\(reason)")
+      releaseSession()
+      return
+    }
     do {
       try configureSession()
+      if carPlayRoute() {
+        enterCarPlayPause(reason: "post-activate/\(reason)")
+        releaseSession()
+        return
+      }
       let input = engine.inputNode
       // ALWAYS tear down and reinstall the tap. After an interruption iOS can leave
       // the engine "running" (start() succeeds) while the old tap silently stops
@@ -440,6 +496,54 @@ public final class AudioRecorder: NSObject {
     if engine.isRunning { engine.stop() }
     recording = false
     NSLog("[Audio] engine stopped")
+  }
+
+  // MARK: - CarPlay pause (see `carPlayPaused`)
+
+  /// Flag the pause. Callable from any thread; the teardown itself is
+  /// `releaseSession`, which is q-confined like every other engine mutation.
+  /// State 1 (enabled but down), never 0: 0 means "off by choice" and would
+  /// stop location's re-arm heartbeat for good.
+  private func enterCarPlayPause(reason: String) {
+    carPlayPaused = true
+    NSLog("[Audio] CarPlay route (%@) — releasing the session until the car disconnects", reason)
+    if cachedEnabled { virtues_location_audio_state(1) }
+  }
+
+  /// Stop the graph and DEACTIVATE — the one place this class ever calls
+  /// `setActive(false)`. Everywhere else the session stays active by design
+  /// (a background re-arm only works as a continuation); here the point is
+  /// to be absent from the car's route entirely. Released whether or not
+  /// recording is enabled: a stopped recorder still leaves the session active
+  /// with the mic pinned, and that is the state that evicts the car.
+  private func releaseSession() {
+    stopEngine(finalize: true)
+    do {
+      try session.setActive(false)
+      NSLog("[Audio] session released")
+    } catch {
+      NSLog("[Audio] session release failed: %@", error.localizedDescription)
+    }
+  }
+
+  /// The car port is gone. One arm attempt now, then the interruption-hold
+  /// cadence: `bailArm` only holds during a call, so a refused background arm
+  /// (our own deactivation, not an interruption — iOS may say no) would
+  /// otherwise spin the 5s watchdog for the rest of the day. The hold is set
+  /// AFTER ensureRecording so the first attempt is not itself gated; a success
+  /// clears it with the first buffer, a failure leaves it as the retry pace.
+  /// Foreground clears it too, so opening the app is the sure resume.
+  private func exitCarPlayPause() {
+    // On main: ensureRecording hops there asynchronously when called from the
+    // notification thread, and the hold below must land AFTER its synchronous
+    // gate check or the first attempt is the one it gates.
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      self.carPlayPaused = false
+      NSLog("[Audio] CarPlay route gone — attempting resume")
+      self.ensureRecording(reason: "carplay-disconnect")
+      self.interruptionHoldUntil = Date().addingTimeInterval(self.interruptedRetryInterval)
+    }
   }
 
   private func configureSession() throws {
@@ -816,6 +920,22 @@ public final class AudioRecorder: NSObject {
   @objc private func handleRouteChange(_ note: Notification) {
     guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
       let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+    // CarPlay gate, on EVERY reason: the car can arrive as newDeviceAvailable,
+    // routeConfigurationChange or override depending on wired/wireless and on
+    // what else was routed. An edge enters or exits the pause and nothing
+    // below runs; a steady paused state swallows every other route event,
+    // since each of them would otherwise re-pin the mic on the car route.
+    let car = carPlayRoute()
+    if car != carPlayPaused {
+      if car {
+        enterCarPlayPause(reason: "route-change")
+        q.async { [weak self] in self?.releaseSession() }
+      } else {
+        exitCarPlayPause()
+      }
+      return
+    }
+    if carPlayPaused { return }
     switch reason {
     case .newDeviceAvailable, .oldDeviceUnavailable:
       // A device switch (e.g. plugging into / out of AirPods) deactivates our
@@ -827,7 +947,14 @@ public final class AudioRecorder: NSObject {
       // backstop. This turns a ~10s recovery (old: wait for the slow location poll)
       // into <1s.
       interruptionHoldUntil = nil
-      q.async { [weak self] in try? self?.configureSession() }
+      // Only a recorder that wants the mic re-pins it. Unguarded, this
+      // activated a playAndRecord session with the built-in mic pinned on
+      // every device switch for users who had recording OFF — a route
+      // mutation nobody asked for. ensureRecording below has the same guard.
+      q.async { [weak self] in
+        guard let self = self, self.cachedEnabled, self.authorized() else { return }
+        try? self.configureSession()
+      }
       for delay in [0.7, 2.5] {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
           self?.ensureRecording(reason: "route-change")

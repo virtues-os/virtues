@@ -37,4 +37,9 @@ pub struct AudioStatus {
   pub quiet_start: Option<i32>,
   #[serde(default)]
   pub quiet_end: Option<i32>,
+  /// Capture is paused for a reason the user did not choose — "carplay" while
+  /// a car audio route is present (the session is released so the car keeps
+  /// its audio). Absent when recording, off, or paused by the user.
+  #[serde(default)]
+  pub paused_reason: Option<String>,
 }
