@@ -63,6 +63,10 @@ pub struct SourceListing {
     /// Decided by which root the folder actually resolves in, not by anything
     /// the manifest claims.
     pub origin_root: &'static str,
+    /// `<origin>@<version>` the folder was copied from, when the manifest
+    /// records it (`virtues@v0.1.6` for a forked built-in). Absent for a
+    /// shipped, authored, or imported folder.
+    pub forked_from: Option<String>,
     pub files: Vec<SourceFile>,
     /// True when the walk stopped early at [`MAX_FILES`].
     pub truncated: bool,
@@ -161,6 +165,7 @@ pub async fn list_handler(Path(applet_id): Path<String>) -> Response {
             .into_response();
     };
     let dir = crate::applet_templates::dir_for_applet_id(&applet_id).unwrap_or_default();
+    let forked_from = crate::applet_templates::forked_from_for_dir(&dir);
     let (mut files, truncated) = collect(&root);
     // Manifest first — it is what the reader is usually looking for.
     files.sort_by(|a, b| {
@@ -174,6 +179,7 @@ pub async fn list_handler(Path(applet_id): Path<String>) -> Response {
         Json(SourceListing {
             dir,
             origin_root,
+            forked_from,
             files,
             truncated,
         }),

@@ -788,6 +788,18 @@ pub fn declares_vault_key_need(applet_id: &str) -> bool {
     }
 }
 
+/// What the folder at `dir` was forked from, if its manifest records it —
+/// the read side of [`stamp_forked_from`]. The source pane shows it, so "what
+/// did this diverge from" is answered where the code is read.
+pub fn forked_from_for_dir(dir: &str) -> Option<String> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard
+        .action
+        .iter()
+        .find(|t| t.dir == dir)
+        .and_then(|t| t.forked_from.clone())
+}
+
 /// Whether the manifest at `dir` declares it needs the vault key.
 fn template_needs_vault_key(dir: &str) -> bool {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");

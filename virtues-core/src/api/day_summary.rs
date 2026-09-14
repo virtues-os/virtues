@@ -175,27 +175,6 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
 /// model runs.
 const MIN_ACTIVATION_SOURCES: usize = 3;
 
-/// How many SPANS a day needs before it has a shape of its own.
-///
-/// A `wiki_event` is a span, and the doctrine wants 8–16 of them in a day. You
-/// cannot cut that out of one thing — and one thing is what most of history holds.
-/// Measured on the real box, the distribution is not a gradient, it is a cliff:
-///
-/// ```text
-///   13–373 spans   7 days    ← transcripts + visits: the week the collectors ran
-///        2 spans   6 days    ← a couple of calendar entries
-///        1 span   84 days    ← one calendar entry, sometimes an all-day one
-/// ```
-///
-/// An all-day calendar event is 24 hours long and bounds nothing. A day with one
-/// meeting in it is a day the model would have to invent 15 waking hours of.
-///
-/// Three separates the days that happened from the days we merely have a receipt
-/// for. It is deliberately strict: the cost of skipping a real day is that it stays
-/// unwritten until the collectors fill it in; the cost of narrating an empty one is
-/// a confident, permanent, searchable account of a life nobody lived.
-const MIN_SPANS: usize = 3;
-
 /// What a day's sources amount to, measured the way the segmenter measures it.
 ///
 /// One definition, two readers. The segmenter asks it before spending a model
@@ -232,8 +211,25 @@ impl DayShape {
         Self { acted, shaped }
     }
 
-    /// Enough of a day to hand to the detective. `MIN_SPANS` documents the
-    /// doctrine; `MIN_ACTIVATION_SOURCES` is the gate that has always been applied.
+    /// Enough of a day to hand to the detective.
+    ///
+    /// `MIN_ACTIVATION_SOURCES` is the gate that has always been applied; on the
+    /// span side the gate is only "at least one". A `wiki_event` is a span, and
+    /// the doctrine wants 8–16 of them in a day, which you cannot cut out of one
+    /// thing — and one thing is what most of history holds. Measured on the real
+    /// box, the distribution is not a gradient, it is a cliff:
+    ///
+    /// ```text
+    ///   13–373 spans   7 days    ← transcripts + visits: the week the collectors ran
+    ///        2 spans   6 days    ← a couple of calendar entries
+    ///        1 span   84 days    ← one calendar entry, sometimes an all-day one
+    /// ```
+    ///
+    /// An all-day calendar event is 24 hours long and bounds nothing, and a day
+    /// with one meeting in it is a day the model would have to invent 15 waking
+    /// hours of. A stricter floor of three spans was written down as the doctrine
+    /// but never applied as a gate; raising this to it is a product decision
+    /// (it skips ~90% of the days above), not a tidy-up.
     pub fn is_enough(&self) -> bool {
         self.acted >= MIN_ACTIVATION_SOURCES && self.shaped > 0
     }
@@ -2052,17 +2048,8 @@ struct ParsedDaySummary {
     diary: String,
     epigraph: Option<String>,
     data_quality: Option<String>,
-    events: Option<Vec<LlmEvent>>,
 }
 
-/// Split virtues-api response into diary text, epigraph, data quality, and optional events JSON.
-/// Expected format:
-///   [diary text]
-///   ---EPIGRAPH---
-///   [one-line epigraph]
-///   ---DATA_QUALITY---
-///   {"coverage":{...},"overall":3,"note":"..."}
-///   ---EVENTS---
 /// Drop prompt-instruction echo from the article prose.
 ///
 /// Observed live (2025-12-16): the model opened its output with
@@ -2146,30 +2133,25 @@ fn unlink_uninvited_refs(prose: &str, candidates: &[String]) -> String {
     out
 }
 
-///   [JSON events]
+/// Split virtues-api response into diary text, epigraph, and data quality.
+/// Expected format:
+///   [diary text]
+///   ---EPIGRAPH---
+///   [one-line epigraph]
+///   ---DATA_QUALITY---
+///   {"coverage":{...},"overall":3,"note":"..."}
 ///
-/// All markers except the diary are optional. Handles markdown code fences around JSON.
+/// Both markers are optional. Handles markdown code fences around JSON.
+///
+/// There is no `---EVENTS---` block: cutting a day into events is its own
+/// model call (`segment_day_events`), and the narrate prompt does not ask for
+/// one — a parser for it here would only ever see `None`.
 fn parse_virtues_api_response(response: &str) -> ParsedDaySummary {
-    // 1. Split off events JSON first (it's always at the end)
-    let (before_events, events) = if let Some(idx) = response.find("---EVENTS---") {
-        let before = &response[..idx];
-        let mut events_str = response[idx + "---EVENTS---".len()..].trim();
-        events_str = events_str
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim();
-        let parsed = parse_events_salvaging(events_str);
-        (before, parsed)
-    } else {
-        (response, None)
-    };
-
-    // 2. Split off data_quality from the remaining text
-    let (before_quality, data_quality) = if let Some(idx) = before_events.find("---DATA_QUALITY---")
+    // 1. Split off data_quality from the end
+    let (before_quality, data_quality) = if let Some(idx) = response.find("---DATA_QUALITY---")
     {
-        let before = &before_events[..idx];
-        let mut dq_str = before_events[idx + "---DATA_QUALITY---".len()..].trim();
+        let before = &response[..idx];
+        let mut dq_str = response[idx + "---DATA_QUALITY---".len()..].trim();
         dq_str = dq_str
             .trim_start_matches("```json")
             .trim_start_matches("```")
@@ -2185,10 +2167,10 @@ fn parse_virtues_api_response(response: &str) -> ParsedDaySummary {
             .map(|v| v.to_string());
         (before, validated)
     } else {
-        (before_events, None)
+        (response, None)
     };
 
-    // 3. Split off epigraph from the remaining text
+    // 2. Split off epigraph from the remaining text
     let (diary, epigraph) = if let Some(idx) = before_quality.find("---EPIGRAPH---") {
         let d = before_quality[..idx].trim().to_string();
         let e_raw = before_quality[idx + "---EPIGRAPH---".len()..].trim();
@@ -2208,7 +2190,6 @@ fn parse_virtues_api_response(response: &str) -> ParsedDaySummary {
         diary,
         epigraph,
         data_quality,
-        events,
     }
 }
 

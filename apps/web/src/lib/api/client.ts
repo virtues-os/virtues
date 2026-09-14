@@ -746,6 +746,8 @@ export interface AppletSourceListing {
 	dir: string;
 	/** Which root the folder resolved in — `shipped` came with the box. */
 	origin_root: 'shipped' | 'state';
+	/** `<origin>@<version>` the folder was copied from, when its manifest records it. */
+	forked_from: string | null;
 	files: AppletSourceFile[];
 	truncated: boolean;
 }
