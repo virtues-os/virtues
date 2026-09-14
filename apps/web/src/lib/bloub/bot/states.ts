@@ -135,6 +135,18 @@ const TEAR = polyPath(hullOfCircles(0, 0, 0.118, 0, 0.172, 0.012))
  * rayon 0.213 autour de l'origine (mesure). C'est ce decalage qui donne
  * l'impression qu'il bascule au lieu de pivoter sur place.
  */
+/**
+ * The mark's three dots (the `sleep` state). Smaller and further apart than
+ * the thinking ellipsis, and breathing a good deal slower — at a glance in
+ * the margin it should read as punctuation, not as something running.
+ */
+const SLEEP_DOT_R = 0.1347
+/** Half the base's width, and the apex's rise: the triangle's spread. */
+const SLEEP_BASE = 0.3
+const SLEEP_SPREAD = 0.22
+/** Seconds per ripple, and per loop of the state. */
+const SLEEP_PERIOD = 3.6
+
 const TRI_ORBIT = 0.213
 
 function spinningTriangle(rot: number): Silhouette {
@@ -359,7 +371,10 @@ export const STATES: StateDef[] = [
 
   {
     id: 'sleep',
-    duration: 2.4,
+    // One ripple per loop: the bob's period IS the duration, so the cycle
+    // closes where it started instead of jumping at the seam (it used to run
+    // at 1.8s inside a 2.4s loop). Slowed from there at Adam's ask.
+    duration: SLEEP_PERIOD,
     morph: 0.5,
     baseFace: false,
     baseBody: false,
@@ -371,19 +386,19 @@ export const STATES: StateDef[] = [
       // stays continuous, and the base dots slide out of it the same way the
       // thinking ellipsis detaches its side dots.
       const emerge = 0.3 + 0.7 * easings.easeOutCubic(clamp(t / 0.3))
-      const bob = (i: number) => Math.sin(t * (TAU / 1.8) - i * 0.55) * 0.07
-      const apex = { x: 0, y: -0.19 }
+      const bob = (i: number) => Math.sin(t * (TAU / SLEEP_PERIOD) - i * 0.55) * 0.07
+      const apex = { x: 0, y: -SLEEP_SPREAD }
       const feet = [
-        { x: -0.26, y: 0.19 },
-        { x: 0.26, y: 0.19 }
+        { x: -SLEEP_BASE, y: SLEEP_SPREAD },
+        { x: SLEEP_BASE, y: SLEEP_SPREAD }
       ]
       return base({
-        sil: circle(0.1585, { cy: apex.y + bob(0) }),
+        sil: circle(SLEEP_DOT_R, { cy: apex.y + bob(0) }),
         eyeAlpha: 0,
         dots: feet.map((p, i) => ({
           x: p.x * emerge,
           y: apex.y + (p.y - apex.y) * emerge + bob(i + 1),
-          r: 0.1585,
+          r: SLEEP_DOT_R,
           opacity: 1
         }))
       })
