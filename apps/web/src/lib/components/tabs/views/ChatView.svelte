@@ -2579,7 +2579,7 @@
 	.chat-topbar-right.stacked {
 		flex-direction: column;
 		align-items: flex-end;
-		gap: 8px;
+		gap: 12px;
 	}
 
 
