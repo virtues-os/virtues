@@ -11,7 +11,7 @@ class AudioPlugin: Plugin {
   private static func fullStatus() -> [String: Any] {
     let r = AudioRecorder.shared
     let quiet = r.quietHours()
-    return [
+    var status: [String: Any] = [
       "authorized": r.authorized(),
       "recording": r.recording,
       "notify": r.notifyEnabled(),
@@ -19,6 +19,11 @@ class AudioPlugin: Plugin {
       "quietStart": quiet.start,
       "quietEnd": quiet.end,
     ]
+    // Absent, not null, when there is no reason: Rust reads it as
+    // Option<String> with a serde default, so the key may be missing but a
+    // JSON null would still be a value to decode.
+    if let reason = r.pausedReason() { status["pausedReason"] = reason }
+    return status
   }
 
   /// Explicit "Enable": prompt for microphone access, then start recording.

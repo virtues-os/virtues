@@ -58,6 +58,11 @@
 		 * Mute-don't-release: the mic stays armed, chunks stop being written. */
 		quietStart?: number;
 		quietEnd?: number;
+		/** Paused for a reason the user did not choose: "carplay" while a car
+		 * audio route is present (session released so the car keeps its audio;
+		 * resumes when the car disconnects). Recording is still ON — the toggle
+		 * offers Stop, not Resume, and a Resume would just re-evict the car. */
+		pausedReason?: string;
 	}
 
 	/** Radio-hygiene counters — the battery A/B harness (reach plugin). */
@@ -303,7 +308,7 @@
 		togglingAudio = true;
 		error = null;
 		try {
-			if (audio?.recording) {
+			if (audio?.recording || audio?.pausedReason) {
 				audio = await invoke<AudioStatus>("plugin:audio|disable");
 			} else {
 				audio = await invoke<AudioStatus>("plugin:audio|enable");
@@ -560,6 +565,8 @@
 				<div class="s-sub">
 					{#if audio?.recording}
 						Recording{#if audioSync && audioSync.queued > 0} · {audioSync.queued} syncing{:else} · synced{/if}
+					{:else if audio?.pausedReason === "carplay"}
+						Paused · CarPlay
 					{:else if audio?.authorized}
 						Paused
 					{:else}Ambient sound &amp; transcripts{/if}
@@ -576,7 +583,7 @@
 				}}
 				disabled={togglingAudio}
 			>
-				{#if togglingAudio}…{:else if audio?.recording}Stop{:else if audio?.authorized}Resume{:else}Enable{/if}
+				{#if togglingAudio}…{:else if audio?.recording || audio?.pausedReason}Stop{:else if audio?.authorized}Resume{:else}Enable{/if}
 			</button>
 		</div>
 		{#if audioConsentOpen && !audio?.authorized}
