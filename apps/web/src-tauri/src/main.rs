@@ -12,6 +12,9 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_reach::ReachExt;
 use tauri_plugin_shell::ShellExt;
 
+mod message_replies;
+use message_replies::{open_messages_thread, send_imessage, take_pending_route};
+
 /// Collector status returned from CLI
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CollectorStatus {
@@ -1004,6 +1007,9 @@ fn permissions_ok(status: &CollectorStatus) -> bool {
 #[derive(Clone)]
 struct TrayItems {
     status: tauri::menu::IconMenuItem<tauri::Wry>,
+    /// "Reply to Nick: …" while a draft is pending; disabled otherwise. The
+    /// replies poll owns its text (see `message_replies::start_poll`).
+    reply: tauri::menu::MenuItem<tauri::Wry>,
 }
 
 /// Recompute the status line and apply it. Spawns its OWN thread because
@@ -1051,18 +1057,25 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let show = MenuItem::with_id(app, "show", "Open Virtues", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Virtues", true, None::<&str>)?;
+    // Replies from the record: the newest pending draft (the poll names it),
+    // and the button — "take care of the thread that just messaged me".
+    let reply = MenuItem::with_id(app, "reply", "No replies waiting", false, None::<&str>)?;
+    let draft = MenuItem::with_id(app, "draft", "Reply to the latest thread…", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
         &[
             &status,
             &PredefinedMenuItem::separator(app)?,
+            &reply,
+            &draft,
+            &PredefinedMenuItem::separator(app)?,
             &show,
             &quit,
         ],
     )?;
 
-    let items = TrayItems { status };
+    let items = TrayItems { status, reply };
 
     // The ∴ mark as a TEMPLATE image: monochrome black+alpha that AppKit recolors
     // to fit light/dark menu bars. The full-color app icon would not adapt and
@@ -1085,9 +1098,29 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "quit" => app.exit(0),
+            "reply" => {
+                if let Some(id) = message_replies::newest_pending(app) {
+                    message_replies::open_reply(app, &id);
+                }
+            }
+            "draft" => {
+                // Off the main thread: the request blocks on the loopback,
+                // which can hold a connection for seconds when the box is away.
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    use tauri_plugin_notification::NotificationExt;
+                    let (title, body) = match message_replies::request_draft(None) {
+                        Ok(()) => ("Looking at the latest thread…", "A draft will appear here if there is something to answer.".to_string()),
+                        Err(e) => ("Could not start a draft", e),
+                    };
+                    let _ = app.notification().builder().title(title).body(body).show();
+                });
+            }
             _ => {}
         })
         .build(app)?;
+
+    message_replies::start_poll(app.clone(), items.reply.clone());
 
     // Keep the labels honest. A poll (not an event subscription) because the
     // collector is a separate daemon with no push channel back to this app.
@@ -1415,6 +1448,9 @@ fn main() {
             open_full_disk_access,
             open_accessibility_settings,
             set_summon_shortcut,
+            send_imessage,
+            open_messages_thread,
+            take_pending_route,
         ])
         .setup(|app| {
             // Bind the default summon chord here rather than waiting for the
@@ -1474,6 +1510,7 @@ fn main() {
             // only — Windows/Linux defer self-update (updates come from the box).
             #[cfg(target_os = "macos")]
             app.manage(std::sync::Mutex::new(UpdateState::default()));
+            app.manage(message_replies::ReplyWatchState::default());
 
             // Decide where to land. A valid pairing reconnects SILENTLY (the
             // 90% reinstall case); we only ever interrupt when something's
@@ -1636,6 +1673,9 @@ fn main() {
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
+                    // A notification click lands here too. If a draft was
+                    // announced moments ago, that is what they came for.
+                    message_replies::open_if_notified_recently(app_handle);
                 }
             }
             #[cfg(not(target_os = "macos"))]

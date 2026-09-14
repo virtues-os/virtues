@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 import SQLite3
 
@@ -7,6 +8,36 @@ class MessageMonitor {
     private let dbPath = NSString(string: "~/Library/Messages/chat.db").expandingTildeInPath
     private var timer: DispatchSourceTimer?
     private let syncInterval: TimeInterval = 300 // 5 minutes
+
+    // Every sync runs on this one serial queue. The timer, the file watcher,
+    // and the initial sync all land here, so two syncs can never interleave —
+    // which matters because the watermark is read at the top of a sync and
+    // written at the bottom, and an overlapping pair would re-read (harmless,
+    // the box dedups) or, worse, advance past rows the other had not stored.
+    private let syncQueue = DispatchQueue(label: "com.virtues.collector.messages.sync", qos: .background)
+
+    // Freshness. The 5-minute timer is the floor; this is the ceiling.
+    //
+    // A reply drafted from a thread is only useful if the ask reaches the box
+    // in seconds, not "some time in the next five minutes". FSEvents on the
+    // Messages directory fires when chat.db-wal grows — every inbound and
+    // outbound message — and `watcherLatency` coalesces the burst of writes a
+    // single message produces (the row, the chat join, the read receipt) into
+    // one sync. Watching the -wal file directly would also work, but the WAL is
+    // deleted and recreated on checkpoint, and a vnode source dies with the
+    // inode; a directory-level stream survives that.
+    //
+    // Idle cost is zero: no polling, the kernel wakes us. And the watcher only
+    // ever calls the same watermark sync the timer does, so a spurious event
+    // (a read receipt, a sticker download) costs one indexed query that finds
+    // nothing.
+    private var watcher: FSEventStreamRef?
+    private let watcherLatency: CFTimeInterval = 1.0
+
+    /// Fired after a sync that stored at least one new message, with the count.
+    /// The uploader hangs an immediate flush off this so a fresh message does
+    /// not sit in the local queue until the next 5-minute upload tick.
+    var onNewMessages: ((Int) -> Void)?
     
     // Configuration
     //
@@ -49,12 +80,12 @@ class MessageMonitor {
         }
 
         // Perform initial sync asynchronously to avoid blocking caller
-        DispatchQueue.global(qos: .background).async { [weak self] in
+        syncQueue.async { [weak self] in
             self?.syncMessages()
         }
 
         // Set up periodic sync using DispatchSourceTimer (more reliable than Timer for background execution)
-        let syncTimer = DispatchSource.makeTimerSource(queue: .global(qos: .background))
+        let syncTimer = DispatchSource.makeTimerSource(queue: syncQueue)
         syncTimer.schedule(deadline: .now() + syncInterval, repeating: syncInterval)
         syncTimer.setEventHandler { [weak self] in
             self?.syncMessages()
@@ -62,14 +93,80 @@ class MessageMonitor {
         syncTimer.resume()
         self.timer = syncTimer
 
-        print("Message monitor started (syncing every \(Int(syncInterval)) seconds)")
+        startWatcher()
+
+        print("Message monitor started (syncing every \(Int(syncInterval)) seconds, plus on write)")
     }
     
     func stop() {
         timer?.cancel()
         timer = nil
+        stopWatcher()
         saveLastSyncDate()
         print("Message monitor stopped")
+    }
+
+    // The FSEvents context holds `self` unretained; the stream must not
+    // outlive the monitor.
+    deinit {
+        stopWatcher()
+    }
+
+    // MARK: - File watcher
+
+    private func startWatcher() {
+        guard watcher == nil else { return }
+        // Without Full Disk Access the directory is unreadable and the stream
+        // would never fire. `syncMessages` re-probes access every tick and
+        // calls back in here once it is granted.
+        guard hasFullDiskAccess else { return }
+
+        let dir = (dbPath as NSString).deletingLastPathComponent
+        var context = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(self).toOpaque(),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
+        )
+        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+            guard let info = info else { return }
+            let monitor = Unmanaged<MessageMonitor>.fromOpaque(info).takeUnretainedValue()
+            monitor.syncQueue.async { monitor.syncMessages() }
+        }
+        // `FileEvents` so writes to chat.db-wal inside the directory are
+        // reported at all; a plain directory stream only sees entries come
+        // and go, and the WAL grows in place.
+        let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagIgnoreSelf)
+        guard let stream = FSEventStreamCreate(
+            kCFAllocatorDefault,
+            callback,
+            &context,
+            [dir] as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            watcherLatency,
+            flags
+        ) else {
+            print("⚠️ Could not create Messages file watcher — falling back to the timer alone")
+            return
+        }
+        FSEventStreamSetDispatchQueue(stream, syncQueue)
+        guard FSEventStreamStart(stream) else {
+            print("⚠️ Could not start Messages file watcher — falling back to the timer alone")
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+            return
+        }
+        watcher = stream
+        print("Watching \(dir) for new messages")
+    }
+
+    private func stopWatcher() {
+        guard let stream = watcher else { return }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        watcher = nil
     }
     
     private func syncMessages() {
@@ -106,6 +203,7 @@ class MessageMonitor {
                     hasFullDiskAccess = true
                     // Reset attempts counter
                     permissionCheckAttempts = 0
+                    startWatcher()
                     // Fall through to perform sync
                 } else {
                     if permissionCheckAttempts == 1 {
@@ -324,6 +422,12 @@ class MessageMonitor {
             if let latestDate = latestMessageDate {
                 lastSyncDate = latestDate
                 saveLastSyncDate()
+            }
+
+            // Only now — after the rows are durably queued and the watermark
+            // has moved — is there something worth flushing.
+            if !storable.isEmpty {
+                onNewMessages?(storable.count)
             }
         }
     }

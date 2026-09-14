@@ -587,6 +587,62 @@ export async function onSummon(handler: () => void): Promise<() => void> {
 	}
 }
 
+// ─── Replies from the record ─────────────────────────────────────────────────
+//
+// The box drafts; this Mac sends. Three commands (surface 5): send a text into
+// a Messages thread by chat id, open Messages with the text typed into a
+// thread (the zero-permission path), and collect a route the shell queued
+// for this page — the tray item or a notification click may fire before the
+// page is listening.
+
+/** The command-surface version that introduced the reply commands. */
+export const REPLY_SURFACE = 5;
+
+/**
+ * Send `text` into the Messages thread `threadId` (a chat.db chat GUID);
+ * `handle` is the other party for a one-to-one thread, the fallback address
+ * when the GUID is not one Messages will take. The first use prompts for
+ * Automation access to Messages; a refusal comes back as the thrown error.
+ */
+export async function sendIMessage(threadId: string, handle: string | null, text: string): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) throw new Error('Sending needs the Virtues app on a Mac.');
+	await invoke('send_imessage', { threadId, handle, text });
+}
+
+/** Open Messages to `handle` with `body` in the compose field. Not for groups. */
+export async function openMessagesThread(handle: string, body: string): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) throw new Error('Opening Messages needs the Virtues app on a Mac.');
+	await invoke('open_messages_thread', { handle, body });
+}
+
+/** A route the shell wants opened, taken once; null when there is none. */
+export async function takePendingRoute(): Promise<string | null> {
+	const invoke = await getInvoke();
+	if (!invoke) return null;
+	try {
+		return (await invoke<string | null>('take_pending_route')) ?? null;
+	} catch {
+		// A shell predating the command. Nothing queued, by construction.
+		return null;
+	}
+}
+
+/** Run `handler` when the shell asks this page to open a route. */
+export async function onOpenRoute(handler: (route: string) => void): Promise<() => void> {
+	if (!isTauri) return () => {};
+	try {
+		const { listen } = await import('@tauri-apps/api/event');
+		return await listen<string>('virtues://open-route', (e) => {
+			if (typeof e.payload === 'string' && e.payload) handler(e.payload);
+		});
+	} catch (e) {
+		console.error('[tauri] could not listen for open-route:', e);
+		return () => {};
+	}
+}
+
 // ─── The pairing door ────────────────────────────────────────────────────────
 //
 // Pairing is structurally LAN-only (a device can't use iroh until it's

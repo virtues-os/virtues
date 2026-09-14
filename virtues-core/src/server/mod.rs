@@ -250,6 +250,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     // Initialize chat cancellation state for stopping in-progress requests
     let chat_cancel_state = crate::api::chat::ChatCancellationState::new();
+    // Turns outlive their requests; this is where a client finds one to rejoin.
+    let live_turns = crate::api::live_turn::LiveTurns::new();
 
     // Create drive config with shared storage backend
     let drive_config = crate::api::DriveConfig::new(client.storage.clone());
@@ -261,6 +263,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tool_executor,
         yjs_state: yjs_state.clone(),
         chat_cancel_state,
+        live_turns,
     };
 
     // ============================================================
@@ -1030,6 +1033,23 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pins/:id",
             patch(api::update_pin_handler).delete(api::delete_pin_handler),
         )
+        // Drafted message replies (the Mac app polls, sends, reports back)
+        .route(
+            "/api/message-replies/pending",
+            get(api::list_pending_message_replies_handler),
+        )
+        .route(
+            "/api/message-replies/:id",
+            get(api::get_message_reply_handler),
+        )
+        .route(
+            "/api/message-replies/:id/sent",
+            post(api::mark_message_reply_sent_handler),
+        )
+        .route(
+            "/api/message-replies/:id/dismiss",
+            post(api::dismiss_message_reply_handler),
+        )
         // Notebooks API (the "room" a chat lives in)
         .route(
             "/api/notebooks",
@@ -1073,6 +1093,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Chat API (streaming)
         .route("/api/chat", post(api::chat_handler))
         .route("/api/chat/cancel", post(api::cancel_chat_handler))
+        .route("/api/chat/:id/stream", get(api::live_turn_stream_handler))
         .route("/api/ai/complete", post(api::ai_complete_handler))
         // Chat Edit Permissions API
         .route(

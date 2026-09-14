@@ -33,6 +33,7 @@ const PagesView: ViewLoader = () => import('$lib/components/tabs/views/PagesView
 const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/PageDetailView.svelte');
 const BookmarksView: ViewLoader = () => import('$lib/components/tabs/views/BookmarksView.svelte');
 const BookmarkDetailView: ViewLoader = () => import('$lib/components/tabs/views/BookmarkDetailView.svelte');
+const MessageReplyView: ViewLoader = () => import('$lib/components/tabs/views/MessageReplyView.svelte');
 const NotebooksListView: ViewLoader = () => import('$lib/components/tabs/views/NotebooksListView.svelte');
 const NotebookDetailView: ViewLoader = () => import('$lib/components/tabs/views/NotebookDetailView.svelte');
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
@@ -346,6 +347,25 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		icon: 'ri:bookmark-line',
 		defaultLabel: 'Bookmarks',
 		component: BookmarksView,
+	},
+
+	// REPLY DRAFT: /reply/{id} — one reply the box drafted for a thread,
+	// opened from the Mac's tray or notification.
+	reply: {
+		match: (path) => /^\/reply\/.+$/.test(path),
+		parse: (path) => ({
+			type: 'reply',
+			label: 'Reply',
+			icon: 'ri:reply-line',
+			entityId: path.match(/^\/reply\/(.+)$/)?.[1],
+		}),
+		// Ids are minted as `reply_<hex>`, so the id is its own serialization.
+		serialize: (id) => id || 'reply',
+		deserialize: (serialized) => (serialized.startsWith('reply_') ? `/reply/${serialized}` : '/'),
+		icon: 'ri:reply-line',
+		defaultLabel: 'Reply',
+		component: MessageReplyView,
+		detailComponent: MessageReplyView,
 	},
 
 	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /notebook/{id}.
@@ -873,6 +893,7 @@ export function parseRoute(route: string): ParsedRoute {
 		// unreachable — this array is what routing actually walks.
 		'bookmark',
 		'bookmarks',
+		'reply', // /reply/{id} — a drafted message reply
 		'day',
 		'year',
 		'narrative-identity',

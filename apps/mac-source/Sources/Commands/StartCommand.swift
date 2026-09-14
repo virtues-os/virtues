@@ -99,6 +99,15 @@ struct StartCommand: ParsableCommand {
         globalPresenceMonitor = presenceMonitor
         globalUploader = uploader
 
+        // A new message flushes the queue at once instead of waiting for the
+        // uploader's 5-minute tick. Everything else pending (app events,
+        // visits) rides along in the same batch, so this costs one small
+        // upload per message rather than a second schedule.
+        messageMonitor.onNewMessages = { [weak uploader] count in
+            print("\(count) new message(s) — uploading now")
+            Task { await uploader?.uploadNow() }
+        }
+
         // Start monitoring and uploading
         monitor.start()
         messageMonitor.start()
