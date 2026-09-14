@@ -314,6 +314,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/setup/skip-onboarding",
             post(crate::api::box_status::skip_onboarding_handler),
         )
+        // Getting started, derived: the four steps, the lock, the first day.
+        // Authenticated, unlike /api/setup/state — it reads the profile.
+        .route(
+            "/api/getting-started",
+            get(crate::api::getting_started::state_handler),
+        )
+        .route(
+            "/api/getting-started/skip",
+            post(crate::api::getting_started::skip_handler),
+        )
         // What the attached 7" display renders. Registered here because the
         // kiosk draws before any device is paired, but UNLIKE its neighbours
         // above it carries the live pair code — so the handler itself refuses

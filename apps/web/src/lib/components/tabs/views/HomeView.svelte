@@ -52,15 +52,10 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import GettingStarted from "$lib/components/home/GettingStarted.svelte";
 	import DayDeck from "$lib/components/home/DayDeck.svelte";
 
-	// Which page this is — written by GettingStarted, read here. While any
-	// getting-started section remains ("focus"), those sections ARE the page:
-	// no subtitle, no day stepper, no deck of silent tracks sharing the
-	// screen with them. Home's own furniture exists only at "settled", when
-	// getting started has retired entirely.
-	let gsPhase = $state<"loading" | "focus" | "settled">("loading");
+	// Getting started left this page on 2026-09-13: it is a chat room now
+	// (chat/getting-started), and Home is only ever Home.
 	import DayGround from "$lib/components/home/DayGround.svelte";
 	import DayNovelty from "$lib/components/home/DayNovelty.svelte";
 	import PlaceAsk from "$lib/components/home/PlaceAsk.svelte";
@@ -318,16 +313,6 @@
 	}
 </script>
 
-<!-- First run: getting started is the page, whole and alone — a spread that
-     bleeds to the pane and carries its own title, so it lives OUTSIDE the Page
-     shell. It is mounted exactly once and hidden, not destroyed, when the box
-     settles: it is what computes `gsPhase`, and re-creating it on a phase
-     change made it and this view chase each other (see its header). -->
-<div class="host" class:settled={gsPhase === "settled"}>
-	<GettingStarted bind:phase={gsPhase} />
-</div>
-
-{#if gsPhase === "settled"}
 <div class="host">
 <div class="spread">
 	<section class="work">
@@ -473,7 +458,6 @@
 	</nav>
 </div>
 </div>
-{/if}
 
 <style>
 	.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -482,7 +466,6 @@
 	   getting-started spread and Home's. Getting started is display:none
 	   (not unmounted) once Home takes over — see GettingStarted.svelte. */
 	.host { height: 100%; overflow-y: auto; }
-	.host.settled { display: none; }
 
 	/* One column. Getting Started is a spread — work on the left, painting on
 	   the right — but once it retires Home is the work alone, in the page's

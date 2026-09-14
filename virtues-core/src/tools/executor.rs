@@ -335,6 +335,12 @@ impl ToolExecutor {
                 }
             }
             "update_memory" => self.execute_update_memory(arguments).await,
+            // Getting started's tools: markers, never writes (the client's
+            // cards write). `skip_step` is the one exception and it lands in
+            // the same stored list the door uses.
+            "show_step" => self.execute_show_step(arguments).await,
+            "skip_step" => self.execute_skip_step(arguments).await,
+            "record_introductions" => self.execute_record_introductions(arguments).await,
             "set_user_name" => self.execute_set_user_name(arguments).await,
             "set_assistant_name" => self.execute_set_assistant_name(arguments).await,
             "web_search" => self.web_search.execute(arguments).await,
@@ -817,6 +823,106 @@ impl ToolExecutor {
         Ok(ToolResult::success(serde_json::json!({
             "saved": true,
             "length": content.len()
+        })))
+    }
+
+    /// Open one step's card. A done step has no card to open, and the
+    /// refusal tells the model what to say instead.
+    async fn execute_show_step(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+        let step = arguments
+            .get("step")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::InvalidParameters("step is required".into()))?
+            .to_string();
+        if !crate::api::getting_started::is_step(&step) || step == "connect_ai" {
+            return Err(ToolError::InvalidParameters(format!("no card for {step}")));
+        }
+        let state = crate::api::getting_started::compute(&self._pool)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("getting-started state: {e}")))?;
+        match state.step(&step).map(|s| s.status) {
+            Some(crate::api::getting_started::StepStatus::Done) => Err(ToolError::InvalidParameters(
+                format!("{step} is already done; say so, and move to the next open step"),
+            )),
+            _ => Ok(ToolResult::success(serde_json::json!({
+                "card": "step",
+                "step": step,
+                "message": "The card is open below for them to do it."
+            }))),
+        }
+    }
+
+    /// Skip a step on the person's ask. `connect_ai` is the door's alone.
+    async fn execute_skip_step(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+        let step = arguments
+            .get("step")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::InvalidParameters("step is required".into()))?
+            .to_string();
+        let skipped = arguments.get("skipped").and_then(|v| v.as_bool()).unwrap_or(true);
+        if step == "connect_ai" {
+            return Err(ToolError::InvalidParameters(
+                "connect_ai cannot be skipped from the conversation; the door in the corner is the person's own exit".into(),
+            ));
+        }
+        crate::api::getting_started::set_skipped(&self._pool, &step, skipped)
+            .await
+            .map_err(|e| match e {
+                crate::error::Error::InvalidInput(why) => ToolError::InvalidParameters(why),
+                e => ToolError::ExecutionFailed(format!("skip step: {e}")),
+            })?;
+        let state = crate::api::getting_started::compute(&self._pool)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("getting-started state: {e}")))?;
+        Ok(ToolResult::success(serde_json::json!({
+            "step": step,
+            "skipped": skipped,
+            "graduated": state.graduated,
+            "state": state.render_prompt_block(),
+        })))
+    }
+
+    /// Play introductions back. Validates the shapes it can (a date, a time
+    /// zone name) and returns the fields as a card marker; writes nothing.
+    async fn execute_record_introductions(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+        let field = |k: &str| {
+            arguments
+                .get(k)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        let birth_date = field("birth_date");
+        if let Some(d) = &birth_date {
+            chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| {
+                ToolError::InvalidParameters(format!("birth_date must be YYYY-MM-DD, got {d}"))
+            })?;
+        }
+        let home_timezone = field("home_timezone");
+        if let Some(tz) = &home_timezone {
+            if tz.parse::<chrono_tz::Tz>().is_err() {
+                return Err(ToolError::InvalidParameters(format!(
+                    "home_timezone must be an IANA name (e.g. America/Chicago), got {tz}"
+                )));
+            }
+        }
+        let fields = serde_json::json!({
+            "preferred_name": field("preferred_name"),
+            "assistant_name": field("assistant_name"),
+            "home_place": field("home_place"),
+            "home_timezone": home_timezone,
+            "birth_date": birth_date,
+        });
+        if fields.as_object().is_some_and(|o| o.values().all(|v| v.is_null())) {
+            return Err(ToolError::InvalidParameters(
+                "nothing to play back; ask for at least one of the four".into(),
+            ));
+        }
+        Ok(ToolResult::success(serde_json::json!({
+            "card": "introductions",
+            "fields": fields,
+            "message": "The card is below; they confirm or correct it, and the card writes."
         })))
     }
 

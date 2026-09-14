@@ -10,6 +10,8 @@
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
 	import DeskSection from "./DeskSection.svelte";
+	import GettingStartedCard from "./GettingStartedCard.svelte";
+	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ZoneHeader from "./ZoneHeader.svelte";
 	import { sidebarZones } from "$lib/stores/sidebarZones.svelte";
 	import { SECTION_GROUPS } from "$lib/sidebar/sections";
@@ -243,6 +245,12 @@
 					<Icon icon="ri:loader-4-line" width="16" class="spinner" />
 					<span>Loading...</span>
 				</div>
+			{:else if gettingStarted.locked}
+				<!-- No model yet: the app is a room and a door. The card is the
+				     room's only entry; nothing else is on the shelf. -->
+				{#if !isCollapsed}
+					<GettingStartedCard />
+				{/if}
 			{:else}
 				<!-- One swap, not eleven. The two panels are stacked in a single
 				     grid cell so the outgoing one can leave while the incoming
@@ -306,9 +314,16 @@
 			{/if}
 		</nav>
 
-		<SidebarFooter
-			collapsed={isCollapsed}
-		/>
+		{#if !gettingStarted.locked}
+			{#if !isCollapsed && gettingStarted.loaded && !gettingStarted.unsupported && !gettingStarted.graduated}
+				<!-- The progress card: the one mention of getting started
+				     outside its room, from step 1 to graduation. -->
+				<GettingStartedCard />
+			{/if}
+			<SidebarFooter
+				collapsed={isCollapsed}
+			/>
+		{/if}
 	</div>
 </aside>
 

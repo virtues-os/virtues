@@ -208,6 +208,9 @@ pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
         // chapters. Still no search, no data, no pages: it must not read the
         // record mid-confession or claim capabilities.
         "interview" => Some(&["write_it_up"] as &[&str]),
+        // Getting started: the room is about the box, not the record. Open a
+        // card, skip a step, play introductions back. No search, no data.
+        crate::api::getting_started::AGENT_MODE => Some(crate::api::getting_started::TOOLS),
         _ => None,
     };
     match allowlist {

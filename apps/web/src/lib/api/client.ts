@@ -2237,6 +2237,50 @@ export async function skipOnboarding(skipped = true): Promise<void> {
 	if (!res.ok) throw new Error(`Failed to record onboarding choice: ${res.statusText}`);
 }
 
+// ---- Getting started: one room, one derived truth (api/getting_started.rs) ----
+
+export type GettingStartedStepId = 'connect_ai' | 'introductions' | 'connect_world' | 'interview';
+
+export interface GettingStartedStep {
+	id: GettingStartedStepId;
+	title: string;
+	status: 'done' | 'open' | 'skipped';
+	/** How a done step got done, where it matters ("subscription" | "byo"). */
+	via?: string;
+	/** Server-authored copy for the step's current state — render verbatim. */
+	detail?: string;
+	/** Started but not done (the interview has replies, no document yet). */
+	underway?: boolean;
+}
+
+export interface GettingStartedState {
+	ai_connected: boolean;
+	locked: boolean;
+	steps: GettingStartedStep[];
+	first_day: string | null;
+	graduated: boolean;
+}
+
+export async function getGettingStarted(): Promise<GettingStartedState> {
+	const res = await fetch(`${API_BASE}/getting-started`);
+	if (!res.ok) throw new Error(`Failed to get getting-started state: ${res.statusText}`);
+	return res.json();
+}
+
+/** Skip (or un-skip) one step. Answers with the new state. */
+export async function skipGettingStartedStep(
+	step: GettingStartedStepId,
+	skipped = true
+): Promise<GettingStartedState> {
+	const res = await fetch(`${API_BASE}/getting-started/skip`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ step, skipped })
+	});
+	if (!res.ok) throw new Error(`Failed to skip step: ${res.statusText}`);
+	return res.json();
+}
+
 export async function getSetupState(): Promise<SetupState> {
 	const res = await fetch(`${API_BASE}/setup/state`);
 	if (!res.ok) throw new Error(`Failed to get setup state: ${res.statusText}`);
