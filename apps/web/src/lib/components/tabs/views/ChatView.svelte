@@ -480,7 +480,7 @@
 
 	// Keep a map of message metadata (agentId, provider, etc.) for rendering
 	let messageMetadata = $state<
-		Map<string, { agentId?: string; provider?: string; stopped?: boolean }>
+		Map<string, { agentId?: string; provider?: string; stopped?: boolean; interrupted?: boolean }>
 	>(new Map());
 
 	// Citation panel state
@@ -778,14 +778,17 @@
 
 	// Helper function to convert database messages to Chat parts
 	function convertMessageToParts(msg: any) {
-		// Carry agent/provider + the user-stopped flag (subject='cancelled') so the
-		// "Stopped" notice survives a reload.
+		// Carry agent/provider + the partial-reply flags so the notice under a
+		// stub survives a reload: subject='cancelled' is the person's stop,
+		// subject='interrupted' is the stream or the model quitting (VIR-334).
 		const stopped = msg.subject === "cancelled";
-		if (msg.agentId || msg.provider || stopped) {
+		const interrupted = msg.subject === "interrupted";
+		if (msg.agentId || msg.provider || stopped || interrupted) {
 			messageMetadata.set(msg.id, {
 				agentId: msg.agentId,
 				provider: msg.provider,
 				stopped,
+				interrupted,
 			});
 		}
 
@@ -2069,6 +2072,8 @@
 											{/each}
 											{#if messageMetadata.get(message.id)?.stopped}
 												<StoppedNotice />
+											{:else if messageMetadata.get(message.id)?.interrupted}
+												<StoppedNotice reason="interrupted" />
 											{/if}
 										{:else}
 											{@const fileParts = message.parts.filter((p: any) => p.type === "file")}

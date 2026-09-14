@@ -98,7 +98,7 @@ async fn chat_completions(
         let pool_clone = pool.clone();
         let account_id = ent.account_id.clone();
         let result = crate::routes::streaming::create_streaming_response(
-            &state.http_client,
+            &state.stream_client,
             &state.config,
             &state.catalog,
             &model,

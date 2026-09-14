@@ -1614,6 +1614,9 @@ fn create_agent_stream(
         // separator ("…exact text.The earlier edit…"). When text resumes after a
         // tool call, insert a paragraph break so each narration reads on its own.
         let mut needs_text_break = false;
+        // Set by any error event mid-turn: the reply on screen is partial,
+        // and the row must say so or a reload shows the stub as the answer.
+        let mut interrupted = false;
 
         // Token usage tracking
         let mut total_input_tokens: u32 = 0;
@@ -1797,6 +1800,7 @@ fn create_agent_stream(
                 }
 
                 AgentEvent::Error { message, code: _, recoverable: _ } => {
+                    interrupted = true;
                     let event = StreamEvent::Error { error_text: message };
                     yield Ok(SseEvent::default().data(serialize_event(&event)));
                 }
@@ -1854,7 +1858,16 @@ fn create_agent_stream(
                 tool_calls: if all_tool_calls.is_empty() { None } else { Some(all_tool_calls.clone()) },
                 reasoning: if reasoning_content.is_empty() { None } else { Some(reasoning_content.clone()) },
                 intent: None,
-                subject: if was_cancelled { Some("cancelled".to_string()) } else { None },
+                // "interrupted": the stream or the model stopped before the
+                // reply was finished (VIR-334). The UI reads both on reload
+                // and shows a notice under the stub; a person's stop wins.
+                subject: if was_cancelled {
+                    Some("cancelled".to_string())
+                } else if interrupted {
+                    Some("interrupted".to_string())
+                } else {
+                    None
+                },
                 thought_signature: None,
                 parts: None,
             };

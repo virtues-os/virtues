@@ -130,13 +130,22 @@ where
     // Token usage
     let mut usage = TokenUsage::default();
     let mut finish_reason = StepReason::EndTurn;
+    // The model said it was done: a `finish_reason` on a choice, or the
+    // `[DONE]` sentinel. A stream that ends without either did not finish —
+    // the gateway's upstream broke, a proxy gave up, the idle timeout fired.
+    // This used to be indistinguishable from a normal end: the loop broke,
+    // `finish_reason` kept its `EndTurn` default, and the half-reply was
+    // saved as the answer with nothing on screen to say so (VIR-334).
+    let mut ended_cleanly = false;
 
     while let Some(chunk) = bytes_stream.next().await {
         let chunk = match chunk {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("Stream error: {}", e);
-                break;
+                return Err(StreamError::Interrupted(format!(
+                    "the connection dropped mid-reply: {e}"
+                )));
             }
         };
 
@@ -154,11 +163,26 @@ where
             let data = &line[6..]; // Strip "data: " prefix
 
             if data == "[DONE]" {
+                ended_cleanly = true;
                 break;
             }
 
             // Parse the SSE data as JSON
             if let Ok(json) = serde_json::from_str::<Value>(data) {
+                // The gateway's own frame for an upstream that broke mid-stream
+                // (`routes/streaming.rs`): a chat-completions stream has no
+                // standard error shape, so this is the one the proxy and the
+                // box agree on. Never a model chunk, so nothing is lost by
+                // stopping here.
+                if let Some(err) = json.get("error") {
+                    let message = err
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("the gateway reported an error mid-reply")
+                        .to_string();
+                    return Err(StreamError::Interrupted(message));
+                }
+
                 // Extract thought signature if present (check top-level and choices)
                 if let Some(sig) = json.get("thought_signature").and_then(|s| s.as_str()) {
                     thought_signature = Some(sig.to_string());
@@ -237,6 +261,7 @@ where
                         
                         // Check for finish_reason
                         if let Some(reason) = choice.get("finish_reason").and_then(|f| f.as_str()) {
+                            ended_cleanly = true;
                             finish_reason = match reason {
                                 "tool_calls" => StepReason::ToolCalls,
                                 "length" => StepReason::MaxTokens,
@@ -273,6 +298,15 @@ where
                 }
             }
         }
+    }
+
+    if !ended_cleanly {
+        // The bytes stopped before the model said it was done. Everything
+        // streamed so far already reached the caller through `emit`; what is
+        // refused here is the claim that it was the whole reply.
+        return Err(StreamError::Interrupted(
+            "the reply stopped before the model finished".to_string(),
+        ));
     }
 
     // Parse accumulated tool calls
@@ -325,7 +359,11 @@ pub enum StreamError {
     #[error("Parse error: {0}")]
     ParseError(String),
 
-    #[error("Stream interrupted")]
-    Interrupted,
+    /// The stream ended before the model finished: a dropped connection, the
+    /// idle timeout, the gateway's error frame, or bytes that simply stopped
+    /// with no `finish_reason` and no `[DONE]`. What streamed before the cut
+    /// has already been emitted; the message says why the rest never came.
+    #[error("Stream interrupted: {0}")]
+    Interrupted(String),
 }
 

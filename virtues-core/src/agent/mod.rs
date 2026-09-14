@@ -247,17 +247,32 @@ impl AgentLoop {
                 let result = match result {
                     Ok(r) => r,
                     Err(e) => {
-                        yield AgentEvent::error(
-                            e.to_string(),
-                            Some(ErrorCode::LlmError),
-                            false,
-                        );
+                        // An interrupted stream is not an LLM error: the model
+                        // was mid-sentence when the bytes stopped. The text
+                        // that streamed is already with the caller; this event
+                        // is what stops it being saved as the whole answer.
+                        let code = match e {
+                            stream::StreamError::Interrupted(_) => ErrorCode::Interrupted,
+                            _ => ErrorCode::LlmError,
+                        };
+                        yield AgentEvent::error(e.to_string(), Some(code), false);
                         break;
                     }
                 };
 
                 // Check if we're done (no tool calls)
                 if result.tool_calls.is_empty() {
+                    if result.finish_reason == StepReason::MaxTokens {
+                        // `finish_reason: length` used to be mapped and then
+                        // ignored, so a reply the model never finished read
+                        // as one it did.
+                        yield AgentEvent::error(
+                            "The model reached its output limit before it finished; \
+                             what it wrote is above.",
+                            Some(ErrorCode::OutputLimit),
+                            false,
+                        );
+                    }
                     yield AgentEvent::step_complete(step, result.finish_reason);
                     break;
                 }
