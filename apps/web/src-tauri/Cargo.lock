@@ -6194,6 +6194,7 @@ name = "tauri-plugin-audio"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.20",
@@ -7157,6 +7158,7 @@ dependencies = [
  "flate2",
  "keyring",
  "objc2 0.6.4",
+ "semver",
  "serde",
  "serde_json",
  "tar",

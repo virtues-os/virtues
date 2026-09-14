@@ -142,7 +142,9 @@ export type OtaCheck =
 	| { state: 'applied'; contentHash: string }
 	| { state: 'shell_too_old'; needs: number; have: number }
 	| { state: 'no_bundle_on_box' }
-	| { state: 'rolled_back'; contentHash: string };
+	| { state: 'rolled_back'; contentHash: string }
+	| { state: 'box_behind'; boxVersion: string; have: string }
+	| { state: 'version_unreadable'; boxVersion: string; have: string | null };
 
 /**
  * One line describing an update check, or null when there is nothing worth
@@ -163,6 +165,13 @@ export function describeOtaCheck(c: OtaCheck | null): string | null {
 			// bundle after a failed boot, which otherwise looks like OTA
 			// silently not working.
 			return 'A newer UI failed to start on this device and was set aside — the next box update clears it.';
+		case 'box_behind':
+			// The other half of shell_too_old, and the ordinary one: this app
+			// updates on Apple's cadence, your box when you upgrade it. Silence
+			// here would read as OTA being broken.
+			return `This app already has newer UI than your box (box ${c.boxVersion}, app ${c.have}) — it stays on its own until you run \`sudo virtues upgrade\`.`;
+		case 'version_unreadable':
+			return "This app can't tell whether your box's UI is newer than its own, so it's staying on the build it shipped with.";
 		default:
 			return null;
 	}
