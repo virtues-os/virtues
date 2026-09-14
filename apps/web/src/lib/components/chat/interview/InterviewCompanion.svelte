@@ -106,10 +106,19 @@
 		gap: 0.375rem;
 		padding: 0 0 0.5rem;
 		/* The bloub viewBox is ±158 around a body of radius 100, so the SVG
-		   carries (58/316)·size of built-in whitespace per side; pull the ball's
-		   edge back onto the column's left margin, and its top toward the
-		   conversation's tail. Keep the px in step with the size= prop. */
-		margin-left: calc(54px * -58 / 316);
+		   carries built-in whitespace on every side; pull it back so the shape
+		   sits on the column's left margin rather than a gutter in from it, and
+		   its top toward the conversation's tail. Keep the px in step with the
+		   size= prop.
+
+		   The LEFT is measured from the resting mark, not the ball: the ∴ is
+		   what stands here almost always, and its outer dot reaches only 43.5
+		   viewBox units (SLEEP_BASE 0.30 + SLEEP_DOT_R 0.1347, in body radii),
+		   leaving 114.5 units of air to its left. Aligning the ball's edge
+		   instead — 58 units — left the mark visibly indented from the prose.
+		   When he wakes, the ball now overhangs the column slightly, which is
+		   the usual optical treatment for a round shape at a text edge. */
+		margin-left: calc(54px * -114.5 / 316);
 		margin-top: calc(54px * -58 / 316);
 	}
 
