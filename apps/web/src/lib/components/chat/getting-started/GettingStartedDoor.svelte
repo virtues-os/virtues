@@ -39,26 +39,20 @@
 	title={connected ? "Come back to this later" : "Dangerously skip onboarding"}
 	aria-label={connected ? "Come back to this later" : "Dangerously skip onboarding"}
 >
+	<!-- Icon only, in both states. A label here sat at a different size
+	     from the steps beneath it and the corner read as two things; the
+	     sentence lives in the tooltip. -->
 	<Icon icon="ri:door-open-line" width="16" />
-	{#if connected}
-		<!-- Two words in the corner; the sentence stays in the tooltip. The
-		     full label ran nearly the width of the contents beneath it. -->
-		<span class="label">Finish later</span>
-	{/if}
 </button>
 
 <style>
 	.door {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.4rem;
 		background: none;
 		border: 1px solid transparent;
 		border-radius: 6px;
-		padding: 0.25rem 0.5rem;
-		margin-right: 0.25rem;
-		font: inherit;
-		font-size: 0.875rem;
+		padding: 0.25rem 0.4rem;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
 		flex: none;
