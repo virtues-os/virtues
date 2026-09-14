@@ -188,14 +188,21 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     let account = done("account");
     let ai_connected = account || byo;
 
-    let profile = sqlx::query_as::<_, (Option<String>, Vec<String>, Option<chrono::DateTime<chrono::Utc>>)>(
-        "SELECT preferred_name, getting_started_dismissed, interview_started_at FROM app_user_profile LIMIT 1",
+    let profile = sqlx::query_as::<_, (Option<String>, Option<String>, Vec<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+        "SELECT preferred_name, full_name, getting_started_dismissed, interview_started_at \
+           FROM app_user_profile LIMIT 1",
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("read profile for getting started: {e}")))?;
     // absent-ok: no profile row yet IS the fresh box — nothing named, nothing skipped.
-    let (preferred_name, dismissed, interview_started_at) = profile.unwrap_or((None, Vec::new(), None));
+    let (preferred_name, full_name, dismissed, interview_started_at) =
+        profile.unwrap_or((None, None, Vec::new(), None));
+    // Either name settles the step, the way `get_user_name` reads them: someone
+    // who gives only "Nick Ari" and no nickname has still introduced themselves.
+    let named = [&preferred_name, &full_name]
+        .into_iter()
+        .any(|n| n.as_deref().is_some_and(|n| !n.trim().is_empty()));
     let skipped = |id: &str| dismissed.iter().any(|d| d == id);
 
     let status = |id: &str, is_done: bool| {
@@ -268,10 +275,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
         Step {
             id: "introductions",
             title: title("introductions"),
-            status: status(
-                "introductions",
-                preferred_name.as_deref().is_some_and(|n| !n.trim().is_empty()),
-            ),
+            status: status("introductions", named),
             via: None,
             detail: None,
             underway: false,
@@ -423,7 +427,10 @@ fn settled_line(s: &Step) -> String {
 fn ask_line(s: &Step) -> String {
     match s.id {
         "connect_ai" => "Nothing begins until AI is connected. A Virtues subscription gives you the best of Claude, Gemini, GPT and Grok, all of them under zero data retention, which means each request is metered and nothing you send is kept or trained on. If you already have an account, sign in. If you run models of your own, you can point your server at them instead.".into(),
-        "introductions" => "Now that it can think, your server would like to know who it is talking to. Tell it what you like to be called, what you will call it, where home is, and when you were born, all in one message if you like. The birthday is not idle curiosity; it is the ruler your whole life is drawn against.".into(),
+        // Plainly, as a list: these five are the most important thing on the
+        // screen, and buried in a sentence they read as decoration. The
+        // person still answers in one message, in their own order.
+        "introductions" => "Now that it can think, your server would like to know who it is talking to. Answer in one message, however you like to write it:\n\n- Your name, first and last\n- What you would like to be called\n- What to call your assistant, which answers to Ari unless you say otherwise\n- The city you live in\n- Your birth date, with the year\n\nThe birth date is not idle curiosity: the whole record is laid out against it.".into(),
         "connect_world" => {
             let opener = match &s.detail {
                 Some(d) => format!("Next, your integrations. {}, and the record is written from what they hold.", capitalize(d)),

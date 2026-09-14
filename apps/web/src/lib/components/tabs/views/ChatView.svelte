@@ -1854,6 +1854,7 @@
 						<div
 							class="messages-container"
 							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID}
+							class:room={isGettingStartedChat(currentChatConversationId)}
 						>
 							{#each uniqueMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
@@ -3147,6 +3148,26 @@
 
 	.message-wrapper.bleeds {
 		contain: layout;
+	}
+
+	/* ── The room's rhythm ──
+	   The getting-started room is one voice writing down the page, not two
+	   people taking turns: its lines are separate assistant messages only
+	   because the server appends them one at a time. At the default turn
+	   spacing they drift 3rem apart (a paragraph's trailing margin, the
+	   wrapper's padding twice, and the list's gap, none of which collapse
+	   through `contain`) while the paragraphs INSIDE one message sit 1rem
+	   apart — so the page reads as pulled apart. Here the gap is the only
+	   spacing left, set to the paragraph's own rhythm. A user turn keeps its
+	   bubble, which separates itself. */
+	.messages-container.room {
+		gap: 1rem;
+	}
+	.messages-container.room .message-wrapper:not([data-role="user"]) {
+		padding: 0;
+	}
+	.messages-container.room .message-wrapper:not([data-role="user"]) :global(.markdown > :last-child) {
+		margin-bottom: 0;
 	}
 
 	.message-wrapper :global(h1),

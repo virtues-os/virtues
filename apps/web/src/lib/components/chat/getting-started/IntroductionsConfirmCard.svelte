@@ -11,6 +11,7 @@
 	import Choices from "./ui/Choices.svelte";
 
 	interface Fields {
+		full_name?: string | null;
 		preferred_name?: string | null;
 		assistant_name?: string | null;
 		home_place?: string | null;
@@ -24,15 +25,16 @@
 	let error = $state<string | null>(null);
 	const settled = $derived(saved || gettingStarted.step("introductions")?.status === "done");
 
-	const summary = $derived(
+	// The same five, in the same order the room asked for them, so the answer
+	// visibly lands against the ask rather than being re-summarized.
+	const rows = $derived(
 		[
-			fields.preferred_name ? `you are ${fields.preferred_name}` : null,
-			fields.assistant_name ? `I am ${fields.assistant_name}` : null,
-			fields.home_place ?? fields.home_timezone ? `home is ${fields.home_place ?? fields.home_timezone}` : null,
-			fields.birth_date ? `born ${fields.birth_date}` : null,
-		]
-			.filter(Boolean)
-			.join(", "),
+			["Name", fields.full_name],
+			["Called", fields.preferred_name],
+			["Assistant", fields.assistant_name],
+			["Home", fields.home_place ?? fields.home_timezone],
+			["Born", fields.birth_date],
+		].filter(([, v]) => !!v) as [string, string][],
 	);
 
 	async function save() {
@@ -41,6 +43,7 @@
 		error = null;
 		try {
 			const profile: Partial<Profile> = {};
+			if (fields.full_name) profile.full_name = fields.full_name;
 			if (fields.preferred_name) profile.preferred_name = fields.preferred_name;
 			if (fields.birth_date) profile.birth_date = fields.birth_date;
 			if (fields.home_timezone) profile.home_timezone = fields.home_timezone;
@@ -58,7 +61,12 @@
 	}
 </script>
 
-<p class="said">{settled ? "Recorded" : "So"}: {summary}.</p>
+<dl class="said">
+	{#each rows as [label, value] (label)}
+		<dt>{label}</dt>
+		<dd>{value}</dd>
+	{/each}
+</dl>
 {#if !settled}
 	<Choices>
 		{#snippet foot()}
@@ -70,7 +78,19 @@
 
 <style>
 	.said {
+		display: grid;
+		grid-template-columns: max-content 1fr;
+		gap: 0.2rem 0.85rem;
 		margin: 0.5rem 0 0;
+	}
+	dt {
+		color: var(--color-foreground-tertiary, #8a8a8a);
+		font-size: 0.8125rem;
+		line-height: 1.5rem;
+	}
+	dd {
+		margin: 0;
+		line-height: 1.5rem;
 	}
 	.error {
 		color: var(--color-error, #9a2b2e);
