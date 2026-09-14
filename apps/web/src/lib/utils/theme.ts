@@ -31,6 +31,20 @@ const THEME_STORAGE_KEY = 'virtues-theme';
 const THEME_BG_STORAGE_KEY = 'virtues-theme-bg';
 
 /**
+ * Resolved `--surface`, which is what a COLD START actually ends up looking at.
+ *
+ * `body` is `--background`, so that is what the pre-paint script used to paint —
+ * and for one theme in two it is the wrong answer. Both shells cover the window
+ * in `--surface`: the phone's `.viewport` and the desktop pane both take
+ * `var(--color-surface)`. On Pemberley the two tokens are the same white and
+ * nothing shows; on Oxford they are #FDFCF9 and #FFFFFF, so every cold launch
+ * painted a warm field for ~270ms and then went white under it (measured on a
+ * real launch, 2026-09-14). Painting what the app is ABOUT to look like rather
+ * than what `body` technically is removes the step.
+ */
+const THEME_SURFACE_STORAGE_KEY = 'virtues-theme-surface';
+
+/**
  * The two themes Virtues stands behind — one light, one dark.
  *
  * Sixteen themes with no marked pair is sixteen equal strangers: nothing tells
@@ -110,11 +124,14 @@ export function applyTheme(theme: Theme): void {
 	// (notably the Tauri webview) flashes white before the stylesheet lands,
 	// which is worst for anyone on a dark theme. Read back from the cascade
 	// rather than duplicating the palette here, so it can't drift.
-	const bg = getComputedStyle(document.documentElement)
-		.getPropertyValue('--background')
-		.trim();
+	const styles = getComputedStyle(document.documentElement);
+	const bg = styles.getPropertyValue('--background').trim();
 	if (bg) {
 		localStorage.setItem(THEME_BG_STORAGE_KEY, bg);
+	}
+	const surface = styles.getPropertyValue('--surface').trim();
+	if (surface) {
+		localStorage.setItem(THEME_SURFACE_STORAGE_KEY, surface);
 	}
 
 	// Hand the background back to the stylesheet. The bootstrap sets it as an
