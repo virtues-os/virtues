@@ -84,11 +84,12 @@ pub const REQUEST_TIMEOUT_SECS: u64 = 60;
 /// any reply still producing tokens at five minutes, and `stream.rs` then
 /// treated the cut as the model finishing (VIR-334). What a dead stream
 /// actually looks like is silence: the gateway sends an SSE keep-alive every
-/// 15s while the upstream lives, so three minutes without a byte on the
-/// wallet path is a broken pipe, not a slow model. A BYO endpoint sends no
-/// keep-alive, which is why this is minutes and not seconds: a model that
-/// reasons without streaming its reasoning is silent for exactly that long.
-pub const STREAM_IDLE_TIMEOUT_SECS: u64 = 180;
+/// 15s while the upstream lives, so minutes without a byte on the wallet
+/// path is a broken pipe, not a slow model. A BYO endpoint sends no
+/// keep-alive, and a model that reasons without streaming its reasoning is
+/// silent until its first token — so this equals the total it replaced: no
+/// reply that survived before is cut now, and a dead pipe is still noticed.
+pub const STREAM_IDLE_TIMEOUT_SECS: u64 = 300;
 
 /// Request timeout for non-streaming AI completions in seconds.
 ///

@@ -174,16 +174,20 @@ where
         // reported to the box as an error frame rather than passed off as a
         // clean end, which is what the box used to see and save (VIR-334).
         let mut saw_done = false;
+        // The read-error branch sends its own frame; the trailer below must
+        // not send a second one for the same break.
+        let mut reported = false;
         // `FnOnce` callback wrapped in Option so we can take() inside the
         // loop without moving across iterations.
         let mut on_complete = Some(on_complete);
 
         tokio::pin!(bytes_stream);
 
-        while let Some(chunk_result) = bytes_stream.next().await {
-            let chunk = match chunk_result {
-                Ok(c) => c,
-                Err(e) => {
+        let mut upstream_open = true;
+        'read: while upstream_open {
+            match bytes_stream.next().await {
+                Some(Ok(chunk)) => buffer.push_str(&String::from_utf8_lossy(&chunk)),
+                Some(Err(e)) => {
                     // reqwest's error text names the transport failure, never
                     // the body, so it is safe to log and to forward.
                     tracing::error!(model = %model, "upstream stream broke: {}", e);
@@ -192,11 +196,19 @@ where
                             "the connection to the model dropped mid-reply: {e}"
                         )))))
                         .await;
-                    break;
+                    reported = true;
+                    break 'read;
                 }
-            };
-
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
+                None => {
+                    // The upstream closed. A final line that arrived without
+                    // its newline is still a line — left in the buffer it
+                    // would turn a `[DONE]` into a false "ended early".
+                    upstream_open = false;
+                    if !buffer.trim().is_empty() && !buffer.ends_with('\n') {
+                        buffer.push('\n');
+                    }
+                }
+            }
 
             // Process complete lines
             while let Some(line_end) = buffer.find('\n') {
@@ -226,7 +238,7 @@ where
                                 );
                             }
                         }
-                        break;
+                        break 'read;
                     }
 
                     // Parse chunk and extract usage if present
@@ -249,16 +261,18 @@ where
         }
 
         if !saw_done {
-            // Bytes stopped without the sentinel (a read error already sent
-            // its own frame above; this covers the upstream closing quietly).
-            // The usage trailer rides with the last chunk, so an unfinished
-            // stream almost never carries one — the turn goes unbilled, and
-            // that is logged rather than guessed at.
-            let _ = tx
-                .send(Ok(SseEvent::default().data(error_frame(
-                    "the model's reply ended before it was finished",
-                ))))
-                .await;
+            // Bytes stopped without the sentinel. A read error already sent
+            // its own frame above; this frame covers the upstream closing
+            // quietly. The usage trailer rides with the last chunk, so an
+            // unfinished stream almost never carries one — the turn goes
+            // unbilled, and that is logged rather than guessed at.
+            if !reported {
+                let _ = tx
+                    .send(Ok(SseEvent::default().data(error_frame(
+                        "the model's reply ended before it was finished",
+                    ))))
+                    .await;
+            }
             let cost_micros = resolve_cost_micros(&catalog, &model, final_usage.take());
             if cost_micros > 0 {
                 if let Some(cb) = on_complete.take() {

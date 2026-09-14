@@ -139,18 +139,26 @@ where
     // saved as the answer with nothing on screen to say so (VIR-334).
     let mut ended_cleanly = false;
 
-    while let Some(chunk) = bytes_stream.next().await {
-        let chunk = match chunk {
-            Ok(c) => c,
-            Err(e) => {
+    let mut upstream_open = true;
+    'read: while upstream_open {
+        match bytes_stream.next().await {
+            Some(Ok(chunk)) => buffer.push_str(&String::from_utf8_lossy(&chunk)),
+            Some(Err(e)) => {
                 tracing::error!("Stream error: {}", e);
                 return Err(StreamError::Interrupted(format!(
                     "the connection dropped mid-reply: {e}"
                 )));
             }
-        };
-
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+            None => {
+                // The stream closed. A final line that arrived without its
+                // newline is still a line — left in the buffer it would turn
+                // a `[DONE]` into a false interruption.
+                upstream_open = false;
+                if !buffer.trim().is_empty() && !buffer.ends_with('\n') {
+                    buffer.push('\n');
+                }
+            }
+        }
 
         // Process complete SSE lines
         while let Some(line_end) = buffer.find('\n') {
@@ -165,7 +173,7 @@ where
 
             if data == "[DONE]" {
                 ended_cleanly = true;
-                break;
+                break 'read;
             }
 
             // Parse the SSE data as JSON
@@ -174,8 +182,8 @@ where
                 // (`routes/streaming.rs`): a chat-completions stream has no
                 // standard error shape, so this is the one the proxy and the
                 // box agree on. Never a model chunk, so nothing is lost by
-                // stopping here.
-                if let Some(err) = json.get("error") {
+                // stopping here. A bare `"error": null` is not a report.
+                if let Some(err) = json.get("error").filter(|v| !v.is_null()) {
                     let message = err
                         .get("message")
                         .and_then(|m| m.as_str())

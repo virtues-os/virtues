@@ -111,11 +111,13 @@ async fn main() -> Result<()> {
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300)) // 5 min for long completions
         .build()?;
-    // Three minutes of silence is a dead upstream, not a slow model: the
-    // gateway keeps a live stream ticking with reasoning deltas and pings.
+    // Five minutes of silence is a dead upstream, not a slow model. Matches
+    // the total this replaced, so no reply that survived before is cut now;
+    // a model that reasons without streaming its reasoning is silent until
+    // its first token, and nothing upstream promises a keep-alive meanwhile.
     let stream_client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
-        .read_timeout(std::time::Duration::from_secs(180))
+        .read_timeout(std::time::Duration::from_secs(300))
         .build()?;
 
     // DB connect + migrate. Required — the accounts/ledger schema is the only
