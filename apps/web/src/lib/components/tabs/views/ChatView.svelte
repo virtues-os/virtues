@@ -39,7 +39,6 @@
 	} from "$lib/components/chat/getting-started/getting-started";
 	import RoomControls from "$lib/components/chat/getting-started/RoomControls.svelte";
 	import GettingStartedDoor from "$lib/components/chat/getting-started/GettingStartedDoor.svelte";
-	import GettingStartedToc from "$lib/components/chat/getting-started/GettingStartedToc.svelte";
 	import IntroductionsRecorded from "$lib/components/chat/getting-started/IntroductionsRecorded.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
@@ -857,22 +856,6 @@
 			// asked. Dropped here until now, so every line looked the same.
 			subject: msg.subject ?? undefined,
 		};
-	}
-
-	/**
-	 * Scroll the thread to where the room spoke about a step — its ask if it
-	 * is still being asked, otherwise the line that settled it. This is what
-	 * makes the contents a contents: the step names are the anchors, and the
-	 * server already marks every line it speaks with one.
-	 */
-	function jumpToStep(stepId: string) {
-		const root = scrollContainer ?? document;
-		const target =
-			root.querySelector(`[data-subject="gs:ask:${stepId}"]`) ??
-			root.querySelector(`[data-subject="gs:done:${stepId}"]`);
-		if (!(target instanceof HTMLElement)) return;
-		const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-		target.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
 	}
 
 	/** A line the room speaks about a step that is already settled. */
@@ -1886,7 +1869,7 @@
 			<!-- Main chat area -->
 			<div class="chat-area" class:ghost={isGhost}>
 				<!-- Top-right chrome: temporary-chat toggle + live context ring -->
-				<div class="chat-topbar-right" class:stacked={isGettingStartedChat(currentChatConversationId)}>
+				<div class="chat-topbar-right">
 					{#if !isGhost && contextUsage && extractConversationId(tab.route) && !isGettingStartedChat(currentChatConversationId)}
 						<ContextIndicator
 							conversationId={extractConversationId(tab.route)!}
@@ -1899,10 +1882,8 @@
 					{/if}
 					{#if isGettingStartedChat(currentChatConversationId)}
 						<!-- One door, two labels: the skip before AI, "come back
-						     to this later" after — and under it the four steps,
-						     which is the one fixed place to look on coming back. -->
+						     to this later" after. -->
 						<GettingStartedDoor />
-						<GettingStartedToc onjump={jumpToStep} />
 					{/if}
 					<!-- On the phone the ghost toggle lives in the shell's top bar
 					     (the modal top-right slot), not here. -->
@@ -2574,13 +2555,6 @@
 		gap: 6px;
 	}
 
-	/* In the room the door is not alone: the contents hang beneath it, so the
-	   row becomes a right-aligned column. */
-	.chat-topbar-right.stacked {
-		flex-direction: column;
-		align-items: flex-end;
-		gap: 10px;
-	}
 
 	.ghost-toggle {
 		display: inline-flex;
