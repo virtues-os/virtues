@@ -18,6 +18,7 @@
 	import { listSourceCatalog, listCredentials, type SourceCatalogItem, type Credential } from "$lib/api/client";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import { GETTING_STARTED_CHAT_ID } from "./getting-started";
+	import Act from "./ui/Act.svelte";
 
 	/** The three that lead, in order. Everything else waits behind "Show all". */
 	const LEAD = ["mac", "ios", "google"];
@@ -107,15 +108,15 @@
 					{#if on}
 						<span class="state">Connected</span>
 					{:else}
-						<button type="button" class="add" onclick={() => connect(s)} disabled={busy === s.id}>
+						<Act onclick={() => connect(s)} disabled={busy === s.id}>
 							{busy === s.id ? "…" : "Connect"}
-						</button>
+						</Act>
 					{/if}
 				</li>
 			{/each}
 		</ul>
 		{#if !showAll}
-			<button type="button" class="more" onclick={() => (showAll = true)}>Show every integration</button>
+			<Act variant="plain" onclick={() => (showAll = true)}>Show every integration</Act>
 		{/if}
 		{#if error}<p class="error">{error}</p>{/if}
 	{/if}
@@ -177,49 +178,17 @@
 		flex: 1;
 	}
 	.name {
-		font-size: 0.9375rem;
+		font-size: 1rem;
 		color: var(--color-foreground);
 	}
 	.why {
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
-	}
-	.add {
-		flex: none;
-		font: inherit;
-		font-size: 0.8125rem;
-		padding: 0.3rem 0.8rem;
-		border-radius: 999px;
-		border: 1px solid var(--color-border);
-		background: transparent;
-		color: var(--color-foreground);
-		cursor: pointer;
-		transition: border-color 0.18s ease;
-	}
-	.add:hover {
-		border-color: var(--color-foreground);
-	}
-	.add:disabled {
-		opacity: 0.4;
-		cursor: default;
 	}
 	.state {
 		flex: none;
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		color: var(--color-foreground-subtle);
-	}
-	.more {
-		margin-top: 0.5rem;
-		background: none;
-		border: 0;
-		padding: 0.25rem 0;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-	}
-	.more:hover {
-		color: var(--color-foreground);
 	}
 	.quiet-line,
 	.error {

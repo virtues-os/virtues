@@ -56,7 +56,7 @@
 		padding: 0.25rem 0.5rem;
 		margin-right: 0.25rem;
 		font: inherit;
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
 		flex: none;

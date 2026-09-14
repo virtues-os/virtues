@@ -32,14 +32,12 @@
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
 	import {
-		GS_PREFIX,
+		GS_INTERVIEW_OPENING_ID,
 		SKIP_COMMAND,
 		isGettingStartedChat,
-		applyGettingStartedOpening,
-		stripGettingStartedBottom,
+		applyInterviewOpening as applyRoomInterviewOpening,
 	} from "$lib/components/chat/getting-started/getting-started";
-	import GettingStartedMessage from "$lib/components/chat/getting-started/GettingStartedMessage.svelte";
-	import StepActions from "$lib/components/chat/getting-started/StepActions.svelte";
+	import RoomControls from "$lib/components/chat/getting-started/RoomControls.svelte";
 	import GettingStartedDoor from "$lib/components/chat/getting-started/GettingStartedDoor.svelte";
 	import IntroductionsConfirmCard from "$lib/components/chat/getting-started/IntroductionsConfirmCard.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -762,8 +760,10 @@
 		windowShellStore.openChatContext(conversationId, currentPane);
 	}
 
-	// Handle compaction completion from ContextViewPanel - refresh messages
-	async function handleCompacted() {
+	/** Re-read the stored transcript. Used after a compaction, and after the
+	 *  getting-started room speaks (its lines are appended server-side, so
+	 *  the thread has to be re-read to show them). */
+	async function reloadMessages() {
 		if (!conversationId) return;
 		try {
 			const data = await getChat<{ messages?: any[] }>(conversationId);
@@ -771,10 +771,14 @@
 			chat.messages = deduplicateMessages(loadedMessages).map(
 				toUiMessage,
 			) as unknown as typeof chat.messages;
+			// Re-reading drops the interview's opening, which is shown rather
+			// than stored; put it back where it belongs.
+			applyRoomInterviewOpening(chat, conversationId, gettingStarted.state);
 		} catch {
 			// Non-critical refresh — leave the current messages in place on failure.
 		}
 	}
+	const handleCompacted = reloadMessages;
 
 	// Helper function to convert database messages to Chat parts
 	function convertMessageToParts(msg: any) {
@@ -868,9 +872,10 @@
 	// The interview's chrome (no thinking block, the resident companion)
 	// applies in the old standalone room and in the getting-started room
 	// while the interview is underway there.
+	// Setup and the interview are both rooms where the machine's workings are
+	// not the subject: no thinking block, no tool names.
 	const inInterview = $derived(
-		currentChatConversationId === INTERVIEW_CHAT_ID ||
-			(isGettingStartedChat(currentChatConversationId) && gettingStarted.interviewUnderway),
+		currentChatConversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(currentChatConversationId),
 	);
 
 	// The id that goes on the wire — ONLY when the person moved the picker off
@@ -999,7 +1004,7 @@
 								loadedMessages,
 							).map(toUiMessage) as unknown as typeof chat.messages;
 							applyInterviewOpening(chat, currentTabConversationId);
-							applyGettingStartedOpening(chat, currentTabConversationId, gettingStarted.state);
+							applyRoomInterviewOpening(chat, currentTabConversationId, gettingStarted.state);
 							// The picker is deliberately left alone on a tab
 							// switch. It used to be re-seeded from the model
 							// that last answered THIS conversation, which is
@@ -1112,7 +1117,7 @@
 			// After the load, not inside it: a failed fetch must still leave
 			// the interview speaking rather than showing a blank room.
 			applyInterviewOpening(chat, tabConversationId);
-			applyGettingStartedOpening(chat, tabConversationId, gettingStarted.state);
+			applyRoomInterviewOpening(chat, tabConversationId, gettingStarted.state);
 
 			// What the picker SHOWS, for every chat old or new: the owner's
 			// standing preference, else the Virtues default. Deliberately not
@@ -1334,10 +1339,29 @@
 		// Never while a turn is streaming: the transcript is the SDK's to
 		// write then. Reading `status` here re-runs this once it settles.
 		if (chat.status !== "ready") return;
-		untrack(() => applyGettingStartedOpening(chat, convId, state));
+		untrack(() => applyRoomInterviewOpening(chat, convId, state));
 	});
 	$effect(() => {
 		if (isGettingStartedChat(currentChatConversationId)) gettingStarted.start();
+	});
+
+	/** The room speaks server-side, so when its state moves the thread has
+	 *  new lines in it. Re-read on any change of the walk — the step
+	 *  statuses and the interview's start are the whole of it. */
+	let lastWalk = $state<string | null>(null);
+	$effect(() => {
+		const st = gettingStarted.state;
+		if (!isGettingStartedChat(currentChatConversationId) || !st) return;
+		const walk =
+			st.steps.map((x) => `${x.id}:${x.status}`).join("|") + `|${st.interview_started_at ?? ""}`;
+		if (lastWalk === null) {
+			lastWalk = walk;
+			return;
+		}
+		if (lastWalk === walk) return;
+		lastWalk = walk;
+		if (chat.status !== "ready") return;
+		untrack(() => void reloadMessages());
 	});
 
 	const interviewClosedPart = $derived(
@@ -1586,11 +1610,6 @@
 		if (capabilityIssue) return;
 
 		if (!messageToSend && attachments.length === 0) return;
-
-		// Getting started: the ask at the bottom comes off before the turn,
-		// so the reply lands under the person's words and the ask returns
-		// beneath it once the turn settles (the state effect re-adds it).
-		stripGettingStartedBottom(chat, currentChatConversationId);
 
 		if (chat.status !== "ready") {
 			// Queue text; attachments stay staged and ride along when the drain
@@ -1854,8 +1873,7 @@
 								>
 									<div
 										class="message-wrapper"
-										class:bleeds={message.id === INTERVIEW_OPENING_ID || message.id === "gs-iv-opening"}
-										class:gs={message.id.startsWith(GS_PREFIX)}
+										class:bleeds={message.id === INTERVIEW_OPENING_ID || message.id === GS_INTERVIEW_OPENING_ID}
 										class:user-has-attachment={isUserMessage &&
 											message.parts.some((p: any) => p.type === "file")}
 										data-message-id={message.id}
@@ -1870,11 +1888,7 @@
 													p.type === "text" && p.text,
 											)}
 									>
-										{#if message.id.startsWith(GS_PREFIX)}
-											<!-- Getting started's synthetic top: mast, cards,
-											     the promise, the authored first line. -->
-											<GettingStartedMessage id={message.id} text={(message.parts.find((p: any) => p.type === "text") as any)?.text ?? ""} />
-										{:else if message.role === "checkpoint"}
+										{#if message.role === "checkpoint"}
 											<!-- Compaction checkpoint message -->
 											{@const checkpointPart = message.parts.find((p: any) => p.type === "checkpoint")}
 											{#if checkpointPart}
@@ -1962,7 +1976,7 @@
 															citations={citationContext}
 															onCitationClick={openCitationPanel}
 														/>
-														{#if message.id === INTERVIEW_OPENING_ID && partIndex === 0}
+														{#if (message.id === INTERVIEW_OPENING_ID && partIndex === 0) || message.id === GS_INTERVIEW_OPENING_ID}
 															<!-- Right under the heading, wider than the column:
 															     one fictional life on one wire, α toward Ω. The
 															     table that follows lists the same chapters. -->
@@ -1983,9 +1997,9 @@
 													onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
 													onDeny={() => handlePermissionDeny()}
 												/>
-											{:else if part.type === "tool-show_step" && (part as any).state === "output-available" && (part as any).output?.step}
-												<!-- The model opened a step: the same card, opened here. -->
-												<StepActions step={(part as any).output.step} />
+											{:else if part.type === "tool-show_step"}
+												<!-- Nothing inline: a step's controls stand in one
+												     place under the thread, where they always are. -->
 											{:else if part.type === "tool-record_introductions" && (part as any).state === "output-available" && (part as any).output?.fields}
 												<!-- The four facts as heard, for confirmation; the card writes. -->
 												<IntroductionsConfirmCard fields={(part as any).output.fields} />
@@ -2307,6 +2321,10 @@
 									</div>
 								{/each}
 							</div>
+						{/if}
+						{#if isGettingStartedChat(currentChatConversationId)}
+							<!-- One place a person acts: whatever the open step needs. -->
+							<RoomControls />
 						{/if}
 						{#if interviewClosed}
 							<!-- The interview is over: no composer, the two doors instead. -->
@@ -3127,12 +3145,6 @@
 
 	.message-wrapper.bleeds {
 		contain: layout;
-	}
-
-	/* Getting started's authored lines sit closer together than turns do:
-	   they are one voice saying a few short things, not an exchange. */
-	.message-wrapper.gs {
-		padding: 0.125rem 0;
 	}
 
 	.message-wrapper :global(h1),

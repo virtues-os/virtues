@@ -355,14 +355,7 @@ pub async fn start_interview_handler(
         )
             .into_response();
     }
-    match compute(pool).await {
-        Ok(s) => (StatusCode::OK, Json(s)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    answer(speak_then_state(pool).await)
 }
 
 /// Skip (or un-skip) a step: the one stored fact about getting started.
@@ -388,10 +381,179 @@ pub async fn set_skipped(pool: &PgPool, step: &str, skipped: bool) -> Result<()>
     Ok(())
 }
 
+// ─── The room's voice ────────────────────────────────────────────────────
+//
+// Everything the room says is a real message in the transcript, appended
+// once, in order, and marked by `subject` so it is never said twice. This
+// replaced a client that re-rendered its lines from state on every change
+// and so asked a question again underneath the answer to it (2026-09-14).
+// Because the lines are turns, the model reading this chat sees exactly what
+// the room said, and the client has nothing to place.
+
+/// The marker on every line the room speaks: `gs:<id>`.
+fn subject_of(line: &str) -> String {
+    format!("gs:{line}")
+}
+
+const WELCOME: &str = "# First things first\n\nVirtues records, remembers, and recounts your life.\n\nFour things have to be in place before it can start: an AI subscription, your name, your integrations, and your life's story. This conversation sets them up in order.";
+
+const GRADUATED: &str =
+    "That is all four. This room stays open for any question about the setup, and the rest of Virtues is yours.";
+
+/// What a step says once it is settled — done or set aside.
+fn settled_line(s: &Step) -> String {
+    match (s.id, s.status) {
+        ("connect_ai", StepStatus::Skipped) => "You went on without connecting AI. Your server can show you its record, but it cannot answer you until a model is connected in Settings.".into(),
+        ("introductions", StepStatus::Skipped) => "You set introductions aside for now. Say the word whenever you would like to return to them.".into(),
+        ("connect_world", StepStatus::Skipped) => "You set your integrations aside for now. They are waiting in Settings whenever you want them.".into(),
+        ("interview", StepStatus::Skipped) => "You set your story aside for now. The interview is waiting here whenever you want it.".into(),
+        ("connect_ai", _) if s.via == Some("byo") => "Your server is connected to an endpoint of your own, and can think.".into(),
+        ("connect_ai", _) => "Your server is connected to your Virtues subscription, and can think.".into(),
+        ("introductions", _) => "Introductions are made.".into(),
+        ("connect_world", _) => match &s.detail {
+            Some(d) => format!("The record has begun, with one thing still to see to: {d}."),
+            None => "The record has begun.".into(),
+        },
+        ("interview", _) => "Your story is written down, in your own words.".into(),
+        _ => String::new(),
+    }
+}
+
+/// What a step asks when its turn comes.
+fn ask_line(s: &Step) -> String {
+    match s.id {
+        "connect_ai" => "Nothing begins until AI is connected. A Virtues subscription gives you the best of Claude, Gemini, GPT and Grok, all of them under zero data retention, which means each request is metered and nothing you send is kept or trained on. If you already have an account, sign in. If you run models of your own, you can point your server at them instead.".into(),
+        "introductions" => "Now that it can think, your server would like to know who it is talking to. Tell it what you like to be called, what you will call it, where home is, and when you were born, all in one message if you like. The birthday is not idle curiosity; it is the ruler your whole life is drawn against.".into(),
+        "connect_world" => {
+            let opener = match &s.detail {
+                Some(d) => format!("Next, your integrations. {}, and the record is written from what they hold.", capitalize(d)),
+                None => "Next, your integrations. The record is written from what your accounts, this computer, and your phone already hold.".into(),
+            };
+            format!("{opener} Nothing they hold ever leaves your server.")
+        }
+        "interview" => "Last comes your story. The record can hold what happened, but only you can say what it meant. This is a conversation of about twenty minutes, one question at a time; stop wherever you like, and it will keep your place.".into(),
+        _ => String::new(),
+    }
+}
+
+fn promise_line(first_day: Option<chrono::NaiveDate>) -> String {
+    match first_day {
+        Some(_) => "Your first page is written: yesterday, written down.".into(),
+        None => "Every day, a page will be waiting for you: yesterday, written down. The first one comes tomorrow morning.".into(),
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
+}
+
+/// The lines the room should have spoken by now, in order.
+fn script(state: &GettingStartedState) -> Vec<(String, String)> {
+    let mut out = vec![("welcome".to_string(), WELCOME.to_string())];
+    for s in &state.steps {
+        match s.status {
+            StepStatus::Open => {
+                out.push((format!("ask:{}", s.id), ask_line(s)));
+                // One ask at a time: the room says nothing past the step it
+                // is waiting on.
+                return out;
+            }
+            _ => {
+                out.push((format!("done:{}", s.id), settled_line(s)));
+                // Only a real connection earns the promise: nothing is written
+                // overnight for someone who set their integrations aside.
+                if s.id == "connect_world" && s.status == StepStatus::Done && state.ai_connected {
+                    out.push(("promise".to_string(), promise_line(state.first_day)));
+                }
+            }
+        }
+    }
+    out.push(("graduated".to_string(), GRADUATED.to_string()));
+    out
+}
+
+/// Speak whatever the room owes. Idempotent: a line whose `subject` is
+/// already in the transcript is never said again, so this is safe to call on
+/// every read of the state.
+pub async fn narrate(pool: &PgPool, state: &GettingStartedState) -> Result<()> {
+    let said: Vec<String> = sqlx::query_scalar(
+        "SELECT subject FROM app_chat_messages \
+         WHERE chat_id = $1 AND subject IS NOT NULL",
+    )
+    .bind(GETTING_STARTED_CHAT_ID)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("read what the room has said: {e}")))?;
+
+    for (line, text) in script(state) {
+        let subject = subject_of(&line);
+        if text.is_empty() || said.iter().any(|s| *s == subject) {
+            continue;
+        }
+        let msg = crate::api::chats::ChatMessage {
+            id: None,
+            role: "assistant".to_string(),
+            content: text,
+            timestamp: crate::types::Timestamp::now(),
+            model: None,
+            provider: None,
+            agent_id: Some("getting_started".to_string()),
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: Some(subject),
+            reasoning_details: None,
+            parts: None,
+        };
+        crate::api::chats::append_message(pool, GETTING_STARTED_CHAT_ID.to_string(), msg)
+            .await
+            .map_err(|e| Error::Database(format!("the room could not speak: {e}")))?;
+    }
+    Ok(())
+}
+
+/// The state, with whatever the room owes said first. Every handler answers
+/// through this: a step settled by a POST has to leave its line in the
+/// thread, or the conversation silently skips a beat.
+async fn speak_then_state(pool: &PgPool) -> Result<GettingStartedState> {
+    let s = compute(pool).await?;
+    if let Err(e) = narrate(pool, &s).await {
+        // The state is still true if the room could not speak: say so and
+        // answer, rather than failing the read over a line of dialogue.
+        tracing::warn!(error = %e, "getting-started narration failed");
+    }
+    Ok(s)
+}
+
+fn answer(r: Result<GettingStartedState>) -> axum::response::Response {
+    match r {
+        Ok(s) => (StatusCode::OK, Json(s)).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "getting-started state failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    }
+}
+
 /// `GET /api/getting-started`
 pub async fn state_handler(State(state): State<AppState>, _user: AuthUser) -> impl IntoResponse {
     match compute(state.db.pool()).await {
-        Ok(s) => (StatusCode::OK, Json(s)).into_response(),
+        Ok(s) => {
+            // The room says what it owes before answering: this endpoint is
+            // read after every change, so it is where the thread catches up.
+            if let Err(e) = narrate(state.db.pool(), &s).await {
+                tracing::warn!(error = %e, "getting-started narration failed");
+            }
+            (StatusCode::OK, Json(s)).into_response()
+        }
         Err(e) => {
             tracing::warn!(error = %e, "getting-started state failed");
             (
@@ -429,14 +591,7 @@ pub async fn skip_handler(
         };
         return (code, Json(serde_json::json!({ "error": e.to_string() }))).into_response();
     }
-    match compute(pool).await {
-        Ok(s) => (StatusCode::OK, Json(s)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+    answer(speak_then_state(pool).await)
 }
 
 #[cfg(test)]
