@@ -1,0 +1,124 @@
+# One logbook: keys on every line, one door for clients
+
+> Status: **Planned, 2026-09-09; trimmed 2026-09-14** to the three slices
+> that pay back on the first incident. The general events table and the
+> Logbook UI are deferred until a real incident shows they are needed (see
+> the end). Delete this file when slice 2 ships.
+
+## The problem, in one paragraph
+
+Answering "why did the box do that at 3am" takes four tools: `journalctl` for
+the process, the System view for the machine, the applet's run log for the
+job, and `psql` against `app_ai_calls` for the spend. Each is honest. None can
+name the others: no span carries a `run_id`, so a failed run cannot find its
+own journal lines; the web app's 135 `console.*` calls never leave the
+browser, so a phone that fails to pair is invisible to the box; and the one
+thing that does leave the box, the crash beacon, never writes the crash
+locally and sits under a comment saying the box sends nothing anywhere.
+
+## Goal
+
+1. **Every journal line carries its key.** `run_id`, `chat_id`/`turn_id`,
+   `request_id`, `device_id`, stamped by the span you are inside, so one
+   `journalctl … -o json | jq 'select(.run_id=="…")'` tells a run's whole
+   story.
+2. **Clients report through one door.** Web, phone, Mac, desktop post
+   `warn`+ to the box as their paired device; the box re-emits into its own
+   journal. A client failure becomes a box fact.
+3. **The code says what it does.** The crash is recorded locally before it
+   is sent, and the opt-out is documented.
+
+**Non-goals.** Central telemetry. A metrics exporter. A log store in
+Postgres. A new events table or a Logbook UI (deferred, below).
+
+## What is true today
+
+Read against the code on 2026-09-09.
+
+| Where | What | Why it matters |
+|---|---|---|
+| `virtues-core/src/main.rs:84`, `applets/src/lib.rs:32`, `crates/virtues-iroh/src/lib.rs:45`, `apps/desktop/src/main.rs:240`, `services/*/src/main.rs` | Five `tracing_subscriber::fmt()` inits, plain text to stderr | Same shape everywhere; one shared init is a refactor |
+| every `Cargo.toml` with tracing-subscriber | `features = ["env-filter", "json"]` | JSON output is compiled in and never switched on |
+| whole tree | 535 `tracing::*!` sites, **0** `#[instrument]`, no request-id middleware | No line is findable by anything but time and grep |
+| `applet_runner/mod.rs:1057-1092` | subprocess stderr: one `tracing::warn` plus a 500-char tail on the run row | Full stderr survives nowhere |
+| `cli/report_crash.rs`, `cli/diag.rs` | `ExecStopPost` tails 50 journal lines and POSTs to atlas; default-on; opt-out `VIRTUES_DIAG=off` | **The crash is never written locally.** `VIRTUES_DIAG` is in no doc and no installer output |
+| `main.rs:92` | comment: "Virtues collects no central telemetry" | False while the beacon is default-on |
+| `apps/web/src` | 135 bare `console.*`, no wrapper, no `onerror`, nothing posted to the box | Client failures are invisible to the box |
+| `apps/mac-source/Sources/Core/Uploader.swift:208` | already ships `collector_health` with every upload | The box reads it and discards it |
+| `middleware/rate_limit.rs` | per-IP sliding window, guards `/api/pair/consume` only | Reusable shape for a per-device limit on the door |
+| `docs/operate/recovery.md:28` | "Everything logs to the journal. There is no Virtues log file." | The one line of doctrine; this plan extends it |
+
+## Slices
+
+### Slice 0 — tell the truth (no migration)
+
+- `report-crash` emits `box.crashed` with the 50-line tail as a tracing
+  event before any send.
+- Fix the `main.rs` comment. Document `VIRTUES_DIAG` in recovery.md. Print
+  its state in `virtues doctor` and `virtues status`.
+- **Gate:** `grep -rn "collects no central" virtues-core/src` is empty;
+  `virtues doctor` on dragon prints a diagnostics line.
+
+### Slice 1 — keys on every line
+
+- `virtues-core/src/observe.rs`: the field-name constants (`kind`,
+  `severity`, `source`, `run_id`, `chat_id`, `turn_id`, `request_id`,
+  `device_id`) and a shared `init_tracing()` every binary calls: env-filter,
+  JSON when stderr is not a TTY, text when it is. Five inits become calls.
+- `tower_http::TraceLayer` (already a dependency) with a request-id maker;
+  `x-request-id` on every response.
+- Spans on five entry points: HTTP request, scheduler tick, applet run,
+  chat turn, AI call. Children inherit.
+- Applet subprocess stderr re-emitted line by line at `warn` inside the run
+  span. The 500-char tail on the run row stays as the UI summary.
+- **Gate:** on dragon, `journalctl -u virtues -o json -n 2000 | jq -r
+  '.MESSAGE | fromjson | .span.run_id' | sort | uniq -c` shows run ids, and
+  a chosen failed run's full stderr is found by that id alone.
+
+### Slice 2 — the client door
+
+- `POST /api/events`: paired-device authed, batched body of `{kind,
+  severity, message, detail, occurred_at}`. The box stamps
+  `source=device:<id>` from the session, never the body, and re-emits each
+  as a tracing event. Per-device limit using a keyed variant of the
+  sliding window in `rate_limit.rs`; body capped; `detail` capped at 4 KB.
+- `apps/web/src/lib/log.ts`: `log.info/warn/error/report`. Writes to the
+  console and enqueues `warn`+ for the box; flushes on a timer and on
+  `visibilitychange`; drops past a cap when offline; never throws.
+  `window.onerror` and `unhandledrejection` feed it. The 135 `console.*`
+  calls move onto it mechanically; prefixes become `component`.
+- The Mac collector's `collector_health` block, already arriving on every
+  upload, produces a `collector.*` tracing event on *change* (grant lost or
+  regained). No Swift change.
+- **Gate:** throw in the SPA on a phone over the relay; the journal line
+  carries `source=device:<phone>` and the same `request_id` as the response
+  header. Revoke Full Disk Access on a Mac; one `collector.fda.lost` line.
+
+## Decisions
+
+1. **Crash beacon stays default-on** through the `0.1.x` line, made visible
+   by slice 0. Flip to opt-in later if wanted; nothing here depends on it.
+2. **Clients forward `warn`+ only.** Anything finer is the browser console's
+   job.
+
+## Deferred, and what would un-defer it
+
+- **`app_events` table** (auth events plus stall transitions, update
+  outcomes, sidecar flaps, crashes, client errors) and a **Logbook** in the
+  System view with journal drill-down over a session-authed `journalctl`
+  route. Build when someone other than the operator needs to answer "what
+  happened" without ssh, and let that incident shape the schema.
+- Retiring `app_auth_event` follows from the above.
+
+## Constraints
+
+- Live users, append-only migrations, boxes do not auto-update. These
+  slices need no migration.
+- Nothing from a real life in `detail`: the `log` wrapper truncates
+  messages and never serializes request bodies or page content.
+- A failing observability write must never fail the thing observed. Each
+  such swallow is commented, per the query-error rule.
+
+## Review register
+
+_Empty until reviewed._
