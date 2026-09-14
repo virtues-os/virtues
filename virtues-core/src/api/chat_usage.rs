@@ -221,7 +221,7 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, thought_signature
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -246,7 +246,7 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
-            let thought_signature: Option<String> = row.get("thought_signature");
+            let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
 
             let tool_calls = tool_calls_raw
                 .and_then(|tc| serde_json::from_value(tc).ok());
@@ -265,7 +265,7 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
                 tool_calls,
                 intent,
                 subject,
-                thought_signature,
+                reasoning_details,
                 parts: None,
             }
         })
@@ -425,7 +425,7 @@ pub async fn check_compaction_needed(
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, thought_signature
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -450,7 +450,7 @@ pub async fn check_compaction_needed(
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
-            let thought_signature: Option<String> = row.get("thought_signature");
+            let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
 
             let tool_calls = tool_calls_raw
                 .and_then(|tc| serde_json::from_value(tc).ok());
@@ -469,7 +469,7 @@ pub async fn check_compaction_needed(
                 tool_calls,
                 intent,
                 subject,
-                thought_signature,
+                reasoning_details,
                 parts: None,
             }
         })

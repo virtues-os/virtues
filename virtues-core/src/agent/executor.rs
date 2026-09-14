@@ -283,7 +283,7 @@ pub fn build_attachment_message(attachments: &[(String, crate::tools::ToolAttach
 pub fn build_assistant_tool_message(
     content: &str,
     tool_calls: &[ToolCall],
-    thought_signature: Option<&str>,
+    reasoning_details: &[Value],
 ) -> Value {
     let mut msg = serde_json::json!({
         "role": "assistant",
@@ -300,8 +300,12 @@ pub fn build_assistant_tool_message(
         }).collect::<Vec<_>>()
     });
 
-    if let Some(sig) = thought_signature {
-        msg["thought_signature"] = serde_json::json!(sig);
+    // The gateway asks for its own reasoning blocks back, verbatim, on the
+    // message that produced them, so the model can resume the thought that
+    // led to these tool calls. Only when there were any: an empty array is
+    // a claim of "no reasoning" some providers reject.
+    if !reasoning_details.is_empty() {
+        msg["reasoning_details"] = Value::Array(reasoning_details.to_vec());
     }
 
     msg

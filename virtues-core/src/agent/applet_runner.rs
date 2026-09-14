@@ -130,7 +130,6 @@ pub async fn run_agent_loop(
         tools,
         tool_context,
         None,
-        None,
     );
 
     let mut assistant_content = String::new();
@@ -222,7 +221,7 @@ pub async fn run_agent_loop(
                         reasoning: None,
                         intent: None,
                         subject: None,
-                        thought_signature: None,
+                        reasoning_details: None,
                         parts: None,
                     };
                     let _ = append_message(pool, cid.clone(), error_msg).await;
@@ -247,7 +246,7 @@ pub async fn run_agent_loop(
                 reasoning: None,
                 intent: None,
                 subject: None,
-                thought_signature: None,
+                reasoning_details: None,
                 parts: None,
             };
             let _ = append_message(pool, cid.clone(), msg).await;
@@ -291,11 +290,11 @@ async fn load_chat_messages(pool: &PgPool, chat_id: &str) -> Result<Vec<ChatMess
         Option<String>,
         Option<serde_json::Value>,
         Option<String>,
-        Option<String>,
+        Option<serde_json::Value>,
         Timestamp,
     )>(
         r#"
-        SELECT id, role, content, model, provider, agent_id, reasoning, tool_calls, subject, thought_signature, created_at
+        SELECT id, role, content, model, provider, agent_id, reasoning, tool_calls, subject, reasoning_details, created_at
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -307,7 +306,7 @@ async fn load_chat_messages(pool: &PgPool, chat_id: &str) -> Result<Vec<ChatMess
 
     let messages = rows
         .into_iter()
-        .map(|(id, role, content, model, provider, agent_id, reasoning, tool_calls_raw, subject, thought_signature, timestamp)| {
+        .map(|(id, role, content, model, provider, agent_id, reasoning, tool_calls_raw, subject, reasoning_details, timestamp)| {
             let tool_calls = tool_calls_raw
                 .and_then(|tc| serde_json::from_value(tc).ok());
 
@@ -323,7 +322,7 @@ async fn load_chat_messages(pool: &PgPool, chat_id: &str) -> Result<Vec<ChatMess
                 reasoning,
                 intent: None,
                 subject,
-                thought_signature,
+                reasoning_details,
                 parts: None,
             }
         })

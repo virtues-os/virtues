@@ -1,10 +1,13 @@
 # One AI door: the plan for the model and API layer
 
-> Status: **Phase 1 built on `wave` 2026-09-08, not yet deployed.** Written
-> the same day after the interview drafter and the day summary failed the same
-> way four days apart; revised after review (the review register is at the
-> bottom). The two 16k hotfixes are the interim; this plan is what replaces
-> them. Delete this file when Phase 3 ships.
+> Status: **Phases 1 to 4 built on `wave`; Phase 1 (the proxy) not yet
+> deployed; Phase 5 decided, not built.** Written 2026-09-08 after the
+> interview drafter and the day summary failed the same way four days apart;
+> revised after review (the register is at the bottom); Phases 2 to 4 landed
+> 2026-09-14 (the record is below). The plan's death condition was "Phase 3
+> ships": it has, on wave. This file goes when the box release carrying it is
+> cut and the proxy is rolled, so the deploy checklist at the end is what is
+> left of it.
 
 ## The story, in one paragraph
 
@@ -444,4 +447,75 @@ the thought-signature question (2d, `reasoning_details` echo then delete);
 ghost chats versus last-message-only (Phase 4, exempt); two unverified claims
 (the section above). Ghost persistence was fixed the same day rather than
 planned.
+
+## Built 2026-09-14: Phases 2, 3, 4 (wave)
+
+**Phase 2.** `Thinking::{Off, Low, Default, High}` in
+`virtues_api/request.rs`, with `reasoning_for` turning a mode plus the
+catalog's `ReasoningFacts` plus the BYO route into the request (tested against
+the four live catalog shapes). `system_completion` takes a mode and a
+temperature and nothing else; it sends no `max_tokens`, skips an empty system
+prompt, and reports `finish_reason: length` as its own error. Every literal
+cap in the box is gone: day summary (Low), the interview drafter and chapter
+extraction (Off), entity articles, compaction, chat titles and bookmark
+enrichment (Off), the last three moved onto the helper from hand-built JSON.
+Live chat sends `temperature: 0.7` itself and attaches the catalog's display
+options so Claude 5 returns its thinking text; the stream parser now reads
+`delta.reasoning`, the gateway's spelling, which it never had (only the
+DeepSeek-style `reasoning_content`), so the thinking block was empty on the
+gateway for reasons beyond the display flag. The gateway's `reasoning_details`
+are merged per block and echoed on the assistant message the loop builds for
+the next step; they are stored on the row (`reasoning_details jsonb`,
+migration 0019) and the thought-signature field, event, data part, transport
+hook and column are gone.
+
+**Phase 3.** The box emits `start`, `start-step` / `finish-step` around every
+agent step, `tool-output-error` for a failed tool, `finish` with the SDK's
+reason, and `abort` on the person's stop. Text and reasoning parts now open
+and close per step: the SDK forgets its open parts at every `finish-step`, so
+the one-text-part-per-turn the box had streamed since the beginning could
+never have carried step boundaries; the conformance test found that before a
+browser did. The row's `subject` gains `length`, and the UI shows "reached its
+output limit" for it. The `pending` state is gone from the UI.
+
+**The gate.** `ui_stream_fixture` in `chat.rs` writes the box's canonical
+turn and a stopped turn to `apps/web/src/lib/ai/fixtures/` from the same
+`serialize_event` that serves a real one, and fails when they are stale;
+`apps/web/src/lib/ai/uiStream.test.ts` (vitest, `pnpm test:unit`) feeds them
+through `DefaultChatTransport` with a stubbed fetch, so the SDK's own schema
+validation and parser judge the box. Regenerate with `UPDATE_FIXTURES=1`.
+
+**Phase 4.** The transport sends the last message only, or none on regenerate,
+with the trigger; ghost chats still send everything. The box, on
+`regenerate-message` (SDK 7's spelling; the docs' name is read too), deletes
+its trailing assistant rows after the last user turn before answering, and
+appends no user turn. Before this the box kept its previous answer in history
+while the client had removed it, so "regenerate" answered with the old reply
+in front of the model.
+
+**Phase 5, decided.** Native tool approval is deferred: the SDK's flow expects
+the server to read the approval response off the wire messages and resume a
+paused loop, which is a loop redesign, and the current permission-then-
+regenerate flow now works correctly because regenerate really regenerates.
+The reactivity patch on the SDK's private `replaceMessage` and `pushMessage`
+stays; removing it needs a browser session to judge, not a test. Gateway
+reporting tags are declined: the gateway bills every tag write, and
+`app_ai_calls` already attributes spend per feature on the box for free.
+
+**Not verified live.** No turn was run against the gateway from this tree.
+The reasoning-details echo and the thinking display follow the gateway's
+documented shapes and are unit-tested against them; a real Sonnet 5 turn with
+tools, and one Gemini turn with tools, are the first thing to run on a dev box
+after the proxy is deployed.
+
+## Deploy checklist (what is left of this plan)
+
+1. Push the proxy image and roll EC2 (Phase 1). Confirm `/v1/ai/models` shows
+   `reasoning` on the Chat slot model.
+2. Cut the box release carrying Phases 2 to 4. Migration 0019 runs on upgrade.
+3. On a dev box: one chat turn with tools on the Chat slot (thinking text
+   appears, the turn finishes with `finish`), one regenerate, one stop, one
+   day-summary run, one interview close. Read `finish_reason` off the calls.
+4. Delete this file. The record of what was built is the commits and the
+   Phase sections above; move anything worth keeping to `agents/record/`.
 

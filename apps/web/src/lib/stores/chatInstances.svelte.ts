@@ -99,7 +99,6 @@ interface ChatInstanceEntry {
     refCount: number; // Number of tabs/views referencing this instance
     createdAt: number;
     cleanupTimeout?: ReturnType<typeof setTimeout>;
-    lastThoughtSignature?: string;
 }
 
 /** Live status of one Deep Research subagent, from transient `data-subagent` events. */
@@ -197,23 +196,36 @@ class ChatInstanceStore {
             id: conversationId,
             transport: new DefaultChatTransport({
                 api: '/api/chat',
-                prepareSendMessagesRequest: ({ messages }) => {
+                prepareSendMessagesRequest: ({ messages, trigger }) => {
                     const notebookId = getNotebookId();
                     const activePage = getActivePageContext?.();
                     const persona = getPersona?.() || 'default';
                     const agentMode = getAgentMode?.() || 'chat';
                     const chatMode = getChatMode?.() || 'open';
                     const temporary = getTemporary?.() || false;
-                    const entry = this.instances.get(conversationId);
-                    const thoughtSignature = entry?.lastThoughtSignature;
                     // Omitted unless the person picked one — see getModel above.
                     const model = getModel();
+
+                    // The box owns the history and rebuilds it from its own
+                    // store, reading only the last user turn off the wire; it
+                    // was sent the whole transcript every turn regardless. Now
+                    // only the last message goes, and on regenerate none: the
+                    // trigger tells the box to drop its last answer and reply
+                    // to the last user turn again. A ghost chat is the one
+                    // exception, by design: the box holds nothing for it, so
+                    // the wire is its whole transcript, every turn.
+                    const wireMessages = temporary
+                        ? messages
+                        : trigger === 'regenerate-message'
+                            ? []
+                            : messages.slice(-1);
 
                     return {
                         body: {
                             chatId: conversationId,
                             agentId: 'auto',
-                            messages,
+                            messages: wireMessages,
+                            trigger,
                             persona,
                             agentMode,
                             // Retrieval scope for notebook chats: 'open' (whole
@@ -228,8 +240,6 @@ class ChatInstanceStore {
                             ...(notebookId && { notebookId }),
                             // Include active page context if a page is bound
                             ...(activePage && { activePage }),
-                            // Include thought signature if available
-                            ...(thoughtSignature && { thoughtSignature }),
                             ...(model && { model })
                         }
                     };
@@ -237,15 +247,8 @@ class ChatInstanceStore {
             }),
             messages: [],
             onData: (dataPart) => {
-                // Handle thought signature events (transient - only for state tracking)
-                if (dataPart.type === 'data-thought-signature') {
-                    const entry = this.instances.get(conversationId);
-                    if (entry) {
-                        entry.lastThoughtSignature = (dataPart.data as { signature: string }).signature;
-                    }
-                }
                 // Handle Deep Research subagent events (transient - drives the live panel)
-                else if (dataPart.type === 'data-subagent') {
+                if (dataPart.type === 'data-subagent') {
                     this.applySubagent(conversationId, dataPart.data as SubagentStatus);
                 }
                 // The interview's write_it_up finished: open the "In your own

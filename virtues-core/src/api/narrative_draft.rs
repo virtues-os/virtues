@@ -668,13 +668,13 @@ fn split_draft(raw: &str) -> (String, Vec<String>) {
 /// The Chat slot is the Virtues-curated map and stays ZDR-capable. (See
 /// `model_choice::honors_pin` for the same ruling on the interview turns.)
 ///
-/// The cap is sized for THINKING plus answer. It was 4000 here, and the Chat
-/// slot's model reasons inside `max_tokens`: on a 19-chapter transcript the
-/// extraction spent the cap thinking and returned a truncated array, which
-/// serde refused, and the person was told their chapters "didn't take" for a
-/// reason that had nothing to do with what they said. Same failure
-/// day_summary hit under the same cap (see its 16k note). Low effort: both
-/// jobs are arrangement, not composition.
+/// Thinking OFF, no cap: both jobs are arrangement, not composition. There
+/// was a cap of 4000 here once, and the Chat slot's model reasoned inside it:
+/// on a 19-chapter transcript the extraction spent the cap thinking and
+/// returned a truncated array, which serde refused, and the person was told
+/// their chapters "didn't take" for a reason that had nothing to do with what
+/// they said. Same failure day_summary hit under the same cap. The helper now
+/// asks the model not to think where it can be asked, and sends no cap at all.
 async fn call_model(
     pool: &PgPool,
     system_prompt: &str,
@@ -687,9 +687,8 @@ async fn call_model(
         feature,
         system_prompt,
         user_prompt,
-        16_000,
+        crate::virtues_api::request::Thinking::Off,
         0.3,
-        Some("low"),
     )
     .await
 }

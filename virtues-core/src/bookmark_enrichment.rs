@@ -35,7 +35,6 @@ use sqlx::PgPool;
 
 use crate::error::{Error, Result};
 use crate::fetch;
-use crate::virtues_api::client::{BearerClient, Purpose};
 use virtues_registry::models::ModelSlot;
 
 /// Bookmarks enriched in one run. Small on purpose: the applet is on a cron, so
@@ -191,18 +190,12 @@ pub async fn run_enrichment_job(db: &PgPool) -> Result<EnrichmentSummary> {
     }
 
     let batch = BATCH_SIZE.min(allowance);
-    // `with_feature` is what makes this spend legible: it tags the cost bucket
-    // recorded into `app_ai_calls`, so Usage can say what bookmark enrichment
-    // cost rather than folding it anonymously into the gateway total.
-    let client = BearerClient::from_env(db.clone())
-        .with_purpose(Purpose::System)
-        .with_feature("bookmark_enrichment");
 
     for _ in 0..batch {
         let Some(item) = claim_next(db).await? else {
             break;
         };
-        match enrich_one(db, &client, &item).await {
+        match enrich_one(db, &item).await {
             Ok(Outcome::Enriched) => summary.enriched += 1,
             Ok(Outcome::Skipped(reason)) => {
                 summary.skipped += 1;
@@ -321,7 +314,7 @@ enum Outcome {
     Skipped(String),
 }
 
-async fn enrich_one(db: &PgPool, client: &BearerClient, item: &Claimed) -> Result<Outcome> {
+async fn enrich_one(db: &PgPool, item: &Claimed) -> Result<Outcome> {
     let page = match fetch::fetch_page(&item.url).await {
         Ok(p) => p,
         // A URL we refuse on policy (a private address, a content type this
@@ -336,7 +329,7 @@ async fn enrich_one(db: &PgPool, client: &BearerClient, item: &Claimed) -> Resul
         return Ok(Outcome::Skipped("page yielded no text".to_string()));
     }
 
-    let record = compose_record(client, &page).await?;
+    let record = compose_record(db, &page).await?;
     let model = crate::api::model_catalog::model_for_slot(ModelSlot::Lite);
 
     // COALESCE on the way in: a sync source that supplied a title owns it, and
@@ -406,7 +399,7 @@ Rules:
 - likely_queries are phrases a HUMAN would type from memory — "that cream house with the green door", "rust async book chapter on pinning" — not keyword soup and not a restatement of the title.
 - NEVER guess WHY the person saved this. You do not know, and inventing a reason is worse than leaving it out. There is no field for it."#;
 
-async fn compose_record(client: &BearerClient, page: &fetch::FetchedPage) -> Result<ExtractionRecord> {
+async fn compose_record(db: &PgPool, page: &fetch::FetchedPage) -> Result<ExtractionRecord> {
     let text: String = page.article.text.chars().take(MAX_PROMPT_CHARS).collect();
     let user_content = format!(
         "URL: {}\nTitle: {}\nDescription: {}\n\nPage text:\n{}",
@@ -420,33 +413,23 @@ async fn compose_record(client: &BearerClient, page: &fetch::FetchedPage) -> Res
         }
     );
 
-    let body = serde_json::json!({
-        "model": crate::api::model_catalog::model_for_slot(ModelSlot::Lite),
-        "messages": [
-            { "role": "system", "content": SYSTEM_PROMPT },
-            { "role": "user", "content": user_content },
-        ],
-        "max_tokens": 1024,
-        // Description, not invention.
-        "temperature": 0.0,
-    });
+    // Description, not invention: thinking off, temperature zero, no cap
+    // (the 1024 that sat here was a guess about a model that answers, and
+    // the Lite pin may be one that thinks). The helper resolves the Lite
+    // slot through the owner's background pin and tags the spend.
+    let content = crate::virtues_api::completion::system_completion(
+        db,
+        ModelSlot::Lite,
+        "bookmark_enrichment",
+        SYSTEM_PROMPT,
+        &user_content,
+        crate::virtues_api::request::Thinking::Off,
+        0.0,
+    )
+    .await
+    .map_err(|e| Error::ExternalApi(format!("enrichment request failed: {e}")))?;
 
-    let response = client
-        .post_json("/v1/ai/chat/completions", &body)
-        .await
-        .map_err(|e| Error::ExternalApi(format!("enrichment request failed: {e}")))?;
-    if !response.is_success() {
-        return Err(Error::ExternalApi(format!(
-            "enrichment returned {}: {}",
-            response.status, response.body
-        )));
-    }
-
-    let content = response.body["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or_else(|| Error::ExternalApi("enrichment response had no content".to_string()))?;
-
-    parse_record(content)
+    parse_record(&content)
 }
 
 /// Parse the model's reply into a record.
