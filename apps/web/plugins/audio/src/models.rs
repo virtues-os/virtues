@@ -71,4 +71,18 @@ pub struct AudioStatus {
   /// its audio). Absent when recording, off, or paused by the user.
   #[serde(default)]
   pub paused_reason: Option<String>,
+  /// The weekly schedule document (see `SetScheduleRequest`). Absent on a
+  /// native build that predates it — the Svelte editor keys on presence.
+  /// The first cut of this field was lost to a patch that matched an older
+  /// tail of this struct and silently changed nothing; the Swift side sent
+  /// it all along and this layer dropped it.
+  #[serde(default)]
+  pub schedule: Option<serde_json::Value>,
+  /// The cached muted places. Same absence rule as `schedule`.
+  #[serde(default)]
+  pub places: Option<Vec<MutedPlace>>,
+  /// Why chunk writing is paused right now: "schedule" or "place". Absent
+  /// when recording normally.
+  #[serde(default)]
+  pub muted_by: Option<String>,
 }
