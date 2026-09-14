@@ -1,7 +1,7 @@
 ---
 title: When something breaks
 description: Diagnosing a Virtues server that won't start, won't answer, or is behaving strangely — services, logs, health commands, and where everything lives.
-updated: 2026-08-28
+updated: 2026-09-14
 ---
 
 Start here when the server is misbehaving. You're reading this on the web rather
@@ -55,6 +55,34 @@ when other things are broken.
 These commands read the database, and the database belongs to the `virtues`
 service user. You don't have to think about that: run them as yourself and
 they re-launch themselves as the right user, printing a line to say so.
+
+## When the server crashes
+
+If the server exits abnormally, it writes a record of that to its own journal
+before doing anything else:
+
+```bash
+sudo journalctl -u virtues -g box.crashed
+```
+
+Each entry carries the exit status and the version that was running. The
+journal lines just above it are the ones that led to the crash.
+
+By default, the same information — the exit status and the last 50 lines of
+the journal — is also sent to us, so that a crash on your server is something
+we can fix rather than something you have to report. Nothing else on a running
+server is sent anywhere.
+
+To turn that off, set it in the server's configuration and restart:
+
+```bash
+sudo sh -c 'echo VIRTUES_DIAG=off >> /var/lib/virtues/virtues.env'
+sudo systemctl restart virtues
+```
+
+`virtues doctor` tells you which way it is currently set, under Diagnostics.
+Turning it off changes nothing about the local record above — your server
+always keeps its own account of a crash.
 
 ## The pieces
 
