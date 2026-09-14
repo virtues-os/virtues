@@ -74,14 +74,14 @@
 </script>
 
 {#if mode === "choose"}
-	<button type="button" class="btn" onclick={subscribe}>Create a Virtues account · $20/mo</button>
-	<button type="button" class="btn quiet" onclick={() => (mode = "login")}>Sign in to my account</button>
+	<button type="button" class="btn" onclick={subscribe}>Use Virtues' models · $20/mo</button>
+	<button type="button" class="btn quiet" onclick={() => (mode = "login")}>Sign in to an existing account</button>
 	<button
 		type="button"
 		class="btn quiet"
 		onclick={() => windowShellStore.openRouteBeside("/virtues/billing", "Billing")}
 	>
-		Use an endpoint of my own
+		Bring your own endpoint · advanced
 	</button>
 {:else if mode === "login"}
 	<input
