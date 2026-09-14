@@ -32,7 +32,7 @@
 	const rows = $derived(
 		(
 			[
-				["Name", fields.full_name],
+				["Full name", fields.full_name],
 				["Goes by", fields.preferred_name],
 				["Assistant", fields.assistant_name],
 				["Home", fields.home_place ?? fields.home_timezone],
