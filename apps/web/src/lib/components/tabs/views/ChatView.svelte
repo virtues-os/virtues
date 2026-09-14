@@ -851,7 +851,17 @@
 			role: msg.role as "user" | "assistant" | "checkpoint",
 			parts: convertMessageToParts(msg),
 			createdAt: msg.timestamp ? new Date(msg.timestamp) : undefined,
+			// The room marks each line it speaks (`gs:done:connect_ai`, …), and
+			// the render needs it to tell a settled step from the one being
+			// asked. Dropped here until now, so every line looked the same.
+			subject: msg.subject ?? undefined,
 		};
+	}
+
+	/** A line the room speaks about a step that is already settled. */
+	function isSettledLine(message: { subject?: string }): boolean {
+		const s = message.subject;
+		return !!s && (s.startsWith("gs:done:") || s === "gs:promise" || s === "gs:graduated");
 	}
 
 	function deduplicateMessages(messages: any[]): any[] {
@@ -1934,6 +1944,7 @@
 									<div
 										class="message-wrapper"
 										class:bleeds={message.id === INTERVIEW_OPENING_ID || message.id === GS_INTERVIEW_OPENING_ID}
+										class:settled={isSettledLine(message)}
 										class:user-has-attachment={isUserMessage &&
 											message.parts.some((p: any) => p.type === "file")}
 										data-message-id={message.id}
@@ -3235,6 +3246,31 @@
 	}
 	.messages-container.room .message-wrapper:not([data-role="user"]) :global(.markdown > :last-child) {
 		margin-bottom: 0;
+	}
+
+	/* ── A step that is settled says so ──
+	   Every line the room speaks used to be the same paragraph, so someone
+	   coming back from the browser tab where they had just subscribed found
+	   more prose and no way to tell what had changed or what was still being
+	   asked of them. A settled step now carries a check in the margin: the
+	   eye finds the checks, and the last line without one is where you are.
+
+	   `contain: layout` rather than the default `layout paint`, or the
+	   margin's check is clipped by the wrapper's own box — the same exemption
+	   `.bleeds` takes for the lifeline plate. */
+	.messages-container.room .message-wrapper.settled {
+		contain: layout;
+	}
+	.messages-container.room .message-wrapper.settled::before {
+		content: "✓";
+		position: absolute;
+		left: -1.35rem;
+		top: 0;
+		font-size: 0.8125rem;
+		/* Sat on the first line's baseline: --md-body-lh of a 1rem body. */
+		line-height: var(--md-body-lh, 1.7);
+		color: var(--color-success, #3f7d58);
+		pointer-events: none;
 	}
 
 	.message-wrapper :global(h1),
