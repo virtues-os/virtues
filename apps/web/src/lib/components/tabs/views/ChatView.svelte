@@ -42,7 +42,6 @@
 	import StepActions from "$lib/components/chat/getting-started/StepActions.svelte";
 	import GettingStartedDoor from "$lib/components/chat/getting-started/GettingStartedDoor.svelte";
 	import IntroductionsConfirmCard from "$lib/components/chat/getting-started/IntroductionsConfirmCard.svelte";
-	import LockedComposer from "$lib/components/chat/getting-started/LockedComposer.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
@@ -2295,8 +2294,8 @@
 								chaptersError={interviewClosedPart?.chapters_error ?? null}
 							/>
 						{:else if isGettingStartedChat(currentChatConversationId) && gettingStarted.locked}
-							<!-- No model yet: one line, not a dead input. -->
-							<LockedComposer />
+							<!-- No model yet: no composer at all. The ask above says
+							     what to do; a dead input would only argue with it. -->
 						{:else}
 						<ChatInput
 							allowEmptySubmit={stagedRefs.length > 0 || attachments.length > 0}
