@@ -13,14 +13,14 @@
 
 	function go() {
 		windowShellStore.openTabFromRoute(`/chat/${GETTING_STARTED_CHAT_ID}`, {
-			label: "First things first",
+			label: "Getting started",
 			focusExisting: true,
 		});
 	}
 </script>
 
 <button type="button" class="card" onclick={go}>
-	<span class="title">First things first</span>
+	<span class="title">Getting started</span>
 	<span class="count">{open === 1 ? "1 thing left" : `${open} things left`}</span>
 </button>
 
