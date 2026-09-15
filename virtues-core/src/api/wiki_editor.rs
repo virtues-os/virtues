@@ -284,6 +284,111 @@ pub fn change_line(before: &str, after: &str) -> String {
     }
 }
 
+/// An article the editor should look at on this run.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct DueArticle {
+    pub id: String,
+    pub subject_type: String,
+    pub subject_id: String,
+    pub page_id: String,
+    /// The article exactly as the editor last left it (§ provenance).
+    pub machine_text: Option<String>,
+    pub input_fingerprint: Option<String>,
+}
+
+/// At most this many articles per run. The ceiling is the cost control: there
+/// is no per-day spend limit anywhere in the system, so the editor must carry
+/// its own.
+pub const MAX_PER_RUN: i64 = 3;
+
+/// Articles whose rest is over, oldest edition first.
+///
+/// Three gates, and this is only the cheap two. **Eligible**: the person has
+/// not switched maintenance off, and nobody has been editing it in the last
+/// six hours — safe under the CRDT, still jarring to watch a paragraph change
+/// under your cursor. **Ready**: the minimum interval has passed, or they
+/// pressed update now.
+///
+/// The third gate — **drift**, whether the article's inputs actually moved —
+/// is not here. It needs the fold input built, which costs a query per
+/// article, so it is checked per candidate by the caller. An article whose
+/// inputs have not changed is not rewritten; it just gets its fingerprint
+/// stored and waits.
+///
+/// Note this selects from articles that EXIST. Whether an entity deserves one
+/// in the first place is a separate question with a separate budget, because
+/// "every entity on the box" is 226 articles nobody asked for on a five-month
+/// record.
+pub async fn due_articles(pool: &sqlx::PgPool, limit: i64) -> Result<Vec<DueArticle>> {
+    sqlx::query_as::<_, DueArticle>(
+        r#"
+        SELECT id, subject_type, subject_id, page_id, machine_text, input_fingerprint
+        FROM wiki_articles
+        WHERE maintenance <> 'never'
+          AND (last_human_edit_at IS NULL OR last_human_edit_at < now() - interval '6 hours')
+          AND (
+                update_requested_at IS NOT NULL
+             OR last_written_at IS NULL
+             OR last_written_at < now() - make_interval(days =>
+                  CASE WHEN subject_type IN ('year', 'story') THEN 7 ELSE 30 END)
+          )
+        ORDER BY update_requested_at NULLS LAST, last_written_at NULLS FIRST
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to select due articles: {e}")))
+}
+
+/// Record that the editor has looked at an article.
+///
+/// Called on EVERY outcome, including a refusal: an article whose edit failed
+/// its checks must still store the fingerprint it was refused for, or it comes
+/// back next hour, fails the same way, and burns a model call an hour until
+/// its interval elapses.
+pub async fn record_pass(
+    pool: &sqlx::PgPool,
+    article_id: &str,
+    fingerprint: &str,
+    wrote: Option<&str>,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE wiki_articles \
+         SET input_fingerprint = $2, \
+             update_requested_at = NULL, \
+             machine_text = COALESCE($3, machine_text), \
+             last_written_at = CASE WHEN $3 IS NULL THEN last_written_at ELSE now() END, \
+             updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(article_id)
+    .bind(fingerprint)
+    .bind(wrote)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to record editor pass: {e}")))?;
+    Ok(())
+}
+
+/// Store what the person has done to an article since the editor last wrote.
+pub async fn record_provenance(
+    pool: &sqlx::PgPool,
+    article_id: &str,
+    theirs: &[String],
+    removed: &[String],
+) -> Result<()> {
+    sqlx::query("UPDATE wiki_articles SET theirs = $2, removed = $3 WHERE id = $1")
+        .bind(article_id)
+        .bind(serde_json::json!(theirs))
+        .bind(serde_json::json!(removed))
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to record provenance: {e}")))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,6 +499,127 @@ mod tests {
             .to_string();
         assert!(err.contains("was restored"), "{err}");
         assert!(check_edit("You went to the coast.", &[], &removed).is_ok());
+    }
+
+    /// Seed an article with a page, and set the maintenance columns directly.
+    #[cfg(test)]
+    async fn seed(
+        pool: &sqlx::PgPool,
+        subject_id: &str,
+        maintenance: &str,
+        written_days_ago: Option<i32>,
+    ) -> String {
+        let a = crate::api::wiki_articles::create_article(
+            pool, "person", subject_id, subject_id, "A first draft.",
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE wiki_articles SET maintenance = $2, \
+             last_written_at = CASE WHEN $3::int IS NULL THEN NULL \
+                               ELSE now() - make_interval(days => $3::int) END \
+             WHERE id = $1",
+        )
+        .bind(&a.id)
+        .bind(maintenance)
+        .bind(written_days_ago)
+        .execute(pool)
+        .await
+        .unwrap();
+        a.id
+    }
+
+    #[sqlx::test]
+    async fn due_skips_what_is_switched_off_and_what_is_still_resting(pool: sqlx::PgPool) {
+        for (id, name) in [("person_a", "Ada"), ("person_b", "Bo"), ("person_c", "Cy")] {
+            sqlx::query("INSERT INTO wiki_people (id, name) VALUES ($1, $2)")
+                .bind(id)
+                .bind(name)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let off = seed(&pool, "person_a", "never", Some(400)).await;
+        let resting = seed(&pool, "person_b", "auto", Some(3)).await;
+        let due = seed(&pool, "person_c", "auto", Some(90)).await;
+
+        let got: Vec<String> = due_articles(&pool, 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|a| a.id)
+            .collect();
+        assert!(!got.contains(&off), "maintenance 'never' means never");
+        assert!(!got.contains(&resting), "inside its interval");
+        assert!(got.contains(&due));
+    }
+
+    #[sqlx::test]
+    async fn update_now_beats_the_interval_and_a_recent_human_edit_defers(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_d', 'Di')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let id = seed(&pool, "person_d", "auto", Some(1)).await;
+        assert!(due_articles(&pool, 10).await.unwrap().is_empty());
+
+        sqlx::query("UPDATE wiki_articles SET update_requested_at = now() WHERE id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(due_articles(&pool, 10).await.unwrap().len(), 1, "asked for");
+
+        // Somebody is in the page right now. Even "update now" waits: the CRDT
+        // makes it safe, not unsurprising.
+        sqlx::query("UPDATE wiki_articles SET last_human_edit_at = now() WHERE id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(due_articles(&pool, 10).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test]
+    async fn a_refused_pass_still_stores_its_fingerprint(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_e', 'Eli')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let id = seed(&pool, "person_e", "auto", Some(90)).await;
+
+        let before: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT last_written_at FROM wiki_articles WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        // A pass that wrote nothing: the article must not come back next hour
+        // to fail the same way and burn a model call an hour.
+        record_pass(&pool, &id, "fp-1", None).await.unwrap();
+        let (fp, written): (Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+            sqlx::query_as("SELECT input_fingerprint, last_written_at FROM wiki_articles WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(fp.as_deref(), Some("fp-1"), "the refusal is remembered");
+        assert_eq!(
+            written, before,
+            "nothing was written, so the edition date must not move — \
+             otherwise a refusal reads as an edit and resets the interval"
+        );
+
+        record_pass(&pool, &id, "fp-2", Some("The new text.")).await.unwrap();
+        let (mt, written): (Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+            sqlx::query_as("SELECT machine_text, last_written_at FROM wiki_articles WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(mt.as_deref(), Some("The new text."));
+        assert!(written.is_some());
     }
 
     #[test]
