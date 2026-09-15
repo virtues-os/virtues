@@ -863,6 +863,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::wiki_entity_record_facets_handler),
         )
         .route("/api/wiki/day/:date", get(api::wiki_get_day_handler))
+        .route("/api/wiki/years", get(api::wiki_list_years_handler))
+        .route(
+            "/api/wiki/year/:year",
+            get(api::wiki_get_year_handler).put(api::wiki_update_year_handler),
+        )
+        .route(
+            "/api/wiki/year/:year/article",
+            axum::routing::post(api::wiki_write_year_article_handler),
+        )
         // Wiki - Temporal Events
         .route(
             "/api/wiki/day/:date/events",

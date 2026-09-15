@@ -419,16 +419,35 @@ pub async fn evidence_fingerprint(
 ) -> Result<String> {
     use sha2::Digest;
 
-    // Refs touching the subject, and notes about it. Both are counted with
-    // their latest timestamp, so a retraction moves the hash as surely as an
-    // addition.
-    let (refs, last_ref): (i64, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
-        "SELECT count(*), max(occurred_at) FROM wiki_refs WHERE entity_id = $1",
-    )
-    .bind(&article.subject_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to count refs: {e}")))?;
+    // What the subject rests on, which differs by KIND. An entity rests on the
+    // records that reference it; a year rests on the days inside it, and has no
+    // refs of its own — hashing refs for a year would produce a constant, and
+    // the year would never be revised no matter how much was written beneath
+    // it.
+    let (refs, last_ref): (i64, Option<chrono::DateTime<chrono::Utc>>) =
+        if article.subject_type == "year" {
+            let year: i32 = article
+                .subject_id
+                .strip_prefix("year_")
+                .and_then(|y| y.parse().ok())
+                .ok_or_else(|| {
+                    Error::InvalidInput(format!("not a year id: {}", article.subject_id))
+                })?;
+            sqlx::query_as(
+                "SELECT count(*) FILTER (WHERE narrated_at IS NOT NULL), max(narrated_at) \
+                 FROM wiki_days WHERE EXTRACT(YEAR FROM date) = $1",
+            )
+            .bind(year)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to count the year's days: {e}")))?
+        } else {
+            sqlx::query_as("SELECT count(*), max(occurred_at) FROM wiki_refs WHERE entity_id = $1")
+                .bind(&article.subject_id)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| Error::Database(format!("Failed to count refs: {e}")))?
+        };
 
     let (notes, last_note): (i64, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
         "SELECT count(*), max(resolved_at) FROM wiki_notes \
@@ -440,12 +459,27 @@ pub async fn evidence_fingerprint(
     .await
     .map_err(|e| Error::Database(format!("Failed to count notes: {e}")))?;
 
+    // What the person wrote about the subject moves the hash as well. A title
+    // or summary they added is new evidence in the only sense that matters: the
+    // article should be revisited because of it.
+    let authored: Option<chrono::DateTime<chrono::Utc>> = if article.subject_type == "year" {
+        sqlx::query_scalar("SELECT updated_at FROM wiki_years WHERE id = $1")
+            .bind(&article.subject_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to read the year: {e}")))?
+            .flatten()
+    } else {
+        None
+    };
+
     let mut h = sha2::Sha256::new();
     h.update(
         format!(
-            "refs:{refs}:{};notes:{notes}:{};",
+            "refs:{refs}:{};notes:{notes}:{};authored:{};",
             last_ref.map(|t| t.timestamp()).unwrap_or(0),
             last_note.map(|t| t.timestamp()).unwrap_or(0),
+            authored.map(|t| t.timestamp()).unwrap_or(0),
         )
         .as_bytes(),
     );

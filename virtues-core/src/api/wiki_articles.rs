@@ -280,6 +280,8 @@ pub async fn get_subject_backlinks(
         "organization" => "org",
         "day" => "day",
         "story" => "story",
+        "year" => "year",
+        "chapter" => "chapter",
         other => {
             return Err(Error::InvalidInput(format!(
                 "No route for subject type {other}"
