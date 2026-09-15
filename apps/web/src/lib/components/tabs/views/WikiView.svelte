@@ -31,6 +31,7 @@
 	import {
 		ActivityHeatmap,
 		ChaptersSection,
+		StoriesSection,
 		DaysChronicle,
 		NarrativeIdentitySection,
 	} from '$lib/components/wiki';
@@ -851,6 +852,10 @@
 		{:else if section === 'chapters'}
 			<div class="identity-wrap">
 				<ChaptersSection />
+			</div>
+		{:else if section === 'stories'}
+			<div class="identity-wrap">
+				<StoriesSection />
 			</div>
 		{/if}
 	</main>

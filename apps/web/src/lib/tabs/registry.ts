@@ -72,7 +72,7 @@ export interface TabDefinition {
  * section.
  */
 export const WIKI_SECTION_RE =
-	/^\/wiki\/(days|years|entities|identity|chapters|lifeline|history|people|places|orgs|unlinked)$/;
+	/^\/wiki\/(days|years|entities|identity|chapters|stories|lifeline|history|people|places|orgs|unlinked)$/;
 
 /**
  * Sections of the Sources room. Same one-list rule as the wiki above, and here

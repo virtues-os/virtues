@@ -634,6 +634,82 @@ export async function writeArticle(
 }
 
 /** Turn maintenance on or off. Off means the AI never touches this article. */
+/** A subject the person named because it mattered. Not a span. */
+export interface StoryApi {
+	id: string;
+	title: string;
+	summary: string | null;
+	started_at: string | null;
+	ended_at: string | null;
+	started_precision: string | null;
+	ended_precision: string | null;
+	has_article: boolean;
+}
+
+export async function listStories(fetchFn: FetchFn = fetch): Promise<StoryApi[]> {
+	const res = await fetchFn('/api/wiki/stories');
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** Only the person starts one — the editor may not create a subject. */
+export async function createStory(title: string, fetchFn: FetchFn = fetch): Promise<StoryApi> {
+	const res = await fetchFn('/api/wiki/stories', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title })
+	});
+	if (!res.ok) throw new Error('Could not start that');
+	return res.json();
+}
+
+export async function updateStory(
+	id: string,
+	fields: Partial<Pick<StoryApi, 'title' | 'summary' | 'started_at' | 'ended_at'>>,
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/story/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(fields)
+	});
+	if (!res.ok) throw new Error('Could not save that');
+}
+
+export async function deleteStory(id: string, fetchFn: FetchFn = fetch): Promise<void> {
+	const res = await fetchFn(`/api/wiki/story/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error('Could not remove that');
+}
+
+/** Give a story a page, seeded with their words for the editor to fill. */
+export async function startStoryArticle(id: string, fetchFn: FetchFn = fetch): Promise<void> {
+	const res = await fetchFn(`/api/wiki/story/${id}/article`, { method: 'POST' });
+	if (!res.ok) throw new Error('Could not start that page');
+}
+
+/** Correct a chapter — a boundary, a name, or the sentence about why it ended. */
+export async function updateChapter(
+	id: string,
+	fields: { title?: string; started_at?: string; ended_at?: string; changepoint?: string; summary?: string },
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/chapter/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(fields)
+	});
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.error ?? 'Could not save that');
+	}
+}
+
+/** Unname a chapter. The years it covered stay, as an unnamed stretch. */
+export async function deleteChapter(id: string, fetchFn: FetchFn = fetch): Promise<void> {
+	const res = await fetchFn(`/api/wiki/chapter/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error('Could not remove that');
+}
+
 /** One day of a year, with the line the year reads. */
 export interface YearDayApi {
 	date: string;
