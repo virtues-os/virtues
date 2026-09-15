@@ -22,7 +22,7 @@
 		src="/covers/getting-started.jpg"
 		alt="An oil painting: a college library in autumn light, its double doors open onto a walled garden"
 		width="2400"
-		height="392"
+		height="480"
 		fetchpriority="high"
 		onload={() => (loaded = true)}
 	/>
@@ -35,21 +35,19 @@
 	   mask was tried first and read as a cheap vignette; a column-width
 	   version read as a component.
 
-	   The scroller is the size container (ChatView sets container-type), so
-	   100cqw is its inner width; the negative top margin cancels the
-	   messages column's own 1.5rem of padding, and `.room` keeps layout
-	   containment only, so none of the overhang is clipped.
+	   It is a direct child of the scroller, above the messages column, so
+	   "full width" is plain `width: 100%` — no container-query escape, no
+	   negative margins, nothing to drift by a scrollbar. The column's own
+	   top padding then supplies the air beneath it.
 
-	   The source is composed AT 6:1 rather than cropped into a band — a 3:1
+	   The source is composed AT 5:1 rather than cropped into a band — a 3:1
 	   painting in this slot lost its ceiling and floor to object-fit and
-	   looked stretched. */
+	   looked stretched. At the pane's usual width the band comes out just
+	   under the 18rem cap, so the whole painting is drawn and object-fit
+	   never bites. */
 	.cover {
-		margin: -1.5rem 0 2.25rem;
-		width: 100cqw;
-		max-width: none;
-		position: relative;
-		left: 50%;
-		transform: translateX(-50%);
+		margin: 0;
+		width: 100%;
 	}
 	img {
 		display: block;
