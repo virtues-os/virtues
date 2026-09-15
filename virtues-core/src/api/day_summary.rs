@@ -723,10 +723,34 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
 /// this writer refuses and stamps `dirty_at`; new evidence for a claimed day
 /// belongs in notes, never in prose the user owns.
 ///
-/// Even for a kept article, a pool-side rewrite is only safe while
-/// `yjs_state IS NULL` — once a CRDT exists, an UPDATE of `content` would be
-/// clobbered by the next debounced save. A kept-but-opened page is skipped
-/// with a dirty stamp; a server-side (Yjs-aware) writer can pick it up.
+/// Even for a kept article, a pool-side rewrite has to reckon with the CRDT:
+/// an UPDATE of `content` alone would be clobbered by the next debounced save.
+///
+/// This used to be answered by writing only `WHERE yjs_state IS NULL` and
+/// stamping `dirty_at` otherwise, deferring to "a server-side (Yjs-aware)
+/// writer" that was never built. Nothing reads `dirty_at`, so the real
+/// behaviour was: **once a day's page had been opened in the editor, that day
+/// never received narration again** — silently, for the life of the box. A
+/// re-cut day kept its first draft forever.
+///
+/// The protocol that makes the pool write safe already exists in the other
+/// direction: an external writer sets `yjs_state = NULL`, and
+/// `DocCache::get_or_create` treats that as "rewritten outside the CRDT",
+/// evicts the cached doc and reseeds it from `content`
+/// ([server/yjs.rs] — added after a cached doc was observed resurrecting
+/// stale prose over a narration). So narration uses it: content and
+/// `yjs_state = NULL` together, and the next reader gets a doc seeded from
+/// the new prose.
+///
+/// Nothing of the person's is lost, because this branch is only reached while
+/// the article is still KEPT — `claim_article_on_user_edit` flips
+/// `auto_update` off on the first doc update that actually changes the text,
+/// so a kept article has never been edited by anyone.
+///
+/// The one remaining race is a page open *right now* whose in-memory doc
+/// would save over us before any reader re-seeds it. `updated_at` is the
+/// proxy for that: a page touched in the last 15 minutes is left alone and
+/// picked up on a later run (narration is hourly), which also self-heals.
 async fn save_day_article(
     pool: &PgPool,
     day_id: &str,
@@ -770,8 +794,9 @@ async fn save_day_article(
     }
 
     let updated = sqlx::query(
-        "UPDATE app_pages SET content = $1, updated_at = now() \
-         WHERE id = $2 AND yjs_state IS NULL",
+        "UPDATE app_pages SET content = $1, yjs_state = NULL, updated_at = now() \
+         WHERE id = $2 \
+           AND (yjs_state IS NULL OR updated_at < now() - interval '15 minutes')",
     )
     .bind(prose)
     .bind(&article.page_id)
@@ -789,7 +814,8 @@ async fn save_day_article(
         tracing::info!(
             date = %date,
             page_id = %article.page_id,
-            "kept day article has a live CRDT — pool write would be clobbered; marked dirty"
+            "kept day article was touched in the last 15 minutes — someone may have it \
+             open; leaving it and trying again on a later run"
         );
         sqlx::query("UPDATE wiki_articles SET dirty_at = now() WHERE id = $1")
             .bind(&article.id)
@@ -2963,6 +2989,111 @@ mod dossier_tests {
             section.body.contains("avg 70, min 60, max 80 (3 readings)"),
             "{}",
             section.body
+        );
+    }
+
+    /// A day whose page has been opened in the editor must still receive
+    /// narration.
+    ///
+    /// THE FAILURE CLASS: **a maintenance write that defers to a queue nobody
+    /// consumes is not deferred, it is dropped.** This write was guarded
+    /// `WHERE yjs_state IS NULL` and stamped `dirty_at` otherwise, deferring
+    /// to a Yjs-aware writer that was never built — and nothing reads
+    /// `dirty_at`. So opening a day page once froze that day's article at its
+    /// first draft for the life of the box, and re-cutting the day changed
+    /// nothing. Invisible from outside: the page still holds plausible prose,
+    /// just never the current prose.
+    #[sqlx::test]
+    async fn narration_lands_on_a_day_page_that_has_been_opened(pool: PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap();
+        let day = get_or_create_day(&pool, date).await.unwrap();
+
+        save_day_article(&pool, &day.id, date, "First draft.")
+            .await
+            .unwrap();
+        let article = crate::api::wiki_articles::get_article(&pool, "day", &day.id)
+            .await
+            .unwrap()
+            .expect("the first narration creates the article");
+
+        // Someone opens the page: a CRDT exists for it from then on, and
+        // nothing ever sets it back to NULL. Backdated so this is not the
+        // "being edited right now" case, which is the next test.
+        // `app_pages` carries a BEFORE UPDATE trigger that stamps
+        // `updated_at = now()`, which is what makes that column mean "last
+        // written by anything" in production — and what stops a plain UPDATE
+        // here from backdating it. Suspend it for the one statement.
+        for stmt in [
+            "ALTER TABLE app_pages DISABLE TRIGGER set_updated_at",
+            "UPDATE app_pages SET yjs_state = '\\x010203'::bytea, \
+             updated_at = now() - interval '1 hour' WHERE id = $1",
+            "ALTER TABLE app_pages ENABLE TRIGGER set_updated_at",
+        ] {
+            let q = sqlx::query(stmt);
+            let q = if stmt.contains("$1") {
+                q.bind(&article.page_id)
+            } else {
+                q
+            };
+            q.execute(&pool).await.unwrap();
+        }
+
+        save_day_article(&pool, &day.id, date, "Second draft, after the re-cut.")
+            .await
+            .unwrap();
+
+        let (content, state): (String, Option<Vec<u8>>) =
+            sqlx::query_as("SELECT content, yjs_state FROM app_pages WHERE id = $1")
+                .bind(&article.page_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            content, "Second draft, after the re-cut.",
+            "an opened page must still receive narration"
+        );
+        assert!(
+            state.is_none(),
+            "the CRDT must be cleared, so the next reader reseeds from the new \
+             prose instead of resurrecting the old doc over it"
+        );
+    }
+
+    /// The one page narration leaves alone: one someone may have open at this
+    /// moment, whose in-memory doc would save over the write before any reader
+    /// re-seeds it. Not skipped forever — narration runs hourly and the page
+    /// stops being fresh.
+    #[sqlx::test]
+    async fn narration_waits_for_a_page_touched_a_moment_ago(pool: PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
+        let day = get_or_create_day(&pool, date).await.unwrap();
+        save_day_article(&pool, &day.id, date, "First draft.")
+            .await
+            .unwrap();
+        let article = crate::api::wiki_articles::get_article(&pool, "day", &day.id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        sqlx::query("UPDATE app_pages SET yjs_state = $1, updated_at = now() WHERE id = $2")
+            .bind(vec![1u8, 2, 3])
+            .bind(&article.page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        save_day_article(&pool, &day.id, date, "Second draft.")
+            .await
+            .unwrap();
+
+        let content: String = sqlx::query_scalar("SELECT content FROM app_pages WHERE id = $1")
+            .bind(&article.page_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            content, "First draft.",
+            "a page touched seconds ago is left for a later run"
         );
     }
 }
