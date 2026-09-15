@@ -651,6 +651,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             axum::routing::put(api::set_article_auto_update_handler),
         )
         .route(
+            "/api/wiki/articles/:subject_type/:subject_id/maintenance",
+            axum::routing::put(api::set_article_maintenance_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/revert",
+            axum::routing::post(api::revert_article_handler),
+        )
+        .route(
             "/api/entities/people",
             axum::routing::post(api::create_person_handler),
         )
