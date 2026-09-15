@@ -134,6 +134,9 @@ export const WIKI_MODE: SidebarMode = {
 		// Its own room: wiki_chapters is structure, not part of the identity
 		// document.
 		{ id: 'chapters', label: 'Chapters', icon: 'ri:contacts-book-2-line', href: '/wiki/chapters' },
+		// Beside Chapters on purpose: both are subjects the person named, and
+		// neither is derived from the record the way Days and Years are.
+		{ id: 'stories', label: 'Stories', icon: 'ri:book-2-line', href: '/wiki/stories' },
 		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', href: '/wiki/days' },
 		{ id: 'years', label: 'Years', icon: 'ri:calendar-2-line', href: '/wiki/years' },
 		{ id: 'people', label: 'People', icon: 'ri:user-line', href: '/wiki/people' },

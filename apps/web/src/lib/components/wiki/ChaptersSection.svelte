@@ -12,23 +12,64 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { getChapters, type ChapterApi } from '$lib/wiki/api';
+	import { getChapters, updateChapter, deleteChapter, type ChapterApi } from '$lib/wiki/api';
 
 	let loading = $state(true);
 	let chapters = $state<ChapterApi[]>([]);
 
-	onMount(async () => {
+	async function load() {
 		try {
 			chapters = await getChapters();
 		} finally {
 			loading = false;
 		}
-	});
+	}
+
+	onMount(load);
 
 	/** A chapter whose page hasn't been seeded yet — acknowledged, not a
 	 *  dead click. Cleared after a beat. */
 	let missingNote = $state<string | null>(null);
 	let missingTimer: ReturnType<typeof setTimeout> | undefined;
+
+	let editing = $state<string | null>(null);
+	let renameDraft = $state('');
+	let chapterError = $state<string | null>(null);
+	let errorText = $state<string | null>(null);
+
+	/**
+	 * Chapters were written once by the interview and could never be changed —
+	 * no update and no delete existed. A boundary in the wrong place, or a name
+	 * someone regretted, was permanent, on a partition of their own life.
+	 */
+	async function saveTitle(ch: ChapterApi) {
+		const title = renameDraft.trim();
+		editing = null;
+		if (!title || title === (ch.title ?? '')) return;
+		try {
+			await updateChapter(ch.id, { title });
+			await load();
+		} catch (e) {
+			chapterError = ch.id;
+			errorText = e instanceof Error ? e.message : 'Could not save that';
+		}
+	}
+
+	/**
+	 * Unnaming keeps the years. The partition is gapless by materialising its
+	 * holes, so the time becomes "an unnamed stretch" rather than disappearing —
+	 * the years someone would rather not name are still part of the shape.
+	 */
+	async function unname(ch: ChapterApi) {
+		if (!confirm(`Unname "${ch.title}"? The years stay, as an unnamed stretch.`)) return;
+		try {
+			await deleteChapter(ch.id);
+			await load();
+		} catch (e) {
+			chapterError = ch.id;
+			errorText = e instanceof Error ? e.message : 'Could not do that';
+		}
+	}
 
 	async function openChapter(ch: ChapterApi) {
 		// The chapter's article page, resolved on demand — seeded by the
@@ -89,6 +130,34 @@
 							<p class="chapter-note changepoint">No page yet — it is written when the interview is closed.</p>
 						{/if}
 					</button>
+					<p class="chapter-actions">
+						{#if editing === ch.id}
+							<!-- svelte-ignore a11y_autofocus -->
+							<input
+								class="rename"
+								bind:value={renameDraft}
+								autofocus
+								placeholder="What do you call this stretch?"
+								onblur={() => saveTitle(ch)}
+								onkeydown={(e) => e.key === 'Enter' && saveTitle(ch)}
+							/>
+						{:else}
+							<button
+								type="button"
+								class="linkish"
+								onclick={() => {
+									renameDraft = ch.title ?? '';
+									editing = ch.id;
+								}}>{ch.title ? 'Rename' : 'Name it'}</button
+							>
+							{#if ch.title}
+								<button type="button" class="linkish" onclick={() => unname(ch)}>Unname</button>
+							{/if}
+						{/if}
+						{#if chapterError === ch.id && errorText}
+							<span class="failed">{errorText}</span>
+						{/if}
+					</p>
 				</li>
 			{/each}
 		</ol>
@@ -106,6 +175,44 @@
 </div>
 
 <style>
+	.chapter-actions {
+		margin: 0.25rem 0 0 0;
+		display: flex;
+		gap: 0.75rem;
+		align-items: baseline;
+	}
+
+	.linkish {
+		background: none;
+		border: 0;
+		padding: 0;
+		cursor: pointer;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+
+	.linkish:hover {
+		color: var(--color-foreground);
+	}
+
+	.rename {
+		font-family: var(--font-serif);
+		font-size: 1rem;
+		background: none;
+		border: 0;
+		border-bottom: 1px solid var(--color-border);
+		color: var(--color-foreground);
+		padding: 0.1rem 0;
+		min-width: 18rem;
+	}
+
+	.failed {
+		font-size: 0.75rem;
+		color: var(--color-danger, #b00);
+	}
+
 	.chapters-room {
 		display: flex;
 		flex-direction: column;
