@@ -194,14 +194,14 @@
 	{:else if mode === "mailed"}
 		<div class="pane" in:fly={IN} out:fly={OUT}>
 			<Choices>
-				<Waiting>A sign-in link is in your email. This picks up on its own once you have used it.</Waiting>
+				<Waiting>A sign-in link is on its way to your email. Open it and this picks up on its own — you can leave this where it is.</Waiting>
 				<Act variant="plain" onclick={back}>Back</Act>
 			</Choices>
 		</div>
 	{:else if mode === "checkout"}
 		<div class="pane" in:fly={IN} out:fly={OUT}>
 			<Choices>
-				<Waiting>Finish in the window that opened. This picks up on its own after checkout.</Waiting>
+				<Waiting>Finish in the window that opened. This picks up on its own once you have, and nothing is charged until you confirm there.</Waiting>
 				<Act variant="plain" onclick={back}>Back</Act>
 			</Choices>
 		</div>

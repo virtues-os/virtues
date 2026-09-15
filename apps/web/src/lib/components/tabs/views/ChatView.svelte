@@ -1781,15 +1781,13 @@
 	async function handleChatSubmit(value: string) {
 		let messageToSend = value.trim();
 
-		// The one slash command: does what the door does. Deterministic and
-		// client-side; the model never sees it. Any other slash text sends.
+		// The one slash command, and it does exactly what the door does: leave.
+		// It used to also skip connect_ai, which was the key out of a locked
+		// app; nothing is locked now, so the room keeps its place and you come
+		// back to it from the sidebar. Deterministic and client-side; the model
+		// never sees it. Any other slash text sends.
 		if (messageToSend === SKIP_COMMAND) {
 			input = "";
-			try {
-				await gettingStarted.skip("connect_ai", true);
-			} catch {
-				/* the door will say why on its own attempt */
-			}
 			void goto("/home");
 			return;
 		}
@@ -2212,9 +2210,6 @@
 													onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
 													onDeny={() => handlePermissionDeny()}
 												/>
-											{:else if part.type === "tool-show_step"}
-												<!-- Nothing inline: a step's controls stand in one
-												     place under the thread, where they always are. -->
 											{:else if part.type === "tool-record_introductions"}
 												<!-- Nothing here: the receipt goes under the whole
 												     turn, not wherever in it the model reached for

@@ -73,7 +73,6 @@ pub fn default_tools() -> Vec<ToolConfig> {
         propose_narrative_identity_tool(),
         write_it_up_tool(),
         revise_article_tool(),
-        show_step_tool(),
         skip_step_tool(),
         record_introductions_tool(),
         update_memory_tool(),
@@ -274,26 +273,6 @@ A refused call is not an error: it returns the sentence to act on, and the inter
 /// Getting started's tools. Mode-only (see get_tools_for_agent_mode);
 /// is_system keeps them out of every other room. None writes anything: they
 /// return markers the client renders as cards, and the cards do the work.
-fn show_step_tool() -> ToolConfig {
-    ToolConfig {
-        id: "show_step".to_string(),
-        name: "Open a getting-started step".to_string(),
-        description: "Open one step's card in the getting-started conversation".to_string(),
-        llm_description: "Put one getting-started step's controls under your turn (connect_world: the source and phone doors; interview: its door; introductions: nothing to show, they just reply). The controls are the person's way to do the step; you cannot do it for them. Refused for a step that is already done.".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "step": { "type": "string", "enum": ["introductions", "connect_world", "interview"] }
-            },
-            "required": ["step"]
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:layout-top-line".to_string(),
-        display_order: 0,
-        is_system: true,
-    }
-}
 
 fn skip_step_tool() -> ToolConfig {
     ToolConfig {

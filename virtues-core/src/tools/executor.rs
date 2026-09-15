@@ -338,7 +338,6 @@ impl ToolExecutor {
             // Getting started's tools: markers, never writes (the client's
             // cards write). `skip_step` is the one exception and it lands in
             // the same stored list the door uses.
-            "show_step" => self.execute_show_step(arguments).await,
             "skip_step" => self.execute_skip_step(arguments).await,
             "record_introductions" => self.execute_record_introductions(arguments).await,
             "set_user_name" => self.execute_set_user_name(arguments).await,
@@ -871,30 +870,6 @@ impl ToolExecutor {
     }
 
     /// Open one step's card. A done step has no card to open, and the
-    /// refusal tells the model what to say instead.
-    async fn execute_show_step(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
-        let step = arguments
-            .get("step")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParameters("step is required".into()))?
-            .to_string();
-        if !crate::api::getting_started::is_step(&step) || step == "connect_ai" {
-            return Err(ToolError::InvalidParameters(format!("no card for {step}")));
-        }
-        let state = crate::api::getting_started::compute(&self._pool)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("getting-started state: {e}")))?;
-        match state.step(&step).map(|s| s.status) {
-            Some(crate::api::getting_started::StepStatus::Done) => Err(ToolError::InvalidParameters(
-                format!("{step} is already done; say so, and move to the next open step"),
-            )),
-            _ => Ok(ToolResult::success(serde_json::json!({
-                "card": "step",
-                "step": step,
-                "message": "Its controls are under your turn for them to use."
-            }))),
-        }
-    }
 
     /// Skip a step on the person's ask. `connect_ai` is the door's alone.
     async fn execute_skip_step(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
