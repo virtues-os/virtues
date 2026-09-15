@@ -2,8 +2,18 @@
 	// Root layout - minimal, delegates to route group layouts
 	// This is kept minimal as (onboarding) and (app) groups have their own layouts
 	import { onMount } from "svelte";
+	import { installErrorReporting } from "$lib/log";
 
 	let { children } = $props();
+
+	// Here, not in a route group, for the same reason as the drop handler
+	// below: an error that kills the app is most likely on the pages BEFORE
+	// `(app)` — the airlock, pairing, onboarding — and those are exactly the
+	// ones nobody can report from, because the screen is stuck. Installing at
+	// the root means the reporter is live before any of that can fail.
+	//
+	// Safe to call during SSR (it no-ops without a `window`) and idempotent.
+	installErrorReporting();
 
 	// The one thing that cannot live in a route group's layout: swallowing a
 	// file dropped somewhere nothing claims.

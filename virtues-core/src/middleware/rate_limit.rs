@@ -1,31 +1,48 @@
-//! Per-IP rate limiter for the `/api/pair/consume` endpoint.
+//! Sliding-window rate limiting, keyed by whatever the caller counts by.
 //!
-//! The pair token is a 6-char code from a 24-char alphabet (≈191M combos).
-//! That's unbrutable within the 30-minute window ONLY if we cap attempts per
-//! IP. Without this, a LAN attacker can enumerate freely.
+//! Two users, two very different reasons:
 //!
-//! Implementation: an in-memory sliding-window counter per source IP. No
-//! external crate; a single `Mutex<HashMap>` is sufficient for an endpoint
-//! that sees at most a handful of real pairs per day. Entries expire
-//! automatically — we purge stale windows on each check.
+//! - **`pair_limiter`**, keyed by source IP. The pair token is a 6-char code
+//!   from a 24-char alphabet (≈191M combos). That's unbrutable within the
+//!   30-minute window ONLY if we cap attempts per IP. Without this, a LAN
+//!   attacker can enumerate freely. This one is a security control.
+//! - **`event_limiter`**, keyed by device id. A client reporting its own
+//!   errors (`POST /api/events`) can get stuck in a render loop and report the
+//!   same failure thousands of times a minute. journald rate-limits per unit,
+//!   so an unbounded client would push the box into dropping OTHER lines —
+//!   the feature would cause blindness instead of curing it. This one is a
+//!   budget, not a defense; the device is already authenticated.
+//!
+//! Implementation: an in-memory sliding-window counter per key. No external
+//! crate; a single `Mutex<HashMap>` is sufficient at these volumes. Entries
+//! expire automatically — we purge stale windows on each check.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// Sliding window size — matches the pair-token TTL so a token can only be
-/// guessed within the window it is valid.
+/// Pair: sliding window size — matches the pair-token TTL so a token can only
+/// be guessed within the window it is valid.
 const WINDOW: Duration = Duration::from_secs(30 * 60);
 
-/// Maximum attempts from a single IP within the window. 10 allows a
+/// Pair: maximum attempts from a single IP within the window. 10 allows a
 /// reasonable number of typos/retries without opening meaningful enumeration.
 const MAX_ATTEMPTS: usize = 10;
 
-pub struct PairRateLimiter(Mutex<HashMap<String, Vec<Instant>>>);
+/// Events: one minute, because that is the timescale a runaway client loops
+/// on and the timescale journald's own rate limiting works over.
+const EVENT_WINDOW: Duration = Duration::from_secs(60);
 
-impl PairRateLimiter {
-    fn new() -> Self {
-        Self(Mutex::new(HashMap::new()))
+/// Events: per device, per minute. A real client flushing warnings sends a
+/// handful; 120 is far above any honest burst (a page that fails to load might
+/// report a dozen) and far below a volume that could crowd the journal.
+const EVENT_MAX: usize = 120;
+
+pub struct SlidingWindowLimiter(Mutex<HashMap<String, Vec<Instant>>>, Duration, usize);
+
+impl SlidingWindowLimiter {
+    fn new(window: Duration, max: usize) -> Self {
+        Self(Mutex::new(HashMap::new()), window, max)
     }
 
     /// Record an attempt from `ip_key` and return `true` (allow) or `false`
@@ -38,7 +55,7 @@ impl PairRateLimiter {
     /// limit. The sweep is O(n) but n is tiny (a handful of real pairs).
     pub fn check_and_record(&self, ip_key: &str) -> bool {
         let now = Instant::now();
-        let cutoff = now - WINDOW;
+        let cutoff = now - self.1;
 
         let mut map = self.0.lock().unwrap();
 
@@ -52,7 +69,7 @@ impl PairRateLimiter {
         // gets a timestamp pushed below); the deny path always has a non-empty
         // Vec. So `or_default` can't strand an empty entry.
         let attempts = map.entry(ip_key.to_string()).or_default();
-        if attempts.len() >= MAX_ATTEMPTS {
+        if attempts.len() >= self.2 {
             return false;
         }
         attempts.push(now);
@@ -60,11 +77,18 @@ impl PairRateLimiter {
     }
 }
 
-static PAIR_LIMITER: OnceLock<PairRateLimiter> = OnceLock::new();
+static PAIR_LIMITER: OnceLock<SlidingWindowLimiter> = OnceLock::new();
 
-/// Returns the global `PairRateLimiter` instance, initialising it on first call.
-pub fn pair_limiter() -> &'static PairRateLimiter {
-    PAIR_LIMITER.get_or_init(PairRateLimiter::new)
+/// The pair-consume limiter, keyed by source IP. See the module header.
+pub fn pair_limiter() -> &'static SlidingWindowLimiter {
+    PAIR_LIMITER.get_or_init(|| SlidingWindowLimiter::new(WINDOW, MAX_ATTEMPTS))
+}
+
+static EVENT_LIMITER: OnceLock<SlidingWindowLimiter> = OnceLock::new();
+
+/// The client-report limiter, keyed by device id. See the module header.
+pub fn event_limiter() -> &'static SlidingWindowLimiter {
+    EVENT_LIMITER.get_or_init(|| SlidingWindowLimiter::new(EVENT_WINDOW, EVENT_MAX))
 }
 
 #[cfg(test)]
@@ -73,7 +97,7 @@ mod tests {
 
     #[test]
     fn allows_up_to_max_attempts() {
-        let lim = PairRateLimiter::new();
+        let lim = SlidingWindowLimiter::new(WINDOW, MAX_ATTEMPTS);
         for _ in 0..MAX_ATTEMPTS {
             assert!(lim.check_and_record("1.2.3.4"));
         }
@@ -82,7 +106,7 @@ mod tests {
 
     #[test]
     fn different_ips_dont_share_budget() {
-        let lim = PairRateLimiter::new();
+        let lim = SlidingWindowLimiter::new(WINDOW, MAX_ATTEMPTS);
         for _ in 0..MAX_ATTEMPTS {
             lim.check_and_record("10.0.0.1");
         }
@@ -92,7 +116,7 @@ mod tests {
 
     #[test]
     fn map_does_not_retain_empty_entries() {
-        let lim = PairRateLimiter::new();
+        let lim = SlidingWindowLimiter::new(WINDOW, MAX_ATTEMPTS);
         // One attempt creates one live entry.
         lim.check_and_record("10.0.0.1");
         assert_eq!(lim.0.lock().unwrap().len(), 1);
