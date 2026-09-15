@@ -47,6 +47,8 @@
 		listOrganizations,
 		listDays,
 		listDayActivity,
+		listYears,
+		type YearSummaryApi,
 		listOnThisDay,
 		getNarrativeIdentity,
 		getLifeline,
@@ -113,35 +115,16 @@
 	// from day activity. Only years with recorded days appear — an empty year
 	// is not a year of your life you'd want listed.
 
-	interface YearRow {
-		year: number;
-		recorded: number;
-		narrated: number;
-	}
-
-	let years = $state<YearRow[]>([]);
+	// Years come from the box now. They used to be derived here from a ten-year
+	// window of day activity, with a comment explaining that no years endpoint
+	// existed — so a year before the record simply was not a year, and every
+	// row linked to the days index regardless of which year you clicked.
+	let years = $state<YearSummaryApi[]>([]);
 	let yearsLoaded = $state(false);
 
 	async function loadYears() {
 		if (yearsLoaded) return;
-		// Wide enough to cover the record; the endpoint returns only real days.
-		const end = new Date();
-		const start = new Date(end.getFullYear() - 10, 0, 1);
-		const activity = await listDayActivity(
-			getLocalDateSlug(start),
-			getLocalDateSlug(end)
-		);
-
-		const byYear = new Map<number, YearRow>();
-		for (const d of activity) {
-			if (!d.event_count) continue;
-			const y = Number(d.date.slice(0, 4));
-			const row = byYear.get(y) ?? { year: y, recorded: 0, narrated: 0 };
-			row.recorded += 1;
-			if (d.narrated) row.narrated += 1;
-			byYear.set(y, row);
-		}
-		years = [...byYear.values()].sort((a, b) => b.year - a.year);
+		years = await listYears();
 		yearsLoaded = true;
 	}
 
@@ -779,14 +762,19 @@
 				{#if !yearsLoaded}
 					<p class="quiet">Loading…</p>
 				{:else if years.length === 0}
-					<p class="quiet">No recorded days yet, so there are no years to show.</p>
+					<p class="quiet">No years yet.</p>
 				{:else}
 					<ul class="years">
 						{#each years as y (y.year)}
 							<li>
-								<a href="/wiki/days">{y.year}</a>
+								<a href="/year/{y.id}">{y.title ?? y.year}</a>
 								<span class="quiet">
-									{y.recorded} day{y.recorded === 1 ? '' : 's'} · {y.narrated} narrated
+									{#if y.days_recorded === 0}
+										nothing recorded{#if y.chapters.length} · {y.chapters[0]}{/if}
+									{:else}
+										{y.days_recorded} day{y.days_recorded === 1 ? '' : 's'} · {y.days_narrated}
+										narrated{#if y.has_article} · written up{/if}
+									{/if}
 								</span>
 							</li>
 						{/each}
