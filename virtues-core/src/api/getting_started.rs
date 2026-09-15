@@ -436,7 +436,7 @@ fn ask_line(s: &Step) -> String {
         // The buttons under this say Subscribe, Sign in and My own models, so
         // the prose does not enumerate the doors. It spends its words on the
         // one thing that needs arguing.
-        "connect_ai" => "AI has to be connected before anything else works. A Virtues subscription gives you the best of Claude, Gemini, GPT and Grok under zero data retention — nothing you send is stored or trained on, by them or by us.".into(),
+        "connect_ai" => "AI has to be connected before anything else works. A Virtues subscription gives you the best of Claude, Gemini, GPT and Grok under zero data retention — nothing you send is stored or trained on, by them or by us. One day these models should run on your server itself; the hardware has to get cheaper first.".into(),
         // Plainly, as a list: these five are the most important thing on the
         // screen, and buried in a sentence they read as decoration. The
         // person still answers in one message, in their own order.
