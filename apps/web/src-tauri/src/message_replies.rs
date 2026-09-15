@@ -28,6 +28,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 
 const POLL_EVERY: Duration = Duration::from_secs(5);
+/// How often to look again once the box has said it has no such route.
+const POLL_WHEN_UNSUPPORTED: Duration = Duration::from_secs(300);
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
 const READ_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_BODY: u64 = 4 * 1024 * 1024;
@@ -85,9 +87,10 @@ fn box_addr() -> String {
     format!("127.0.0.1:{}", tauri_plugin_reach::loopback_port())
 }
 
-/// One HTTP/1.1 request over the loopback. `Some(body)` on 2xx, `None` on any
-/// other status; a transport failure is the error.
-fn loopback_request(method: &str, path: &str, json: Option<&str>) -> std::io::Result<Option<Vec<u8>>> {
+/// One HTTP/1.1 request over the loopback, returning the status and the body.
+/// The status matters to the caller: a 404 is a box too old to know these
+/// routes, which is a different thing from a box that is refusing or away.
+fn loopback_request(method: &str, path: &str, json: Option<&str>) -> std::io::Result<(u16, Vec<u8>)> {
     let sock = box_addr()
         .parse()
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad addr"))?;
@@ -109,26 +112,41 @@ fn loopback_request(method: &str, path: &str, json: Option<&str>) -> std::io::Re
     let mut raw = Vec::new();
     stream.take(MAX_BODY).read_to_end(&mut raw)?;
 
-    let head_end = match raw.windows(4).position(|w| w == b"\r\n\r\n") {
-        Some(i) => i,
-        None => return Ok(None),
-    };
+    let head_end = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| std::io::Error::other("no HTTP header terminator"))?;
     let head = String::from_utf8_lossy(&raw[..head_end]);
-    let status = head.split_whitespace().nth(1).unwrap_or("");
-    if !status.starts_with('2') {
-        return Ok(None);
-    }
-    Ok(Some(raw[head_end + 4..].to_vec()))
+    let status: u16 = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| std::io::Error::other("no HTTP status"))?;
+    Ok((status, raw[head_end + 4..].to_vec()))
 }
 
-/// A non-2xx is an error here, not "nothing pending": a 401 or 5xx while the
+/// Why a poll did not produce a list. The distinction is the whole point: a
+/// box that has never heard of these routes wants an upgrade, not a retry.
+enum PollFailure {
+    /// 404 — this box predates the feature.
+    NoSuchRoute,
+    /// Away, restarting, refusing: ordinary, and worth trying again shortly.
+    Unreachable(String),
+}
+
+/// A non-2xx is a failure here, not "nothing pending": a 401 or 5xx while the
 /// box restarts must not clear the seen-set and re-announce everything.
-fn fetch_pending() -> std::io::Result<Vec<PendingReply>> {
-    let Some(body) = loopback_request("GET", "/api/message-replies/pending", None)? else {
-        return Err(std::io::Error::other("box answered non-2xx"));
-    };
+fn fetch_pending() -> Result<Vec<PendingReply>, PollFailure> {
+    let (status, body) = loopback_request("GET", "/api/message-replies/pending", None)
+        .map_err(|e| PollFailure::Unreachable(e.to_string()))?;
+    if status == 404 {
+        return Err(PollFailure::NoSuchRoute);
+    }
+    if !(200..300).contains(&status) {
+        return Err(PollFailure::Unreachable(format!("box answered {status}")));
+    }
     serde_json::from_slice::<Vec<PendingReply>>(&body)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+        .map_err(|e| PollFailure::Unreachable(e.to_string()))
 }
 
 // ─── The poll ────────────────────────────────────────────────────────────────
@@ -140,17 +158,45 @@ pub fn start_poll(app: AppHandle, tray_line: tauri::menu::MenuItem<tauri::Wry>) 
         // Off the launch path: the loopback is not serving for the first
         // seconds, and there is nothing to announce that cannot wait.
         std::thread::sleep(Duration::from_secs(8));
+        // Log a verdict when it CHANGES, not every tick. At 5s a box that is
+        // simply older than this app would write seventeen thousand identical
+        // lines a day.
+        let mut said: Option<&'static str> = None;
         loop {
+            let mut wait = POLL_EVERY;
             match fetch_pending() {
-                Ok(pending) => announce(&app, &tray_line, pending),
-                Err(e) => {
-                    // The box being away is ordinary (laptop lid, box
-                    // rebooting). Say nothing; the tray status line already
-                    // reports reachability.
-                    eprintln!("[replies] box not reachable: {e}");
+                Ok(pending) => {
+                    if said.is_some() {
+                        eprintln!("[replies] box is answering again");
+                        said = None;
+                    }
+                    announce(&app, &tray_line, pending);
+                }
+                // The app updates on its own and the box updates on its own,
+                // so an app newer than its box is a normal state, not a
+                // fault. Back off hard: nothing here will change until
+                // someone upgrades the box.
+                Err(PollFailure::NoSuchRoute) => {
+                    if said != Some("old") {
+                        eprintln!(
+                            "[replies] this box has no /api/message-replies — it predates \
+                             drafted replies; checking every {}s in case it is upgraded",
+                            POLL_WHEN_UNSUPPORTED.as_secs()
+                        );
+                        said = Some("old");
+                    }
+                    wait = POLL_WHEN_UNSUPPORTED;
+                }
+                // Away is ordinary (a closed lid, a rebooting box). The tray's
+                // status line already reports reachability.
+                Err(PollFailure::Unreachable(why)) => {
+                    if said != Some("away") {
+                        eprintln!("[replies] box not reachable: {why}");
+                        said = Some("away");
+                    }
                 }
             }
-            std::thread::sleep(POLL_EVERY);
+            std::thread::sleep(wait);
         }
     });
 }
@@ -261,8 +307,9 @@ pub fn request_draft(thread_id: Option<&str>) -> Result<(), String> {
     };
     let path = format!("/api/applets/{REPLY_APPLET_ID}/run");
     match loopback_request("POST", &path, Some(&payload.to_string())) {
-        Ok(Some(_)) => Ok(()),
-        Ok(None) => Err("the box declined to start a draft".into()),
+        Ok((s, _)) if (200..300).contains(&s) => Ok(()),
+        Ok((404, _)) => Err("This server doesn't draft replies yet. Upgrade it first.".into()),
+        Ok((s, _)) => Err(format!("the box declined to start a draft ({s})")),
         Err(e) => Err(format!("box not reachable: {e}")),
     }
 }
