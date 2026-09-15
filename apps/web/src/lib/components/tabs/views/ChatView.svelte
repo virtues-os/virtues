@@ -2050,16 +2050,6 @@
 						class="flex-1 overflow-y-auto chat-layout"
 						class:visible={!isEmpty}
 					>
-						{#if isGettingStartedChat(currentChatConversationId) && uniqueMessages.length > 0}
-							<!-- The room's frontispiece, above its title. A direct
-							     child of the SCROLLER, not of the messages column:
-							     escaping the column with 100cqw put it half a
-							     scrollbar to the left of true, because the column's
-							     centre and the container-query width disagree by
-							     exactly that. Here it is simply 100% of the thing
-							     it should be as wide as. -->
-							<RoomCover />
-						{/if}
 						<div
 							class="messages-container"
 							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID ||
@@ -2067,6 +2057,13 @@
 								isGettingStartedChat(currentChatConversationId)}
 							class:room={isGettingStartedChat(currentChatConversationId)}
 						>
+							{#if isGettingStartedChat(currentChatConversationId) && uniqueMessages.length > 0}
+								<!-- The frontispiece, at the measure of the words.
+								     It ran the full width of the pane as an oil
+								     painting and made the room read as two products
+								     stacked. -->
+								<RoomCover />
+							{/if}
 							{#each uniqueMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
 								{@const exchangeIndex = isUserMessage
