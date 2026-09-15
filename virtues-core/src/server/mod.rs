@@ -863,6 +863,25 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::wiki_entity_record_facets_handler),
         )
         .route("/api/wiki/day/:date", get(api::wiki_get_day_handler))
+        .route(
+            "/api/wiki/stories",
+            get(api::wiki_list_stories_handler).post(api::wiki_create_story_handler),
+        )
+        .route(
+            "/api/wiki/story/:id",
+            get(api::wiki_get_story_handler)
+                .put(api::wiki_update_story_handler)
+                .delete(api::wiki_delete_story_handler),
+        )
+        .route(
+            "/api/wiki/story/:id/article",
+            axum::routing::post(api::wiki_start_story_article_handler),
+        )
+        .route(
+            "/api/wiki/chapter/:id",
+            axum::routing::put(api::wiki_update_chapter_handler)
+                .delete(api::wiki_delete_chapter_handler),
+        )
         .route("/api/wiki/years", get(api::wiki_list_years_handler))
         .route(
             "/api/wiki/year/:year",
@@ -1266,6 +1285,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // stamp the SPA's staleness watcher compares.
     let app = app.layer(axum::middleware::from_fn(stamp_box_build));
 
+    // Outside even that: the request span has to be open before any other
+    // layer logs, or the first lines of a request are the ones without a key.
+    let app = app.layer(axum::middleware::from_fn(request_id));
+
     // iroh reach: the box is an iroh Endpoint that serves this same axum app
     // (LAN-direct → hole-punch → our relay), reachable by EndpointId with no
     // public inbound port. Serves a clone of `app`; the :8000 TCP listener below
@@ -1422,6 +1445,63 @@ fn static_cache_control(path: &str) -> Option<&'static str> {
 }
 
 #[cfg(test)]
+mod request_id_tests {
+    use super::*;
+    use axum::{routing::get, Router};
+    use tower::Service;
+
+    async fn probe(inbound: Option<&str>) -> String {
+        let mut app = Router::new()
+            .route("/x", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(request_id));
+        let mut req = axum::http::Request::builder().uri("/x");
+        if let Some(v) = inbound {
+            req = req.header("x-request-id", v);
+        }
+        let res = app
+            .call(req.body(axum::body::Body::empty()).unwrap())
+            .await
+            .unwrap();
+        res.headers()
+            .get("x-request-id")
+            .expect("every response carries one")
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn mints_one_when_the_client_sends_none() {
+        let a = probe(None).await;
+        let b = probe(None).await;
+        assert!(a.starts_with('r'), "unexpected shape: {a}");
+        assert_ne!(a, b, "two requests must not share an id");
+    }
+
+    #[tokio::test]
+    async fn honors_a_client_supplied_id() {
+        assert_eq!(probe(Some("abc-123_XYZ")).await, "abc-123_XYZ");
+    }
+
+    /// The header goes back out in a response and into a log line, so a
+    /// caller-controlled value is bounded and filtered rather than trusted.
+    ///
+    /// Not tested here: CR/LF injection, the classic attack on a value that
+    /// reaches a log line. `http` refuses to construct such a header at all —
+    /// this test could not even build the request — so it never reaches this
+    /// middleware. The filter still earns its place on quoting and spacing,
+    /// which are perfectly legal in a header value and ugly in a log field.
+    #[tokio::test]
+    async fn strips_junk_and_bounds_length() {
+        assert_eq!(probe(Some(r#""quoted; id" 42"#)).await, "quotedid42");
+        let long = "a".repeat(500);
+        assert_eq!(probe(Some(&long)).await.len(), 64);
+        // Nothing usable left → mint instead of returning an empty header.
+        assert!(probe(Some("!!!")).await.starts_with('r'));
+    }
+}
+
+#[cfg(test)]
 mod static_cache_policy_tests {
     use super::*;
     use axum::{routing::get, Router};
@@ -1546,6 +1626,53 @@ mod static_cache_policy_tests {
 /// webview kept a page whose chunks were gone. The SPA watches this header
 /// across its own requests and soft-reloads from the background when it moves
 /// (see `$lib/build.ts`).
+/// Give every request an id, put it on a span so all downstream lines inherit
+/// it, and hand it back on the response.
+///
+/// The header is the half that makes this usable from outside: a client that
+/// saw a failure can quote `x-request-id`, and that string alone finds every
+/// line the box logged while serving it. Without it the id would be a fact the
+/// box knows and nobody can ask for.
+///
+/// An inbound `x-request-id` is honored rather than replaced — a client (or a
+/// future proxy) that already minted one is trying to correlate across a hop,
+/// and overwriting it would break exactly the case the header exists for. It
+/// is bounded and sanitized first: this value goes into a log line and back
+/// out in a header, and unbounded caller-controlled text in either is how you
+/// get log injection.
+async fn request_id(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use tracing::Instrument;
+
+    let inbound = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            s.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .take(64)
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty());
+    let id = inbound.unwrap_or_else(crate::observe::new_request_id);
+
+    let method = req.method().as_str().to_owned();
+    // The path, never the query string: query strings carry search terms and
+    // ids, and this lands in a log line.
+    let path = req.uri().path().to_owned();
+
+    let span = crate::observe::request_span(&id, &method, &path);
+    let mut res = next.run(req).instrument(span).await;
+
+    if let Ok(value) = axum::http::HeaderValue::from_str(&id) {
+        res.headers_mut().insert("x-request-id", value);
+    }
+    res
+}
+
 async fn stamp_box_build(
     req: axum::extract::Request,
     next: axum::middleware::Next,
