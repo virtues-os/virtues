@@ -1,11 +1,12 @@
 <!--
 	MobileStreamPage — one stream of this phone, on its own page.
 
-	The This-device list keeps every stream to one line; anything a stream
-	can be told (stop, when, where, notify) lives here instead of trailing
-	under its row. The frame is the same for all six: a back header, a status
-	card with the one primary action, a sentence on what the stream collects,
-	the sync line, then whatever settings the stream has as children.
+	The Settings list keeps every stream to one line; anything a stream can
+	be told (stop, when, where, notify) lives here instead of trailing under
+	its row. The frame is the same for all six: a back header, a status card
+	with the one primary action, a sentence on what the stream collects, the
+	sync line, then whatever settings the stream has as children. Recent
+	activity borrows the frame too — it is a page under the same list.
 -->
 <script lang="ts">
 	import type { Snippet } from "svelte";
@@ -25,10 +26,23 @@
 		sync?: OutboxStats | null;
 		error?: string | null;
 		onBack: () => void;
+		/** The name of the list this page sits under. */
+		backLabel?: string;
 		children?: Snippet;
 	}
-	let { title, icon, status, on, description, action = null, sync = null, error = null, onBack, children }: Props =
-		$props();
+	let {
+		title,
+		icon,
+		status,
+		on,
+		description,
+		action = null,
+		sync = null,
+		error = null,
+		onBack,
+		backLabel = "Settings",
+		children,
+	}: Props = $props();
 
 	const syncLine = $derived.by(() => {
 		if (!sync) return null;
@@ -42,7 +56,7 @@
 	<div class="head">
 		<button class="back" type="button" onclick={onBack}>
 			<Icon icon="ri:arrow-left-s-line" width={22} />
-			<span>This device</span>
+			<span>{backLabel}</span>
 		</button>
 	</div>
 
