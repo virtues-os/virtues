@@ -29,13 +29,9 @@ pub fn init_tracing() {
         let _ = dotenv::from_path("../.env");
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    // Same subscriber as the server's, so a subprocess's lines look like the
+    // ones the runner re-emits around them (see `virtues::observe`).
+    virtues::observe::init("info");
 }
 
 /// A reqwest client with a generous default timeout for action HTTP calls

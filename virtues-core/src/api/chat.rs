@@ -21,6 +21,7 @@ use axum::{
 use chrono::Utc;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
+use tracing::Instrument;
 use sqlx::PgPool;
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -1117,6 +1118,37 @@ fn escape_attr(s: &str) -> String {
 ///
 /// Requires authentication. Routes through virtues-api for budget enforcement.
 pub async fn chat_handler(
+    State(pool): State<PgPool>,
+    State(yjs_state): State<YjsState>,
+    State(cancel_state): State<ChatCancellationState>,
+    State(live_turns): State<LiveTurns>,
+    user: AuthUser,
+    Json(request): Json<ChatRequest>,
+) -> Response {
+    // One turn, one key. Nothing persists a turn id — a turn is a request, not
+    // a row — so two turns in the same chat are otherwise indistinguishable in
+    // the log, which is exactly what you are reading the log to tell apart.
+    // The span nests inside the request span, so a line carries both this and
+    // the `request_id` the client was handed back.
+    //
+    // `.instrument()` on the future, not `.entered()` in the body: this is an
+    // async handler, and the guard `entered()` returns is not `Send`, so
+    // holding one across an await makes the handler future non-`Send` — which
+    // axum rejects, confusingly, as "not a Handler".
+    let span = crate::observe::turn_span(&request.chat_id, &crate::observe::new_turn_id());
+    chat_handler_inner(
+        State(pool),
+        State(yjs_state),
+        State(cancel_state),
+        State(live_turns),
+        user,
+        Json(request),
+    )
+    .instrument(span)
+    .await
+}
+
+async fn chat_handler_inner(
     State(pool): State<PgPool>,
     State(yjs_state): State<YjsState>,
     State(cancel_state): State<ChatCancellationState>,

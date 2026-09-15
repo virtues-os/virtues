@@ -38,6 +38,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tracing::Instrument;
 
 pub mod limits;
 
@@ -359,6 +360,29 @@ async fn prepare_run(
 /// against the run row rather than propagated, so this function always returns
 /// an `AppletRunResult` and is safe to detach.
 async fn execute_prepared(
+    deps: RunnerDeps,
+    action: Applet,
+    run_id: String,
+    trigger: String,
+    payload: Option<serde_json::Value>,
+) -> AppletRunResult {
+    // Everything below — the subprocess's own stderr, the agent phase, the AI
+    // calls it bills, the failure that lands on the run row — happens inside
+    // this span, so `run_id` is on every line of it.
+    //
+    // `.instrument()` on the future, NOT `.entered()` in the body: the guard
+    // `entered()` returns is not `Send`, and holding one across an `await`
+    // makes the whole future non-`Send` — which this one may not be, because
+    // `run_applet_detached` hands it to `tokio::spawn`. Instrumenting the
+    // future instead attaches the span to it, so it follows the work into the
+    // spawned task, which is the behavior we actually want here.
+    let span = crate::observe::run_span(&run_id, &action.id);
+    execute_prepared_inner(deps, action, run_id, trigger, payload)
+        .instrument(span)
+        .await
+}
+
+async fn execute_prepared_inner(
     deps: RunnerDeps,
     action: Applet,
     run_id: String,
@@ -1072,6 +1096,13 @@ async fn run_subprocess(
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if !output.status.success() {
+        // Emit before returning. The error string goes to the run row, which
+        // holds one field: on a crash that printed a backtrace, the row shows
+        // a wall of text and the journal shows nothing. This is the case the
+        // line-by-line emit exists for.
+        if !stderr.trim().is_empty() {
+            emit_subprocess_stderr(&action.id, &stderr);
+        }
         return Err(Error::Other(if stderr.is_empty() {
             format!("subprocess exited with status {}", output.status)
         } else {
@@ -1100,7 +1131,7 @@ async fn run_subprocess(
     // fold a short tail into the run summary so it shows in the Telemetry tab.
     let mut summary = applet_output.result;
     if !stderr.trim().is_empty() {
-        tracing::warn!(applet_id = %action.id, "action stderr (exit 0): {}", stderr.trim());
+        emit_subprocess_stderr(&action.id, &stderr);
         let tail: String = stderr.trim().chars().rev().take(500).collect::<Vec<_>>()
             .into_iter().rev().collect();
         summary = format!("{summary}\n[stderr] {tail}");
@@ -1110,6 +1141,42 @@ async fn run_subprocess(
         summary,
         records: applet_output.records,
     })
+}
+
+/// Re-emit a subprocess's stderr into the box's own log, one line per line,
+/// inside whatever run span is current.
+///
+/// This used to be a single `warn!` holding the whole blob, and the run row
+/// kept the last 500 characters. Both are lossy in the same direction: the
+/// interesting line in a failing applet is usually the *first* one, and a tail
+/// keeps the last. Worse, a multi-line blob inside one JSON log record is one
+/// record — you cannot filter to the line you want, which is the entire reason
+/// for structured output.
+///
+/// Line by line, each inherits `run_id` and `applet_id` from the enclosing
+/// span, so `jq 'select(.span.run_id == "…")'` returns the subprocess's own
+/// output interleaved with the runner's, in order.
+///
+/// Bounded: a runaway applet can print megabytes, and journald will rate-limit
+/// the unit and drop *other* lines to make room. 200 lines is well past any
+/// real diagnostic and far short of a flood.
+fn emit_subprocess_stderr(applet_id: &str, stderr: &str) {
+    const MAX_LINES: usize = 200;
+    let mut lines = stderr.lines().filter(|l| !l.trim().is_empty());
+    let mut shown = 0usize;
+    for line in lines.by_ref().take(MAX_LINES) {
+        tracing::warn!(applet_id = %applet_id, "applet stderr: {line}");
+        shown += 1;
+    }
+    let dropped = lines.count();
+    if dropped > 0 {
+        tracing::warn!(
+            applet_id = %applet_id,
+            shown,
+            dropped,
+            "applet stderr truncated — the rest is in the run summary tail"
+        );
+    }
 }
 
 /// Default deployed location for action binaries, matching the installer's
