@@ -1,0 +1,14 @@
+-- 0023_message_replies_no_trigger
+--
+-- 0021 gave a drafted reply a `trigger` column because the box could produce
+-- one two ways: because the owner asked, or because a message arrived and a
+-- model decided it was worth offering. The second way is gone — nothing
+-- drafts a reply now except a person pressing a button — so the column
+-- records a distinction that no longer exists, and every row would carry the
+-- same value forever.
+--
+-- Dropped rather than left in place: this schema is read by a model at
+-- runtime, and a column whose name promises a choice that cannot be made is
+-- worse than no column. Nothing has shipped with 0021, so nothing is losing
+-- data it kept.
+ALTER TABLE app_message_replies DROP COLUMN IF EXISTS trigger;

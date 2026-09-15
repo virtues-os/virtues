@@ -1,10 +1,9 @@
 /**
  * Replies from the record — `app_message_replies` over the box API.
  *
- * The box drafts a reply to a message thread and holds it as a pending row.
- * A device shows the draft, sends it (or not), and reports back here. The
- * drafting itself is the `message_reply` applet; asking for one on demand is
- * a manual run of it.
+ * You ask for a draft, the box writes one, and the row holds it until you
+ * send it or let it go. Nothing drafts on its own. The drafting itself is a
+ * run of the `message_reply` applet.
  */
 
 import { apiGet, apiSend } from './client';
@@ -22,7 +21,6 @@ export interface MessageReply {
 	is_group: boolean;
 	draft: string;
 	rationale: string | null;
-	trigger: 'auto' | 'manual';
 	status: MessageReplyStatus;
 	sent_text: string | null;
 	sent_at: string | null;

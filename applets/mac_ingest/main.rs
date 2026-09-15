@@ -89,37 +89,28 @@ async fn main() -> Result<()> {
     let browser_written = transform::write_browser_history(&pool, &browser).await?;
     let imessage_written = transform::write_imessages(&pool, &imessages).await?;
 
-    // Replies from the record. Two things, both off the ingest's critical
-    // path in spirit: outbound messages settle any draft the box was holding
-    // for that thread (cheap SQL, inline), and inbound ones start the drafter
-    // in its own process so a model call never holds this run — the
-    // collector's upload request is waiting on it, and the runner's
-    // concurrency gate would 409 the next batch. Neither may fail the ingest:
-    // the messages are already written, and that is what matters.
-    let mut drafter_note: Option<String> = None;
+    let (bm_written, bm_tombstoned) =
+        transform::write_bookmarks(&pool, device_id, &bookmarks).await?;
+
+    // A message the owner SENT settles any draft the box was holding for that
+    // thread — sent if it is the draft, answered if they wrote their own
+    // words. Cheap SQL, no model, and it is what keeps a draft from lingering
+    // as though it were still owed.
+    //
+    // Nothing here starts a drafter. Drafting happens when the owner asks for
+    // it and at no other time: a box that reasons about every message as it
+    // arrives is doing work nobody requested, and the owner would have no way
+    // to tell it to stop.
     {
-        let (inbound_threads, outbound) = virtues_applets::message_reply::split_batch(&imessages);
+        let outbound = virtues_applets::message_reply::outbound_in_batch(&imessages);
         if !outbound.is_empty() {
             match virtues_applets::message_reply::resolve_from_outbound(&pool, &outbound).await {
-                Ok(n) if n > 0 => tracing::info!(resolved = n, "outbound messages settled pending drafts"),
+                Ok(n) if n > 0 => tracing::info!(resolved = n, "sent messages settled pending drafts"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "could not settle pending drafts"),
             }
         }
-        if !inbound_threads.is_empty() {
-            if let Err(e) = virtues_applets::message_reply::spawn_detached(
-                &inbound_threads,
-                virtues_applets::message_reply::TRIGGER_AUTO,
-            ) {
-                // Into the run summary, not just stderr: the symptom is
-                // otherwise "no drafts, ever", with one line nobody reads.
-                tracing::warn!(error = %e, "could not start the reply drafter");
-                drafter_note = Some(format!("reply drafter did not start: {e:#}"));
-            }
-        }
     }
-    let (bm_written, bm_tombstoned) =
-        transform::write_bookmarks(&pool, device_id, &bookmarks).await?;
 
     // A batch with zero messages because the Mac has none, and one with zero
     // because macOS is denying the collector `chat.db`, are identical on the
@@ -147,10 +138,6 @@ async fn main() -> Result<()> {
         summary.push_str(&format!(
             ", bookmarks: {bm_written} upserted / {bm_tombstoned} tombstoned"
         ));
-    }
-    if let Some(note) = &drafter_note {
-        summary.push_str(" — ");
-        summary.push_str(note);
     }
     let summary = if denied.is_empty() {
         summary

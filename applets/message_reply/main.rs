@@ -1,18 +1,19 @@
 //! Reply from the record — the binary.
 //!
-//! Three ways in, one payload shape:
-//! - ingest (`mac_ingest`) spawns this detached with `{"thread_ids": […],
-//!   "trigger": "auto"}` after a batch that carried inbound messages;
-//! - the Mac app's "take care of this" hits the manual run endpoint, with a
-//!   `thread_id` or with nothing, meaning the thread that most recently
-//!   messaged the owner;
+//! Runs when the owner asks for a draft and at no other time. Two ways in,
+//! one payload shape:
+//! - the Mac's "draft a reply" button, which is a manual run of this applet;
 //! - chat's `run_applet` tool, same payload.
+//!
+//! Payload: `{"thread_id": "…"}` for one thread, `{"thread_ids": […]}` for
+//! several, or nothing at all, meaning the thread that most recently messaged
+//! the owner.
 //!
 //! Everything it does lives in `virtues_applets::message_reply`; this file
 //! only reads the payload and reports.
 
 use anyhow::Result;
-use virtues_applets::message_reply::{self, TRIGGER_AUTO, TRIGGER_MANUAL};
+use virtues_applets::message_reply;
 use virtues_helpers::{connect_from_env, output_with_records, read_input};
 
 #[tokio::main]
@@ -32,13 +33,6 @@ async fn main() -> Result<()> {
             threads.push(one.to_string());
         }
     }
-    // Only ingest says "auto". A person or the model asking is manual, which
-    // skips the gate: they want a draft, not an opinion on whether one is due.
-    let trigger = match payload.get("trigger").and_then(|v| v.as_str()) {
-        Some(TRIGGER_AUTO) => TRIGGER_AUTO,
-        _ => TRIGGER_MANUAL,
-    };
-
     if threads.is_empty() {
         let channel = payload.get("channel").and_then(|v| v.as_str()).unwrap_or("imessage");
         match message_reply::latest_inbound_thread(&pool, channel).await? {
@@ -50,9 +44,9 @@ async fn main() -> Result<()> {
         }
     }
 
-    let out = message_reply::consider_threads(&pool, &threads, trigger).await?;
+    let out = message_reply::consider_threads(&pool, &threads).await?;
     let mut summary = format!(
-        "{trigger}: {} thread(s) considered, {} drafted, {} skipped",
+        "{} thread(s) considered, {} drafted, {} skipped",
         out.considered, out.drafted, out.skipped
     );
     if !out.skipped_why.is_empty() {
