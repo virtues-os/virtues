@@ -72,11 +72,15 @@ Read against the code on 2026-09-09.
   `stamp_box_build` layer beside it. TraceLayer would also have emitted its
   own request/response lines on every static asset, which is noise this box
   does not need, and the span is the part we were actually after.)
-- Spans on FOUR entry points, not the five written here: HTTP request,
-  applet run, chat turn, AI call. Children inherit. The scheduler tick got
-  none: every cron fire reaches `run_applet` → `execute_prepared`, which
-  opens the run span, so a tick span would have been a second key for the
-  same work and an empty one on the ticks that do nothing.
+- THREE spans — HTTP request, applet run, chat turn — plus one keyed event
+  on the AI call, which needs no span of its own because it has no children;
+  it inherits whichever of the three encloses it. Not the five written here.
+  The scheduler tick got nothing: every cron fire reaches `run_applet` →
+  `execute_prepared`, which opens the run span, so a tick span would have
+  been a second key for the same work and an empty one on the ticks that do
+  nothing. The AI-call line is at `debug` because the row in `app_ai_calls`
+  is already the durable record; the line exists to be switched on while
+  chasing something.
 - Applet subprocess stderr re-emitted line by line at `warn` inside the run
   span. The 500-char tail on the run row stays as the UI summary.
 - **Gate:** on dragon, `journalctl -u virtues -o json -n 2000 | jq -r
