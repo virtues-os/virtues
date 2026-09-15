@@ -45,7 +45,7 @@ Read against the code on 2026-09-09.
 | `cli/report_crash.rs`, `cli/diag.rs` | `ExecStopPost` tails 50 journal lines and POSTs to atlas; default-on; opt-out `VIRTUES_DIAG=off` | **The crash is never written locally.** `VIRTUES_DIAG` is in no doc and no installer output |
 | `main.rs:92` | comment: "Virtues collects no central telemetry" | False while the beacon is default-on |
 | `apps/web/src` | 135 bare `console.*`, no wrapper, no `onerror`, nothing posted to the box | Client failures are invisible to the box |
-| `apps/mac-source/Sources/Core/Uploader.swift:208` | already ships `collector_health` with every upload | The box reads it and discards it |
+| `apps/mac-source/Sources/Core/Uploader.swift:208`, `applets/mac_ingest/main.rs:103` | already ships `collector_health` with every upload; `mac_ingest` parks it on the device row and warns | **This plan said "the box reads it and discards it". Wrong** — it is stored and warned about. What was missing is the *transition*: the warning fires on every ingest for as long as a grant is missing, so a permission lost five minutes ago and one lost a month ago read identically |
 | `middleware/rate_limit.rs` | per-IP sliding window, guards `/api/pair/consume` only | Reusable shape for a per-device limit on the door |
 | `docs/operate/recovery.md:28` | "Everything logs to the journal. There is no Virtues log file." | The one line of doctrine; this plan extends it |
 
@@ -83,7 +83,7 @@ Read against the code on 2026-09-09.
   '.MESSAGE | fromjson | .span.run_id' | sort | uniq -c` shows run ids, and
   a chosen failed run's full stderr is found by that id alone.
 
-### Slice 2 — the client door
+### Slice 2 — the client door — **BUILT 2026-09-15**
 
 - `POST /api/events`: paired-device authed, batched body of `{kind,
   severity, message, detail, occurred_at}`. The box stamps
@@ -95,12 +95,30 @@ Read against the code on 2026-09-09.
   `visibilitychange`; drops past a cap when offline; never throws.
   `window.onerror` and `unhandledrejection` feed it. The 135 `console.*`
   calls move onto it mechanically; prefixes become `component`.
-- The Mac collector's `collector_health` block, already arriving on every
-  upload, produces a `collector.*` tracing event on *change* (grant lost or
-  regained). No Swift change.
-- **Gate:** throw in the SPA on a phone over the relay; the journal line
-  carries `source=device:<phone>` and the same `request_id` as the response
-  header. Revoke Full Disk Access on a Mac; one `collector.fda.lost` line.
+- The Mac collector's `collector_health` block produces a
+  `collector.permission.lost` / `.granted` line on *change* only, by reading
+  the device row before overwriting it. No Swift change. (Trap found while
+  building: the wire keys are snake_case, `full_disk_access`, while the Swift
+  properties they come from are camelCase. Comparing the camelCase name would
+  have compiled, run, and simply never fired.)
+- **Gate — partly met.** Verified in a browser against the dev stack: an
+  uncaught error is captured, batched and posted with `keepalive`, carrying
+  kind, severity, message, stack and `occurred_at`. The server leg is covered
+  by unit tests on the shipped `prepare` path, NOT by a live round trip — the
+  shared `make dev` server runs a build without the route and restarting it
+  would disturb other agents. **Still to do on a real box:** the 200 path and
+  the journal line with `source=device:<id>`, and pulling Full Disk Access on
+  a Mac to see exactly one `collector.permission.lost`.
+- **Found while verifying, and fixed:** with no stand-down, a client posts
+  into a 404 every ten seconds forever on any box older than this route —
+  which is the normal state after a client release, since phones update
+  themselves and boxes do not. A 404 now stops reporting for the session.
+- **Deferred, deliberately:** moving the 135 existing `console.*` calls onto
+  the wrapper. Nearly all sit in `catch` blocks, which means the code already
+  handled the failure; the errors that break a screen are the uncaught ones,
+  and those are covered by the global handlers. The sweep touches ~45 files
+  that other agents are actively editing, so the churn would cost more than
+  it returns. Do it opportunistically, file by file.
 
 ## Decisions
 

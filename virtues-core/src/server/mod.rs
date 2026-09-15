@@ -479,6 +479,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/sudo/status/:id",    get(crate::api::sudo::status_handler))
         // ─── Audit log ────────────────────────────────────────────────
         .route("/api/audit/auth",         get(crate::api::audit::list_handler))
+        // ─── Client reports ───────────────────────────────────────────
+        // The one door a paired device reports its OWN failures through; they
+        // become lines in this box's journal. Body limit is small on purpose:
+        // this takes diagnostics, and anything larger is a client shipping a
+        // document. See `api/events.rs`.
+        .route(
+            "/api/events",
+            post(crate::api::events::report_handler)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         // ─── Billing settings (BYO key) ───────────────────────────────
         // BYO routes inference around virtues-api entirely: box calls
         // upstream directly. Save/delete are sudo-gated (change_byo_key);
