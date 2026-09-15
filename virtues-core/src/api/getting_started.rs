@@ -488,10 +488,53 @@ fn script(state: &GettingStartedState) -> Vec<(String, String)> {
     out
 }
 
-/// Speak whatever the room owes. Idempotent: a line whose `subject` is
-/// already in the transcript is never said again, so this is safe to call on
-/// every read of the state.
+/// Speak whatever the room owes, and UNSAY whatever is no longer true.
+///
+/// The room's lines are a function of the walk, exactly as its steps are, so
+/// this reconciles the thread to [`script`] rather than only appending to it.
+/// Appending alone was a one-way ratchet: a step that REGRESSES — a lapsed
+/// subscription, a credential revoked, an integration disconnected — left its
+/// settled line standing and put the new ask at the bottom, so the room said
+/// "your server is connected" near the top and "nothing begins until AI is
+/// connected" underneath, with the buttons. Seen on the dev box when the core
+/// restarted without `VIRTUES_DEV_SKIP_SETUP`; a lapsed subscription does the
+/// same thing to a real box.
+///
+/// Only the room's own lines are touched (`gs:` subjects). The person's turns
+/// carry no subject, and other subjects — a stopped turn's `cancelled`, a
+/// truncated one's `length` — are not the room's to remove.
 pub async fn narrate(pool: &PgPool, state: &GettingStartedState) -> Result<()> {
+    let lines = script(state);
+    let wanted: Vec<String> = lines
+        .iter()
+        .filter(|(_, text)| !text.is_empty())
+        .map(|(line, _)| subject_of(line))
+        .collect();
+
+    // Unsay first, so what remains is only ever a prefix of the script and the
+    // appends below land in the script's own order.
+    let stale: Vec<String> = sqlx::query_scalar(
+        "DELETE FROM app_chat_messages \
+         WHERE chat_id = $1 AND subject LIKE 'gs:%' AND subject <> ALL($2) \
+         RETURNING subject",
+    )
+    .bind(GETTING_STARTED_CHAT_ID)
+    .bind(&wanted)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("the room could not unsay a line: {e}")))?;
+    if !stale.is_empty() {
+        sqlx::query(
+            "UPDATE app_chats SET message_count = GREATEST(message_count - $2, 0), \
+             updated_at = now() WHERE id = $1",
+        )
+        .bind(GETTING_STARTED_CHAT_ID)
+        .bind(stale.len() as i32)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("the room's count: {e}")))?;
+    }
+
     let said: Vec<String> = sqlx::query_scalar(
         "SELECT subject FROM app_chat_messages \
          WHERE chat_id = $1 AND subject IS NOT NULL",
@@ -501,7 +544,7 @@ pub async fn narrate(pool: &PgPool, state: &GettingStartedState) -> Result<()> {
     .await
     .map_err(|e| Error::Database(format!("read what the room has said: {e}")))?;
 
-    for (line, text) in script(state) {
+    for (line, text) in lines {
         let subject = subject_of(&line);
         if text.is_empty() || said.iter().any(|s| *s == subject) {
             continue;
@@ -651,6 +694,28 @@ mod tests {
         assert!(block.contains("- introductions: Introductions (open)"));
         assert!(block.contains("- connect_world: Integrations (skipped)"));
         assert!(block.contains("first day written up: not yet"));
+    }
+
+    /// A step that regresses must not leave its settled line standing: the
+    /// script is the whole truth, so what the room has said is reconciled to
+    /// it, not merely added to. (The delete itself is exercised by the
+    /// endpoint; this pins the script, which is what drives it.)
+    #[test]
+    fn a_regressed_step_drops_the_lines_after_it() {
+        use StepStatus::*;
+        let forward = state([Done, Open, Open, Open], true, false);
+        let subjects = |st: &GettingStartedState| -> Vec<String> {
+            script(st).into_iter().map(|(l, _)| l).collect()
+        };
+        assert_eq!(
+            subjects(&forward),
+            vec!["welcome", "done:connect_ai", "ask:introductions"]
+        );
+
+        // AI goes away again: the settled line and the next ask are no longer
+        // in the script, so narrate() removes them.
+        let back = state([Open, Open, Open, Open], false, false);
+        assert_eq!(subjects(&back), vec!["welcome", "ask:connect_ai"]);
     }
 
     #[test]
