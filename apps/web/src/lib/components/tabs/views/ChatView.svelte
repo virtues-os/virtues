@@ -2033,7 +2033,9 @@
 					>
 						<div
 							class="messages-container"
-							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID || roomHoldsPlate}
+							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID ||
+								roomHoldsPlate ||
+								isGettingStartedChat(currentChatConversationId)}
 							class:room={isGettingStartedChat(currentChatConversationId)}
 						>
 							{#if isGettingStartedChat(currentChatConversationId) && uniqueMessages.length > 0}
