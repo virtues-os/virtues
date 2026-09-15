@@ -1,47 +1,26 @@
 <!--
-	One door, two labels. Before AI is connected it is hidden-ish and skips
-	connecting AI — the box's only exit while it has no model, and it is
-	meant to look like one. After, the app is open anyway, so the same door
-	reads "come back to this later" and simply goes Home.
+	One door, out of the room and Home. It used to be the box's only exit
+	while the app was closed off, and carried a warning to match; nothing is
+	closed off now, so leaving is just leaving — the room keeps its place,
+	the sidebar card says setup is unfinished, and you come back when you
+	like. Deliberately quiet: something to find, not something offered.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import Icon from "$lib/components/Icon.svelte";
-	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
-
-	const connected = $derived(gettingStarted.aiConnected);
-	let busy = $state(false);
 
 	async function leave() {
-		if (busy) return;
-		if (!connected) {
-			const ok = window.confirm(
-				"Skip connecting AI? Your server will show its record but cannot answer, write up a day, or run this room until AI is connected in Settings. You can come back to this conversation any time.",
-			);
-			if (!ok) return;
-			busy = true;
-			try {
-				await gettingStarted.skip("connect_ai", true);
-			} finally {
-				busy = false;
-			}
-		}
-		void goto("/home");
+		await goto("/home");
 	}
 </script>
 
 <button
 	type="button"
 	class="door"
-	class:quiet={!connected}
 	onclick={leave}
-	disabled={busy}
-	title={connected ? "Come back to this later" : "Dangerously skip onboarding"}
-	aria-label={connected ? "Come back to this later" : "Dangerously skip onboarding"}
+	title="Come back to this later"
+	aria-label="Come back to this later"
 >
-	<!-- Icon only, in both states. A label here sat at a different size
-	     from the steps beneath it and the corner read as two things; the
-	     sentence lives in the tooltip. -->
 	<Icon icon="ri:door-open-line" width="16" />
 </button>
 
@@ -60,15 +39,5 @@
 	.door:hover {
 		color: var(--color-foreground);
 		border-color: var(--color-border);
-	}
-	.door.quiet {
-		opacity: 0.35;
-	}
-	.door.quiet:hover {
-		opacity: 1;
-	}
-	.door:disabled {
-		opacity: 0.4;
-		cursor: default;
 	}
 </style>

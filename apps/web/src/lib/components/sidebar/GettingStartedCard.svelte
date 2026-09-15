@@ -2,7 +2,8 @@
 	The progress card: getting started's one mention outside its room. A
 	colored card at the bottom of the sidebar, above Sources: the title and
 	how many things are left, and it opens the room. From step 1 to
-	graduation. (While the app is locked there is no sidebar at all.)
+	graduation. It is the standing reminder that setup is unfinished — the
+	app is not closed off while it is, so this is the only thing saying so.
 -->
 <script lang="ts">
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";

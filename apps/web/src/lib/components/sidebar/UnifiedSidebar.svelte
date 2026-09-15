@@ -229,7 +229,6 @@
 	);
 </script>
 
-{#if !gettingStarted.locked}
 <aside class={sidebarClass}>
 	<!-- Book Spine: When collapsed, show expand button on hover -->
 	{#if isCollapsed}
@@ -343,7 +342,7 @@
 		/>
 	</div>
 </aside>
-{/if}
+
 
 <style>
 	@reference "../../../app.css";

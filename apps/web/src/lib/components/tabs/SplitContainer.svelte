@@ -132,7 +132,6 @@
 
 <div
 	class="split-container"
-	class:bare={gettingStarted.locked}
 	bind:this={containerRef}
 	class:dragging={isResizing}
 	class:split-enabled={isSplitEnabled}
@@ -187,9 +186,8 @@
 		aria-label="Left pane"
 	>
 		<!-- While the app is one room (no AI yet), there are no tabs to show. -->
-		{#if !gettingStarted.locked}
 			<WindowTabBar paneId={isSplitEnabled ? "left" : undefined} />
-		{/if}
+		
 	</div>
 
 	<!-- Resize Handle (only interactive in split mode) -->

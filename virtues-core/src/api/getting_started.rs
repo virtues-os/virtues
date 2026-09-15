@@ -3,8 +3,8 @@
 //! After the founder's letter, getting started is a single seeded chat
 //! (`chat_getting_started`). Everything about the room that is not the
 //! person's own words is DERIVED here, from rows, on every read: which of the
-//! four steps are done, whether the box can call a model, whether the app is
-//! locked. Nothing stores progress. The only stored state is the skips, in
+//! four steps are done and whether the box can call a model. Nothing stores
+//! progress. The only stored state is the skips, in
 //! `app_user_profile.getting_started_dismissed` (migration 0014), which this
 //! module writes and the old getting-started page used to.
 //!
@@ -75,8 +75,7 @@ pub struct GettingStartedState {
     /// route. The dev skip (`VIRTUES_DEV_SKIP_SETUP`) counts, or every
     /// checkout would open locked.
     pub ai_connected: bool,
-    /// The app is a room and a door: no AI, and the door has not been used.
-    pub locked: bool,
+
     pub steps: Vec<Step>,
     /// The first narrated day, once one exists — the promise line's payoff.
     pub first_day: Option<chrono::NaiveDate>,
@@ -305,15 +304,11 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
         },
     ];
 
-    // Locked = no model and the door unused. The door's skip lands in the
-    // same dismissed list as every other skip; there is no second flag.
-    let locked = !ai_connected && !skipped("connect_ai");
     let graduated = steps.iter().all(|s| s.status != StepStatus::Open);
     let first_day = crate::api::census::first_narrated_day(pool).await;
 
     Ok(GettingStartedState {
         ai_connected,
-        locked,
         steps,
         first_day,
         graduated,
@@ -669,7 +664,7 @@ pub async fn skip_handler(
 mod tests {
     use super::*;
 
-    fn state(statuses: [StepStatus; 4], ai: bool, door_used: bool) -> GettingStartedState {
+    fn state(statuses: [StepStatus; 4], ai: bool, _door_used: bool) -> GettingStartedState {
         let steps = STEP_IDS
             .iter()
             .zip(statuses)
@@ -686,7 +681,6 @@ mod tests {
             .collect::<Vec<_>>();
         GettingStartedState {
             ai_connected: ai,
-            locked: !ai && !door_used,
             graduated: steps.iter().all(|s| s.status != StepStatus::Open),
             steps,
             first_day: None,
@@ -764,9 +758,10 @@ mod tests {
     }
 
     /// A fresh box: no key, no BYO, no name, nothing flowing, no document.
-    /// Everything open, the app locked; one skip of connect_ai opens it.
+    /// Everything open. NOT locked — the app is not closed off any more; the
+    /// room is where you land, not the only place you may be.
     #[sqlx::test(migrations = "./migrations")]
-    async fn fresh_box_is_locked_and_all_open(pool: PgPool) -> sqlx::Result<()> {
+    async fn fresh_box_has_everything_open(pool: PgPool) -> sqlx::Result<()> {
         // The dev skip would mark the account done and defeat the test.
         std::env::remove_var("VIRTUES_DEV_SKIP_SETUP");
         sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
@@ -776,15 +771,13 @@ mod tests {
             .ok();
         let s = compute(&pool).await.expect("compute on a fresh box");
         assert!(!s.ai_connected);
-        assert!(s.locked, "no model and the door unused = locked");
         assert!(!s.graduated);
         assert!(s.steps.iter().all(|st| st.status == StepStatus::Open));
         assert_eq!(s.steps.iter().map(|st| st.id).collect::<Vec<_>>(), STEP_IDS);
 
         set_skipped(&pool, "connect_ai", true).await.unwrap();
         let s = compute(&pool).await.unwrap();
-        assert!(!s.ai_connected, "the door does not connect anything");
-        assert!(!s.locked, "the door opens the app");
+        assert!(!s.ai_connected, "skipping does not connect anything");
         assert_eq!(s.step("connect_ai").unwrap().status, StepStatus::Skipped);
         Ok(())
     }

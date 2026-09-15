@@ -120,29 +120,6 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 			if (e && typeof e === 'object' && 'status' in e) throw e;
 		}
 
-		// THE LOCK. No model, and the door unused: the app is one room. Every
-		// route but the getting-started chat (and Billing, where the BYO form
-		// still lives) lands in it. Derived server-side so the phone, which
-		// loads this same SPA from the box, gets the same verdict. A 404 is an
-		// older box without the endpoint: unlocked — a phone that updated
-		// ahead of its server must never strand here. A blip: unlocked, same
-		// reason as every gate above.
-		try {
-			const gs = await fetch('/api/getting-started');
-			if (gs.ok) {
-				const state = (await gs.json()) as { locked?: boolean };
-				const allowed =
-					url.pathname === '/chat/chat_getting_started' ||
-					url.pathname.startsWith('/virtues/billing') ||
-					url.pathname.startsWith('/virtues/byo-key');
-				if (state.locked === true && !allowed) {
-					throw redirect(303, '/chat/chat_getting_started');
-				}
-			}
-		} catch (e) {
-			if (e && typeof e === 'object' && 'status' in e) throw e;
-		}
-
 		// Fetch profile for user preferences and server status
 		const profileResponse = await fetch('/api/profile');
 
