@@ -48,15 +48,15 @@ const MAX_TOTAL_CHARS: usize = 14000;
 
 const SYSTEM_PROMPT: &str = r#"You are the editor of a private wiki about one person's life — their own personal wikipedia, readable only by them. You are writing the article for ONE entity in that wiki: a person they know, a place they go, or an organization in their life. "You"/"your" in the article always refers to the wiki's owner; the entity is written about in the third person.
 
-You are given the entity's structured facts, the raw records that reference it (messages, emails, calendar events, visits, transactions), narrated days it appears in, and the previous edition of the article if one exists.
+You are given the entity's structured facts, the raw records that reference it (messages, emails, calendar events, visits, transactions), and narrated days it appears in.
 
 WRITE:
 - Two to four short paragraphs, in the register of a well-edited encyclopedia that happens to be about a private life: precise, warm, unhurried. Markdown is allowed but keep it to plain paragraphs — no headings, no lists.
-- Open with what the entity IS in the owner's life (the relationship, the role, the pattern), then how it shows up in the record (rhythms, places, recurring context), then what has changed lately if the previous edition missed it.
+- Open with what the entity IS in the owner's life (the relationship, the role, the pattern), then how it shows up in the record (rhythms, places, recurring context).
 - LINK entities: when you mention an entity listed under "Entities you may link", link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12) or [March 3, 2026](/day/day_2026-03-03) for a listed day. Link each once, on first mention. Never invent a link or link anything not listed.
 - Ground every claim in the material given. Describe patterns, never essence ("your lunches with her tend to…", never "she is the kind of person who…"). If the record is one-sided (only messages, only transactions), say so plainly.
 - Absence of data is not data: never invent feelings, motives, or events. No flattery, no horoscope lines that could be true of anyone.
-- This is an edition, not an append: rewrite the whole article, carrying forward what the previous edition got right.
+- This is the article's FIRST edition. Write it whole. It is maintained afterwards by editing, not by rewriting, so do not write anything that would have to be replaced wholesale to stay true.
 
 Output only the article."#;
 
@@ -200,20 +200,24 @@ async fn entity_title(pool: &PgPool, subject_type: &str, subject_id: &str) -> Re
 }
 
 /// Assemble everything the editor reads: header facts, the recent record,
-/// co-occurring entities (the link allowlist), narrated days, and the
-/// previous edition.
+/// co-occurring entities (the link allowlist), and narrated days.
+///
+/// It deliberately reads NO never-written column. `seen_count`, `first_seen`,
+/// `last_seen`, `article` and `wiki_people.notes` have no writer anywhere, so
+/// every one of them either fed the model a zero or fed it nothing — and
+/// "Interactions on record: 0" was reaching the prompt for entities with
+/// thousands of refs. The honest count is `entity.refs`, straight from
+/// `wiki_refs`, and it is already in the header line.
 async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
     use sqlx::Row;
 
     let mut p = String::new();
 
     // ── Header facts + previous edition, per kind ──
-    let (name, facts, previous): (String, String, Option<String>) = match entity.kind.as_str() {
+    let (name, facts): (String, String) = match entity.kind.as_str() {
         "person" => {
             let row = sqlx::query(
-                "SELECT name, relationship_category, nickname, notes, \
-                        first_seen::text AS fi, last_seen::text AS li, \
-                        seen_count, article \
+                "SELECT name, relationship_category, nickname \
                  FROM wiki_people WHERE id = $1",
             )
             .bind(&entity.id)
@@ -228,26 +232,11 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("nickname") {
                 f.push_str(&format!("- Nickname: {}\n", v));
             }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("notes") {
-                f.push_str(&format!("- Owner's own notes: {}\n", cap(&v, 400)));
-            }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("fi") {
-                f.push_str(&format!("- First interaction on record: {}\n", v));
-            }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("li") {
-                f.push_str(&format!("- Most recent interaction: {}\n", v));
-            }
-            if let Ok(v) = row.try_get::<i64, _>("seen_count") {
-                f.push_str(&format!("- Interactions on record: {}\n", v));
-            }
-            let prev: Option<String> = row.try_get("article").ok().flatten();
-            (name, f, prev)
+            (name, f)
         }
         "place" => {
             let row = sqlx::query(
-                "SELECT name, category, address, seen_count, \
-                        first_seen::text AS fv, last_seen::text AS lv, article \
-                 FROM wiki_places WHERE id = $1",
+                "SELECT name, category, address FROM wiki_places WHERE id = $1",
             )
             .bind(&entity.id)
             .fetch_one(pool)
@@ -261,26 +250,11 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("address") {
                 f.push_str(&format!("- Address: {}\n", v));
             }
-            // `seen_count` is bigint — the pre-fix code asked for a phantom
-            // `ref_count` as i32, so this line failed twice over. The rename
-            // sweep (4526df11) missed these two raw-query sites; only
-            // `sqlx::query!` sites got compiler coverage.
-            if let Ok(v) = row.try_get::<i64, _>("seen_count") {
-                f.push_str(&format!("- Visits on record: {}\n", v));
-            }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("fv") {
-                f.push_str(&format!("- First visit: {}\n", v));
-            }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("lv") {
-                f.push_str(&format!("- Most recent visit: {}\n", v));
-            }
-            let prev: Option<String> = row.try_get("article").ok().flatten();
-            (name, f, prev)
+            (name, f)
         }
         _ => {
             let row = sqlx::query(
-                "SELECT name, organization_type, relationship_type, role_title, \
-                        first_seen::text AS fi, last_seen::text AS li, article \
+                "SELECT name, organization_type, relationship_type, role_title \
                  FROM wiki_orgs WHERE id = $1",
             )
             .bind(&entity.id)
@@ -298,14 +272,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("role_title") {
                 f.push_str(&format!("- Owner's role: {}\n", v));
             }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("fi") {
-                f.push_str(&format!("- First interaction on record: {}\n", v));
-            }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("li") {
-                f.push_str(&format!("- Most recent interaction: {}\n", v));
-            }
-            let prev: Option<String> = row.try_get("article").ok().flatten();
-            (name, f, prev)
+            (name, f)
         }
     };
 
@@ -420,11 +387,6 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             "\n## Entities you may link (copy the exact markdown link)\n{}\n",
             links.join("\n")
         ));
-    }
-
-    // ── Previous edition ──
-    if let Some(prev) = previous {
-        p.push_str(&format!("\n## Previous edition of this article\n{}\n", cap(&prev, 2000)));
     }
 
     if p.len() > MAX_TOTAL_CHARS {
