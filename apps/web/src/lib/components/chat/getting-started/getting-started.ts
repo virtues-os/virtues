@@ -29,9 +29,16 @@ export const GETTING_STARTED_CHAT_ID = "chat_getting_started";
 export const GS_INTERVIEW_PREFIX = "gs-iv-";
 export const GS_INTERVIEW_OPENING_ID = "gs-iv-opening";
 
-/** The slash command that does what the door does. Typed, not discovered:
- *  the one place "onboarding" survives in the visible vocabulary. */
-export const SKIP_COMMAND = "/dangerously-skip-onboarding";
+/**
+ * The slash command, which does exactly what the door does: leave. It was
+ * `/dangerously-skip-onboarding` and it also wrote a skip against connect_ai
+ * — that mattered while the app was closed off and the skip was the key out.
+ * Nothing is closed off now, so there was nothing dangerous about it, and two
+ * exits with different side effects and no way to tell them apart is worse
+ * than one. Typed, not discovered: the one place "onboarding" survives in the
+ * visible vocabulary.
+ */
+export const SKIP_COMMAND = "/skip-onboarding";
 
 export function isGettingStartedChat(convId: string | null | undefined): boolean {
 	return convId === GETTING_STARTED_CHAT_ID;

@@ -75,7 +75,8 @@
 			if (intent.kind === "pair") pair = { deviceType: intent.deviceType, displayName: intent.displayName };
 			else if (intent.kind === "api_key") apiKey = intent.source;
 			else if (intent.kind === "oauth" && intent.external) reloadOnReturn(refresh);
-			else if (intent.kind === "chat_import") error = "Bringing your chat history in happens in Sources; everything else here is one button.";
+			else if (intent.kind === "chat_import")
+				error = "Chat history takes a file you export yourself, so it is done in Sources rather than here. Everything else on this list is one button.";
 			else if (intent.kind === "error") error = intent.message;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -91,7 +92,7 @@
 
 <div class="picker">
 	{#if loading}
-		<p class="quiet-line">Reading the catalog…</p>
+		<p class="quiet-line">Looking at what your server can connect to…</p>
 	{:else}
 		<ul class="rows">
 			{#each rows as s (s.id)}
@@ -116,7 +117,7 @@
 			{/each}
 		</ul>
 		{#if !showAll}
-			<Act variant="plain" onclick={() => (showAll = true)}>Show every integration</Act>
+			<Act variant="plain" onclick={() => (showAll = true)}>Show the rest</Act>
 		{/if}
 		{#if error}<p class="error">{error}</p>{/if}
 	{/if}

@@ -33,7 +33,12 @@ pub const AGENT_MODE: &str = "getting_started";
 pub const STEP_IDS: [&str; 4] = ["connect_ai", "introductions", "connect_world", "interview"];
 
 /// The tools the room's model may call. Registry ids (`virtues_registry::tools`).
-pub const TOOLS: &[&str] = &["show_step", "skip_step", "record_introductions"];
+pub const TOOLS: &[&str] = &["skip_step", "record_introductions"];
+// `show_step` was the third and is deleted: it put a step's controls under
+// the model's turn, and the controls have stood in one fixed place under the
+// thread since the room became one surface. The client rendered nothing for
+// it, so the model could call it, be told it succeeded, and say "the options
+// are below" when nothing had happened.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -191,21 +196,38 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     let account = done("account");
     let ai_connected = account || byo;
 
-    let profile = sqlx::query_as::<_, (Option<String>, Option<String>, Vec<String>, Option<chrono::DateTime<chrono::Utc>>)>(
-        "SELECT preferred_name, full_name, getting_started_dismissed, interview_started_at \
+    type ProfileRow = (
+        Option<String>,
+        Option<String>,
+        Option<chrono::NaiveDate>,
+        Vec<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    );
+    let profile = sqlx::query_as::<_, ProfileRow>(
+        "SELECT preferred_name, full_name, birth_date, getting_started_dismissed, \
+                interview_started_at \
            FROM app_user_profile LIMIT 1",
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("read profile for getting started: {e}")))?;
     // absent-ok: no profile row yet IS the fresh box — nothing named, nothing skipped.
-    let (preferred_name, full_name, dismissed, interview_started_at) =
-        profile.unwrap_or((None, None, Vec::new(), None));
-    // Either name settles the step, the way `get_user_name` reads them: someone
-    // who gives only "Nick Ari" and no nickname has still introduced themselves.
+    let (preferred_name, full_name, birth_date, dismissed, interview_started_at) =
+        profile.unwrap_or((None, None, None, Vec::new(), None));
+    /* Introductions need a name AND a birth date.
+     *
+     * A name alone is not evidence that anyone was asked: signing in to a
+     * subscription fills `full_name` from the account, which silently settled
+     * this step, skipped the only beat that asks anything, and left the birth
+     * date — the ruler the whole lifeline is drawn against — unrequested. The
+     * date cannot arrive from anywhere but the person, so it is the honest
+     * gate. Either name still satisfies the name half: someone who gives only
+     * "Nick Ari" and no nickname has introduced themselves.
+     */
     let named = [&preferred_name, &full_name]
         .into_iter()
         .any(|n| n.as_deref().is_some_and(|n| !n.trim().is_empty()));
+    let introduced = named && birth_date.is_some();
     let skipped = |id: &str| dismissed.iter().any(|d| d == id);
 
     let status = |id: &str, is_done: bool| {
@@ -275,7 +297,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
         Step {
             id: "introductions",
             title: title("introductions"),
-            status: status("introductions", named),
+            status: status("introductions", introduced),
             via: None,
             detail: None,
             connected: None,
@@ -747,6 +769,37 @@ mod tests {
             .map(|st| format!("gs:ask:{}", st.id))
             .collect();
         assert!(kept.iter().any(|l| l == "gs:ask:connect_ai"));
+    }
+
+    /// A name can arrive without anyone being asked — signing in to a
+    /// subscription fills `full_name` from the account — so a name alone
+    /// must not settle introductions. The birth date can only come from the
+    /// person, and the lifeline is drawn against it.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_name_alone_does_not_settle_introductions(pool: PgPool) -> sqlx::Result<()> {
+        std::env::remove_var("VIRTUES_DEV_SKIP_SETUP");
+        sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
+            .execute(&pool)
+            .await
+            .ok();
+
+        // As a sign-in leaves it: a name from the account, nothing else.
+        sqlx::query("UPDATE app_user_profile SET full_name = 'Nick Ari'")
+            .execute(&pool)
+            .await?;
+        let s = compute(&pool).await.unwrap();
+        assert_eq!(
+            s.step("introductions").unwrap().status,
+            StepStatus::Open,
+            "a name from the account is not an introduction"
+        );
+
+        sqlx::query("UPDATE app_user_profile SET birth_date = DATE '1997-06-06'")
+            .execute(&pool)
+            .await?;
+        let s = compute(&pool).await.unwrap();
+        assert_eq!(s.step("introductions").unwrap().status, StepStatus::Done);
+        Ok(())
     }
 
     #[test]
