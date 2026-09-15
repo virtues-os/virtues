@@ -46,9 +46,12 @@
 		{:else if step.id === "connect_world"}
 			<IntegrationsPicker />
 			<Choices>
-				<!-- With something connected this moves on; with nothing it is
-				     the same "Not now" every other step uses for setting aside,
-				     never a "Continue" that hides that nothing was done. -->
+				<!-- THIS BUTTON IS THE COMPLETION. The step no longer closes
+				     itself when the first credential lands — it closes when the
+				     person says they are finished adding — so Continue is the
+				     thing that ends the step, not a no-op beside a status that
+				     had already moved on. With nothing connected it is the same
+				     "Not now" every other step uses for setting aside. -->
 				{#if (step.connected ?? 0) > 0}
 					<Act variant="primary" onclick={() => void gettingStarted.skip("connect_world", true)}>Continue</Act>
 				{:else}

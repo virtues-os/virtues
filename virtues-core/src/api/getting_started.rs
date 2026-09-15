@@ -66,6 +66,11 @@ pub struct Step {
     /// the settled line read differently with two connected than with none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connected: Option<i64>,
+    /// What is actually feeding the record, named. "The record is being
+    /// written from Google and this Mac" is a payoff; "from what you
+    /// connected" is a receipt for something anonymous.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<String>>,
     /// The person has moved past this step themselves (the dismissed list
     /// carries it). Read for a step that is done by rows before the walk
     /// reached it — integrations already in place — so the room can still
@@ -243,9 +248,31 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     // Connect your world: something flowing, by the rule the old page used —
     // a source row, or a device that has landed data. A collector running
     // with a denied permission is said, not hidden behind the check.
-    let world = done("first_source") || done("device_collecting");
+    /* Integrations close when the PERSON says so, not when the first row
+     * lands. One credential used to flip the step to done, the room narrated
+     * the settled line, and the walk moved on mid-thought — while the
+     * Continue button beneath the picker wrote a flag that `status` then
+     * ignored, because a row existing outranked it. So there was a completion
+     * signal, a button wired to it, and a rule that read neither.
+     *
+     *   done     something is flowing AND they pressed Continue
+     *   skipped  nothing is flowing and they pressed Not now
+     *   open     anything else, including "I have three and I am still going"
+     */
+    let flowing = done("first_source") || done("device_collecting");
     // What is already in place, said in the ask when the walk reaches this
     // step with rows already there: "3 integrations connected".
+    let source_names: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT s.name FROM credentials c \
+           JOIN sources s ON s.id = c.source_id \
+          WHERE c.status = 'active' AND c.source_id NOT IN ($1, $2, '__device__') \
+          ORDER BY s.name",
+    )
+    .bind(crate::api::settings_byo::BYO_SOURCE_ID)
+    .bind(crate::virtues_api::renew::SOURCE_ID)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default(); // absent-ok: an unnamed source only costs the settled line its detail
     let integrations: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM credentials WHERE status = 'active' \
            AND source_id NOT IN ($1, $2, '__device__')",
@@ -291,6 +318,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             },
             detail: None,
             connected: None,
+            sources: None,
             underway: false,
             acknowledged: skipped("connect_ai"),
         },
@@ -301,16 +329,24 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             via: None,
             detail: None,
             connected: None,
+            sources: None,
             underway: false,
             acknowledged: skipped("introductions"),
         },
         Step {
             id: "connect_world",
             title: title("connect_world"),
-            status: status("connect_world", world),
+            status: if flowing && skipped("connect_world") {
+                StepStatus::Done
+            } else if !flowing && skipped("connect_world") {
+                StepStatus::Skipped
+            } else {
+                StepStatus::Open
+            },
             via: None,
             detail: world_detail,
             connected: Some(integrations),
+            sources: Some(source_names.clone()),
             underway: false,
             acknowledged: skipped("connect_world"),
         },
@@ -321,6 +357,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             via: None,
             detail: None,
             connected: None,
+            sources: None,
             underway: interview_started && !interview_done,
             acknowledged: skipped("interview"),
         },
@@ -438,10 +475,18 @@ fn settled_line(s: &Step) -> String {
         ("connect_ai", _) if s.via == Some("byo") => "Your server is connected to your own models. Your assistant can answer now.".into(),
         ("connect_ai", _) => "Your server is connected to your Virtues subscription. Your assistant can answer now.".into(),
         ("introductions", _) => "Introductions are made.".into(),
-        ("connect_world", _) => match &s.detail {
-            Some(d) => format!("The record is being written from what you connected. One thing still to see to: {d}."),
-            None => "The record is being written from what you connected.".into(),
-        },
+        ("connect_world", _) => {
+            let from = s
+                .sources
+                .as_deref()
+                .filter(|v| !v.is_empty())
+                .map(|v| format!("The record is being written from {}.", list(v)))
+                .unwrap_or_else(|| "The record is being written from what you connected.".to_string());
+            match &s.detail {
+                Some(d) => format!("{from} One thing still to see to: {d}."),
+                None => format!("{from} You can add more in Settings whenever you like."),
+            }
+        }
         ("interview", _) => "Your story is written down, in your own words.".into(),
         _ => String::new(),
     }
@@ -458,15 +503,15 @@ fn ask_line(s: &Step) -> String {
         // screen, and buried in a sentence they read as decoration. The
         // person still answers in one message, in their own order.
         "introductions" => "Your assistant would like to know who it is talking to. Answer in one message, however you like to write it:\n\n- Your name, first and last\n- What you would like to be called\n- What to call your assistant, which answers to Ari unless you say otherwise\n- The city you live in\n- Your birth date, with the year\n\nThe birth date is not idle curiosity: the whole record is laid out against it.".into(),
-        // What this step is for, the minimum, what happens next, and the
-        // one safety fact — not a list of sources: the rows under it say
-        // what each one holds. Read differently when some are already in.
+        /* What each of the three actually BUYS, because "connect your
+         * integrations" is a chore and "years of your own messages" is a
+         * reason. One is enough to begin; the record is only as full as what
+         * feeds it, and that is the honest argument for a second. */
         "connect_world" => match s.connected {
             Some(n) if n > 0 => format!(
-                "Next, your integrations: what the record is written from. You already have {n} connected, and the record is being written from {}. Add more now, or later from Settings. Nothing they hold ever leaves your server.",
-                if n == 1 { "it" } else { "them" }
+                "Next, your integrations: what the record is written from. You have {n} connected. Add as many as you like — this Mac holds years of your messages and browsing and needs no account, your phone holds where you went and who you called, and Google holds your mail and calendar — then carry on. Nothing they hold ever leaves your server."
             ),
-            _ => "Next, your integrations: what the record is written from. One is enough to begin; the rest can come later from Settings. Nothing they hold ever leaves your server.".into(),
+            _ => "Next, your integrations: what the record is written from. This Mac holds years of your messages and browsing and needs no account; your phone holds where you went and who you called; Google holds your mail and calendar. One is enough to begin, and the record is only as full as what feeds it. Nothing they hold ever leaves your server.".into(),
         },
         "interview" => "Last comes your story. The record can hold what happened; only you can say what it meant. This is an interview with your assistant of about twenty minutes, one question at a time. Stop wherever you like; your place is kept.".into(),
         _ => String::new(),
@@ -480,6 +525,15 @@ fn promise_line(first_day: Option<chrono::NaiveDate>) -> String {
             d.format("%A, %B %-d")
         ),
         None => "Tomorrow morning there will be a page on Home for today, written from what your integrations hold. There will be one every morning after.".into(),
+    }
+}
+
+/// "Google", "Google and this Mac", "Google, your iPhone and this Mac".
+fn list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -697,6 +751,7 @@ mod tests {
                 via: None,
                 detail: None,
                 connected: None,
+                sources: None,
                 underway: false,
                 acknowledged: false,
             })
@@ -799,6 +854,46 @@ mod tests {
             .await?;
         let s = compute(&pool).await.unwrap();
         assert_eq!(s.step("introductions").unwrap().status, StepStatus::Done);
+        Ok(())
+    }
+
+    /// One credential used to close the step on its own, so someone who
+    /// meant to add three had the walk move on after the first. The person
+    /// says when they are finished; the button is what says it.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn integrations_close_when_the_person_says_so(pool: PgPool) -> sqlx::Result<()> {
+        std::env::remove_var("VIRTUES_DEV_SKIP_SETUP");
+        sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
+            .execute(&pool)
+            .await
+            .ok();
+
+        // Nothing connected, nothing said: open.
+        let s = compute(&pool).await.unwrap();
+        assert_eq!(s.step("connect_world").unwrap().status, StepStatus::Open);
+
+        // Something flowing, still adding: STILL OPEN. This is the case the
+        // old rule got wrong.
+        sqlx::query(
+            // `secrets_ciphertext` is NOT NULL — a credential without secrets
+            // is not one. The bytes are nonsense; nothing on this path reads them.
+            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+             VALUES ('cred_test_one', 'google', 'Google account', 'active', 'x')",
+        )
+        .execute(&pool)
+        .await?;
+        let s = compute(&pool).await.unwrap();
+        assert_eq!(
+            s.step("connect_world").unwrap().status,
+            StepStatus::Open,
+            "one integration is not a decision to stop"
+        );
+        assert_eq!(s.step("connect_world").unwrap().connected, Some(1));
+
+        // Continue pressed: done.
+        set_skipped(&pool, "connect_world", true).await.unwrap();
+        let s = compute(&pool).await.unwrap();
+        assert_eq!(s.step("connect_world").unwrap().status, StepStatus::Done);
         Ok(())
     }
 
