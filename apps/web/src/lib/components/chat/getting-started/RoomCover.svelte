@@ -1,69 +1,59 @@
 <!--
-	The cover at the head of the room: a library opening onto a garden, in
-	autumn light. A book's frontispiece, and the only picture in the setup.
+	The room's frontispiece: a graphite study of the library's garden doors,
+	the centre pair standing open.
 
-	It is the whole product's motif — traditional oil, majestic, slightly
-	impressionist, thick paint — settled 2026-09-15 after the earlier
-	portrait plates were deleted (composed for a column that no longer
-	exists, and never a family). Painted through our own gateway on the
-	Image slot, so anything drawn later matches this one.
+	It is a MASK, not a picture. The drawing is one ink, so the PNG carries
+	only its alpha and the page paints it with the foreground token —
+	graphite on paper in the light theme, chalk on ink in the dark one. No
+	rectangle, no paper colour of its own to clash with the page, and it
+	needs no border or fade to stop looking like a component: the drawing
+	simply trails off into the page at its edges, because the study does.
 
-	Column width, not bled: the plate under the interview's opening is the
-	room's one wide thing, and two different widths at the top of one page
-	read as an accident. Capped short so the welcome's first sentence is
-	still above the fold on a laptop.
+	The oil painting that stood here first ran the full width of the pane
+	and made the room read as two products stacked — a cinematic band over a
+	column of chat. This sits inside the column, at the measure of the words.
 -->
 <script lang="ts">
-	let loaded = $state(false);
+	let visible = $state(false);
+	// The mask has no intrinsic paint, so there is no load event to wait on
+	// the way an <img> gives one; fade the block in once it is in the DOM.
+	$effect(() => {
+		const id = requestAnimationFrame(() => (visible = true));
+		return () => cancelAnimationFrame(id);
+	});
 </script>
 
-<figure class="cover" class:loaded>
-	<img
-		src="/covers/getting-started.jpg"
-		alt="An oil painting: a college library in autumn light, its double doors open onto a walled garden"
-		width="2400"
-		height="480"
-		fetchpriority="high"
-		onload={() => (loaded = true)}
-	/>
-</figure>
+<figure
+	class="cover"
+	class:visible
+	role="img"
+	aria-label="A pencil study of a library's garden doors, the centre pair standing open onto a lawn and a stone urn"
+></figure>
 
 <style>
-	/* No border, no radius, no card, no fade, and no gutter: the painting
-	   spans the FULL width of the scroller and touches its top edge, so the
-	   room opens with a picture rather than with a picture on a page. A soft
-	   mask was tried first and read as a cheap vignette; a column-width
-	   version read as a component.
-
-	   It is a direct child of the scroller, above the messages column, so
-	   "full width" is plain `width: 100%` — no container-query escape, no
-	   negative margins, nothing to drift by a scrollbar. The column's own
-	   top padding then supplies the air beneath it.
-
-	   The source is composed AT 5:1 rather than cropped into a band — a 3:1
-	   painting in this slot lost its ceiling and floor to object-fit and
-	   looked stretched. At the pane's usual width the band comes out just
-	   under the 18rem cap, so the whole painting is drawn and object-fit
-	   never bites. */
 	.cover {
-		margin: 0;
+		margin: 0 0 1.5rem;
 		width: 100%;
-	}
-	img {
-		display: block;
-		width: 100%;
-		height: auto;
-		max-height: 18rem;
-		object-fit: cover;
-		object-position: center;
+		aspect-ratio: 1600 / 529;
+		background-color: var(--color-foreground);
+		/* Graphite reads heavy at full strength against body copy; this is a
+		   drawing in the margin of the page, not the page's subject. */
 		opacity: 0;
-		transition: opacity 0.5s ease;
+		transition: opacity 0.6s ease;
+		-webkit-mask-image: url("/covers/getting-started.png");
+		mask-image: url("/covers/getting-started.png");
+		-webkit-mask-size: contain;
+		mask-size: contain;
+		-webkit-mask-repeat: no-repeat;
+		mask-repeat: no-repeat;
+		-webkit-mask-position: center;
+		mask-position: center;
 	}
-	.cover.loaded img {
-		opacity: 1;
+	.cover.visible {
+		opacity: 0.78;
 	}
 	@media (prefers-reduced-motion: reduce) {
-		img {
+		.cover {
 			transition: none;
 		}
 	}
