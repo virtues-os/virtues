@@ -24,6 +24,19 @@ export function isInterviewChat(convId: string | null | undefined): boolean {
  *  renders right after it, bleeding past the column — see the message
  *  template in ChatView), then the intro and the example table, then the ask. */
 export const INTERVIEW_OPENING = "# The story of your life: chapters & identity";
+
+/** Under the heading, before the plate: what the plate is an example of,
+ *  and why the interview exists at all. The "why" is the point — the
+ *  record holds what happened; this is how the AI is grounded in who the
+ *  person is and what they value, not just in what they did. */
+export const INTERVIEW_OPENING_LEAD =
+	"Below is an example of the lifeline you will be making: one life from " +
+	"its beginning, divided into chapters, with the turning points and the " +
+	"stories that mattered marked along it. It is here so the AI is grounded " +
+	"in who you are — your temperament, your virtues and your faults, what " +
+	"you value, and the person you are trying to become — and not in the " +
+	"record alone.";
+
 export const INTERVIEW_OPENING_BODY =
 	"In order to help the Virtues platform generate more powerful insights " +
 	"in your life, we’ll guide you in briefly describing your past " +
@@ -79,7 +92,7 @@ export function applyInterviewOpening(chat: Chat, convId: string | null | undefi
 			// the first (the heading), so the shape is seen before the
 			// example table, and the ask lands last.
 			parts: [
-				{ type: "text", text: INTERVIEW_OPENING },
+				{ type: "text", text: INTERVIEW_OPENING + "\n\n" + INTERVIEW_OPENING_LEAD },
 				{ type: "text", text: INTERVIEW_OPENING_BODY },
 				{ type: "text", text: INTERVIEW_OPENING_ASK },
 			],

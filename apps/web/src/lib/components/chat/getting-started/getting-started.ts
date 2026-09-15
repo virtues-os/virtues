@@ -16,7 +16,11 @@
  */
 import type { Chat } from "@ai-sdk/svelte";
 import type { GettingStartedState } from "$lib/api/client";
-import { INTERVIEW_OPENING_BODY, INTERVIEW_OPENING_ASK } from "$lib/components/chat/interview/interview";
+import {
+	INTERVIEW_OPENING_LEAD,
+	INTERVIEW_OPENING_BODY,
+	INTERVIEW_OPENING_ASK,
+} from "$lib/components/chat/interview/interview";
 
 /** Mirrors getting_started::GETTING_STARTED_CHAT_ID on the server. */
 export const GETTING_STARTED_CHAT_ID = "chat_getting_started";
@@ -66,7 +70,9 @@ export function applyInterviewOpening(
 		(t >= boundary ? after : before).push(m);
 	}
 	const lines = [
-		opening(GS_INTERVIEW_OPENING_ID, "## The story of your life: chapters & identity"),
+		// The heading and its lead share one message: the plate renders
+		// after that message's text, so the lead stands between them.
+		opening(GS_INTERVIEW_OPENING_ID, "## The story of your life: chapters & identity\n\n" + INTERVIEW_OPENING_LEAD),
 		opening("gs-iv-body", INTERVIEW_OPENING_BODY),
 		opening("gs-iv-ask", INTERVIEW_OPENING_ASK),
 	];
