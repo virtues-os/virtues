@@ -50,7 +50,6 @@
 		line-height: 1.3;
 		font-variant-numeric: tabular-nums;
 		color: var(--color-foreground-muted);
-		user-select: none;
 	}
 	.step.current .t {
 		color: var(--color-foreground);
