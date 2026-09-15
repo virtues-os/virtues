@@ -296,10 +296,10 @@
 					class="unreachable-door"
 					onclick={() =>
 						windowShellStore.openTabFromRoute("/virtues/devices/this", {
-							label: "This device",
+							label: "Settings",
 						})}
 				>
-					This device
+					Settings
 				</button>
 			</div>
 		{/if}

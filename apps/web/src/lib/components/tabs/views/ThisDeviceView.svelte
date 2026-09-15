@@ -25,10 +25,15 @@
 
 <!-- No "← Devices" chrome: on the phone this page is entered from the drawer,
      not the Devices list, so the link pointed somewhere the reader never was.
-     Swipe-back / the drawer are the ways out. -->
+     Swipe-back / the drawer are the ways out.
+
+     Titled "Settings", not "This device": the drawer's door says Settings
+     (VIR-345), and this is the room it opens — the phone's streams, its link
+     to the server, and the way to the profile. The route keeps its name;
+     the device is still the subject, the title is what people look for. -->
 <Page
-	title="This device"
-	description="What this phone collects, and whether it is reaching your server."
+	title="Settings"
+	description="What this phone collects, whether it is reaching your server, and who you are."
 	padding="compact"
 >
 	<MobileDeviceScreen />
