@@ -7,41 +7,6 @@ class MessageMonitor {
     private let dbPath = NSString(string: "~/Library/Messages/chat.db").expandingTildeInPath
     private var timer: DispatchSourceTimer?
     private let syncInterval: TimeInterval = 300 // 5 minutes
-
-    // Every sync runs on this one serial queue. The timer, the file watcher,
-    // and the initial sync all land here, so two syncs can never interleave —
-    // which matters because the watermark is read at the top of a sync and
-    // written at the bottom, and an overlapping pair would re-read (harmless,
-    // the box dedups) or, worse, advance past rows the other had not stored.
-    private let syncQueue = DispatchQueue(label: "com.virtues.collector.messages.sync", qos: .background)
-
-    // Freshness. The 5-minute timer is the floor; this is the ceiling.
-    //
-    // A reply drafted from a thread is only useful if the ask reaches the box
-    // in seconds, not "some time in the next five minutes". So a second timer
-    // asks one cheap question — is there a row newer than the watermark? — and
-    // only runs the real sync when the answer is yes.
-    //
-    // **This was an FSEvents watcher first, and FSEvents did not deliver.**
-    // Measured on this machine: a message written at 20:30 produced a sync
-    // within two seconds, and the next two, at 20:39 and 20:42, produced
-    // nothing at all — both waited for the five-minute timer. FSEvents reports
-    // that a directory changed; it does not promise an event for every
-    // in-place write to a file already in it, which is exactly and only what
-    // SQLite does to `chat.db-wal`. A watcher that fires for the first message
-    // after launch and then goes quiet is worse than no watcher, because it
-    // demonstrates itself once and then hides.
-    //
-    // The peek costs an open and one indexed lookup against `message.date`,
-    // which is sub-millisecond; the expensive parts of a sync — the join, the
-    // attachment query, the health write — stay behind it.
-    private var peekTimer: DispatchSourceTimer?
-    private let peekInterval: TimeInterval = 3
-
-    /// Fired after a sync that stored at least one new message, with the count.
-    /// The uploader hangs an immediate flush off this so a fresh message does
-    /// not sit in the local queue until the next 5-minute upload tick.
-    var onNewMessages: ((Int) -> Void)?
     
     // Configuration
     //
@@ -84,12 +49,12 @@ class MessageMonitor {
         }
 
         // Perform initial sync asynchronously to avoid blocking caller
-        syncQueue.async { [weak self] in
+        DispatchQueue.global(qos: .background).async { [weak self] in
             self?.syncMessages()
         }
 
         // Set up periodic sync using DispatchSourceTimer (more reliable than Timer for background execution)
-        let syncTimer = DispatchSource.makeTimerSource(queue: syncQueue)
+        let syncTimer = DispatchSource.makeTimerSource(queue: .global(qos: .background))
         syncTimer.schedule(deadline: .now() + syncInterval, repeating: syncInterval)
         syncTimer.setEventHandler { [weak self] in
             self?.syncMessages()
@@ -97,55 +62,16 @@ class MessageMonitor {
         syncTimer.resume()
         self.timer = syncTimer
 
-        let peek = DispatchSource.makeTimerSource(queue: syncQueue)
-        peek.schedule(deadline: .now() + peekInterval, repeating: peekInterval)
-        peek.setEventHandler { [weak self] in
-            guard let self, self.hasFullDiskAccess, self.hasNewerThanWatermark() else { return }
-            self.syncMessages()
-        }
-        peek.resume()
-        self.peekTimer = peek
-
-        print(
-            "Message monitor started (full sync every \(Int(syncInterval))s, "
-                + "new-message check every \(Int(peekInterval))s)")
+        print("Message monitor started (syncing every \(Int(syncInterval)) seconds)")
     }
     
     func stop() {
         timer?.cancel()
         timer = nil
-        peekTimer?.cancel()
-        peekTimer = nil
         saveLastSyncDate()
         print("Message monitor stopped")
     }
-
-    // MARK: - The cheap check
-
-    /// Is there a message newer than the watermark? One indexed lookup, no
-    /// joins, no writes — safe to ask every few seconds.
-    ///
-    /// Answers false on any failure (locked, permission lost, unopenable).
-    /// A missed peek costs freshness for one interval and nothing else: the
-    /// five-minute sync is still underneath, and it is the one that reports
-    /// permission trouble.
-    private func hasNewerThanWatermark() -> Bool {
-        guard let since = lastSyncDate else { return true }
-
-        var db: OpaquePointer?
-        defer { if db != nil { sqlite3_close(db) } }
-        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
-            return false
-        }
-
-        var statement: OpaquePointer?
-        defer { if statement != nil { sqlite3_finalize(statement) } }
-        let sql = "SELECT 1 FROM message WHERE date > ? LIMIT 1"
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return false }
-        sqlite3_bind_int64(statement, 1, Int64(dateToCoreDateTimestamp(since)))
-        return sqlite3_step(statement) == SQLITE_ROW
-    }
-
+    
     private func syncMessages() {
         // Republish permissions FIRST, on every tick, before any early return.
         //
@@ -398,12 +324,6 @@ class MessageMonitor {
             if let latestDate = latestMessageDate {
                 lastSyncDate = latestDate
                 saveLastSyncDate()
-            }
-
-            // Only now — after the rows are durably queued and the watermark
-            // has moved — is there something worth flushing.
-            if !storable.isEmpty {
-                onNewMessages?(storable.count)
             }
         }
     }

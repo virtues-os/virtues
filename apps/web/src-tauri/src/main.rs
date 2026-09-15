@@ -12,9 +12,6 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_reach::ReachExt;
 use tauri_plugin_shell::ShellExt;
 
-mod message_replies;
-use message_replies::{open_messages_thread, send_imessage, take_pending_route};
-
 /// Collector status returned from CLI
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CollectorStatus {
@@ -1054,16 +1051,11 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let show = MenuItem::with_id(app, "show", "Open Virtues", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Virtues", true, None::<&str>)?;
-    // The whole of replies from the record, from this menu: one press, one
-    // draft. Nothing is drafted unless it is pressed.
-    let draft = MenuItem::with_id(app, "draft", "Draft a reply to the latest message", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
         &[
             &status,
-            &PredefinedMenuItem::separator(app)?,
-            &draft,
             &PredefinedMenuItem::separator(app)?,
             &show,
             &quit,
@@ -1093,13 +1085,9 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "quit" => app.exit(0),
-            // Asks the box for a draft and opens it when it lands. Does its
-            // own waiting on its own thread.
-            "draft" => message_replies::ask_for_draft(app, None),
             _ => {}
         })
         .build(app)?;
-
 
     // Keep the labels honest. A poll (not an event subscription) because the
     // collector is a separate daemon with no push channel back to this app.
@@ -1427,9 +1415,6 @@ fn main() {
             open_full_disk_access,
             open_accessibility_settings,
             set_summon_shortcut,
-            send_imessage,
-            open_messages_thread,
-            take_pending_route,
         ])
         .setup(|app| {
             // Bind the default summon chord here rather than waiting for the
@@ -1489,7 +1474,6 @@ fn main() {
             // only — Windows/Linux defer self-update (updates come from the box).
             #[cfg(target_os = "macos")]
             app.manage(std::sync::Mutex::new(UpdateState::default()));
-            app.manage(message_replies::ReplyWatchState::default());
 
             // Decide where to land. A valid pairing reconnects SILENTLY (the
             // 90% reinstall case); we only ever interrupt when something's

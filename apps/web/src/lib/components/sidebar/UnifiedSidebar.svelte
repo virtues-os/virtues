@@ -18,13 +18,7 @@
 	import SidebarModePanel from "./SidebarModePanel.svelte";
 	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
-	import {
-		onOpenRoute,
-		onSummon,
-		setSummonShortcut,
-		storedSummonChord,
-		takePendingRoute,
-	} from "$lib/tauri/bridge";
+	import { onSummon, setSummonShortcut, storedSummonChord } from "$lib/tauri/bridge";
 
 	// Collapsed state from shared store (also consumed by WindowTabBar)
 	const isCollapsed = $derived(sidebarState.collapsed);
@@ -63,23 +57,6 @@
 			// onMount's cleanup may already have run — this resolves a tick late.
 			if (disposed) un();
 			else unlistenSummon = un;
-		});
-
-		// The shell asking for a route: a drafted reply from the tray line or a
-		// notification. The event is for a page already up; the queued route
-		// covers a window that was cold when the click happened.
-		let unlistenOpenRoute: (() => void) | null = null;
-		void onOpenRoute((route) => {
-			windowShellStore.openTabFromRoute(route, { focusExisting: true });
-			// The shell queued the same route for a cold page; this page was
-			// warm, so drain it or the next mount reopens a resolved draft.
-			void takePendingRoute();
-		}).then((un) => {
-			if (disposed) un();
-			else unlistenOpenRoute = un;
-		});
-		void takePendingRoute().then((route) => {
-			if (route && !disposed) windowShellStore.openTabFromRoute(route, { focusExisting: true });
 		});
 
 		// Re-apply the stored rebind. Native binds the default at startup so the
@@ -140,7 +117,6 @@
 		return () => {
 			disposed = true;
 			unlistenSummon?.();
-			unlistenOpenRoute?.();
 			unregisterShortcuts();
 		};
 	});

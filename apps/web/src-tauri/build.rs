@@ -85,10 +85,6 @@ const APP_COMMANDS: &[&str] = &[
     "open_accessibility_settings",
     // Window chrome (desktop).
     "set_summon_shortcut",
-    // Replies from the record (desktop, macOS).
-    "send_imessage",
-    "open_messages_thread",
-    "take_pending_route",
 ];
 
 fn main() {

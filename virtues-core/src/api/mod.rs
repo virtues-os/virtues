@@ -20,7 +20,6 @@ pub mod setup;
 pub mod sudo;
 pub mod web_bundle;
 pub mod chat;
-pub mod live_turn;
 pub mod chat_permissions;
 pub mod chat_usage;
 pub mod chats;
@@ -48,8 +47,8 @@ pub mod bookmarks;
 pub mod pages;
 pub mod personas;
 pub mod updates;
+pub mod live_turn;
 pub mod pins;
-pub mod message_replies;
 pub mod search_local;
 pub mod places;
 pub mod profile;
@@ -72,6 +71,7 @@ pub mod terminal;
 pub mod token_estimation;
 pub mod unsplash;
 pub mod wiki;
+pub mod years;
 pub mod lifeline;
 pub mod link_session;
 pub mod wiki_articles;
@@ -196,10 +196,6 @@ pub use bookmarks::{
 pub use pins::{
     create_pin, delete_pin, list_pins, reorder_pins, update_pin, CreatePinRequest, Pin,
     UpdatePinRequest,
-};
-pub use message_replies::{
-    dismiss_message_reply, get_message_reply, list_pending_message_replies,
-    mark_message_reply_sent, MarkSentRequest, MessageReply,
 };
 pub use annotations::{
     create_annotation, delete_annotation, export_file_annotations_md, get_annotation,

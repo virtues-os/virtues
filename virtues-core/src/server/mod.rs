@@ -1038,23 +1038,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pins/:id",
             patch(api::update_pin_handler).delete(api::delete_pin_handler),
         )
-        // Drafted message replies (the Mac app polls, sends, reports back)
-        .route(
-            "/api/message-replies/pending",
-            get(api::list_pending_message_replies_handler),
-        )
-        .route(
-            "/api/message-replies/:id",
-            get(api::get_message_reply_handler),
-        )
-        .route(
-            "/api/message-replies/:id/sent",
-            post(api::mark_message_reply_sent_handler),
-        )
-        .route(
-            "/api/message-replies/:id/dismiss",
-            post(api::dismiss_message_reply_handler),
-        )
         // Notebooks API (the "room" a chat lives in)
         .route(
             "/api/notebooks",
