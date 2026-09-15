@@ -75,6 +75,7 @@ pub mod wiki;
 pub mod lifeline;
 pub mod link_session;
 pub mod wiki_articles;
+pub mod wiki_editor;
 pub mod wiki_notes;
 
 // Re-export all functions for convenience
