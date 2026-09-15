@@ -74,9 +74,18 @@ class GettingStartedStore {
 		this.state = await skipGettingStartedStep(step, skipped);
 	}
 
+	/**
+	 * Set by `startInterview` and consumed by the room once the opening is
+	 * in the thread: the opening is authored, not streamed, so the room
+	 * reveals it the way a turn arrives — but only on the press of Start,
+	 * never on a reload of a thread that already holds it.
+	 */
+	revealOpening = $state(false);
+
 	/** The interview begins, inside the room. */
 	async startInterview(): Promise<void> {
 		this.state = await startGettingStartedInterview();
+		this.revealOpening = true;
 	}
 
 	/** The interview is the conversation now: begun, and no document yet. */

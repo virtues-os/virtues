@@ -1242,6 +1242,11 @@
 	}
 
 	const uniqueMessages = $derived(chat?.messages ? deduplicateMessages(chat.messages) : []);
+	/** The interview's opening plate is in this thread — mid-thread here,
+	 *  not first as in the old standalone room — so the container must not
+	 *  clip paint at its edge. Without this the plate lost both ends. */
+	const roomHoldsPlate = $derived(uniqueMessages.some((m) => m.id === GS_INTERVIEW_OPENING_ID));
+
 
 	// Get the last assistant message
 	const lastAssistantMessage = $derived.by(() => {
@@ -1452,6 +1457,74 @@
 	/** The room speaks server-side, so when its state moves the thread has
 	 *  new lines in it. Re-read on any change of the walk — the step
 	 *  statuses and the interview's start are the whole of it. */
+	/**
+	 * The interview's opening arriving as a turn does — revealed at a quick
+	 * model's pace through the same Streamdown path a live stream takes,
+	 * so it fades in word by word and its table builds as it goes. Three
+	 * authored messages, in order, with a breath between them; the plate
+	 * waits for its heading. `null` = nothing revealing, everything shown.
+	 * Only ever started by the press of Start (the store's flag): a thread
+	 * reloaded with the opening already in it shows it whole, as it should.
+	 */
+	const OPENING_IDS = [GS_INTERVIEW_OPENING_ID, "gs-iv-body", "gs-iv-ask"];
+	let revealChars = $state<Record<string, number> | null>(null);
+	let revealTimer: ReturnType<typeof setTimeout> | null = null;
+	function revealOpening() {
+		if (revealTimer) clearTimeout(revealTimer);
+		if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+		const texts = OPENING_IDS.map(
+			(id) => ((chat.messages.find((m) => m.id === id)?.parts[0] as { text?: string } | undefined)?.text ?? ""),
+		);
+		const shown: Record<string, number> = Object.fromEntries(OPENING_IDS.map((id) => [id, 0]));
+		revealChars = { ...shown };
+		const RATE = 420; // characters per second: a quick model, not a typewriter
+		const BREATH = 260; // ms between one message and the next
+		let i = 0;
+		let start = performance.now();
+		const tick = (now: number) => {
+			const id = OPENING_IDS[i];
+			const full = texts[i].length;
+			shown[id] = Math.max(0, Math.min(full, Math.floor(((now - start) / 1000) * RATE)));
+			revealChars = { ...shown };
+			if (shown[id] >= full) {
+				i += 1;
+				if (i >= OPENING_IDS.length) {
+					revealChars = null;
+					return;
+				}
+				start = now + BREATH;
+			}
+			// A timer, not rAF: the pace is elapsed-time, so frame sync buys
+			// nothing, and rAF stops in a background tab — someone who presses
+			// Start and glances at another tab would come back to a reveal
+			// frozen at nothing. A throttled timer just takes coarser steps.
+			revealTimer = setTimeout(() => tick(performance.now()), 16);
+		};
+		tick(performance.now());
+	}
+	$effect(() => {
+		if (!gettingStarted.revealOpening) return;
+		if (!chat.messages.some((m) => m.id === GS_INTERVIEW_OPENING_ID)) return;
+		gettingStarted.revealOpening = false;
+		untrack(revealOpening);
+	});
+	onDestroy(() => {
+		if (revealTimer) clearTimeout(revealTimer);
+	});
+	/** How much of a text part to show right now, and whether it is still arriving. */
+	function revealed(messageId: string, text: string): { content: string; arriving: boolean } {
+		const n = revealChars?.[messageId];
+		if (n === undefined) return { content: text, arriving: false };
+		return { content: text.slice(0, n), arriving: n < text.length };
+	}
+	/** The plate under the opening's heading waits for the heading. */
+	const plateReady = $derived.by(() => {
+		if (revealChars === null) return true;
+		const heading = chat.messages.find((m) => m.id === GS_INTERVIEW_OPENING_ID);
+		const text = (heading?.parts[0] as { text?: string } | undefined)?.text ?? "";
+		return (revealChars[GS_INTERVIEW_OPENING_ID] ?? 0) >= text.length;
+	});
+
 	let lastWalk = $state<string | null>(null);
 	$effect(() => {
 		const st = gettingStarted.state;
@@ -1959,7 +2032,7 @@
 					>
 						<div
 							class="messages-container"
-							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID}
+							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID || roomHoldsPlate}
 							class:room={isGettingStartedChat(currentChatConversationId)}
 						>
 							{#each uniqueMessages as message, messageIndex (message.id)}
@@ -2079,16 +2152,17 @@
 											{/if}
 											{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
 												{#if part.type === "text" && part.text.trim()}
+													{@const shown = revealed(message.id, part.text)}
 													<div
 														class="text-base text-foreground assistant-response"
 													>
 														<Markdown
-															content={part.text}
-															{isStreaming}
+															content={shown.content}
+															isStreaming={isStreaming || shown.arriving}
 															citations={citationContext}
 															onCitationClick={openCitationPanel}
 														/>
-														{#if (message.id === INTERVIEW_OPENING_ID && partIndex === 0) || message.id === GS_INTERVIEW_OPENING_ID}
+														{#if (message.id === INTERVIEW_OPENING_ID && partIndex === 0) || (message.id === GS_INTERVIEW_OPENING_ID && plateReady)}
 															<!-- Right under the heading, wider than the column:
 															     one fictional life on one wire, α toward Ω. The
 															     table that follows lists the same chapters. -->
@@ -2288,7 +2362,7 @@
 								{/if}
 								<InterviewCompanion status={chat.status} />
 							{:else if inInterview}
-								<InterviewCompanion status={chat.status} />
+								<InterviewCompanion status={revealChars ? "streaming" : chat.status} />
 							{:else if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">
 									<div class="message-wrapper" data-role="assistant">
