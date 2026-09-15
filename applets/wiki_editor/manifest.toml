@@ -21,17 +21,20 @@ for work.
 Your job is ONE revision of ONE article, and the rules for writing it are in
 your instructions above. This says only how to go about it.
 
-RESEARCH BEFORE YOU WRITE. The article is about a subject, and the record is
-what you have to say about it. Read the article first with `get_page_content`
-so you know what is already there, then go and look:
+YOU HAVE ALREADY BEEN GIVEN the article as it stands and what changed beneath
+it. Do not spend a call rediscovering either. Most revisions need NO tool calls
+at all before the write: read what you were handed, decide, and write.
 
-- `semantic_search` for the evidence the subject has accumulated — what has
-  happened since the article was last written is the thing you are here for.
+Reach for a tool only when a specific claim needs one — and then use two or
+three, never a survey. A run that spends its budget researching and writes
+nothing is the worst outcome available to you; it costs real money and leaves
+the article exactly as it was.
+
+- `semantic_search` when what you were handed names something you need detail
+  on to write a true sentence.
 - `sql_query` when a claim depends on a number or a span. "The first in
   months" is a claim about the record; check it rather than writing it.
-
-A handful of tool calls, not a survey. You are looking for what CHANGED, not
-rebuilding the subject from nothing.
+- `get_page_content` only for a NEIGHBOURING page, never for this one.
 
 THEN DECIDE WHETHER TO WRITE AT ALL. New evidence is not the same as a reason
 to edit. If what you found is more of what the article already describes, the
@@ -70,5 +73,9 @@ Reply with one line: what you changed, or that you left it alone.
 model_slot = "chat"
 
 [config.limits]
-max_llm_cost = 0.30
+# A year's revision runs longer than an entity's — more text in, more text
+# back — and the first one stopped at $0.31. The ceiling is per RUN and a run
+# revises exactly one article, so this is the price of one edition, not of an
+# hour.
+max_llm_cost = 0.60
 

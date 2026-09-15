@@ -12,6 +12,11 @@ changed between January and December — which no single day can show.
 **Open with a lede**: one short paragraph, no heading, that says what this year
 was. If a reader read nothing else, this is what they would keep.
 
+Do not begin with the year, or with the name they gave it, on a line of its
+own. The page already carries both above your prose, and the first block you
+write is taken as the article's summary everywhere else in the wiki — a title
+line there means the year summarises itself as three words.
+
 **Then sections, under `## ` headings**, one per thread. A thread is something
 that spans the year or connects parts of it: work that moved, a place that
 entered or left the life, something learned, something that ended, a
