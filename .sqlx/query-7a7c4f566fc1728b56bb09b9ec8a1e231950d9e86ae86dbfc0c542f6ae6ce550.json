@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE wiki_articles SET maintenance = $3 WHERE subject_type = $1 AND subject_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7a7c4f566fc1728b56bb09b9ec8a1e231950d9e86ae86dbfc0c542f6ae6ce550"
+}

@@ -2139,6 +2139,59 @@ pub async fn write_article_handler(
     )
 }
 
+/// Put a named version of an article back.
+///
+/// Rule 4 of the wiki's paradigm — every edit is a revision you can read AND
+/// revert — has been half true since the history feed shipped: the diff was
+/// readable and there was no way to undo it.
+pub async fn revert_article_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let Some(version) = body.get("version_number").and_then(|v| v.as_i64()) else {
+        return error_response(Error::InvalidInput(
+            "version_number is required".to_string(),
+        ));
+    };
+    match crate::api::wiki_editor::revert_article(
+        state.db.pool(),
+        &state.yjs_state,
+        &subject_type,
+        &subject_id,
+        version,
+    )
+    .await
+    {
+        Ok(change) => success_message(&format!("Reverted to v{version} — {change}")),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Set how an article is maintained: always, auto, or never.
+pub async fn set_article_maintenance_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mode = body.get("maintenance").and_then(|v| v.as_str()).unwrap_or("");
+    match crate::api::wiki_articles::set_maintenance(
+        state.db.pool(),
+        &subject_type,
+        &subject_id,
+        mode,
+    )
+    .await
+    {
+        Ok(()) => success_message(match mode {
+            "always" => "The record will revisit this whenever anything changes",
+            "never" => "The record will leave this article alone",
+            _ => "The record will keep this up to date",
+        }),
+        Err(e) => error_response(e),
+    }
+}
+
 /// Turn maintenance on or off for one article.
 pub async fn set_article_auto_update_handler(
     State(state): State<AppState>,

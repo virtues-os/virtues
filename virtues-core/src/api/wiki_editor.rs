@@ -466,6 +466,81 @@ pub async fn record_provenance(
     Ok(())
 }
 
+/// Put a named version's text back, as a NEW version.
+///
+/// History is never rewound. Reverting to v12 leaves v12 where it is and adds
+/// v18 saying the same thing, so the act of reverting is itself in the record
+/// and can be undone in turn.
+///
+/// This deliberately does NOT run `check_edit`. That invariant protects the
+/// person from the machine; a revert is the person, and they are allowed to
+/// drop a sentence of their own if that is what going back means.
+///
+/// It also deliberately leaves `machine_text` alone, which looks like an
+/// omission and is the whole trick. `machine_text` means "what the editor last
+/// wrote", and the editor did not write this. Left as it is, the next pass
+/// diffs the reverted text against it and reaches the right conclusions on its
+/// own: sentences the revert brought back that the editor never wrote are
+/// theirs, and sentences the editor wrote that the revert removed are not to
+/// be restored. Setting it to the reverted text would tell the editor it had
+/// authored every word of it, and it would feel free to rewrite them all.
+pub async fn revert_article(
+    pool: &sqlx::PgPool,
+    yjs: &crate::server::yjs::YjsState,
+    subject_type: &str,
+    subject_id: &str,
+    version_number: i64,
+) -> Result<String> {
+    let article = crate::api::wiki_articles::get_article(pool, subject_type, subject_id)
+        .await?
+        .ok_or_else(|| Error::NotFound(format!("No article for {subject_type} {subject_id}")))?;
+
+    let snapshot: Vec<u8> = sqlx::query_scalar(
+        "SELECT yjs_snapshot FROM app_page_versions \
+         WHERE page_id = $1 AND version_number = $2",
+    )
+    .bind(&article.page_id)
+    .bind(version_number)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load that version: {e}")))?
+    .ok_or_else(|| Error::NotFound(format!("No version {version_number} of this article")))?;
+
+    let text = crate::server::yjs::extract_text_content(&snapshot);
+    if text.trim().is_empty() {
+        return Err(Error::InvalidInput(
+            "that version has no readable text to restore".into(),
+        ));
+    }
+
+    let live = yjs
+        .read_text(&article.page_id)
+        .await
+        .map_err(|e| Error::Other(format!("could not read the article: {e}")))?;
+    if live == text {
+        return Ok("that version is already what the page says".into());
+    }
+
+    let applied = yjs
+        .apply_text_diff(&article.page_id, &live, &text)
+        .await
+        .map_err(Error::Other)?;
+
+    let change = change_line(&live, &applied);
+    if let Ok(state) = yjs.encoded_state(&article.page_id).await {
+        let _ = crate::api::pages::create_version_from_snapshot(
+            pool,
+            &article.page_id,
+            &state,
+            &applied,
+            "user",
+            Some(&format!("reverted to v{version_number} — {change}")),
+        )
+        .await;
+    }
+    Ok(change)
+}
+
 /// The maintenance state of one article, as the editor needs it.
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct EditorArticle {
@@ -859,6 +934,79 @@ mod tests {
         .await
         .unwrap();
         assert!(authors.contains(&"user".to_string()), "{authors:?}");
+    }
+
+    #[sqlx::test]
+    async fn reverting_adds_a_version_rather_than_rewinding_history(pool: sqlx::PgPool) {
+        let (yjs, id, page_id) = article_fixture(&pool, "You met Zoe at the shop.").await;
+        // Two editions, so there is an earlier one to go back to. A version's
+        // snapshot is the state AFTER the edit it records, so v1 is the first
+        // revision's result — not the empty page before it.
+        revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop. She fixes bicycles.",
+            "added the shop",
+        )
+        .await
+        .unwrap();
+        let v1: i64 = sqlx::query_scalar(
+            "SELECT max(version_number) FROM app_page_versions WHERE page_id = $1",
+        )
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop. She fixes bicycles. You ride together on Sundays.",
+            "added the Sunday rides",
+        )
+        .await
+        .unwrap();
+
+        revert_article(&pool, &yjs, "person", "person_z", v1)
+            .await
+            .unwrap();
+
+        let live = yjs.read_text(&page_id).await.unwrap();
+        assert!(!live.contains("Sundays"), "the later edit is undone: {live}");
+        assert!(live.contains("fixes bicycles"), "and the earlier one is kept");
+
+        let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+            "SELECT version_number, created_by, description FROM app_page_versions \
+             WHERE page_id = $1 ORDER BY version_number",
+        )
+        .bind(&page_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            rows.iter().any(|(n, _, _)| *n == v1),
+            "the version reverted TO is still there — history is never rewound"
+        );
+        let last = rows.last().unwrap();
+        assert_eq!(last.1, "user", "a revert is the person's act, not the machine's");
+        assert!(last.2.as_deref().unwrap().contains(&format!("reverted to v{v1}")));
+
+        // The editor's idea of what IT last wrote is deliberately untouched, so
+        // the next pass reads the revert correctly instead of claiming it.
+        let machine: Option<String> =
+            sqlx::query_scalar("SELECT machine_text FROM wiki_articles WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            machine.unwrap().contains("Sundays"),
+            "machine_text still says what the EDITOR last wrote, so its next pass \
+             reads the revert as the person's doing instead of claiming it"
+        );
     }
 
     #[sqlx::test]

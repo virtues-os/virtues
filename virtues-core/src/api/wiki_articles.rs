@@ -525,6 +525,39 @@ fn diff_lines(before: &str, after: &str) -> Vec<DiffLine> {
 /// `false` means the AI never touches it — not a pending-approval queue,
 /// nothing held for review. The sweep skips it, and it changes only when a
 /// person regenerates it or flips this back. The switch IS the consent.
+/// Set how an article is maintained, in the vocabulary the column actually
+/// has. `set_auto_update` is the two-state toggle the UI shipped with; this is
+/// the full setting, including `always` — an article someone wants revisited
+/// whenever anything moves, which the toggle can preserve but never set.
+pub async fn set_maintenance(
+    pool: &PgPool,
+    subject_type: &str,
+    subject_id: &str,
+    mode: &str,
+) -> Result<()> {
+    if !matches!(mode, "always" | "auto" | "never") {
+        return Err(Error::InvalidInput(format!(
+            "maintenance is always, auto or never — not {mode:?}"
+        )));
+    }
+    let n = sqlx::query!(
+        "UPDATE wiki_articles SET maintenance = $3 WHERE subject_type = $1 AND subject_id = $2",
+        subject_type,
+        subject_id,
+        mode
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to set maintenance: {}", e)))?
+    .rows_affected();
+    if n == 0 {
+        return Err(Error::NotFound(format!(
+            "No article for {subject_type} {subject_id}"
+        )));
+    }
+    Ok(())
+}
+
 pub async fn set_auto_update(
     pool: &PgPool,
     subject_type: &str,
