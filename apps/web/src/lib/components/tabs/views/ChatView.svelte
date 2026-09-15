@@ -1081,8 +1081,11 @@
 					} finally {
 						if (!signal.aborted) {
 							isLoading = false;
-							// Scroll to bottom after loading existing chat
-							setTimeout(() => scrollToBottom("instant"), 10);
+							// Scroll to bottom after loading existing chat — but
+							// the getting-started room opens on its cover.
+							setTimeout(() => {
+								if (!openAtStart()) scrollToBottom("instant");
+							}, 10);
 						}
 					}
 				})();
@@ -1193,7 +1196,7 @@
 
 			isLoading = false;
 			setTimeout(() => {
-				scrollToBottom("instant");
+				if (!openAtStart()) scrollToBottom("instant");
 				enableTransitions = true;
 			}, 50);
 
@@ -1698,6 +1701,22 @@
 		observer.observe(composer);
 		return () => observer.disconnect();
 	});
+
+	/**
+	 * Where a room opens. A chat opens at its newest message; the
+	 * getting-started room opens at the TOP, on the cover — the painting is
+	 * the first thing in it and the first thing anyone should see, and on a
+	 * short window the walk's own length was starting it half scrolled off.
+	 * Only on load: once the person is in the conversation, new turns pull
+	 * the view down as they do anywhere else.
+	 */
+	function openAtStart(behavior: ScrollBehavior = "instant") {
+		if (isGettingStartedChat(currentChatConversationId)) {
+			scrollContainer?.scrollTo({ top: 0, behavior });
+			return true;
+		}
+		return false;
+	}
 
 	function scrollToBottom(behavior: ScrollBehavior = "smooth") {
 		if (scrollContainer) {
