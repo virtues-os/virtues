@@ -242,10 +242,11 @@ async fn consider_thread_locked(pool: &PgPool, thread_id: &str, trigger: &str) -
     }
 
     let voice = load_voice_sample(pool, thread_id).await?;
-    let hits = search_record(pool, &latest.body, &counterpart).await;
+    let mut hits = named_facts(pool, &latest.body).await?;
+    hits.extend(search_record(pool, &latest.body, &counterpart).await);
 
     let drafted = draft(pool, &owner, &counterpart, &transcript, latest, &voice, &hits).await?;
-    let Some(reply) = drafted.reply.filter(|r| !r.trim().is_empty()) else {
+    let Some(reply) = drafted.reply.filter(|r| is_a_message(r)) else {
         tracing::info!(thread_id, why = ?drafted.rationale, "drafter: nothing to add");
         return Ok(None);
     };
@@ -369,6 +370,91 @@ async fn load_voice_sample(pool: &PgPool, thread_id: &str) -> Result<Vec<String>
     Ok(rows)
 }
 
+/// Places and people the ask NAMES, looked up by name rather than by vector.
+///
+/// The asks people actually text are mostly about named things — "what's the
+/// address of that ramen place", "do you have Nick's number" — and the answer
+/// is a structured row, not a passage. Hybrid search finds those only where
+/// the box has an index; a fresh box, or one mid-reindex, has none, and the
+/// drafter would answer "I don't have that" about a row sitting in plain
+/// sight. This pass costs one indexed query and works on any box.
+///
+/// Only entities the record already holds are matched, so this cannot invent
+/// a place; it can only remember one.
+async fn named_facts(pool: &PgPool, ask: &str) -> Result<Vec<String>> {
+    // Words the ask might be naming. Short words and the common furniture of a
+    // question match everything and mean nothing.
+    const STOPWORDS: &[&str] = &[
+        "what", "whats", "where", "when", "which", "that", "this", "your", "yours", "you",
+        "the", "there", "here", "have", "with", "from", "about", "again", "please", "send",
+        "address", "number", "phone", "email", "time", "place", "thing", "know", "tell",
+        "took", "went", "give", "just", "like", "they", "them", "were", "was", "for",
+    ];
+    let words: Vec<String> = ask
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .map(|w| w.trim_matches('\'').to_lowercase())
+        .filter(|w| w.chars().count() >= 4 && !STOPWORDS.contains(&w.as_str()))
+        .take(12)
+        .collect();
+    if words.is_empty() {
+        return Ok(Vec::new());
+    }
+    let patterns: Vec<String> = words.iter().map(|w| format!("%{w}%")).collect();
+
+    let mut out = Vec::new();
+
+    let places = sqlx::query(
+        "SELECT name, address, category FROM wiki_places \
+         WHERE name ILIKE ANY($1) OR aliases::text ILIKE ANY($1) \
+         ORDER BY seen_count DESC LIMIT 4",
+    )
+    .bind(&patterns)
+    .fetch_all(pool)
+    .await?;
+    for r in places {
+        let name: String = r.get("name");
+        let address: Option<String> = r.get("address");
+        let category: Option<String> = r.get("category");
+        out.push(format!(
+            "[place] {name}{}{}",
+            category.map(|c| format!(" ({c})")).unwrap_or_default(),
+            address.map(|a| format!(" — {a}")).unwrap_or_default()
+        ));
+    }
+
+    let people = sqlx::query(
+        "SELECT name, relationship_category, handles, emails, phones FROM wiki_people \
+         WHERE name ILIKE ANY($1) OR aliases::text ILIKE ANY($1) \
+         ORDER BY seen_count DESC LIMIT 4",
+    )
+    .bind(&patterns)
+    .fetch_all(pool)
+    .await?;
+    for r in people {
+        let name: String = r.get("name");
+        let rel: Option<String> = r.get("relationship_category");
+        let contacts = [
+            r.get::<Value, _>("emails"),
+            r.get::<Value, _>("phones"),
+            r.get::<Value, _>("handles"),
+        ]
+        .iter()
+        .filter_map(|v| v.as_array())
+        .flatten()
+        .filter_map(Value::as_str)
+        .take(4)
+        .collect::<Vec<_>>()
+        .join(", ");
+        out.push(format!(
+            "[person] {name}{}{}",
+            rel.map(|c| format!(" ({c})")).unwrap_or_default(),
+            if contacts.is_empty() { String::new() } else { format!(" — {contacts}") }
+        ));
+    }
+
+    Ok(out)
+}
+
 /// Hybrid search over the record with the ask as the query. Search being down
 /// (no embedder, an index mid-rebuild) must not stop a draft that the thread
 /// alone can answer, so this degrades to no hits with a warning.
@@ -430,8 +516,13 @@ addressed to them, not to someone else);
 - it wants information, not an action in the world or an opinion or a feeling;
 - the owner has not already answered it later in the thread.
 
-Answer NO for small talk, reactions, statements, jokes, questions of taste or feeling, \
-requests to do something physical, and anything the owner already answered.
+Things the record can answer, so YES: the owner's own contact details, where they live or \
+work, whether they are free at a given time, a date or a plan already made, something they \
+sent or said before, a place they have been to and could name.
+
+Answer NO for small talk, reactions, statements, jokes, questions of taste or feeling \
+(\"how are you\", \"did you like it\"), requests to do something physical, and anything the \
+owner already answered.
 
 Reply with JSON only: {\"answerable\": true|false, \"ask\": \"the ask in one short line\", \
 \"why\": \"one short line\"}";
@@ -473,17 +564,26 @@ message in a thread. You are not an assistant talking to them; you are them, rep
 other person. The owner will read it and press send, or not.
 
 Rules:
-- Answer only the latest open ask. One message, plain text, no greeting, no sign-off, no \
-markdown, no emoji unless the owner's own messages use them.
+- Answer the latest ask and nothing else. One message, plain text, no greeting, no \
+sign-off, no markdown, no emoji unless the owner's own messages use them.
+- Never volunteer a detail nobody asked for. Asked for one thing, give that one thing. An \
+address, an email, a phone number or a plan that was not requested must not appear in the \
+reply — adding one is worse than saying nothing, because the owner is about to send it.
+- Every fact must appear, in those words, in the material below. If it is not written there \
+you do not know it: return null rather than something plausible. This binds hardest on \
+addresses, emails, phone numbers, times and dates — a guessed one looks exactly like a real \
+one and is sent as if true.
 - Sound like the owner's own messages in this thread: their length, punctuation, \
 capitalization, warmth. Short beats complete.
-- Use only facts present below — the owner's profile, the record hits, the thread itself. \
-Never invent a detail. If the records do not contain the answer, return null and say why.
-- Never share: bank or card numbers, passwords or codes, health details, anyone else's \
-private information, or the owner's location history. If the ask is for one of those, \
-return null.
-- If the ask is for the owner's address or phone number and the counterpart is a stranger or \
-unknown, return null.
+- The owner's own everyday details are theirs to give out when asked for them: their home \
+address, their email, their phone number, where they work, when they are free. Give them to \
+someone the record knows — a name, a relationship, a history of talking. That is the ordinary \
+case, not an exception.
+- Withhold those details when the counterpart is a stranger to the record, or when the \
+thread reads like a stranger, a scam, or a pretext. Then return null.
+- Never share, whoever is asking: bank, card or account numbers; passwords or verification \
+codes; health details; another person's private information; or a history of where the owner \
+has been. For those, return null.
 - Do not answer for anyone else in a group.
 
 Reply with JSON only: {{\"reply\": \"the message\" | null, \"rationale\": \"one short line on \
@@ -529,7 +629,7 @@ what you used, or why not\"}}"
         }
     }
 
-    user.push_str("\n## From the owner's records (search hits for the ask)\n");
+    user.push_str("\n## From the owner's records\n");
     if hits.is_empty() {
         user.push_str("(none)\n");
     } else {
@@ -576,6 +676,22 @@ fn push_kv(out: &mut String, key: &str, value: Option<&str>) {
     }
 }
 
+/// "Nothing to add" reaches us two ways: a JSON `null`, and — because models
+/// asked for text often answer in text — the WORD null. A draft of "null"
+/// once made it into a pending row, ready to send to someone. Anything that
+/// is only a way of saying nothing is nothing.
+fn is_a_message(reply: &str) -> bool {
+    let t = reply.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let bare = t.trim_matches(|c: char| c == '"' || c == '\'' || c == '.').to_ascii_lowercase();
+    !matches!(
+        bare.as_str(),
+        "null" | "none" | "nil" | "n/a" | "na" | "nothing" | "no reply" | "no response" | "undefined"
+    )
+}
+
 fn cap(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         return s.to_string();
@@ -620,6 +736,42 @@ fn parse_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T> {
         }
     }
     anyhow::bail!("unbalanced JSON in model output")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_word_null_is_not_a_message() {
+        for nothing in ["null", "NULL", "\"null\"", " none ", "N/A", "nothing", "", "   "] {
+            assert!(!is_a_message(nothing), "{nothing:?} should not be sendable");
+        }
+        for real in ["it's Mueller, Austin, TX", "no", "nothing much, you?", "yes"] {
+            assert!(is_a_message(real), "{real:?} should be sendable");
+        }
+    }
+
+    #[test]
+    fn json_is_taken_from_a_fenced_or_prefaced_answer() {
+        #[derive(Debug, Deserialize)]
+        struct R {
+            reply: Option<String>,
+        }
+        let raw = "Here you go:\n```json\n{\"reply\": \"sure, 3pm\"}\n```\nhope that helps";
+        assert_eq!(parse_json::<R>(raw).unwrap().reply.as_deref(), Some("sure, 3pm"));
+    }
+
+    #[test]
+    fn a_tapback_is_not_part_of_the_batch() {
+        let batch = vec![
+            json!({"guid": "a", "chat_id": "t1", "text": "Loved \u{201c}ok\u{201d}",
+                   "is_from_me": false, "associated_message_type": 2000}),
+            json!({"guid": "b", "chat_id": "t1", "text": "what time?", "is_from_me": false}),
+        ];
+        let (inbound, _) = split_batch(&batch);
+        assert_eq!(inbound, vec!["t1".to_string()]);
+    }
 }
 
 // ── Detached spawn (used by ingest) ─────────────────────────────────────────
