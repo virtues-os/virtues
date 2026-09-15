@@ -39,7 +39,7 @@
 	} from "$lib/components/chat/getting-started/getting-started";
 	import RoomControls from "$lib/components/chat/getting-started/RoomControls.svelte";
 	import GettingStartedDoor from "$lib/components/chat/getting-started/GettingStartedDoor.svelte";
-	import OnboardingProgress from "$lib/components/chat/getting-started/OnboardingProgress.svelte";
+	import StepEyebrow from "$lib/components/chat/getting-started/StepEyebrow.svelte";
 	import IntroductionsRecorded from "$lib/components/chat/getting-started/IntroductionsRecorded.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
@@ -875,19 +875,21 @@
 	}
 
 	/**
-	 * Scroll the thread to where the room spoke about a step — its ask if one
-	 * still stands, else the line that settled it. The anchors are the
-	 * `subject` the server writes on every line it speaks.
+	 * The one line per step that carries its number: the ask, or — for a step
+	 * settled before the room ever asked (AI already connected, integrations
+	 * already there) — the line that settled it. Keyed by message id.
 	 */
-	function jumpToStep(stepId: string) {
-		const root = scrollContainer ?? document;
-		const target =
-			root.querySelector(`[data-subject="gs:ask:${stepId}"]`) ??
-			root.querySelector(`[data-subject="gs:done:${stepId}"]`);
-		if (!(target instanceof HTMLElement)) return;
-		const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-		target.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
-	}
+	const eyebrowFor = $derived.by(() => {
+		const out = new Map<string, string>();
+		const claimed = new Set<string>();
+		for (const m of uniqueMessages as { id: string; subject?: string }[]) {
+			const match = m.subject?.match(/^gs:(ask|done):(.+)$/);
+			if (!match || claimed.has(match[2])) continue;
+			claimed.add(match[2]);
+			out.set(m.id, match[2]);
+		}
+		return out;
+	});
 
 	/** A line the room speaks about a step that is already settled. */
 	function isSettledLine(message: { subject?: string }): boolean {
@@ -1902,7 +1904,7 @@
 			<!-- Main chat area -->
 			<div class="chat-area" class:ghost={isGhost}>
 				<!-- Top-right chrome: temporary-chat toggle + live context ring -->
-				<div class="chat-topbar-right" class:stacked={isGettingStartedChat(currentChatConversationId)}>
+				<div class="chat-topbar-right">
 					{#if !isGhost && contextUsage && extractConversationId(tab.route) && !isGettingStartedChat(currentChatConversationId)}
 						<ContextIndicator
 							conversationId={extractConversationId(tab.route)!}
@@ -1915,11 +1917,10 @@
 					{/if}
 					{#if isGettingStartedChat(currentChatConversationId)}
 						<!-- One door, two labels: the skip before AI, "come back
-						     to this later" after — and under it, how far in you
-						     are, which is the one fixed place to look on coming
-						     back from somewhere else. -->
+						     to this later" after. Nothing else lives up here —
+						     progress is numbered in the thread, on the axis the
+						     eye is already reading along. -->
 						<GettingStartedDoor />
-						<OnboardingProgress onjump={jumpToStep} />
 					{/if}
 					<!-- On the phone the ghost toggle lives in the shell's top bar
 					     (the modal top-right slot), not here. -->
@@ -2073,6 +2074,9 @@
 												/>
 											{/if}
 
+											{#if eyebrowFor.has(message.id)}
+												<StepEyebrow stepId={eyebrowFor.get(message.id)!} />
+											{/if}
 											{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
 												{#if part.type === "text" && part.text.trim()}
 													<div
@@ -2591,13 +2595,6 @@
 		gap: 6px;
 	}
 
-	/* In the room the door is not alone: how far in you are hangs beneath it,
-	   so the row becomes a right-aligned column. */
-	.chat-topbar-right.stacked {
-		flex-direction: column;
-		align-items: flex-end;
-		gap: 12px;
-	}
 
 
 	.ghost-toggle {
