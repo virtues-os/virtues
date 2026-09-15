@@ -634,6 +634,38 @@ export async function writeArticle(
 }
 
 /** Turn maintenance on or off. Off means the AI never touches this article. */
+/** Put an article back to a named version. Adds a version; never rewinds. */
+export async function revertArticle(
+	subjectType: string,
+	subjectId: string,
+	versionNumber: number,
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/revert`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ version_number: versionNumber })
+	});
+	if (!res.ok) throw new Error('Could not revert that');
+}
+
+/** How an article is maintained: always, auto, or never. */
+export type Maintenance = 'always' | 'auto' | 'never';
+
+export async function setArticleMaintenance(
+	subjectType: string,
+	subjectId: string,
+	maintenance: Maintenance,
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/maintenance`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ maintenance })
+	});
+	if (!res.ok) throw new Error('Could not change that');
+}
+
 export async function setArticleAutoUpdate(
 	subjectType: string,
 	subjectId: string,
