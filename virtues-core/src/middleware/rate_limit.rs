@@ -45,21 +45,22 @@ impl SlidingWindowLimiter {
         Self(Mutex::new(HashMap::new()), window, max)
     }
 
-    /// Record an attempt from `ip_key` and return `true` (allow) or `false`
-    /// (deny — limit exceeded).
+    /// Record an attempt against `key` and return `true` (allow) or `false`
+    /// (deny — limit exceeded). The key is whatever the caller counts by: a
+    /// source IP for pairing, a device id for client reports.
     ///
     /// Before checking, we sweep the WHOLE map: slide each IP's window and drop
     /// any IP whose window is now empty. This bounds the map by the number of
     /// IPs *actively* pairing within the last WINDOW — not by every IP ever
     /// seen — so distinct source IPs coming and going can't grow it without
     /// limit. The sweep is O(n) but n is tiny (a handful of real pairs).
-    pub fn check_and_record(&self, ip_key: &str) -> bool {
+    pub fn check_and_record(&self, key: &str) -> bool {
         let now = Instant::now();
         let cutoff = now - self.1;
 
         let mut map = self.0.lock().unwrap();
 
-        // Slide every window and evict fully-expired IPs.
+        // Slide every window and evict fully-expired keys.
         map.retain(|_, attempts| {
             attempts.retain(|t| *t > cutoff);
             !attempts.is_empty()
@@ -68,7 +69,7 @@ impl SlidingWindowLimiter {
         // A newly-inserted entry has 0 attempts, so it's never denied here (it
         // gets a timestamp pushed below); the deny path always has a non-empty
         // Vec. So `or_default` can't strand an empty entry.
-        let attempts = map.entry(ip_key.to_string()).or_default();
+        let attempts = map.entry(key.to_string()).or_default();
         if attempts.len() >= self.2 {
             return false;
         }

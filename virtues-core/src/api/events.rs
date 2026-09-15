@@ -38,11 +38,13 @@
 //!   the unit and dropping OTHER lines — which would make this feature a cause
 //!   of blindness rather than a cure for it.
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::PgPool;
 
+// No `State` extractor: this handler touches no database. `AuthUser` pulls the
+// pool out of the router state itself, so taking one here would be an
+// extractor that does nothing but look load-bearing.
 use crate::middleware::auth::AuthUser;
 
 /// Most events accepted in one request. A client batches; a client that has
@@ -98,11 +100,7 @@ pub struct EventAck {
 }
 
 /// `POST /api/events`
-pub async fn report_handler(
-    State(_pool): State<PgPool>,
-    user: AuthUser,
-    Json(batch): Json<EventBatch>,
-) -> impl IntoResponse {
+pub async fn report_handler(user: AuthUser, Json(batch): Json<EventBatch>) -> impl IntoResponse {
     if !crate::middleware::rate_limit::event_limiter().check_and_record(&user.device_id) {
         // 429 with no body: the client's queue drops these on any non-2xx, and
         // a client that is over budget is by definition not in a state where

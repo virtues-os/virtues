@@ -113,6 +113,19 @@ Read against the code on 2026-09-09.
   into a 404 every ten seconds forever on any box older than this route —
   which is the normal state after a client release, since phones update
   themselves and boxes do not. A 404 now stops reporting for the session.
+- **Found in the post-build audit, and fixed** (`apps/web/src/lib/log.test.ts`
+  pins all three):
+  1. A full queue sent `MAX_BATCH` events **plus** the drop-notice, and the
+     server takes the first `MAX_BATCH` — so the notice, appended last, was
+     discarded exactly when there was something to report. A slot is now
+     reserved for it.
+  2. A `401` retried every ten seconds forever. The airlock and pairing
+     screens are unpaired by definition and are where a failure is most
+     likely. It now keeps the backlog (pairing can still happen in this
+     session) but stops the clock, degrading to one attempt per new event.
+  3. The flush timer ran forever once started, waking a phone every ten
+     seconds over an empty queue. It now stops when the queue drains and
+     re-arms on the next event.
 - **Deferred, deliberately:** moving the 135 existing `console.*` calls onto
   the wrapper. Nearly all sit in `catch` blocks, which means the code already
   handled the failure; the errors that break a screen are the uncaught ones,

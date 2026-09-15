@@ -118,6 +118,16 @@ function ensureTimer(): void {
 	}, FLUSH_INTERVAL);
 }
 
+function stopTimer(): void {
+	if (timer === null) return;
+	try {
+		clearInterval(timer);
+	} catch {
+		/* rule 1 */
+	}
+	timer = null;
+}
+
 /**
  * Post what is queued. Never rejects.
  *
@@ -136,12 +146,18 @@ export async function flush(): Promise<void> {
 	if (standDown || inFlight || queue.length === 0) return;
 	if (typeof fetch !== 'function') return;
 
-	const batch = queue.slice(0, MAX_BATCH);
+	const lost = dropped;
+	// Reserve a slot when a drop-notice is going to be appended. Without this,
+	// a full queue produces MAX_BATCH real events plus the notice, the server
+	// takes the first MAX_BATCH, and the notice — the LAST entry — is the one
+	// discarded. It would go missing in exactly the situation it exists to
+	// report, which is the quietly-incomplete picture this file is against.
+	const room = lost > 0 ? MAX_BATCH - 1 : MAX_BATCH;
+	const batch = queue.slice(0, room);
 	// Captured BEFORE the synthetic drop-notice is appended: this is how many
 	// real queued events the batch consumes, and mixing the two up is how you
 	// get a logger that silently eats one event per flush.
 	const consumed = batch.length;
-	const lost = dropped;
 	inFlight = true;
 	try {
 		if (lost > 0) {
@@ -162,6 +178,21 @@ export async function flush(): Promise<void> {
 			// Only drop what we actually sent — more may have queued meanwhile.
 			queue = queue.slice(consumed);
 			dropped = 0;
+			// Nothing left to say: stop the clock. `enqueue` re-arms it. A timer
+			// that keeps firing every ten seconds over an empty queue is a
+			// periodic wakeup on someone's phone in exchange for nothing.
+			if (queue.length === 0) stopTimer();
+		} else if (res.status === 401) {
+			// Not paired (yet). Keep the backlog — pairing can happen later in
+			// this same session and the errors from BEFORE it are the
+			// interesting ones — but stop the clock, or an unpaired device
+			// posts a 401 every ten seconds forever. That is not hypothetical:
+			// the airlock and the pairing screens are unpaired by definition
+			// and are where a failure is most likely.
+			//
+			// `enqueue` re-arms the timer, so this degrades to one attempt per
+			// new event instead of one per tick.
+			stopTimer();
 		} else if (res.status === 404) {
 			// This box is older than this route, and no amount of retrying will
 			// change that. An app is always liable to be ahead of a box: phones
@@ -175,10 +206,7 @@ export async function flush(): Promise<void> {
 			standDown = true;
 			queue = [];
 			dropped = 0;
-			if (timer !== null) {
-				clearInterval(timer);
-				timer = null;
-			}
+			stopTimer();
 		} else if (res.status === 429) {
 			// Over budget. The box has already logged that it is dropping this
 			// device's reports, so re-sending the same batch would only spend
