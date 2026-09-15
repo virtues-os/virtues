@@ -342,6 +342,57 @@ pub async fn due_articles(pool: &sqlx::PgPool, limit: i64) -> Result<Vec<DueArti
     .map_err(|e| Error::Database(format!("Failed to select due articles: {e}")))
 }
 
+/// A hash of what an article rests on.
+///
+/// The third gate. `due_articles` answers "has it rested long enough"; this
+/// answers "did anything actually change". An article whose evidence is
+/// identical to its last edition is not rewritten, which is what lets the
+/// schedule be hourly without the cost being hourly.
+///
+/// Counts and latest timestamps rather than content: the same shape
+/// `wiki_days.sources_fingerprint` has used to gate re-segmentation since it
+/// shipped, and cheap enough to run on every candidate every hour. It moves
+/// when a ref is added, a note is accepted, or the person edits an authored
+/// field — which is exactly the set of things that should earn a new edition.
+pub async fn evidence_fingerprint(
+    pool: &sqlx::PgPool,
+    article: &DueArticle,
+) -> Result<String> {
+    use sha2::Digest;
+
+    // Refs touching the subject, and notes about it. Both are counted with
+    // their latest timestamp, so a retraction moves the hash as surely as an
+    // addition.
+    let (refs, last_ref): (i64, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT count(*), max(occurred_at) FROM wiki_refs WHERE entity_id = $1",
+    )
+    .bind(&article.subject_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to count refs: {e}")))?;
+
+    let (notes, last_note): (i64, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT count(*), max(resolved_at) FROM wiki_notes \
+         WHERE subject_type = $1 AND subject_id = $2 AND resolved_at IS NOT NULL",
+    )
+    .bind(&article.subject_type)
+    .bind(&article.subject_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to count notes: {e}")))?;
+
+    let mut h = sha2::Sha256::new();
+    h.update(
+        format!(
+            "refs:{refs}:{};notes:{notes}:{};",
+            last_ref.map(|t| t.timestamp()).unwrap_or(0),
+            last_note.map(|t| t.timestamp()).unwrap_or(0),
+        )
+        .as_bytes(),
+    );
+    Ok(format!("{:x}", h.finalize()))
+}
+
 /// Record that the editor has looked at an article.
 ///
 /// Called on EVERY outcome, including a refusal: an article whose edit failed

@@ -1,0 +1,55 @@
+name = "Wiki Editor"
+description = "Keeps the wiki's articles true as the record grows."
+owner = "system"
+command = ["wiki_editor"]
+triggers = ["cron", "manual", "tool"]
+schedule = "0 0 * * * *"
+# Off until a box opts in. The editor writes prose into pages a person reads,
+# and the first run must be something they chose rather than something they
+# discovered.
+default_enabled = false
+
+# A ceiling, because the doctrine that applies to everything scheduled applies
+# here: anything on a timer that calls a model gets a cap, or it is a hope
+# rather than a limit. One article per run, at most one run an hour.
+[config.limits]
+max_llm_cost = 0.30
+
+agent = """
+The subprocess has already chosen the article and told you which one. If it
+reported that nothing is due, reply "nothing due" and stop — do not go looking
+for work.
+
+Your job is ONE revision of ONE article, and the rules for writing it are in
+your instructions above. This says only how to go about it.
+
+RESEARCH BEFORE YOU WRITE. The article is about a subject, and the record is
+what you have to say about it. Read the article first with `get_page_content`
+so you know what is already there, then go and look:
+
+- `semantic_search` for the evidence the subject has accumulated — what has
+  happened since the article was last written is the thing you are here for.
+- `sql_query` when a claim depends on a number or a span. "The first in
+  months" is a claim about the record; check it rather than writing it.
+
+A handful of tool calls, not a survey. You are looking for what CHANGED, not
+rebuilding the subject from nothing.
+
+THEN DECIDE WHETHER TO WRITE AT ALL. New evidence is not the same as a reason
+to edit. If what you found is more of what the article already describes, the
+honest outcome is to leave it alone: say so and stop. An article rewritten
+every hour to say the same thing in new words is worse than one that sits
+still.
+
+WHEN YOU DO WRITE, call `revise_article` once, with the whole article as it
+should now read. Everything still true must appear again unchanged; anything
+you leave out is deleted. The box works out what actually changed and applies
+only that, so a small change stays a small change in the page's history.
+
+If the call comes back refused, read the reason and try again. The usual
+reason is that your text dropped or reworded something the owner wrote — you
+may not do that, not even to improve it. Put their sentence back exactly as it
+was and keep your edit to your own prose.
+
+Reply with one line: what you changed, or that you left it alone.
+"""
