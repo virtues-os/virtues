@@ -6,6 +6,7 @@
 -->
 
 <script lang="ts">
+	import { subjectHref } from "$lib/wiki/links";
 	import type { OrganizationPage as OrganizationPageType } from "$lib/wiki/types";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
 	import SubjectBacklinks from "./SubjectBacklinks.svelte";
@@ -148,7 +149,7 @@
 					<ul class="footer-list">
 						{#each page.keyContacts as person}
 							<li>
-								<a href="/wiki/{person.pageId}" class="footer-link">
+								<a href={subjectHref(person.pageId) ?? "#"} class="footer-link">
 									<span class="link-text">{person.displayName}</span>
 									{#if person.preview}
 										<span class="link-preview">{person.preview}</span>
@@ -167,7 +168,7 @@
 					<ul class="footer-list">
 						{#each page.locations as place}
 							<li>
-								<a href="/wiki/{place.pageId}" class="footer-link">
+								<a href={subjectHref(place.pageId) ?? "#"} class="footer-link">
 									<span class="link-text">{place.displayName}</span>
 								</a>
 							</li>
@@ -183,7 +184,7 @@
 					<ul class="footer-list">
 						{#each page.narrativeContext as context}
 							<li>
-								<a href="/wiki/{context.pageId}" class="footer-link">
+								<a href={subjectHref(context.pageId) ?? "#"} class="footer-link">
 									<span class="link-text">{context.displayName}</span>
 								</a>
 							</li>

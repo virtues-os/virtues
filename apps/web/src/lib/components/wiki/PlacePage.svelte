@@ -6,6 +6,7 @@
 -->
 
 <script lang="ts">
+	import { subjectHref } from "$lib/wiki/links";
 	import type { PlacePage as PlacePageType } from "$lib/wiki/types";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
@@ -224,7 +225,7 @@
 					<ul class="footer-list">
 						{#each page.associatedPeople as person}
 							<li>
-								<a href="/wiki/{person.pageId}" class="footer-link">
+								<a href={subjectHref(person.pageId) ?? "#"} class="footer-link">
 									<span class="link-text">{person.displayName}</span>
 								</a>
 							</li>
@@ -240,7 +241,7 @@
 					<ul class="footer-list">
 						{#each page.narrativeContext as context}
 							<li>
-								<a href="/wiki/{context.pageId}" class="footer-link">
+								<a href={subjectHref(context.pageId) ?? "#"} class="footer-link">
 									<span class="link-text">{context.displayName}</span>
 								</a>
 							</li>

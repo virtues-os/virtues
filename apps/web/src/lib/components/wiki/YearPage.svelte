@@ -6,6 +6,7 @@
 -->
 
 <script lang="ts">
+	import { subjectHref } from "$lib/wiki/links";
 	import type { YearPage as YearPageType } from "$lib/wiki/types";
 	import { listDayActivity } from "$lib/wiki/api";
 	import { toActivityLevels } from "$lib/wiki/activity";
@@ -131,7 +132,7 @@
 					<ul class="footer-list">
 						{#each page.chapters as chapter}
 							<li>
-								<a href="/wiki/{chapter.pageId}" class="footer-link">
+								<a href={subjectHref(chapter.pageId) ?? "#"} class="footer-link">
 									<span class="link-text">{chapter.displayName}</span>
 									<span class="link-type">chapter</span>
 								</a>
@@ -150,7 +151,7 @@
 					<ul class="footer-list">
 						{#each page.keyPeople as person}
 							<li>
-								<a href="/wiki/{person.pageId}" class="footer-link">
+								<a href={subjectHref(person.pageId) ?? "#"} class="footer-link">
 									<span class="link-text">{person.displayName}</span>
 								</a>
 							</li>
@@ -168,7 +169,7 @@
 					<ul class="footer-list">
 						{#each page.keyPlaces as place}
 							<li>
-								<a href="/wiki/{place.pageId}" class="footer-link">
+								<a href={subjectHref(place.pageId) ?? "#"} class="footer-link">
 									<span class="link-text">{place.displayName}</span>
 								</a>
 							</li>
@@ -186,7 +187,7 @@
 					<ul class="footer-list">
 						{#each page.significantDays as day}
 							<li>
-								<a href="/wiki/{day.pageId}" class="footer-link">
+								<a href={subjectHref(day.pageId) ?? "#"} class="footer-link">
 									<span class="link-text">{day.displayName}</span>
 								</a>
 							</li>
