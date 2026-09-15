@@ -780,9 +780,18 @@ impl YjsState {
             (new_content, update_bytes)
         };
 
-        self.save_queue
-            .queue_save(page_id.to_string(), update_bytes)
-            .await;
+        // Persisted NOW rather than queued, and that is load-bearing rather
+        // than cautious. `get_or_create` treats `yjs_state IS NULL` as "this
+        // page was rewritten outside the CRDT" and reseeds the doc from
+        // `content` — correct when the nightly narrator writes through the
+        // pool, and fatal here: a page whose CRDT state has never been saved
+        // (every article, until its first edit) would have this edit thrown
+        // away by the very next reader inside the two-second debounce window.
+        // The debounce is right for a person typing and wrong for a machine
+        // edit the caller is about to record elsewhere.
+        save_and_materialize(&self.pool, page_id, &update_bytes)
+            .await
+            .map_err(|e| format!("Failed to persist the edit: {e}"))?;
 
         Ok(new_content)
     }

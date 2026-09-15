@@ -423,6 +423,32 @@ pub async fn record_pass(
     Ok(())
 }
 
+/// Record that a new edition exists: what the editor wrote, and when.
+///
+/// Deliberately does NOT touch `input_fingerprint`. The fingerprint is stored
+/// by the scheduler before the agent runs, so that a revision which fails does
+/// not come back next hour to fail the same way; writing it again here would
+/// be harmless, but writing an empty one — which is all this function knows —
+/// would erase the very thing that stops the loop.
+pub async fn record_edition(
+    pool: &sqlx::PgPool,
+    article_id: &str,
+    machine_text: &str,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE wiki_articles \
+         SET machine_text = $2, last_written_at = now(), update_requested_at = NULL, \
+             updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(article_id)
+    .bind(machine_text)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to record edition: {e}")))?;
+    Ok(())
+}
+
 /// Store what the person has done to an article since the editor last wrote.
 pub async fn record_provenance(
     pool: &sqlx::PgPool,
@@ -564,6 +590,7 @@ pub async fn revise_article(
         .await;
     }
     record_provenance(pool, &article.id, &theirs, &removed).await?;
+    record_edition(pool, &article.id, &applied).await?;
     Ok(change)
 }
 
@@ -705,6 +732,148 @@ mod tests {
         .await
         .unwrap();
         a.id
+    }
+
+    /// A person, an article, and the live document layer — everything
+    /// `revise_article` touches except the model, which is exactly the half
+    /// worth testing: the model's output is an argument here, so every
+    /// guarantee after it can be proven without spending a call.
+    #[cfg(test)]
+    async fn article_fixture(
+        pool: &sqlx::PgPool,
+        first_draft: &str,
+    ) -> (crate::server::yjs::YjsState, String, String) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_z', 'Zoe')")
+            .execute(pool)
+            .await
+            .unwrap();
+        let a = crate::api::wiki_articles::create_article(
+            pool, "person", "person_z", "Zoe", first_draft,
+        )
+        .await
+        .unwrap();
+        // The editor knows what it last wrote; without that there is no
+        // provenance, because provenance IS the difference from it.
+        record_pass(pool, &a.id, "fp-0", Some(first_draft)).await.unwrap();
+        (
+            crate::server::yjs::YjsState::new(pool.clone()),
+            a.id,
+            a.page_id,
+        )
+    }
+
+    #[sqlx::test]
+    async fn a_revision_lands_as_a_small_diff_with_a_summary_that_counts(pool: sqlx::PgPool) {
+        let (yjs, _id, page_id) =
+            article_fixture(&pool, "You met Zoe at the shop. She fixes bicycles.").await;
+
+        let change = revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop. She fixes bicycles. You now ride together on Sundays.",
+            "added the Sunday rides",
+        )
+        .await
+        .unwrap();
+        assert!(change.contains("+1 sentence"), "{change}");
+
+        let live = yjs.read_text(&page_id).await.unwrap();
+        assert!(live.contains("ride together on Sundays"));
+        assert!(
+            live.starts_with("You met Zoe at the shop."),
+            "what was already true is left exactly as it was"
+        );
+
+        let (by, desc): (String, Option<String>) = sqlx::query_as(
+            "SELECT created_by, description FROM app_page_versions \
+             WHERE page_id = $1 ORDER BY version_number DESC LIMIT 1",
+        )
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(by, "ai");
+        let desc = desc.unwrap();
+        assert!(desc.contains("added the Sunday rides"), "the editor's why: {desc}");
+        assert!(
+            desc.contains("+1 sentence"),
+            "and a count it cannot flatter itself with: {desc}"
+        );
+    }
+
+    #[sqlx::test]
+    async fn the_owners_sentence_survives_a_revision_that_tried_to_reword_it(
+        pool: sqlx::PgPool,
+    ) {
+        let (yjs, id, page_id) = article_fixture(&pool, "You met Zoe at the shop.").await;
+
+        // The person adds a line of their own, the way they actually would.
+        yjs.apply_text_diff(
+            &page_id,
+            "You met Zoe at the shop.",
+            "You met Zoe at the shop. She taught me to ride again.",
+        )
+        .await
+        .unwrap();
+
+        // The editor's next pass tries to smooth their sentence into its own
+        // voice. This is the whole reason the invariant exists.
+        let refused = revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop. She taught you to ride again, after some years away.",
+            "tidied",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(refused.contains("did not survive"), "{refused}");
+
+        let live = yjs.read_text(&page_id).await.unwrap();
+        assert!(
+            live.contains("She taught me to ride again."),
+            "a refused edit must leave the document exactly as it was"
+        );
+
+        // Their words were recorded on the way through, so the next attempt is
+        // told what it may not touch.
+        let theirs: serde_json::Value =
+            sqlx::query_scalar("SELECT theirs FROM wiki_articles WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(theirs[0], "She taught me to ride again.");
+
+        // And a version carrying THEIR edit was cut before the machine's, so
+        // the history reads in the order the writing happened.
+        let authors: Vec<String> = sqlx::query_scalar(
+            "SELECT created_by FROM app_page_versions WHERE page_id = $1 ORDER BY version_number",
+        )
+        .bind(&page_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(authors.contains(&"user".to_string()), "{authors:?}");
+    }
+
+    #[sqlx::test]
+    async fn an_article_the_owner_switched_off_is_not_revised(pool: sqlx::PgPool) {
+        let (yjs, id, _page) = article_fixture(&pool, "You met Zoe at the shop.").await;
+        sqlx::query("UPDATE wiki_articles SET maintenance = 'never' WHERE id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = revise_article(&pool, &yjs, "person", "person_z", "Anything.", "why")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("maintenance off"), "{err}");
     }
 
     #[sqlx::test]
