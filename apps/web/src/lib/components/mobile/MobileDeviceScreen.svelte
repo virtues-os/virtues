@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * "This device" — the native collector dashboard (iOS/Android shell only).
+	 * Settings — the native collector dashboard (iOS/Android shell only).
 	 *
 	 * This phone as a data collector. The list keeps every stream to one line
 	 * — name, state, a chevron — and each stream's controls (enable, stop,
@@ -8,13 +8,16 @@
 	 * page and the list read the same status objects, so they cannot
 	 * disagree.
 	 *
-	 * Below the streams: the link to the server, a short recent-activity
-	 * strip (three runs in words, the rest as dots), and About. The radio
-	 * counters that used to headline the Sync card are the battery bench's
-	 * instruments, not settings; they sit under About now.
+	 * Around the streams: the link to the server, Sync with Recent activity
+	 * as a row beneath it (the full log is its own page — it used to sit
+	 * inline as three runs and a strip of dots, which made the settings list
+	 * scroll past a log nobody had asked to read), the profile, and About.
+	 * The radio counters that used to headline the Sync card are the battery
+	 * bench's instruments, not settings; they sit under About now.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { invoke } from "@tauri-apps/api/core";
 	import { getVersion } from "@tauri-apps/api/app";
@@ -87,6 +90,8 @@
 	let error = $state<string | null>(null);
 	/** Which stream's page is open, if any. */
 	let open = $state<StreamKey | null>(null);
+	/** The Recent activity page. */
+	let activityOpen = $state(false);
 
 	/** Location fixes only — the probe also writes 0,0 marker rows (start,
 	 * mode changes, regions) for the field log, which are not places. */
@@ -141,11 +146,12 @@
 		}
 		return out;
 	});
-	/** Three runs in words; the rest as a strip of dots. */
-	const SHOWN_RUNS = 3;
-	let activityExpanded = $state(false);
-	const shownRuns = $derived(activityExpanded ? runs : runs.slice(0, SHOWN_RUNS));
-	const dotRuns = $derived(activityExpanded ? [] : runs.slice(SHOWN_RUNS));
+	/** The activity row's one line, and the page's status. */
+	const activityLine = $derived(
+		fixes.length === 0
+			? "No location fixes yet"
+			: `${fixes.length} location fixes · last ${rel(lastTs ?? "")}`,
+	);
 
 	async function load() {
 		if (!mobileLayout.isNativeShell) {
@@ -172,8 +178,10 @@
 				radioResp,
 				ver,
 			] = await Promise.all([
+				// A page's worth of history now that the log has a page; 60 was
+				// sized for an inline strip that showed three runs.
 				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
-					payload: { limit: 60 },
+					payload: { limit: 300 },
 				}),
 				invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
@@ -551,7 +559,9 @@
 		</div>
 	</div>
 
-	<div class="group-label">Streams</div>
+	<!-- "This phone", not "Streams": under a page titled Settings, the group
+	     label is what says these rows are about the device in hand. -->
+	<div class="group-label">This phone</div>
 	<div class="card">
 		{#each STREAMS as s (s.key)}
 			{@const on = streamOn(s.key)}
@@ -589,53 +599,40 @@
 				{syncingNow ? "Syncing…" : "Sync now"}
 			</button>
 		</div>
-	</div>
-
-	<div class="group-label">
-		<span>Recent activity</span>
-		<button class="refresh" onclick={load} aria-label="Refresh">
-			<Icon icon="ri:refresh-line" width={15} />
+		<!-- What the phone has recorded lately, as a door (VIR-348). It sits
+		     under Sync because that is the question it answers: is anything
+		     being kept, and when was the last of it. -->
+		<button class="stream link" type="button" onclick={() => (activityOpen = true)}>
+			<div class="s-icon" class:on={enabled}>
+				<Icon icon="ri:history-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">Recent activity</div>
+				<div class="s-sub">{loading ? "Loading…" : activityLine}</div>
+			</div>
+			<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
 		</button>
 	</div>
+
+	<!-- The profile lives on the box (name, appearance); this is its only door
+	     on the phone since the drawer's gear went. A route push, so the way
+	     back is the drawer, like every other page on the phone. -->
+	<div class="group-label">You</div>
 	<div class="card">
-		{#if loading}
-			<div class="empty">Loading…</div>
-		{:else if error}
-			<div class="empty err">{error}</div>
-		{:else if runs.length === 0}
-			<div class="empty">No location fixes yet. Turn on Location to see them here.</div>
-		{:else}
-			{#each shownRuns as r, i (i)}
-				<div class="log">
-					<span class="l-dot" class:bg={r.appState !== "active"}></span>
-					<div class="l-body">
-						<div class="l-top">
-							<span class="l-time">{rel(r.ts)}</span>
-							<span class="l-state">{r.appState === "active" ? "in use" : "background"}</span>
-							{#if r.count > 1}<span class="l-count">×{r.count}</span>{/if}
-						</div>
-						<div class="l-sub">
-							{r.lat.toFixed(4)}, {r.lon.toFixed(4)}
-							{#if r.launchReason && r.launchReason !== "none"}· {r.launchReason}{/if}
-						</div>
-					</div>
-				</div>
-			{/each}
-			{#if dotRuns.length > 0}
-				<button class="dots" type="button" onclick={() => (activityExpanded = true)}>
-					<span class="dots-row">
-						{#each dotRuns as r, i (i)}
-							<span class="l-dot" class:bg={r.appState !== "active"} title={rel(r.ts)}></span>
-						{/each}
-					</span>
-					<span class="dots-cap">{dotRuns.length} earlier · back to {rel(dotRuns[dotRuns.length - 1].ts)}</span>
-				</button>
-			{:else if activityExpanded && runs.length > SHOWN_RUNS}
-				<button class="dots" type="button" onclick={() => (activityExpanded = false)}>
-					<span class="dots-cap">Show less</span>
-				</button>
-			{/if}
-		{/if}
+		<button
+			class="stream link"
+			type="button"
+			onclick={() => windowShellStore.openTabFromRoute("/virtues/you", { label: "Profile" })}
+		>
+			<div class="s-icon">
+				<Icon icon="ri:user-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">Profile</div>
+				<div class="s-sub">Your name, and how the app looks</div>
+			</div>
+			<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+		</button>
 	</div>
 
 	<div class="group-label">About</div>
@@ -715,6 +712,48 @@
 	</MobileStreamPage>
 {/if}
 
+{#if activityOpen}
+	<!-- Every run, newest first, in the stream page's frame: the same back
+	     header and status card the streams get, no primary action beyond a
+	     refresh. Consecutive fixes at one spot are one run with a count, so
+	     a phone that sat on a desk all afternoon is one line, not forty. -->
+	<MobileStreamPage
+		title="Recent activity"
+		icon="ri:history-line"
+		status={activityLine}
+		on={enabled}
+		description="Location fixes this phone has recorded, newest first. Fixes at the same spot are collapsed into one run with a count; a filled dot means the app was in the background when it recorded."
+		action={{ label: loading ? "Loading…" : "Refresh", onclick: load, disabled: loading }}
+		{error}
+		onBack={() => (activityOpen = false)}
+	>
+		<div class="card activity">
+			{#if loading && runs.length === 0}
+				<div class="empty">Loading…</div>
+			{:else if runs.length === 0}
+				<div class="empty">No location fixes yet. Turn on Location to see them here.</div>
+			{:else}
+				{#each runs as r, i (i)}
+					<div class="log">
+						<span class="l-dot" class:bg={r.appState !== "active"}></span>
+						<div class="l-body">
+							<div class="l-top">
+								<span class="l-time">{rel(r.ts)}</span>
+								<span class="l-state">{r.appState === "active" ? "in use" : "background"}</span>
+								{#if r.count > 1}<span class="l-count">×{r.count}</span>{/if}
+							</div>
+							<div class="l-sub">
+								{r.lat.toFixed(4)}, {r.lon.toFixed(4)}
+								{#if r.launchReason && r.launchReason !== "none"}· {r.launchReason}{/if}
+							</div>
+						</div>
+					</div>
+				{/each}
+			{/if}
+		</div>
+	</MobileStreamPage>
+{/if}
+
 <style>
 	.device {
 		padding-bottom: 8px;
@@ -726,13 +765,6 @@
 		font-size: 11px;
 		color: var(--color-foreground-muted);
 		margin: 18px 4px 8px;
-	}
-	.refresh {
-		display: flex;
-		border: 0;
-		background: transparent;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
 	}
 	.card {
 		background: var(--color-surface);
@@ -852,7 +884,10 @@
 		margin-top: 2px;
 	}
 
-	/* Recent activity: three runs in words, the rest as dots. */
+	/* Recent activity: one run per line, on its own page. */
+	.card.activity {
+		margin-top: 16px;
+	}
 	.log {
 		display: flex;
 		align-items: flex-start;
@@ -904,32 +939,6 @@
 		font-variant-numeric: tabular-nums;
 		margin-top: 1px;
 	}
-	.dots {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 6px;
-		width: 100%;
-		padding: 10px 14px 12px;
-		border: 0;
-		border-top: 1px solid var(--color-border);
-		background: transparent;
-		cursor: pointer;
-		text-align: left;
-	}
-	.dots-row {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 5px;
-	}
-	.dots-row .l-dot {
-		margin-top: 0;
-	}
-	.dots-cap {
-		font-size: 11px;
-		color: var(--color-foreground-muted);
-	}
-
 	.about {
 		display: flex;
 		align-items: center;
@@ -963,8 +972,5 @@
 		padding: 14px;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
-	}
-	.empty.err {
-		color: var(--color-foreground);
 	}
 </style>
