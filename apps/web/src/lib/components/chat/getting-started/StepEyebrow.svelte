@@ -1,14 +1,18 @@
 <!--
-	The number over a beat of the room: "2 of 4 · Introductions".
+	The heading over a beat of the room: "1 of 4 · Connect AI", as an h2.
 
-	This is where progress lives now — in the thread, on the reading axis,
-	the way a conversational form numbers each question. The line the room
-	asks a step with carries it; if a step was settled before it was ever
-	asked, the settling line carries it instead. Scrolling the thread IS
-	reading the progress, and the last eyebrow is where you are.
+	Progress lives in the thread, on the reading axis, the way a
+	conversational form numbers each question — and as a section heading
+	rather than a caption, so the room has the hierarchy of an authored
+	page: one title, four sections, each with its ask, the answer, and the
+	settled line under it. The line the room asks a step with carries it;
+	a step settled before it was ever asked has its settling line carry it
+	instead. The last heading is where you are.
 
-	Ink while the step is the one being asked; quiet once it has settled.
-	No check, no glyph: the number and the weight of the ink are the state.
+	Serif, like the h1 and the markdown's own h2, but a size under it: four
+	of these in a chat at document size would shout. Weight 400 — the
+	serif is never bold. The count is the same serif, quiet; the title is
+	ink while the step is being asked and quiet once it has settled.
 -->
 <script lang="ts">
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -22,36 +26,40 @@
 </script>
 
 {#if step}
-	<p class="eyebrow" class:current class:skipped={step.status === "skipped"}>
+	<h2 class="step" class:current class:skipped={step.status === "skipped"}>
 		<span class="n">{index + 1} of {steps.length}</span>
 		<span class="sep" aria-hidden="true">·</span>
 		<span class="t">{step.title}</span>
-	</p>
+	</h2>
 {/if}
 
 <style>
-	.eyebrow {
+	.step {
 		display: flex;
 		align-items: baseline;
-		gap: 0.4rem;
-		margin: 0 0 0.35rem;
-		font-size: 0.8125rem;
-		line-height: 1.4;
-		color: var(--color-foreground-subtle);
+		gap: 0.5rem;
+		/* A section break wants more air above it than the room's 1rem line
+		   rhythm; the container gap supplies 1rem and this adds the rest. As
+		   PADDING: the chat zeroes margin-top on every heading inside a
+		   message (`.message-wrapper :global(h2)`), and out-specifies this. */
+		margin: 0 0 0.5rem;
+		padding-top: 0.75rem;
+		font-family: var(--md-heading-major-family, var(--font-serif));
+		font-size: 1.25rem;
+		font-weight: 400;
+		line-height: 1.3;
 		font-variant-numeric: tabular-nums;
+		color: var(--color-foreground-muted);
 		user-select: none;
 	}
-	.eyebrow.current {
+	.step.current .t {
 		color: var(--color-foreground);
 	}
-	.eyebrow.current .t {
-		font-weight: 500;
-	}
-	.eyebrow.skipped .t {
+	.step.skipped .t {
 		text-decoration: line-through;
 		text-decoration-thickness: 1px;
 	}
 	.sep {
-		opacity: 0.6;
+		opacity: 0.5;
 	}
 </style>
