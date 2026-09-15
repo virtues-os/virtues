@@ -508,11 +508,24 @@ fn script(state: &GettingStartedState) -> Vec<(String, String)> {
 /// truncated one's `length` — are not the room's to remove.
 pub async fn narrate(pool: &PgPool, state: &GettingStartedState) -> Result<()> {
     let lines = script(state);
-    let wanted: Vec<String> = lines
+    let mut wanted: Vec<String> = lines
         .iter()
         .filter(|(_, text)| !text.is_empty())
         .map(|(line, _)| subject_of(line))
         .collect();
+    // A question that has been answered STAYS. The script only ever carries
+    // the ask for the step being waited on, so reconciling to it alone
+    // deleted each ask the moment its step settled — and a transcript of a
+    // conversation with all the questions removed reads as a list of
+    // announcements, with the person's own replies sitting under nothing.
+    // Settled steps therefore keep whatever ask they were given. They are
+    // not re-spoken: a step that was already done on arrival was never
+    // asked, and should not gain a question it never had.
+    for step in &state.steps {
+        if step.status != StepStatus::Open {
+            wanted.push(subject_of(&format!("ask:{}", step.id)));
+        }
+    }
 
     // Unsay first, so what remains is only ever a prefix of the script and the
     // appends below land in the script's own order.
@@ -719,6 +732,27 @@ mod tests {
         // in the script, so narrate() removes them.
         let back = state([Open, Open, Open, Open], false, false);
         assert_eq!(subjects(&back), vec!["welcome", "ask:connect_ai"]);
+    }
+
+    /// A question that has been answered is still part of the conversation.
+    /// The script carries only the current ask, so reconciling to the script
+    /// alone erased each one as its step settled.
+    #[test]
+    fn an_answered_ask_is_not_unsaid() {
+        use StepStatus::*;
+        let s = state([Done, Open, Open, Open], true, false);
+        // The script itself moves on ...
+        let script_subjects: Vec<String> = script(&s).into_iter().map(|(l, _)| l).collect();
+        assert!(!script_subjects.iter().any(|l| l == "ask:connect_ai"));
+        // ... but the settled step keeps whatever it was asked, so the line
+        // survives narrate()'s reconciliation.
+        let kept: Vec<String> = s
+            .steps
+            .iter()
+            .filter(|st| st.status != StepStatus::Open)
+            .map(|st| format!("gs:ask:{}", st.id))
+            .collect();
+        assert!(kept.iter().any(|l| l == "gs:ask:connect_ai"));
     }
 
     #[test]

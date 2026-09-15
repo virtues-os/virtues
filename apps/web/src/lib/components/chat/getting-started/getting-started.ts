@@ -70,9 +70,11 @@ export function applyInterviewOpening(
 		(t >= boundary ? after : before).push(m);
 	}
 	const lines = [
-		// The heading and its lead share one message: the plate renders
-		// after that message's text, so the lead stands between them.
-		opening(GS_INTERVIEW_OPENING_ID, "## The story of your life: chapters & identity\n\n" + INTERVIEW_OPENING_LEAD),
+		// No heading of its own: the step's own "4 of 4 · Your story" stands
+		// directly above this, and two headings for one thing read as two
+		// things. The lead carries the message, and the plate renders after
+		// its text as before.
+		opening(GS_INTERVIEW_OPENING_ID, INTERVIEW_OPENING_LEAD),
 		opening("gs-iv-body", INTERVIEW_OPENING_BODY),
 		opening("gs-iv-ask", INTERVIEW_OPENING_ASK),
 	];
