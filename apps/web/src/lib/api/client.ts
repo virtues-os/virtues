@@ -2257,6 +2257,8 @@ export interface GettingStartedStep {
 	underway?: boolean;
 	/** The person moved past this step themselves (skip/continue). */
 	acknowledged?: boolean;
+	/** Integrations in place — on the step that counts them. */
+	connected?: number;
 }
 
 export interface GettingStartedState {

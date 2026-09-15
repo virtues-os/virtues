@@ -37,11 +37,8 @@ export const INTERVIEW_OPENING_LEAD =
 	"so that it keeps the record of your life the way you would.";
 
 export const INTERVIEW_OPENING_BODY =
-	"In order to help the Virtues platform generate more powerful insights " +
-	"in your life, we’ll guide you in briefly describing your past " +
-	"chapters.\n\n" +
-	"We define chapters as seven major arcs in your life; see the table " +
-	"below for an example.\n\n" +
+	"A chapter is one of the major arcs of a life, usually about seven of " +
+	"them. The table below is an example.\n\n" +
 	// A made-up life (see ChapterLifeline.svelte, which draws the same
 	// one). The interview prompt tells the model this table is an
 	// example, and the repo's rule is that nothing from a real life ships.

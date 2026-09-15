@@ -155,7 +155,7 @@
 			<Choices>
 				<Act variant="primary" onclick={subscribe}>Subscribe · $20/mo</Act>
 				<Act onclick={() => open("signin")}>Sign in</Act>
-				<Act onclick={() => open("endpoint")}>Own endpoint</Act>
+				<Act onclick={() => open("endpoint")}>My own models</Act>
 			</Choices>
 		</div>
 	{:else if mode === "signin" || mode === "sending"}

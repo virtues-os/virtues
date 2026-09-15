@@ -57,6 +57,10 @@ pub struct Step {
     /// Started but not done (the interview has begun, no document yet).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub underway: bool,
+    /// Integrations in place, for the step that counts them: the ask and
+    /// the settled line read differently with two connected than with none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connected: Option<i64>,
     /// The person has moved past this step themselves (the dismissed list
     /// carries it). Read for a step that is done by rows before the walk
     /// reached it — integrations already in place — so the room can still
@@ -141,8 +145,8 @@ fn title(id: &str) -> &'static str {
     match id {
         "connect_ai" => "Connect AI",
         "introductions" => "Introductions",
-        "connect_world" => "Connect your world",
-        "interview" => "In your own words",
+        "connect_world" => "Integrations",
+        "interview" => "Your story",
         _ => "",
     }
 }
@@ -230,14 +234,10 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("count integrations: {e}")))?;
+    // `detail` is the one thing still to see to, if any — a collector
+    // running with a permission denied. The count has its own field.
     let world_detail = if setup.degraded.is_empty() {
-        (integrations > 0).then(|| {
-            if integrations == 1 {
-                "1 integration connected".to_string()
-            } else {
-                format!("{integrations} integrations connected")
-            }
-        })
+        None
     } else {
         let names: Vec<String> = setup
             .degraded
@@ -269,6 +269,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
                 None
             },
             detail: None,
+            connected: None,
             underway: false,
             acknowledged: skipped("connect_ai"),
         },
@@ -278,6 +279,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             status: status("introductions", named),
             via: None,
             detail: None,
+            connected: None,
             underway: false,
             acknowledged: skipped("introductions"),
         },
@@ -287,6 +289,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             status: status("connect_world", world),
             via: None,
             detail: world_detail,
+            connected: Some(integrations),
             underway: false,
             acknowledged: skipped("connect_world"),
         },
@@ -296,6 +299,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             status: status("interview", interview_done),
             via: None,
             detail: None,
+            connected: None,
             underway: interview_started && !interview_done,
             acknowledged: skipped("interview"),
         },
@@ -399,24 +403,27 @@ fn subject_of(line: &str) -> String {
     format!("gs:{line}")
 }
 
-const WELCOME: &str = "# Getting started\n\nVirtues records, remembers, and recounts your life.\n\nFour things have to be in place before it can start: an AI subscription, your name, your integrations, and your life's story. This conversation sets them up in order. The first three take a few minutes; the fourth is a conversation of about twenty. You can stop at any point using the door in the top right and come back later. Your progress is kept.";
+const WELCOME: &str = "# Getting started\n\nVirtues records, remembers, and recounts your life.\n\nFour things have to be in place before it can start: connecting AI, introductions, your integrations, and your story. This conversation sets them up in order. The first three take a few minutes; the fourth is a conversation of about twenty. You can stop at any point using the door in the top right and come back later. Your progress is kept.";
 
 const GRADUATED: &str =
-    "That is all four. This room stays open for any question about the setup, and the rest of Virtues is yours.";
+    "That is all four. This room stays open for questions about your setup; the rest of Virtues is yours.";
 
-/// What a step says once it is settled — done or set aside.
+/// What a step says once it is settled — done or set aside. Two names and
+/// only two: "your server" is the box, "your assistant" is who you talk to
+/// (Ari, unless renamed). "AI" survives in the step's title and the
+/// subscription's pitch; "the model", "it can think", and the rest are out.
 fn settled_line(s: &Step) -> String {
     match (s.id, s.status) {
-        ("connect_ai", StepStatus::Skipped) => "You went on without connecting AI. Your server can show you its record, but it cannot answer you until a model is connected in Settings.".into(),
+        ("connect_ai", StepStatus::Skipped) => "You went on without connecting AI. Your server can show you its record, but your assistant cannot answer until AI is connected in Settings.".into(),
         ("introductions", StepStatus::Skipped) => "You set introductions aside for now. Say the word whenever you would like to return to them.".into(),
         ("connect_world", StepStatus::Skipped) => "You set your integrations aside for now. They are waiting in Settings whenever you want them.".into(),
         ("interview", StepStatus::Skipped) => "You set your story aside for now. The interview is waiting here whenever you want it.".into(),
-        ("connect_ai", _) if s.via == Some("byo") => "Your server is connected to an endpoint of your own, and can think.".into(),
-        ("connect_ai", _) => "Your server is connected to your Virtues subscription, and can think.".into(),
+        ("connect_ai", _) if s.via == Some("byo") => "Your server is connected to your own models. Your assistant can answer now.".into(),
+        ("connect_ai", _) => "Your server is connected to your Virtues subscription. Your assistant can answer now.".into(),
         ("introductions", _) => "Introductions are made.".into(),
         ("connect_world", _) => match &s.detail {
-            Some(d) => format!("The record has begun, with one thing still to see to: {d}."),
-            None => "The record has begun.".into(),
+            Some(d) => format!("The record is being written from what you connected. One thing still to see to: {d}."),
+            None => "The record is being written from what you connected.".into(),
         },
         ("interview", _) => "Your story is written down, in your own words.".into(),
         _ => String::new(),
@@ -430,31 +437,29 @@ fn ask_line(s: &Step) -> String {
         // Plainly, as a list: these five are the most important thing on the
         // screen, and buried in a sentence they read as decoration. The
         // person still answers in one message, in their own order.
-        "introductions" => "Now that it can think, your server would like to know who it is talking to. Answer in one message, however you like to write it:\n\n- Your name, first and last\n- What you would like to be called\n- What to call your assistant, which answers to Ari unless you say otherwise\n- The city you live in\n- Your birth date, with the year\n\nThe birth date is not idle curiosity: the whole record is laid out against it.".into(),
-        "connect_world" => {
-            let opener = match &s.detail {
-                Some(d) => format!("Next, your integrations. {}, and the record is written from what they hold.", capitalize(d)),
-                None => "Next, your integrations. The record is written from what your accounts, this computer, and your phone already hold.".into(),
-            };
-            format!("{opener} Nothing they hold ever leaves your server.")
-        }
-        "interview" => "Last comes your story. The record can hold what happened, but only you can say what it meant. This is a conversation of about twenty minutes, one question at a time; stop wherever you like, and it will keep your place.".into(),
+        "introductions" => "Your assistant would like to know who it is talking to. Answer in one message, however you like to write it:\n\n- Your name, first and last\n- What you would like to be called\n- What to call your assistant, which answers to Ari unless you say otherwise\n- The city you live in\n- Your birth date, with the year\n\nThe birth date is not idle curiosity: the whole record is laid out against it.".into(),
+        // What this step is for, the minimum, what happens next, and the
+        // one safety fact — not a list of sources: the rows under it say
+        // what each one holds. Read differently when some are already in.
+        "connect_world" => match s.connected {
+            Some(n) if n > 0 => format!(
+                "Next, your integrations: what the record is written from. You already have {n} connected, and the record is being written from {}. Add more now, or later from Settings. Nothing they hold ever leaves your server.",
+                if n == 1 { "it" } else { "them" }
+            ),
+            _ => "Next, your integrations: what the record is written from. One is enough to begin; the rest can come later from Settings. Nothing they hold ever leaves your server.".into(),
+        },
+        "interview" => "Last comes your story. The record can hold what happened; only you can say what it meant. This is an interview with your assistant of about twenty minutes, one question at a time. Stop wherever you like; your place is kept.".into(),
         _ => String::new(),
     }
 }
 
 fn promise_line(first_day: Option<chrono::NaiveDate>) -> String {
     match first_day {
-        Some(_) => "Your first page is written: yesterday, written down.".into(),
-        None => "Every day, a page will be waiting for you: yesterday, written down. The first one comes tomorrow morning.".into(),
-    }
-}
-
-fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-        None => String::new(),
+        Some(d) => format!(
+            "Your first page is on Home: {}, written down from what your integrations hold. There will be one every morning.",
+            d.format("%A, %B %-d")
+        ),
+        None => "Tomorrow morning there will be a page on Home for today, written from what your integrations hold. There will be one every morning after.".into(),
     }
 }
 
@@ -615,6 +620,7 @@ mod tests {
                 status,
                 via: None,
                 detail: None,
+                connected: None,
                 underway: false,
                 acknowledged: false,
             })
@@ -643,7 +649,7 @@ mod tests {
         let block = s.render_prompt_block();
         assert!(block.contains("- connect_ai: Connect AI (done)"));
         assert!(block.contains("- introductions: Introductions (open)"));
-        assert!(block.contains("- connect_world: Connect your world (skipped)"));
+        assert!(block.contains("- connect_world: Integrations (skipped)"));
         assert!(block.contains("first day written up: not yet"));
     }
 
