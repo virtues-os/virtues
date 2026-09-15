@@ -6,7 +6,7 @@
  * read. `refresh()` after anything that could flip a step (a card's write,
  * a source connecting, a skip) — the server has nothing to push.
  *
- * A 404 reads as "an older box": unlocked, nothing to show. A phone that
+ * A 404 reads as "an older box": nothing to show. A phone that
  * updated ahead of its server must never strand on a missing endpoint.
  */
 import {
@@ -22,14 +22,11 @@ const POLL_MS = 30_000;
 class GettingStartedStore {
 	state = $state<GettingStartedState | null>(null);
 	loaded = $state(false);
-	/** The endpoint is missing (an older box): behave as unlocked and done. */
+	/** The endpoint is missing (an older box): behave as done. */
 	unsupported = $state(false);
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private inflight: Promise<void> | null = null;
 
-	get locked(): boolean {
-		return this.state?.locked ?? false;
-	}
 	get aiConnected(): boolean {
 		return this.state?.ai_connected ?? true;
 	}

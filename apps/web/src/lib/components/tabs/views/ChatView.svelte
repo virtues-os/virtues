@@ -2573,9 +2573,20 @@
 								alreadyExisted={interviewClosedPart?.document_already_existed ?? false}
 								chaptersError={interviewClosedPart?.chapters_error ?? null}
 							/>
-						{:else if isGettingStartedChat(currentChatConversationId) && gettingStarted.locked}
-							<!-- No model yet: no composer at all. The ask above says
-							     what to do; a dead input would only argue with it. -->
+						{:else if isGettingStartedChat(currentChatConversationId) && !gettingStarted.aiConnected}
+							<!-- No model yet. The composer STAYS and says why it
+							     cannot be used: the app is no longer closed off, so
+							     the thing that genuinely does not work has to
+							     explain itself where it is, rather than the whole
+							     surface disappearing around it. -->
+							<ChatInput
+								bind:value={input}
+								disabled={true}
+								sendDisabled={true}
+								maxWidth="max-w-3xl"
+								placeholder="Connect AI above to write here"
+								onSubmit={() => {}}
+							/>
 						{:else}
 						<ChatInput
 							allowEmptySubmit={stagedRefs.length > 0 || attachments.length > 0}

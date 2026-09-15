@@ -193,9 +193,11 @@
 		<line x1={L.X(L.now)} y1={BASE - BH - 8} x2={L.X(L.now)} y2={BASE + BH + 38} class="now" />
 		<text x={L.X(L.now)} y={BASE + BH + 50} text-anchor="middle" class="t-now">now</text>
 	</svg>
-	<figcaption class="readout" class:idle={!readout}>
-		{readout ?? life.caption}
-	</figcaption>
+	<!-- Only on hover. The idle line ("One life so far: seven chapters…")
+	     described the drawing to someone already looking at it. -->
+	{#if readout}
+		<figcaption class="readout">{readout}</figcaption>
+	{/if}
 </figure>
 
 <style>
@@ -347,7 +349,4 @@
 		min-height: 1.2em;
 	}
 
-	.readout.idle {
-		color: var(--color-foreground-subtle);
-	}
 </style>

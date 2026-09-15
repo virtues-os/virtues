@@ -2263,7 +2263,6 @@ export interface GettingStartedStep {
 
 export interface GettingStartedState {
 	ai_connected: boolean;
-	locked: boolean;
 	steps: GettingStartedStep[];
 	first_day: string | null;
 	graduated: boolean;

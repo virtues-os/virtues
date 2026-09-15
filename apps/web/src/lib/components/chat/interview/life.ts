@@ -48,8 +48,6 @@ export interface Life {
 	 *  real life carries none until the interview has asked for them. */
 	stories: LifeStory[];
 	planned: PlannedChapter | null;
-	/** The caption when nothing is hovered. */
-	caption: string;
 	ariaLabel: string;
 }
 
@@ -79,8 +77,6 @@ export const FICTIONAL_LIFE: Life = {
 		{ t: new Date(2020, 2, 20).getTime(), label: "the year at a desk" },
 	],
 	planned: { t0: F_NOW + 10 * (YR / 12), t1: F_NOW + 4.2 * YR, label: "The shop, grown" },
-	// A legend in one sentence: what each kind of mark on the plate is.
-	caption: "One life so far: seven chapters, three of its stories marked, and a chapter planned ahead.",
 	ariaLabel:
 		"One fictional life drawn on one wire: seven chapters as spans from birth toward now, named above, aged below, three stories marked inside them, and one planned chapter dashed ahead of now. The table that follows lists the same chapters.",
 };
@@ -118,7 +114,6 @@ export function lifeFromRecord(chapters: ChapterApi[], birthDate: string | null 
 		chapters: spans,
 		stories: [],
 		planned: null,
-		caption: `Your life on one wire: ${n} ${n === 1 ? "chapter" : "chapters"}, from ${from} to now.`,
 		ariaLabel: `Your life drawn on one wire: ${n} chapters as spans from ${from} toward now, named above.`,
 	};
 }
