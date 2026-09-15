@@ -2139,6 +2139,14 @@ pub async fn write_article_handler(
     )
 }
 
+/// The owner's own page: their name, their document, and the apparatus.
+///
+/// Also the one place that ensures they have a row among the people of their
+/// own wiki — nothing else ever created one.
+pub async fn wiki_me_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::me::get_me(state.db.pool()).await)
+}
+
 /// The stories: subjects the person named because they mattered.
 pub async fn wiki_list_stories_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::stories::list_stories(state.db.pool()).await)

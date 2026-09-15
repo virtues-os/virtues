@@ -72,6 +72,7 @@ pub mod terminal;
 pub mod token_estimation;
 pub mod unsplash;
 pub mod wiki;
+pub mod me;
 pub mod stories;
 pub mod years;
 pub mod lifeline;

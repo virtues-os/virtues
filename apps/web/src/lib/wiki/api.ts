@@ -634,6 +634,24 @@ export async function writeArticle(
 }
 
 /** Turn maintenance on or off. Off means the AI never touches this article. */
+/** The owner's own page: their name, their document, and the apparatus. */
+export interface MeApi {
+	person_id: string | null;
+	name: string | null;
+	birth_date: string | null;
+	article: string | null;
+	article_updated_at: string | null;
+	page_id: string | null;
+	chapters: ChapterApi[];
+	years: number[];
+}
+
+export async function getMe(fetchFn: FetchFn = fetch): Promise<MeApi | null> {
+	const res = await fetchFn('/api/wiki/me');
+	if (!res.ok) return null;
+	return res.json();
+}
+
 /** A subject the person named because it mattered. Not a span. */
 export interface StoryApi {
 	id: string;
