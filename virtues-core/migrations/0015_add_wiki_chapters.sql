@@ -83,7 +83,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON wiki_chapters
 -- A chapter is an ENTITY, not a label: it gets a real page, with prose,
 -- history and marginalia, so "the Wisconsin years" is somewhere you can open
 -- and write in rather than a band on a drawing. ('chapter' is already a valid
--- ref prefix in resolve_id (api/wiki.rs), so refs and citations resolve the moment
+-- ref prefix in parse_entity_id, so refs and citations resolve the moment
 -- rows exist.)
 ALTER TABLE wiki_articles DROP CONSTRAINT wiki_articles_subject_type_check;
 ALTER TABLE wiki_articles ADD CONSTRAINT wiki_articles_subject_type_check

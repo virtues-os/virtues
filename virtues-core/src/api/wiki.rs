@@ -1279,6 +1279,12 @@ pub struct IdResolution {
 /// Resolve an entity ID to find its type
 /// IDs follow the format: {type}_{hash} (e.g., person_abc123, place_xyz789)
 /// For days, the ID format is: day_{YYYY-MM-DD}
+///
+/// This is the function migration 0015's comment means when it says
+/// "parse_entity_id" — no such function has ever existed, and the comment
+/// cannot be corrected in place because sqlx checksums an applied migration
+/// and a box refuses to boot when one changes under it. The claim itself is
+/// true: `chapter` is in the allowlist below.
 pub fn resolve_id(id: &str) -> Result<IdResolution> {
     // Parse the prefix from the ID
     let parts: Vec<&str> = id.splitn(2, '_').collect();
