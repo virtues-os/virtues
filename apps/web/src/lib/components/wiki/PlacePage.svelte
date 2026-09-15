@@ -218,11 +218,6 @@
 				</section>
 			{/if}
 
-			<!-- Associated People -->
-
-			<!-- Narrative Context -->
-
-			<!-- Citations -->
 		</div>
 	</article>
 </div>
