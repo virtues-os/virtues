@@ -66,10 +66,6 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
 		articleAutoUpdate: api.article_auto_update ?? false,
 
-		// Metadata (empty for now - will be computed from entity_edges)
-		citations: [],
-		linkedPages: [],
-		tags: [],
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
 		lastEditedBy: "ai",
@@ -116,14 +112,8 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Connections (populated from entity_edges later)
-		associatedPeople: [],
-		activities: [],
-		narrativeContext: [],
 
 		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
 		lastEditedBy: "ai",
@@ -175,14 +165,8 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 		articleAutoUpdate: api.article_auto_update ?? false,
 
 		// Connections (populated from entity_edges later)
-		keyContacts: [],
-		locations: [],
-		narrativeContext: [],
 
 		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
 		lastEditedBy: "ai",
@@ -230,9 +214,6 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		})),
 
 		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
 		// The day's prose: the article page (via wiki_day_prose) with the
 		content: api.article ?? "",
 		createdAt: new Date(api.created_at),

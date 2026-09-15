@@ -288,21 +288,6 @@
 			</section>
 			{/if}
 
-			{#if page.linkedPages && page.linkedPages.length > 0}
-			<!-- Connections -->
-			<section class="section" id="connections">
-				<h2 class="section-title">Connections</h2>
-				<ul class="footer-list">
-					{#each page.linkedPages as linked}
-						<li>
-							<a href={subjectHref(linked.pageId) ?? "#"} class="footer-link">
-								<span class="link-text">{linked.displayName}</span>
-							</a>
-						</li>
-					{/each}
-				</ul>
-			</section>
-			{/if}
 
 			<!-- There used to be a second "Notes" section here, rendering
 			     `wiki_people.content`. Two headings with the same name on one
@@ -473,13 +458,6 @@
 		margin: 0 0 0.75rem;
 	}
 
-	.notes-content {
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-		line-height: 1.6;
-		white-space: pre-wrap;
-	}
-
 	/* Info list (dt/dd) */
 	.info-list {
 		margin: 0;
@@ -520,37 +498,6 @@
 	}
 
 	/* Footer sections */
-	.footer-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-
-	.footer-link {
-		display: block;
-		padding: 0.375rem 0;
-		color: var(--color-primary);
-		text-decoration: none;
-	}
-
-	.link-text {
-		display: inline;
-		position: relative;
-		background-image: linear-gradient(
-			to top,
-			color-mix(in srgb, var(--color-primary) 15%, transparent),
-			color-mix(in srgb, var(--color-primary) 15%, transparent)
-		);
-		background-repeat: no-repeat;
-		background-size: 100% 0%;
-		background-position: 0 100%;
-		transition: background-size 0.2s ease;
-	}
-
-	.footer-link:hover .link-text {
-		background-size: 100% 100%;
-	}
-
 	.empty-placeholder {
 		font-size: 0.875rem;
 		color: var(--color-foreground-subtle);

@@ -107,19 +107,4 @@ export interface PlacePage extends WikiPageBase {
 	// ─────────────────────────────────────────────────────────────
 	// Connections
 	// ─────────────────────────────────────────────────────────────
-
-	/**
-	 * People associated with this place.
-	 */
-	associatedPeople: LinkedPage[];
-
-	/**
-	 * Things you do here (activities, routines).
-	 */
-	activities: string[];
-
-	/**
-	 * Acts/chapters that took place here.
-	 */
-	narrativeContext: LinkedPage[];
 }

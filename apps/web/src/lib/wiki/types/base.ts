@@ -139,20 +139,11 @@ export interface WikiPageBase {
 	subtitle?: string;
 	cover?: string; // Cover image URL
 
-	// Citations (data provenance)
-	citations: Citation[];
-
-	// Linked pages (resolution for [[wiki links]])
-	linkedPages: LinkedPage[];
-
 	// Related pages (AI-suggested or manually curated)
 	relatedPages?: RelatedPage[];
 
 	// Infobox (Wikipedia-style sidebar)
 	infobox?: Infobox;
-
-	// Tags
-	tags: string[];
 
 	// Content (markdown body)
 	content: string;
