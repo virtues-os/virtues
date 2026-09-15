@@ -8,6 +8,7 @@
 -->
 
 <script lang="ts">
+	import { subjectHref } from "$lib/wiki/links";
 	import { browser } from "$app/environment";
 	import type { DayPage as DayPageType, DayEvent } from "$lib/wiki/types";
 	import { flattenLinkedEntities } from "$lib/wiki/types";
@@ -679,7 +680,7 @@
 								{#each allLinkedPages as entity}
 									<li>
 										<a
-											href="/wiki/{entity.pageId}"
+											href={subjectHref(entity.pageId) ?? "#"}
 											class="footer-link"
 										>
 											<span class="link-text"

@@ -6,6 +6,7 @@
 -->
 
 <script lang="ts">
+	import { subjectHref } from "$lib/wiki/links";
 	import { untrack } from "svelte";
 	import type { PersonPage as PersonPageType } from "$lib/wiki/types";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
@@ -294,7 +295,7 @@
 				<ul class="footer-list">
 					{#each page.linkedPages as linked}
 						<li>
-							<a href="/wiki/{linked.pageId}" class="footer-link">
+							<a href={subjectHref(linked.pageId) ?? "#"} class="footer-link">
 								<span class="link-text">{linked.displayName}</span>
 							</a>
 						</li>

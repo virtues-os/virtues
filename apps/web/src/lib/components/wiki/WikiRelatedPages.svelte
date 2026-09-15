@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { subjectHref } from "$lib/wiki/links";
 	import type { RelatedPage } from "$lib/wiki";
 	import WikiCollapsibleSection from "./WikiCollapsibleSection.svelte";
 
@@ -18,7 +19,7 @@
 		<ul class="list-none m-0 p-0">
 			{#each relatedPages as page}
 				<li>
-					<a href="/wiki/{page.id}" class="wiki-link">
+					<a href={subjectHref(page.id) ?? "#"} class="wiki-link">
 						<span class="link-text">{page.title}</span>
 					</a>
 				</li>
