@@ -33,7 +33,8 @@ export const INTERVIEW_OPENING_LEAD =
 	"This lifeline is an example of what you will make here: your life from " +
 	"beginning to end, its chapters, its turning points, and the stories " +
 	"that matter. It gives the AI a grounding in who you are, your " +
-	"temperament, your virtues and vices, and the person you want to become.";
+	"temperament, your virtues and vices, and the person you want to become, " +
+	"so that it keeps the record of your life the way you would.";
 
 export const INTERVIEW_OPENING_BODY =
 	"In order to help the Virtues platform generate more powerful insights " +
