@@ -292,32 +292,29 @@ fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<(Vec<u8>, bool)> {
 
 /// A doc update arriving over the WebSocket is, by definition, a human edit —
 /// the machine's writes go through `YjsState` methods server-side and never
-/// traverse a client connection. If the page is a KEPT article
-/// (`auto_update = true`), that edit claims it: the article becomes yours,
-/// and the record stops rewriting it. New evidence arrives as notes instead.
+/// traverse a client connection. (Opening a page to read sends an empty diff,
+/// which is why the caller checks that the doc actually changed first.)
 ///
-/// This is the whole authorship model: an article has exactly one pen at a
-/// time, so "whose sentence is this" never needs to be answered.
-async fn claim_article_on_user_edit(pool: &PgPool, page_id: &str) {
-    let claimed = sqlx::query_as::<_, (String, String)>(
-        "UPDATE wiki_articles SET auto_update = false \
-         WHERE page_id = $1 AND auto_update = true \
-         RETURNING subject_type, subject_id",
+/// This used to CLAIM the article: `auto_update` flipped to false and the
+/// record stopped editing it ever again, on the reasoning that an article has
+/// exactly one pen so "whose sentence is this" never needs answering. That is
+/// the one-pen rule, and it is overruled — almost nobody wants to maintain
+/// their own record, and touching one sentence is not a decision to take over
+/// a page. Losing the record's maintenance was the price of a typo fix.
+///
+/// So the same signal now records WHEN rather than deciding WHO: the editor
+/// skips an article somebody was in recently, and "whose sentence is this" is
+/// answered properly, by diffing the live text against what the editor itself
+/// last wrote (`api::wiki_editor::provenance`).
+async fn note_human_edit(pool: &PgPool, page_id: &str) {
+    if let Err(e) = sqlx::query(
+        "UPDATE wiki_articles SET last_human_edit_at = now() WHERE page_id = $1",
     )
     .bind(page_id)
-    .fetch_optional(pool)
-    .await;
-    match claimed {
-        Ok(Some((subject_type, subject_id))) => {
-            tracing::info!(
-                page_id,
-                subject_type,
-                subject_id,
-                "article claimed by user edit — the record stops updating it"
-            );
-        }
-        Ok(None) => {}
-        Err(e) => tracing::warn!(page_id, error = %e, "article claim check failed"),
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(page_id, error = %e, "could not record a human edit on the article");
     }
 }
 
@@ -968,7 +965,7 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                             // must re-arm the claim — a memo held that flag
                                             // hostage until cache eviction.
                                             if changed {
-                                                claim_article_on_user_edit(&state.pool, &page_id).await;
+                                                note_human_edit(&state.pool, &page_id).await;
                                             }
                                             state.save_queue.queue_save(page_id.clone(), full_state).await;
                                         }
@@ -992,7 +989,7 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                             // must re-arm the claim — a memo held that flag
                                             // hostage until cache eviction.
                                             if changed {
-                                                claim_article_on_user_edit(&state.pool, &page_id).await;
+                                                note_human_edit(&state.pool, &page_id).await;
                                             }
                                             state.save_queue.queue_save(page_id.clone(), full_state).await;
                                         }

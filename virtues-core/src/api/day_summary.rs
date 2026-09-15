@@ -710,12 +710,11 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
 
 /// Land the narration in the day's article page — the one prose store.
 ///
-/// An article has exactly one pen at a time. A day article starts KEPT
-/// (`auto_update = true`): the nightly narration is its maintenance, and the
-/// record may rewrite it. Editing the article claims it — the Yjs layer
-/// flips `auto_update` off on the first real user edit — and from then on
-/// this writer refuses and stamps `dirty_at`; new evidence for a claimed day
-/// belongs in notes, never in prose the user owns.
+/// A day article's maintenance is the nightly narration. It is written unless
+/// the person has turned maintenance off for that page, which is now a setting
+/// they choose rather than a flag their first edit trips: touching one
+/// sentence is not a decision to take over a page, and it used to cost them
+/// the record's maintenance forever.
 ///
 /// Even for a kept article, a pool-side rewrite has to reckon with the CRDT:
 /// an UPDATE of `content` alone would be clobbered by the next debounced save.
@@ -762,28 +761,24 @@ async fn save_day_article(
         let title = date.format("%-d %B %Y").to_string();
         let created =
             crate::api::wiki_articles::create_article(pool, "day", day_id, &title, prose).await?;
-        // Day articles are kept by default — narration IS their maintenance.
-        // (Entity articles stay opt-in; their consent is the explicit toggle.)
-        if let Err(e) = sqlx::query("UPDATE wiki_articles SET auto_update = true WHERE id = $1")
-            .bind(&created.id)
-            .execute(pool)
-            .await
-        {
-            tracing::warn!(date = %date, error = %e, "could not mark the day article kept");
-        }
+        // A day article is maintained from birth — narration IS its
+        // maintenance — which is the DEFAULT for the column, so there is
+        // nothing to set. Entity articles are opt-in and say so themselves.
+        let _ = created;
         return Ok(());
     };
 
-    if !article.auto_update {
+    let maintenance: String =
+        sqlx::query_scalar("SELECT maintenance FROM wiki_articles WHERE id = $1")
+            .bind(&article.id)
+            .fetch_one(pool)
+            .await?;
+    if maintenance == "never" {
         tracing::info!(
             date = %date,
             page_id = %article.page_id,
-            "day article is claimed (yours) — narration files nothing; marked dirty"
+            "the owner has turned maintenance off for this day — narration files nothing"
         );
-        sqlx::query("UPDATE wiki_articles SET dirty_at = now() WHERE id = $1")
-            .bind(&article.id)
-            .execute(pool)
-            .await?;
         return Ok(());
     }
 
