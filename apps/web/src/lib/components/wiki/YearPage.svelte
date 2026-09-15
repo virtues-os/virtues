@@ -210,20 +210,6 @@
 				</section>
 			{/if}
 
-			<!-- Citations -->
-			{#if page.citations && page.citations.length > 0}
-				<section class="section" id="data-sources">
-					<h2 class="section-title">Data Sources</h2>
-					<ul class="footer-list">
-						{#each page.citations as citation}
-							<li class="citation-item">
-								<span class="citation-index">[{citation.index}]</span>
-								<span class="citation-label">{citation.label}</span>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
 		</div>
 	</article>
 
@@ -397,26 +383,6 @@
 	}
 
 	/* Citations */
-	.citation-item {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		padding: 0.375rem 0;
-	}
-
-	.citation-index {
-		font-size: 0.8125rem;
-		font-weight: 400;
-		color: var(--color-primary);
-		flex-shrink: 0;
-	}
-
-	.citation-label {
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-		flex: 1;
-	}
-
 	/* Sidebar metadata */
 	.sidebar-meta {
 		text-align: center;

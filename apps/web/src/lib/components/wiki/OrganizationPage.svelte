@@ -143,70 +143,12 @@
 			{/if}
 
 			<!-- Key Contacts -->
-			{#if page.keyContacts && page.keyContacts.length > 0}
-				<section class="section" id="key-contacts">
-					<h2 class="section-title">Key Contacts</h2>
-					<ul class="footer-list">
-						{#each page.keyContacts as person}
-							<li>
-								<a href={subjectHref(person.pageId) ?? "#"} class="footer-link">
-									<span class="link-text">{person.displayName}</span>
-									{#if person.preview}
-										<span class="link-preview">{person.preview}</span>
-									{/if}
-								</a>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
 
 			<!-- Locations -->
-			{#if page.locations && page.locations.length > 0}
-				<section class="section" id="locations">
-					<h2 class="section-title">Locations</h2>
-					<ul class="footer-list">
-						{#each page.locations as place}
-							<li>
-								<a href={subjectHref(place.pageId) ?? "#"} class="footer-link">
-									<span class="link-text">{place.displayName}</span>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
 
 			<!-- Narrative Context -->
-			{#if page.narrativeContext && page.narrativeContext.length > 0}
-				<section class="section" id="narrative-context">
-					<h2 class="section-title">Narrative Context</h2>
-					<ul class="footer-list">
-						{#each page.narrativeContext as context}
-							<li>
-								<a href={subjectHref(context.pageId) ?? "#"} class="footer-link">
-									<span class="link-text">{context.displayName}</span>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
 
 			<!-- Citations -->
-			{#if page.citations && page.citations.length > 0}
-				<section class="section" id="data-sources">
-					<h2 class="section-title">Data Sources</h2>
-					<ul class="footer-list">
-						{#each page.citations as citation}
-							<li class="citation-item">
-								<span class="citation-index">[{citation.index}]</span>
-								<span class="citation-label">{citation.label}</span>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
 		</div>
 	</article>
 </div>
@@ -355,64 +297,6 @@
 	}
 
 	/* Footer sections */
-	.footer-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-
-	.footer-link {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		padding: 0.375rem 0;
-		color: var(--color-primary);
-		text-decoration: none;
-	}
-
-	.link-text {
-		display: inline;
-		position: relative;
-		background-image: linear-gradient(
-			to top,
-			color-mix(in srgb, var(--color-primary) 15%, transparent),
-			color-mix(in srgb, var(--color-primary) 15%, transparent)
-		);
-		background-repeat: no-repeat;
-		background-size: 100% 0%;
-		background-position: 0 100%;
-		transition: background-size 0.2s ease;
-	}
-
-	.footer-link:hover .link-text {
-		background-size: 100% 100%;
-	}
-
-	.link-preview {
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.citation-item {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		padding: 0.375rem 0;
-	}
-
-	.citation-index {
-		font-size: 0.8125rem;
-		font-weight: 400;
-		color: var(--color-primary);
-		flex-shrink: 0;
-	}
-
-	.citation-label {
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-		flex: 1;
-	}
-
 	/* Responsive */
 	@media (max-width: 900px) {
 		.page-layout {

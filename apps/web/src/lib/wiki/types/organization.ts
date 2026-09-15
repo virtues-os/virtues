@@ -71,19 +71,4 @@ export interface OrganizationPage extends WikiPageBase {
 	// ─────────────────────────────────────────────────────────────
 	// Connections
 	// ─────────────────────────────────────────────────────────────
-
-	/**
-	 * Key people you know there.
-	 */
-	keyContacts: LinkedPage[];
-
-	/**
-	 * Physical locations of this organization.
-	 */
-	locations: LinkedPage[];
-
-	/**
-	 * Acts/chapters associated with this organization.
-	 */
-	narrativeContext: LinkedPage[];
 }
