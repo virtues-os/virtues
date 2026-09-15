@@ -38,11 +38,6 @@ export interface Life {
 	 *  scale then starts at the first chapter. */
 	birth: number | null;
 	now: number;
-	/** When the record begins. Kept on the life for the close's plate;
-	 *  the opening's example no longer draws coverage from it — strips of
-	 *  invented data density were the busiest thing on the plate and the
-	 *  one thing nobody could read. */
-	box: number | null;
 	chapters: LifeChapter[];
 	/** Marked moments inside the chapters. The example carries three; a
 	 *  real life carries none until the interview has asked for them. */
@@ -60,7 +55,6 @@ const F_NOW = new Date(2026, 7, 17).getTime();
 export const FICTIONAL_LIFE: Life = {
 	birth: F_BIRTH,
 	now: F_NOW,
-	box: new Date(2025, 1, 9).getTime(),
 	chapters: [
 		{ t0: F_BIRTH, t1: new Date(2003, 7, 20).getTime(), label: "Childhood on the coast", ep: "three towns before the first classroom" },
 		{ t0: new Date(2003, 7, 20).getTime(), t1: new Date(2009, 5, 10).getTime(), label: "Grade school, inland", ep: "snow days and the lake" },
@@ -110,7 +104,6 @@ export function lifeFromRecord(chapters: ChapterApi[], birthDate: string | null 
 	return {
 		birth: birthDate ? dayOf(birthDate) : null,
 		now,
-		box: null,
 		chapters: spans,
 		stories: [],
 		planned: null,
