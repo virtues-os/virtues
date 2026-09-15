@@ -52,9 +52,12 @@
 		font-weight: 400;
 		line-height: 1.3;
 		font-variant-numeric: tabular-nums;
+		/* One color for the whole line. The count used to sit a shade lighter
+		   than the title beside it, which read as two things sharing a line
+		   rather than one heading. */
 		color: var(--color-foreground-muted);
 	}
-	.step.current .t {
+	.step.current {
 		color: var(--color-foreground);
 	}
 	.step.skipped .t {
@@ -62,6 +65,6 @@
 		text-decoration-thickness: 1px;
 	}
 	.sep {
-		opacity: 0.5;
+		opacity: 0.45;
 	}
 </style>
