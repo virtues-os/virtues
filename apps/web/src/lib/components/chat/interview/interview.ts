@@ -55,15 +55,13 @@ export const INTERVIEW_OPENING_BODY =
 	"| The workshop | 2023 – 2025 |\n" +
 	"| Out on my own | 2025 – now |";
 
-/** The ask comes last, after the shape has been seen; the retention
- *  promise rides with it because it is the one thing to know before
- *  answering. */
+/** The ask comes last, after the shape has been seen. No retention
+ *  promise here: it was made once, when AI was connected, and repeating
+ *  it at the moment of answering read as a warning. */
 export const INTERVIEW_OPENING_ASK =
 	"Yours will look nothing like these. What would your chapters be? " +
 	"Rough names and rough years are enough; months and dates are welcome " +
-	"where you remember them.\n\n" +
-	"What you say here stays on your server. The model conducting this is " +
-	"sent your words under a no-retention agreement and keeps nothing.";
+	"where you remember them.";
 
 /** The narrative interview opens ALREADY SPEAKING: an authored first line,
  *  shown free (never persisted, no model call). The interview prompt knows
