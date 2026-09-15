@@ -1,7 +1,8 @@
 # One logbook: keys on every line, one door for clients
 
-> Status: **Planned, 2026-09-09; trimmed 2026-09-14** to the three slices
-> that pay back on the first incident. The general events table and the
+> Status: **Slices 0 and 1 built on `wave`, unreleased. Slice 2 open.**
+> Planned 2026-09-09; trimmed 2026-09-14 to the three slices that pay back on
+> the first incident. The general events table and the
 > Logbook UI are deferred until a real incident shows they are needed (see
 > the end). Delete this file when slice 2 ships.
 
@@ -50,7 +51,7 @@ Read against the code on 2026-09-09.
 
 ## Slices
 
-### Slice 0 — tell the truth (no migration)
+### Slice 0 — tell the truth (no migration) — **BUILT 2026-09-14** (`0b13e5a5`, `a6dcb2ea`)
 
 - `report-crash` emits `box.crashed` with the 50-line tail as a tracing
   event before any send.
@@ -59,14 +60,18 @@ Read against the code on 2026-09-09.
 - **Gate:** `grep -rn "collects no central" virtues-core/src` is empty;
   `virtues doctor` on dragon prints a diagnostics line.
 
-### Slice 1 — keys on every line
+### Slice 1 — keys on every line — **BUILT 2026-09-15** (`0e09d45b`, plus the request-id middleware carried in `da0d6cc6`)
 
 - `virtues-core/src/observe.rs`: the field-name constants (`kind`,
   `severity`, `source`, `run_id`, `chat_id`, `turn_id`, `request_id`,
   `device_id`) and a shared `init_tracing()` every binary calls: env-filter,
   JSON when stderr is not a TTY, text when it is. Five inits become calls.
-- `tower_http::TraceLayer` (already a dependency) with a request-id maker;
-  `x-request-id` on every response.
+- A `from_fn` middleware minting the request id, opening the span, and
+  returning `x-request-id`. (Written as `tower_http::TraceLayer` with a
+  request-id maker; built as a plain middleware instead, matching the
+  `stamp_box_build` layer beside it. TraceLayer would also have emitted its
+  own request/response lines on every static asset, which is noise this box
+  does not need, and the span is the part we were actually after.)
 - Spans on five entry points: HTTP request, scheduler tick, applet run,
   chat turn, AI call. Children inherit.
 - Applet subprocess stderr re-emitted line by line at `warn` inside the run
