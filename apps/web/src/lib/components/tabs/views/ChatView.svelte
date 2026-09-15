@@ -39,6 +39,7 @@
 	} from "$lib/components/chat/getting-started/getting-started";
 	import RoomControls from "$lib/components/chat/getting-started/RoomControls.svelte";
 	import GettingStartedDoor from "$lib/components/chat/getting-started/GettingStartedDoor.svelte";
+	import RoomCover from "$lib/components/chat/getting-started/RoomCover.svelte";
 	import StepEyebrow from "$lib/components/chat/getting-started/StepEyebrow.svelte";
 	import IntroductionsRecorded from "$lib/components/chat/getting-started/IntroductionsRecorded.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -2035,6 +2036,10 @@
 							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID || roomHoldsPlate}
 							class:room={isGettingStartedChat(currentChatConversationId)}
 						>
+							{#if isGettingStartedChat(currentChatConversationId) && uniqueMessages.length > 0}
+								<!-- The room's frontispiece, above its title. -->
+								<RoomCover />
+							{/if}
 							{#each uniqueMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
 								{@const exchangeIndex = isUserMessage
