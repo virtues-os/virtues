@@ -1,4 +1,3 @@
-import CoreServices
 import Foundation
 import SQLite3
 
@@ -19,20 +18,25 @@ class MessageMonitor {
     // Freshness. The 5-minute timer is the floor; this is the ceiling.
     //
     // A reply drafted from a thread is only useful if the ask reaches the box
-    // in seconds, not "some time in the next five minutes". FSEvents on the
-    // Messages directory fires when chat.db-wal grows — every inbound and
-    // outbound message — and `watcherLatency` coalesces the burst of writes a
-    // single message produces (the row, the chat join, the read receipt) into
-    // one sync. Watching the -wal file directly would also work, but the WAL is
-    // deleted and recreated on checkpoint, and a vnode source dies with the
-    // inode; a directory-level stream survives that.
+    // in seconds, not "some time in the next five minutes". So a second timer
+    // asks one cheap question — is there a row newer than the watermark? — and
+    // only runs the real sync when the answer is yes.
     //
-    // Idle cost is zero: no polling, the kernel wakes us. And the watcher only
-    // ever calls the same watermark sync the timer does, so a spurious event
-    // (a read receipt, a sticker download) costs one indexed query that finds
-    // nothing.
-    private var watcher: FSEventStreamRef?
-    private let watcherLatency: CFTimeInterval = 1.0
+    // **This was an FSEvents watcher first, and FSEvents did not deliver.**
+    // Measured on this machine: a message written at 20:30 produced a sync
+    // within two seconds, and the next two, at 20:39 and 20:42, produced
+    // nothing at all — both waited for the five-minute timer. FSEvents reports
+    // that a directory changed; it does not promise an event for every
+    // in-place write to a file already in it, which is exactly and only what
+    // SQLite does to `chat.db-wal`. A watcher that fires for the first message
+    // after launch and then goes quiet is worse than no watcher, because it
+    // demonstrates itself once and then hides.
+    //
+    // The peek costs an open and one indexed lookup against `message.date`,
+    // which is sub-millisecond; the expensive parts of a sync — the join, the
+    // attachment query, the health write — stay behind it.
+    private var peekTimer: DispatchSourceTimer?
+    private let peekInterval: TimeInterval = 3
 
     /// Fired after a sync that stored at least one new message, with the count.
     /// The uploader hangs an immediate flush off this so a fresh message does
@@ -93,82 +97,55 @@ class MessageMonitor {
         syncTimer.resume()
         self.timer = syncTimer
 
-        startWatcher()
+        let peek = DispatchSource.makeTimerSource(queue: syncQueue)
+        peek.schedule(deadline: .now() + peekInterval, repeating: peekInterval)
+        peek.setEventHandler { [weak self] in
+            guard let self, self.hasFullDiskAccess, self.hasNewerThanWatermark() else { return }
+            self.syncMessages()
+        }
+        peek.resume()
+        self.peekTimer = peek
 
-        print("Message monitor started (syncing every \(Int(syncInterval)) seconds, plus on write)")
+        print(
+            "Message monitor started (full sync every \(Int(syncInterval))s, "
+                + "new-message check every \(Int(peekInterval))s)")
     }
     
     func stop() {
         timer?.cancel()
         timer = nil
-        stopWatcher()
+        peekTimer?.cancel()
+        peekTimer = nil
         saveLastSyncDate()
         print("Message monitor stopped")
     }
 
-    // The FSEvents context holds `self` unretained; the stream must not
-    // outlive the monitor.
-    deinit {
-        stopWatcher()
+    // MARK: - The cheap check
+
+    /// Is there a message newer than the watermark? One indexed lookup, no
+    /// joins, no writes — safe to ask every few seconds.
+    ///
+    /// Answers false on any failure (locked, permission lost, unopenable).
+    /// A missed peek costs freshness for one interval and nothing else: the
+    /// five-minute sync is still underneath, and it is the one that reports
+    /// permission trouble.
+    private func hasNewerThanWatermark() -> Bool {
+        guard let since = lastSyncDate else { return true }
+
+        var db: OpaquePointer?
+        defer { if db != nil { sqlite3_close(db) } }
+        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            return false
+        }
+
+        var statement: OpaquePointer?
+        defer { if statement != nil { sqlite3_finalize(statement) } }
+        let sql = "SELECT 1 FROM message WHERE date > ? LIMIT 1"
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return false }
+        sqlite3_bind_int64(statement, 1, Int64(dateToCoreDateTimestamp(since)))
+        return sqlite3_step(statement) == SQLITE_ROW
     }
 
-    // MARK: - File watcher
-
-    private func startWatcher() {
-        guard watcher == nil else { return }
-        // Without Full Disk Access the directory is unreadable and the stream
-        // would never fire. `syncMessages` re-probes access every tick and
-        // calls back in here once it is granted.
-        guard hasFullDiskAccess else { return }
-
-        let dir = (dbPath as NSString).deletingLastPathComponent
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil,
-            release: nil,
-            copyDescription: nil
-        )
-        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
-            guard let info = info else { return }
-            let monitor = Unmanaged<MessageMonitor>.fromOpaque(info).takeUnretainedValue()
-            monitor.syncQueue.async { monitor.syncMessages() }
-        }
-        // `FileEvents` so writes to chat.db-wal inside the directory are
-        // reported at all; a plain directory stream only sees entries come
-        // and go, and the WAL grows in place.
-        let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagIgnoreSelf)
-        guard let stream = FSEventStreamCreate(
-            kCFAllocatorDefault,
-            callback,
-            &context,
-            [dir] as CFArray,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            watcherLatency,
-            flags
-        ) else {
-            print("⚠️ Could not create Messages file watcher — falling back to the timer alone")
-            return
-        }
-        FSEventStreamSetDispatchQueue(stream, syncQueue)
-        guard FSEventStreamStart(stream) else {
-            print("⚠️ Could not start Messages file watcher — falling back to the timer alone")
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
-            return
-        }
-        watcher = stream
-        print("Watching \(dir) for new messages")
-    }
-
-    private func stopWatcher() {
-        guard let stream = watcher else { return }
-        FSEventStreamStop(stream)
-        FSEventStreamInvalidate(stream)
-        FSEventStreamRelease(stream)
-        watcher = nil
-    }
-    
     private func syncMessages() {
         // Republish permissions FIRST, on every tick, before any early return.
         //
@@ -203,7 +180,6 @@ class MessageMonitor {
                     hasFullDiskAccess = true
                     // Reset attempts counter
                     permissionCheckAttempts = 0
-                    startWatcher()
                     // Fall through to perform sync
                 } else {
                     if permissionCheckAttempts == 1 {
