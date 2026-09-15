@@ -10,22 +10,23 @@
 //! sharing a `thread_id`, whoever ingested them. iMessage from the Mac is the
 //! first channel; email is the same shape.
 //!
-//! Two model calls, deliberately split. The gate runs on the lite slot for
-//! every inbound message and only asks "is there an open, answerable ask
-//! here?" — cheap enough to run on every "lol". The draft runs on the chat
-//! slot and only when the gate said yes. A manual request skips the gate:
-//! the owner pressed the button, so they want a draft even for a thread the
-//! gate would have passed over.
+//! **One model call, and only when asked.** There is no watcher here and no
+//! gate. An earlier build ran a cheap model over every arriving message to
+//! decide whether to offer a draft; it was deleted. A box that reasons about
+//! every message as it lands is doing work nobody requested — the cost is the
+//! smaller half of the objection, and the larger half is that the owner never
+//! asked and cannot tell it to stop. Pressing the button IS the decision, so
+//! there is nothing left to decide.
 //!
-//! Retrieval is deterministic, not a tool loop: the ask is run through the
-//! record's hybrid search once and the hits are pasted into the prompt. Far
-//! more predictable than letting the model call tools, and the day summary
-//! already established the pattern.
+//! Retrieval is deterministic, not a tool loop: the ask is matched by name
+//! against the record's places and people, and run once through hybrid
+//! search. Far more predictable than letting the model call tools, and the
+//! day summary already established the pattern.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
 use virtues::search::query::SearchOptions;
@@ -33,9 +34,6 @@ use virtues::search::SemanticSearchEngine;
 use virtues::virtues_api::completion::system_completion;
 use virtues::virtues_api::request::Thinking;
 use virtues_registry::models::ModelSlot;
-
-pub const TRIGGER_AUTO: &str = "auto";
-pub const TRIGGER_MANUAL: &str = "manual";
 
 /// How much of a thread the model sees. Twenty is enough to know what "it"
 /// refers to; a hundred is noise and cost.
@@ -87,11 +85,11 @@ struct Counterpart {
 /// Consider every thread in the list. Errors on one thread are logged and
 /// counted, never fatal: a batch of five threads with one bad row still
 /// drafts the other four.
-pub async fn consider_threads(pool: &PgPool, thread_ids: &[String], trigger: &str) -> Result<Outcome> {
+pub async fn consider_threads(pool: &PgPool, thread_ids: &[String]) -> Result<Outcome> {
     let mut out = Outcome::default();
     for thread_id in thread_ids {
         out.considered += 1;
-        match consider_thread(pool, thread_id, trigger).await {
+        match consider_thread(pool, thread_id).await {
             Ok(Some(id)) => {
                 tracing::info!(thread_id, reply_id = %id, "drafted a reply");
                 out.drafted += 1;
@@ -171,7 +169,7 @@ pub async fn resolve_from_outbound(
 /// already be showing. A session lock on a dedicated connection, held for
 /// the whole consideration; the loser returns at once and the winner's row
 /// is what the loser would have seen had it waited.
-async fn consider_thread(pool: &PgPool, thread_id: &str, trigger: &str) -> Result<Option<String>> {
+async fn consider_thread(pool: &PgPool, thread_id: &str) -> Result<Option<String>> {
     let mut lock_conn = pool.acquire().await?;
     let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext($1))")
         .bind(format!("message_reply|{thread_id}"))
@@ -181,7 +179,7 @@ async fn consider_thread(pool: &PgPool, thread_id: &str, trigger: &str) -> Resul
         tracing::info!(thread_id, "another drafter holds this thread");
         return Ok(None);
     }
-    let result = consider_thread_locked(pool, thread_id, trigger).await;
+    let result = consider_thread_locked(pool, thread_id).await;
     // Unlock on the same connection, whatever happened; dropping the
     // connection back to the pool would release it too, but explicitly.
     let _ = sqlx::query("SELECT pg_advisory_unlock(hashtext($1))")
@@ -191,7 +189,7 @@ async fn consider_thread(pool: &PgPool, thread_id: &str, trigger: &str) -> Resul
     result
 }
 
-async fn consider_thread_locked(pool: &PgPool, thread_id: &str, trigger: &str) -> Result<Option<String>> {
+async fn consider_thread_locked(pool: &PgPool, thread_id: &str) -> Result<Option<String>> {
     let thread = load_thread(pool, thread_id).await?;
     let Some(latest) = thread.first() else {
         tracing::info!(thread_id, "empty thread");
@@ -207,6 +205,10 @@ async fn consider_thread_locked(pool: &PgPool, thread_id: &str, trigger: &str) -
         return Ok(None);
     }
 
+    // Asking again for a thread already answered is not a mistake to correct —
+    // the owner pressed the button twice, so draft again. The one exception is
+    // a draft already sent: that conversation moved on, and re-answering the
+    // same message would be a second reply to it.
     let already: Option<String> = sqlx::query_scalar(
         "SELECT status FROM app_message_replies WHERE thread_id = $1 AND ask_stream_id = $2",
     )
@@ -214,15 +216,9 @@ async fn consider_thread_locked(pool: &PgPool, thread_id: &str, trigger: &str) -
     .bind(&latest.message_id)
     .fetch_optional(pool)
     .await?;
-    if let Some(status) = &already {
-        // Auto never reconsiders an ask: the owner already saw it, or the gate
-        // already passed. Manual is the owner asking again, which overrides
-        // a dismissal or an expiry but not a send.
-        let manual = trigger == TRIGGER_MANUAL;
-        if !manual || status == "sent" || status == "pending" {
-            tracing::info!(thread_id, status, "ask already considered");
-            return Ok(None);
-        }
+    if already.as_deref() == Some("sent") {
+        tracing::info!(thread_id, "this message was already answered");
+        return Ok(None);
     }
 
     // `?`, not a fallback: a failed query here is a bug against the schema,
@@ -231,15 +227,6 @@ async fn consider_thread_locked(pool: &PgPool, thread_id: &str, trigger: &str) -
     let owner = load_owner(pool).await?;
     let counterpart = load_counterpart(pool, latest).await?;
     let transcript = render_transcript(&thread, &owner);
-
-    if trigger != TRIGGER_MANUAL {
-        let gate = gate(pool, &transcript, latest, &counterpart).await?;
-        if !gate.answerable {
-            tracing::info!(thread_id, why = %gate.why, "gate: not answerable");
-            return Ok(None);
-        }
-        tracing::info!(thread_id, ask = %gate.ask, "gate: answerable");
-    }
 
     let voice = load_voice_sample(pool, thread_id).await?;
     let mut hits = named_facts(pool, &latest.body).await?;
@@ -255,12 +242,11 @@ async fn consider_thread_locked(pool: &PgPool, thread_id: &str, trigger: &str) -
     sqlx::query(
         "INSERT INTO app_message_replies \
            (id, thread_id, ask_stream_id, ask_text, from_handle, from_name, is_group, \
-            draft, rationale, trigger, status) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending') \
+            draft, rationale, status) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending') \
          ON CONFLICT (thread_id, ask_stream_id) DO UPDATE \
            SET draft = EXCLUDED.draft, rationale = EXCLUDED.rationale, \
-               trigger = EXCLUDED.trigger, status = 'pending', \
-               sent_text = NULL, sent_at = NULL, updated_at = now()",
+               status = 'pending', sent_text = NULL, sent_at = NULL, updated_at = now()",
     )
     .bind(&id)
     .bind(thread_id)
@@ -271,7 +257,6 @@ async fn consider_thread_locked(pool: &PgPool, thread_id: &str, trigger: &str) -
     .bind(latest.is_group)
     .bind(reply.trim())
     .bind(drafted.rationale.as_deref())
-    .bind(trigger)
     .execute(pool)
     .await?;
     Ok(Some(id))
@@ -490,56 +475,6 @@ async fn search_record(pool: &PgPool, ask: &str, who: &Counterpart) -> Vec<Strin
 // ── Model calls ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct Gate {
-    answerable: bool,
-    #[serde(default)]
-    ask: String,
-    #[serde(default)]
-    why: String,
-}
-
-async fn gate(
-    pool: &PgPool,
-    transcript: &str,
-    latest: &ThreadMessage,
-    who: &Counterpart,
-) -> Result<Gate> {
-    let system = "\
-You read the tail of a text-message thread and decide one thing: does the LATEST message \
-ask the owner of this phone for something concrete that could be answered from the owner's \
-own records — an address, a phone number or email, a link or file they once sent, a date, a \
-time, whether they are free, a name, a place, a fact about their own past or plans?
-
-Answer YES only when all of these hold:
-- the latest message is a request or question aimed at the owner (in a group, it must be \
-addressed to them, not to someone else);
-- it wants information, not an action in the world or an opinion or a feeling;
-- the owner has not already answered it later in the thread.
-
-Things the record can answer, so YES: the owner's own contact details, where they live or \
-work, whether they are free at a given time, a date or a plan already made, something they \
-sent or said before, a place they have been to and could name.
-
-Answer NO for small talk, reactions, statements, jokes, questions of taste or feeling \
-(\"how are you\", \"did you like it\"), requests to do something physical, and anything the \
-owner already answered.
-
-Reply with JSON only: {\"answerable\": true|false, \"ask\": \"the ask in one short line\", \
-\"why\": \"one short line\"}";
-    let user = format!(
-        "Counterpart: {}\nGroup thread: {}\n\nThread (oldest first, latest last):\n{}\n\nLatest message: {}",
-        who.name.as_deref().unwrap_or("unknown"),
-        if latest.is_group { "yes" } else { "no" },
-        transcript,
-        latest.body.trim()
-    );
-    let raw = system_completion(pool, ModelSlot::Lite, "message_reply_gate", system, &user, Thinking::Off, 0.0)
-        .await
-        .context("gate completion")?;
-    parse_json::<Gate>(&raw).context("gate returned no JSON")
-}
-
-#[derive(Debug, Deserialize)]
 struct Draft {
     #[serde(default)]
     reply: Option<String>,
@@ -741,6 +676,7 @@ fn parse_json<T: for<'de> Deserialize<'de>>(raw: &str) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn the_word_null_is_not_a_message() {
@@ -763,78 +699,27 @@ mod tests {
     }
 
     #[test]
-    fn a_tapback_is_not_part_of_the_batch() {
+    fn only_the_owners_own_messages_settle_a_draft() {
         let batch = vec![
-            json!({"guid": "a", "chat_id": "t1", "text": "Loved \u{201c}ok\u{201d}",
-                   "is_from_me": false, "associated_message_type": 2000}),
-            json!({"guid": "b", "chat_id": "t1", "text": "what time?", "is_from_me": false}),
+            // theirs: not an answer to anything
+            json!({"guid": "a", "chat_id": "t1", "text": "what time?", "is_from_me": false}),
+            // the owner's tapback: a reaction, not an answer
+            json!({"guid": "b", "chat_id": "t1", "text": "Loved \u{201c}ok\u{201d}",
+                   "is_from_me": true, "associated_message_type": 2000}),
+            // the owner actually replying
+            json!({"guid": "c", "chat_id": "t1", "text": "7pm", "is_from_me": true}),
         ];
-        let (inbound, _) = split_batch(&batch);
-        assert_eq!(inbound, vec!["t1".to_string()]);
+        let out = outbound_in_batch(&batch);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1, "7pm");
     }
 }
 
-// ── Detached spawn (used by ingest) ─────────────────────────────────────────
-
-/// Start the `message_reply` binary on these threads and return at once.
+/// The messages in a batch that the OWNER sent, for settling drafts.
 ///
-/// Ingest runs inline under the collector's upload request and under the
-/// runner's per-applet concurrency gate, so model calls cannot live there: a
-/// ten-second draft would hold the Mac's HTTP request open and 409 the next
-/// batch. The child gets its own process group so the runner's `kill_on_drop`
-/// on the ingest process cannot reach it, and inherits the environment the
-/// runner built (DATABASE_URL and the rest).
-pub fn spawn_detached(thread_ids: &[String], trigger: &str) -> Result<()> {
-    use std::io::Write;
-    use std::os::unix::process::CommandExt;
-    use std::process::{Command, Stdio};
-
-    if thread_ids.is_empty() {
-        return Ok(());
-    }
-    let exe = locate_sibling("message_reply")?;
-    let payload = json!({ "thread_ids": thread_ids, "trigger": trigger });
-    let input = json!({ "config": {}, "payload": payload });
-
-    let mut child = Command::new(&exe)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .process_group(0)
-        .spawn()
-        .with_context(|| format!("spawn {}", exe.display()))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input.to_string().as_bytes())?;
-    }
-    // Not waited on, on purpose. The child outlives this process.
-    std::mem::forget(child);
-    tracing::info!(threads = thread_ids.len(), exe = %exe.display(), "message_reply started");
-    Ok(())
-}
-
-/// Applet binaries ship side by side, and the runner resolved this one from
-/// the same directory it would resolve the sibling from.
-fn locate_sibling(name: &str) -> Result<std::path::PathBuf> {
-    if let Ok(dir) = std::env::var("VIRTUES_APPLETS_BIN_DIR") {
-        let p = std::path::Path::new(&dir).join(name);
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-    let me = std::env::current_exe().context("current_exe")?;
-    let p = me.parent().context("exe has no parent")?.join(name);
-    if p.exists() {
-        return Ok(p);
-    }
-    anyhow::bail!("no `{name}` binary beside {}", me.display())
-}
-
-/// Inbound and outbound messages of one collector batch, split for the two
-/// things ingest does with them: outbound settles pending drafts, inbound
-/// starts new ones. `is_from_me` decides which; a message with no thread is
-/// neither.
-pub fn split_batch(imessages: &[Value]) -> (Vec<String>, Vec<(String, String, DateTime<Utc>)>) {
-    let mut inbound_threads: Vec<String> = Vec::new();
+/// Inbound messages are deliberately NOT collected here any more: nothing is
+/// triggered by a message arriving.
+pub fn outbound_in_batch(imessages: &[Value]) -> Vec<(String, String, DateTime<Utc>)> {
     let mut outbound = Vec::new();
     for m in imessages {
         let Some(thread) = m
@@ -846,34 +731,27 @@ pub fn split_batch(imessages: &[Value]) -> (Vec<String>, Vec<(String, String, Da
             continue;
         };
         let body = m.get("text").and_then(Value::as_str).unwrap_or("").trim();
-        if body.is_empty() {
+        if body.is_empty() || !m.get("is_from_me").and_then(Value::as_bool).unwrap_or(false) {
             continue;
         }
-        // A tapback ("Loved …") is a reaction, not a message: it neither asks
-        // anything nor answers anything.
+        // A tapback ("Loved …") is a reaction, not an answer to anything.
         let reaction = m
             .get("associated_message_type")
             .and_then(Value::as_i64)
             .is_some_and(|t| t > 0)
-            || m
-                .get("associated_message_guid")
+            || m.get("associated_message_guid")
                 .and_then(Value::as_str)
                 .is_some_and(|g| !g.is_empty());
         if reaction {
             continue;
         }
-        let from_me = m.get("is_from_me").and_then(Value::as_bool).unwrap_or(false);
-        if from_me {
-            let when = m
-                .get("timestamp")
-                .and_then(Value::as_str)
-                .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
-                .map(|t| t.with_timezone(&Utc))
-                .unwrap_or_else(Utc::now);
-            outbound.push((thread.to_string(), body.to_string(), when));
-        } else if !inbound_threads.iter().any(|t| t == thread) {
-            inbound_threads.push(thread.to_string());
-        }
+        let when = m
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+        outbound.push((thread.to_string(), body.to_string(), when));
     }
-    (inbound_threads, outbound)
+    outbound
 }

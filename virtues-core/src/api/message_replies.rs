@@ -1,10 +1,10 @@
 //! Drafted replies to message threads (`app_message_replies`).
 //!
-//! The `message_reply` applet reads a thread from the record, decides whether
-//! the latest message is asking the owner for something the record can answer,
-//! and if so writes one row here with a draft. A device — today the Mac app —
-//! polls for pending rows, shows the draft, and reports what happened: sent
-//! (with the text that actually went out, which may be an edit), or dismissed.
+//! The owner asks for a draft; the `message_reply` applet reads that thread
+//! and writes one row here. The device that asked opens it, shows the draft,
+//! and reports what happened: sent (with the text that actually went out,
+//! which may be an edit), or dismissed. Nothing writes a row here unless it
+//! was asked for.
 //!
 //! This module is the device-facing half only. Drafting lives in the applet;
 //! this never calls a model.
@@ -27,7 +27,6 @@ pub struct MessageReply {
     pub is_group: bool,
     pub draft: String,
     pub rationale: Option<String>,
-    pub trigger: String,
     pub status: String,
     pub sent_text: Option<String>,
     pub sent_at: Option<Timestamp>,
@@ -36,7 +35,7 @@ pub struct MessageReply {
 }
 
 const COLUMNS: &str = "id, thread_id, ask_stream_id, ask_text, from_handle, from_name, is_group, \
-                       draft, rationale, trigger, status, sent_text, sent_at, created_at, updated_at";
+                       draft, rationale, status, sent_text, sent_at, created_at, updated_at";
 
 /// Pending drafts, newest first. A draft the owner never acted on is not
 /// pending forever: after a day the ask is stale and answering it late would

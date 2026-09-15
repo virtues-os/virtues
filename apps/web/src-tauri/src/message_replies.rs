@@ -1,16 +1,14 @@
 //! Replies from the record — the Mac's half.
 //!
-//! The box drafts a reply to a message thread and parks it in
-//! `app_message_replies`. This module is the hand: it polls the box for
-//! pending drafts, tells the owner one is waiting (a notification and a tray
-//! line), opens the draft in the window, and sends through Messages when the
-//! owner says so. It never decides anything; every send is a click.
+//! The owner asks for a draft; the box writes one; this opens it. There is no
+//! watching here. An earlier build polled every five seconds and raised a
+//! notification whenever the box had drafted something on its own — both are
+//! gone with the thing that produced them. Asking is the whole trigger.
 //!
 //! Why this app and not the collector: the collector is a bare LaunchAgent
-//! binary, and macOS lets only a bundled app post user notifications or hold
-//! the Automation grant Messages requires. This app is already the process the
-//! collector routes through (`:7117`), so it is already the one that has to
-//! be running.
+//! binary, and macOS lets only a bundled app hold the Automation grant
+//! Messages requires. This app is already the process the collector routes
+//! through (`:7117`), so it is already the one that has to be running.
 //!
 //! Sending is `osascript` telling Messages to send text to a chat id. The
 //! chat id is the GUID the collector reads out of chat.db and the box hands
@@ -19,7 +17,6 @@
 //! script, so quoting cannot break it or be used against it.
 
 use serde::Deserialize;
-use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Mutex;
@@ -27,17 +24,16 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 
-const POLL_EVERY: Duration = Duration::from_secs(5);
-/// How often to look again once the box has said it has no such route.
-const POLL_WHEN_UNSUPPORTED: Duration = Duration::from_secs(300);
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(1500);
 const READ_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_BODY: u64 = 4 * 1024 * 1024;
-/// A notification click activates the app; if the owner then reopens the
-/// window within this long, it is safe to assume they came for the draft.
-const NOTIFIED_RECENTLY: Duration = Duration::from_secs(90);
-/// The applet the box runs for "take care of the latest thread". The id is
-/// derived from the applet's directory name (`applet_<dir>`).
+/// How often to look for the draft the owner just asked for, and for how
+/// long. This is a wait on ONE request, not a watch: it starts when they
+/// press the button and ends when the draft lands or the box gives up.
+const AWAIT_EVERY: Duration = Duration::from_secs(2);
+const AWAIT_FOR: Duration = Duration::from_secs(120);
+/// The applet the box runs to draft a reply. The id is derived from the
+/// applet's directory name (`applet_<dir>`).
 const REPLY_APPLET_ID: &str = "applet_message_reply";
 
 /// The wire shape of `app_message_replies`, only the fields this side reads
@@ -45,34 +41,18 @@ const REPLY_APPLET_ID: &str = "applet_message_reply";
 #[derive(Debug, Clone, Deserialize)]
 pub struct PendingReply {
     pub id: String,
-    pub ask_text: String,
-    pub from_handle: String,
-    pub from_name: Option<String>,
-    pub draft: String,
-}
-
-impl PendingReply {
-    pub fn who(&self) -> &str {
-        self.from_name.as_deref().filter(|n| !n.is_empty()).unwrap_or(&self.from_handle)
-    }
+    pub thread_id: String,
 }
 
 #[derive(Default)]
 pub struct ReplyWatch {
-    /// Whether a poll has succeeded since launch. The first one seeds `seen`
-    /// without notifying: rows up to a day old may be pending, and a burst of
-    /// banners at login is noise — the tray line names the newest anyway.
-    primed: bool,
-    /// Ids already announced, so a row is notified once and not every 5s.
-    seen: HashSet<String>,
-    /// What is pending as of the last poll, newest first.
-    pending: Vec<PendingReply>,
-    /// The last draft announced, and when — see `NOTIFIED_RECENTLY`.
-    last_notified: Option<(String, Instant)>,
     /// A route the shell wants the SPA to open, held until the SPA asks. An
     /// event emitted before the page's listener exists is simply lost, and
-    /// the window may be cold when the tray item is clicked.
+    /// the window may be cold when the menu item is clicked.
     queued_route: Option<String>,
+    /// True while a draft has been asked for and not yet arrived, so a second
+    /// press does not start a second wait.
+    awaiting: bool,
 }
 
 pub type ReplyWatchState = Mutex<ReplyWatch>;
@@ -130,130 +110,93 @@ fn loopback_request(method: &str, path: &str, json: Option<&str>) -> std::io::Re
 enum PollFailure {
     /// 404 — this box predates the feature.
     NoSuchRoute,
-    /// Away, restarting, refusing: ordinary, and worth trying again shortly.
-    Unreachable(String),
+    /// Away, restarting, refusing: ordinary while waiting on a draft, and
+    /// worth trying again until the deadline.
+    Unreachable,
 }
 
 /// A non-2xx is a failure here, not "nothing pending": a 401 or 5xx while the
 /// box restarts must not clear the seen-set and re-announce everything.
 fn fetch_pending() -> Result<Vec<PendingReply>, PollFailure> {
     let (status, body) = loopback_request("GET", "/api/message-replies/pending", None)
-        .map_err(|e| PollFailure::Unreachable(e.to_string()))?;
+        .map_err(|_| PollFailure::Unreachable)?;
     if status == 404 {
         return Err(PollFailure::NoSuchRoute);
     }
     if !(200..300).contains(&status) {
-        return Err(PollFailure::Unreachable(format!("box answered {status}")));
+        return Err(PollFailure::Unreachable);
     }
     serde_json::from_slice::<Vec<PendingReply>>(&body)
-        .map_err(|e| PollFailure::Unreachable(e.to_string()))
+        .map_err(|_| PollFailure::Unreachable)
 }
 
-// ─── The poll ────────────────────────────────────────────────────────────────
+// ─── Asking for a draft ──────────────────────────────────────────────────────
 
-/// Watch the box for pending drafts. One thread for the life of the app;
-/// a poll, because the box has no push channel to this app.
-pub fn start_poll(app: AppHandle, tray_line: tauri::menu::MenuItem<tauri::Wry>) {
-    std::thread::spawn(move || {
-        // Off the launch path: the loopback is not serving for the first
-        // seconds, and there is nothing to announce that cannot wait.
-        std::thread::sleep(Duration::from_secs(8));
-        // Log a verdict when it CHANGES, not every tick. At 5s a box that is
-        // simply older than this app would write seventeen thousand identical
-        // lines a day.
-        let mut said: Option<&'static str> = None;
-        loop {
-            let mut wait = POLL_EVERY;
-            match fetch_pending() {
-                Ok(pending) => {
-                    if said.is_some() {
-                        eprintln!("[replies] box is answering again");
-                        said = None;
-                    }
-                    announce(&app, &tray_line, pending);
-                }
-                // The app updates on its own and the box updates on its own,
-                // so an app newer than its box is a normal state, not a
-                // fault. Back off hard: nothing here will change until
-                // someone upgrades the box.
-                Err(PollFailure::NoSuchRoute) => {
-                    if said != Some("old") {
-                        eprintln!(
-                            "[replies] this box has no /api/message-replies — it predates \
-                             drafted replies; checking every {}s in case it is upgraded",
-                            POLL_WHEN_UNSUPPORTED.as_secs()
-                        );
-                        said = Some("old");
-                    }
-                    wait = POLL_WHEN_UNSUPPORTED;
-                }
-                // Away is ordinary (a closed lid, a rebooting box). The tray's
-                // status line already reports reachability.
-                Err(PollFailure::Unreachable(why)) => {
-                    if said != Some("away") {
-                        eprintln!("[replies] box not reachable: {why}");
-                        said = Some("away");
-                    }
-                }
-            }
-            std::thread::sleep(wait);
-        }
-    });
-}
-
-fn announce(app: &AppHandle, tray_line: &tauri::menu::MenuItem<tauri::Wry>, pending: Vec<PendingReply>) {
-    use tauri_plugin_notification::NotificationExt;
-
-    let state = app.state::<ReplyWatchState>();
-    let mut fresh: Vec<PendingReply> = Vec::new();
+/// Ask the box to draft a reply, wait for it, and open it.
+///
+/// Runs on its own thread: the request and the wait both block, and this is
+/// called from a menu handler on the main thread. Speaks to the owner only at
+/// the ends — when there is a draft, and when there will not be one.
+pub fn ask_for_draft(app: &AppHandle, thread_id: Option<String>) {
     {
+        let state = app.state::<ReplyWatchState>();
         let mut g = state.lock().unwrap();
-        let announce_new = g.primed;
-        g.primed = true;
-        for r in &pending {
-            if g.seen.insert(r.id.clone()) && announce_new {
-                fresh.push(r.clone());
-            }
+        if g.awaiting {
+            drop(g);
+            notify(app, "Still working on the last one", "");
+            return;
         }
-        // Forget ids the box no longer lists, so a row that is re-drafted
-        // later (manual re-request after a dismissal) is announced again.
-        let live: HashSet<&str> = pending.iter().map(|r| r.id.as_str()).collect();
-        g.seen.retain(|id| live.contains(id.as_str()));
-        g.pending = pending.clone();
+        g.awaiting = true;
     }
 
-    // One notification per new draft. The body is the draft itself so the
-    // owner can judge it from the banner; the window is one click away.
-    for r in &fresh {
-        let title = format!("{} asked: {}", r.who(), cap(&r.ask_text, 60));
-        let _ = app
-            .notification()
-            .builder()
-            .title(title)
-            .body(cap(&r.draft, 200))
-            .show();
-        state.lock().unwrap().last_notified = Some((r.id.clone(), Instant::now()));
-    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let outcome = request_draft(thread_id.as_deref())
+            .and_then(|()| await_draft(thread_id.as_deref()));
+        app.state::<ReplyWatchState>().lock().unwrap().awaiting = false;
 
-    // The tray line names the newest pending draft, or says there is none.
-    let (text, enabled) = match pending.first() {
-        Some(r) => (format!("Reply to {}: {}", r.who(), cap(&r.ask_text, 40)), true),
-        None => ("No replies waiting".to_string(), false),
-    };
-    let line = tray_line.clone();
-    let _ = app.run_on_main_thread(move || {
-        let _ = line.set_text(text);
-        let _ = line.set_enabled(enabled);
+        match outcome {
+            Ok(Some(reply)) => open_reply(&app, &reply.id),
+            // The drafter ran and had nothing to say. That is an answer, and
+            // the owner is owed it — they pressed a button and are waiting.
+            Ok(None) => notify(
+                &app,
+                "Nothing to reply with",
+                "Your record doesn't have what that message is asking for.",
+            ),
+            Err(e) => notify(&app, "Could not draft a reply", &e),
+        }
     });
 }
 
-fn cap(s: &str, n: usize) -> String {
-    let s = s.trim().replace('\n', " ");
-    if s.chars().count() <= n {
-        return s;
+/// Poll for the draft this request produced, up to `AWAIT_FOR`.
+fn await_draft(thread_id: Option<&str>) -> Result<Option<PendingReply>, String> {
+    let deadline = Instant::now() + AWAIT_FOR;
+    while Instant::now() < deadline {
+        std::thread::sleep(AWAIT_EVERY);
+        match fetch_pending() {
+            Ok(pending) => {
+                let found = pending.into_iter().find(|r| match thread_id {
+                    Some(t) => r.thread_id == t,
+                    None => true,
+                });
+                if found.is_some() {
+                    return Ok(found);
+                }
+            }
+            // A blip while the box restarts is not a verdict; keep waiting.
+            Err(PollFailure::Unreachable) => {}
+            Err(PollFailure::NoSuchRoute) => {
+                return Err("This server doesn't draft replies yet. Upgrade it first.".into())
+            }
+        }
     }
-    let cut: String = s.chars().take(n).collect();
-    format!("{cut}…")
+    Ok(None)
+}
+
+fn notify(app: &AppHandle, title: &str, body: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app.notification().builder().title(title).body(body).show();
 }
 
 // ─── Opening a draft ─────────────────────────────────────────────────────────
@@ -271,36 +214,9 @@ pub fn open_reply(app: &AppHandle, id: &str) {
     let _ = app.emit("virtues://open-route", route);
 }
 
-/// The newest pending draft's id, if any.
-pub fn newest_pending(app: &AppHandle) -> Option<String> {
-    app.state::<ReplyWatchState>()
-        .lock()
-        .unwrap()
-        .pending
-        .first()
-        .map(|r| r.id.clone())
-}
-
-/// After a notification click: the app was activated with no window, and a
-/// draft was announced moments ago. Open it.
-pub fn open_if_notified_recently(app: &AppHandle) {
-    let recent = {
-        let state = app.state::<ReplyWatchState>();
-        let g = state.lock().unwrap();
-        g.last_notified
-            .as_ref()
-            .filter(|(_, at)| at.elapsed() < NOTIFIED_RECENTLY)
-            .filter(|(id, _)| g.pending.iter().any(|r| &r.id == id))
-            .map(|(id, _)| id.clone())
-    };
-    if let Some(id) = recent {
-        open_reply(app, &id);
-    }
-}
-
-/// Ask the box to draft for the thread that most recently messaged the owner
-/// (or a named one). Returns at once; the poll announces the result.
-pub fn request_draft(thread_id: Option<&str>) -> Result<(), String> {
+/// Start the drafter on a thread — or, with none, on whichever thread most
+/// recently messaged the owner. Returns as soon as the run is queued.
+fn request_draft(thread_id: Option<&str>) -> Result<(), String> {
     let payload = match thread_id {
         Some(t) => serde_json::json!({ "payload": { "thread_id": t } }),
         None => serde_json::json!({ "payload": {} }),
@@ -454,9 +370,4 @@ mod tests {
         assert_eq!(urlencode("a-b_c.d~e"), "a-b_c.d~e");
     }
 
-    #[test]
-    fn cap_trims_and_flattens() {
-        assert_eq!(cap("  hi\nthere  ", 10), "hi there");
-        assert_eq!(cap("abcdefghijk", 5), "abcde…");
-    }
 }

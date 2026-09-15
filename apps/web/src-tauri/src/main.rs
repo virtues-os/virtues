@@ -1007,9 +1007,6 @@ fn permissions_ok(status: &CollectorStatus) -> bool {
 #[derive(Clone)]
 struct TrayItems {
     status: tauri::menu::IconMenuItem<tauri::Wry>,
-    /// "Reply to Nick: …" while a draft is pending; disabled otherwise. The
-    /// replies poll owns its text (see `message_replies::start_poll`).
-    reply: tauri::menu::MenuItem<tauri::Wry>,
 }
 
 /// Recompute the status line and apply it. Spawns its OWN thread because
@@ -1057,17 +1054,15 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let show = MenuItem::with_id(app, "show", "Open Virtues", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Virtues", true, None::<&str>)?;
-    // Replies from the record: the newest pending draft (the poll names it),
-    // and the button — "take care of the thread that just messaged me".
-    let reply = MenuItem::with_id(app, "reply", "No replies waiting", false, None::<&str>)?;
-    let draft = MenuItem::with_id(app, "draft", "Reply to the latest thread…", true, None::<&str>)?;
+    // The whole of replies from the record, from this menu: one press, one
+    // draft. Nothing is drafted unless it is pressed.
+    let draft = MenuItem::with_id(app, "draft", "Draft a reply to the latest message", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
         &[
             &status,
             &PredefinedMenuItem::separator(app)?,
-            &reply,
             &draft,
             &PredefinedMenuItem::separator(app)?,
             &show,
@@ -1075,7 +1070,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         ],
     )?;
 
-    let items = TrayItems { status, reply };
+    let items = TrayItems { status };
 
     // The ∴ mark as a TEMPLATE image: monochrome black+alpha that AppKit recolors
     // to fit light/dark menu bars. The full-color app icon would not adapt and
@@ -1098,29 +1093,13 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "quit" => app.exit(0),
-            "reply" => {
-                if let Some(id) = message_replies::newest_pending(app) {
-                    message_replies::open_reply(app, &id);
-                }
-            }
-            "draft" => {
-                // Off the main thread: the request blocks on the loopback,
-                // which can hold a connection for seconds when the box is away.
-                let app = app.clone();
-                std::thread::spawn(move || {
-                    use tauri_plugin_notification::NotificationExt;
-                    let (title, body) = match message_replies::request_draft(None) {
-                        Ok(()) => ("Looking at the latest thread…", "A draft will appear here if there is something to answer.".to_string()),
-                        Err(e) => ("Could not start a draft", e),
-                    };
-                    let _ = app.notification().builder().title(title).body(body).show();
-                });
-            }
+            // Asks the box for a draft and opens it when it lands. Does its
+            // own waiting on its own thread.
+            "draft" => message_replies::ask_for_draft(app, None),
             _ => {}
         })
         .build(app)?;
 
-    message_replies::start_poll(app.clone(), items.reply.clone());
 
     // Keep the labels honest. A poll (not an event subscription) because the
     // collector is a separate daemon with no push channel back to this app.
@@ -1673,9 +1652,6 @@ fn main() {
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
-                    // A notification click lands here too. If a draft was
-                    // announced moments ago, that is what they came for.
-                    message_replies::open_if_notified_recently(app_handle);
                 }
             }
             #[cfg(not(target_os = "macos"))]
