@@ -40,7 +40,10 @@ One idea, ONE carrier (settled 2026-09-01: "no abridged version at all"):
 
 There is deliberately no distilled "core"/"capsule" beside it. That existed
 (`wiki_narrative_identity.content`, 80–120 words, with a follower re-deriving
-it on document edits) and was deleted 2026-09-01: two versions of one
+it on document edits) and the COLUMN was dropped 2026-09-01 (migration 0006;
+the `wiki_narrative_identity` table itself outlived it as an orphan with no
+reader and no writer, and goes in article resolution's terminal migration):
+two versions of one
 identity drifted, and the abridger was caught inventing standing directives
 ("be direct, don't go easy") that would have silently steered every chat.
 What the person edits is byte-for-byte what the assistant carries
