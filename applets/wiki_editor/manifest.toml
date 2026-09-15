@@ -9,12 +9,10 @@ schedule = "0 0 * * * *"
 # discovered.
 default_enabled = false
 
-# A ceiling, because the doctrine that applies to everything scheduled applies
-# here: anything on a timer that calls a model gets a cap, or it is a hope
-# rather than a limit. One article per run, at most one run an hour.
-[config.limits]
-max_llm_cost = 0.30
-
+# NOTE: this MUST stay above any [table] header. TOML binds every key
+# after a table header to that table, so an `agent` written below
+# [config.limits] is parsed as config.limits.agent — the column stays NULL,
+# the agent phase never runs, and nothing complains.
 agent = """
 The subprocess has already chosen the article and told you which one. If it
 reported that nothing is due, reply "nothing due" and stop — do not go looking
@@ -41,8 +39,12 @@ honest outcome is to leave it alone: say so and stop. An article rewritten
 every hour to say the same thing in new words is worse than one that sits
 still.
 
-WHEN YOU DO WRITE, call `revise_article` once, with the whole article as it
-should now read. Everything still true must appear again unchanged; anything
+WHEN YOU DO WRITE, call `revise_article` — never `edit_page`. That is not a
+preference. `revise_article` is the only door that checks the edit against the
+owner's own sentences before it lands; `edit_page` will happily overwrite them,
+and on a wiki article it is the wrong tool even when it appears to work.
+
+Call it once, with the whole article as it should now read. Everything still true must appear again unchanged; anything
 you leave out is deleted. The box works out what actually changed and applies
 only that, so a small change stays a small change in the page's history.
 
@@ -53,3 +55,11 @@ was and keep your edit to your own prose.
 
 Reply with one line: what you changed, or that you left it alone.
 """
+
+
+# A ceiling, because the doctrine that applies to everything scheduled applies
+# here: anything on a timer that calls a model gets a cap, or it is a hope
+# rather than a limit. One article per run, at most one run an hour.
+[config.limits]
+max_llm_cost = 0.30
+
