@@ -1,12 +1,6 @@
-export { default as WikiPage } from './WikiPage.svelte';
 export { default as YearPage } from './YearPage.svelte';
-export { default as WikiCitations } from './WikiCitations.svelte';
-export { default as WikiLinkedPages } from './WikiLinkedPages.svelte';
-export { default as WikiRelatedPages } from './WikiRelatedPages.svelte';
 export { default as WikiRightRail } from './WikiRightRail.svelte';
 export { default as WikiRailContents } from './WikiRailContents.svelte';
-export { default as WikiRailHistory } from './WikiRailHistory.svelte';
-export { default as WikiRailAI } from './WikiRailAI.svelte';
 export { default as WikiCollapsibleSection } from './WikiCollapsibleSection.svelte';
 
 // Day page
