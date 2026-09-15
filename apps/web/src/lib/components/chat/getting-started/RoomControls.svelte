@@ -5,6 +5,7 @@
 	them), and this is the one place a person acts.
 -->
 <script lang="ts">
+	import { goto } from "$app/navigation";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ConnectAiActions from "./ConnectAiActions.svelte";
 	import IntegrationsPicker from "./IntegrationsPicker.svelte";
@@ -15,6 +16,9 @@
 	const step = $derived(gettingStarted.steps.find((s) => s.status === "open") ?? null);
 	const interviewUnderway = $derived(gettingStarted.interviewUnderway);
 	const interviewDone = $derived(gettingStarted.step("interview")?.status === "done");
+	/** The first day the box wrote up, once one exists: the promise, shown
+	 *  rather than told — a door to the page itself. */
+	const firstDay = $derived(gettingStarted.state?.first_day ?? null);
 
 	let starting = $state(false);
 	async function startInterview() {
@@ -42,7 +46,14 @@
 		{:else if step.id === "connect_world"}
 			<IntegrationsPicker />
 			<Choices>
-				<Act variant="primary" onclick={() => void gettingStarted.skip("connect_world", true)}>Continue</Act>
+				<!-- With something connected this moves on; with nothing it is
+				     the same "Not now" every other step uses for setting aside,
+				     never a "Continue" that hides that nothing was done. -->
+				{#if (step.connected ?? 0) > 0}
+					<Act variant="primary" onclick={() => void gettingStarted.skip("connect_world", true)}>Continue</Act>
+				{:else}
+					<Act onclick={() => void gettingStarted.skip("connect_world", true)}>Not now</Act>
+				{/if}
 			</Choices>
 		{:else if step.id === "interview"}
 			<Choices>
@@ -50,6 +61,9 @@
 					{starting ? "Starting…" : "Start the interview"}
 				</Act>
 				<Act onclick={() => void gettingStarted.skip("interview", true)}>Not now</Act>
+				{#if firstDay}
+					<Act variant="plain" onclick={() => void goto(`/day/day_${firstDay}`)}>Read your first page</Act>
+				{/if}
 			</Choices>
 		{/if}
 	</section>
