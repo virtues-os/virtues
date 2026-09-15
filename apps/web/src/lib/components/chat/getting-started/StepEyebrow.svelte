@@ -45,7 +45,10 @@
 		margin: 0 0 0.5rem;
 		padding-top: 0.75rem;
 		font-family: var(--md-heading-major-family, var(--font-serif));
-		font-size: 1.25rem;
+		/* The markdown's own h2 token, so the room's two serif headings come
+		   off one scale — 1.25rem was a number I invented, and it sat a step
+		   below the scale rather than on it. */
+		font-size: var(--md-h2-size, 1.375rem);
 		font-weight: 400;
 		line-height: 1.3;
 		font-variant-numeric: tabular-nums;

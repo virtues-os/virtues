@@ -403,7 +403,7 @@ fn subject_of(line: &str) -> String {
     format!("gs:{line}")
 }
 
-const WELCOME: &str = "# Getting started\n\nVirtues records, remembers, and recounts your life.\n\nFour things have to be in place before it can start: connecting AI, introductions, your integrations, and your story. This conversation sets them up in order. The first three take a few minutes; the fourth is a conversation of about twenty. You can stop at any point using the door in the top right and come back later. Your progress is kept.";
+const WELCOME: &str = "# Getting started\n\nWelcome in. Virtues records, remembers, and recounts your life.\n\nFour things have to be in place before it can start: connecting AI, introductions, your integrations, and your story. This conversation sets them up in order, and you can stop at any point using the door in the top right.";
 
 const GRADUATED: &str =
     "That is all four. This room stays open for questions about your setup; the rest of Virtues is yours.";
