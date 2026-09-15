@@ -291,7 +291,8 @@ pub async fn write_year_article(pool: &PgPool, year: i32) -> Result<String> {
     p.push_str(&format!("YEAR {year}\n"));
     if !page.summary.chapters.is_empty() {
         p.push_str(&format!(
-            "The chapters it falls inside, in their words: {}\n",
+            "The chapters of the owner's life this year falls inside, named by \
+             them: {}\n",
             page.summary.chapters.join("; ")
         ));
     }
@@ -300,12 +301,18 @@ pub async fn write_year_article(pool: &PgPool, year: i32) -> Result<String> {
     // distinction: what is here is placed, never paraphrased.
     let has_authored = page.summary.title.is_some() || page.summary.summary.is_some();
     if has_authored {
-        p.push_str("\n## IN THEIR WORDS — place these, never reword them\n");
+        // The owner is "you" in the article. This block describes them to
+        // you in the third person because it is a briefing — say so, or the
+        // briefing's voice becomes the article's.
+        p.push_str(
+            "\n## THE OWNER'S OWN WORDS — place these, never reword them\n\
+             (The article addresses the owner as \"you\", as every page does.)\n",
+        );
         if let Some(t) = &page.summary.title {
-            p.push_str(&format!("- They call this year: {t}\n"));
+            p.push_str(&format!("- The name they gave this year: {t}\n"));
         }
         if let Some(sm) = &page.summary.summary {
-            p.push_str(&format!("- What they say about it: {sm}\n"));
+            p.push_str(&format!("- What they say the year was: {sm}\n"));
         }
     }
 

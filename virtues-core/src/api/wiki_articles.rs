@@ -34,7 +34,7 @@ use crate::ids::{generate_id, PAGE_PREFIX, WIKI_ARTICLE_PREFIX};
 /// `'org'`: the entity-ref table and every live query use the long form, and
 /// the sweep joins articles to refs — the short form would make that join
 /// silently return zero organization rows. The frontend route stays `/org`.
-pub const SUBJECT_TYPES: [&str; 7] = [
+pub const SUBJECT_TYPES: [&str; 8] = [
     "person",
     "place",
     "organization",
@@ -44,6 +44,10 @@ pub const SUBJECT_TYPES: [&str; 7] = [
     // Chapters of a life (migration 0015): each era the interview captures
     // gets a page seeded with the person's own words about it.
     "chapter",
+    // A year is a subject with a page, not a folder of days
+    // (migration 0022). Same idiom as a chapter: the person may title it and
+    // say what it was, and the record writes the article beneath that.
+    "year",
 ];
 
 /// A subject's article, if it has one.

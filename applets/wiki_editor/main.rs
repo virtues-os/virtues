@@ -73,10 +73,16 @@ async fn main() -> Result<()> {
         .fetch_one(&pool)
         .await?;
 
+        // WHAT CHANGED, not just that something did. The first year revision
+        // spent its whole budget in ten tool calls rediscovering the days it
+        // could have been handed, and wrote nothing. Research should be the
+        // agent's option, not its only way to find out why it was woken.
+        let changed = changed_since(&pool, &article).await?;
+
         output(
             &format!(
-                "Revise the article for subject_type={} subject_id={}. Its evidence has \
-                 changed since the last edition.\n\n\
+                "Revise the article for subject_type={} subject_id={}.\n\n\
+                 WHAT CHANGED SINCE THE LAST EDITION:\n{changed}\n\n\
                  THE ARTICLE AS IT STANDS — revise THIS text and pass the whole result \
                  to `revise_article`:\n\n{current}",
                 article.subject_type, article.subject_id
@@ -88,4 +94,41 @@ async fn main() -> Result<()> {
 
     output("No article is due for revision.", &input.config)?;
     Ok(())
+}
+
+/// What is new beneath a subject since its article was last written.
+///
+/// A year rests on its days, so the days written up since the last edition ARE
+/// the change, and handing them over costs one query. An entity rests on
+/// records that reference it, and those are better searched than dumped, so it
+/// gets a count and goes looking if it wants detail.
+async fn changed_since(
+    pool: &sqlx::PgPool,
+    article: &virtues::api::wiki_editor::DueArticle,
+) -> Result<String> {
+    if article.subject_type != "year" {
+        return Ok("New records reference this subject. Search for them.".to_string());
+    }
+    let Some(year) = article
+        .subject_id
+        .strip_prefix("year_")
+        .and_then(|y| y.parse::<i32>().ok())
+    else {
+        return Ok(String::new());
+    };
+
+    let days = virtues::api::years::days_of(pool, year).await?;
+    let lines: Vec<String> = days
+        .iter()
+        .filter(|d| d.narrated && d.lede.is_some())
+        .map(|d| format!("- {} — {}", d.date, d.lede.clone().unwrap_or_default()))
+        .collect();
+    if lines.is_empty() {
+        return Ok("Nothing is written up for this year yet.".to_string());
+    }
+    Ok(format!(
+        "Every written-up day of {year}, with its opening line. Compare them \
+         against the article: what is here and not there is what you are for.\n{}",
+        lines.join("\n")
+    ))
 }
