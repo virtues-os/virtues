@@ -60,6 +60,15 @@ Reply with one line: what you changed, or that you left it alone.
 # A ceiling, because the doctrine that applies to everything scheduled applies
 # here: anything on a timer that calls a model gets a cap, or it is a hope
 # rather than a limit. One article per run, at most one run an hour.
+[config]
+# The CHAT slot, not the background one. An agent applet gets the lite model by
+# default, which is right for summarizing and bookkeeping and wrong here: what
+# this applet produces is prose a person reads on their own wiki, held to the
+# same bar as the day's article. A slot rather than a model id, because the
+# registry owns model selection and a literal in a manifest goes stale the
+# moment the catalog moves.
+model_slot = "chat"
+
 [config.limits]
 max_llm_cost = 0.30
 
