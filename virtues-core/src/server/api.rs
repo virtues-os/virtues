@@ -2305,22 +2305,6 @@ pub async fn wiki_get_day_handler(
 }
 
 
-/// Update a day by date
-pub async fn wiki_update_day_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-    Json(request): Json<crate::api::UpdateWikiDayRequest>,
-) -> Response {
-    match date.parse::<chrono::NaiveDate>() {
-        Ok(parsed_date) => {
-            api_response(crate::api::update_day(state.db.pool(), parsed_date, request).await)
-        }
-        Err(_) => error_response(Error::InvalidInput(format!(
-            "Invalid date format: {}",
-            date
-        ))),
-    }
-}
 
 /// List days in a date range
 pub async fn wiki_list_days_handler(

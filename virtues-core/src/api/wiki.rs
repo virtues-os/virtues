@@ -131,7 +131,6 @@ pub struct WikiDay {
     /// The day's prose, from `wiki_day_prose`. The article page is its only
     /// home — the legacy `autobiography` column was dropped in 0106.
     pub article: Option<String>,
-    pub epigraph: Option<String>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
     // act_id/chapter_id are gone: the 2026-08-18 squash dropped the columns,
@@ -273,15 +272,6 @@ pub struct UpdateWikiOrganizationRequest {
 }
 
 /// Request to update a day wiki page
-#[derive(Debug, Deserialize)]
-pub struct UpdateWikiDayRequest {
-    pub epigraph: Option<String>,
-    pub last_edited_by: Option<String>,
-    pub cover_image: Option<String>,
-    pub start_timezone: Option<String>,
-    pub data_quality: Option<serde_json::Value>,
-    pub snapshot: Option<serde_json::Value>,
-}
 
 // ============================================================================
 // Person CRUD Operations
@@ -880,7 +870,6 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         // Absent from the INSERT..RETURNING path (a just-created day has no
         // prose anyway) — `.ok()` makes that read as None rather than an error.
         article: row.try_get("article").ok().flatten(),
-        epigraph: row.try_get("epigraph").ok().flatten(),
         last_edited_by: row.try_get("last_edited_by").ok().flatten(),
         cover_image: row.try_get("cover_image").ok().flatten(),
         data_quality: row.try_get("data_quality").ok().flatten(),
@@ -1099,43 +1088,6 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
 }
 
 /// Update a day
-pub async fn update_day(
-    pool: &PgPool,
-    date: NaiveDate,
-    req: UpdateWikiDayRequest,
-) -> Result<WikiDay> {
-    // Get or create the day first
-    let day = get_or_create_day(pool, date).await?;
-    let day_id_str = day.id.to_string();
-
-    sqlx::query(
-        r#"
-        UPDATE wiki_days
-        SET
-            epigraph = COALESCE($2, epigraph),
-            last_edited_by = COALESCE($3, last_edited_by),
-            cover_image = COALESCE($4, cover_image),
-            start_timezone = COALESCE($5, start_timezone),
-            data_quality = COALESCE($6, data_quality),
-            snapshot = COALESCE($7, snapshot),
-            updated_at = now()
-        WHERE id = $1
-        "#,
-    )
-    .bind(&day_id_str)
-    .bind(&req.epigraph)
-    .bind(&req.last_edited_by)
-    .bind(&req.cover_image)
-    .bind(&req.start_timezone)
-    .bind(&req.data_quality)
-    .bind(&req.snapshot)
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to update day: {}", e)))?;
-
-    get_or_create_day(pool, date).await
-}
-
 /// List days in a date range
 pub async fn list_days(
     pool: &PgPool,
@@ -1238,31 +1190,53 @@ pub async fn day_activity(
 #[derive(Debug, Serialize)]
 pub struct OnThisDayEntry {
     pub date: NaiveDate,
-    pub epigraph: Option<String>,
+    /// The day article's opening paragraph. Was `epigraph` — a column the
+    /// narrate prompt forbids the model to produce, so it was NULL on every
+    /// row of every box, and the overview rendered nothing for years.
+    pub lede: Option<String>,
     pub narrated: bool,
     pub event_count: i64,
+}
+
+/// THE LEDE, in SQL — the day's opening paragraph, which is the short form
+/// every rung above the day reads.
+///
+/// `$prose` is a `wiki_day_prose.prose` expression. The first block that is
+/// neither blank nor a markdown heading: the narrate prompt requires the
+/// article to open with a lede carrying no heading, and a human edit that
+/// adds one above it must not turn the heading into the summary.
+///
+/// Defined once and interpolated, because two callers wanted it and a second
+/// hand-written copy is how two spellings of one rule start disagreeing.
+pub fn day_lede_sql(prose: &str) -> String {
+    format!(
+        "(SELECT btrim(b) FROM unnest(string_to_array({prose}, E'\\n\\n')) AS b \
+          WHERE btrim(b) <> '' AND left(btrim(b), 1) <> '#' LIMIT 1)"
+    )
 }
 
 /// Days from earlier years sharing `date`'s month and day, newest first.
 pub async fn on_this_day(pool: &PgPool, date: NaiveDate) -> Result<Vec<OnThisDayEntry>> {
     use sqlx::Row;
 
-    let rows = sqlx::query(
+    let rows = sqlx::query(&format!(
         r#"
         SELECT
             d.date,
-            d.epigraph,
+            {lede} AS lede,
             (d.narrated_at IS NOT NULL) AS narrated,
             COUNT(e.id) FILTER (WHERE e.user_hidden = false) AS event_count
         FROM wiki_days d
+        LEFT JOIN wiki_day_prose dp ON dp.day_id = d.id
         LEFT JOIN wiki_events e ON e.day_id = d.id
         WHERE EXTRACT(MONTH FROM d.date) = $1
           AND EXTRACT(DAY FROM d.date) = $2
           AND d.date < $3
-        GROUP BY d.id, d.date, d.epigraph, d.narrated_at
+        GROUP BY d.id, d.date, dp.prose, d.narrated_at
         ORDER BY d.date DESC
         "#,
-    )
+        lede = day_lede_sql("dp.prose")
+    ))
     .bind(chrono::Datelike::month(&date) as i32)
     .bind(chrono::Datelike::day(&date) as i32)
     .bind(date)
@@ -1276,9 +1250,9 @@ pub async fn on_this_day(pool: &PgPool, date: NaiveDate) -> Result<Vec<OnThisDay
                 date: row
                     .try_get("date")
                     .map_err(|e| Error::Database(format!("Failed to decode date: {}", e)))?,
-                epigraph: row
-                    .try_get("epigraph")
-                    .map_err(|e| Error::Database(format!("Failed to decode epigraph: {}", e)))?,
+                lede: row
+                    .try_get("lede")
+                    .map_err(|e| Error::Database(format!("Failed to decode lede: {}", e)))?,
                 narrated: row
                     .try_get("narrated")
                     .map_err(|e| Error::Database(format!("Failed to decode narrated: {}", e)))?,
