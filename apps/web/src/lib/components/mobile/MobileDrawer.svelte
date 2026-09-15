@@ -12,9 +12,13 @@
 	 *   - Conversations carry their own relative time as a caption instead of
 	 *     shouting day-bucket headers between them — one quiet section label,
 	 *     then rows.
-	 *   - Actions are not dressed as list rows: search, settings and compose
-	 *     live in a pinned bottom bar (the thumb's home), compose as the one
-	 *     filled control in the room — the primary verb, spent once.
+	 *   - Two regions, not one list: the mast and the doors (Search, New
+	 *     chat, All chats, Settings) are pinned chrome; only Recents scrolls,
+	 *     and a hairline appears under the doors once the list has slid
+	 *     beneath them — the way a navigation bar earns its rule. There used
+	 *     to be a bottom bar too (search pill, compose), and search down there
+	 *     sat one thumb-width from the chat's own search, so which search you
+	 *     were in was never quite clear. Search is now the first door.
 	 *
 	 * Because the viewport slides ALL the way off (see MobileShell), this is a
 	 * standalone screen, so it carries the app's masthead — the same drawn ∴
@@ -56,6 +60,9 @@
 		mobileLayout.closeDrawer();
 		search.show();
 	}
+
+	/** The list has scrolled under the doors; draw the rule between them. */
+	let scrolled = $state(false);
 
 	/**
 	 * A conversation's recency, said the way a person would: clock time today,
@@ -110,13 +117,22 @@
 		</button>
 	</header>
 
-	<div class="body">
-		<!-- The mini-menu: the drawer's few fixed doors, before the flow of
-		     conversations. Doors wear Atlas (the shell's drawn set), matching
-		     the desktop sidebar's rule: Atlas for nav doors, Remix for
-		     interface symbols (the close » above). New chat leads — it is the
-		     app's primary verb — then the full archive, then the device
-		     itself ("is this thing collecting?"). -->
+	<!-- The doors: pinned, before the flow of conversations. They wear Atlas
+	     (the shell's drawn set), matching the desktop sidebar's rule: Atlas
+	     for nav doors, Remix for interface symbols (the close » above).
+	     Search first, then New chat — the app's primary verb — then the full
+	     archive, then Settings. That last door used to say "This device",
+	     which was the truth about what the page held (this phone's streams
+	     and its link to the server) and a mystery to anyone looking for
+	     settings. One door, the word people look for. -->
+	<div class="doors" class:scrolled>
+		<!-- Search is a field, not a door: the one filled shape in the column,
+		     so the eye finds it without reading. The pill treatment is the
+		     old bottom bar's, moved up. -->
+		<button class="search-pill" onclick={openSearch}>
+			<AtlasIcon name="search" bare />
+			<span>Search</span>
+		</button>
 		<button class="row" onclick={() => go("/chat", "Chat")}>
 			<AtlasIcon name="new-chat" bare />
 			<span class="row-text">New chat</span>
@@ -125,11 +141,13 @@
 			<AtlasIcon name="chats" bare />
 			<span class="row-text">All chats</span>
 		</button>
-		<button class="row" onclick={() => go("/virtues/devices/this", "This device")}>
-			<AtlasIcon name="device" bare />
-			<span class="row-text">This device</span>
+		<button class="row" onclick={() => go("/virtues/devices/this", "Settings")}>
+			<AtlasIcon name="settings" bare />
+			<span class="row-text">Settings</span>
 		</button>
+	</div>
 
+	<div class="body" onscroll={(e) => (scrolled = e.currentTarget.scrollTop > 0)}>
 		<div class="section-label">Recents</div>
 		{#each recentSessions as s (s.conversation_id)}
 			{@const route = `/chat/${s.conversation_id}`}
@@ -146,24 +164,14 @@
 			<div class="empty">Conversations you start will collect here.</div>
 		{/each}
 	</div>
-
-	<footer class="bar">
-		<button class="search-pill" onclick={openSearch}>
-			<AtlasIcon name="search" bare />
-			<span>Search</span>
-		</button>
-		<button class="bar-circle" onclick={() => go("/virtues/you", "Settings")} aria-label="Settings">
-			<AtlasIcon name="settings" bare />
-		</button>
-		<button class="bar-circle filled" onclick={() => go("/chat", "Chat")} aria-label="New chat">
-			<AtlasIcon name="new-chat" bare />
-		</button>
-	</footer>
 </nav>
 
 <style>
-	/* Elevated, not surface: the viewport slides off this, and the two planes
-	   reading as the same material loses the depth that says which one moved. */
+	/* The same paint as the viewport (MobileShell), on purpose. It used to be
+	   --surface-elevated so the two planes would read as different materials;
+	   but the drawer fills the whole screen, so on a warm theme "elevated"
+	   read as the page turning beige when the menu opened. Depth is the
+	   sliding plane's shadow, which the viewport already casts on this one. */
 	.drawer {
 		display: flex;
 		flex-direction: column;
@@ -173,7 +181,9 @@
 		   layout). Padding it again pushed the mast a full notch-height below
 		   the viewport's top bar, and the two bars are meant to share a
 		   baseline — the » lands where the ghost/compose control sits. */
-		background: var(--color-surface-elevated, var(--color-surface));
+		background-color: var(--color-surface);
+		background-image: var(--background-image);
+		background-blend-mode: multiply;
 		color: var(--color-foreground);
 	}
 
@@ -232,13 +242,55 @@
 		-webkit-text-stroke: 0.2px currentColor;
 	}
 
+	/* Pinned chrome. The rule beneath is drawn only while the list is under
+	   it: at rest the doors and the first rows share one column, and a
+	   permanent line there would cut the room in two for no reason. */
+	.doors {
+		flex: none;
+		padding: 2px 10px 6px;
+		border-bottom: 1px solid transparent;
+		transition: border-color 0.2s ease-out;
+	}
+	.doors.scrolled {
+		border-bottom-color: var(--color-border);
+	}
+
+	.search-pill {
+		display: flex;
+		align-items: center;
+		gap: 9px;
+		width: 100%;
+		min-height: 40px;
+		margin: 0 0 6px;
+		padding: 0 14px;
+		border: 0;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		color: var(--color-foreground-muted);
+		font-size: 15px;
+		text-align: left;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+		transition: background-color 0.25s ease-out;
+	}
+	.search-pill:active {
+		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+		transition-duration: 0s;
+	}
+	/* Atlas ships a .sidebar-icon color of its own (the desktop sidebar's);
+	   in this pill the control says what its glyph wears. */
+	.search-pill :global(svg) {
+		color: currentColor;
+	}
+
+	/* No bottom bar any more, so the list covers the home indicator itself. */
 	.body {
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
 		-webkit-overflow-scrolling: touch;
 		overscroll-behavior: contain;
-		padding: 4px 10px 12px;
+		padding: 0 10px calc(12px + env(safe-area-inset-bottom));
 	}
 
 	/* Voice 1 of 2: a row. One size, one weight, everywhere in the list. */
@@ -272,7 +324,7 @@
 
 	/* Voice 2 of 2: a caption. The section label and the row times share it. */
 	.section-label {
-		margin: 18px 10px 6px;
+		margin: 12px 10px 6px;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
 	}
@@ -318,73 +370,5 @@
 		padding: 16px 10px;
 		font-size: 13px;
 		color: var(--color-foreground-muted);
-	}
-
-	/* The thumb's row: search as a pill, settings quiet, compose filled — the
-	   room's one filled control, because starting a conversation is the app's
-	   primary verb. */
-	.bar {
-		flex: none;
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-	}
-
-	.search-pill {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		gap: 9px;
-		min-height: 44px;
-		padding: 0 16px;
-		border: 0;
-		border-radius: 999px;
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
-		color: var(--color-foreground-muted);
-		font-size: 15px;
-		text-align: left;
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
-		transition: background-color 0.25s ease-out;
-	}
-	.search-pill:active {
-		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
-		transition-duration: 0s;
-	}
-
-	.bar-circle {
-		flex: none;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 44px;
-		height: 44px;
-		border: 0;
-		border-radius: 999px;
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
-		color: var(--color-foreground);
-		cursor: pointer;
-		-webkit-tap-highlight-color: transparent;
-		transition: background-color 0.25s ease-out;
-	}
-	.bar-circle:active {
-		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
-		transition-duration: 0s;
-	}
-
-	/* Atlas ships a .sidebar-icon color of its own (the desktop sidebar's);
-	   in this room the buttons say what their glyphs wear. */
-	.search-pill :global(svg),
-	.bar-circle :global(svg) {
-		color: currentColor;
-	}
-
-	.bar-circle.filled {
-		background: var(--color-foreground);
-		color: var(--color-surface);
-	}
-	.bar-circle.filled:active {
-		background: color-mix(in srgb, var(--color-foreground) 85%, var(--color-surface));
 	}
 </style>
