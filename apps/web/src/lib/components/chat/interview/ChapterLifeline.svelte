@@ -40,42 +40,15 @@
 
 	interface Label { cx: number; text: string; tight: boolean; row: number; planned: boolean; unnamed: boolean }
 	interface Tick { t: number; year: number; age: number | null; major: boolean }
-	interface Strip { x: number; w: number; o: number }
-
-	/* Deterministic coverage strips — dense and live after the box arrived,
-	   faint imported traces before it. Same idea as the prototype's covSegs,
-	   simplified to what reads at this size. */
-	function rnd(a: number, b: number): number {
-		let h = (2166136261 ^ Math.imul(a | 0, 374761393) ^ Math.imul(b | 0, 668265263)) | 0;
-		h = Math.imul(h ^ (h >>> 13), 1274126177);
-		return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-	}
-
 	/* Everything the template draws, laid out from the life at hand. The
 	   origin of the scale is birth when known, else the first chapter; now
 	   sits at 72% of the sheet, as the prototype boots. */
 	const L = $derived.by(() => {
-		const { now, box, chapters, planned } = life;
+		const { now, chapters, planned, stories } = life;
 		const origin = life.birth ?? chapters[0]?.t0 ?? now - 30 * YR;
 		const LO = origin;
 		const HI = origin + Math.max(now - origin, YR) / 0.72;
 		const X = (t: number) => PX0 + ((t - LO) / (HI - LO)) * (PX1 - PX0);
-
-		const coverage = (ci: number, t0: number, t1: number): Strip[] => {
-			if (box === null) return [];
-			const segs: Strip[] = [];
-			const xa = X(t0), xb = X(Math.min(t1, now));
-			const n = Math.max(3, Math.round((xb - xa) / 9));
-			for (let i = 0; i < n; i++) {
-				const fa = xa + ((xb - xa) * i) / n;
-				const t = t0 + ((t1 - t0) * i) / n;
-				const live = t >= box;
-				const r = rnd(ci * 97 + i, 5);
-				if (!live && r < 0.55) continue; // imported traces are sparse
-				segs.push({ x: fa, w: (xb - xa) / n - 1.4, o: live ? 0.5 : 0.16 + r * 0.14 });
-			}
-			return segs;
-		};
 
 		/* The ruler. With a birth known, birthday ticks read in both
 		   coordinate systems — the world's calendar above, the life's age
@@ -105,7 +78,8 @@
 		/* The dimension lane's labels, laid out so none collide. A name longer
 		   than its box is set tight; a name that would still run into the one
 		   before it on the lane steps up a row. Widths are estimated from the
-		   mono face's advance (0.62em) plus tracking, in viewBox px. */
+		   serif's average advance (about 0.5em at these sizes, in sentence
+		   case) plus a little slack, in viewBox px. */
 		const spans = [
 			...chapters.map((c) => ({
 				x0: X(c.t0),
@@ -117,7 +91,7 @@
 			...(planned ? [{ x0: plannedX0, x1: plannedX1, text: planned.label, planned: true, unnamed: false }] : []),
 		];
 		const width = (text: string, tight: boolean) =>
-			text.length * (tight ? 9.5 * 0.62 * 1.04 : 12.5 * 0.62 * 1.1);
+			text.length * (tight ? 11 * 0.5 * 1.08 : 13.5 * 0.5 * 1.1);
 		const ends = [-Infinity, -Infinity];
 		const labels: Label[] = spans.map(({ x0, x1, text, planned, unnamed }) => {
 			const tight = width(text, false) > x1 - x0;
@@ -133,10 +107,12 @@
 			x0: X(c.t0),
 			x1: X(c.t1 ?? now),
 			color: CH_COLORS[ci % CH_COLORS.length],
-			strips: coverage(ci, c.t0, c.t1 ?? now),
 		}));
 
-		return { X, now, ages, plannedX0, plannedX1, labels, boxes, planned };
+		// The stories: a dot on the wire, named beneath it inside the box.
+		const marks = stories.filter((st) => st.t <= now).map((st) => ({ x: X(st.t), label: st.label }));
+
+		return { X, now, ages, plannedX0, plannedX1, labels, boxes, marks, planned };
 	});
 
 	let readout = $state<string | null>(null);
@@ -150,7 +126,11 @@
 		<text x={PX0 - 14} y={BASE + 5} text-anchor="end" class="t-omega">α</text>
 		<text x={PX1 + 14} y={BASE + 5} text-anchor="start" class="t-omega">Ω</text>
 
-		<!-- the age ruler: years above the ticks, the life's age below -->
+		<!-- the age ruler: years above the ticks, the life's age below, the
+		     age row named at its left so "5, 10, 15" is not a puzzle -->
+		{#if life.birth !== null}
+			<text x={PX0 - 14} y={BASE + BH + 30} text-anchor="end" class="t-age t-age-name">age</text>
+		{/if}
 		{#each L.ages as a (a.t)}
 			<line x1={L.X(a.t)} y1={BASE + BH + 14} x2={L.X(a.t)} y2={BASE + BH + 19} class="tick" class:fut={a.t > L.now} />
 			{#if a.major}
@@ -171,9 +151,6 @@
 				onmouseleave={() => (readout = null)}
 			>
 				<rect x={b.x0} y={BASE - BH} width={b.x1 - b.x0} height={BH * 2} class="box" style={`--ch:${b.color}`} />
-				{#each b.strips as s, si (si)}
-					<rect x={s.x} y={BASE - BH + 3} width={Math.max(s.w, 1)} height={BH * 2 - 6} fill={b.color} fill-opacity={s.o} />
-				{/each}
 				<!-- the dimension lane: a hairline with end ticks, the drafted name above -->
 				<line x1={b.x0 + 1} y1={DIM} x2={b.c.t1 === null ? b.x1 : b.x1 - 1} y2={DIM} class="dim" />
 				<line x1={b.x0 + 1} y1={DIM} x2={b.x0 + 1} y2={DIM + 5} class="dim" />
@@ -183,7 +160,14 @@
 			</g>
 		{/each}
 
-		<!-- the planned chapter: drafted, not lived — dashed, in intent red -->
+		<!-- the stories: a dot on the wire, named beneath it inside its chapter -->
+		{#each L.marks as m (m.x)}
+			<circle cx={m.x} cy={BASE} r="2.4" class="story-dot" />
+			<text x={m.x} y={BASE + BH - 4} text-anchor="middle" class="t-story">{m.label}</text>
+		{/each}
+
+		<!-- the planned chapter: drafted, not lived — dashed and quiet. The
+		     one red on the plate is now. -->
 		{#if L.planned}
 			<line x1={L.plannedX0} y1={DIM} x2={L.plannedX1} y2={DIM} class="dim planned" />
 		{/if}
@@ -216,7 +200,9 @@
 
 <style>
 	.lifeline {
-		margin: 1.5rem 0 1.75rem;
+		/* A plate wants a full measure of air from the prose on both sides;
+		   at the paragraph's own spacing it read as part of the paragraph. */
+		margin: 2.5rem 0 2.75rem;
 		/* Wider than the column it sits in: the chat scroller is the size
 		   container (ChatView sets container-type on it), so the plate takes
 		   up to 72rem of it, less a gutter, and centers on the column. The
@@ -266,11 +252,18 @@
 		stroke-opacity: 0.22;
 	}
 
+	/* Every word on the plate is set in the book's serif, roman, never
+	   bold — an engraving's labels, not a chart's. The mono it wore made
+	   the one picture in the room look like a dashboard pasted into it. */
 	.t-age {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 11px;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 11.5px;
 		fill: var(--color-foreground-subtle);
 		font-variant-numeric: tabular-nums;
+	}
+	.t-age-name {
+		font-size: 10.5px;
+		letter-spacing: 0.06em;
 	}
 
 	.t-age.fut {
@@ -305,26 +298,33 @@
 	}
 
 	.dim.planned {
-		stroke: #9a2b2e;
+		stroke: var(--color-foreground-subtle);
 		stroke-dasharray: 3 4;
 	}
 
 	.t-dim {
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 12.5px;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 13.5px;
+		letter-spacing: 0.01em;
 		fill: var(--color-foreground-muted);
 	}
 
 	.t-dim-tight {
-		font-size: 9.5px;
-		letter-spacing: 0.04em;
+		font-size: 11px;
 	}
 
 	.planned-t {
-		fill: #9a2b2e;
-		fill-opacity: 0.85;
+		fill: var(--color-foreground-subtle);
+	}
+
+	.story-dot {
+		fill: var(--color-foreground);
+	}
+
+	.t-story {
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 10.5px;
+		fill: var(--color-foreground-muted);
 	}
 
 	.now {
@@ -333,9 +333,9 @@
 	}
 
 	.t-now {
-		font-family: var(--font-mono, ui-monospace, monospace);
+		font-family: var(--font-serif, Georgia, serif);
 		font-size: 11px;
-		letter-spacing: 0.18em;
+		letter-spacing: 0.14em;
 		text-transform: uppercase;
 		fill: #9a2b2e;
 	}
