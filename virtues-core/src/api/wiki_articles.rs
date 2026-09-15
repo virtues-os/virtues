@@ -531,15 +531,21 @@ pub async fn set_auto_update(
     subject_id: &str,
     on: bool,
 ) -> Result<()> {
+    // `on` is the two states the UI offers. The column carries a third,
+    // 'always', for an article someone wants revisited whenever anything
+    // moves; nothing sets it yet, and the toggle must not silently clear it.
     let n = sqlx::query!(
-        "UPDATE wiki_articles SET auto_update = $3 WHERE subject_type = $1 AND subject_id = $2",
+        "UPDATE wiki_articles SET maintenance = CASE \
+             WHEN $3 THEN (CASE WHEN maintenance = 'always' THEN 'always' ELSE 'auto' END) \
+             ELSE 'never' END \
+         WHERE subject_type = $1 AND subject_id = $2",
         subject_type,
         subject_id,
         on
     )
     .execute(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to set auto_update: {}", e)))?
+    .map_err(|e| Error::Database(format!("Failed to set maintenance: {}", e)))?
     .rows_affected();
 
     if n == 0 {
