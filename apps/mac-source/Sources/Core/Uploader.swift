@@ -98,55 +98,8 @@ class Uploader {
         return await upload()
     }
 
-    // One upload in flight at a time. The timer and the message watcher can
-    // both ask for a flush in the same second; letting them run concurrently
-    // would post the same pending rows twice (the box dedups on GUID, so it is
-    // waste rather than corruption) and race on marking them uploaded. A
-    // request that arrives mid-flight is remembered and served once, right
-    // after — so nothing is dropped, and nothing is doubled.
-    private let inFlightLock = NSLock()
-    private var isUploading = false
-    private var rerunRequested = false
-
-    /// Claim the in-flight slot, or note that another pass is wanted. Synchronous
-    /// on purpose: the lock is never held across an await.
-    private func beginUploadOrDefer() -> Bool {
-        inFlightLock.lock()
-        defer { inFlightLock.unlock() }
-        if isUploading {
-            rerunRequested = true
-            return false
-        }
-        isUploading = true
-        return true
-    }
-
-    /// Release the slot, unless a pass was requested mid-flight — then keep it
-    /// and tell the caller to go again.
-    private func endUploadOrRerun() -> Bool {
-        inFlightLock.lock()
-        defer { inFlightLock.unlock() }
-        if rerunRequested {
-            rerunRequested = false
-            return true
-        }
-        isUploading = false
-        return false
-    }
-
     @discardableResult
     private func upload() async -> (uploaded: Int, failed: Int) {
-        guard beginUploadOrDefer() else { return (0, 0) }
-        var total = (uploaded: 0, failed: 0)
-        repeat {
-            let r = await uploadOnce()
-            total.uploaded += r.uploaded
-            total.failed += r.failed
-        } while endUploadOrRerun()
-        return total
-    }
-
-    private func uploadOnce() async -> (uploaded: Int, failed: Int) {
         // Check if uploads are paused due to auth failures
         if isAuthPaused {
             if let pauseUntil = authPauseUntil, Date() < pauseUntil {

@@ -88,29 +88,8 @@ async fn main() -> Result<()> {
     let app_written = sessionize::ingest(&pool, device_id, &app_events).await?;
     let browser_written = transform::write_browser_history(&pool, &browser).await?;
     let imessage_written = transform::write_imessages(&pool, &imessages).await?;
-
     let (bm_written, bm_tombstoned) =
         transform::write_bookmarks(&pool, device_id, &bookmarks).await?;
-
-    // A message the owner SENT settles any draft the box was holding for that
-    // thread — sent if it is the draft, answered if they wrote their own
-    // words. Cheap SQL, no model, and it is what keeps a draft from lingering
-    // as though it were still owed.
-    //
-    // Nothing here starts a drafter. Drafting happens when the owner asks for
-    // it and at no other time: a box that reasons about every message as it
-    // arrives is doing work nobody requested, and the owner would have no way
-    // to tell it to stop.
-    {
-        let outbound = virtues_applets::message_reply::outbound_in_batch(&imessages);
-        if !outbound.is_empty() {
-            match virtues_applets::message_reply::resolve_from_outbound(&pool, &outbound).await {
-                Ok(n) if n > 0 => tracing::info!(resolved = n, "sent messages settled pending drafts"),
-                Ok(_) => {}
-                Err(e) => tracing::warn!(error = %e, "could not settle pending drafts"),
-            }
-        }
-    }
 
     // A batch with zero messages because the Mac has none, and one with zero
     // because macOS is denying the collector `chat.db`, are identical on the

@@ -42,8 +42,6 @@
     <string>Virtues uses Bluetooth to find your box during setup and put it on your Wi-Fi.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Virtues finds your box on this network so it can connect to it directly.</string>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>Virtues sends a reply you approved into Messages on your behalf.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_virtues._tcp</string>

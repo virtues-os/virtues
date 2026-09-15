@@ -1,5 +1,0 @@
-name = "Reply from the record"
-description = "Drafts a reply to the latest message in a thread from what your record knows — an address, a link you once sent, when you're free — and holds it for you to send. Payload: {\"thread_id\": \"…\"} for one thread, {\"thread_ids\": […]} for several, or nothing for the thread that most recently messaged you."
-owner = "system"
-command = ["message_reply"]
-triggers = ["manual", "tool"]

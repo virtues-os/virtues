@@ -122,10 +122,6 @@ path = "plaid_liabilities_sync/main.rs"
 name = "chat_import"
 path = "chat_import/main.rs"
 
-[[bin]]
-name = "message_reply"
-path = "message_reply/main.rs"
-
 [dependencies]
 virtues = { path = "../virtues-core" }
 virtues-helpers = { path = "../crates/virtues-helpers" }
