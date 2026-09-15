@@ -22,10 +22,12 @@
 //! A shell NEWER than its box is therefore the ordinary state of affairs, not a
 //! rare window — and "take whatever the box serves" then means a fresh
 //! TestFlight build OTAs itself backwards onto the box's older SPA on its first
-//! launch, silently. The airlock lives through this: `ui/connect.html` is baked
-//! into the binary while `app.html` and the views ride the bundle, so a new
-//! binary paired with a downgraded SPA loses the hand-over between them (the
-//! launch-mark work of 2026-09-14 split exactly along that seam).
+//! launch, silently. The airlock is where that bites: `ui/connect.html` is
+//! baked into the binary while `app.html` and the views ride the bundle, so a
+//! downgrade desynchronizes two halves of one launch that shipped together and
+//! were only ever tested together. Anything spanning that seam — a handoff, a
+//! shared constant, chrome one side draws and the other clears — is written
+//! against a partner the box can silently replace with an older one.
 //!
 //! So the bundle only ever moves forward: `version_gate` refuses an offer that
 //! is not provably newer than what this device can already serve, and
