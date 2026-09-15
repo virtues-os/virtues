@@ -255,6 +255,65 @@ pub fn check_edit(new_text: &str, theirs: &[String], removed: &[String]) -> Resu
     Ok(())
 }
 
+/// Every subject a piece of prose links to, as `(type, id)`.
+///
+/// Links are written as `[label](/person/person_ab12)`, so the shape is fixed
+/// and a regex would be overkill.
+pub fn linked_subjects(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (i, _) in text.match_indices("](/") {
+        let rest = &text[i + 3..];
+        let Some(end) = rest.find(')') else { continue };
+        let target = &rest[..end];
+        let mut parts = target.splitn(2, '/');
+        if let (Some(kind), Some(id)) = (parts.next(), parts.next()) {
+            if !kind.is_empty() && !id.is_empty() && !id.contains('/') {
+                out.push((kind.to_string(), id.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// Refuse prose that links to something that does not exist.
+///
+/// The constitution says never invent a link, and the very first article the
+/// editor wrote invented one anyway: it linked the subject as
+/// `/person/person_abc1` — the id from the EXAMPLE in its own prompt. Examples
+/// leak into output, which is a property of models rather than a bug in this
+/// one, so the rule needs a check behind it and not just a sentence.
+///
+/// A dead link in a wiki is worse than no link: it looks like a page that
+/// exists and is one click from proving the record wrong about itself.
+pub async fn check_links(pool: &sqlx::PgPool, text: &str) -> Result<()> {
+    for (kind, id) in linked_subjects(text) {
+        let table = match kind.as_str() {
+            "person" => "wiki_people",
+            "place" => "wiki_places",
+            "org" | "organization" => "wiki_orgs",
+            "day" => "wiki_days",
+            "year" => "wiki_years",
+            // A link to something that is not a subject (an external URL, a
+            // route with no table) is not this check's business.
+            _ => continue,
+        };
+        let exists: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS (SELECT 1 FROM {table} WHERE id = $1)"
+        ))
+        .bind(&id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to check a link: {e}")))?;
+        if !exists {
+            return Err(Error::InvalidInput(format!(
+                "the article links to /{kind}/{id}, which does not exist — link only \
+                 the exact ids you were given, and never an id from an example"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// The mechanical half of an edit summary: what changed, counted rather than
 /// described.
 ///
@@ -620,15 +679,21 @@ pub async fn revise_article(
         .map_err(|e| Error::Other(format!("could not read the article: {e}")))?;
 
     // ── 1. What the person has done since the editor last wrote ──
+    //
+    // No `machine_text` means the editor has never recorded an edition of this
+    // article, so the difference between it and the live text is UNKNOWN — not
+    // "all of it is theirs". Inferring provenance from an empty string would
+    // mark every sentence, including the machine's own first draft, as the
+    // person's, and the invariant would then forbid the editor from ever
+    // touching the article again. Absent is absent.
+    let (theirs, removed) = match article.machine_text.as_deref() {
+        Some(machine_text) => {
+            let (added, removed_now) = provenance(machine_text, &live);
+            fold_provenance(&theirs_stored, &removed_stored, &added, &removed_now, &live)
+        }
+        None => (theirs_stored.clone(), removed_stored.clone()),
+    };
     let machine_text = article.machine_text.clone().unwrap_or_default();
-    let (added, removed_now) = provenance(&machine_text, &live);
-    let (theirs, removed) = fold_provenance(
-        &theirs_stored,
-        &removed_stored,
-        &added,
-        &removed_now,
-        &live,
-    );
     if !machine_text.is_empty() && live != machine_text {
         // Their edit becomes its own version, before the machine's, so the
         // history reads in the order the writing happened.
@@ -641,8 +706,9 @@ pub async fn revise_article(
         record_provenance(pool, &article.id, &theirs, &removed).await?;
     }
 
-    // ── 2. The invariant, before anything reaches the document ──
+    // ── 2. The invariants, before anything reaches the document ──
     check_edit(new_text, &theirs, &removed)?;
+    check_links(pool, new_text).await?;
 
     // ── 3. Only what changed ──
     let applied = yjs
@@ -934,6 +1000,42 @@ mod tests {
         .await
         .unwrap();
         assert!(authors.contains(&"user".to_string()), "{authors:?}");
+    }
+
+    #[test]
+    fn links_are_read_out_of_prose_by_shape() {
+        let found = linked_subjects(
+            "You met [Nick](/person/person_nick01) on [3 March](/day/day_2026-03-03), \
+             and see [the site](https://example.com).",
+        );
+        assert_eq!(
+            found,
+            vec![
+                ("person".into(), "person_nick01".into()),
+                ("day".into(), "day_2026-03-03".into())
+            ],
+            "an external URL is not a subject link"
+        );
+    }
+
+    #[sqlx::test]
+    async fn a_link_to_a_subject_that_does_not_exist_is_refused(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_real', 'Nick')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        check_links(&pool, "You met [Nick](/person/person_real).")
+            .await
+            .unwrap();
+
+        // The id from the example in the editor's own prompt. The first
+        // article ever written by this editor linked exactly this.
+        let err = check_links(&pool, "You met [Nick](/person/person_abc1).")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not exist"), "{err}");
+        assert!(err.contains("never an id from an example"), "{err}");
     }
 
     #[sqlx::test]

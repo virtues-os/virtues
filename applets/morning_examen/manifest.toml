@@ -4,12 +4,10 @@ owner = "user"
 triggers = ["cron", "manual"]
 schedule = "0 0 7 * * *"
 
-# One model call a day, and a ceiling on it because the doctrine that applies
-# to everything else applies here: anything scheduled that calls a model gets a
-# cap, or it is a hope rather than a limit.
-[config.limits]
-max_llm_cost = 0.10
-
+# NOTE: this MUST stay above any [table] header. TOML binds every key
+# after a table header to that table, so an `agent` written below
+# [config.limits] is parsed as config.limits.agent — the column stays NULL,
+# the agent phase never runs, and nothing complains.
 agent = """
 Each morning you open the user's journal page for today.
 
@@ -77,3 +75,11 @@ Under 150 words of YOUR OWN. The Gospel does not count toward that — it is
 as long as it is. Reply with just the page title so the run
 log stays readable; the page is the artifact.
 """
+
+
+# One model call a day, and a ceiling on it because the doctrine that applies
+# to everything else applies here: anything scheduled that calls a model gets a
+# cap, or it is a hope rather than a limit.
+[config.limits]
+max_llm_cost = 0.10
+

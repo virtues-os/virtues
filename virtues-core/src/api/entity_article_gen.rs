@@ -176,6 +176,12 @@ pub async fn write_entity_article_now(
         .await
         .map_err(|e| Error::Database(format!("Failed to stamp ref count: {}", e)))?;
 
+    // Record what the editor just wrote. Without this the article has no
+    // `machine_text`, and the first revision cannot tell the machine's own
+    // first draft from something the person typed — it would mark the whole
+    // article as theirs and then be forbidden from ever editing it.
+    crate::api::wiki_editor::record_edition(pool, &created.id, &article).await?;
+
     Ok(created)
 }
 

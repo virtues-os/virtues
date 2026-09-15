@@ -62,10 +62,23 @@ async fn main() -> Result<()> {
         // The summary IS the agent phase's brief for this run: it names the
         // one article to revise, in the vocabulary the revise_article tool
         // takes, so the agent never has to guess what it was woken for.
+        // The current text goes in the hand-over, not just the ids. The agent
+        // has no page id and no way to guess one, and the first real run spent
+        // its opening turns hunting for the page before giving up and editing
+        // it through the wrong door.
+        let current: String = sqlx::query_scalar(
+            "SELECT coalesce(content, '') FROM app_pages WHERE id = $1",
+        )
+        .bind(&article.page_id)
+        .fetch_one(&pool)
+        .await?;
+
         output(
             &format!(
-                "Revise the article for subject_type={} subject_id={}. Its evidence \
-                 has changed since the last edition.",
+                "Revise the article for subject_type={} subject_id={}. Its evidence has \
+                 changed since the last edition.\n\n\
+                 THE ARTICLE AS IT STANDS — revise THIS text and pass the whole result \
+                 to `revise_article`:\n\n{current}",
                 article.subject_type, article.subject_id
             ),
             &input.config,
