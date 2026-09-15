@@ -433,7 +433,10 @@ fn settled_line(s: &Step) -> String {
 /// What a step asks when its turn comes.
 fn ask_line(s: &Step) -> String {
     match s.id {
-        "connect_ai" => "Nothing begins until AI is connected. A Virtues subscription gives you the best of Claude, Gemini, GPT and Grok. Nothing you send them is kept or trained on; every request runs under zero data retention. If you already have an account, sign in. If you run models of your own, you can point your server at them instead.".into(),
+        // The buttons under this say Subscribe, Sign in and My own models, so
+        // the prose does not enumerate the doors. It spends its words on the
+        // one thing that needs arguing.
+        "connect_ai" => "AI has to be connected before anything else works. A Virtues subscription gives you the best of Claude, Gemini, GPT and Grok under zero data retention — nothing you send is stored or trained on, by them or by us.".into(),
         // Plainly, as a list: these five are the most important thing on the
         // screen, and buried in a sentence they read as decoration. The
         // person still answers in one message, in their own order.
