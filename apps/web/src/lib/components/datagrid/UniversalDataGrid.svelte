@@ -71,6 +71,14 @@
 		pageSize?: number;
 		/** Default view mode when no stored preference exists for this entityType. */
 		defaultViewMode?: ViewMode;
+		/**
+		 * What the phone shows in place of the table. Default 'grid', because a
+		 * table needs width. A consumer whose table is already one column (All
+		 * chats: a title and a time) passes 'table' and keeps its rows — the
+		 * phone then renders the same list the desk does, and the mode is
+		 * pinned: no stored preference and no toggle can put cards back.
+		 */
+		mobileViewMode?: ViewMode;
 		/** Minimum card width in grid mode (CSS value). Default: '200px'. */
 		gridMinWidth?: string;
 		/** If provided, row click toggles an inline detail row instead of firing onItemClick. */
@@ -147,6 +155,7 @@
 		searchPlaceholder = 'Search...',
 		pageSize = 16,
 		defaultViewMode = 'table',
+		mobileViewMode = 'grid',
 		gridMinWidth = '200px',
 		expandDetail,
 		animateMount = false,
@@ -493,7 +502,7 @@
 	// column on its own and is fine there. An explicit user preference still
 	// wins over both.
 	const fallbackViewMode = $derived<ViewMode>(
-		mobileLayout.isMobile && defaultViewMode === 'table' ? 'grid' : defaultViewMode
+		mobileLayout.isMobile && defaultViewMode === 'table' ? mobileViewMode : defaultViewMode
 	);
 
 	// svelte-ignore state_referenced_locally
@@ -501,7 +510,7 @@
 		dataGridPrefs.hasViewMode(entityType)
 			? dataGridPrefs.getViewMode(entityType)
 			: mobileLayout.isMobile
-				? 'grid'
+				? mobileViewMode
 				: defaultViewMode
 	);
 	// svelte-ignore state_referenced_locally
@@ -546,8 +555,15 @@
 	 * Wall, the consumer later stops passing `wallTile`, and the grid would
 	 * render a mode with no renderer. Fall back rather than blank.
 	 */
+	/**
+	 * A consumer that keeps its table on the phone pins it there: the phone
+	 * has no room for a second reading of the same list, and anyone who
+	 * opened the page before the pin has 'grid' stored for it, which would
+	 * otherwise win forever.
+	 */
+	const pinnedMobileTable = $derived(mobileLayout.isMobile && mobileViewMode === 'table');
 	const effectiveViewMode = $derived<ViewMode>(
-		availableModes.includes(viewMode) ? viewMode : 'table'
+		pinnedMobileTable ? 'table' : availableModes.includes(viewMode) ? viewMode : 'table'
 	);
 
 	function toggleViewMode() {
@@ -957,14 +973,16 @@
 						{/snippet}
 					</Popover>
 				{/if}
-				<button
-					class="ctrl-btn"
-					onclick={toggleViewMode}
-					aria-label={`Switch view — showing ${VIEW_META[effectiveViewMode].label}`}
-					title={VIEW_META[effectiveViewMode].label}
-				>
-					<Icon icon={VIEW_META[effectiveViewMode].icon} width="16" />
-				</button>
+				{#if !pinnedMobileTable}
+					<button
+						class="ctrl-btn"
+						onclick={toggleViewMode}
+						aria-label={`Switch view — showing ${VIEW_META[effectiveViewMode].label}`}
+						title={VIEW_META[effectiveViewMode].label}
+					>
+						<Icon icon={VIEW_META[effectiveViewMode].icon} width="16" />
+					</button>
+				{/if}
 				{#if toolbarActions}
 					{@render toolbarActions()}
 				{/if}
