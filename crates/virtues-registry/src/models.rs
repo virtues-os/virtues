@@ -253,7 +253,14 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
         // on the high-volume slot, which is what put it here originally and is
         // still the reason it belongs here.
         ModelSlot::Lite => "zai/glm-4.7-flash",
-        ModelSlot::Image => "google/gemini-3-pro-image",
+        // Nano Banana 2 (the 3.1 generation), replacing gemini-3-pro-image on
+        // 2026-09-15. Newer, and a quarter the price on the gateway's catalog
+        // ($0.0005/$0.003 per 1k against $0.002/$0.012). Compared head to head
+        // on the same painterly prompt: 3.1-flash lays paint on thickly —
+        // palette-knife ridges, saturated — where 3-pro is subtler and more
+        // atmospheric but holds a "leave this area quiet" instruction better.
+        // The thick-paint character is what we want for the plates.
+        ModelSlot::Image => "google/gemini-3.1-flash-image",
         // The audio-native model that won a controlled 5-clip bench. Stays out
         // of the Gemini-3 parallel-tool-call problem entirely: transcription
         // uses no tools. Every audio-in model besides Gemini rejects audio on
