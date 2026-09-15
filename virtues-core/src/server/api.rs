@@ -2139,6 +2139,72 @@ pub async fn write_article_handler(
     )
 }
 
+/// The stories: subjects the person named because they mattered.
+pub async fn wiki_list_stories_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::stories::list_stories(state.db.pool()).await)
+}
+
+pub async fn wiki_get_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::stories::get_story(state.db.pool(), &id).await)
+}
+
+/// Start a story. Only the person may: the editor's constitution forbids it
+/// from creating a subject, because naming one is a claim about what mattered.
+pub async fn wiki_create_story_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let title = body.get("title").and_then(|v| v.as_str()).unwrap_or("");
+    api_response(crate::api::stories::create_story(state.db.pool(), title).await)
+}
+
+pub async fn wiki_update_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(fields): Json<crate::api::stories::StoryFields>,
+) -> Response {
+    api_response(crate::api::stories::update_story(state.db.pool(), &id, &fields).await)
+}
+
+pub async fn wiki_delete_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::stories::delete_story(state.db.pool(), &id).await {
+        Ok(()) => success_message("Removed"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Give a story a page. Seeded with THEIR words, not a machine draft — a story
+/// has nothing beneath it to draft from, and the editor fills it by searching.
+pub async fn wiki_start_story_article_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::stories::start_article(state.db.pool(), &id).await)
+}
+
+/// Edit a chapter. There has never been a way to change one.
+pub async fn wiki_update_chapter_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(edit): Json<crate::api::narrative_draft::ChapterEdit>,
+) -> Response {
+    api_response(crate::api::narrative_draft::update_chapter(state.db.pool(), &id, &edit).await)
+}
+
+/// Unname a chapter, leaving the years it covered as an unnamed stretch.
+pub async fn wiki_delete_chapter_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::narrative_draft::delete_chapter(state.db.pool(), &id).await)
+}
+
 /// Every year of the life, newest first. Derived — opening the index writes
 /// nothing.
 pub async fn wiki_list_years_handler(State(state): State<AppState>) -> Response {

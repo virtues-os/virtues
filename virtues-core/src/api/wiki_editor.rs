@@ -20,6 +20,7 @@ pub const CONSTITUTION: &str = include_str!("../../prompts/wiki/constitution.md"
 /// what this page is for.
 pub const YEAR_BRIEF: &str = include_str!("../../prompts/wiki/year.md");
 pub const ENTITY_BRIEF: &str = include_str!("../../prompts/wiki/entity.md");
+pub const STORY_BRIEF: &str = include_str!("../../prompts/wiki/story.md");
 
 /// Which brief a subject type gets.
 ///
@@ -29,6 +30,7 @@ pub const ENTITY_BRIEF: &str = include_str!("../../prompts/wiki/entity.md");
 pub fn brief_for(subject_type: &str) -> Option<&'static str> {
     match subject_type {
         "year" => Some(YEAR_BRIEF),
+        "story" => Some(STORY_BRIEF),
         "person" | "place" | "organization" => Some(ENTITY_BRIEF),
         _ => None,
     }
@@ -425,7 +427,15 @@ pub async fn evidence_fingerprint(
     // the year would never be revised no matter how much was written beneath
     // it.
     let (refs, last_ref): (i64, Option<chrono::DateTime<chrono::Utc>>) =
-        if article.subject_type == "year" {
+        if article.subject_type == "story" {
+            // A story has no refs and usually no dates, so there is no cheap
+            // signal that its material grew: finding out would mean running the
+            // agent's own searches, which is the expensive thing the gate
+            // exists to avoid. So a story is revised when the person asks or
+            // when they accept a note — both explicit, both theirs. The whole
+            // record moving underneath it is not, by itself, a reason.
+            (0, None)
+        } else if article.subject_type == "year" {
             let year: i32 = article
                 .subject_id
                 .strip_prefix("year_")
