@@ -653,6 +653,127 @@ impl YjsState {
         Ok(new_content)
     }
 
+    /// The page's current markdown, straight from the authoritative doc.
+    ///
+    /// The editor reads this to build its prompt and hands the same string
+    /// back as `expected_old`, which is what makes the staleness guard in
+    /// `apply_text_diff` meaningful.
+    pub async fn read_text(&self, page_id: &str) -> Result<String, String> {
+        let page_doc = self
+            .doc_cache
+            .get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| format!("Failed to get page document: {e}"))?;
+        let doc = page_doc.read().await;
+        let txn = doc.doc.transact();
+        Ok(txn
+            .get_text("content")
+            .map(|t| t.get_string(&txn))
+            .unwrap_or_default())
+    }
+
+    /// Replace a page's prose by applying only what actually changed.
+    ///
+    /// The editor returns a whole article — a batch job has no turn in which
+    /// to retry a failed find/replace, and asking a model for exact anchor
+    /// strings in a two-thousand-token document is the known way to lose an
+    /// edit. So the model writes the document and the SERVER works out the
+    /// edit, which is the opposite of `apply_text_edit` and deliberately so.
+    ///
+    /// Why not simply replace the text: in a CRDT a full replace is delete-all
+    /// plus insert-all, which discards any concurrent human edit by
+    /// construction and makes every revision diff at 100%, so History shows
+    /// "everything changed" every time — the same as showing nothing.
+    ///
+    /// `expected_old` is the text the caller read before it started. If the
+    /// document has moved since (somebody typed while the model was thinking),
+    /// the edit is refused rather than applied to text it was not written
+    /// against. The next run picks it up.
+    ///
+    /// Offsets are BYTES: yrs 0.18 is `OffsetKind::Bytes`, and ops are applied
+    /// last-first so earlier offsets stay valid as the text shifts underneath.
+    pub async fn apply_text_diff(
+        &self,
+        page_id: &str,
+        expected_old: &str,
+        new_text: &str,
+    ) -> Result<String, String> {
+        use similar::{ChangeTag, TextDiff};
+
+        let page_doc = self
+            .doc_cache
+            .get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| format!("Failed to get page document: {e}"))?;
+
+        let (new_content, update_bytes) = {
+            let mut doc = page_doc.write().await;
+            {
+                let mut txn = doc.doc.transact_mut();
+                let text = txn.get_or_insert_text("content");
+                let current = text.get_string(&txn);
+                if current != expected_old {
+                    return Err("the page changed while the edit was being written".to_string());
+                }
+
+                // (byte offset into `expected_old`, bytes to delete, insertion)
+                let mut ops: Vec<(u32, u32, String)> = Vec::new();
+                let mut at = 0usize;
+                for change in TextDiff::from_words(expected_old, new_text).iter_all_changes() {
+                    let v = change.value();
+                    match change.tag() {
+                        ChangeTag::Equal => at += v.len(),
+                        ChangeTag::Delete => {
+                            ops.push((at as u32, v.len() as u32, String::new()));
+                            at += v.len();
+                        }
+                        ChangeTag::Insert => {
+                            // A delete immediately followed by an insert at the
+                            // same offset is one replacement. Merging them
+                            // matters: applied separately in reverse, the
+                            // insert would land first and shift the range the
+                            // delete was measured against.
+                            match ops.last_mut() {
+                                Some((start, del, ins))
+                                    if *start as usize == at && *del > 0 && ins.is_empty() =>
+                                {
+                                    *ins = v.to_string()
+                                }
+                                _ => ops.push((at as u32, 0, v.to_string())),
+                            }
+                        }
+                    }
+                }
+
+                for (start, del, ins) in ops.into_iter().rev() {
+                    if del > 0 {
+                        text.remove_range(&mut txn, start, del);
+                    }
+                    if !ins.is_empty() {
+                        text.insert(&mut txn, start, &ins);
+                    }
+                }
+                // txn commits on drop
+            }
+
+            doc.last_update = Instant::now();
+            let txn = doc.doc.transact();
+            let new_content = txn
+                .get_text("content")
+                .map(|t| t.get_string(&txn))
+                .unwrap_or_default();
+            let update_bytes = txn.encode_state_as_update_v1(&StateVector::default());
+            let _ = doc.broadcast_tx.send(encode_sync_update(&update_bytes));
+            (new_content, update_bytes)
+        };
+
+        self.save_queue
+            .queue_save(page_id.to_string(), update_bytes)
+            .await;
+
+        Ok(new_content)
+    }
+
     /// Append a markdown block to the end of a page, through Yjs.
     ///
     /// This is the safe way to send content into a page that may be OPEN in an
