@@ -21,27 +21,31 @@
 	<img
 		src="/covers/getting-started.jpg"
 		alt="An oil painting: a college library in autumn light, its double doors open onto a walled garden"
-		width="1600"
-		height="528"
+		width="2400"
+		height="392"
 		fetchpriority="high"
 		onload={() => (loaded = true)}
 	/>
 </figure>
 
 <style>
-	/* No border, no radius, no card, and no fade — a frontispiece is not a
-	   component pasted onto a page, it IS the top of the page. It runs wider
-	   than the column, to the same measure as the plate under the
-	   interview's opening, so the room has one wide thing and the paint
-	   reaches past the words on both sides. Edges are clean: a soft mask was
-	   tried and read as a cheap vignette.
+	/* No border, no radius, no card, no fade, and no gutter: the painting
+	   spans the FULL width of the scroller and touches its top edge, so the
+	   room opens with a picture rather than with a picture on a page. A soft
+	   mask was tried first and read as a cheap vignette; a column-width
+	   version read as a component.
 
 	   The scroller is the size container (ChatView sets container-type), so
-	   this measures against it, and `.room` keeps layout containment only so
-	   the overhang is drawn rather than clipped. */
+	   100cqw is its inner width; the negative top margin cancels the
+	   messages column's own 1.5rem of padding, and `.room` keeps layout
+	   containment only, so none of the overhang is clipped.
+
+	   The source is composed AT 6:1 rather than cropped into a band — a 3:1
+	   painting in this slot lost its ceiling and floor to object-fit and
+	   looked stretched. */
 	.cover {
-		margin: 0 0 2.25rem;
-		width: min(72rem, calc(100cqw - 3rem));
+		margin: -1.5rem 0 2.25rem;
+		width: 100cqw;
 		max-width: none;
 		position: relative;
 		left: 50%;
@@ -51,9 +55,9 @@
 		display: block;
 		width: 100%;
 		height: auto;
-		max-height: 15rem;
+		max-height: 18rem;
 		object-fit: cover;
-		object-position: center 42%;
+		object-position: center;
 		opacity: 0;
 		transition: opacity 0.5s ease;
 	}
