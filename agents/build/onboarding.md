@@ -370,7 +370,8 @@ IP · first_source = an active non-device credential · remote_access = **iroh
 relay registered** · first_sync = a successful applet run ·
 narrative_identity_ready = the narrative-identity ARTICLE exists
 (`wiki_articles`, subject_type `narrative_identity`) — the abridged
-`wiki_narrative_identity` capsule this used to check was deleted 2026-09-01;
+`wiki_narrative_identity` capsule this used to check had its COLUMN dropped
+2026-09-01 (0006 — the table is still there, orphaned);
 the document is the one artifact. Derivation
 means the state survives re-installs, restores, and out-of-band changes.
 
