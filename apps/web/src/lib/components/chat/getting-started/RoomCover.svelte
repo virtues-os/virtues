@@ -29,14 +29,13 @@
 </figure>
 
 <style>
+	/* No border, no radius, no card. A frontispiece is not a component
+	   pasted onto a page — it IS the top of the page, so the paint runs to
+	   the column's edges and dissolves into the paper where the words
+	   begin. Masked rather than faded with an overlay, so it works on any
+	   ground, light or dark. */
 	.cover {
-		margin: 0 0 1.75rem;
-		border-radius: 6px;
-		overflow: hidden;
-		background: var(--color-surface-elevated, rgba(0, 0, 0, 0.03));
-		/* The painting is warm and opaque in both themes — paint does not
-		   invert — so a hairline keeps it from floating on a dark ground. */
-		border: 1px solid var(--color-border-subtle, var(--color-border));
+		margin: 0 0 2rem;
 	}
 	img {
 		display: block;
@@ -46,7 +45,15 @@
 		object-fit: cover;
 		object-position: center 42%;
 		opacity: 0;
-		transition: opacity 0.4s ease;
+		transition: opacity 0.5s ease;
+		-webkit-mask-image:
+			linear-gradient(to bottom, #000 62%, transparent 100%),
+			linear-gradient(to right, transparent 0, #000 5%, #000 95%, transparent 100%);
+		mask-image:
+			linear-gradient(to bottom, #000 62%, transparent 100%),
+			linear-gradient(to right, transparent 0, #000 5%, #000 95%, transparent 100%);
+		-webkit-mask-composite: source-in;
+		mask-composite: intersect;
 	}
 	.cover.loaded img {
 		opacity: 1;

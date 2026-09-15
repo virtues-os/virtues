@@ -3384,8 +3384,28 @@
 	.messages-container.room .message-wrapper:not([data-role="user"]) {
 		padding: 0;
 	}
-	.messages-container.room .message-wrapper:not([data-role="user"]) :global(.markdown > :last-child) {
+	/* `.markdown > .streamdown-content > <blocks>` — Streamdown nests its
+	   output one level, so the original `.markdown > :last-child` matched
+	   that wrapper and never the last paragraph. The trailing margin stayed,
+	   and the room's lines sat 2rem apart while paragraphs inside a line sat
+	   at 1rem — the very thing this rule was written to fix. */
+	.messages-container.room .message-wrapper:not([data-role="user"]) :global(.markdown > * > :last-child) {
 		margin-bottom: 0;
+	}
+
+	/* ── The standfirst ──
+	   The welcome's opening line is the most important sentence in the
+	   product and was set as body copy, indistinguishable from the admin
+	   paragraph beneath it. It carries the page's one voice change: the
+	   book's serif, a size up, with air under it. Everything else in the
+	   room stays body. */
+	/* Descendant, not child: Streamdown nests its output one level inside
+	   `.markdown`, so `>` never matched. */
+	.messages-container.room .message-wrapper[data-subject="gs:welcome"] :global(.markdown p:first-of-type) {
+		font-family: var(--md-heading-major-family, var(--font-serif));
+		font-size: 1.3125rem;
+		line-height: 1.5;
+		margin-bottom: 1.25rem;
 	}
 
 	/* `.settled` is still set on every line the room speaks about a step that
