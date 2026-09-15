@@ -106,8 +106,9 @@
 			<Markdown content={article} refVariant="quiet" />
 		</div>
 		<p class="colophon">
-			<!-- "Not kept" covers both never-kept and claimed-by-you: either way
-			     the record's pen is down and its channel is the Notes rail. -->
+			<!-- "Not kept" means the person switched maintenance off. It no
+			     longer means "you edited it once": editing an article does not
+			     take the record's pen away, so this line must not imply it. -->
 			{maintained
 				? 'Written and kept by the record'
 				: 'Written from the record — not kept updated; new evidence arrives as notes'}{revisedLabel
@@ -119,8 +120,8 @@
 					type="button"
 					class="linkish"
 					title={maintained
-						? 'The record rewrites this article as new evidence arrives. Turning this off makes it yours.'
-						: 'Let the record keep this updated — it may rewrite the article, including your edits.'}
+						? 'The record revises this article as new evidence arrives, leaving anything you wrote untouched. Turning it off stops that.'
+						: 'Let the record keep this updated. It edits around your own sentences rather than over them.'}
 					onclick={toggleMaintenance}
 				>
 					{maintained ? 'Keeping this updated' : 'Keep this updated'}
@@ -130,7 +131,7 @@
 					type="button"
 					class="linkish"
 					title={maintained
-						? 'Editing makes this article yours — AI updates turn off. Prefer a note for marginalia or raw data.'
+						? 'Edit freely. Your sentences stay yours, and the record edits around them.'
 						: 'Open in the editor.'}
 					onclick={openInEditor}
 				>
@@ -140,8 +141,9 @@
 		</p>
 		{#if maintained && canWrite}
 			<p class="regime-hint">
-				Making edits turns off AI updates as new data comes in — add a note instead to
-				attach marginalia.
+				Anything you write here stays as you wrote it — the record edits around your
+				sentences, and every change it makes is listed in History, where you can put any
+				version back.
 			</p>
 		{/if}
 	</div>
