@@ -634,6 +634,66 @@ export async function writeArticle(
 }
 
 /** Turn maintenance on or off. Off means the AI never touches this article. */
+/** One day of a year, with the line the year reads. */
+export interface YearDayApi {
+	date: string;
+	narrated: boolean;
+	event_count: number;
+	lede: string | null;
+}
+
+/** A year: a subject with a page, not a folder of days. */
+export interface YearApi {
+	id: string;
+	year: number;
+	title: string | null;
+	summary: string | null;
+	days_recorded: number;
+	days_narrated: number;
+	has_article: boolean;
+	chapters: string[];
+	days: YearDayApi[];
+	article: string | null;
+	/** Decided by the box, because what the page may OFFER depends on it. */
+	state: 'before_record' | 'thin' | 'dense';
+}
+
+export type YearSummaryApi = Omit<YearApi, 'days' | 'article' | 'state'>;
+
+/** Every year of the life, newest first. Reading this writes nothing. */
+export async function listYears(fetchFn: FetchFn = fetch): Promise<YearSummaryApi[]> {
+	const res = await fetchFn('/api/wiki/years');
+	if (!res.ok) return [];
+	return res.json();
+}
+
+export async function getYear(year: number, fetchFn: FetchFn = fetch): Promise<YearApi | null> {
+	const res = await fetchFn(`/api/wiki/year/${year}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** The two things only the person can say about a year. */
+export async function updateYear(
+	year: number,
+	fields: { title?: string; summary?: string },
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/year/${year}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(fields)
+	});
+	if (!res.ok) throw new Error('Could not save that');
+}
+
+/** Write the year's first article. Refused for a year with no narrated day. */
+export async function writeYearArticle(year: number, fetchFn: FetchFn = fetch): Promise<string> {
+	const res = await fetchFn(`/api/wiki/year/${year}/article`, { method: 'POST' });
+	if (!res.ok) throw new Error('Could not write that article');
+	return res.json();
+}
+
 /** Put an article back to a named version. Adds a version; never rewinds. */
 export async function revertArticle(
 	subjectType: string,

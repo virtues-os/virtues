@@ -43,6 +43,8 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let wikiPage = $state<WikiPageType | undefined>(undefined);
+	/** Set when the route is a year; rendered on its own. */
+	let yearNumber = $state<number | null>(null);
 
 	// Parse a date string (YYYY-MM-DD) as local date to avoid timezone issues
 	function parseDateString(dateStr: string): Date {
@@ -107,8 +109,17 @@
 				}
 
 				case "year": {
-					// TODO: Implement year API
-					error = `Year pages not yet implemented`;
+					// A year does not go through the WikiPage union: it is its own
+					// shape (days with ledes, a chapter dateline, and the state the
+					// box decided), and squeezing it into the entity type would
+					// lose exactly the parts that make it a year.
+					const y = Number(entityId.replace(/^year_/, ""));
+					if (Number.isFinite(y)) {
+						yearNumber = y;
+						updateLabel(String(y));
+					} else {
+						error = `Not a year: ${entityId}`;
+					}
 					break;
 				}
 
@@ -199,6 +210,8 @@
 			<h1>Page not found</h1>
 			<p>{error}</p>
 		</div>
+	{:else if yearNumber !== null}
+		<YearPage year={yearNumber} />
 	{:else if wikiPage}
 		{#if isDayPage(wikiPage)}
 			<DayPage page={wikiPage} />
@@ -208,8 +221,6 @@
 			<PlacePage page={wikiPage} />
 		{:else if isOrganizationPage(wikiPage)}
 			<OrganizationPage page={wikiPage} />
-		{:else if isYearPage(wikiPage)}
-			<YearPage page={wikiPage} />
 		{/if}
 	{:else}
 		<div class="error">

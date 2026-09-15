@@ -98,6 +98,9 @@
 	$effect(() => {
 		void getChapters().then((rows) => (chapters = rows));
 	});
+	/** The year this day belongs to, for the way back up. */
+	const dayYear = $derived(page?.date ? Number(String(page.date).slice(0, 4)) : null);
+
 	const dayChapter = $derived.by(() => {
 		if (!chapters.length) return null;
 		return (
@@ -534,10 +537,16 @@
 					<h1 class="day-title">
 						{formatDate(page.date, page.dayOfWeek)}
 					</h1>
-					{#if relativeDateLabel() || dayChapter}
+					{#if relativeDateLabel() || dayChapter || dayYear}
 						<div class="day-subtitle">
 							{#if relativeDateLabel()}
 								<span class="date-badge">{relativeDateLabel()}</span>
+							{/if}
+							{#if dayYear}
+								<!-- Up one rung. The year's article links the days it
+								     rests on; without this the link only ran one way,
+								     and a day was a leaf you could not climb out of. -->
+								<a class="chapter-dateline" href="/year/year_{dayYear}">{dayYear}</a>
 							{/if}
 							{#if dayChapter}
 								<!-- The chapter dateline: which era of the life this day
