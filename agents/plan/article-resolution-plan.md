@@ -88,17 +88,35 @@ it ships today ([tools/executor.rs](../../virtues-core/src/tools/executor.rs)):
 | `semantic_search` | find the evidence, scoped to the subject |
 | `sql_query` | counts, spans, "which days carry this topic" |
 | `get_page_content` | read this article and its neighbours |
-| `edit_page` | the surgical edit, through the CRDT |
 | `think` | deliberate before editing |
+| `revise_article` | hand back the whole revised article; the server does the rest |
 
-**This reverses the earlier design of the write path, for a stated
-reason.** The deleted plan had the model return a whole article for the
-server to diff, because a batch job cannot retry a failed find/replace. An
-agent loop *can* — it sees the failure and tries again, which is how coding
-agents edit files. So the editor uses `edit_page` as chat does, and the
-whole-article-plus-server-diff machinery is dropped. `page_editor` already
-reads via `get_page_content`, snapshots a version, and edits via
-`apply_text_edit` — the three things a maintenance pass needs.
+**Corrected 2026-09-15, after building both halves.** An earlier draft of
+this section said the agent should edit through `edit_page`'s find/replace,
+on the reasoning that an agent loop can retry a failed anchor match where a
+batch job cannot. That reasoning is sound and is not the whole question.
+Find/replace gives back the retry and gives up two things this design needs:
+a guarantee that the diff is small, and any enforcement of the invariant —
+`edit_page` will happily apply an edit that paraphrases a sentence the person
+wrote.
+
+So the write tool is neither of the two earlier answers. **The agent returns
+the whole revised article; the server diffs it, checks it, and applies only
+what changed** — and a refusal comes back as a tool error naming what failed,
+which the agent can act on in the same turn. That keeps the retry loop the
+find/replace argument was defending, keeps history diffs small, and makes the
+invariant something the server refuses rather than something the prompt asks
+for.
+
+The mechanics exist: `YjsState::read_text` and `apply_text_diff` (whole
+article in, minimal ops out, with a staleness guard),
+`wiki_editor::check_edit` (the invariant), `change_line` (the mechanical half
+of the summary) and `pages::create_version_from_snapshot` (server-side
+versions, which nothing could cut before).
+
+`edit_page` stays exactly as it is for chat, whose situation is the opposite:
+a person is watching, and a failed anchor costs a sentence of conversation
+rather than a silent hour.
 
 ### 2.3 What the agent is told
 
@@ -122,9 +140,11 @@ The turn's opening message carries: the subject and its authored fields,
 `THEIRS` (§2.6), `REMOVED`, what has changed since the last edition, and the
 budget (how many tool calls it may spend).
 
-The briefs are prose and live in `agents/build/wiki-briefs.md`, included by
-the Rust constants at compile time so the doc that is reviewed and the
-prompt the box runs cannot drift.
+The constitution and the briefs are prose and live in
+`virtues-core/prompts/wiki/`, included by the Rust constants at compile time
+so the text that is reviewed is the text that runs. How they are organized,
+and what is settled about the register, is
+[agents/build/wiki-editor.md](../build/wiki-editor.md).
 
 ### 2.4 When: eligibility, then drift, then interval
 

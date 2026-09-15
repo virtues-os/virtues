@@ -672,6 +672,22 @@ impl YjsState {
             .unwrap_or_default())
     }
 
+    /// The doc's full state, for a version snapshot.
+    ///
+    /// `app_page_versions.yjs_snapshot` is a self-contained update rather than
+    /// a yrs Snapshot, which is what lets a version be decoded on its own
+    /// without `skip_gc`.
+    pub async fn encoded_state(&self, page_id: &str) -> Result<Vec<u8>, String> {
+        let page_doc = self
+            .doc_cache
+            .get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| format!("Failed to get page document: {e}"))?;
+        let doc = page_doc.read().await;
+        let txn = doc.doc.transact();
+        Ok(txn.encode_state_as_update_v1(&StateVector::default()))
+    }
+
     /// Replace a page's prose by applying only what actually changed.
     ///
     /// The editor returns a whole article — a batch job has no turn in which
