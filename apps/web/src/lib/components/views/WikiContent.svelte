@@ -14,7 +14,6 @@
 		apiToDayPage,
 	} from "$lib/wiki/converters";
 	import {
-		WikiPage,
 		YearPage,
 		DayPage,
 		PersonPage,
@@ -211,8 +210,6 @@
 			<OrganizationPage page={wikiPage} />
 		{:else if isYearPage(wikiPage)}
 			<YearPage page={wikiPage} />
-		{:else}
-			<WikiPage page={wikiPage} />
 		{/if}
 	{:else}
 		<div class="error">
