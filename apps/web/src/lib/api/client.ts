@@ -2259,6 +2259,8 @@ export interface GettingStartedStep {
 	acknowledged?: boolean;
 	/** Integrations in place — on the step that counts them. */
 	connected?: number;
+	/** What is actually feeding the record, named. */
+	sources?: string[];
 }
 
 export interface GettingStartedState {

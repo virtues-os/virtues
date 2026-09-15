@@ -60,6 +60,24 @@
 	function connected(s: SourceCatalogItem): boolean {
 		return s.credential_count > 0;
 	}
+
+	/* The nudge. Naming the best thing NOT yet connected is worth more than
+	   "connect more": it is specific, it changes as they go, and it stops the
+	   moment there is nothing useful left to say. In LEAD order, which is
+	   value order — the Mac needs no account and holds the most, the phone
+	   holds where a life actually happened, Google holds the correspondence. */
+	const NUDGE: Record<string, string> = {
+		mac: "Your Mac holds the most, and it needs no account.",
+		ios: "Your phone holds where you went and who you called.",
+		google: "Google adds your mail and calendar.",
+	};
+	const count = $derived(rows.filter(connected).length);
+	const nextWorth = $derived(
+		LEAD.map((id) => catalog.find((s) => s.id === id))
+			.filter((s): s is SourceCatalogItem => !!s && !connected(s))
+			.map((s) => NUDGE[s.id])
+			.find(Boolean) ?? null,
+	);
 	function detailFor(s: SourceCatalogItem): string | null {
 		const names = [...new Set(credentials.filter((c) => c.provider === s.id && c.is_active).map((c) => c.name))];
 		if (names.length === 0) return null;
@@ -116,6 +134,12 @@
 				</li>
 			{/each}
 		</ul>
+		{#if nextWorth}
+			<p class="nudge">
+				{count === 0 ? "Nothing connected yet." : count === 1 ? "1 connected." : `${count} connected.`}
+				{nextWorth}
+			</p>
+		{/if}
 		{#if !showAll}
 			<Act variant="plain" onclick={() => (showAll = true)}>Show the rest</Act>
 		{/if}
@@ -192,8 +216,18 @@
 		color: var(--color-foreground-subtle);
 	}
 	.quiet-line,
+	.nudge {
+		margin: 0.875rem 0 0;
+		font-size: 0.875rem;
+		color: var(--color-foreground-muted);
+	}
 	.error {
 		margin: 0.25rem 0 0;
+		font-size: 0.875rem;
+		color: var(--color-foreground-muted);
+	}
+	.nudge {
+		margin: 0.875rem 0 0;
 		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 	}
