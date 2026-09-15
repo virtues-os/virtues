@@ -389,6 +389,133 @@ pub async fn record_provenance(
     Ok(())
 }
 
+/// The maintenance state of one article, as the editor needs it.
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct EditorArticle {
+    id: String,
+    page_id: String,
+    maintenance: String,
+    machine_text: Option<String>,
+    theirs: serde_json::Value,
+    removed: serde_json::Value,
+}
+
+impl EditorArticle {
+    fn provenance_sets(&self) -> (Vec<String>, Vec<String>) {
+        let as_vec = |v: &serde_json::Value| -> Vec<String> {
+            v.as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        (as_vec(&self.theirs), as_vec(&self.removed))
+    }
+}
+
+/// Apply the editor's revision of one article.
+///
+/// This is the whole write path, and it runs on the server rather than in the
+/// agent because every step after "here is the new text" is a guarantee the
+/// agent must not be able to skip:
+///
+/// 1. Read the live document. If the person has edited it since the editor
+///    last wrote, cut a `user` version first — otherwise their change would
+///    sit invisibly inside the machine's next version — and fold what they did
+///    into `theirs` / `removed`.
+/// 2. Check the proposed text against those sets. A refusal returns the reason
+///    rather than raising: the caller is an agent loop, and the reason is
+///    something it can act on in the same turn.
+/// 3. Apply only what changed, through the CRDT, with the staleness guard.
+/// 4. Cut the machine's version, carrying the editor's own summary and a
+///    mechanical count that cannot flatter itself.
+///
+/// Returns the line the agent should report.
+pub async fn revise_article(
+    pool: &sqlx::PgPool,
+    yjs: &crate::server::yjs::YjsState,
+    subject_type: &str,
+    subject_id: &str,
+    new_text: &str,
+    summary: &str,
+) -> Result<String> {
+    // The editor's own columns, read directly: `wiki_articles::get_article`
+    // is a compile-time-checked macro over a shared struct, and widening that
+    // for one caller would put maintenance state on every reader of articles.
+    let article: EditorArticle = sqlx::query_as(
+        "SELECT id, page_id, maintenance, machine_text, theirs, removed \
+         FROM wiki_articles WHERE subject_type = $1 AND subject_id = $2",
+    )
+    .bind(subject_type)
+    .bind(subject_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load article: {e}")))?
+    .ok_or_else(|| Error::NotFound(format!("No article for {subject_type} {subject_id}")))?;
+
+    if article.maintenance == "never" {
+        return Err(Error::InvalidInput(
+            "the owner has turned maintenance off for this article".into(),
+        ));
+    }
+    let (theirs_stored, removed_stored) = article.provenance_sets();
+
+    let live = yjs
+        .read_text(&article.page_id)
+        .await
+        .map_err(|e| Error::Other(format!("could not read the article: {e}")))?;
+
+    // ── 1. What the person has done since the editor last wrote ──
+    let machine_text = article.machine_text.clone().unwrap_or_default();
+    let (added, removed_now) = provenance(&machine_text, &live);
+    let (theirs, removed) = fold_provenance(
+        &theirs_stored,
+        &removed_stored,
+        &added,
+        &removed_now,
+        &live,
+    );
+    if !machine_text.is_empty() && live != machine_text {
+        // Their edit becomes its own version, before the machine's, so the
+        // history reads in the order the writing happened.
+        if let Ok(state) = yjs.encoded_state(&article.page_id).await {
+            let _ = crate::api::pages::create_version_from_snapshot(
+                pool, &article.page_id, &state, &live, "user", Some("edited"),
+            )
+            .await;
+        }
+        record_provenance(pool, &article.id, &theirs, &removed).await?;
+    }
+
+    // ── 2. The invariant, before anything reaches the document ──
+    check_edit(new_text, &theirs, &removed)?;
+
+    // ── 3. Only what changed ──
+    let applied = yjs
+        .apply_text_diff(&article.page_id, &live, new_text)
+        .await
+        .map_err(Error::Other)?;
+
+    // ── 4. The machine's version, with a summary that cannot flatter itself ──
+    let change = change_line(&live, &applied);
+    let description = format!("{} — {}", summary.trim(), change);
+    if let Ok(state) = yjs.encoded_state(&article.page_id).await {
+        let _ = crate::api::pages::create_version_from_snapshot(
+            pool,
+            &article.page_id,
+            &state,
+            &applied,
+            "ai",
+            Some(&description),
+        )
+        .await;
+    }
+    record_provenance(pool, &article.id, &theirs, &removed).await?;
+    Ok(change)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -361,6 +361,50 @@ impl ToolExecutor {
             "create_page" => self.page_editor.create_page(arguments).await,
             "get_page_content" => self.page_editor.get_page_content(arguments, context).await,
             "edit_page" => self.page_editor.edit_page(arguments, context).await,
+            // The wiki editor's write door. Deliberately NOT edit_page: the
+            // agent hands back a whole article and the server works out the
+            // edit, so history keeps a small diff and the owner's own
+            // sentences are protected by a check the agent cannot skip.
+            "revise_article" => {
+                let yjs = self.yjs_state.as_ref().ok_or_else(|| {
+                    ToolError::ExecutionFailed(
+                        "revise_article needs the live document layer; it runs in an \
+                         applet's agent phase, not in a subprocess"
+                            .to_string(),
+                    )
+                })?;
+                let arg = |k: &str| -> Result<String, ToolError> {
+                    arguments
+                        .get(k)
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                        .ok_or_else(|| {
+                            ToolError::ExecutionFailed(format!("revise_article needs {k}"))
+                        })
+                };
+                let (st, sid, article, summary) = (
+                    arg("subject_type")?,
+                    arg("subject_id")?,
+                    arg("article")?,
+                    arg("summary")?,
+                );
+                match crate::api::wiki_editor::revise_article(
+                    &self._pool, yjs, &st, &sid, &article, &summary,
+                )
+                .await
+                {
+                    Ok(change) => Ok(ToolResult::success(serde_json::json!({
+                        "applied": true,
+                        "change": change,
+                    }))),
+                    // A refusal is not an error to raise at the person: it is a
+                    // sentence for the agent to act on in this same turn.
+                    Err(e) => Ok(ToolResult::success(serde_json::json!({
+                        "applied": false,
+                        "refused": e.to_string(),
+                    }))),
+                }
+            }
             // Applet setup
             "setup_applet" => super::applet_setup::execute(&self._pool, arguments, context).await,
             // Applet memory (persistent scratchpad for actions across runs)

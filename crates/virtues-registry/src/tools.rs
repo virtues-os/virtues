@@ -72,6 +72,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         think_tool(),
         propose_narrative_identity_tool(),
         write_it_up_tool(),
+        revise_article_tool(),
         show_step_tool(),
         skip_step_tool(),
         record_introductions_tool(),
@@ -180,6 +181,53 @@ If you are unsure whether something qualifies, it does not."#.to_string(),
 /// The narrative interview's ONE tool: turn the transcript into the person's
 /// document and chapters. Interview-mode only (see get_tools_for_agent_mode);
 /// is_system keeps it out of every other room's tool set.
+fn revise_article_tool() -> ToolConfig {
+    ToolConfig {
+        id: "revise_article".to_string(),
+        name: "Revise a wiki article".to_string(),
+        description: "Hand back a revised wiki article; the record applies what changed"
+            .to_string(),
+        // The HOW-TO-WRITE lives in the editor's constitution and brief
+        // (virtues-core/prompts/wiki/), in one place. This describes only the
+        // arguments and what the box does with them, so the two cannot drift.
+        llm_description: r#"Hand back the WHOLE article as it should now read. You do not patch it and you do not describe the change: you write the finished document, and the record works out what actually changed and applies only that. History therefore shows a small diff, not a rewrite.
+
+Arguments:
+- subject_type / subject_id: the article you were asked to revise.
+- article: the complete new text. Everything still true must appear again, unchanged — anything you leave out is deleted.
+- summary: one line on WHAT you changed and WHY, in plain words ("added the spring recital and three lessons in March"). Never "improved the article". The box appends its own count of what moved, so do not pad this with numbers.
+
+A refused call is not an error. It returns the sentence to act on — most often that your text dropped or reworded something the owner wrote, which you may not do even to improve it. Fix that and call again."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "subject_type": {
+                    "type": "string",
+                    "description": "The article's subject type, e.g. person, place, organization, year."
+                },
+                "subject_id": {
+                    "type": "string",
+                    "description": "The article's subject id, exactly as given to you."
+                },
+                "article": {
+                    "type": "string",
+                    "description": "The complete revised article. Anything omitted is deleted."
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "One plain line: what changed and why."
+                }
+            },
+            "required": ["subject_type", "subject_id", "article", "summary"]
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:draft-line".to_string(),
+        display_order: 0,
+        is_system: true,
+    }
+}
+
 fn write_it_up_tool() -> ToolConfig {
     ToolConfig {
         id: "write_it_up".to_string(),
