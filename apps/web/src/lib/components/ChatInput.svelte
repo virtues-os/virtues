@@ -15,7 +15,7 @@
 		isStreaming = false,
 		maxWidth = "max-w-3xl",
 		focused = $bindable(false),
-		placeholder = "Write a message...",
+		placeholder = "Ask Virtues",
 		onAttach = undefined as ((files: File[]) => void) | undefined,
 		onSubmit = undefined as ((content: string) => void) | undefined,
 		onStop = undefined as (() => void) | undefined,

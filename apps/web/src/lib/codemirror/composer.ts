@@ -146,7 +146,7 @@ export function createComposerEditor(options: ComposerOptions): ComposerEditor {
 	const {
 		parent,
 		doc = '',
-		placeholder = 'Write a message...',
+		placeholder = 'Ask Virtues',
 		disabled = false,
 		isMobile,
 		onSubmit,
