@@ -548,9 +548,6 @@
 							{/if}
 						</div>
 					{/if}
-					{#if page.epigraph}
-						<p class="day-epigraph">{page.epigraph}</p>
-					{/if}
 					<!-- The record's colophon, where a title page would carry one:
 					     when this was last written, by whose hand, and how much of
 					     the day the record actually saw. The audit trail below
@@ -860,18 +857,6 @@
 	.byline-sep {
 		margin: 0 0.375rem;
 		opacity: 0.5;
-	}
-
-	.day-epigraph {
-		font-family: var(--font-sans, system-ui, sans-serif);
-		font-style: italic;
-		font-weight: 400;
-		font-size: 0.9375rem;
-		line-height: 1.5;
-		color: var(--color-foreground-subtle);
-		letter-spacing: 0.01em;
-		margin: 0;
-		max-width: 32rem;
 	}
 
 	.day-title {

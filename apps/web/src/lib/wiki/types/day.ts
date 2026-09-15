@@ -218,9 +218,6 @@ export interface DayPage extends WikiPageBase {
 
 	/** Section-level tracking for granular authorship */
 
-	/** One-line literary subtitle for the day (Austen register, generated alongside autobiography) */
-	epigraph?: string;
-
 	// ─────────────────────────────────────────────────────────────
 	// Data Quality (W6H journalist assessment, nightly)
 	// ─────────────────────────────────────────────────────────────

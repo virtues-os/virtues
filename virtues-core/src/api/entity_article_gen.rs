@@ -355,9 +355,12 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             links.push(format!("- [{}](/{}/{})", n, route, eid));
         }
     }
-    let days: Vec<(chrono::NaiveDate, Option<String>)> = sqlx::query_as(
+    // The day's LEDE, not its `epigraph`: that column is NULL on every row of
+    // every box, because the narrate prompt forbids the model to write one.
+    // Six narrated days were being offered to the editor as bare dates.
+    let days: Vec<(chrono::NaiveDate, Option<String>)> = sqlx::query_as(&format!(
         r#"
-        SELECT DISTINCT d.date, d.epigraph
+        SELECT DISTINCT d.date, {lede} AS lede
         FROM wiki_days d
         JOIN wiki_day_prose dp ON dp.day_id = d.id AND dp.prose IS NOT NULL
         JOIN wiki_refs er ON date(er.occurred_at) = d.date
@@ -365,19 +368,20 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         ORDER BY d.date DESC
         LIMIT 6
         "#,
-    )
+        lede = crate::api::wiki::day_lede_sql("dp.prose")
+    ))
     .bind(&entity.id)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
-    for (date, epigraph) in &days {
+    for (date, lede) in &days {
         let label = date.format("%B %-d, %Y");
-        match epigraph {
+        match lede {
             Some(e) => links.push(format!(
                 "- [{}](/day/day_{}) — narrated day: \"{}\"",
                 label,
                 date.format("%Y-%m-%d"),
-                cap(e, 100)
+                cap(e, 200)
             )),
             None => links.push(format!("- [{}](/day/day_{})", label, date.format("%Y-%m-%d"))),
         }

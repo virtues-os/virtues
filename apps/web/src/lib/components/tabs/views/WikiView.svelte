@@ -400,7 +400,7 @@
 		stubs: 0,
 	});
 	let onThisDay = $state<OnThisDayApi[]>([]);
-	let latestEntry = $state<{ slug: string; label: string; epigraph: string | null } | null>(null);
+	let latestEntry = $state<{ slug: string; label: string; lede: string | null } | null>(null);
 	let standfirst = $state<string | null>(null);
 
 	// The lifeline strip: the whole record flattened to one row (§17.1), plus
@@ -494,6 +494,14 @@
 
 			// recent is date DESC; the latest narrated day is the featured entry.
 			const featured = recent.find((d) => d.article);
+			// The lede: the article's first block that is neither blank nor a
+			// heading. Same rule the server applies in SQL (day_lede_sql).
+			const ledeOf = (prose: string | null | undefined): string | null =>
+				prose
+					?.split(/\n\s*\n/)
+					.map((b) => b.trim())
+					.find((b) => b !== "" && !b.startsWith("#")) ?? null;
+
 			if (featured) {
 				latestEntry = {
 					slug: featured.date,
@@ -503,7 +511,10 @@
 						day: 'numeric',
 						year: 'numeric',
 					}),
-					epigraph: featured.epigraph,
+					// The day's own opening paragraph, which is its short form
+					// everywhere. `epigraph` was a column the narrate prompt
+					// forbids, so this card showed nothing on every box.
+					lede: ledeOf(featured.article),
 				};
 			}
 
@@ -649,8 +660,8 @@
 									<li>
 										<button class="otd-row" onclick={() => openDay(entry.date)}>
 											<span class="otd-year">{yearOf(entry.date)}</span>
-											{#if entry.epigraph}
-												<span class="otd-epigraph">{entry.epigraph}</span>
+											{#if entry.lede}
+												<span class="otd-epigraph">{entry.lede}</span>
 											{:else if entry.narrated}
 												<span class="otd-epigraph">A narrated day</span>
 											{:else}
@@ -676,9 +687,9 @@
 							<h2>The latest entry</h2>
 							<button class="featured" onclick={() => openDay(latestEntry!.slug)}>
 								<span class="featured-date">{latestEntry.label}</span>
-								{#if latestEntry.epigraph}
+								{#if latestEntry.lede}
 									<blockquote class="featured-epigraph">
-										{latestEntry.epigraph}
+										{latestEntry.lede}
 									</blockquote>
 								{/if}
 								<span class="featured-open">Read the entry →</span>

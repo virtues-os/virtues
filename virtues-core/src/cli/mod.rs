@@ -572,11 +572,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
             println!();
             println!("✅ Day narrated — id={}", day.id);
-            if let Some(epigraph) = &day.epigraph {
-                println!();
-                println!("Epigraph:");
-                println!("  {epigraph}");
-            }
             // The prose lives on the day's article page, and only there — the
             // legacy `autobiography` column and the view's fallback arm were
             // dropped in 0106.

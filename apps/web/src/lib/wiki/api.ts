@@ -94,7 +94,6 @@ export interface WikiDayApi {
 	start_timezone: string | null;
 	/** The day's prose, from wiki_day_prose. The article page is its only home (0106). */
 	article?: string | null;
-	epigraph: string | null;
 	last_edited_by: string | null;
 	cover_image: string | null;
 	data_quality: {
@@ -756,19 +755,6 @@ export async function getDayByDate(
 	return res.json();
 }
 
-export async function updateDay(
-	date: string,
-	data: Partial<WikiDayApi>,
-	fetchFn: FetchFn = fetch
-): Promise<WikiDayApi | null> {
-	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) return null;
-	return res.json();
-}
 
 export async function listDays(
 	startDate?: string,
@@ -873,7 +859,8 @@ export async function getEntityRecordFacets(
 /** A past year's entry sharing today's month and day. */
 export interface OnThisDayApi {
 	date: string;
-	epigraph: string | null;
+	/** The day article's opening paragraph. */
+	lede: string | null;
 	narrated: boolean;
 	event_count: number;
 }

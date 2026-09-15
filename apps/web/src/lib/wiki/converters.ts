@@ -199,7 +199,6 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		linkedTemporal: emptyLinkedTemporal(),
 		events: [],
 		autobiography: api.article ?? "",
-		epigraph: api.epigraph ?? undefined,
 		dataQuality: api.data_quality ?? undefined,
 		newEntityCount: api.new_entity_count ?? 0,
 		newTopicCount: api.new_topic_count ?? 0,

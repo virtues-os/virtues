@@ -13,7 +13,7 @@ use crate::error::Result;
 
 use super::wiki::{
     create_temporal_event, delete_auto_events_for_day, get_day_sources, get_or_create_day,
-    update_day, CreateTemporalEventRequest, DaySource, UpdateWikiDayRequest, WikiDay,
+    CreateTemporalEventRequest, DaySource, WikiDay,
 };
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -679,28 +679,22 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     // Chat slot: this is the narrative call, and the only one left that earns it.
     // Slot DEFAULT via the completion helper, never the pinned chat model.
     let raw = call_virtues_api(pool, NARRATE_PROMPT, ModelSlot::Chat, &prompt).await?;
-    let mut parsed = parse_virtues_api_response(&raw);
-    parsed.diary = strip_prompt_echo(&parsed.diary);
-    parsed.diary = unlink_uninvited_refs(&parsed.diary, &entities);
+    let mut diary = parse_virtues_api_response(&raw);
+    diary = strip_prompt_echo(&diary);
+    diary = unlink_uninvited_refs(&diary, &entities);
 
-    let day = update_day(
-        pool,
-        date,
-        UpdateWikiDayRequest {
-            epigraph: parsed.epigraph,
-            last_edited_by: Some("ai".to_string()),
-            cover_image: None,
-            start_timezone: Some(day_tz),
-            data_quality: parsed
-                .data_quality
-                .as_deref()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
-            snapshot: None,
-        },
-    )
-    .await?;
+    // The only field narration has ever really set. `epigraph` and
+    // `data_quality` went with the prompt that forbids them, and
+    // `last_edited_by` was a freeze flag that no longer decides anything —
+    // the article is edited, and its history says who wrote each version.
+    let day = crate::api::wiki::get_or_create_day(pool, date).await?;
+    sqlx::query("UPDATE wiki_days SET start_timezone = $1, updated_at = now() WHERE id = $2")
+        .bind(&day_tz)
+        .bind(&day.id)
+        .execute(pool)
+        .await?;
 
-    save_day_article(pool, &day.id, date, &parsed.diary).await?;
+    save_day_article(pool, &day.id, date, &diary).await?;
 
     sqlx::query("UPDATE wiki_days SET narrated_at = now() WHERE date = $1")
         .bind(date)
@@ -2063,13 +2057,6 @@ fn parse_events_salvaging(raw: &str) -> Option<Vec<LlmEvent>> {
     Some(events)
 }
 
-/// Parsed day summary from LLM response
-struct ParsedDaySummary {
-    diary: String,
-    epigraph: Option<String>,
-    data_quality: Option<String>,
-}
-
 /// Drop prompt-instruction echo from the article prose.
 ///
 /// Observed live (2025-12-16): the model opened its output with
@@ -2153,64 +2140,17 @@ fn unlink_uninvited_refs(prose: &str, candidates: &[String]) -> String {
     out
 }
 
-/// Split virtues-api response into diary text, epigraph, and data quality.
-/// Expected format:
-///   [diary text]
-///   ---EPIGRAPH---
-///   [one-line epigraph]
-///   ---DATA_QUALITY---
-///   {"coverage":{...},"overall":3,"note":"..."}
+/// The model's reply IS the article. Nothing is split off it.
 ///
-/// Both markers are optional. Handles markdown code fences around JSON.
-///
-/// There is no `---EVENTS---` block: cutting a day into events is its own
-/// model call (`segment_day_events`), and the narrate prompt does not ask for
-/// one — a parser for it here would only ever see `None`.
-fn parse_virtues_api_response(response: &str) -> ParsedDaySummary {
-    // 1. Split off data_quality from the end
-    let (before_quality, data_quality) = if let Some(idx) = response.find("---DATA_QUALITY---")
-    {
-        let before = &response[..idx];
-        let mut dq_str = response[idx + "---DATA_QUALITY---".len()..].trim();
-        dq_str = dq_str
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim();
-        // Validate it's parseable JSON, then store as raw string
-        let validated: Option<String> = serde_json::from_str::<serde_json::Value>(dq_str)
-            .map_err(|e| {
-                tracing::warn!(error = %e, raw = dq_str, "Failed to parse data_quality from LLM");
-                e
-            })
-            .ok()
-            .map(|v| v.to_string());
-        (before, validated)
-    } else {
-        (response, None)
-    };
-
-    // 2. Split off epigraph from the remaining text
-    let (diary, epigraph) = if let Some(idx) = before_quality.find("---EPIGRAPH---") {
-        let d = before_quality[..idx].trim().to_string();
-        let e_raw = before_quality[idx + "---EPIGRAPH---".len()..].trim();
-        // Epigraph is a single line — take only the first non-empty line
-        let e = e_raw
-            .lines()
-            .map(str::trim)
-            .find(|l| !l.is_empty())
-            .map(|l| l.trim_matches(['"', '\'', '—', '–']).trim().to_string())
-            .filter(|l| !l.is_empty());
-        (d, e)
-    } else {
-        (before_quality.trim().to_string(), None)
-    };
-
-    ParsedDaySummary {
-        diary,
-        epigraph,
-        data_quality,
-    }
+/// This used to carve `---EPIGRAPH---` and `---DATA_QUALITY---` off the end
+/// and store both on `wiki_days`. The narrate prompt has forbidden the model
+/// to emit either for months ("no epigraph, no closing metric, no data
+/// quality note"), so both parsed to None on every run while three columns,
+/// a request struct, an HTTP route and a CLI branch went on carrying them.
+/// A parser for output a prompt forbids is not defensive, it is a second
+/// description of the format that nobody keeps true.
+fn parse_virtues_api_response(response: &str) -> String {
+    response.trim().to_string()
 }
 
 /// Store LLM-identified events as wiki_events rows — delete the old cut and land
