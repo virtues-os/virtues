@@ -2139,6 +2139,43 @@ pub async fn write_article_handler(
     )
 }
 
+/// Every year of the life, newest first. Derived — opening the index writes
+/// nothing.
+pub async fn wiki_list_years_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::years::list_years(state.db.pool()).await)
+}
+
+/// One year's page. Creates its row on the way, which is the lazy half of the
+/// partition: every year is there to read, and none is written until asked for.
+pub async fn wiki_get_year_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+) -> Response {
+    api_response(crate::api::years::get_year(state.db.pool(), year).await)
+}
+
+/// Set what only the person can say about a year.
+pub async fn wiki_update_year_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let title = body.get("title").and_then(|v| v.as_str());
+    let summary = body.get("summary").and_then(|v| v.as_str());
+    match crate::api::years::update_year(state.db.pool(), year, title, summary).await {
+        Ok(()) => success_message("Saved"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Write a year's first article.
+pub async fn wiki_write_year_article_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+) -> Response {
+    api_response(crate::api::years::write_year_article(state.db.pool(), year).await)
+}
+
 /// Put a named version of an article back.
 ///
 /// Rule 4 of the wiki's paradigm — every edit is a revision you can read AND
