@@ -80,14 +80,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("sudo")
                 | Some("warm-models")
         );
-        let default_filter = if interactive { "warn" } else { "info" };
-        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
-
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .with_writer(std::io::stderr)
-            .init();
+        // The format (text on a terminal, JSON under systemd) and the field
+        // vocabulary live in `observe`; the noise floor is this binary's own
+        // judgment, so it stays here.
+        virtues::observe::init(if interactive { "warn" } else { "info" });
 
         // No metrics exporter, and no continuous telemetry egress: the
         // running box reports nothing anywhere. All of it is box-local (see

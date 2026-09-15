@@ -6,20 +6,12 @@
 //! - Sample axiology tags (common task categories)
 
 use tracing::{error, info};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use virtues::database::Database;
 use virtues::seeding::prod_seed::seed_production_data;
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "virtues_prod_seed=info".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    virtues::observe::init("virtues_prod_seed=info");
 
     info!("🌱 Virtues Production Seed");
     info!("Seeding models, agents, and axiology tags...");

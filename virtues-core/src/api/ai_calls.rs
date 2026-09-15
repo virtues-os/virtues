@@ -103,6 +103,27 @@ pub async fn record_ai_call(pool: &PgPool, call: &AiCall) -> Result<(), sqlx::Er
     .bind(&call.applet_run_id)
     .execute(pool)
     .await?;
+
+    // The same call, on the log side. The row is the ledger a person reads
+    // back in the Usage tab; this line is what lets the *other* half of a
+    // question be answered — a chat turn that spent oddly, or an applet run
+    // that burned its budget, is now one filter away from the lines that
+    // produced it, because the enclosing span already carries `run_id` or
+    // `chat_id`/`turn_id`.
+    //
+    // At `debug`: a busy box makes many of these, and the row is already the
+    // durable record. This is here to be turned on while chasing something.
+    tracing::debug!(
+        kind = "ai.call",
+        feature = %call.feature,
+        model = %call.model,
+        prompt_tokens = call.prompt_tokens,
+        completion_tokens = call.completion_tokens,
+        reasoning_tokens = call.reasoning_tokens,
+        cost_micros = call.cost_micros,
+        route = call.route.as_str(),
+        "ai call recorded"
+    );
     Ok(())
 }
 
