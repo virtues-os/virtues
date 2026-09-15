@@ -126,8 +126,10 @@ export const WIKI_MODE: SidebarMode = {
 		{ id: 'lifeline', label: 'Lifeline', icon: 'ri:pulse-line', href: '/wiki/lifeline' },
 		{
 			id: 'identity',
-			label: 'Narrative Identity',
-			icon: 'ri:compass-3-line',
+			// "You", not "Narrative Identity": that is the name of the artifact,
+			// not the name of the subject, and the room is the owner's own page.
+			label: 'You',
+			icon: 'ri:user-star-line',
 			href: '/wiki/identity',
 		},
 		// The life's own partition — authored in the interview, never inferred.

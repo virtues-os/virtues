@@ -892,6 +892,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             axum::routing::put(api::wiki_update_chapter_handler)
                 .delete(api::wiki_delete_chapter_handler),
         )
+        .route("/api/wiki/me", get(api::wiki_me_handler))
         .route("/api/wiki/years", get(api::wiki_list_years_handler))
         .route(
             "/api/wiki/year/:year",

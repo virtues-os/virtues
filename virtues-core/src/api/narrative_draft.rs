@@ -527,7 +527,7 @@ fn span_label(started_at: chrono::NaiveDate, ended_at: Option<chrono::NaiveDate>
 }
 
 /// One chapter, as the wiki identity page lists them.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct ChapterRow {
     pub id: String,
     pub kind: String,
