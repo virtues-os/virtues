@@ -142,13 +142,6 @@
 				</section>
 			{/if}
 
-			<!-- Key Contacts -->
-
-			<!-- Locations -->
-
-			<!-- Narrative Context -->
-
-			<!-- Citations -->
 		</div>
 	</article>
 </div>

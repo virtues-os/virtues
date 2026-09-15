@@ -518,6 +518,15 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
     let (article, article_updated_at, auto_update) =
         overlay_article(pool, "place", &row.id, row.article.clone(), row.article_updated_at).await;
 
+    let visits: (i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT count(*), min(occurred_at), max(occurred_at) \
+         FROM wiki_refs WHERE entity_id = $1 AND role = 'location'",
+    )
+    .bind(&row.id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to count visits: {e}")))?;
+
     Ok(WikiPlace {
         id: row.id,
         name: row.name.clone(),
@@ -530,9 +539,14 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
         address: row.address.clone(),
         latitude: row.latitude,
         longitude: row.longitude,
-        seen_count: Some(row.seen_count as i32),
-        first_seen: row.first_seen,
-        last_seen: row.last_seen,
+        // Counted from the refs, not read off the row. `seen_count`,
+        // `first_seen` and `last_seen` have no writer anywhere, so the place
+        // page showed "Total visits: 0" and no dates for somewhere the person
+        // had been fifty times — the same zero the article prompt was being
+        // fed. The refs are where the visits actually are.
+        seen_count: Some(visits.0 as i32),
+        first_seen: visits.1,
+        last_seen: visits.2,
         is_audio_muted: row.is_audio_muted,
         created_at: row.created_at,
         updated_at: row.updated_at,
