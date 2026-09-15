@@ -2388,12 +2388,18 @@
 						</div>
 					</div>
 
-					{#if isEmpty && !isGhost && mobileLayout.isMobile}
-						<!-- The phone's opening image: the mark assembling itself in
-						     the space a conversation will fill. Desktop centers the
-						     composer instead; the phone docks it permanently, which
-						     left this expanse truly blank. Decorative, so hidden
-						     from the tree and transparent to touches. -->
+					{#if isEmpty && !isGhost && attachments.length === 0}
+						<!-- The opening image: the mark assembling itself in the space
+						     a conversation will fill. Both layouts left this expanse
+						     blank — the phone docks the composer to the bottom, the
+						     desktop floats it at center, and either way a new chat
+						     opened onto nothing at all (VIR-313). Positioned off the
+						     midpoint, so it sits above the composer in both. It yields to
+						     staged attachments: the row of chips grows upward from the
+						     composer and would otherwise collide with the word, and once
+						     someone has dropped a file the blank canvas has done its job.
+						     Decorative, so hidden from the tree and transparent to
+						     touches. -->
 						<div class="init-hero" aria-hidden="true" out:fade={{ duration: 200 }}>
 							<svg class="init-mark" viewBox="0 0 12 10.5" width="30" height="26.25" fill="currentColor">
 								<circle class="init-dot init-dot-1" cx="6" cy="2.4" r="1.5" />
@@ -2452,7 +2458,14 @@
 											</span>
 										{/if}
 										<div class="attachment-meta">
-											<span class="attachment-name">{a.filename}</span>
+											<!-- An image carries only its size (VIR-237): a screenshot's
+											     generated filename says nothing the thumbnail has not
+											     already shown. Every other kind keeps its name, because a
+											     type icon and a byte count cannot tell two PDFs apart. The
+											     name still reaches assistive tech through the img alt. -->
+											{#if a.kind !== "image"}
+												<span class="attachment-name">{a.filename}</span>
+											{/if}
 											<span class="attachment-size">{formatFileSize(a.size)}</span>
 										</div>
 										<button
@@ -2544,7 +2557,7 @@
 							sendDisabled={chat.status !== "ready"}
 							isStreaming={chat.status === "streaming"}
 							maxWidth="max-w-3xl"
-							placeholder={isGhost ? "Write a message (temporary)…" : "Write a message..."}
+							placeholder={isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
 						/>
@@ -3082,9 +3095,14 @@
 		max-width: 15rem;
 	}
 
+	/* Four times the area of the old 2.25rem chip (VIR-238), which was too
+	   small to tell one screenshot from another. Linear 4x (9rem) was the
+	   other reading of the ticket and is far too tall — it would own the
+	   composer. The icon below stays at 2.25rem: a file chip is identified by
+	   its name, which it keeps, so it has nothing to gain from the height. */
 	.attachment-thumb {
-		width: 2.25rem;
-		height: 2.25rem;
+		width: 4.5rem;
+		height: 4.5rem;
 		border-radius: 0.4rem;
 		object-fit: cover;
 		flex-shrink: 0;
