@@ -272,28 +272,34 @@ pub fn request_draft(thread_id: Option<&str>) -> Result<(), String> {
 /// The send, as AppleScript. Argv, not interpolation: item 1 is the chat
 /// id, item 2 the handle (empty for a group), item 3 the text.
 ///
-/// The chain exists because chat.db's GUIDs and Messages' scripting ids do
-/// not always agree. Modern macOS stores merged threads as `any;-;+1…`,
-/// which the dictionary may refuse; the same thread answers to `iMessage;-;`
-/// or `SMS;-;`. For a one-to-one thread the last resort is the participant
-/// itself, looked up on the iMessage account and then the SMS one — the
-/// well-worn recipe that predates chat ids. The final attempt's error is the
-/// one reported, so a real refusal (Automation denied) still reads as one.
+/// **Messages must be running before the first attempt.** A `tell` launches
+/// it, but the app is not ready to resolve a chat id for a second or so after
+/// that, and every lookup in the window throws "Can't get chat id". Measured
+/// on a cold Messages: the id path failed outright and only the participant
+/// fallback delivered — which a GROUP thread does not have, so the first
+/// group reply after a reboot would simply fail. Hence launch, then retry the
+/// id for a few seconds before falling back.
+///
+/// The fallback is the participant, looked up on the iMessage account and
+/// then the SMS one — the recipe that predates chat ids. It only applies to a
+/// one-to-one thread, where the caller passes a handle.
+///
+/// chat.db's GUIDs are the `any;-;…` form on modern macOS, and Messages
+/// accepts exactly that; rewriting the prefix to `iMessage;`/`SMS;` produces
+/// an id that resolves to nothing, so this passes the id through untouched.
 const SEND_SCRIPT: &str = r#"
 on run argv
     set theId to item 1 of argv
     set theHandle to item 2 of argv
     set theText to item 3 of argv
-    set candidates to {theId}
-    if theId starts with "any;" then
-        set candidates to candidates & {"iMessage;" & (text 5 thru -1 of theId), "SMS;" & (text 5 thru -1 of theId)}
-    end if
     tell application "Messages"
-        repeat with c in candidates
+        launch
+        repeat 8 times
             try
-                send theText to chat id (c as text)
+                send theText to chat id theId
                 return "sent via chat id"
             end try
+            delay 0.5
         end repeat
         if theHandle is not "" then
             repeat with svc in {iMessage, SMS}
@@ -304,6 +310,8 @@ on run argv
                 end try
             end repeat
         end if
+        -- Out of options: let this one's error be the one reported, so a real
+        -- refusal (Automation denied) still reads as one.
         send theText to chat id theId
     end tell
 end run
