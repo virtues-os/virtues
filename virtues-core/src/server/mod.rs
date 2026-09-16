@@ -1342,8 +1342,38 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     }
 
     // Run the server with graceful shutdown — Ctrl+C / SIGTERM.
+    //
+    // SIGTERM is the one that matters and it was missing. `ctrl_c()` is SIGINT
+    // only; systemd sends SIGTERM, whose default action kills the process
+    // outright. So `systemctl restart virtues` — which every self-update runs
+    // — skipped the whole shutdown path below, including the Yjs flush that
+    // exists specifically because restarts were dropping the owner's last
+    // seconds of typing. The comment on this line claimed SIGTERM for months
+    // while the code handled only the signal a daemon never receives.
     let shutdown_signal = async move {
-        let _ = tokio::signal::ctrl_c().await;
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            match signal(SignalKind::terminate()) {
+                Ok(mut term) => {
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => {}
+                        _ = term.recv() => {}
+                    }
+                }
+                // Registering the handler failed — fall back rather than
+                // refusing to start. A box that cannot shut down cleanly is
+                // still better than a box that will not run.
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not listen for SIGTERM; Ctrl+C only");
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
         tracing::info!("shutdown signal received");
     };
 
