@@ -424,6 +424,13 @@ pub async fn start_interview_handler(
 /// `connect_ai` is the door's business — the model's `skip_step` tool refuses
 /// it (see `tools/executor.rs`), but the door and the slash command land
 /// here with it.
+///
+/// UN-SKIPPING IS A REAL PATH, not a symmetry nobody walks. `skipped = false`
+/// removes the id and the step goes back to being derived from rows, which is
+/// what makes "say the word whenever you would like to return to them" true
+/// rather than a courtesy. The room's prompt tells the model it may call the
+/// tool that way; nothing in the client does, deliberately — a button that
+/// reopens a thing you just set aside is the nagging the room refuses.
 pub async fn set_skipped(pool: &PgPool, step: &str, skipped: bool) -> Result<()> {
     if !is_step(step) {
         return Err(Error::InvalidInput(format!("unknown getting-started step: {step}")));
@@ -501,7 +508,7 @@ fn graduated_line(state: &GettingStartedState) -> String {
 fn settled_line(s: &Step) -> String {
     match (s.id, s.status) {
         ("connect_ai", StepStatus::Skipped) => "You went on without connecting AI. Your server can show you its record, but your assistant cannot answer until AI is connected in Settings.".into(),
-        ("introductions", StepStatus::Skipped) => "You set introductions aside for now. Say the word whenever you would like to return to them.".into(),
+        ("introductions", StepStatus::Skipped) => "You set introductions aside for now. Your name and birth date are in Settings whenever you want them, or say the word here and this step comes back.".into(),
         ("connect_world", StepStatus::Skipped) => "You set your integrations aside for now. They are waiting in Settings whenever you want them.".into(),
         ("interview", StepStatus::Skipped) => "You set your story aside for now. The interview is waiting here whenever you want it.".into(),
         ("connect_ai", _) if s.via == Some("byo") => "Your server is connected to your own models. Your assistant can answer now.".into(),

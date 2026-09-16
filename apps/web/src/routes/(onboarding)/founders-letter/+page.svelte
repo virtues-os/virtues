@@ -15,10 +15,12 @@
   What stays is the one thing that must be read before the app and cannot
   retire: the letter. It sets the covenant; the button at its end is the door.
 
-  THE ACCOUNT GATE MOVED TOO. It was a toll booth on the reveal (the one
-  onboarding surface that called the models); now it stands where the models
-  are actually called — the getting-started page renders AccountGate while
-  the account is unsatisfied.
+  THE ACCOUNT GATE IS GONE, not moved. It was a toll booth on the reveal (the
+  one onboarding surface that called the models), then a component waiting for
+  a getting-started PAGE that never shipped — the page became the room. Asking
+  for an account is `connect_ai`, the room's first step, spoken as a turn with
+  its buttons under the thread; `AccountGate.svelte` was deleted unreferenced
+  on 2026-09-16.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";

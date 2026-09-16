@@ -191,6 +191,39 @@ pub async fn save_handler(
             .into_response();
     }
 
+    /* ASK THE ENDPOINT BEFORE BELIEVING IT.
+     *
+     * Until now this handler checked the URL's SHAPE and nothing else, and a
+     * well-formed wrong URL — or a key with a character missing — saved
+     * clean. `byo_is_active` is `EXISTS(… status = 'active')`, so the row
+     * alone made getting-started's `connect_ai` read done, the room said
+     * "your assistant can answer now", the composer unlocked, and every turn
+     * after that failed with nothing on the surface able to say why. The
+     * room's own conduct rule is "say what the box sees"; what the box saw
+     * was wrong.
+     *
+     * `validate_endpoint` reasons that a wrong path "fails loudly on first
+     * use with the provider's own 404, which is a better teacher than our
+     * guess". That was true when the first use was a chat someone was
+     * watching. It stopped being true when a step in a setup walk started
+     * reading this row as an answer.
+     *
+     * Runs BEFORE the sudo gate, for the same reason the URL check does: a
+     * typo should not burn an approval the person then has to grant again.
+     * It is one request to a host they just named, under the scheme rules
+     * `validate_endpoint` already enforced.
+     */
+    let probe = probe_endpoint(
+        &endpoint_url,
+        req.api_key.trim(),
+        req.models.as_ref().and_then(|m| m.get("chat")).map(String::as_str),
+    )
+    .await;
+    let host = endpoint_host(&endpoint_url).unwrap_or_else(|| "that endpoint".to_string());
+    if let Some(refusal) = probe_refusal(probe, &host) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": refusal }))).into_response();
+    }
+
     // Sudo gate. The id must be approved + matched to the requesting device.
     if let Err(resp) =
         crate::api::sudo::verify_and_consume(&pool, &req.sudo_request_id, "change_byo_key", &user.device_id)
@@ -316,7 +349,20 @@ pub async fn save_handler(
     .execute(&pool)
     .await;
 
-    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+    /* A non-2xx that is not an auth rejection is REPORTED, never blocking.
+     * A 404 is a wrong path or a model id this gateway spells differently —
+     * both real, neither ours to judge (the whole argument in
+     * `validate_endpoint`), and a rule we cannot state correctly would refuse
+     * working setups. The key is saved; the sentence rides along. */
+    let mut ok = json!({ "ok": true });
+    if let Probe::Answered(status) = probe {
+        if !(200..300).contains(&status) {
+            ok["warning"] = json!(format!(
+                "Saved. {host} answered with {status} — if turns fail, check the path and the model id."
+            ));
+        }
+    }
+    (StatusCode::OK, Json(ok)).into_response()
 }
 
 /// `DELETE /api/settings/byo-key` — clear the BYO key. Requires sudo.
@@ -381,6 +427,103 @@ pub async fn byo_is_active(pool: &PgPool) -> bool {
     .fetch_one(pool)
     .await
     .unwrap_or(false)
+}
+
+/// How long to wait for the endpoint to say anything at all.
+///
+/// Generous, because a cold local llama.cpp loading a model off disk is a
+/// legitimate slow answer and refusing it would be the "rejects working
+/// setups" failure this module already warns about once. Short enough that a
+/// black-holed address does not hang the save behind it.
+const PROBE_TIMEOUT_SECS: u64 = 20;
+
+/// What came back when we asked the endpoint whether it is there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Probe {
+    /// Something HTTP answered, with this status.
+    Answered(u16),
+    /// Nothing answered: DNS, TLS, refused, timed out.
+    Unreachable(&'static str),
+    /// We never asked — our own HTTP client would not build. Reads as a pass,
+    /// because a failure on our side is not evidence about their URL.
+    NotRun,
+}
+
+/// One tiny completion against the URL we would really use, with the key we
+/// are really about to store.
+///
+/// **It judges two things only: did anything answer, and was the key
+/// refused.** Not the path, not the model id, not the response shape. That
+/// restraint is the point — the module's own rule is that a wrong path "fails
+/// loudly on first use", and a probe that ruled on paths would start
+/// rejecting Azure's deployment URLs and every gateway that spells a model
+/// differently. Those come back as [`Probe::Answered`] with a non-2xx and are
+/// reported, not blocked.
+///
+/// `max_tokens: 1` so a provider that does answer is charged for a syllable.
+async fn probe_endpoint(endpoint_url: &str, api_key: &str, model: Option<&str>) -> Probe {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(PROBE_TIMEOUT_SECS))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("BYO probe: client build failed, saving unprobed: {e:#}");
+            return Probe::NotRun;
+        }
+    };
+
+    let mut body = json!({
+        "messages": [{ "role": "user", "content": "ping" }],
+        "max_tokens": 1,
+    });
+    // Only when we know what THIS endpoint calls its chat model. Sending our
+    // gateway's spelling to someone else's gateway is the known gap at the
+    // top of this file, and guessing here would turn it into a save that
+    // fails for a reason the person cannot act on.
+    if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
+        body["model"] = json!(m);
+    }
+
+    match client
+        .post(endpoint_url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(resp) => Probe::Answered(resp.status().as_u16()),
+        // The person reads this sentence, so it says what to go and look at,
+        // never `reqwest::Error`'s chain of middle names.
+        Err(e) if e.is_timeout() => Probe::Unreachable("it didn't answer in time"),
+        Err(e) if e.is_connect() => Probe::Unreachable("nothing is listening there"),
+        Err(e) => {
+            tracing::warn!("BYO probe: request failed: {e:#}");
+            Probe::Unreachable("the address didn't resolve, or the connection failed")
+        }
+    }
+}
+
+/// The whole blocking rule, in one place: **nothing answered**, or **the key
+/// was refused**. Everything else is reported and saved.
+///
+/// Kept as its own function because the temptation to add a case here is the
+/// hazard. A 404 is a wrong path OR a model id this gateway spells
+/// differently OR an Azure deployment name — indistinguishable from outside,
+/// and `validate_endpoint` already argues at length that a rule we cannot
+/// state correctly refuses working setups to no benefit. Adding `404` to this
+/// list would break Azure and every gateway with its own model names.
+fn probe_refusal(probe: Probe, host: &str) -> Option<String> {
+    match probe {
+        Probe::Unreachable(why) => {
+            Some(format!("Your server couldn't reach {host}: {why}. Nothing was saved."))
+        }
+        Probe::Answered(401) | Probe::Answered(403) => {
+            Some(format!("{host} answered, but wouldn't take that key. Nothing was saved."))
+        }
+        Probe::Answered(_) | Probe::NotRun => None,
+    }
 }
 
 /// Settle on the URL to POST to: the user's, or a legacy preset.
@@ -579,6 +722,39 @@ pub async fn load_byo_credential(pool: &PgPool) -> Result<Option<ByoCredential>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THE REGRESSION THIS GUARDS. The save used to check the URL's shape and
+    /// nothing else, so a wrong endpoint or a mistyped key stored clean and
+    /// getting-started's `connect_ai` read done over a route that could not
+    /// answer. The probe fixes that — and the way to break it again is to
+    /// "improve" it by refusing more statuses.
+    #[test]
+    fn only_silence_and_a_refused_key_block_the_save() {
+        assert!(probe_refusal(Probe::Unreachable("nothing is listening there"), "gw.example").is_some());
+        assert!(probe_refusal(Probe::Answered(401), "gw.example").is_some());
+        assert!(probe_refusal(Probe::Answered(403), "gw.example").is_some());
+
+        // A wrong path, a model name this gateway spells differently, an
+        // Azure deployment — all 404, all indistinguishable from here, none
+        // of them ours to refuse.
+        assert!(probe_refusal(Probe::Answered(404), "gw.example").is_none());
+        assert!(probe_refusal(Probe::Answered(400), "gw.example").is_none());
+        // Their rate limit is not our verdict on their key.
+        assert!(probe_refusal(Probe::Answered(429), "gw.example").is_none());
+        assert!(probe_refusal(Probe::Answered(500), "gw.example").is_none());
+        assert!(probe_refusal(Probe::Answered(200), "gw.example").is_none());
+        // Our own HTTP client failing to build says nothing about their URL.
+        assert!(probe_refusal(Probe::NotRun, "gw.example").is_none());
+    }
+
+    /// The person reads the refusal, so it names the host and says the key
+    /// was not stored — the two things they need to act.
+    #[test]
+    fn a_refusal_names_the_host_and_says_nothing_was_saved() {
+        let msg = probe_refusal(Probe::Answered(401), "api.openai.com").unwrap();
+        assert!(msg.contains("api.openai.com"));
+        assert!(msg.contains("Nothing was saved"));
+    }
 
     /// The legacy table resolves old rows and old clients; it must still be
     /// callable and must still speak the one contract. `anthropic` pointed at
