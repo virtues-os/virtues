@@ -1093,36 +1093,44 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                 // Device source (iOS/Mac/sensor): fan out per DEVICE. The device's
                 // allowlisted iroh key authorizes its `/webhook/:applet_id` posts,
                 // so the action is anchored on device_id — no credential/bearer.
-                let device_ids: Vec<(String,)> = sqlx::query_as(
-                    "SELECT id FROM app_device WHERE source_id = $1 AND revoked_at IS NULL",
+                let devices: Vec<(String, Option<String>)> = sqlx::query_as(
+                    "SELECT id, label FROM app_device
+                      WHERE source_id = $1 AND revoked_at IS NULL
+                      ORDER BY created_at",
                 )
                 .bind(source_id)
                 .fetch_all(db)
                 .await?;
-                for (device_id,) in device_ids {
+                let qualify = devices.len() > 1;
+                for (device_id, label) in &devices {
                     let applet_id = format!("{}_{}", id_prefix, device_id);
-                    upsert_row(db, template, &applet_id, None, Some(&device_id)).await?;
+                    let anchor = qualify.then(|| label.as_deref()).flatten();
+                    upsert_row(db, template, &applet_id, None, Some(device_id), anchor).await?;
                     live_ids.push(applet_id);
                     upserted += 1;
                 }
             } else {
                 // OAuth / API-key source: fan out per credential (the outbound
                 // secret the action uses to call the provider).
-                let credential_ids: Vec<(String,)> = sqlx::query_as(
-                    "SELECT id FROM credentials WHERE source_id = $1 AND status = 'active'",
+                let credentials: Vec<(String, Option<String>)> = sqlx::query_as(
+                    "SELECT id, name FROM credentials
+                      WHERE source_id = $1 AND status = 'active'
+                      ORDER BY created_at",
                 )
                 .bind(source_id)
                 .fetch_all(db)
                 .await?;
-                for (cred_id,) in credential_ids {
+                let qualify = credentials.len() > 1;
+                for (cred_id, name) in &credentials {
                     let applet_id = format!("{}_{}", id_prefix, cred_id);
-                    upsert_row(db, template, &applet_id, Some(&cred_id), None).await?;
+                    let anchor = qualify.then(|| name.as_deref()).flatten();
+                    upsert_row(db, template, &applet_id, Some(cred_id), None, anchor).await?;
                     live_ids.push(applet_id);
                     upserted += 1;
                 }
             }
         } else {
-            upsert_row(db, template, id_prefix, None, None).await?;
+            upsert_row(db, template, id_prefix, None, None, None).await?;
 
             // Bring the applet's own tables up to whatever its folder declares.
             // Only concrete (non-fan-out) applets own a schema — a per-credential
@@ -1214,13 +1222,39 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     Ok(upserted)
 }
 
+/// The row's display name: the manifest's, qualified by the thing it fans out
+/// from when that is the only way to tell two rows apart.
+///
+/// A `per_credential` manifest has ONE name and produces one row per account,
+/// so connecting a second bank rendered "Plaid Transactions" twice — same
+/// name, same description, same schedule, differing only in a "last run"
+/// column, which reads as a rendering bug rather than as two banks. Four
+/// Plaid manifests × two institutions = eight rows, four visible names.
+/// The device branch has the same shape latent in it: a second iPhone would
+/// duplicate "iOS Ingest".
+///
+/// Qualified only when the source actually has more than one anchor, so a box
+/// with one Google account keeps "Google Mail" rather than carrying an email
+/// address around in a list. The caller decides that from the same fetch it
+/// fans out over, so it is one pass and deterministic — and because system
+/// rows take `name = EXCLUDED.name` on conflict, adding or removing an account
+/// re-qualifies every sibling on the next reconcile with no migration.
+fn row_name(template: &Template, anchor_label: Option<&str>) -> String {
+    match anchor_label.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(label) => format!("{} — {}", template.name, label),
+        None => template.name.clone(),
+    }
+}
+
 async fn upsert_row(
     db: &PgPool,
     template: &Template,
     applet_id: &str,
     credential_id: Option<&str>,
     device_id: Option<&str>,
+    anchor_label: Option<&str>,
 ) -> Result<()> {
+    let name = row_name(template, anchor_label);
     let triggers_json = serde_json::to_string(&template.triggers)
         .map_err(|e| Error::Other(format!("failed to serialize triggers: {e}")))?;
 
@@ -1357,7 +1391,7 @@ async fn upsert_row(
 
     sqlx::query(sql)
         .bind(applet_id)
-        .bind(&template.name)
+        .bind(&name)
         .bind(&template.owner)
         .bind(&template.agent)
         .bind(&template.schedule)
@@ -2141,6 +2175,66 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         assert_eq!(
             snapshot_before, snapshot_after,
             "row set must be byte-identical across back-to-back reconciles"
+        );
+    }
+
+    /// Two accounts on one source must not produce two rows with one name.
+    ///
+    /// Connecting a second bank made every Plaid manifest render twice —
+    /// identical name, description and schedule — so the applets page showed
+    /// four names for eight rows and the only thing separating them was a
+    /// timestamp. A single account stays unqualified: a box with one Google
+    /// account should read "Google Mail", not carry an email address around.
+    #[sqlx::test]
+    async fn a_second_account_makes_its_applets_tell_themselves_apart(pool: sqlx::PgPool) {
+        let seed = |id: &'static str, name: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+                     VALUES ($1, 'plaid', $2, 'active', 'x')",
+                )
+                .bind(id)
+                .bind(name)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+
+        // One account: the manifest name stands alone.
+        seed("cred_one", "Brex").await;
+        reconcile_templates(&pool).await.expect("reconcile one");
+        let solo: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM app_applets WHERE credential_id = 'cred_one' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(!solo.is_empty(), "plaid templates should fan out");
+        assert!(
+            solo.iter().all(|n| !n.contains('—')),
+            "a lone account must not be qualified: {solo:?}"
+        );
+
+        // Second account: every row on the source says which one it is.
+        seed("cred_two", "SoFi").await;
+        reconcile_templates(&pool).await.expect("reconcile two");
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM app_applets WHERE credential_id IN ('cred_one', 'cred_two')",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "names must be distinct: {names:?}");
+        assert!(
+            names.iter().any(|n| n.ends_with("— Brex"))
+                && names.iter().any(|n| n.ends_with("— SoFi")),
+            "each row should name its institution: {names:?}"
         );
     }
 }
