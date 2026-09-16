@@ -25,6 +25,8 @@ pub struct Place {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub radius_m: Option<f64>,
+    /// Counted from `wiki_refs`, never read off the row: the column of that
+    /// name has no writer and reported 0 for a place visited weekly.
     pub seen_count: Option<i32>,
     /// The phone keeps no audio while the owner is inside this place. Read by
     /// the audio collector's place cache, set from the place's wiki page or
@@ -93,7 +95,6 @@ pub async fn list_places(pool: &PgPool) -> Result<Vec<Place>> {
             latitude,
             longitude,
             radius_m,
-            seen_count,
             is_audio_muted,
             metadata,
             created_at,
@@ -118,7 +119,7 @@ pub async fn list_places(pool: &PgPool) -> Result<Vec<Place>> {
             latitude: row.latitude,
             longitude: row.longitude,
             radius_m: Some(row.radius_m),
-            seen_count: Some(row.seen_count as i32),
+            seen_count: None,
             is_audio_muted: row.is_audio_muted,
             metadata: Some(row.metadata),
             created_at: row.created_at,
@@ -142,7 +143,6 @@ pub async fn get_place(pool: &PgPool, id: String) -> Result<Place> {
             latitude,
             longitude,
             radius_m,
-            seen_count,
             is_audio_muted,
             metadata,
             created_at,
@@ -165,7 +165,7 @@ pub async fn get_place(pool: &PgPool, id: String) -> Result<Place> {
         latitude: row.latitude,
         longitude: row.longitude,
         radius_m: Some(row.radius_m),
-        seen_count: Some(row.seen_count as i32),
+        seen_count: None,
         is_audio_muted: row.is_audio_muted,
         metadata: Some(row.metadata),
         created_at: row.created_at,
@@ -386,7 +386,6 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
     let person = sqlx::query!(
         r#"
         SELECT name, emails, phones, handles, nickname,
-               first_seen, last_seen, seen_count,
                metadata, content, aliases
         FROM wiki_people WHERE id = $1
         "#,
@@ -424,15 +423,11 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
 
     sqlx::query!(
         r#"
-        INSERT INTO wiki_orgs (id, name, seen_count, first_seen,
-                               last_seen, metadata, content, aliases)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO wiki_orgs (id, name, metadata, content, aliases)
+        VALUES ($1, $2, $3, $4, $5)
         "#,
         &org_id,
         &person.name,
-        person.seen_count,
-        person.first_seen,
-        person.last_seen,
         serde_json::Value::Object(metadata),
         person.content,
         person.aliases,
