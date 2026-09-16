@@ -173,6 +173,11 @@ export interface Applet {
 	 *  headline. Null only for a row whose manifest omits it. */
 	description: string | null;
 	agent: string | null;
+	/** The prompt we last SHIPPED, which is a different question from the one
+	 *  the applet is running. They differ once the person has written their
+	 *  own — and knowing that is what lets this page offer a diff and a way
+	 *  back to the default, rather than silently keeping either. */
+	agent_shipped: string | null;
 	schedule: string | null;
 	enabled: boolean;
 	config: Record<string, unknown>;
