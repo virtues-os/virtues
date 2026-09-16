@@ -11,30 +11,49 @@
  *
  * One function so the next component cannot get it wrong, and so a section
  * that starts rendering later does not resurrect the bug.
+ *
+ * ## This table mirrors the server's
+ *
+ * `SUBJECT_ROUTES` is the client half of `virtues-core/src/api/subjects.rs`,
+ * which is where a subject kind's facts live. The Rust test
+ * `the_client_route_table_matches_the_registry` reads THIS FILE and fails if
+ * the two disagree, so a rung added on one side cannot quietly go missing on
+ * the other — which is how chapters came to have articles, a room and no way
+ * to be linked.
+ *
+ * A prefix mapped to `null` is a subject with no page of its own. That is a
+ * fact about the product, not an oversight, and `null` is the honest answer:
+ * an href to a route that does not exist renders as a link that goes nowhere.
  */
+const SUBJECT_ROUTES: Record<string, string | null> = {
+	person: 'person',
+	place: 'place',
+	// `org`, not `organization`: the id prefix and the schema's word differ for
+	// exactly this one kind, and this table is keyed on the prefix.
+	org: 'org',
+	day: 'day',
+	year: 'year',
+	chapter: null,
+	story: null,
+	nar: null
+};
+
+/** Namespaces that are not wiki subjects but are still addressable. */
+const OTHER_ROUTES: Record<string, string> = {
+	page: 'page',
+	chat: 'chat'
+};
 
 /** The route for a subject id, or `null` if nothing can display it. */
 export function subjectHref(id: string | null | undefined): string | null {
 	if (!id) return null;
-	const prefix = id.slice(0, id.indexOf("_"));
-	switch (prefix) {
-		case "person":
-			return `/person/${id}`;
-		case "place":
-			return `/place/${id}`;
-		case "org":
-			return `/org/${id}`;
-		case "day":
-			return `/day/${id}`;
-		case "year":
-			return `/year/${id}`;
-		case "page":
-			return `/page/${id}`;
-		case "chat":
-			return `/chat/${id}`;
-		default:
-			// `chapter_` lands here on purpose: chapters have no room yet, and a
-			// link to a route that does not exist is the bug this file fixes.
-			return null;
+	const cut = id.indexOf('_');
+	if (cut < 1) return null;
+	const prefix = id.slice(0, cut);
+	if (prefix in SUBJECT_ROUTES) {
+		const route = SUBJECT_ROUTES[prefix];
+		return route ? `/${route}/${id}` : null;
 	}
+	const other = OTHER_ROUTES[prefix];
+	return other ? `/${other}/${id}` : null;
 }

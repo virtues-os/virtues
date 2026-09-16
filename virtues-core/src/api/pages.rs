@@ -494,14 +494,19 @@ struct RawRefSearchResult {
 
 /// Compute the canonical URL for an entity based on its type and ID
 /// All URLs follow the format: /{type}/{id}
+///
+/// `entity_type` here is an id PREFIX (`org`), not a subject_type
+/// (`organization`), because every caller has an id. Wiki subjects answer from
+/// the registry so this cannot drift from the rest of the wiki again; the rest
+/// are namespaces with no subject behind them.
 fn get_entity_url(entity_type: &str, id: &str) -> String {
+    if let Some(subject) = crate::api::subjects::by_id(id) {
+        if let Some(route) = subject.route {
+            return format!("/{route}/{id}");
+        }
+    }
     match entity_type {
-        "person" => format!("/person/{}", id),
-        "place" => format!("/place/{}", id),
-        "org" => format!("/org/{}", id),
         "page" => format!("/page/{}", id),
-        "day" => format!("/day/{}", id),
-        "year" => format!("/year/{}", id),
         "source" => format!("/source/{}", id),
         "chat" => format!("/chat/{}", id),
         "notebook" => format!("/notebook/{}", id),

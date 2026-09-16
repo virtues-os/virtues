@@ -28,29 +28,10 @@ use crate::api::pages;
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PAGE_PREFIX, WIKI_ARTICLE_PREFIX};
 
-/// The subjects that can carry an article.
-///
-/// Mirrors the `subject_type` CHECK, which migration 0022 aligned across
-/// `wiki_articles`, `wiki_notes` and `wiki_rules` after the four lists had
-/// drifted apart. `'organization'`, not
-/// `'org'`: the entity-ref table and every live query use the long form, and
-/// the sweep joins articles to refs — the short form would make that join
-/// silently return zero organization rows. The frontend route stays `/org`.
-pub const SUBJECT_TYPES: [&str; 8] = [
-    "person",
-    "place",
-    "organization",
-    "day",
-    "story",
-    "narrative_identity",
-    // Chapters of a life (migration 0015): each era the interview captures
-    // gets a page seeded with the person's own words about it.
-    "chapter",
-    // A year is a subject with a page, not a folder of days
-    // (migration 0022). Same idiom as a chapter: the person may title it and
-    // say what it was, and the record writes the article beneath that.
-    "year",
-];
+// The list of subjects that may carry an article is
+// [`crate::api::subjects::SUBJECTS`], and `is_subject` is how to ask. It used
+// to be a second array here, which is how `year` came to pass every route,
+// fold and brief and then fail at this function's own allowlist.
 
 /// A subject's article, if it has one.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -158,7 +139,7 @@ pub async fn create_article(
     title: &str,
     content: &str,
 ) -> Result<Article> {
-    if !SUBJECT_TYPES.contains(&subject_type) {
+    if !crate::api::subjects::is_subject(subject_type) {
         return Err(Error::InvalidInput(format!(
             "Unknown subject type: {subject_type}"
         )));
@@ -314,21 +295,15 @@ pub async fn get_subject_backlinks(
     subject_type: &str,
     subject_id: &str,
 ) -> Result<Vec<SubjectBacklink>> {
-    // The route prefix the frontend actually uses. `organization` is the schema
-    // word; `/org` is the route — the one place that mapping happens.
-    let prefix = match subject_type {
-        "person" => "person",
-        "place" => "place",
-        "organization" => "org",
-        "day" => "day",
-        "story" => "story",
-        "year" => "year",
-        "chapter" => "chapter",
-        other => {
-            return Err(Error::InvalidInput(format!(
-                "No route for subject type {other}"
-            )))
-        }
+    let subject = crate::api::subjects::by_kind(subject_type).ok_or_else(|| {
+        Error::InvalidInput(format!("Not a subject type: {subject_type}"))
+    })?;
+    // A subject with no route has no links pointing at it, because there is no
+    // href anything could have written. Searching for `/chapter/{id})` anyway
+    // returned an empty list that read as "nothing links here" rather than
+    // "this cannot be linked", which are different answers.
+    let Some(prefix) = subject.route else {
+        return Ok(Vec::new());
     };
 
     // Trailing `)` pins the match to a real markdown link and to the exact id,
