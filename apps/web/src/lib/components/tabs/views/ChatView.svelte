@@ -1449,6 +1449,61 @@
 												message.parts.filter((p: any) =>
 													p.type.startsWith("tool-"),
 												)}
+											<!-- A turn is several runs of text with tool calls
+											     between them. A run with a tool call AFTER it was
+											     the model saying what it was about to do; the run
+											     with nothing after it is the reply. Only the reply
+											     belongs in the transcript — the rest is working-out
+											     and goes to the thinking block, which is where the
+											     status label comes from.
+											     "Has a tool after it" rather than "is not the last
+											     one" because it has to hold mid-turn too: the line
+											     the model just wrote is its answer until a tool
+											     starts, and at that moment it becomes narration and
+											     moves. A message stored before `parts` carried this
+											     order has one text run and no tool before it, so it
+											     is all reply and nothing moves. -->
+											{@const lastToolPartIndex =
+												message.parts.reduce(
+													(last: number, p: any, i: number) =>
+														p.type.startsWith("tool-") ? i : last,
+													-1,
+												)}
+											{@const lastTextPartIndex =
+												message.parts.reduce(
+													(last: number, p: any, i: number) =>
+														p.type === "text" && p.text?.trim() ? i : last,
+													-1,
+												)}
+											<!-- Where the reply starts. Normally just past the last
+											     tool call. But a turn that ENDED on a tool call — an
+											     error, a stop, the model quitting — never wrote one,
+											     and treating all of its text as narration would
+											     leave a blank message on screen with the words
+											     hidden in a collapsed block. So once the turn is
+											     over, the last thing it said stands as the reply.
+											     While it is still streaming we do NOT do that: there
+											     genuinely is no reply yet, and the line the model
+											     wrote is already showing as the status label. -->
+											{@const bodyFromIndex =
+												isStreaming ||
+												message.parts.some(
+													(p: any, i: number) =>
+														p.type === "text" &&
+														p.text?.trim() &&
+														i > lastToolPartIndex,
+												)
+													? lastToolPartIndex + 1
+													: lastTextPartIndex}
+											{@const messageNarration =
+												message.parts
+													.filter(
+														(p: any, i: number) =>
+															p.type === "text" &&
+															p.text?.trim() &&
+															i < bodyFromIndex,
+													)
+													.map((p: any) => p.text.trim())}
 											{@const messageReasoning =
 												messageReasoningParts
 													.map(
@@ -1459,7 +1514,8 @@
 													.join("\n")}
 											{@const hasThinkingContent =
 												messageReasoning ||
-												messageToolParts.length > 0}
+												messageToolParts.length > 0 ||
+												messageNarration.length > 0}
 
 											{@const subagents =
 												isLastMessage
@@ -1486,6 +1542,7 @@
 															"streaming"}
 													toolCalls={messageToolParts}
 													reasoningContent={messageReasoning}
+													narration={messageNarration}
 													duration={isLastMessage
 														? thinkingDuration
 														: 0}
@@ -1496,7 +1553,7 @@
 												<StepEyebrow stepId={eyebrowFor.get(message.id)!} />
 											{/if}
 											{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
-												{#if part.type === "text" && part.text.trim()}
+												{#if part.type === "text" && part.text.trim() && partIndex >= bodyFromIndex}
 													{@const shown = reveal.revealed(message.id, part.text)}
 													<div
 														class="text-base text-foreground assistant-response"

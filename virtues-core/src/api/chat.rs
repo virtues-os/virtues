@@ -217,6 +217,58 @@ fn ghost_history(messages: &[UIMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
+/// Materialize a turn's ordered `parts` from the pieces the stream collected.
+///
+/// Text runs keep their order relative to the tool calls that ran between them,
+/// which is the whole point: the LAST text run is the reply, and everything
+/// before it is the model narrating its way there.
+///
+/// A tool id in `turn_slots` with no matching entry in `tool_calls` is skipped
+/// rather than written as an empty invocation — that only happens if the stream
+/// ended between a tool starting and being recorded, and a part with no name or
+/// input tells a reader nothing except that something is missing.
+fn build_turn_parts(
+    turn_slots: &[TurnSlot],
+    text_segments: &[String],
+    tool_calls: &[crate::api::chats::ToolCall],
+) -> Vec<UIPart> {
+    let mut parts = Vec::with_capacity(turn_slots.len());
+    for slot in turn_slots {
+        match slot {
+            TurnSlot::Text(i) => {
+                let Some(text) = text_segments.get(*i) else { continue };
+                // A run that produced nothing is not a paragraph of silence.
+                if text.trim().is_empty() {
+                    continue;
+                }
+                parts.push(UIPart::Text { text: text.clone() });
+            }
+            TurnSlot::Tool(id) => {
+                let Some(tc) = tool_calls
+                    .iter()
+                    .find(|tc| tc.tool_call_id.as_deref() == Some(id.as_str()))
+                else {
+                    continue;
+                };
+                parts.push(UIPart::ToolInvocation {
+                    tool_call_id: id.clone(),
+                    tool_name: tc.tool_name.clone(),
+                    input: tc.arguments.clone(),
+                    // The turn is over by the time this runs, so anything that
+                    // returned has its output and anything that did not, did not.
+                    state: if tc.result.is_some() {
+                        "output-available".to_string()
+                    } else {
+                        "input-available".to_string()
+                    },
+                    output: tc.result.clone(),
+                });
+            }
+        }
+    }
+    parts
+}
+
 fn default_chat_mode() -> String {
     "open".to_string()
 }
@@ -243,6 +295,19 @@ pub struct UIMessage {
     // Legacy format support
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+}
+
+/// Where one piece of a turn sat in time.
+///
+/// The row already stores the turn's text (`content`) and its tool calls
+/// (`tool_calls`), but nothing recorded the ORDER they interleaved in — so a
+/// reload could show what was said and what was called, never which was said
+/// before which call. `parts` is built from this at save time.
+enum TurnSlot {
+    /// An index into the turn's text segments.
+    Text(usize),
+    /// A tool call id, resolved against `all_tool_calls` for its input/output.
+    Tool(String),
 }
 
 /// UI Part types
@@ -1739,6 +1804,28 @@ fn create_agent_stream(
         // text.The earlier edit…" otherwise). On the wire each step's text is
         // its own part and needs none.
         let mut needs_text_break = false;
+        // ONE PART PER TEXT RUN, and a distinct id for each.
+        //
+        // The comment above has always said "on the wire each step's text is
+        // its own part" — and the events were right, but every one of them
+        // carried `msg_id`. The AI SDK keys a part by its id, so a second
+        // `text-start` with the id it just closed REOPENS the first part and
+        // appends to it. Every run of text in a turn merged into one block,
+        // which is why the line the model writes before reaching for a tool
+        // ("Checking what he sent in August") is indistinguishable, on the
+        // client, from the answer it writes at the end.
+        //
+        // They are not the same thing. The first is scaffolding — it says what
+        // is about to happen and is worth reading WHILE it happens; the second
+        // is the reply. Giving each run its own id is what lets the view put
+        // the scaffolding in the thinking block and leave the answer in the
+        // transcript.
+        let mut text_seq = 0usize;
+        let mut text_part_id = msg_id.clone();
+        let mut text_segments: Vec<String> = Vec::new();
+        // The turn in order, so the stored `parts` can interleave text with the
+        // tool calls it ran between — a reload then sees what the stream saw.
+        let mut turn_slots: Vec<TurnSlot> = Vec::new();
         // Set by any error event mid-turn: the reply on screen is partial,
         // and the row must say so or a reload shows the stub as the answer.
         let mut interrupted = false;
@@ -1799,7 +1886,11 @@ fn create_agent_stream(
                     }
                     if !text_open {
                         text_open = true;
-                        yield (serialize_event(&StreamEvent::TextStart { id: msg_id.clone() }));
+                        text_seq += 1;
+                        text_part_id = format!("{msg_id}:t{text_seq}");
+                        turn_slots.push(TurnSlot::Text(text_segments.len()));
+                        text_segments.push(String::new());
+                        yield (serialize_event(&StreamEvent::TextStart { id: text_part_id.clone() }));
                     }
                     // Text resuming after a tool call: break the paragraph in
                     // the stored string so it doesn't butt against the previous
@@ -1809,8 +1900,11 @@ fn create_agent_stream(
                     }
                     needs_text_break = false;
                     full_content.push_str(&content);
+                    if let Some(seg) = text_segments.last_mut() {
+                        seg.push_str(&content);
+                    }
                     let event = StreamEvent::TextDelta {
-                        id: msg_id.clone(),
+                        id: text_part_id.clone(),
                         delta: content,
                     };
                     yield (serialize_event(&event));
@@ -1834,6 +1928,7 @@ fn create_agent_stream(
                     // Any text that resumes after this tool call starts a new
                     // paragraph (see needs_text_break).
                     needs_text_break = true;
+                    turn_slots.push(TurnSlot::Tool(id.clone()));
                     // Track tool call for persistence
                     all_tool_calls.push(ToolCall {
                         tool_name: name.clone(),
@@ -1953,7 +2048,7 @@ fn create_agent_stream(
                     }
                     if text_open {
                         text_open = false;
-                        yield (serialize_event(&StreamEvent::TextEnd { id: msg_id.clone() }));
+                        yield (serialize_event(&StreamEvent::TextEnd { id: text_part_id.clone() }));
                     }
                     yield (serialize_event(&StreamEvent::FinishStep));
                     if reason == StepReason::ToolCalls {
@@ -1994,7 +2089,7 @@ fn create_agent_stream(
 
         // Close a text part a step left open (an error or a stop mid-step).
         if text_open {
-            yield (serialize_event(&StreamEvent::TextEnd { id: msg_id.clone() }));
+            yield (serialize_event(&StreamEvent::TextEnd { id: text_part_id.clone() }));
         }
 
         // How it ended, in the SDK's words. A person's stop is an abort, not
@@ -2053,7 +2148,22 @@ fn create_agent_stream(
                 } else {
                     Some(serde_json::Value::Array(reasoning_details.clone()))
                 },
-                parts: None,
+                // THE TURN IN ORDER — the column was written as `None` by every
+                // caller and was null in every row on every box, while the
+                // client rebuilt an approximation from `content` + `tool_calls`
+                // that could only ever produce ONE text part. That is what made
+                // a reopened chat unable to tell the model's "checking his
+                // messages now" from its actual answer: the distinction was
+                // never on disk to begin with.
+                //
+                // `content` still holds the whole turn joined, because that is
+                // what the model is shown as its own history and what every
+                // older row has. This is additive: a row without `parts` falls
+                // back to the legacy reconstruction exactly as before.
+                parts: {
+                    let parts = build_turn_parts(&turn_slots, &text_segments, &all_tool_calls);
+                    if parts.is_empty() { None } else { Some(parts) }
+                },
             };
 
             if temporary {
@@ -2203,6 +2313,94 @@ pub async fn cancel_chat_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tool(id: &str, name: &str, result: Option<serde_json::Value>) -> crate::api::chats::ToolCall {
+        crate::api::chats::ToolCall {
+            tool_name: name.to_string(),
+            tool_call_id: Some(id.to_string()),
+            arguments: serde_json::json!({}),
+            result,
+            timestamp: "2026-09-16T00:00:00Z".to_string(),
+        }
+    }
+
+    fn kinds(parts: &[UIPart]) -> Vec<String> {
+        parts
+            .iter()
+            .map(|p| match p {
+                UIPart::Text { text } => format!("text:{}", text.trim()),
+                UIPart::ToolInvocation { tool_name, state, .. } => {
+                    format!("tool:{tool_name}:{state}")
+                }
+                _ => "other".to_string(),
+            })
+            .collect()
+    }
+
+    /// The order is the whole point. Without it a reload can say what was said
+    /// and what was called, but never which was said BEFORE which call — and
+    /// that distinction is what separates the model narrating its way to an
+    /// answer from the answer itself.
+    #[test]
+    fn a_turn_keeps_the_order_its_text_and_tools_happened_in() {
+        let slots = vec![
+            TurnSlot::Text(0),
+            TurnSlot::Tool("c1".into()),
+            TurnSlot::Text(1),
+            TurnSlot::Tool("c2".into()),
+            TurnSlot::Text(2),
+        ];
+        let segments = vec![
+            "Checking his messages.".to_string(),
+            "Nothing in August. Looking at September.".to_string(),
+            "He sent it on the 3rd.".to_string(),
+        ];
+        let calls = vec![
+            tool("c1", "sql_query", Some(serde_json::json!({"rows": []}))),
+            tool("c2", "semantic_search", Some(serde_json::json!({"rows": []}))),
+        ];
+
+        assert_eq!(
+            kinds(&build_turn_parts(&slots, &segments, &calls)),
+            [
+                "text:Checking his messages.",
+                "tool:sql_query:output-available",
+                "text:Nothing in August. Looking at September.",
+                "tool:semantic_search:output-available",
+                "text:He sent it on the 3rd.",
+            ]
+        );
+    }
+
+    /// A turn that ends on a tool call has no reply yet. The view reads "text
+    /// with a tool after it" as narration, so an empty trailing run must not be
+    /// written — it would present itself as an answer of nothing.
+    #[test]
+    fn empty_runs_and_unrecorded_tools_are_left_out() {
+        let slots = vec![
+            TurnSlot::Text(0),
+            TurnSlot::Tool("c1".into()),
+            TurnSlot::Text(1),
+            // Started, never recorded: the stream ended in between.
+            TurnSlot::Tool("c_ghost".into()),
+        ];
+        let segments = vec!["Looking it up.".to_string(), "   \n ".to_string()];
+        let calls = vec![tool("c1", "sql_query", None)];
+
+        assert_eq!(
+            kinds(&build_turn_parts(&slots, &segments, &calls)),
+            ["text:Looking it up.", "tool:sql_query:input-available"],
+            "a tool that never returned still shows, as awaiting output"
+        );
+    }
+
+    /// The overwhelmingly common turn: a question, an answer, no tools. It must
+    /// come out as one text part, or every plain reply would look like narration.
+    #[test]
+    fn a_turn_with_no_tools_is_all_reply() {
+        let parts = build_turn_parts(&[TurnSlot::Text(0)], &["Yes.".to_string()], &[]);
+        assert_eq!(kinds(&parts), ["text:Yes."]);
+    }
 
     /// The rules block is the one place where a silent failure means the box
     /// raises a subject someone asked it never to raise. These tests exist
@@ -2511,14 +2709,20 @@ mod ui_stream_fixture {
 
     fn canonical_turn() -> Vec<StreamEvent> {
         let id = "msg_fixture".to_string();
+        // Each run of text carries its OWN id (`{msg}:t{n}`) — see the stream
+        // loop. The step boundary is what actually ends a part, so the ids were
+        // cosmetic until the view began telling the runs apart; they are here so
+        // the fixture is what the box sends, not a simplification of it.
+        let t1 = format!("{id}:t1");
+        let t2 = format!("{id}:t2");
         vec![
             StreamEvent::Start { message_id: id.clone() },
             StreamEvent::StartStep,
-            StreamEvent::TextStart { id: id.clone() },
+            StreamEvent::TextStart { id: t1.clone() },
             StreamEvent::ReasoningStart { id: id.clone() },
             StreamEvent::ReasoningDelta { id: id.clone(), delta: "weighing the ask".into() },
             StreamEvent::ReasoningEnd { id: id.clone() },
-            StreamEvent::TextDelta { id: id.clone(), delta: "Hello".into() },
+            StreamEvent::TextDelta { id: t1.clone(), delta: "Hello".into() },
             StreamEvent::ToolInputStart { tool_call_id: "call_1".into(), tool_name: "web_search".into() },
             StreamEvent::ToolInputDelta { tool_call_id: "call_1".into(), input_text_delta: "{\"query\":\"x\"}".into() },
             StreamEvent::ToolInputAvailable {
@@ -2530,11 +2734,11 @@ mod ui_stream_fixture {
                 tool_call_id: "call_1".into(),
                 output: serde_json::json!({"results": []}),
             },
-            StreamEvent::TextEnd { id: id.clone() },
+            StreamEvent::TextEnd { id: t1.clone() },
             StreamEvent::FinishStep,
             StreamEvent::StartStep,
-            StreamEvent::TextStart { id: id.clone() },
-            StreamEvent::TextDelta { id: id.clone(), delta: " world".into() },
+            StreamEvent::TextStart { id: t2.clone() },
+            StreamEvent::TextDelta { id: t2.clone(), delta: " world".into() },
             StreamEvent::ToolInputStart { tool_call_id: "call_2".into(), tool_name: "create_page".into() },
             StreamEvent::ToolInputAvailable {
                 tool_call_id: "call_2".into(),
@@ -2546,7 +2750,7 @@ mod ui_stream_fixture {
                 error_text: "the page could not be written".into(),
             },
             StreamEvent::NarrativeDocumentReady { page_id: "page_fixture".into() },
-            StreamEvent::TextEnd { id: id.clone() },
+            StreamEvent::TextEnd { id: t2.clone() },
             StreamEvent::FinishStep,
             StreamEvent::Finish { finish_reason: "stop".into() },
         ]
@@ -2554,12 +2758,13 @@ mod ui_stream_fixture {
 
     fn stopped_turn() -> Vec<StreamEvent> {
         let id = "msg_fixture".to_string();
+        let t1 = format!("{id}:t1");
         vec![
             StreamEvent::Start { message_id: id.clone() },
             StreamEvent::StartStep,
-            StreamEvent::TextStart { id: id.clone() },
-            StreamEvent::TextDelta { id: id.clone(), delta: "Partial".into() },
-            StreamEvent::TextEnd { id: id.clone() },
+            StreamEvent::TextStart { id: t1.clone() },
+            StreamEvent::TextDelta { id: t1.clone(), delta: "Partial".into() },
+            StreamEvent::TextEnd { id: t1.clone() },
             StreamEvent::Abort { reason: Some("stopped".into()) },
         ]
     }

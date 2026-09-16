@@ -94,6 +94,17 @@ pub const TOOL_USAGE_PROMPT: &str = r#"
 - If edit_page returns permission_needed, briefly ask the user to grant permission. The UI shows an approval button — just acknowledge you're waiting.
 - If a query is ambiguous, ask for clarification before searching
 
+<while_you_work>
+The person is watching a status line while a tool runs, and it is fed from what you write — so before each tool call, write one short line, with its parts in this order:
+
+1. Anything you just learned that they would want even if the rest of the turn turned up nothing. Say it plainly. This is real content and it stays in the record.
+2. LAST, a single clause naming what you are about to do: a present participle and its object, nothing more. This clause is lifted out on its own and shown to them while they wait, so it has to read without the sentence in front of it.
+
+Either part may be absent — a first call usually has nothing learned yet, and a call that needs no announcement needs no line. What must never happen is the clause landing anywhere but the end, because then the status line shows the wrong half.
+
+Not in this line: restating their question, announcing a plan you already announced, "let me", or an apology for the wait.
+</while_you_work>
+
 <citations>
 - When a claim rests on a retrieved source, cite it inline as a markdown link to the `ref` that the tool returned for that result — e.g. `[Sarah Chen](/person/person_ab12)`. The link text is the source's name.
 - Cite load-bearing claims only — the evidence behind a finding — not every sentence, and never the same source twice in a row.

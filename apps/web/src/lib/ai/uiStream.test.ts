@@ -83,6 +83,35 @@ describe('the box speaks the UI message stream protocol', () => {
 		expect(types).toContain('reasoning');
 	});
 
+	/**
+	 * The rule the transcript and the thinking block split on, checked against
+	 * what the SDK actually produces rather than against a hand-made array.
+	 *
+	 * A run of text with a tool call AFTER it was the model saying what it was
+	 * about to do; the run with nothing after it is the reply. The canonical
+	 * turn deliberately ENDS on a failed tool, so it has no reply at all — which
+	 * is the case that would otherwise render a blank assistant message, with
+	 * every word the model wrote hidden inside a collapsed block.
+	 */
+	it('text runs divide into narration and reply by the tool call after them', async () => {
+		const message = await lastMessageOf('box-ui-stream.jsonl');
+		const parts = message.parts as { type: string; text?: string }[];
+
+		const lastToolIndex = parts.reduce(
+			(last, p, i) => (p.type.startsWith('tool-') ? i : last),
+			-1
+		);
+		const narration = parts
+			.filter((p, i) => p.type === 'text' && p.text?.trim() && i < lastToolIndex)
+			.map((p) => p.text!.trim());
+		const reply = parts
+			.filter((p, i) => p.type === 'text' && p.text?.trim() && i > lastToolIndex)
+			.map((p) => p.text!.trim());
+
+		expect(narration).toEqual(['Hello', 'world']);
+		expect(reply).toEqual([]);
+	});
+
 	it('a stopped turn ends with abort and keeps what streamed', async () => {
 		const message = await lastMessageOf('box-ui-stream-abort.jsonl');
 		const text = message.parts.find((p) => p.type === 'text') as { text: string } | undefined;
