@@ -37,12 +37,16 @@
 //!
 //! # Format
 //!
-//! Text when stderr is a terminal, JSON when it is not. That is the whole
-//! rule, and it falls out right in both places we care about: a developer
-//! running `make dev` reads prose, and a box under systemd writes JSON into
-//! journald, where `journalctl -o json` plus `jq` can filter on the keys
-//! above. `VIRTUES_LOG_FORMAT=text|json` forces one when the guess is wrong
-//! (piping dev output through `tee`, say).
+//! Text when stderr is a terminal, JSON when it is not. That falls out right
+//! in both places we care about: a developer running `make dev` reads prose,
+//! and a box under systemd writes JSON into journald, where `journalctl -o
+//! json` plus `jq` can filter on the keys above. `VIRTUES_LOG_FORMAT=text|json`
+//! forces one when the guess is wrong (piping dev output through `tee`, say).
+//!
+//! One process opts out of the guess: an applet subprocess, whose stderr is a
+//! pipe read by the runner rather than a journal, asks for `Format::Text` — see
+//! [`init_with`]. Detection would say "not a terminal" and be right about the
+//! terminal and wrong about the destination.
 //!
 //! The `json` feature has been compiled into every tracing-subscriber
 //! dependency in this repo since long before anything switched it on.
@@ -50,6 +54,16 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tracing::Span;
+
+/// How a process formats its lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// Text on a terminal, JSON otherwise. What every top-level binary wants.
+    Auto,
+    /// Always text. For a process whose stderr is captured and re-emitted by
+    /// another process that adds the keys — see `init_with`'s note.
+    Text,
+}
 
 /// Initialize the process-wide subscriber. Call once, as early as possible.
 ///
@@ -61,10 +75,27 @@ use tracing::Span;
 /// second call loses and is ignored rather than panicking. Tests and
 /// `#[sqlx::test]` cases routinely bring their own.
 pub fn init(default_filter: &str) {
+    init_with(default_filter, Format::Auto)
+}
+
+/// As [`init`], but with the format stated rather than guessed.
+///
+/// `Format::Text` exists for one case: a process whose stderr is a **pipe read
+/// by another process of ours**, not a journal. An applet subprocess is the
+/// example. Under `Auto` it sees a pipe, correctly concludes "not a terminal",
+/// and emits JSON — which the runner then re-emits line by line inside the
+/// `message` field of its own JSON line. The result is double-encoded: a
+/// reader who filters to a run and asks for `.message` gets back a string of
+/// JSON they have to parse a second time.
+///
+/// The runner already supplies `run_id` and `applet_id`, so the subprocess's
+/// own structure adds nothing and costs legibility. It writes prose; the
+/// wrapper makes it structured.
+pub fn init_with(default_filter: &str, format: Format) {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
 
-    if want_json() {
+    if format == Format::Auto && want_json() {
         let _ = tracing_subscriber::fmt()
             .json()
             // Event fields at the top level, the enclosing span's fields under

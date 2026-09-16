@@ -75,7 +75,9 @@ pub async fn run() -> Result<(), crate::Error> {
         "service_result": service_result,
         "exit_code": exit_code,
         "exit_status": exit_status,
-        "journal_tail": tail,
+        // Filtered, not raw — see `tail_journal`. Named for what it is so the
+        // receiving end does not read absence as silence.
+        "journal_tail_filtered": tail,
         "ts": chrono::Utc::now().to_rfc3339(),
     });
 
@@ -87,19 +89,143 @@ pub async fn run() -> Result<(), crate::Error> {
     Ok(())
 }
 
-/// Tail the last N lines of the `virtues.service` journal. Returns an
-/// empty string if `journalctl` isn't available (won't be in dev) or if
-/// it errors — we never block on log capture.
+/// The journal lines worth sending off the box after a crash.
+///
+/// # Why this is filtered
+///
+/// This is the one thing a running box sends anywhere, and it used to be the
+/// last 50 lines of the unit's journal, unread and unfiltered. A crashing
+/// box's last 50 lines are also the likeliest place in the whole system for a
+/// file path, a search term, a person's name or an error quoting user text to
+/// appear — and `agents/build/virtues-api.md` answers "can you see my notes,
+/// location, or health data?" with "that data never leaves your box". That was
+/// true of every table and one careless `tracing::info!` away from false.
+///
+/// So we send the lines that explain a crash and not the lines that narrate
+/// the work: see [`keep_line`].
+///
+/// # Why not `journalctl -p err`
+///
+/// Because it would send almost nothing, silently. systemd stamps a priority
+/// on lines a service writes to stderr, and absent an explicit `<N>` syslog
+/// prefix — which the tracing formatter does not write — every line lands at
+/// `info` no matter what level we logged it at. Filtering by journal priority
+/// would therefore drop our own ERROR lines. The level we care about lives
+/// INSIDE the message, which is why this matches on content.
+///
+/// Returns an empty string if `journalctl` isn't available (it won't be in
+/// dev) or errors — we never block on log capture.
 fn tail_journal(lines: usize) -> String {
+    // Read well past what we intend to send: the filter is the point, and
+    // after it a 50-line read might yield two lines.
+    let scan = lines * 8;
     let out = Command::new("journalctl")
         .arg("-u")
         .arg("virtues.service")
         .arg("--no-pager")
+        .arg("-o")
+        .arg("cat") // the message only — journald's own prefix adds nothing here
         .arg("-n")
-        .arg(lines.to_string())
+        .arg(scan.to_string())
         .output();
-    match out {
+    let raw = match out {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        _ => String::new(),
+        _ => return String::new(),
+    };
+
+    let kept: Vec<&str> = raw.lines().filter(|l| keep_line(l)).collect();
+    // Send NOTHING rather than falling back to the unfiltered tail when the
+    // filter finds nothing. A fallback would undo the whole point on exactly
+    // the boxes that are chattiest.
+    let start = kept.len().saturating_sub(lines);
+    kept[start..].join("\n")
+}
+
+/// Does this journal line belong in a crash beacon?
+///
+/// Two keepers:
+///
+/// 1. **Anything that is not one of our JSON log records.** A Rust panic does
+///    not go through `tracing` at all — the panic hook writes plain text to
+///    stderr — so the single most valuable line in a crash is exactly the one
+///    a "JSON with level ERROR" rule would throw away. Backtraces, loader
+///    failures and OOM messages arrive the same way.
+/// 2. **Our own records at ERROR.** These are the ones we wrote to describe
+///    something going wrong.
+///
+/// Everything else — our INFO, WARN and DEBUG records — is dropped. That is
+/// the bulk of the volume and the part that narrates the user's actual life:
+/// which applet ran for whom, what was searched, which file was read.
+///
+/// Known residual, deliberately accepted: a line written by an OLDER build
+/// (before the JSON switch) is plain text and therefore kept under rule 1. The
+/// window is small — the daemon that just crashed ships with this binary, so
+/// its own lines are JSON — and closing it would mean guessing at the shape of
+/// text we no longer emit.
+fn keep_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        // One of ours: keep only what we called an error.
+        Ok(v) if v.get("level").is_some() => {
+            matches!(v.get("level").and_then(|l| l.as_str()), Some("ERROR"))
+        }
+        // JSON, but not one of our records (an applet echoing a payload, say).
+        // Not ours to interpret, and not evidence of our crash.
+        Ok(_) => false,
+        // Not JSON: a panic, a backtrace, a linker or OOM message.
+        Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_panic_survives_the_filter() {
+        // The most important line in a crash, and the one a naive
+        // "JSON with level ERROR" rule throws away: the panic hook writes
+        // plain text, never through tracing.
+        assert!(keep_line(
+            "thread 'tokio-runtime-worker' panicked at src/agent/mod.rs:88:9:"
+        ));
+        assert!(keep_line("note: run with `RUST_BACKTRACE=1` to display a backtrace"));
+        assert!(keep_line("   3: core::panicking::panic_fmt"));
+    }
+
+    #[test]
+    fn our_errors_are_kept_and_our_chatter_is_not() {
+        let err = r#"{"timestamp":"t","level":"ERROR","message":"pool timed out"}"#;
+        let info = r#"{"timestamp":"t","level":"INFO","message":"narrating the day"}"#;
+        let warn = r#"{"timestamp":"t","level":"WARN","message":"slow query"}"#;
+        assert!(keep_line(err));
+        assert!(!keep_line(info));
+        assert!(!keep_line(warn));
+    }
+
+    #[test]
+    fn the_users_life_does_not_leave_the_box() {
+        // The whole reason for the filter. These are the shapes that would
+        // have ridden along in an unfiltered tail.
+        for line in [
+            r#"{"level":"INFO","message":"read /var/lib/virtues/lake/notes/therapy.md"}"#,
+            r#"{"level":"INFO","message":"search: divorce lawyer"}"#,
+            r#"{"level":"DEBUG","message":"ai call","feature":"day_summary"}"#,
+            r#"{"level":"WARN","span":{"chat_id":"c1"},"message":"retrying"}"#,
+        ] {
+            assert!(!keep_line(line), "should not leave the box: {line}");
+        }
+    }
+
+    #[test]
+    fn blank_lines_and_foreign_json_are_dropped() {
+        assert!(!keep_line(""));
+        assert!(!keep_line("   "));
+        // Valid JSON that is not one of our records — an applet echoing a
+        // payload, say. Not evidence of our crash, and not ours to interpret.
+        assert!(!keep_line(r#"{"records":[{"name":"someone"}]}"#));
     }
 }

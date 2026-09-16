@@ -35,6 +35,8 @@ interface QueuedEvent {
 	severity: Severity;
 	message: string;
 	detail?: unknown;
+	/** Present only when `detail` does not already carry the exact one. */
+	last_request_id?: string;
 	occurred_at: string;
 }
 
@@ -60,6 +62,29 @@ let timer: ReturnType<typeof setInterval> | null = null;
  * Set when the box tells us it has no door. See the 404 branch in `flush`.
  */
 let standDown = false;
+/**
+ * The most recent `x-request-id` the box handed back. See `noteRequestId`.
+ */
+let lastRequestId: string | undefined;
+
+/**
+ * Remember the box's request id for the request that just completed.
+ *
+ * Called by the API client on every response. It is the join between the two
+ * halves of an incident: the box stamps each request with an id, every server
+ * line it logs inherits it, and it comes back in `x-request-id`. A client
+ * report that carries the same id lands on the same key, so one filter shows
+ * the failure from both sides. Without it they can only be matched by guessing
+ * from timestamps, which is the thing this whole module exists to stop doing.
+ *
+ * "Most recent" is a HINT, not a fact: with concurrent requests the last id
+ * seen may belong to a different one. An `ApiError` carries the exact id for
+ * its own request and that wins; this is the fallback for an uncaught error
+ * that has no request of its own.
+ */
+export function noteRequestId(id: string): void {
+	lastRequestId = id;
+}
 
 function nowIso(): string {
 	try {
@@ -79,7 +104,17 @@ function nowIso(): string {
 function safeDetail(detail: unknown): unknown {
 	try {
 		if (detail instanceof Error) {
-			return { name: detail.name, message: detail.message, stack: detail.stack };
+			// `requestId` is an own property on ApiError, and an Error's own
+			// properties are NOT enumerable, so spreading or stringifying loses
+			// it. Read it by name.
+			const extra = detail as unknown as { requestId?: unknown; status?: unknown };
+			return {
+				name: detail.name,
+				message: detail.message,
+				stack: detail.stack,
+				...(typeof extra.requestId === 'string' ? { request_id: extra.requestId } : {}),
+				...(typeof extra.status === 'number' ? { status: extra.status } : {})
+			};
 		}
 		if (detail && typeof detail === 'object') {
 			// Round-trip to drop functions, symbols, and anything cyclic. If it
@@ -94,11 +129,17 @@ function safeDetail(detail: unknown): unknown {
 
 function enqueue(severity: Severity, kind: string, message: string, detail?: unknown): void {
 	try {
+		const prepared = detail === undefined ? undefined : safeDetail(detail);
+		// The exact id from an ApiError wins; otherwise fall back to the last
+		// one the box handed us, marked as the hint it is.
+		const carriesExact =
+			!!prepared && typeof prepared === 'object' && 'request_id' in (prepared as object);
 		queue.push({
 			kind,
 			severity,
 			message: String(message ?? '').slice(0, 512),
-			detail: detail === undefined ? undefined : safeDetail(detail),
+			detail: prepared,
+			...(carriesExact || !lastRequestId ? {} : { last_request_id: lastRequestId }),
 			occurred_at: nowIso()
 		});
 		while (queue.length > MAX_QUEUE) {
