@@ -19,7 +19,7 @@
         /**
          * Two measures, so views read as siblings: `prose` for reading, `wide`
          * for tables and grids. (Was five — narrow/full were each used once or
-         * twice and only made neighbouring pages disagree by a few rem.)
+         * twice and only made neighboring pages disagree by a few rem.)
          *
          * This is chrome, chosen by the view. The *reader's* width preference
          * is a different thing and lives in `stores/pageDisplay.svelte.ts`.
