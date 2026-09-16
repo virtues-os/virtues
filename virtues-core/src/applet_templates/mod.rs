@@ -1265,6 +1265,23 @@ async fn upsert_row(
     //           `memory`, and non-manifest config keys — manifest config
     //           merges OVER existing config so runtime keys survive.
     let sql = if template.owner == "user" {
+        // `agent` is COALESCEd rather than left alone, and it is the one
+        // exception to "the row is the user's after the first seed".
+        //
+        // A user-owned applet's prompt IS editable (the PATCH path writes
+        // `agent`), so overwriting it would throw away their edit. But a NULL
+        // agent is not an edit — it is a hole, and an agent applet with no
+        // prompt is a scheduled no-op that reports success. Morning Examen
+        // sat in exactly that state on every box: its manifest once wrote
+        // `agent` below a `[config.limits]` header, where TOML binds it to
+        // that table instead of the top level, so the column seeded NULL.
+        // Fixing the manifest repaired nothing, because reconcile never
+        // touched the field again — and `updated_at = now()` fires on every
+        // boot, so the row looked freshly synced while the one part that
+        // mattered stayed empty.
+        //
+        // COALESCE fills the hole and can never overwrite a prompt the person
+        // wrote.
         r#"
         INSERT INTO app_applets (
             id, name, owner, agent, schedule, enabled, config, condition,
@@ -1272,6 +1289,7 @@ async fn upsert_row(
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
+            agent          = COALESCE(app_applets.agent, EXCLUDED.agent),
             device_id      = EXCLUDED.device_id,
             updated_at     = now()
         "#
@@ -1805,6 +1823,77 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         assert!(
             missing.is_empty(),
             "shipped applets with no description on the row: {missing:?}"
+        );
+    }
+
+    /// Every shipped applet that declares an agent prompt must HAVE one on the
+    /// row, and a NULL one must heal on the next reconcile.
+    ///
+    /// Morning Examen shipped, scheduled and enabled with `agent` NULL on
+    /// every box: its manifest once wrote the key below a `[config.limits]`
+    /// header, where TOML binds it to that table rather than the top level.
+    /// It ran every morning and did nothing, reporting success. Fixing the
+    /// manifest repaired no existing box, because a user-owned applet's row is
+    /// the user's after the first seed and reconcile never touched the field
+    /// again.
+    #[sqlx::test]
+    async fn a_missing_agent_prompt_heals_but_an_edited_one_is_left_alone(pool: sqlx::PgPool) {
+        reconcile_templates(&pool).await.expect("reconcile");
+
+        // SCHEDULED is the operative word. `dot_cloud` has no command and no
+        // prompt and is perfectly correct: it is face-only, `triggers = []`,
+        // and nothing server-side ever runs it. What cannot exist is an applet
+        // the scheduler WILL pick up with nothing to do when it gets there.
+        let hollow: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM app_applets \
+             WHERE triggers::text NOT IN ('[]', 'null') \
+               AND (command IS NULL OR command::text IN ('null', '[]')) \
+               AND (agent IS NULL OR btrim(agent) = '') \
+             ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            hollow.is_empty(),
+            "applets the scheduler will run that have nothing to do when it \
+             gets there — each reports success and does nothing: {hollow:?}"
+        );
+
+        // A hole heals.
+        sqlx::query("UPDATE app_applets SET agent = NULL WHERE id = 'applet_morning_examen'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        reconcile_templates(&pool).await.expect("reconcile");
+        let healed: Option<String> =
+            sqlx::query_scalar("SELECT agent FROM app_applets WHERE id = 'applet_morning_examen'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            healed.is_some_and(|a| a.contains("Examen")),
+            "a NULL prompt on a shipped applet is a hole, and reconcile fills it"
+        );
+
+        // Their own words are not a hole.
+        sqlx::query(
+            "UPDATE app_applets SET agent = 'Mine. Leave it.' WHERE id = 'applet_morning_examen'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        reconcile_templates(&pool).await.expect("reconcile");
+        let theirs: Option<String> =
+            sqlx::query_scalar("SELECT agent FROM app_applets WHERE id = 'applet_morning_examen'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            theirs.as_deref(),
+            Some("Mine. Leave it."),
+            "a user-owned applet's prompt is editable, so reconcile must never \
+             overwrite one that is actually there"
         );
     }
 
