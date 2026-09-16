@@ -1,6 +1,6 @@
 {"type":"start","messageId":"msg_fixture"}
 {"type":"start-step"}
-{"type":"text-start","id":"msg_fixture"}
-{"type":"text-delta","id":"msg_fixture","delta":"Partial"}
-{"type":"text-end","id":"msg_fixture"}
+{"type":"text-start","id":"msg_fixture:t1"}
+{"type":"text-delta","id":"msg_fixture:t1","delta":"Partial"}
+{"type":"text-end","id":"msg_fixture:t1"}
 {"type":"abort","reason":"stopped"}

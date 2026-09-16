@@ -1,8 +1,6 @@
 <script lang="ts">
-	import { onMount } from "svelte";
 	import { slide } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
-	import { getRandomThinkingLabel } from "$lib/utils/thinkingLabels";
 
 	interface ToolCallPart {
 		type: string;
@@ -25,6 +23,12 @@
 		toolCalls: ToolCallPart[];
 		/** Reasoning/thinking text from the model */
 		reasoningContent?: string;
+		/**
+		 * What the model said on its way here — every text run in this turn
+		 * except the last, which is the reply. These are the lines it writes
+		 * before reaching for a tool; the newest one is the status label.
+		 */
+		narration?: string[];
 		/** Duration in seconds spent thinking */
 		duration?: number;
 	}
@@ -33,6 +37,7 @@
 		isThinking,
 		toolCalls = [],
 		reasoningContent = "",
+		narration = [],
 		duration = 0,
 	}: Props = $props();
 
@@ -44,30 +49,58 @@
 	let calculatedDuration = $state(0);
 	let hasStartedThinking = $state(false);
 
-	// Rotating thinking label - set once on mount
-	let thinkingLabel = $state(getRandomThinkingLabel());
+	/**
+	 * THE LABEL IS WHAT IS HAPPENING, not a word drawn from a hat.
+	 *
+	 * This used to be one of ninety whimsical verbs — "Pontificating",
+	 * "Combobulating" — chosen at random and re-rolled every four seconds. It
+	 * carried no information by construction, it changed while the thing it
+	 * described did not, and some of them actively misdescribe: a person
+	 * waiting on their own records was told the box was speaking pompously at
+	 * length.
+	 *
+	 * Everything needed to say something true was already on screen. The model
+	 * narrates before it reaches for a tool, and the tool call itself says what
+	 * it is doing. So: the model's own last clause, or the tool in flight, and
+	 * only then a plain fallback. Nothing new is fetched and no second model is
+	 * asked — a lite model reading the tool's arguments could only paraphrase
+	 * what `getToolDescription` already derives for free, and would not know
+	 * WHY the call is being made, which is the one thing the narration does.
+	 */
+	const thinkingLabel = $derived.by(() => {
+		const said = lastIntent(narration);
+		if (said) return said;
 
-	// Animated ellipsis
-	let dots = $state("");
-
-	onMount(() => {
-		// Animate dots every 400ms
-		const dotsInterval = setInterval(() => {
-			dots = dots.length >= 3 ? "" : dots + ".";
-		}, 400);
-
-		// Rotate label every 4 seconds (only if still thinking)
-		const labelInterval = setInterval(() => {
-			if (isThinking) {
-				thinkingLabel = getRandomThinkingLabel();
-			}
-		}, 4000);
-
-		return () => {
-			clearInterval(dotsInterval);
-			clearInterval(labelInterval);
-		};
+		// Nothing said yet — the tool in flight is the next best truth. Prefer
+		// one still running; fall back to the most recent, which is what the
+		// gap between a tool returning and the next one starting looks like.
+		const pending = toolCalls.filter(
+			(t) => t.state === "pending" || t.state === "input-available" || !t.state,
+		);
+		const current = pending.at(-1) ?? toolCalls.at(-1);
+		if (current && getToolName(current) !== "think") {
+			return getToolDescription(current, true);
+		}
+		return "Thinking";
 	});
+
+	/**
+	 * The last clause of the newest thing the model said.
+	 *
+	 * The prompt asks for the line to END with what it is about to do, because
+	 * the sentence before it is usually a finding — worth reading, but not a
+	 * status. Taking the last sentence gets the intent without the preamble,
+	 * and degrades to the whole line for a model that ignores the shape.
+	 */
+	function lastIntent(lines: string[]): string {
+		const line = lines.at(-1)?.trim();
+		if (!line) return "";
+		const sentences = line.split(/(?<=[.!?])\s+/).filter((t) => t.trim());
+		const last = (sentences.at(-1) ?? line).trim();
+		// A whole paragraph is not a label; better to fall through to the tool.
+		if (last.length > 90) return "";
+		return last;
+	}
 
 	// Track thinking start time - only trigger once per thinking session
 	$effect(() => {
@@ -256,7 +289,9 @@
 	}
 
 	// Check if we have content
-	const hasContent = $derived(reasoningContent || toolCalls.length > 0);
+	const hasContent = $derived(
+		reasoningContent || toolCalls.length > 0 || narration.length > 0,
+	);
 
 	// Get unique tools for collapsed summary (filter out "think" — rendered inline, not as a tool)
 	const uniqueToolNames = $derived.by(() => {
@@ -299,7 +334,7 @@
 		<span class="header-content">
 			{#if isThinking}
 				<span class="thinking-text"
-					>{thinkingLabel}<span class="dots">{dots}</span></span
+					>{thinkingLabel}</span
 				>
 			{:else if knownDuration > 0}
 				<span class="duration-text">
@@ -333,6 +368,14 @@
 			{#if reasoningContent}
 				<p class="reasoning-text">{reasoningContent}</p>
 			{/if}
+
+			<!-- What the model said on the way here. It used to sit in the
+			     transcript forever, above the answer, so reopening a chat meant
+			     reading a finished process narrate itself. It belongs with the
+			     rest of the working-out: available, not in the way. -->
+			{#each narration as line, i (i)}
+				<p class="narration-line">{line}</p>
+			{/each}
 
 			{#if toolCalls.length > 0}
 				<ul class="tool-list">
@@ -461,12 +504,6 @@
 		}
 	}
 
-	.dots {
-		display: inline-block;
-		width: 1.2em;
-		text-align: left;
-	}
-
 	.duration-text {
 		color: var(--color-foreground-muted);
 	}
@@ -517,6 +554,16 @@
 		color: var(--color-foreground);
 		line-height: 1.5;
 		white-space: pre-wrap;
+	}
+
+	.narration-line {
+		margin: 0 0 12px 0;
+		color: var(--color-foreground-muted);
+		line-height: 1.5;
+	}
+
+	.narration-line:last-child {
+		margin-bottom: 0;
 	}
 
 	/* Reasoning text - matches .markdown p */

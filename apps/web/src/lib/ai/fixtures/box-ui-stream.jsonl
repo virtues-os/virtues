@@ -1,23 +1,23 @@
 {"type":"start","messageId":"msg_fixture"}
 {"type":"start-step"}
-{"type":"text-start","id":"msg_fixture"}
+{"type":"text-start","id":"msg_fixture:t1"}
 {"type":"reasoning-start","id":"msg_fixture"}
 {"type":"reasoning-delta","id":"msg_fixture","delta":"weighing the ask"}
 {"type":"reasoning-end","id":"msg_fixture"}
-{"type":"text-delta","id":"msg_fixture","delta":"Hello"}
+{"type":"text-delta","id":"msg_fixture:t1","delta":"Hello"}
 {"type":"tool-input-start","toolCallId":"call_1","toolName":"web_search"}
 {"type":"tool-input-delta","toolCallId":"call_1","inputTextDelta":"{\"query\":\"x\"}"}
 {"type":"tool-input-available","toolCallId":"call_1","toolName":"web_search","input":{"query":"x"}}
 {"type":"tool-output-available","toolCallId":"call_1","output":{"results":[]}}
-{"type":"text-end","id":"msg_fixture"}
+{"type":"text-end","id":"msg_fixture:t1"}
 {"type":"finish-step"}
 {"type":"start-step"}
-{"type":"text-start","id":"msg_fixture"}
-{"type":"text-delta","id":"msg_fixture","delta":" world"}
+{"type":"text-start","id":"msg_fixture:t2"}
+{"type":"text-delta","id":"msg_fixture:t2","delta":" world"}
 {"type":"tool-input-start","toolCallId":"call_2","toolName":"create_page"}
 {"type":"tool-input-available","toolCallId":"call_2","toolName":"create_page","input":{"title":"t"}}
 {"type":"tool-output-error","toolCallId":"call_2","errorText":"the page could not be written"}
 {"type":"data-narrative-document","data":{"pageId":"page_fixture"},"transient":true}
-{"type":"text-end","id":"msg_fixture"}
+{"type":"text-end","id":"msg_fixture:t2"}
 {"type":"finish-step"}
 {"type":"finish","finishReason":"stop"}
