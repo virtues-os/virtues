@@ -109,18 +109,27 @@
 	/* Font Families */
 	--font-mono: 'IBM Plex Mono', monospace;
 	--font-sans: 'Avenir', sans-serif;
-	--font-serif: 'JJannon', Lora, serif;
+	/* JJannon ships ONE cut — no bold, no italic, no second size. That is a
+	   technical constraint on any serif hierarchy, not only house taste; the
+	   @font-face note in app.css says what follows from it. The tail is a
+	   system stack, not a webfont: it is only ever seen during `font-display:
+	   swap` or for a glyph JJannon lacks, and it costs zero bytes to draw. */
+	--font-serif: 'JJannon', ui-serif, Georgia, 'Times New Roman', serif;
 	/* The serif for chrome — same face, metrics normalized so a centered line
 	   box centers the letters and not the em square. Use it wherever the serif
 	   shares a row with something that isn't text (an icon, a dot, a control);
 	   use --font-serif for prose. See the @font-face note in app.css. */
-	--font-serif-ui: 'JJannon UI', Lora, serif;
+	--font-serif-ui: 'JJannon UI', ui-serif, Georgia, 'Times New Roman', serif;
 
-	/* Animation Tokens */
+	/* Animation Tokens — only the three the app actually reads.
+	   --duration-normal, --duration-slow and --ease-out-expo were declared here
+	   and referenced by nothing in apps/web/src, which is worse than absent: a
+	   token that exists but is never drawn reads as the house default to the
+	   next person, who then matches a timing nothing else uses. Removed rather
+	   than kept "for later" — a var() is one line to add back when something
+	   needs it. Verified with a repo-wide search first: the only other mention
+	   of all three is the gallery's own prose naming them as dead. */
 	--duration-fast: 150ms;
-	--duration-normal: 200ms;
-	--duration-slow: 300ms;
-	--ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 	--ease-in-out-quad: cubic-bezier(0.45, 0, 0.55, 1);
 	--ease-premium: cubic-bezier(0.2, 0, 0, 1);
 
@@ -352,39 +361,53 @@
 	--foreground-disabled: #a3a3a3;
 
 	/* Interactive Colors - Blue accent */
-	--primary: #2883DE;
-	--primary-hover: #4a9ae5;
-	--primary-active: #1d6bb8;
+	/* --primary is a text ink here (links, ErrorState's retry, a primary Badge),
+	   so it owes 4.5:1 on the page and not only a pleasing fill. Darkened for
+	   that; hover and active moved by the same lightness step, or the pressed
+	   state would have landed LIGHTER than rest. --border-focus tracks --primary
+	   in this file — keep the two equal. Re-measure at /components. */
+	--primary: #2077cd;
+	--primary-hover: #348ee2;
+	--primary-active: #1a5ea2;
 	--primary-subtle: #EFF6FF;
 
 	--secondary: #171717;
 	--secondary-hover: #262626;
 	--secondary-active: #0a0a0a;
 
-	/* Status Colors */
-	--success: #16a34a;
+	/* Status Colors — darkened from the Tailwind defaults these arrived as.
+	   Those are tuned against white and nothing else, and every one of them
+	   failed the pair a reader actually meets: #16a34a reads 3.30 on --surface
+	   and 3.00 on its own #dcfce7 fill, so a success Badge shipped below AA in
+	   the four themes that share this palette (Caladan, Rivendell, Netherfield,
+	   Hogwarts — identical ratios to two decimals). Each ink now clears 4.5:1
+	   against BOTH --surface and its -subtle fill. Hue and saturation held;
+	   only lightness moved. --diff-add / --diff-remove are these same two inks
+	   by construction — move them together or the diff and the Badge disagree.
+	   Re-measure at /components after any change here. */
+	--success: #11803a;
 	--success-subtle: #dcfce7;
-	--warning: #ea580c;
+	--warning: #ba460a;
 	--warning-subtle: #ffedd5;
-	--error: #dc2626;
+	--error: #ca2121;
 	--error-subtle: #fee2e2;
-	--info: #0284c7;
+	--info: #0271ab;
 	--info-subtle: #e0f2fe;
 
 	/* Border Colors - Neutral grays */
 	--border: #e5e5e5;
 	--border-subtle: #f5f5f5;
 	--border-strong: #d4d4d4;
-	--border-focus: #2883DE;
+	--border-focus: #2077cd;
 
 	/* Selection/Highlight - Soft light yellow */
 	--highlight: rgba(253, 237, 178, 0.45);
 	--highlight-foreground: #171717;
 
 	/* Diff Colors */
-	--diff-add: #16a34a;
+	--diff-add: #11803a;
 	--diff-add-bg: #dcfce7;
-	--diff-remove: #dc2626;
+	--diff-remove: #ca2121;
 	--diff-remove-bg: #fee2e2;
 
 	/* Background Inverse */
@@ -422,39 +445,46 @@
 	--foreground-disabled: #a3a3a3;
 
 	/* Interactive Colors - Warm accent */
-	--primary: #D97757;
-	--primary-hover: #E08B70;
-	--primary-active: #C46545;
+	/* --primary is a text ink here (links, ErrorState's retry, a primary Badge),
+	   so it owes 4.5:1 on the page and not only a pleasing fill. Darkened for
+	   that; hover and active moved by the same lightness step, or the pressed
+	   state would have landed LIGHTER than rest. --border-focus tracks --primary
+	   in this file — keep the two equal. Re-measure at /components. */
+	--primary: #C4512C;
+	--primary-hover: #D5603B;
+	--primary-active: #984B30;
 	--primary-subtle: #FEF3F0;
 
 	--secondary: #171717;
 	--secondary-hover: #262626;
 	--secondary-active: #0a0a0a;
 
-	/* Status Colors */
-	--success: #16a34a;
+	/* Status Colors — darkened to clear 4.5:1 on both --surface and the -subtle
+	   fill a Badge draws behind them. Shared with Caladan, whose block carries
+	   the account of why the Tailwind defaults failed. */
+	--success: #11803a;
 	--success-subtle: #dcfce7;
-	--warning: #ea580c;
+	--warning: #ba460a;
 	--warning-subtle: #ffedd5;
-	--error: #dc2626;
+	--error: #ca2121;
 	--error-subtle: #fee2e2;
-	--info: #0284c7;
+	--info: #0271ab;
 	--info-subtle: #e0f2fe;
 
 	/* Border Colors - Neutral grays */
 	--border: #e5e5e5;
 	--border-subtle: #f5f5f5;
 	--border-strong: #d4d4d4;
-	--border-focus: #D97757;
+	--border-focus: #C4512C;
 
 	/* Selection/Highlight - Soft peach */
 	--highlight: rgba(249, 215, 200, 0.45);
 	--highlight-foreground: #171717;
 
 	/* Diff Colors */
-	--diff-add: #16a34a;
+	--diff-add: #11803a;
 	--diff-add-bg: #dcfce7;
-	--diff-remove: #dc2626;
+	--diff-remove: #ca2121;
 	--diff-remove-bg: #fee2e2;
 
 	/* Background Inverse */
@@ -572,39 +602,46 @@
 	--foreground-disabled: #a3a3a3;
 
 	/* Interactive Colors - Blue accent */
-	--primary: #2883DE;
-	--primary-hover: #4a9ae5;
-	--primary-active: #1d6bb8;
+	/* --primary is a text ink here (links, ErrorState's retry, a primary Badge),
+	   so it owes 4.5:1 on the page and not only a pleasing fill. Darkened for
+	   that; hover and active moved by the same lightness step, or the pressed
+	   state would have landed LIGHTER than rest. --border-focus tracks --primary
+	   in this file — keep the two equal. Re-measure at /components. */
+	--primary: #2077cd;
+	--primary-hover: #348ee2;
+	--primary-active: #1a5ea2;
 	--primary-subtle: #EFF6FF;
 
 	--secondary: #171717;
 	--secondary-hover: #262626;
 	--secondary-active: #0a0a0a;
 
-	/* Status Colors */
-	--success: #16a34a;
+	/* Status Colors — darkened to clear 4.5:1 on both --surface and the -subtle
+	   fill a Badge draws behind them. Shared with Caladan, whose block carries
+	   the account of why the Tailwind defaults failed. */
+	--success: #11803a;
 	--success-subtle: #dcfce7;
-	--warning: #ea580c;
+	--warning: #ba460a;
 	--warning-subtle: #ffedd5;
-	--error: #dc2626;
+	--error: #ca2121;
 	--error-subtle: #fee2e2;
-	--info: #0284c7;
+	--info: #0271ab;
 	--info-subtle: #e0f2fe;
 
 	/* Border Colors - Neutral grays */
 	--border: #e5e5e5;
 	--border-subtle: #f5f5f5;
 	--border-strong: #d4d4d4;
-	--border-focus: #2883DE;
+	--border-focus: #2077cd;
 
 	/* Selection/Highlight - Soft light yellow */
 	--highlight: rgba(253, 237, 178, 0.45);
 	--highlight-foreground: #171717;
 
 	/* Diff Colors */
-	--diff-add: #16a34a;
+	--diff-add: #11803a;
 	--diff-add-bg: #dcfce7;
-	--diff-remove: #dc2626;
+	--diff-remove: #ca2121;
 	--diff-remove-bg: #fee2e2;
 
 	/* Background Inverse */
@@ -706,36 +743,43 @@
 	--foreground-disabled: #a8a29e;
 
 	/* Interactive Colors - Orange accent */
-	--primary: #EB5601;
-	--primary-hover: #FF6B1A;
-	--primary-active: #D14A00;
+	/* --primary is a text ink here (links, ErrorState's retry, a primary Badge),
+	   so it owes 4.5:1 on the page and not only a pleasing fill. Darkened for
+	   that; hover and active moved by the same lightness step, or the pressed
+	   state would have landed LIGHTER than rest. --border-focus tracks --primary
+	   in this file — keep the two equal. Re-measure at /components. */
+	--primary: #C34801;
+	--primary-hover: #F15500;
+	--primary-active: #A93C00;
 	--primary-subtle: #FFF0E6;
 
 	--secondary: #26251E;
 	--secondary-hover: #3D3B33;
 	--secondary-active: #1A1914;
 
-	/* Status Colors */
-	--success: #16a34a;
+	/* Status Colors — darkened to clear 4.5:1 on both --surface and the -subtle
+	   fill a Badge draws behind them. Shared with Caladan, whose block carries
+	   the account of why the Tailwind defaults failed. */
+	--success: #11803a;
 	--success-subtle: #dcfce7;
-	--warning: #ea580c;
+	--warning: #ba460a;
 	--warning-subtle: #ffedd5;
-	--error: #dc2626;
+	--error: #ca2121;
 	--error-subtle: #fee2e2;
-	--info: #0284c7;
+	--info: #0271ab;
 	--info-subtle: #e0f2fe;
 
 	/* Diff Colors */
-	--diff-add: #16a34a;
+	--diff-add: #11803a;
 	--diff-add-bg: #dcfce7;
-	--diff-remove: #dc2626;
+	--diff-remove: #ca2121;
 	--diff-remove-bg: #fee2e2;
 
 	/* Border Colors - Fixed: border-subtle should be lighter than border */
 	--border: #e7e5e4;
 	--border-subtle: #f0eeeb;
 	--border-strong: #a8a29e;
-	--border-focus: #EB5601;
+	--border-focus: #C34801;
 
 	/* Selection/Highlight - Warm peach/orange tint */
 	--highlight: #FEE4CC;
@@ -1075,7 +1119,13 @@
 	--success-subtle: #242d1a;
 	--warning: #be8a59;
 	--warning-subtle: #302419;
-	--error: #c16266;
+	/* --error fills Button variant="danger" and the label on it is --surface —
+	   dark text on the red, as in Agora, so the fix is lighter rather than
+	   darker. This was the worst pair in the whole set: #c16266 against #2f333d
+	   read 3.13:1, and that is a destructive control's own label. #D0898C
+	   clears 4.5, and carries error-on-surface text with it. Hue and saturation
+	   held. Same ink as --diff-remove here, so the two move together. */
+	--error: #D0898C;
 	--error-subtle: #30191a;
 	--info: #56b6c2;
 	--info-subtle: #172d30;
@@ -1083,7 +1133,7 @@
 	/* Diff Colors - Atom green/red */
 	--diff-add: #90b061;
 	--diff-add-bg: #242d1a;
-	--diff-remove: #c16266;
+	--diff-remove: #D0898C;
 	--diff-remove-bg: #30191a;
 
 	/* Border Colors */
@@ -1195,7 +1245,13 @@
 	--success-subtle: #f0f4e0;
 	--warning: #cb4b16;
 	--warning-subtle: #fbeee6;
-	--error: #dc322f;
+	/* --error fills Button variant="danger" and the label on it is --surface, so
+	   this one token sets the contrast of its own text. At #dc322f that pair
+	   read 4.29:1 — cream on red, below AA on the one control in the app that
+	   cannot afford to be misread. Darkened to #CD2522 (4.5+ against both the
+	   label and the -subtle Badge fill); hue and saturation held. Same ink as
+	   --diff-remove here, so the two move together. */
+	--error: #CD2522;
 	--error-subtle: #fce8e8;
 	--info: #268bd2;
 	--info-subtle: #f2d9be;
@@ -1203,7 +1259,7 @@
 	/* Diff Colors */
 	--diff-add: #859900;
 	--diff-add-bg: #f0f4e0;
-	--diff-remove: #dc322f;
+	--diff-remove: #CD2522;
 	--diff-remove-bg: #fce8e8;
 
 	/* Border Colors */
@@ -1255,7 +1311,12 @@
 	--success-subtle: #1e3d28;
 	--warning: #f1fa8c;
 	--warning-subtle: #3d3d20;
-	--error: #ff5555;
+	/* --error fills Button variant="danger" and the label on it is --surface —
+	   which in a dark theme is DARK text on the red. So this token raises its
+	   own label's contrast by getting lighter, not darker: #ff5555 read 4.17:1
+	   against #2d303e, and #FF6767 clears 4.5. Hue and saturation held. Same
+	   ink as --diff-remove here, so the two move together. */
+	--error: #FF6767;
 	--error-subtle: #3d1e1e;
 	--info: #8be9fd;
 	--info-subtle: #1e3d3d;
@@ -1263,7 +1324,7 @@
 	/* Diff Colors */
 	--diff-add: #50fa7b;
 	--diff-add-bg: #1e3d28;
-	--diff-remove: #ff5555;
+	--diff-remove: #FF6767;
 	--diff-remove-bg: #3d1e1e;
 
 	/* Border Colors */
