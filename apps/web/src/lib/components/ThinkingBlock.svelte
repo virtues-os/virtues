@@ -126,6 +126,19 @@
 	let elapsedMs = $state(0);
 
 	/**
+	 * The tool in flight. Prefer one still running; fall back to the most
+	 * recent, which is what the gap between a tool returning and the next one
+	 * starting looks like. Both the label and the depth read this, so they can
+	 * never describe different calls.
+	 */
+	const toolInFlight = $derived.by(() => {
+		const pending = toolCalls.filter(
+			(t) => t.state === "pending" || t.state === "input-available" || !t.state,
+		);
+		return pending.at(-1) ?? toolCalls.at(-1);
+	});
+
+	/**
 	 * THE LABEL IS WHAT IS HAPPENING, not a word drawn from a hat.
 	 *
 	 * This used to be one of ninety whimsical verbs — "Pontificating",
@@ -143,19 +156,6 @@
 	 * what `getToolDescription` already derives for free, and would not know
 	 * WHY the call is being made, which is the one thing the narration does.
 	 */
-	/**
-	 * The tool in flight. Prefer one still running; fall back to the most
-	 * recent, which is what the gap between a tool returning and the next one
-	 * starting looks like. Both the label and the depth read this, so they can
-	 * never describe different calls.
-	 */
-	const toolInFlight = $derived.by(() => {
-		const pending = toolCalls.filter(
-			(t) => t.state === "pending" || t.state === "input-available" || !t.state,
-		);
-		return pending.at(-1) ?? toolCalls.at(-1);
-	});
-
 	const thinkingLabel = $derived.by(() => {
 		const said = lastIntent(narration);
 		if (said) return said;
@@ -217,8 +217,16 @@
 	let landing = $state(false);
 	let landingTimer: ReturnType<typeof setTimeout> | null = null;
 
-	// Track thinking start time - only trigger once per thinking session
-	$effect(() => {
+	/**
+	 * Pre-effect, deliberately. A plain $effect runs AFTER the template has been
+	 * updated, so on the frame the turn ends the template sees `isThinking` false
+	 * while `landing` is still false, unmounts the mark, and the effect then
+	 * remounts a fresh one — which collapses from a resting mark rather than from
+	 * the pose the turn actually ended on. Verified: the mark's DOM node changed
+	 * identity across the transition. Running before the DOM update keeps the
+	 * instance, and with it the pose it froze.
+	 */
+	$effect.pre(() => {
 		if (isThinking && !hasStartedThinking) {
 			hasStartedThinking = true;
 			thinkingStartTime = Date.now();

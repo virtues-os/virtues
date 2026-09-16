@@ -298,12 +298,6 @@
 			const dt = Math.min(0.05, (now - last) / 1000);
 			last = now;
 
-			if (reduced) {
-				// Nothing moves. The mark is the mark; the words carry the status.
-				paint(REST);
-				return;
-			}
-
 			if (depth === 1) {
 				// The landing has to be prompt, so it is the one change that does
 				// not wait for the loop: freeze the pose the turn ended on and
@@ -333,14 +327,37 @@
 			paint(poseOf(SCRIPTS[running], elapsed / SCRIPTS[running].dur));
 		};
 
+		// Under reduced motion the mark is simply the mark, and the words carry
+		// the status — so there is no loop at all, rather than a loop repainting
+		// the same three dots sixty times a second. It starts if the preference
+		// is turned off while the page is open.
+		const startLoop = () => {
+			if (frame) return;
+			last = performance.now();
+			frame = requestAnimationFrame(step);
+		};
+		const stopLoop = () => {
+			if (!frame) return;
+			cancelAnimationFrame(frame);
+			frame = 0;
+		};
+
 		const onQuery = (e: MediaQueryListEvent) => {
 			reduced = e.matches;
+			if (reduced) {
+				stopLoop();
+				paint(REST);
+			} else {
+				startLoop();
+			}
 		};
 		query?.addEventListener("change", onQuery);
-		frame = requestAnimationFrame(step);
+
+		if (reduced) paint(REST);
+		else startLoop();
 
 		return () => {
-			cancelAnimationFrame(frame);
+			stopLoop();
 			query?.removeEventListener("change", onQuery);
 		};
 	});
