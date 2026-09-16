@@ -60,6 +60,31 @@ const CANDIDATE_POOL: i64 = 200;
 ///
 /// Must exceed the LIMIT it serves. At exactly `CANDIDATE_POOL` the index still
 /// prunes below the target, so this carries a margin.
+///
+/// NEVER HOIST THE QUERY VECTOR INTO A CTE. This whole knob — and the index it
+/// tunes — was dead for weeks, and the way it died is a trap any rewrite of the
+/// SQL below will walk back into. The vector used to live in `WITH prm AS
+/// (SELECT $1::halfvec AS qv)`, read by both `dense` and `sc`. Postgres inlines
+/// a CTE only when it is referenced ONCE; at two references `prm` materializes,
+/// so `prm.qv` is a *column of another node* rather than a parameter — and
+/// pgvector can only drive an HNSW scan when the `<=>` operand is constant with
+/// respect to the scan. The planner silently fell back to a parallel seq scan
+/// over every vector plus a full sort, on every search, for every phrasing.
+///
+/// Nothing surfaces it: the results are correct (an exact scan is the same
+/// ranking, only slower), no error is raised, and `ef_search` quietly stops
+/// mattering because no index scan consumes it. Measured on a real box, 226k
+/// vectors, the shipped query against its own logged SQL:
+///
+/// ```text
+/// prm CTE, referenced twice   dense arm 260 ms (Parallel Seq Scan)   whole query 488 ms
+/// $1::halfvec at both sites   dense arm 6.3 ms (Index Scan, hnsw)    whole query 114 ms
+/// ```
+///
+/// Repeating `$1::halfvec` is not duplication to be tidied away; it is the only
+/// spelling that keeps the index reachable. The cost of the mistake grows with
+/// the corpus — it is O(N) per search — so it reads as "search got slower as I
+/// added data", which is exactly what a vector index is supposed to prevent.
 const HNSW_EF_SEARCH: i64 = CANDIDATE_POOL + CANDIDATE_POOL / 4;
 
 /// Notebook-scoped retrieval (lean v1): additive bonus, in z-score space, for a
@@ -514,13 +539,15 @@ impl SemanticSearchEngine {
         // a query-adaptive weight, deduped to the best chunk per record.
         // Numeric constants (N, avgdl, k1, b, weights) are Rust-computed and
         // inlined — injection-safe (all f64/i64).
+        //
+        // `$1::halfvec` IS REPEATED RATHER THAN HOISTED INTO A CTE, and must stay
+        // that way — see `HNSW_EF_SEARCH`.
         let sql = format!(
-            "WITH prm AS (SELECT $1::halfvec AS qv), \
-             dense AS ( \
+            "WITH dense AS ( \
                SELECT se.id \
-               FROM search_vectors vs JOIN search_embeddings se ON se.id = vs.embedding_id, prm \
+               FROM search_vectors vs JOIN search_embeddings se ON se.id = vs.embedding_id \
                WHERE 1=1{f} \
-               ORDER BY vs.embedding <=> prm.qv, se.id LIMIT {pool} \
+               ORDER BY vs.embedding <=> $1::halfvec, se.id LIMIT {pool} \
              ), lex AS ( \
                SELECT dt.chunk_id AS id, \
                       sum( ln(({n}::float8 - df.df + 0.5)/(df.df + 0.5) + 1) \
@@ -534,9 +561,9 @@ impl SemanticSearchEngine {
                GROUP BY dt.chunk_id, se.bm25_len ORDER BY bs DESC LIMIT {pool} \
              ), u AS (SELECT id FROM dense UNION SELECT id FROM lex), \
              sc AS ( \
-               SELECT u.id, -(vs.embedding <=> prm.qv) AS ds, COALESCE(l.bs, 0) AS bs \
+               SELECT u.id, -(vs.embedding <=> $1::halfvec) AS ds, COALESCE(l.bs, 0) AS bs \
                FROM u JOIN search_vectors vs ON vs.embedding_id = u.id \
-                      LEFT JOIN lex l ON l.id = u.id, prm \
+                      LEFT JOIN lex l ON l.id = u.id \
              ), z AS ( \
                SELECT id, \
                  (ds - avg(ds) OVER())/(COALESCE(stddev_samp(ds) OVER(),0) + 1e-9) AS dz, \

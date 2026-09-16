@@ -574,6 +574,99 @@ impl SqlQueryTool {
         })))
     }
 
+    /// Turn a failed query into something the next attempt can use.
+    ///
+    /// The model writes SQL against a schema it is only told the TABLES of, and
+    /// then guesses the columns — from a week of one box's logs, eight of eleven
+    /// tool failures were invented column names (`amount` where the schema says
+    /// `amount_cents`, `body_text` and `content` for `body`, `pending` where the
+    /// convention is an `is_` prefix). Our naming rules are the ones a model is
+    /// least able to guess, because they are house rules, not English.
+    ///
+    /// What made that expensive was not the first wrong guess — it was that the
+    /// error said only `column "amount" does not exist`, which is the same
+    /// information the model already had. So it guessed again. Handing back the
+    /// real column list turns a dead end into one round trip, and it is the
+    /// standard move for tool-using SQL agents: let execution teach.
+    ///
+    /// Two things are recovered here that were being thrown away:
+    ///
+    /// - **Postgres's own `HINT`**, which for a near-miss is literally
+    ///   `Perhaps you meant to reference the column "m.from_handle"`. We were
+    ///   formatting only `{e}`, and `Display` for a sqlx database error drops it.
+    /// - **The failing SQL**, which was never logged. The journal recorded that
+    ///   a tool call failed and on which column, but not the statement — so the
+    ///   one artifact needed to tell a model mistake from a schema bug was the
+    ///   one thing absent.
+    ///
+    /// Only catalog tables are described, the same fence `get_schema` applies:
+    /// a table deliberately withheld from the catalog must not be spelled out
+    /// by an error message either.
+    async fn explain_failure(&self, sql: &str, err: &sqlx::Error) -> String {
+        let db_err = err.as_database_error();
+        let code = db_err.and_then(|e| e.code()).unwrap_or_default().to_string();
+        let message = db_err.map(|e| e.message().to_string()).unwrap_or_else(|| err.to_string());
+
+        tracing::warn!(
+            sqlstate = %code,
+            error = %message,
+            sql = %sql.chars().take(500).collect::<String>(),
+            "sql_query failed"
+        );
+
+        let mut out = format!("Query failed: {message}");
+
+        if let Some(hint) = db_err
+            .and_then(|e| e.try_downcast_ref::<sqlx::postgres::PgDatabaseError>())
+            .and_then(|pg| pg.hint())
+        {
+            out.push_str(&format!("\nHint: {hint}"));
+        }
+
+        // 42703 undefined_column, 42P01 undefined_table, 42702 ambiguous_column.
+        // For anything else (a type error, a bad cast) the columns are not the
+        // thing in question and listing them is noise.
+        if !matches!(code.as_str(), "42703" | "42P01" | "42702") {
+            return out;
+        }
+
+        let lowered = sql.to_lowercase();
+        let metadata = get_table_metadata();
+        let mut tables: Vec<&str> = metadata
+            .keys()
+            .copied()
+            .filter(|t| mentions_table(&lowered, t))
+            .collect();
+        tables.sort_unstable();
+        // Three is enough to fix a join and short enough to stay readable; a
+        // query touching more than that has a bigger problem than a typo.
+        tables.truncate(3);
+        if tables.is_empty() {
+            out.push_str(
+                "\nNo catalog table was recognized in this query. Call sql_query with                  operation='list_tables' to see what exists.",
+            );
+            return out;
+        }
+
+        for table in tables {
+            let cols: Vec<String> = sqlx::query_scalar(
+                "SELECT column_name FROM information_schema.columns \
+                 WHERE table_schema = 'public' AND table_name = $1 \
+                 ORDER BY ordinal_position",
+            )
+            .bind(table)
+            .fetch_all(self.pool.as_ref())
+            .await
+            .unwrap_or_default();
+            if cols.is_empty() {
+                continue;
+            }
+            out.push_str(&format!("\n{table} has: {}", cols.join(", ")));
+        }
+        out.push_str("\nRewrite the query using these column names.");
+        out
+    }
+
     /// Execute a read-only SQL query.
     ///
     /// Read-only is enforced by Postgres itself (`SET TRANSACTION READ ONLY`),
@@ -672,10 +765,15 @@ impl SqlQueryTool {
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 
-        let rows = sqlx::query(&query)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+        let rows = match sqlx::query(&query).fetch_all(&mut *tx).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                // The transaction is aborted; let it go before we read the
+                // catalog on a fresh connection to build the correction.
+                drop(tx);
+                return Err(ToolError::ExecutionFailed(self.explain_failure(&query, &e).await));
+            }
+        };
 
         // Read-only transaction: nothing to commit, and a rollback can't lose
         // work. Dropping would do this anyway; explicit for legibility.
@@ -971,6 +1069,55 @@ mod tests {
             unexplained.is_empty(),
             "the two model-facing table lists disagree without explanation:\n  {}",
             unexplained.join("\n  ")
+        );
+    }
+
+    /// And a THIRD list: the prose catalog inside the tool's own
+    /// `llm_description`, which is what the model actually reads before it
+    /// writes SQL. The test above keeps `registered_ontologies()` and
+    /// `get_table_metadata()` honest with each other; nothing kept either
+    /// honest with the paragraph the model is given.
+    ///
+    /// It had drifted, and the drift was not cosmetic. The description listed
+    /// `entity_references`, a table that does not exist under that name (it is
+    /// `wiki_refs`), and left its NARRATIVE section as a heading with nothing
+    /// under it. A model reading that list will write `FROM entity_references`
+    /// and get an error for a name it was handed — which is not the model
+    /// hallucinating, it is us.
+    ///
+    /// Checks names, not columns: a prose list of every column would drift
+    /// faster than the table list did, which is what `get_schema` is for.
+    #[test]
+    fn every_table_named_in_the_sql_tool_description_exists_in_the_catalog() {
+        let desc = virtues_registry::tools::default_tools()
+            .into_iter()
+            .find(|t| t.id == "sql_query")
+            .expect("sql_query tool must be registered")
+            .llm_description;
+
+        let catalog = get_table_metadata();
+        let mut unknown: Vec<String> = Vec::new();
+
+        // The three real table namespaces. `entity_` is deliberately NOT one of
+        // them — that it looked like one is exactly how `entity_references`
+        // survived in this text; the junction table is `wiki_refs`, and
+        // `entity_id`/`entity_type` are its COLUMNS. Tokenized the way Postgres
+        // reads an identifier, so `data_*` (a gloss, not a name) and
+        // `wiki_people/places` (one name plus shorthand) don't match as tables.
+        for word in desc.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+            let is_table_shaped = ["data_", "wiki_", "narrative_"]
+                .iter()
+                .any(|p| word.starts_with(p) && word.len() > p.len());
+            if is_table_shaped && !catalog.contains_key(word) && !unknown.iter().any(|u| u == word) {
+                unknown.push(word.to_string());
+            }
+        }
+
+        assert!(
+            unknown.is_empty(),
+            "sql_query's llm_description names tables the catalog does not have, \
+             so the model is being taught to write queries that cannot run:\n  {}",
+            unknown.join("\n  ")
         );
     }
 
