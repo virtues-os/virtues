@@ -130,6 +130,19 @@ Read against the code on 2026-09-09.
   3. The flush timer ran forever once started, waking a phone every ten
      seconds over an empty queue. It now stops when the queue drains and
      re-arms on the next event.
+- **Wired 2026-09-15, after the audit found it claimed but absent:** the
+  request-id join. The box returned `x-request-id` and nothing on the client
+  ever read it, so a client report and the server's account of the same
+  failure still could not be put on one key. `ApiError` now carries the exact
+  id of the request that failed; the client keeps the last id it saw as a
+  fallback for uncaught errors that have no request of their own; and the
+  report says which of the two it holds, because a hint that looked like a
+  fact would produce a confident join to the wrong request.
+- **Fixed 2026-09-15:** applet subprocess logs were double-encoded. Their
+  stderr is a pipe, so format auto-detection said "not a terminal" and emitted
+  JSON, which the runner then wrapped inside the `message` field of its own
+  JSON line. `observe::Format::Text` lets a process whose output is re-emitted
+  by another of ours opt out of the guess.
 - **Deferred, deliberately:** moving the 135 existing `console.*` calls onto
   the wrapper. Nearly all sit in `catch` blocks, which means the code already
   handled the failure; the errors that break a screen are the uncaught ones,
@@ -143,16 +156,22 @@ Read against the code on 2026-09-09.
    by slice 0. Flip to opt-in later if wanted; nothing here depends on it.
 2. **Clients forward `warn`+ only.** Anything finer is the browser console's
    job.
-3. **Open: what the beacon's journal tail may contain.** Found while doing
-   slice 0, not fixed by it. The tail is 50 unfiltered lines, and a crashing
-   box's last 50 lines are exactly where a path, a filename, a query, or an
-   error quoting user text is most likely to appear. `agents/build/virtues-api.md`
-   answers "can you see my notes, location, or health data?" with "that data
-   never leaves your box" — true of the tables, and the tail is the one place
-   that could make it accidentally false. Three options, in increasing cost:
-   send only lines from `virtues` at `ERROR`; redact anything that looks like
-   a path under the state root; or send no tail at all and rely on the owner
-   pasting one. Decide before the beacon is ever used in anger.
+3. **Settled 2026-09-15: the beacon sends errors and panics only.** The tail
+   was 50 unfiltered lines, and a crashing box's last 50 lines are exactly
+   where a path, a query, or an error quoting user text is most likely to
+   appear — one careless `info!` from making `virtues-api.md`'s "that data
+   never leaves your box" false. It now keeps a line only if it is NOT one of
+   our JSON records (a panic, a backtrace, an OOM message — plain text,
+   because the panic hook never goes through tracing) or IS one at `ERROR`.
+   Everything at INFO/WARN/DEBUG is dropped, which is both the bulk of the
+   volume and the part that narrates the user's life.
+
+   Note for anyone reaching for the obvious version: `journalctl -p err` does
+   NOT work. systemd stamps every line a service writes to stderr as `info`
+   absent a `<N>` syslog prefix, which the tracing formatter does not write,
+   so filtering by journal priority drops our own ERROR lines. The level lives
+   inside the message. Slice 1 is what made this cheap — before the JSON
+   switch there was no level to match on.
 
 ## Deferred, and what would un-defer it
 

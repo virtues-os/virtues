@@ -7,6 +7,8 @@
 
 import { sanitizeUrl } from '$lib/utils/urlUtils';
 
+import { noteRequestId } from '$lib/log';
+
 const API_BASE = '/api';
 
 // ============================================================================
@@ -23,11 +25,23 @@ const API_BASE = '/api';
 export class ApiError extends Error {
 	readonly status: number;
 	readonly body: unknown;
-	constructor(status: number, message: string, body?: unknown) {
+	/**
+	 * The box's `x-request-id` for the request that failed.
+	 *
+	 * This is the join. The box stamps every request with an id, puts it on a
+	 * span so all of its own log lines inherit it, and returns it in this
+	 * header. Carrying it on the error means a client report about a failure
+	 * and the server-side lines that explain it end up on the same key —
+	 * without it, the two halves of an incident can only be matched by
+	 * guessing from timestamps.
+	 */
+	readonly requestId?: string;
+	constructor(status: number, message: string, body?: unknown, requestId?: string) {
 		super(message);
 		this.name = 'ApiError';
 		this.status = status;
 		this.body = body;
+		this.requestId = requestId;
 	}
 }
 
@@ -56,6 +70,11 @@ export async function request<T>(
 	}
 
 	const res = await fetch(url, init);
+	// Remember it whether or not this request failed: an error thrown LATER,
+	// or an uncaught exception with no request of its own, still wants the
+	// most recent one as a hint. See `noteRequestId`.
+	const requestId = res.headers.get('x-request-id') ?? undefined;
+	if (requestId) noteRequestId(requestId);
 
 	if (!res.ok) {
 		let body: unknown;
@@ -75,7 +94,7 @@ export async function request<T>(
 		} catch {
 			/* keep statusText fallback */
 		}
-		throw new ApiError(res.status, message, body);
+		throw new ApiError(res.status, message, body, requestId);
 	}
 
 	if (res.status === 204) return undefined as T;

@@ -152,3 +152,45 @@ describe('client reporter', () => {
 		expect(detail.message).toBe('the real reason');
 	});
 });
+
+describe('request-id correlation', () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it('carries the exact id from an ApiError, and the last-seen one otherwise', async () => {
+		const calls: Array<{ events: Array<Record<string, unknown>> }> = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_u: string, init?: RequestInit) => {
+				calls.push(JSON.parse(String(init?.body)));
+				return { ok: true, status: 200 } as Response;
+			})
+		);
+		const { log, noteRequestId } = await import('./log');
+
+		// The box answered some earlier request with this id.
+		noteRequestId('r42_seen');
+
+		// An uncaught error knows no request of its own → the hint rides along.
+		log.error('uncaught', 'boom');
+
+		// An ApiError knows exactly which request failed → that wins.
+		class ApiErrorLike extends Error {
+			readonly requestId = 'r7_exact';
+			readonly status = 500;
+		}
+		log.error('api', 'call failed', new ApiErrorLike('server said no'));
+
+		await log.flush();
+
+		const [uncaught, api] = calls[0].events;
+		expect(uncaught.last_request_id).toBe('r42_seen');
+		const detail = api.detail as { request_id: string; status: number };
+		expect(detail.request_id).toBe('r7_exact');
+		expect(detail.status).toBe(500);
+		expect(api.last_request_id, 'an exact id needs no hint beside it').toBeUndefined();
+	});
+});

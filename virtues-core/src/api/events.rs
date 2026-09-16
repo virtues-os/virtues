@@ -15,6 +15,14 @@
 //! moment — and, when the client passes back the `x-request-id` it was handed,
 //! on the same key.
 //!
+//! That last clause described an intention for one commit before it described
+//! the code: the header was returned and nothing on the client ever read it.
+//! It is wired now — `ApiError` carries the exact id of the request that
+//! failed, the client keeps the last one it saw as a fallback for errors with
+//! no request of their own, and a report says which of the two it is holding.
+//! A hint that looked like a fact would be worse than no id at all, because it
+//! would produce a confident join to the wrong request.
+//!
 //! # What this is NOT
 //!
 //! Not analytics, and not a second telemetry channel: nothing here leaves the
@@ -79,6 +87,19 @@ pub struct ClientEvent {
     /// Anything else the client thinks matters. Never parsed here.
     #[serde(default)]
     pub detail: Option<Value>,
+    /// The box's own `x-request-id` for the request this is about, when the
+    /// client knows it exactly (an API error carries the id of its own
+    /// request). This is the join: the box already stamps every request with
+    /// this id and every server line it logs inherits it, so a client report
+    /// carrying it lands on the same key as the server's own account of the
+    /// same failure.
+    #[serde(default)]
+    pub request_id: Option<String>,
+    /// The most recent id the client saw, when it does not know the exact one
+    /// — an uncaught error has no request of its own. A HINT, and named so it
+    /// cannot be mistaken for the real thing when read back.
+    #[serde(default)]
+    pub last_request_id: Option<String>,
     /// When it happened on the client. Advisory only: a client's clock is its
     /// own, and the journal timestamps arrival regardless. Carried into the
     /// line so a delayed flush is distinguishable from a burst.
@@ -127,14 +148,17 @@ pub async fn report_handler(user: AuthUser, Json(batch): Json<EventBatch>) -> im
         match ev.severity {
             Severity::Error => tracing::error!(
                 kind = %ev.kind, source = %source, device = %user.device_label,
+                request_id = %ev.request_id, request_id_is_hint = ev.request_id_is_hint,
                 occurred_at = %ev.occurred_at, detail = %ev.detail, "{}", ev.message
             ),
             Severity::Info => tracing::info!(
                 kind = %ev.kind, source = %source, device = %user.device_label,
+                request_id = %ev.request_id, request_id_is_hint = ev.request_id_is_hint,
                 occurred_at = %ev.occurred_at, detail = %ev.detail, "{}", ev.message
             ),
             Severity::Warn => tracing::warn!(
                 kind = %ev.kind, source = %source, device = %user.device_label,
+                request_id = %ev.request_id, request_id_is_hint = ev.request_id_is_hint,
                 occurred_at = %ev.occurred_at, detail = %ev.detail, "{}", ev.message
             ),
         }
@@ -162,6 +186,9 @@ struct PreparedEvent {
     severity: Severity,
     message: String,
     detail: String,
+    /// The request this is about, and whether the client knew it exactly.
+    request_id: String,
+    request_id_is_hint: bool,
     occurred_at: String,
 }
 
@@ -196,6 +223,17 @@ fn prepare(events: Vec<ClientEvent>) -> Vec<PreparedEvent> {
                 },
                 message,
                 detail: bound_detail(ev.detail),
+                // An exact id always wins over the "last one I saw" hint, and
+                // the flag travels with it: a reader who joins on a hint and
+                // gets the wrong request should be able to see that they might
+                // have, rather than trusting a key that was never a promise.
+                request_id: ev
+                    .request_id
+                    .as_deref()
+                    .or(ev.last_request_id.as_deref())
+                    .map(|s| sanitize(s, 64))
+                    .unwrap_or_default(),
+                request_id_is_hint: ev.request_id.is_none() && ev.last_request_id.is_some(),
                 occurred_at: ev
                     .occurred_at
                     .as_deref()
@@ -290,6 +328,8 @@ mod batch_tests {
             severity: severity.into(),
             message: message.into(),
             detail: None,
+            request_id: None,
+            last_request_id: None,
             occurred_at: None,
         }
     }
@@ -323,6 +363,25 @@ mod batch_tests {
         let out = prepare(vec![ev("", "warn", "something broke")]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].kind, "client.unspecified");
+    }
+
+    #[test]
+    fn an_exact_request_id_beats_the_hint_and_is_marked_as_such() {
+        // The join between a client report and the server's own account of the
+        // same failure. A hint that silently looked like a fact would be worse
+        // than no id: it would produce a confident, wrong answer.
+        let mut exact = ev("client.api", "error", "500 from the box");
+        exact.request_id = Some("r7_123".into());
+        exact.last_request_id = Some("r9_999".into());
+
+        let mut hint = ev("client.uncaught", "error", "boom");
+        hint.last_request_id = Some("r9_999".into());
+
+        let out = prepare(vec![exact, hint]);
+        assert_eq!(out[0].request_id, "r7_123");
+        assert!(!out[0].request_id_is_hint);
+        assert_eq!(out[1].request_id, "r9_999");
+        assert!(out[1].request_id_is_hint, "a guess must say it is one");
     }
 
     #[test]
