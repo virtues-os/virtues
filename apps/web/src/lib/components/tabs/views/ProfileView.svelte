@@ -3,6 +3,7 @@
 	import { Page, Input } from "$lib";
 	import LoadingState from "$lib/components/LoadingState.svelte";
 	import ThemePicker from "$lib/components/ThemePicker.svelte";
+	import IntroductionSection from "$lib/components/settings/IntroductionSection.svelte";
 	import { getProfile, updateProfile, type Profile } from "$lib/api/client";
 	import { onMount } from "svelte";
 	import {
@@ -277,6 +278,10 @@
 							<a class="letter-link" href="/founders-letter">The founder's letter →</a>
 							<span class="field-hint">The letter that opened the app, kept where you can reread it.</span>
 						</div>
+						<!-- Reading it again is the link above. This is walking it
+						     again: the letter back in its gate, and any step that
+						     was set aside reopened. -->
+						<IntroductionSection />
 					</div>
 				</section>
 			</div>

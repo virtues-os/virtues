@@ -2060,6 +2060,37 @@ fn create_agent_stream(
                 // Ghost: nothing written. The client keeps the turn in its tab.
             } else if let Err(e) = append_message(&pool, chat_id.clone(), assistant_message).await {
                 tracing::error!("Failed to save assistant message: {}", e);
+            } else if chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
+                /* THE ROOM SPEAKS AFTER THE TURN, NOT THIRTY SECONDS LATER.
+                 *
+                 * `narrate` used to run only from the GET and the two POST
+                 * handlers, and no TOOL called it — so a step settled by
+                 * `record_introductions` or `write_it_up` left the room
+                 * silent until the client's 30-second poll. Because narrate
+                 * only ever appends, the line then landed at the BOTTOM of
+                 * the transcript rather than where it belonged in the walk.
+                 *
+                 * Measured on the dev box: introductions were recorded at
+                 * message 4 and "Introductions are made." arrived at message
+                 * 28 — under the person's "whats next?", together with the
+                 * other three settled lines and the graduated line, as a
+                 * backlog. Worse, the MODEL had already answered the question
+                 * at 27 in its own words, so the authored ending landed
+                 * underneath a thinner version of itself.
+                 *
+                 * Here is the right instant: the assistant's turn is on disk,
+                 * so the coda appends directly beneath the sentence that
+                 * earned it. Best-effort — a room that cannot speak must
+                 * never fail a turn that already succeeded.
+                 */
+                match crate::api::getting_started::compute(&pool).await {
+                    Ok(state) => {
+                        if let Err(e) = crate::api::getting_started::narrate(&pool, &state).await {
+                            tracing::warn!(error = %e, "the room could not speak after a turn");
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "getting-started state after a turn"),
+                }
             }
 
             // Record token usage. `cost_micros` is the gateway's authoritative
