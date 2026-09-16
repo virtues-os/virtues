@@ -185,3 +185,9 @@ tmp/*
 /masters/
 *.img
 *.img.zst
+
+# A 32-byte secret some local tooling drops at the repo root. It was untracked
+# but NOT ignored — the one file in the tree that was both a secret and a single
+# `git add -A` away from a public repo, which is a mistake this checkout has
+# already made with other stray files.
+.webui_secret_key

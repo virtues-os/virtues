@@ -58,31 +58,24 @@ they re-launch themselves as the right user, printing a line to say so.
 
 ## When the server crashes
 
-If the server exits abnormally, it writes a record of that to its own journal
-before doing anything else:
+If the server exits abnormally, it reports that to us: the exit status and the
+last 50 lines of the journal, so a crash on your server is something we can fix
+rather than something you have to notice and report. Nothing else on a running
+server is sent to us unprompted, apart from checking for updates.
 
-```bash
-sudo journalctl -u virtues -g box.crashed
-```
-
-Each entry carries the exit status and the version that was running. The
-journal lines just above it are the ones that led to the crash.
-
-By default, the same information — the exit status and the last 50 lines of
-the journal — is also sent to us, so that a crash on your server is something
-we can fix rather than something you have to report. Nothing else on a running
-server is sent anywhere.
-
-To turn that off, set it in the server's configuration and restart:
+To turn the crash report off, set it in the server's configuration and restart:
 
 ```bash
 sudo sh -c 'echo VIRTUES_DIAG=off >> /var/lib/virtues/virtues.env'
 sudo systemctl restart virtues
 ```
 
-`virtues doctor` tells you which way it is currently set, under Diagnostics.
-Turning it off changes nothing about the local record above — your server
-always keeps its own account of a crash.
+Either way the journal itself is the full account, and it stays on your
+machine:
+
+```bash
+sudo journalctl -u virtues -n 200 --no-pager
+```
 
 ## The pieces
 
