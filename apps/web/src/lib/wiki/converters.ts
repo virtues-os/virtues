@@ -68,7 +68,6 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
 	};
 }
 
@@ -116,7 +115,6 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 		// Metadata
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
 	};
 }
 
@@ -169,7 +167,6 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 		// Metadata
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
 	};
 }
 
@@ -187,7 +184,7 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		type: "day",
 		id: api.id,
 				title: formatLongDate(date),
-		cover: api.cover_image ?? undefined,
+		cover: undefined,
 
 		// Day-specific fields
 		date,
@@ -199,11 +196,8 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		linkedTemporal: emptyLinkedTemporal(),
 		events: [],
 		autobiography: api.article ?? "",
-		dataQuality: api.data_quality ?? undefined,
 		newEntityCount: api.new_entity_count ?? 0,
 		newTopicCount: api.new_topic_count ?? 0,
-		readinessScore: api.readiness_score ?? null,
-		readinessDetails: api.readiness_details ?? null,
 		sleepCycles: (api.sleep_cycles ?? []).map((c: { start_time: string; end_time: string; dominant_stage: string; avg_hr: number | null; autonomic_z: number | null }) => ({
 			startTime: new Date(c.start_time),
 			endTime: new Date(c.end_time),
@@ -217,7 +211,6 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		content: api.article ?? "",
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
-		lastEditedBy: (api.last_edited_by as "ai" | "human") ?? "ai",
 	};
 }
 

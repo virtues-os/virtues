@@ -56,9 +56,6 @@ pub struct WikiPerson {
     /// Surfaces this entity also answers to (0037). Read alongside write, or an
     /// editor cannot show what is already there.
     pub aliases: Vec<String>,
-    pub first_seen: Option<DateTime<Utc>>,
-    pub last_seen: Option<DateTime<Utc>>,
-    pub seen_count: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -79,6 +76,10 @@ pub struct WikiPlace {
     pub address: Option<String>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    /// Visits, COUNTED FROM `wiki_refs` rather than read off the row. The
+    /// columns of these names had no writer, so the page reported "Total
+    /// visits: 0" for somewhere the person goes weekly; they are dropped in
+    /// 0025 and these fields now carry the real count and its two dates.
     pub seen_count: Option<i32>,
     pub first_seen: Option<DateTime<Utc>>,
     pub last_seen: Option<DateTime<Utc>>,
@@ -108,9 +109,6 @@ pub struct WikiOrganization {
     pub end_date: Option<NaiveDate>,
     /// Surfaces this entity also answers to (0037).
     pub aliases: Vec<String>,
-    pub seen_count: Option<i32>,
-    pub first_seen: Option<DateTime<Utc>>,
-    pub last_seen: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -131,23 +129,19 @@ pub struct WikiDay {
     /// The day's prose, from `wiki_day_prose`. The article page is its only
     /// home — the legacy `autobiography` column was dropped in 0106.
     pub article: Option<String>,
-    pub last_edited_by: Option<String>,
-    pub cover_image: Option<String>,
-    // act_id/chapter_id are gone: the 2026-08-18 squash dropped the columns,
-    // and the fields spent months serializing a permanent None to a client
-    // that never read them. `try_get(...).ok()` is what let that hide —
-    // it turns schema drift into silent nulls, so prefer removal over
-    // tolerance when a column dies.
-    pub data_quality: Option<serde_json::Value>,
-    pub snapshot: Option<serde_json::Value>,
+    // Gone with the columns behind them (0025): `last_edited_by` was the
+    // one-pen freeze flag, which ownership no longer has; `cover_image` and
+    // `snapshot` never had a writer; `data_quality` and `epigraph` were parsed
+    // out of a response the narrate prompt forbids the model to produce, so
+    // both were NULL on every row of every box.
+    //
+    // The comment this replaces said it already: a field that serializes a
+    // permanent None to a client is schema drift hiding in plain sight, and
+    // `try_get(...).ok()` is what lets it hide. Prefer removal to tolerance.
     /// Count of entities first referenced on this day
     pub new_entity_count: i64,
     /// Count of topics first seen on this day
     pub new_topic_count: i64,
-    /// Morning readiness score (0-100, from overnight HRV/RHR/sleep)
-    pub readiness_score: Option<i64>,
-    /// JSON breakdown of readiness components
-    pub readiness_details: Option<serde_json::Value>,
     /// Sleep cycles with autonomic scores, computed at query time from
     /// data_health_sleep stages + heart rate data. Not stored.
     pub sleep_cycles: Vec<ScoredSleepCycle>,
@@ -177,7 +171,6 @@ pub struct WikiPersonListItem {
     pub name: String,
     pub picture: Option<String>,
     pub relationship_category: Option<String>,
-    pub last_seen: Option<DateTime<Utc>>,
     /// How many records mention this entity — see `REF_COUNT` in this module.
     pub ref_count: i64,
 }
@@ -189,7 +182,6 @@ pub struct WikiPlaceListItem {
     pub name: String,
     pub category: Option<String>,
     pub address: Option<String>,
-    pub seen_count: Option<i32>,
     /// How many records mention this entity — see `REF_COUNT` in this module.
     pub ref_count: i64,
 }
@@ -282,11 +274,10 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     let row = sqlx::query!(
         r#"
         SELECT
-            id, name, content, article, article_updated_at, picture, cover_image,
+            id, name, content, picture, cover_image,
             emails, phones, birthday, died_on, died_precision, instagram,
             facebook, linkedin, x,
             relationship_category, nickname, bond, aliases,
-            first_seen, last_seen, seen_count,
             created_at, updated_at
         FROM wiki_people
         WHERE id = $1
@@ -299,7 +290,7 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     .ok_or_else(|| Error::NotFound(format!("Person not found: {}", id)))?;
 
     let (article, article_updated_at, auto_update) =
-        overlay_article(pool, "person", &row.id, row.article, row.article_updated_at).await;
+        overlay_article(pool, "person", &row.id).await;
 
     Ok(WikiPerson {
         id: row.id,
@@ -323,9 +314,6 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
         relationship_category: row.relationship_category,
         nickname: row.nickname,
         bond: row.bond,
-        first_seen: row.first_seen,
-        last_seen: row.last_seen,
-        seen_count: Some(row.seen_count as i32),
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -344,17 +332,20 @@ async fn overlay_article(
     pool: &PgPool,
     subject_type: &str,
     subject_id: &str,
-    legacy: Option<String>,
-    legacy_at: Option<DateTime<Utc>>,
 ) -> (Option<String>, Option<DateTime<Utc>>, bool) {
     match crate::api::wiki_articles::get_article_prose(pool, subject_type, subject_id).await {
         Ok(Some(a)) => (Some(a.content), Some(a.updated_at), a.maintained),
+        // No article is the ordinary case, not an error: they are opt-in.
+        Ok(None) => (None, None, false),
         // A read failure must not take the whole entity page down with it — the
         // records below the article are the more important half.
-        Ok(None) => (legacy, legacy_at, false),
+        //
+        // This used to fall back to the entity's own `article` column, which
+        // had no writer on any box, so the fallback could only ever return the
+        // same None it now returns directly.
         Err(e) => {
-            tracing::warn!(subject_id, error = %e, "article read failed; showing legacy column");
-            (legacy, legacy_at, false)
+            tracing::warn!(subject_id, error = %e, "article read failed");
+            (None, None, false)
         }
     }
 }
@@ -405,7 +396,7 @@ pub async fn list_people(pool: &PgPool) -> Result<Vec<WikiPersonListItem>> {
     let rows = sqlx::query!(
         r#"
         SELECT
-            p.id, p.name, p.picture, p.relationship_category, p.last_seen,
+            p.id, p.name, p.picture, p.relationship_category,
             COALESCE(r.n, 0) AS "ref_count!"
         FROM wiki_people p
         LEFT JOIN (
@@ -426,7 +417,6 @@ pub async fn list_people(pool: &PgPool) -> Result<Vec<WikiPersonListItem>> {
             name: row.name,
             picture: row.picture,
             relationship_category: row.relationship_category,
-            last_seen: row.last_seen,
             ref_count: row.ref_count,
         })
         .collect())
@@ -501,9 +491,8 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
     let row = sqlx::query!(
         r#"
         SELECT
-            id, name, content, article, article_updated_at, cover_image, category, address,
-            latitude, longitude,
-            seen_count, first_seen, last_seen, is_audio_muted,
+            id, name, content, cover_image, category, address,
+            latitude, longitude, is_audio_muted,
             created_at, updated_at
         FROM wiki_places
         WHERE id = $1
@@ -516,7 +505,7 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
     .ok_or_else(|| Error::NotFound(format!("Place not found: {}", id)))?;
 
     let (article, article_updated_at, auto_update) =
-        overlay_article(pool, "place", &row.id, row.article.clone(), row.article_updated_at).await;
+        overlay_article(pool, "place", &row.id).await;
 
     let visits: (i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>) = sqlx::query_as(
         "SELECT count(*), min(occurred_at), max(occurred_at) \
@@ -558,7 +547,7 @@ pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
     let rows = sqlx::query!(
         r#"
         SELECT
-            p.id, p.name, p.category, p.address, p.seen_count,
+            p.id, p.name, p.category, p.address,
             COALESCE(r.n, 0) AS "ref_count!"
         FROM wiki_places p
         LEFT JOIN (
@@ -579,7 +568,6 @@ pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
             name: row.name,
             category: row.category,
             address: row.address,
-            seen_count: Some(row.seen_count as i32),
             ref_count: row.ref_count,
         })
         .collect())
@@ -628,10 +616,9 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
     let row = sqlx::query!(
         r#"
         SELECT
-            id, name, content, article, article_updated_at, cover_image,
+            id, name, content, cover_image,
             organization_type, relationship_type, role_title, aliases,
-            start_date, end_date, seen_count,
-            first_seen, last_seen,
+            start_date, end_date,
             created_at, updated_at
         FROM wiki_orgs
         WHERE id = $1
@@ -644,7 +631,7 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
     .ok_or_else(|| Error::NotFound(format!("Organization not found: {}", id)))?;
 
     let (article, article_updated_at, auto_update) =
-        overlay_article(pool, "organization", &row.id, row.article, row.article_updated_at).await;
+        overlay_article(pool, "organization", &row.id).await;
 
     Ok(WikiOrganization {
         id: row.id,
@@ -660,9 +647,6 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
         start_date: row.start_date,
         end_date: row.end_date,
         aliases: serde_json::from_value(row.aliases).unwrap_or_default(),
-        seen_count: Some(row.seen_count as i32),
-        first_seen: row.first_seen,
-        last_seen: row.last_seen,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -825,9 +809,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         SELECT
             id, date, start_timezone,
             (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
-            epigraph,
-            last_edited_by, cover_image,
-            data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
+            created_at, updated_at
         FROM wiki_days
         WHERE date = $1
         "#,
@@ -852,9 +834,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         VALUES ($1, $2)
         RETURNING
             id, date, start_timezone,
-            epigraph,
-            last_edited_by, cover_image,
-            data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
+            created_at, updated_at
         "#,
     )
     .bind(&day_id)
@@ -884,14 +864,8 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         // Absent from the INSERT..RETURNING path (a just-created day has no
         // prose anyway) — `.ok()` makes that read as None rather than an error.
         article: row.try_get("article").ok().flatten(),
-        last_edited_by: row.try_get("last_edited_by").ok().flatten(),
-        cover_image: row.try_get("cover_image").ok().flatten(),
-        data_quality: row.try_get("data_quality").ok().flatten(),
-        snapshot: row.try_get("snapshot").ok().flatten(),
         new_entity_count,
         new_topic_count,
-        readiness_score: row.try_get::<Option<i32>, _>("readiness_score").ok().flatten().map(|v| v as i64),
-        readiness_details: row.try_get("readiness_details").ok().flatten(),
         sleep_cycles: vec![], // populated after construction
         created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
         updated_at: row.try_get("updated_at").unwrap_or_else(|_| Utc::now()),
@@ -1115,9 +1089,7 @@ pub async fn list_days(
         SELECT
             id, date, start_timezone,
             (SELECT dp.prose FROM wiki_day_prose dp WHERE dp.day_id = wiki_days.id) AS article,
-            epigraph,
-            last_edited_by, cover_image,
-            data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
+            created_at, updated_at
         FROM wiki_days
         WHERE date >= $1 AND date <= $2
         ORDER BY date DESC

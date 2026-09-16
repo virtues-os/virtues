@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, name, content, article, article_updated_at, cover_image, category, address,\n            latitude, longitude,\n            seen_count, first_seen, last_seen, is_audio_muted,\n            created_at, updated_at\n        FROM wiki_places\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id, name, content, cover_image, category, address,\n            latitude, longitude, is_audio_muted,\n            created_at, updated_at\n        FROM wiki_places\n        WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -20,66 +20,41 @@
       },
       {
         "ordinal": 3,
-        "name": "article",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 4,
-        "name": "article_updated_at",
-        "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 5,
         "name": "cover_image",
         "type_info": "Text"
       },
       {
-        "ordinal": 6,
+        "ordinal": 4,
         "name": "category",
         "type_info": "Text"
       },
       {
-        "ordinal": 7,
+        "ordinal": 5,
         "name": "address",
         "type_info": "Text"
       },
       {
-        "ordinal": 8,
+        "ordinal": 6,
         "name": "latitude",
         "type_info": "Float8"
       },
       {
-        "ordinal": 9,
+        "ordinal": 7,
         "name": "longitude",
         "type_info": "Float8"
       },
       {
-        "ordinal": 10,
-        "name": "seen_count",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 11,
-        "name": "first_seen",
-        "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 12,
-        "name": "last_seen",
-        "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 13,
+        "ordinal": 8,
         "name": "is_audio_muted",
         "type_info": "Bool"
       },
       {
-        "ordinal": 14,
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 15,
+        "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -98,15 +73,10 @@
       true,
       true,
       true,
-      true,
-      true,
-      false,
-      true,
-      true,
       false,
       false,
       false
     ]
   },
-  "hash": "805632b67e39a251e47bf2c55e22d04d2c681878477d0bdf6d90c32ce8650037"
+  "hash": "dc6ebaef5a76217074492060cc9ff8642003c9f390d368d9edef0848f2184f6a"
 }

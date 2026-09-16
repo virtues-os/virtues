@@ -31,7 +31,6 @@
 	import EventTimeline from "./EventTimeline.svelte";
 	import DaylineChart from "./DaylineChart.svelte";
 	import DayToolbar from "./DayToolbar.svelte";
-	import DataQualityCoverage from "./DataQualityCoverage.svelte";
 	import NotesRail from "./NotesRail.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import TableOfContents, { type TocHeading } from "$lib/components/TableOfContents.svelte";
@@ -486,12 +485,6 @@
 	const showSources = $derived(dataSources.length > 0);
 	const showChats = $derived(dayChats.length > 0);
 
-	// Aggregate coverage percentage from W6H data quality (each dimension 1-5, overall is avg/5 → %)
-	const coveragePercent = $derived.by<number | null>(() => {
-		if (!page.dataQuality) return null;
-		return (page.dataQuality.overall / 5) * 100;
-	});
-
 	const hasAnyContent = $derived(
 		showAutobiography ||
 			showTimeline ||
@@ -525,7 +518,6 @@
 		{todaySlug}
 		onNavigateDay={navigateToDay}
 		{headerScrolledAway}
-		{coveragePercent}
 	/>
 
 	<div class="day-page-layout">
@@ -561,40 +553,28 @@
 					     when this was last written, by whose hand, and how much of
 					     the day the record actually saw. The audit trail below
 					     keeps the rest. -->
-					{#if page.updatedAt || page.dataQuality}
+					{#if page.updatedAt}
 						<p class="day-byline">
-							{#if page.updatedAt}
-								<span>
-									Updated {new Date(page.updatedAt).toLocaleDateString("en-US", {
-										month: "short",
-										day: "numeric",
-										year: "numeric",
-									})}{page.lastEditedBy
-										? ` · by ${page.lastEditedBy === "ai" ? "the record" : "you"}`
-										: ""}
-								</span>
-							{/if}
-							{#if page.updatedAt && page.dataQuality}
-								<span class="byline-sep">·</span>
-							{/if}
-							{#if page.dataQuality}
-								<span title={page.dataQuality.note}>
-									Coverage {page.dataQuality.overall}/5
-								</span>
-							{/if}
+							<span>
+								Updated {new Date(page.updatedAt).toLocaleDateString("en-US", {
+									month: "short",
+									day: "numeric",
+									year: "numeric",
+								})}
+							</span>
 						</p>
 					{/if}
 					<div class="day-title-rule" aria-hidden="true"></div>
 				</header>
 
-				<!-- Narrative first: the day told in words (unfolds from the epigraph) -->
+				<!-- Narrative first: the day told in words -->
 				{#if showAutobiography}
 					<section class="section lead-section" id="summary">
 						<h2 class="section-title">
 							The Day
-							<!-- One pen at a time: the day article is kept by the
-							     nightly narration until you edit it, at which point
-							     it becomes yours and the record files notes instead. -->
+							<!-- The nightly narration keeps this page. Editing it does
+							     not take that away: your sentences stay yours and the
+							     record edits around them. -->
 							<button
 								type="button"
 								class="day-edit"
@@ -613,7 +593,7 @@
 				<!-- Dayline chart: visual bridge between narrative and timeline -->
 				<section class="section" id="dayline">
 					<h2 class="section-title">The Dayline</h2>
-					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.startTimezone} pageDate={page.date} readinessScore={page.readinessScore} sleepCycles={page.sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
+					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.startTimezone} pageDate={page.date} sleepCycles={page.sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
 				</section>
 
 				{#if hasAnyContent}
@@ -756,18 +736,8 @@
 							<dd>{page.newEntityCount}</dd>
 							<dt>New topics</dt>
 							<dd>{page.newTopicCount}</dd>
-							{#if page.readinessScore != null}
-								<dt>Readiness</dt>
-								<dd>{page.readinessScore}%</dd>
-							{/if}
 							<dt>Page ID</dt>
 							<dd class="metadata-mono">{page.id}</dd>
-							{#if page.dataQuality}
-								<dt>Coverage</dt>
-								<dd>
-									<DataQualityCoverage dataQuality={page.dataQuality} />
-								</dd>
-							{/if}
 						</dl>
 					</section>
 				{:else}
@@ -861,11 +831,6 @@
 		font-family: var(--font-sans, system-ui, sans-serif);
 		font-size: 0.6875rem;
 		color: var(--color-foreground-subtle);
-	}
-
-	.byline-sep {
-		margin: 0 0.375rem;
-		opacity: 0.5;
 	}
 
 	.day-title {

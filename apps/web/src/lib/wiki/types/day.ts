@@ -222,9 +222,6 @@ export interface DayPage extends WikiPageBase {
 	// Data Quality (W6H journalist assessment, nightly)
 	// ─────────────────────────────────────────────────────────────
 
-	/** W6H data quality assessment — 1-5 per dimension, overall score, and note */
-	dataQuality?: DataQuality;
-
 	/** Count of entities first referenced on this day */
 	newEntityCount: number;
 	/** Count of topics first seen on this day */
@@ -233,11 +230,6 @@ export interface DayPage extends WikiPageBase {
 	// ─────────────────────────────────────────────────────────────
 	// Readiness (morning autonomic state, 0-100)
 	// ─────────────────────────────────────────────────────────────
-
-	/** Morning readiness score (0-100) from overnight HRV, RHR, sleep */
-	readinessScore: number | null;
-	/** Component breakdown */
-	readinessDetails: ReadinessDetails | null;
 
 	// ─────────────────────────────────────────────────────────────
 	// Sleep cycles (computed at query time from ontology data)
