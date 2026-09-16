@@ -54,7 +54,7 @@ pub async fn run() -> Result<(), crate::Error> {
     // The local record. Unconditional, and before the beacon: a box always
     // knows it crashed, whether or not it is allowed to tell anyone.
     // `kind` is the observability vocabulary's event name (see
-    // agents/plan/observability-plan.md); the tail is deliberately NOT a
+    // agents/record/observability.md); the tail is deliberately NOT a
     // field on it — it is already in this journal, a few lines up.
     tracing::error!(
         kind = "box.crashed",

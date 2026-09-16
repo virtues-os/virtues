@@ -28,7 +28,7 @@
 //! Not analytics, and not a second telemetry channel: nothing here leaves the
 //! box. Not a log store either — these become journal lines, which journald
 //! already rotates and bounds. Deliberately no table: see the deferred section
-//! of `agents/plan/observability-plan.md` for what would justify one.
+//! of `agents/record/observability.md` for what would justify one.
 //!
 //! # Trust
 //!
