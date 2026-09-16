@@ -154,8 +154,14 @@ fn tail_journal(lines: usize) -> String {
 ///    stderr — so the single most valuable line in a crash is exactly the one
 ///    a "JSON with level ERROR" rule would throw away. Backtraces, loader
 ///    failures and OOM messages arrive the same way.
-/// 2. **Our own records at ERROR.** These are the ones we wrote to describe
-///    something going wrong.
+/// 2. **Our own records at ERROR**, except those re-emitted from an applet
+///    subprocess (`source` starting `applet:`). An applet's error is a real
+///    error and belongs in the journal — but it runs in a different process,
+///    it is rarely why the daemon died, and it is the likeliest line in the
+///    system to quote a filename or a fragment of the user's own content.
+///    Applet lines began arriving at their true level once the runner started
+///    unwrapping them, so without this they would have quietly re-entered the
+///    beacon that had just been narrowed to keep them out.
 ///
 /// Everything else — our INFO, WARN and DEBUG records — is dropped. That is
 /// the bulk of the volume and the part that narrates the user's actual life:
@@ -172,9 +178,14 @@ fn keep_line(line: &str) -> bool {
         return false;
     }
     match serde_json::from_str::<serde_json::Value>(trimmed) {
-        // One of ours: keep only what we called an error.
+        // One of ours: keep only what we called an error, and only when it
+        // came from the daemon itself.
         Ok(v) if v.get("level").is_some() => {
-            matches!(v.get("level").and_then(|l| l.as_str()), Some("ERROR"))
+            let from_applet = v
+                .get("source")
+                .and_then(|s| s.as_str())
+                .is_some_and(|s| s.starts_with("applet:"));
+            !from_applet && matches!(v.get("level").and_then(|l| l.as_str()), Some("ERROR"))
         }
         // JSON, but not one of our records (an applet echoing a payload, say).
         // Not ours to interpret, and not evidence of our crash.
@@ -231,5 +242,27 @@ mod tests {
         // Valid JSON that is not one of our records — an applet echoing a
         // payload, say. Not evidence of our crash, and not ours to interpret.
         assert!(!keep_line(r#"{"records":[{"name":"someone"}]}"#));
+    }
+}
+
+#[cfg(test)]
+mod applet_source_tests {
+    use super::*;
+
+    #[test]
+    fn an_applet_error_stays_on_the_box() {
+        // Applet lines now arrive at their true level, so ERROR ones would
+        // have slipped back into the beacon that was just narrowed.
+        let line = r#"{"level":"ERROR","message":"failed to read /var/lib/virtues/lake/notes/private.md","kind":"applet.log","source":"applet:applet_document_extraction"}"#;
+        assert!(!keep_line(line));
+    }
+
+    #[test]
+    fn the_daemons_own_error_still_goes() {
+        let line = r#"{"level":"ERROR","message":"pool timed out","kind":"db.pool"}"#;
+        assert!(keep_line(line));
+        // And one that names a source which is not an applet.
+        let boxed = r#"{"level":"ERROR","message":"boom","source":"device:dev_1"}"#;
+        assert!(keep_line(boxed));
     }
 }
