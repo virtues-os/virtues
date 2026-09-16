@@ -12,6 +12,7 @@ a page, indexed from this table, so a record missing a row does not publish.
 | Doc | Status | What it's for |
 |---|---|---|
 | [applets-surface-audit.md](applets-surface-audit.md) | — | _Needs a line._ |
+| [article-resolution.md](article-resolution.md) | Built, unreleased | Every subject has an article and one editor writes them all — one constitution plus a brief per kind. A first draft is one-shot; a revision is agentic, in the applet runner's never-used agent phase. **Ownership never flips**: the server refuses a machine edit that loses a sentence the person wrote. Overrules wiki-plan §10. |
 | [auth-model.md](auth-model.md) | Current | Pair-only auth: no passwords, no email, no magic links. Devices are the auth surface; `virtues sudo` gates the dangerous verbs. |
 | [data-durability.md](data-durability.md) | Partly built | Three-pass audit of the iOS → box ingestion path against the stated "zero silent data loss" promise, split into a data-integrity track and a background-reliability track. |
 | [device-version-update-audit.md](device-version-update-audit.md) | — | _Needs a line._ |

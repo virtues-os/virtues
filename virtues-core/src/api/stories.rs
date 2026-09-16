@@ -9,7 +9,7 @@
 //! nothing beneath it — no day list, no ref set, no partition — so there is
 //! nothing to fold. The only way to write "Piano & Composition" is to go and
 //! search the record for it, which is the whole argument of
-//! `agents/plan/article-resolution-plan.md` §2.1.
+//! `agents/record/article-resolution.md`, "Draft is one-shot; revision is agentic".
 //!
 //! **Created by the person, never by the machine.** The constitution forbids
 //! the editor from starting a subject; the most it may do is leave a note

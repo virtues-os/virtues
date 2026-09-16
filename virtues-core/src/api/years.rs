@@ -1,7 +1,7 @@
 //! The year as a subject.
 //!
 //! A year is a narrative article, in the sense a wikipedia gives "2026" — not
-//! a folder of days. See `agents/plan/article-resolution-plan.md` §4.
+//! a folder of days. See `agents/record/article-resolution.md`.
 //!
 //! **Materialized lazily.** Every year of a life has a page from the reader's
 //! side, but the rows are not written ahead of time. A forty-five-year-old

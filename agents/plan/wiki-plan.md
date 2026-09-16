@@ -867,7 +867,7 @@ trigger is two-sourced — **novelty** from day notes, **accumulation** from
 > **THE ONE-PEN RULE IS OVERRULED, 2026-09-14.** Ownership never flips. The
 > paragraph below is kept because it is the reasoning that has to be answered,
 > not because it still holds — see
-> [article-resolution-plan.md](./article-resolution-plan.md) §5. In short:
+> [agents/record/article-resolution.md](../record/article-resolution.md), "Ownership never flips". In short:
 > almost nobody wants to maintain their own record; they want to leave
 > marginalia and touch a sentence without taking the pen. So both keep editing
 > one article, and what protects the person's words is that the editor is shown

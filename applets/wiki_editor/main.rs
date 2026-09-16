@@ -1,7 +1,7 @@
 //! wiki_editor: the record's contributor.
 //!
 //! Article resolution's scheduler half. See
-//! `agents/plan/article-resolution-plan.md`.
+//! `agents/record/article-resolution.md`.
 //!
 //! This subprocess does not write prose. It answers one question — which
 //! article, if any, should be revised on this run — and hands that to the

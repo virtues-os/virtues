@@ -1,7 +1,7 @@
 # The wiki editor — constitution and briefs
 
 **How the wiki's prose is instructed.** The design is
-[article-resolution-plan.md](../plan/article-resolution-plan.md); this says
+[agents/record/article-resolution.md](../record/article-resolution.md); this says
 what must be true when you touch the prompts.
 
 ## The text is not in this file
