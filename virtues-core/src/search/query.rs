@@ -128,7 +128,7 @@ pub struct SearchFilters {
 }
 
 /// A search request as callers state it, before scope resolution. What
-/// `search`/`search_multi` take instead of nine positional arguments; the
+/// `search_multi` takes instead of nine positional arguments; the
 /// resolved, bind-ready form is [`SearchFilters`] (built by `prepare_filters`).
 /// `Default` = search everything, top 10.
 #[derive(Debug, Clone, Default)]
@@ -371,8 +371,7 @@ impl SemanticSearchEngine {
     /// Resolve a request's scope into ready-to-bind `SearchFilters`, or `None`
     /// for the honest-zero case: a grounded (Exclusive) chat over an empty or
     /// fully unindexed notebook scope returns no results — never silently
-    /// falls open to the whole graph. One implementation shared by `search`
-    /// and `search_multi`, which previously each carried their own copy.
+    /// falls open to the whole graph.
     async fn prepare_filters(&self, opts: &SearchOptions) -> Result<Option<SearchFilters>> {
         // Notebook scoping: resolve the active notebook's members into a set of
         // record_ids (page/day/source/chat + document chunks for /drive/file_
@@ -478,8 +477,8 @@ impl SemanticSearchEngine {
     /// pure-vector query, which degenerates cleanly to dense-only: the lexical
     /// arm matches nothing and `bz` normalizes to 0). Scope resolution is the
     /// caller's job (see `SearchFilters`); this method does no notebook I/O and
-    /// does not enforce Exclusive honest-zero — `search()` does that before
-    /// calling in.
+    /// does not enforce Exclusive honest-zero — `prepare_filters` does that
+    /// before calling in.
     pub(crate) async fn recall_and_fuse(
         &self,
         query_vector: &Vector,
