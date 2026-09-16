@@ -1086,6 +1086,9 @@ export interface TemporalEventApi {
 	hr_z: number | null;
 	// Entity/topic novelty
 	entities: string[] | null;
+	/** `{entity_id: name}` — resolved server-side, because nothing on this
+	 *  side can turn `person_a1b2c3d4` into a person. */
+	entity_names: Record<string, string> | null;
 	topic_novelty: Record<string, number> | null;
 	entity_novelty: Record<string, number> | null;
 	entity_timestamps: Record<string, string> | null;

@@ -48,6 +48,14 @@ pub struct TemporalEvent {
     pub entities: Option<serde_json::Value>,
     pub topic_novelty: Option<serde_json::Value>,
     pub entity_novelty: Option<serde_json::Value>,
+    /// `{entity_id: name}` for every subject this event references.
+    ///
+    /// The ids alone travelled to the client for the life of the project and
+    /// nothing could draw them, because nothing on that side can turn
+    /// `person_a1b2c3d4` into a person. The chart tried, by stripping
+    /// `person_demo_` off the front with a regex — which reads correctly on
+    /// the seeded demo box and renders a hash fragment on every real one.
+    pub entity_names: Option<serde_json::Value>,
     /// Map of entity_id → ISO8601 timestamp of earliest ref within event window.
     /// Sourced from wiki_refs. Used to position entity dots at their actual
     /// moment (not event center).
@@ -158,6 +166,39 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
         }
     }
 
+    // Every subject id the day's events point at, from both places one can
+    // appear: the event's own `entities` list and the keys of its novelty map.
+    // One query for the day rather than one per event — a busy day has fifteen
+    // events and perhaps a dozen distinct subjects between them.
+    let mut wanted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for row in &rows {
+        if let Ok(Some(serde_json::Value::Array(ids))) =
+            row.try_get::<Option<serde_json::Value>, _>("entities")
+        {
+            wanted.extend(ids.iter().filter_map(|v| v.as_str().map(str::to_string)));
+        }
+        if let Ok(Some(serde_json::Value::Object(map))) =
+            row.try_get::<Option<serde_json::Value>, _>("entity_novelty")
+        {
+            wanted.extend(map.keys().cloned());
+        }
+    }
+
+    let mut names: HashMap<String, String> = HashMap::new();
+    if !wanted.is_empty() {
+        let ids: Vec<String> = wanted.into_iter().collect();
+        let found: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, name FROM wiki_people WHERE id = ANY($1) \
+             UNION ALL SELECT id, name FROM wiki_places WHERE id = ANY($1) \
+             UNION ALL SELECT id, name FROM wiki_orgs   WHERE id = ANY($1)",
+        )
+        .bind(&ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to name the day's subjects: {e}")))?;
+        names.extend(found);
+    }
+
     Ok(rows
         .iter()
         .filter_map(|row| {
@@ -173,6 +214,34 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             let created_at: DateTime<Utc> = row.try_get("created_at").ok()?;
             let updated_at: DateTime<Utc> = row.try_get("updated_at").ok()?;
             let entity_timestamps = entity_ts_by_event.get(&id).cloned();
+
+            // Only the names this event refers to. A resolved id is one an
+            // entity table still holds; an unresolved one is omitted rather
+            // than guessed at, so a deleted subject reads as absent instead of
+            // as its own id.
+            let entity_names = {
+                let mut m = serde_json::Map::new();
+                let mut take = |k: &str| {
+                    if let Some(n) = names.get(k) {
+                        m.insert(k.to_string(), serde_json::Value::String(n.clone()));
+                    }
+                };
+                if let Ok(Some(serde_json::Value::Array(ids))) =
+                    row.try_get::<Option<serde_json::Value>, _>("entities")
+                {
+                    for v in ids.iter().filter_map(|v| v.as_str()) {
+                        take(v);
+                    }
+                }
+                if let Ok(Some(serde_json::Value::Object(nov))) =
+                    row.try_get::<Option<serde_json::Value>, _>("entity_novelty")
+                {
+                    for k in nov.keys() {
+                        take(k);
+                    }
+                }
+                (!m.is_empty()).then(|| serde_json::Value::Object(m))
+            };
 
             Some(TemporalEvent {
                 id,
@@ -201,6 +270,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
                 entities: row.try_get::<Option<serde_json::Value>, _>("entities").ok().flatten(),
                 topic_novelty: row.try_get::<Option<serde_json::Value>, _>("topic_novelty").ok().flatten(),
                 entity_novelty: row.try_get::<Option<serde_json::Value>, _>("entity_novelty").ok().flatten(),
+                entity_names,
                 entity_timestamps,
                 created_at,
                 updated_at,
@@ -338,6 +408,9 @@ pub async fn create_temporal_event<'e>(
         entities: None,
         topic_novelty: None,
         entity_novelty: None,
+        // A write path returns what it just stored; names are a read-time
+        // enrichment and the caller re-reads the day to get them.
+        entity_names: None,
         entity_timestamps: None,
         created_at,
         updated_at,
@@ -405,6 +478,9 @@ pub async fn update_temporal_event(
         entities: None,
         topic_novelty: None,
         entity_novelty: None,
+        // A write path returns what it just stored; names are a read-time
+        // enrichment and the caller re-reads the day to get them.
+        entity_names: None,
         entity_timestamps: None,
         created_at: row.created_at,
         updated_at: row.updated_at,

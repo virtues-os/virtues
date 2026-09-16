@@ -185,11 +185,15 @@
 			}
 			if (e.entityNovelty) {
 				for (const [entityId, z] of Object.entries(e.entityNovelty)) {
-					// Clean up entity ID for display: "person_demo_maya" → "Maya"
-					const displayName = entityId
-						.replace(/^(person|place|org)_demo_/, "")
-						.replace(/_/g, " ")
-						.replace(/\b\w/g, (c) => c.toUpperCase());
+					// The name comes from the server, which is the only place that
+					// can supply one. This used to strip `person_demo_` off the id
+					// with a regex and title-case the rest — which is right on the
+					// seeded demo box and, on a real one, labels the dot
+					// "Person A1b2c3d4e5f6g7h8", because a generated id is a hash.
+					// A dot whose subject no longer exists is not drawn at all,
+					// rather than drawn as its own id.
+					const displayName = e.entityNames[entityId];
+					if (!displayName) continue;
 					// Use entity-specific timestamp if available
 					const tsIso = e.entityTimestamps?.[entityId];
 					const xHourOverride = tsIso
