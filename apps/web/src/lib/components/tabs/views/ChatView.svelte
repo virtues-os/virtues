@@ -50,7 +50,7 @@
 		applyInterviewOpening,
 		findWriteItUpOutput,
 	} from "$lib/components/chat/interview/interview";
-	import InterviewCompanion from "$lib/components/chat/interview/InterviewCompanion.svelte";
+	import Composing from "$lib/components/chat/Composing.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
@@ -1775,9 +1775,13 @@
 									     the chapters the person just named. -->
 									<ChapterLifelineLive />
 								{/if}
-								<InterviewCompanion status={chat.status} />
+								{#if chat.status === "submitted" || chat.status === "streaming"}
+									<Composing label="Composing a reply" />
+								{/if}
 							{:else if inInterview}
-								<InterviewCompanion status={reveal.chars ? "streaming" : chat.status} />
+								{#if reveal.chars || chat.status === "submitted" || chat.status === "streaming"}
+									<Composing label="Composing a reply" />
+								{/if}
 							{:else if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">
 									<div class="message-wrapper" data-role="assistant">
