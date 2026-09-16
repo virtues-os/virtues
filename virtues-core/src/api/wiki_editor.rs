@@ -23,27 +23,14 @@ pub const ENTITY_BRIEF: &str = include_str!("../../prompts/wiki/entity.md");
 pub const STORY_BRIEF: &str = include_str!("../../prompts/wiki/story.md");
 pub const CHAPTER_BRIEF: &str = include_str!("../../prompts/wiki/chapter.md");
 
-/// Which brief a subject type gets.
+/// Which brief a subject type gets, from the registry.
 ///
-/// Two absences here are refusals rather than gaps, and both are structural on
+/// Two absences are refusals rather than gaps, and both are structural on
 /// purpose — a prompt rule is something a model weighs against its other
-/// rules, and a missing brief is not.
-///
-/// `narrative_identity` — the life page — is the one place in this wiki where
-/// the record is not the author. It is written by the person, in the first
-/// person, and the editor may not touch it; its only channel is a note.
-///
-/// `day` is released and tuned and writes its first draft from its own prompt.
-/// It joins this door when its REVISION does, which is the attention plan's
-/// work, not this one.
+/// rules, and a missing brief is not. Which two, and why, is recorded on the
+/// rows themselves in [`crate::api::subjects::SUBJECTS`].
 pub fn brief_for(subject_type: &str) -> Option<&'static str> {
-    match subject_type {
-        "year" => Some(YEAR_BRIEF),
-        "story" => Some(STORY_BRIEF),
-        "chapter" => Some(CHAPTER_BRIEF),
-        "person" | "place" | "organization" => Some(ENTITY_BRIEF),
-        _ => None,
-    }
+    crate::api::subjects::by_kind(subject_type)?.brief
 }
 
 /// The editor's system prompt: constitution, then brief, then the person's
@@ -327,17 +314,38 @@ pub fn linked_subjects(text: &str) -> Vec<(String, String)> {
 /// A dead link in a wiki is worse than no link: it looks like a page that
 /// exists and is one click from proving the record wrong about itself.
 pub async fn check_links(pool: &sqlx::PgPool, text: &str) -> Result<()> {
-    for (kind, id) in linked_subjects(text) {
-        let table = match kind.as_str() {
-            "person" => "wiki_people",
-            "place" => "wiki_places",
-            "org" | "organization" => "wiki_orgs",
-            "day" => "wiki_days",
-            "year" => "wiki_years",
-            // A link to something that is not a subject (an external URL, a
-            // route with no table) is not this check's business.
-            _ => continue,
+    for (route, id) in linked_subjects(text) {
+        // Resolve through the ID, not the route segment. A route is not a
+        // subject_type (`/org/…` is an organization), and keying on the
+        // segment meant a hand-written match that named five kinds and let
+        // every other link fall through unchecked — including chapters and
+        // stories, which a chapter article is the likeliest thing to write.
+        let Some(subject) = crate::api::subjects::by_id(&id) else {
+            // Not a subject at all: an external URL, a page, a chat. Those are
+            // not this check's business.
+            continue;
         };
+
+        // A subject with no route of its own cannot be linked, however real it
+        // is. The client has no page to open, so the link renders as an anchor
+        // that goes nowhere — which is the failure this function exists to
+        // prevent, arrived at from the other direction.
+        let Some(expected) = subject.route else {
+            return Err(Error::InvalidInput(format!(
+                "the article links to /{route}/{id}, and a {} has no page to open — \
+                 name it in the prose instead of linking it",
+                subject.kind
+            )));
+        };
+        if route != expected {
+            return Err(Error::InvalidInput(format!(
+                "the article links to /{route}/{id}, but {id} is a {} and lives at \
+                 /{expected}/{id}",
+                subject.kind
+            )));
+        }
+
+        let Some(table) = subject.table else { continue };
         let exists: bool = sqlx::query_scalar(&format!(
             "SELECT EXISTS (SELECT 1 FROM {table} WHERE id = $1)"
         ))
@@ -347,7 +355,7 @@ pub async fn check_links(pool: &sqlx::PgPool, text: &str) -> Result<()> {
         .map_err(|e| Error::Database(format!("Failed to check a link: {e}")))?;
         if !exists {
             return Err(Error::InvalidInput(format!(
-                "the article links to /{kind}/{id}, which does not exist — link only \
+                "the article links to /{route}/{id}, which does not exist — link only \
                  the exact ids you were given, and never an id from an example"
             )));
         }
@@ -529,25 +537,26 @@ pub async fn evidence_fingerprint(
     // What the person wrote about the subject moves the hash as well. A title
     // or summary they added is new evidence in the only sense that matters: the
     // article should be revisited because of it.
-    let authored: Option<chrono::DateTime<chrono::Utc>> = match article.subject_type.as_str() {
-        "year" => sqlx::query_scalar("SELECT updated_at FROM wiki_years WHERE id = $1")
+// Which kinds carry fields the person writes, and which table holds them, is
+    // the registry's answer — this used to be a second subject-to-table map
+    // forty lines below `check_links`'s, in the same file.
+    //
+    // A chapter's title, summary and changepoint are the spine of its article,
+    // so moving one is the strongest reason there is to rewrite it. The same
+    // goes for a year's name and a story's sentence.
+    let subject = crate::api::subjects::by_kind(&article.subject_type);
+    let authored: Option<chrono::DateTime<chrono::Utc>> = match subject {
+        Some(s) if s.authored_fields => {
+            let table = s.table.expect("a subject with authored fields has a table");
+            sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(&format!(
+                "SELECT updated_at FROM {table} WHERE id = $1"
+            ))
             .bind(&article.subject_id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to read the year: {e}")))?
-            .flatten(),
-        // A chapter's title, summary and changepoint are the spine of its
-        // article, so moving one is the strongest reason there is to rewrite.
-        "chapter" => sqlx::query_scalar("SELECT updated_at FROM wiki_chapters WHERE id = $1")
-            .bind(&article.subject_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| Error::Database(format!("Failed to read the chapter: {e}")))?,
-        "story" => sqlx::query_scalar("SELECT updated_at FROM wiki_stories WHERE id = $1")
-            .bind(&article.subject_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| Error::Database(format!("Failed to read the story: {e}")))?,
+            .map_err(|e| Error::Database(format!("Failed to read the {}: {e}", s.kind)))?
+            .flatten()
+        }
         _ => None,
     };
 

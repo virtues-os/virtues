@@ -77,6 +77,7 @@ pub mod stories;
 pub mod years;
 pub mod lifeline;
 pub mod link_session;
+pub mod subjects;
 pub mod wiki_articles;
 pub mod wiki_days;
 pub mod wiki_events;
