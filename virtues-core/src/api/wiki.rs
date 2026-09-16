@@ -28,7 +28,7 @@ pub struct WikiPerson {
     pub article_updated_at: Option<DateTime<Utc>>,
     /// Is this article being kept up to date? Off unless the user asked.
     #[serde(default)]
-    pub article_auto_update: bool,
+    pub article_maintained: bool,
     pub picture: Option<String>,
     pub cover_image: Option<String>,
     // vCard fields
@@ -70,7 +70,7 @@ pub struct WikiPlace {
     pub article_updated_at: Option<DateTime<Utc>>,
     /// Is this article being kept up to date? Off unless the user asked.
     #[serde(default)]
-    pub article_auto_update: bool,
+    pub article_maintained: bool,
     pub cover_image: Option<String>,
     pub category: Option<String>,
     pub address: Option<String>,
@@ -100,7 +100,7 @@ pub struct WikiOrganization {
     pub article_updated_at: Option<DateTime<Utc>>,
     /// Is this article being kept up to date? Off unless the user asked.
     #[serde(default)]
-    pub article_auto_update: bool,
+    pub article_maintained: bool,
     pub cover_image: Option<String>,
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
@@ -289,7 +289,7 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
     .map_err(|e| Error::Database(format!("Failed to get person: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Person not found: {}", id)))?;
 
-    let (article, article_updated_at, auto_update) =
+    let (article, article_updated_at, maintained) =
         overlay_article(pool, "person", &row.id).await;
 
     Ok(WikiPerson {
@@ -298,7 +298,7 @@ pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
         content: row.content,
         article,
         article_updated_at,
-        article_auto_update: auto_update,
+        article_maintained: maintained,
         picture: row.picture,
         cover_image: row.cover_image,
         emails: serde_json::from_value(row.emails).unwrap_or_default(),
@@ -504,7 +504,7 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
     .map_err(|e| Error::Database(format!("Failed to get place: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Place not found: {}", id)))?;
 
-    let (article, article_updated_at, auto_update) =
+    let (article, article_updated_at, maintained) =
         overlay_article(pool, "place", &row.id).await;
 
     let visits: (i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>) = sqlx::query_as(
@@ -522,7 +522,7 @@ pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
         content: row.content.clone(),
         article,
         article_updated_at,
-        article_auto_update: auto_update,
+        article_maintained: maintained,
         cover_image: row.cover_image.clone(),
         category: row.category.clone(),
         address: row.address.clone(),
@@ -630,7 +630,7 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
     .map_err(|e| Error::Database(format!("Failed to get organization: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Organization not found: {}", id)))?;
 
-    let (article, article_updated_at, auto_update) =
+    let (article, article_updated_at, maintained) =
         overlay_article(pool, "organization", &row.id).await;
 
     Ok(WikiOrganization {
@@ -639,7 +639,7 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
         content: row.content,
         article,
         article_updated_at,
-        article_auto_update: auto_update,
+        article_maintained: maintained,
         cover_image: row.cover_image,
         organization_type: row.organization_type,
         relationship_type: row.relationship_type,

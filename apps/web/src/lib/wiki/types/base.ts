@@ -153,7 +153,7 @@ export interface WikiPageBase {
 	article?: string;
 	articleUpdatedAt?: Date;
 	/** Is the record keeping this article up to date? Off unless asked. */
-	articleAutoUpdate?: boolean;
+	articleMaintained?: boolean;
 
 	// Timestamps
 	createdAt: Date;

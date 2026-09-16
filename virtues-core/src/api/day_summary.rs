@@ -735,10 +735,26 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
 /// `yjs_state = NULL` together, and the next reader gets a doc seeded from
 /// the new prose.
 ///
-/// Nothing of the person's is lost, because this branch is only reached while
-/// the article is still KEPT — `claim_article_on_user_edit` flips
-/// `auto_update` off on the first doc update that actually changes the text,
-/// so a kept article has never been edited by anyone.
+/// **Narration is a FIRST DRAFT, and a draft is only safe on a page nobody has
+/// written on.** This overwrites the whole document — content replaced,
+/// `yjs_state` nulled — so anything the person typed into a day article would
+/// go with it.
+///
+/// That used to be impossible rather than guarded: `claim_article_on_user_edit`
+/// flipped `auto_update` off on the first doc update that changed the text, so
+/// a still-maintained article had by definition never been touched. Removing
+/// the claim flip removed that guarantee, and the day did not get the
+/// replacement the other rungs got — the editor diffs its output against the
+/// live text and the server refuses any edit that loses a sentence the person
+/// wrote, but the day is excluded from that door while its narrator stays
+/// one-shot. So the guarantee is restored here, from evidence rather than a
+/// flag: `last_human_edit_at` is stamped by `note_human_edit` on every doc
+/// update that changes the text, and a day carrying one is never re-drafted.
+///
+/// A day they have written on needs REVISION, not a new draft, and revision is
+/// what the day rung still owes — see `agents/record/article-resolution.md`.
+/// Until then this stops, which loses them later evidence; the alternative
+/// loses them their own words, and only one of those is recoverable.
 ///
 /// The one remaining race is a page open *right now* whose in-memory doc
 /// would save over us before any reader re-seeds it. `updated_at` is the
@@ -768,8 +784,8 @@ async fn save_day_article(
         return Ok(());
     };
 
-    let maintenance: String =
-        sqlx::query_scalar("SELECT maintenance FROM wiki_articles WHERE id = $1")
+    let (maintenance, last_human_edit_at): (String, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as("SELECT maintenance, last_human_edit_at FROM wiki_articles WHERE id = $1")
             .bind(&article.id)
             .fetch_one(pool)
             .await?;
@@ -778,6 +794,15 @@ async fn save_day_article(
             date = %date,
             page_id = %article.page_id,
             "the owner has turned maintenance off for this day — narration files nothing"
+        );
+        return Ok(());
+    }
+    if last_human_edit_at.is_some() {
+        tracing::info!(
+            date = %date,
+            page_id = %article.page_id,
+            "this day has been edited by hand — a first draft would overwrite it, and \
+             narration has no way to edit around their sentences yet"
         );
         return Ok(());
     }
@@ -3025,6 +3050,62 @@ mod dossier_tests {
         assert_eq!(
             content, "First draft.",
             "a page touched seconds ago is left for a later run"
+        );
+    }
+
+    /// The day article someone has written in is never re-drafted over.
+    ///
+    /// This is the guarantee the one-pen rule used to provide structurally: a
+    /// still-maintained article had by definition never been edited, so
+    /// overwriting it wholesale was safe. Ownership no longer flips, and the
+    /// day is excluded from the editor that diffs its output against the live
+    /// text — so without this gate a person who fixed one sentence in a day
+    /// article lost it on the next nightly pass, with nothing in the UI to say
+    /// a thing had happened.
+    #[sqlx::test]
+    async fn a_day_someone_has_written_in_is_not_redrafted_over(pool: PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 28).unwrap();
+        let day = get_or_create_day(&pool, date).await.unwrap();
+        save_day_article(&pool, &day.id, date, "First draft.")
+            .await
+            .unwrap();
+        let article = crate::api::wiki_articles::get_article(&pool, "day", &day.id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // They open it and change a sentence. `note_human_edit` stamps the
+        // article; the page keeps their text. Backdated past the 15-minute
+        // "someone may have it open" window so THAT guard is not what is being
+        // tested here — see `narration_waits_for_a_page_touched_a_moment_ago`.
+        sqlx::query("UPDATE wiki_articles SET last_human_edit_at = now() WHERE id = $1")
+            .bind(&article.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for stmt in [
+            "ALTER TABLE app_pages DISABLE TRIGGER set_updated_at",
+            "UPDATE app_pages SET content = 'First draft. I was actually at the coast.', \
+             updated_at = now() - interval '1 hour' WHERE id = $1",
+            "ALTER TABLE app_pages ENABLE TRIGGER set_updated_at",
+        ] {
+            let q = sqlx::query(stmt);
+            let q = if stmt.contains("$1") { q.bind(&article.page_id) } else { q };
+            q.execute(&pool).await.unwrap();
+        }
+
+        save_day_article(&pool, &day.id, date, "A completely different second draft.")
+            .await
+            .unwrap();
+
+        let content: String = sqlx::query_scalar("SELECT content FROM app_pages WHERE id = $1")
+            .bind(&article.page_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            content, "First draft. I was actually at the coast.",
+            "their correction must survive the next night's narration"
         );
     }
 }

@@ -178,7 +178,7 @@
 					name={page.title}
 					subjectType="person"
 					subjectId={page.id}
-					autoUpdate={page.articleAutoUpdate}
+					maintained={page.articleMaintained}
 					onChanged={() => location.reload()}
 				/>
 			</section>

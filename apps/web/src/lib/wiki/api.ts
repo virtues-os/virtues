@@ -35,7 +35,7 @@ export interface WikiPersonApi {
 	/** Surfaces this entity also answers to (migration 0037). */
 	aliases: string[];
 	/** Is the record keeping this article up to date? Off unless asked. */
-	article_auto_update?: boolean;
+	article_maintained?: boolean;
 	created_at: string;
 	updated_at: string;
 }
@@ -62,7 +62,7 @@ export interface WikiPlaceApi {
 	created_at: string;
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */
-	article_auto_update?: boolean;
+	article_maintained?: boolean;
 }
 
 export interface WikiOrganizationApi {
@@ -80,7 +80,7 @@ export interface WikiOrganizationApi {
 	created_at: string;
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */
-	article_auto_update?: boolean;
+	article_maintained?: boolean;
 	aliases?: string[];
 }
 
@@ -508,8 +508,8 @@ export interface WikiArticleApi {
 	subject_type: string;
 	subject_id: string;
 	page_id: string;
-	auto_update: boolean;
-	source_ref_count: number;
+	/** always | auto | never — see `Maintenance`. */
+	maintenance: Maintenance;
 }
 
 /** A subject's article row, or null when no article exists yet. */

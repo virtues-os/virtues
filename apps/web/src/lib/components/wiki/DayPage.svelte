@@ -465,9 +465,10 @@
 		summaryText = page.autobiography || "";
 	});
 
-	// The day article IS a page — Edit opens the page editor. The first real
-	// edit claims it (the server flips auto_update off) and the nightly
-	// narration stops rewriting that day.
+	// The day article IS a page — Edit opens the page editor. Editing it does
+	// stop the nightly narration for that day, which is the one rung where that
+	// is still true: narration writes a whole first draft and has no way to
+	// edit around your sentences, so it stands down once there are any.
 	async function openDayArticle() {
 		const a = await getArticle("day", page.id);
 		if (a?.page_id) windowShellStore.openTabFromRoute(`/page/${a.page_id}`);

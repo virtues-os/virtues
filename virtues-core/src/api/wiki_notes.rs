@@ -17,8 +17,8 @@
 //!
 //! **The writer never touches the graph.** Notes are the machine's only channel
 //! into the record. It may not write `wiki_refs`, not at any confidence,
-//! not flagged. Promotion is a human accepting, or an editor pass gated on
-//! `auto_update`.
+//! not flagged. Promotion is a human accepting, or an editor pass on an
+//! article whose `maintenance` allows one.
 //!
 //! **Notes never age out.** A note whose purpose is "for later" that deletes
 //! itself before later arrives has defeated itself, silently. Three exits, all

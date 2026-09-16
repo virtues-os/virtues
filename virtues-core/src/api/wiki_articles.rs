@@ -30,7 +30,9 @@ use crate::ids::{generate_id, PAGE_PREFIX, WIKI_ARTICLE_PREFIX};
 
 /// The subjects that can carry an article.
 ///
-/// Mirrors the `subject_type` CHECK in migration 0081. `'organization'`, not
+/// Mirrors the `subject_type` CHECK, which migration 0022 aligned across
+/// `wiki_articles`, `wiki_notes` and `wiki_rules` after the four lists had
+/// drifted apart. `'organization'`, not
 /// `'org'`: the entity-ref table and every live query use the long form, and
 /// the sweep joins articles to refs — the short form would make that join
 /// silently return zero organization rows. The frontend route stays `/org`.
@@ -106,9 +108,10 @@ pub struct ArticleProse {
 /// Reads `app_pages.content`, which the Yjs layer materialises on every save,
 /// so this is the same text search indexes and the same text the editor shows.
 ///
-/// Callers should fall back to the legacy per-entity `article` column while it
-/// still exists: drops trail their phase by a release, so for now a box can
-/// hold prose in either place — old articles in the column, new ones here.
+/// The only place article prose lives. The per-entity `article` columns this
+/// used to fall back to were dropped in migration 0025, so a fallback written
+/// against them today would not compile — and one written defensively would be
+/// dead code pretending a second source of truth still exists.
 pub async fn get_article_prose(
     pool: &PgPool,
     subject_type: &str,
@@ -487,9 +490,9 @@ pub struct HistoryEntry {
 
 /// Every recent edit to any article, newest first — the room's front page.
 ///
-/// This is the review surface that makes `auto_update` safe to turn on: the
-/// switch is the consent, and this is where you see what that consent produced.
-/// Without it the machine edits prose in a room nobody visits.
+/// This is the review surface that makes maintenance safe to turn on: the
+/// switch is the consent, and this is where you see what that consent
+/// produced. Without it the machine edits prose in a room nobody visits.
 ///
 /// Authorship carries the same off-by-one as `get_article_history` and is
 /// resolved the same way — `created_by` names the author of the edit this row
