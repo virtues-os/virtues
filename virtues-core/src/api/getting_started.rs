@@ -11,7 +11,7 @@
 //! The model is a guest in this room: it reads the state as a prompt block,
 //! it can open a card or skip a step or play introductions back for
 //! confirmation, and it can never mark a step done. Real rows do that. See
-//! agents/plan/getting-started-plan.md.
+//! agents/record/getting-started.md.
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};

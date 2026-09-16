@@ -42,7 +42,7 @@
 //! data-URI, which is a Vercel quirk that OpenRouter will reject. Per-slot
 //! model ids and a per-route audio encoder fix them —
 //! `agents/plan/byo-ai-plan.md` phases 2 and 3. The Billing UI and
-//! `agents/record/virtues-api.md` are now true as written.
+//! `agents/build/virtues-api.md` are now true as written.
 //!
 //! The key is stored as a `credentials` row with `source_id = "__byo_ai_key__"`,
 //! encrypted at rest via the same `TokenEncryptor` that protects every other

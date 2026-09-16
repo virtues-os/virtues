@@ -70,7 +70,7 @@ pub struct UserProfile {
     pub home_timezone: Option<String>,
     /// Getting-started sections the owner dismissed from Home (section ids).
     /// Dismissed means gone, not collapsed — the features stay reachable where
-    /// they permanently live. See agents/plan/getting-started-plan.md.
+    /// they permanently live. See agents/record/getting-started.md.
     pub getting_started_dismissed: Vec<String>,
     // Audit
     pub created_at: Timestamp,

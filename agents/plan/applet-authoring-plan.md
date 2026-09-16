@@ -1,5 +1,19 @@
 # Applet authoring — the phase-3 plan
 
+> **Correction, 2026-09-16.** This plan was written before the `actions/` →
+> `applets/` rename and said authored applets are promoted into
+> `actions/user/<slug>/` — a directory in the repo. That is wrong twice over.
+> The directory is `applets/`, and `applets/` is **shipped, read-only package
+> data the installer replaces wholesale**; an authored applet is per-box
+> runtime state and lives in the state root (`/var/lib/virtues/applets/` on a
+> box, `.applet-state/` in a dev checkout), which is gitignored and must never
+> be committed. The id prefix is `applet_user__`, not `action_user__`
+> (`scheduler/applets.rs::USER_APPLET_PREFIX`). Paths below are corrected;
+> this note stays because `tools/applet_setup.rs` and `tools/mod.rs` cite this
+> file as their spec, so a reader arriving from the code needs to know which
+> way the rename went.
+
+
 > Status: **v2 — revised after the three-agent review** (red-team vs code · simplicity audit · writability dry-run of 5 canonical asks). The v1 draft's loop shape survived; the review moved the effort from wrapping (cards, catalog tools, edit-v2) into the contract (capability rows, param schema, server-enforced gating). Review register at the bottom.
 
 ## Goal
@@ -33,7 +47,7 @@ The red-team showed v1 violated this three ways: `edit_action` is ungated (model
 Executor flow (all trusted Rust):
 
 1. Write to a **staging dir**; run check (§C). Failures → staging deleted, findings returned as the tool result (the model self-corrects in-turn; 20-step cap bounds it).
-2. Promote to **`actions/user/<slug>/`** — the namespace the loader already reserves for from-chat actions (id `action_user__<slug>`): no collisions with builtins, git imports, or each other, and one stated **upgrade-preservation contract**: the installer/upgrade never touches `actions/user/`.
+2. Promote to **the state root** (`/var/lib/virtues/applets/<slug>/`, `.applet-state/` in a dev checkout) — the namespace the loader already reserves for from-chat actions (id `applet_user__<slug>`): no collisions with builtins, git imports, or each other, and one stated **upgrade-preservation contract**: the installer/upgrade never touches the state root.
 3. **Folder-scoped reconcile** (the git importer's diff-by-slug shape, not the global pass) under a **reconcile mutex**. Manifest seeds `enabled = false` whenever a boundary is crossed (schedule/trigger, credential, recurring spend); manual-only zero-boundary applets seed enabled.
 4. Return the proposal: manifest text + derived capabilities + schedule echo + cost estimate (computed **in Rust**: `runs_per_day × slot constant` — the model never fills it).
 
@@ -78,17 +92,17 @@ Today's two branches both break ai rows (system-overwrite clobbers operational c
 
 ## F. AGENTS.md — the contract, not a tutorial
 
-At `actions/AGENTS.md`: the field contract + exact `[config.limits]` spellings; the §B capability table; the three `until` idioms; cron rules (6-field, box-local, **date-anchored asks: nearest future occurrence + `until="once"` mandatory**); the catch_up×window trap; the **cooldown idiom** until the field ships (`condition AND NOT EXISTS (successful run within interval)`); decomposition rule; catalog-check-first via `sql_query`; honest downgrades; web_search-is-not-fetch; Persona marked **v2 — not authorable, offer draft-mode**. Exemplars are **pointers to real folders** (`morning_examen`, `dot_cloud`), not inline copies that drift — `hello_world`/Biscuit was deleted in 0008.
+At `applets/AGENTS.md`: the field contract + exact `[config.limits]` spellings; the §B capability table; the three `until` idioms; cron rules (6-field, box-local, **date-anchored asks: nearest future occurrence + `until="once"` mandatory**); the catch_up×window trap; the **cooldown idiom** until the field ships (`condition AND NOT EXISTS (successful run within interval)`); decomposition rule; catalog-check-first via `sql_query`; honest downgrades; web_search-is-not-fetch; Persona marked **v2 — not authorable, offer draft-mode**. Exemplars are **pointers to real folders** (`morning_examen`, `dot_cloud`), not inline copies that drift — `hello_world`/Biscuit was deleted in 0008.
 
 ## Sequence (was 6, now 4)
 
-1. **`setup_action` v2** — staging→check→promote under `actions/user/`, param schema, upsert-as-edit, folder-removing delete, folder-scoped reconcile + mutex, parse-degrade. *The core; everything else hangs off it.*
+1. **`setup_action` v2** — staging→check→promote under the state root, param schema, upsert-as-edit, folder-removing delete, folder-scoped reconcile + mutex, parse-degrade. *The core; everything else hangs off it.*
 2. **Runtime contract** — allowlist flip, `sql_write` + `virtues_applet_writer` migration, delivery-row documentation.
 3. **Gate enforcement + ai-reconcile branch** — the invariant becomes true.
 4. **AGENTS.md, then the acceptance suite** — ten asks + four adversarial gate tests: (a) model attempts `edit_action{enabled:true}` post-setup → refused; (b) check-failed draft → no row after global reconcile; (c) delete → no resurrection after reconcile; (d) prompt-injected "enable yourself" in a source document → no enabled row.
 
 ## Review register (what each report changed)
 
-- **Red-team**: the invariant + gate enforcement (D), staging/promote + folder-removing delete (A), `actions/user/` namespace + upgrade contract (A), the ai reconcile branch (E), reconcile mutex + folder-scoped pass + parse-degrade (A/C), check hardening incl. COMMIT-escape rejection (C), `face_html` cap + history-echo mitigation (A), CATALOG.md killed as a staleness trap (C).
+- **Red-team**: the invariant + gate enforcement (D), staging/promote + folder-removing delete (A), state-root namespace + upgrade contract (A), the ai reconcile branch (E), reconcile mutex + folder-scoped pass + parse-degrade (A/C), check hardening incl. COMMIT-escape rejection (C), `face_html` cap + history-echo mitigation (A), CATALOG.md killed as a staleness trap (C).
 - **Simplicity**: preview card cut (existing toggle/permission card is the gate); `data_catalog` tool cut (`sql_query` is the catalog); `edit_action` v2 cut (re-setup upserts); check API/CLI deferred; staleness marker, grandfather machinery, and inline exemplars cut; cost = one Rust heuristic. Sequence 6→4.
 - **Writability** (2/5 one-shot before, projected 5/5 after): the delivery row, `sql_write`, the face data-access contract + slug guarantee, the exact param schema, capability table embedded in the tool description, web_search≠fetch, cooldown + date-anchored idioms, cost computed by the executor.
