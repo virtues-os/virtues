@@ -49,6 +49,7 @@ export function apiToDayEvent(api: TemporalEventApi): DayEvent {
 		isSleep: api.is_sleep ?? false,
 		userHidden: api.user_hidden ?? false,
 		entities: Array.isArray(api.entities) ? api.entities : [],
+		entityNames: api.entity_names ?? {},
 		topicNovelty: api.topic_novelty ?? null,
 		entityNovelty: api.entity_novelty ?? null,
 		entityTimestamps: api.entity_timestamps ?? null,

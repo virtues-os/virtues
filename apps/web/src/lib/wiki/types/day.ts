@@ -52,7 +52,11 @@ export interface DayEvent {
 	userHidden: boolean; // Soft delete
 
 	// Entity/topic novelty
-	entities: string[]; // Wiki entity IDs (person_demo_maya, place_demo_office, etc.)
+	entities: string[]; // Wiki subject ids — person_…, place_…, org_…
+	/** `{id: name}` for the ids above, resolved by the server, because nothing
+	 *  on this side can turn `person_a1b2c3d4` into a person. An id missing
+	 *  from this map no longer exists and is not drawn. */
+	entityNames: Record<string, string>;
 	topicNovelty: Record<string, number> | null; // Per-topic z-scores
 	entityNovelty: Record<string, number> | null; // Per-entity z-scores
 	entityTimestamps: Record<string, string> | null; // entity_id → earliest ISO timestamp within event
