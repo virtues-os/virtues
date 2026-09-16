@@ -333,7 +333,11 @@
 
 		<span class="header-content">
 			{#if isThinking}
-				<span class="thinking-text"
+				<!-- The one place the box says it is working. Its only aria was
+				     `aria-expanded`, so a screen reader was told a button could
+				     be opened and never that anything was happening inside it —
+				     and now that the label is true, it is worth hearing. -->
+				<span class="thinking-text" role="status" aria-live="polite"
 					>{thinkingLabel}</span
 				>
 			{:else if knownDuration > 0}
