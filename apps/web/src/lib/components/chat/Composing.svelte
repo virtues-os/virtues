@@ -3,7 +3,7 @@
 
 	The activity indicator for the two rooms that show no thinking block — the
 	narrative interview and Getting Started, where "the machine's workings are
-	not the subject" (ChatView). Three dots, breathing. Nothing about tools,
+	not the subject" (ChatView). The mark, breathing. Nothing about tools,
 	nothing about models, no word.
 
 	It replaces a vendored character engine (`lib/bloub`, 15 files) whose
@@ -12,13 +12,28 @@
 	all the work; the gerund was a second indicator of the same one bit, and
 	the one it added was which verb came up.
 
-	THE ANNOUNCEMENT IS THE POINT, not the dots. The wrapper it replaced was
+	Removing the character also took the mark out of the margin, and for a
+	while three plain dots stood there instead — the house idiom, but a second
+	three-dot idiom beside the one that is actually ours. `ThinkingMark` at
+	depth 3 is the same three dots breathing, in the shape of the ∴.
+
+	DEPTH 3 IS THE WHOLE POINT, and it is pinned here rather than passed in.
+	The mark reports how far a turn went by growing a fourth and fifth dot;
+	at 3 it never grows one, so it can say "something is happening" without
+	saying anything about what — which is the contract these rooms hold. If a
+	room ever wants to report depth it has the thinking block for that.
+
+	THE ANNOUNCEMENT IS THE POINT, not the mark. The wrapper it replaced was
 	`role="presentation"` over an SVG animation, so that random gerund was the
 	only thing a screen reader could perceive about the box working at all.
-	Here the dots are decoration and a live region carries the fact.
+	Here the mark is decoration (aria-hidden, inside ThinkingMark) and a live
+	region carries the fact. Reduced motion holds the mark still, and nothing
+	is lost, because the live region is what actually reports.
 -->
 
 <script lang="ts">
+	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
+
 	interface Props {
 		/** What a screen reader hears. Steady, not a rotating word. */
 		label?: string;
@@ -27,9 +42,11 @@
 </script>
 
 <div class="composing" role="status" aria-live="polite">
-	<span class="dots" aria-hidden="true">
-		<span></span><span></span><span></span>
-	</span>
+	<!-- 24px puts the dots at 4.8px across — the same weight as the three
+	     plain dots this replaces, so the room's texture does not change. The
+	     chat status line runs the mark smaller, at 16, because there it sits
+	     beside 14px text rather than standing on its own. -->
+	<ThinkingMark depth={3} size={24} />
 	<span class="sr-only">{label}</span>
 </div>
 
@@ -38,51 +55,6 @@
 		display: flex;
 		align-items: center;
 		padding: 0 0 0.5rem;
-	}
-
-	.dots {
-		display: flex;
-		align-items: center;
-		gap: 0.3rem;
-	}
-
-	/* The house idiom for waiting is one breathing dot (getting-started's
-	   `Waiting`); three of them, offset, read as a reply being composed rather
-	   than as a job running elsewhere. */
-	.dots span {
-		width: 0.3rem;
-		height: 0.3rem;
-		border-radius: 999px;
-		background: var(--color-foreground);
-		opacity: 0.25;
-		animation: breathe 1.4s ease-in-out infinite;
-	}
-
-	.dots span:nth-child(2) {
-		animation-delay: 0.18s;
-	}
-
-	.dots span:nth-child(3) {
-		animation-delay: 0.36s;
-	}
-
-	@keyframes breathe {
-		0%,
-		100% {
-			opacity: 0.2;
-		}
-		50% {
-			opacity: 0.7;
-		}
-	}
-
-	/* Reduced motion keeps the dots and drops the pulse — the live region is
-	   what actually reports, so nothing is lost by holding them still. */
-	@media (prefers-reduced-motion: reduce) {
-		.dots span {
-			animation: none;
-			opacity: 0.45;
-		}
 	}
 
 	.sr-only {
