@@ -21,16 +21,26 @@ pub const CONSTITUTION: &str = include_str!("../../prompts/wiki/constitution.md"
 pub const YEAR_BRIEF: &str = include_str!("../../prompts/wiki/year.md");
 pub const ENTITY_BRIEF: &str = include_str!("../../prompts/wiki/entity.md");
 pub const STORY_BRIEF: &str = include_str!("../../prompts/wiki/story.md");
+pub const CHAPTER_BRIEF: &str = include_str!("../../prompts/wiki/chapter.md");
 
 /// Which brief a subject type gets.
 ///
-/// `day` is absent deliberately: the day narrator is released, tuned, and
-/// writes its first draft from its own prompt. It joins this door when its
-/// REVISION does, which is the attention plan's work, not this one.
+/// Two absences here are refusals rather than gaps, and both are structural on
+/// purpose — a prompt rule is something a model weighs against its other
+/// rules, and a missing brief is not.
+///
+/// `narrative_identity` — the life page — is the one place in this wiki where
+/// the record is not the author. It is written by the person, in the first
+/// person, and the editor may not touch it; its only channel is a note.
+///
+/// `day` is released and tuned and writes its first draft from its own prompt.
+/// It joins this door when its REVISION does, which is the attention plan's
+/// work, not this one.
 pub fn brief_for(subject_type: &str) -> Option<&'static str> {
     match subject_type {
         "year" => Some(YEAR_BRIEF),
         "story" => Some(STORY_BRIEF),
+        "chapter" => Some(CHAPTER_BRIEF),
         "person" | "place" | "organization" => Some(ENTITY_BRIEF),
         _ => None,
     }
@@ -76,8 +86,12 @@ pub fn system_prompt(subject_type: &str, rules: &[String]) -> Result<String> {
 /// skip exists because a human edit that adds a heading above it must not turn
 /// that heading into the summary.
 ///
-/// The same rule is written twice more, and all three must agree:
-/// `api::wiki::day_lede_sql` for SQL callers, and `ledeOf` in the overview.
+/// **One rule, three languages.** [`crate::api::wiki::lede_sql`] is the SQL
+/// spelling, for list queries that must not fetch whole articles; `lede()` in
+/// `apps/web/src/lib/wiki/lede.ts` is the client's. This one and the SQL one
+/// are checked against each other by `lede_and_lede_sql_agree`, because three
+/// hand-written copies of a rule is how two spellings of it start disagreeing
+/// — which they had: the chronicle's copy returned a heading as the lede.
 pub fn lede(article: &str) -> Option<&str> {
     article
         .split("\n\n")
@@ -451,6 +465,24 @@ pub async fn evidence_fingerprint(
             .fetch_one(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to count the year's days: {e}")))?
+        } else if article.subject_type == "chapter" {
+            // A chapter rests on the days inside the era the person drew, the
+            // same shape as a year over a longer span. `ended_at` IS NULL is
+            // the running chapter and means "through today" rather than "no
+            // days" — the chapter most likely to be revised is exactly the one
+            // that has not ended, so an inner join on a NULL end would freeze
+            // the current era forever.
+            sqlx::query_as(
+                "SELECT count(*) FILTER (WHERE d.narrated_at IS NOT NULL), max(d.narrated_at) \
+                 FROM wiki_days d \
+                 JOIN wiki_chapters c ON c.id = $1 \
+                 WHERE d.date >= c.started_at \
+                   AND (c.ended_at IS NULL OR d.date < c.ended_at)",
+            )
+            .bind(&article.subject_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to count the chapter's days: {e}")))?
         } else {
             sqlx::query_as("SELECT count(*), max(occurred_at) FROM wiki_refs WHERE entity_id = $1")
                 .bind(&article.subject_id)
@@ -472,24 +504,41 @@ pub async fn evidence_fingerprint(
     // What the person wrote about the subject moves the hash as well. A title
     // or summary they added is new evidence in the only sense that matters: the
     // article should be revisited because of it.
-    let authored: Option<chrono::DateTime<chrono::Utc>> = if article.subject_type == "year" {
-        sqlx::query_scalar("SELECT updated_at FROM wiki_years WHERE id = $1")
+    let authored: Option<chrono::DateTime<chrono::Utc>> = match article.subject_type.as_str() {
+        "year" => sqlx::query_scalar("SELECT updated_at FROM wiki_years WHERE id = $1")
             .bind(&article.subject_id)
             .fetch_optional(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to read the year: {e}")))?
-            .flatten()
-    } else {
-        None
+            .flatten(),
+        // A chapter's title, summary and changepoint are the spine of its
+        // article, so moving one is the strongest reason there is to rewrite.
+        "chapter" => sqlx::query_scalar("SELECT updated_at FROM wiki_chapters WHERE id = $1")
+            .bind(&article.subject_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to read the chapter: {e}")))?,
+        "story" => sqlx::query_scalar("SELECT updated_at FROM wiki_stories WHERE id = $1")
+            .bind(&article.subject_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to read the story: {e}")))?,
+        _ => None,
     };
 
+    // MICROSECONDS, not seconds. A whole-second stamp makes any change landing
+    // in the same second as the last fingerprint invisible — and invisible
+    // forever, because the fingerprint is then stored as if that second had
+    // been accounted for. The window is small and the consequence is not: the
+    // edit never earns an edition. Postgres stores timestamptz to the
+    // microsecond, so the hash reads what the column actually holds.
     let mut h = sha2::Sha256::new();
     h.update(
         format!(
             "refs:{refs}:{};notes:{notes}:{};authored:{};",
-            last_ref.map(|t| t.timestamp()).unwrap_or(0),
-            last_note.map(|t| t.timestamp()).unwrap_or(0),
-            authored.map(|t| t.timestamp()).unwrap_or(0),
+            last_ref.map(|t| t.timestamp_micros()).unwrap_or(0),
+            last_note.map(|t| t.timestamp_micros()).unwrap_or(0),
+            authored.map(|t| t.timestamp_micros()).unwrap_or(0),
         )
         .as_bytes(),
     );
@@ -802,6 +851,112 @@ mod tests {
         // and must not be silently handed the generic door.
         assert!(brief_for("day").is_none());
         assert!(system_prompt("day", &[]).is_err());
+
+        // The life page is the harder one, because refusing it is a promise
+        // rather than a scheduling detail: it is written by the person, in the
+        // first person, and the editor may not touch it. Structural, so that
+        // it is not a rule in a prompt that a model can weigh against another
+        // rule.
+        assert!(brief_for("narrative_identity").is_none());
+        assert!(system_prompt("narrative_identity", &[]).is_err());
+    }
+
+    #[test]
+    fn every_other_subject_the_schema_allows_has_a_brief() {
+        // The vocabulary is `wiki_articles_subject_type_check` (migration
+        // 0022). A kind the schema allows, the UI gives a room, and the editor
+        // has no brief for is an article nothing will ever write — which is
+        // how chapters sat with a seeded page and no second sentence.
+        for kind in ["year", "story", "chapter", "person", "place", "organization"] {
+            assert!(brief_for(kind).is_some(), "{kind} has no brief");
+            assert!(system_prompt(kind, &[]).is_ok(), "{kind} has no prompt");
+        }
+        let p = system_prompt("chapter", &[]).unwrap();
+        assert!(p.contains("an era of this person's life"), "the chapter brief");
+        assert!(
+            p.contains("Do not name it for them"),
+            "an unnamed chapter is an answer, and the brief has to say so — a \
+             model handed a titleless era will supply a title"
+        );
+    }
+
+    /// A chapter that has not ended must still notice its days.
+    ///
+    /// `ended_at IS NULL` is the running era — the one chapter most likely to
+    /// be revised, because it is the one still accumulating. An inner join on
+    /// a NULL end matches nothing, which would freeze the current chapter's
+    /// article permanently while every finished chapter kept updating: a bug
+    /// that looks like "it works" right up until the only page anyone is
+    /// watching is the one that never changes.
+    #[sqlx::test]
+    async fn a_running_chapter_still_sees_the_days_inside_it(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_chapters (id, title, started_at, ended_at) \
+             VALUES ('chap_now', 'Out on my own', '2026-01-01', NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let article = crate::api::wiki_articles::create_article(
+            &pool,
+            "chapter",
+            "chap_now",
+            "Out on my own",
+            "Theirs.",
+        )
+        .await
+        .unwrap();
+        let due = DueArticle {
+            id: article.id.clone(),
+            subject_type: "chapter".into(),
+            subject_id: "chap_now".into(),
+            page_id: article.page_id.clone(),
+            machine_text: None,
+            input_fingerprint: None,
+        };
+
+        let empty = evidence_fingerprint(&pool, &due).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO wiki_days (id, date, narrated_at) \
+             VALUES ('day_2026-02-02', '2026-02-02', now())",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let with_a_day = evidence_fingerprint(&pool, &due).await.unwrap();
+        assert_ne!(
+            empty, with_a_day,
+            "a day written up inside a running chapter is exactly the evidence \
+             that should earn the era a new edition"
+        );
+
+        // And a day outside the era is not the era's evidence.
+        sqlx::query(
+            "INSERT INTO wiki_days (id, date, narrated_at) \
+             VALUES ('day_2020-05-05', '2020-05-05', now())",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            with_a_day,
+            evidence_fingerprint(&pool, &due).await.unwrap(),
+            "a day before the chapter started is another chapter's evidence"
+        );
+
+        // Their own three fields are the spine of the page, so moving one is
+        // the strongest reason there is to rewrite it.
+        sqlx::query("UPDATE wiki_chapters SET changepoint = 'the lease ran out' WHERE id = 'chap_now'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_ne!(
+            with_a_day,
+            evidence_fingerprint(&pool, &due).await.unwrap(),
+            "what they say ended an era says more about it than its name does"
+        );
     }
 
     #[test]

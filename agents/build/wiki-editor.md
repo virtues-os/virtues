@@ -12,6 +12,16 @@ The prompts live beside the code and are compiled in:
 |---|---|
 | [`virtues-core/prompts/wiki/constitution.md`](../../virtues-core/prompts/wiki/constitution.md) | the rules that never vary, shared by every article |
 | [`virtues-core/prompts/wiki/year.md`](../../virtues-core/prompts/wiki/year.md) | the brief for a year |
+| [`virtues-core/prompts/wiki/chapter.md`](../../virtues-core/prompts/wiki/chapter.md) | the brief for a chapter — an era the person drew |
+| [`virtues-core/prompts/wiki/story.md`](../../virtues-core/prompts/wiki/story.md) | the brief for a story — a subject they named, with nothing beneath it |
+| [`virtues-core/prompts/wiki/entity.md`](../../virtues-core/prompts/wiki/entity.md) | the brief for a person, place or organization |
+
+Two subject kinds have **no** brief, and both absences are refusals rather
+than gaps. The life page is the person's, in the first person, and the editor
+may not touch it. The day has its own released narrate prompt and joins this
+door when its revision does. `brief_for` returning `None` is what makes each
+refusal structural — a rule in a prompt is something a model weighs against
+its other rules, and a missing brief is not.
 
 A system prompt is **constitution + brief**, concatenated, plus the active
 `wiki_rules`. The turn's opening message carries the subject, its authored
