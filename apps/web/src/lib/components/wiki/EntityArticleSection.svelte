@@ -18,8 +18,11 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	interface Props {
-		article?: string;
-		articleUpdatedAt?: Date;
+		// `| null` because these come straight off the wire now, where an
+		// absent column is null rather than undefined. Coercing at each of the
+		// three call sites was three chances to forget.
+		article?: string | null;
+		articleUpdatedAt?: Date | null;
 		/** The entity's name, for the offer line. */
 		name: string;
 		/** Subject coordinates, so this can write and maintain its own article. */

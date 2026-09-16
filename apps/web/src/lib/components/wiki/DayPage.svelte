@@ -10,8 +10,7 @@
 <script lang="ts">
 	import { subjectHref } from "$lib/wiki/links";
 	import { browser } from "$app/environment";
-	import type { DayPage as DayPageType, DayEvent } from "$lib/wiki/types";
-	import { flattenLinkedEntities } from "$lib/wiki/types";
+	import type { DayEvent } from "$lib/wiki/types";
 	import {
 		getDaySources,
 		getDayEvents,
@@ -21,11 +20,12 @@
 		type DaySourceApi,
 		type DayChatApi,
 		type TimelineDayLocationChunk,
+		type WikiDayApi,
 	} from "$lib/wiki/api";
 	import { apiToDayEvent } from "$lib/wiki/converters";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import { getOntologyName } from "$lib/wiki/ontology";
-	import { getLocalDateSlug } from "$lib/utils/dateUtils";
+	import { getLocalDateSlug, parseDateSlug } from "$lib/utils/dateUtils";
 	import { getChapters, type ChapterApi } from "$lib/wiki/api";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import EventTimeline from "./EventTimeline.svelte";
@@ -39,10 +39,30 @@
 
 
 	interface Props {
-		page: DayPageType;
+		/** The wire shape. See PersonPage for why the converter is gone. */
+		page: WikiDayApi;
 	}
 
 	let { page }: Props = $props();
+
+	// `page.date` is an ISO day string. Read it as a LOCAL date — `new Date`
+	// on a bare `YYYY-MM-DD` is UTC midnight, which is the previous day for
+	// everyone west of Greenwich, and this one feeds the chart's axis.
+	const date = $derived(parseDateSlug(page.date));
+	const dayOfWeek = $derived(
+		["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][
+			date.getDay()
+		]
+	);
+	const sleepCycles = $derived(
+		(page.sleep_cycles ?? []).map((c) => ({
+			startTime: new Date(c.start_time),
+			endTime: new Date(c.end_time),
+			dominantStage: c.dominant_stage,
+			avgHr: c.avg_hr,
+			autonomicZ: c.autonomic_z,
+		}))
+	);
 
 	// Shared hover state for chart ↔ timeline sync
 	let hoveredEventId = $state<string | null>(null);
@@ -64,9 +84,6 @@
 		return parts[parts.length - 1].replace(/_/g, " ");
 	}
 
-	// Flatten linked entities for entity display
-	const allLinkedPages = $derived(flattenLinkedEntities(page.linkedEntities));
-
 	// Timezone display — fallback to browser timezone for ungenerated days
 	function getBrowserTimezone(): string | null {
 		if (!browser) return null;
@@ -76,17 +93,17 @@
 	}
 
 	const timezoneDisplay = $derived(
-		formatTimezoneDisplay(page.startTimezone) ?? getBrowserTimezone(),
+		formatTimezoneDisplay(page.start_timezone) ?? getBrowserTimezone(),
 	);
 
 	// Render timestamps in the SAME zone the server windowed this day in: the
 	// locked per-day start_timezone, else the viewing device's zone (which is
 	// also what get_day_sources used for an in-progress today). Keeps the Time
 	// column consistent with which records appear. See agents/record/timezone-model.md.
-	const rowTz = $derived(page.startTimezone ?? undefined);
+	const rowTz = $derived(page.start_timezone ?? undefined);
 
 
-	const currentDateSlug = $derived(getLocalDateSlug(page.date));
+	const currentDateSlug = $derived(getLocalDateSlug(date));
 	const todaySlug = $derived(getLocalDateSlug(new Date()));
 
 	// The day's chapter — the gapless partition made felt where a day is
@@ -98,7 +115,7 @@
 		void getChapters().then((rows) => (chapters = rows));
 	});
 	/** The year this day belongs to, for the way back up. */
-	const dayYear = $derived(page?.date ? Number(String(page.date).slice(0, 4)) : null);
+	const dayYear = $derived(page?.date ? Number(page.date.slice(0, 4)) : null);
 
 	const dayChapter = $derived.by(() => {
 		if (!chapters.length) return null;
@@ -459,10 +476,10 @@
 	// `save_day_article` already guards against by refusing when
 	// `yjs_state IS NOT NULL`. The page editor is CRDT-aware; this was never
 	// going to be. One editor, and it is that one.
-	let summaryText = $state(page.autobiography || "");
+	let summaryText = $state((page.article ?? "") || "");
 
 	$effect(() => {
-		summaryText = page.autobiography || "";
+		summaryText = (page.article ?? "") || "";
 	});
 
 	// The day article IS a page — Edit opens the page editor. Editing it does
@@ -482,7 +499,12 @@
 		dayEvents.filter((e) => !e.isUnknown).length > 0,
 	);
 	const showMovement = $derived(hasLocationData);
-	const showEntities = $derived(allLinkedPages.length > 0);
+	// An "Entities" section stood here and could never draw: the converter
+	// hardcoded the list empty and the server never sent one on a day at all,
+	// so a day full of people rendered none while the Metadata block below
+	// reported how many were new. The section is gone rather than left as a
+	// stub; listing a day's entities is a thing to BUILD, from `wiki_refs`,
+	// not a thing to leave half-wired.
 	const showSources = $derived(dataSources.length > 0);
 	const showChats = $derived(dayChats.length > 0);
 
@@ -490,7 +512,6 @@
 		showAutobiography ||
 			showTimeline ||
 			showMovement ||
-			showEntities ||
 			showSources ||
 			showChats,
 	);
@@ -504,7 +525,6 @@
 		h.push({ id: "dayline", text: "The Dayline", level: 2 });
 		if (showTimeline) h.push({ id: "timeline", text: "Event Timeline", level: 2 });
 		if (showChats) h.push({ id: "chats", text: "AI Chats", level: 2 });
-		if (showEntities) h.push({ id: "entities", text: "Entities", level: 2 });
 		if (hasAnyContent) h.push({ id: "ontologies", text: "Data Ontologies", level: 2 });
 		if (hasAnyContent) h.push({ id: "metadata", text: "Metadata", level: 3 });
 		return h;
@@ -514,7 +534,7 @@
 
 <div class="day-page-outer">
 	<DayToolbar
-		pageDate={page.date}
+		pageDate={date}
 		{currentDateSlug}
 		{todaySlug}
 		onNavigateDay={navigateToDay}
@@ -528,7 +548,7 @@
 				<!-- Header: title-page layout (h1 → meta → rule) -->
 				<header class="day-header" bind:this={headerEl}>
 					<h1 class="day-title">
-						{formatDate(page.date, page.dayOfWeek)}
+						{formatDate(date, dayOfWeek)}
 					</h1>
 					{#if relativeDateLabel() || dayChapter || dayYear}
 						<div class="day-subtitle">
@@ -554,10 +574,10 @@
 					     when this was last written, by whose hand, and how much of
 					     the day the record actually saw. The audit trail below
 					     keeps the rest. -->
-					{#if page.updatedAt}
+					{#if page.updated_at}
 						<p class="day-byline">
 							<span>
-								Updated {new Date(page.updatedAt).toLocaleDateString("en-US", {
+								Updated {new Date(page.updated_at).toLocaleDateString("en-US", {
 									month: "short",
 									day: "numeric",
 									year: "numeric",
@@ -594,7 +614,7 @@
 				<!-- Dayline chart: visual bridge between narrative and timeline -->
 				<section class="section" id="dayline">
 					<h2 class="section-title">The Dayline</h2>
-					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.startTimezone} pageDate={page.date} sleepCycles={page.sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
+					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.start_timezone} pageDate={date} sleepCycles={sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
 				</section>
 
 				{#if hasAnyContent}
@@ -609,7 +629,7 @@
 								</button>
 							</div>
 							</div>
-							<EventTimeline bind:this={timelineRef} events={dayEvents} timezone={page.startTimezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} pageDate={page.date} />
+							<EventTimeline bind:this={timelineRef} events={dayEvents} timezone={page.start_timezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} pageDate={date} />
 						</section>
 					{/if}
 
@@ -659,27 +679,6 @@
 						</section>
 					{/if}
 
-					<!-- Entities -->
-					{#if showEntities}
-						<section class="section" id="entities">
-							<h2 class="section-title">Entities</h2>
-							<ul class="footer-list">
-								{#each allLinkedPages as entity}
-									<li>
-										<a
-											href={subjectHref(entity.pageId) ?? "#"}
-											class="footer-link"
-										>
-											<span class="link-text"
-												>{entity.displayName}</span
-											>
-										</a>
-									</li>
-								{/each}
-							</ul>
-						</section>
-					{/if}
-
 					<!-- Ontologies: one chronological table of every data point -->
 					<section class="section" id="ontologies">
 						<h2 class="section-title">Data Ontologies</h2>
@@ -718,13 +717,13 @@
 					<section class="section" id="metadata">
 						<h2 class="section-title">Metadata</h2>
 						<dl class="metadata-grid">
-							{#if page.startTimezone}
+							{#if page.start_timezone}
 								<dt>Timezone</dt>
 								<dd>{timezoneDisplay}</dd>
 							{/if}
-							{#if page.createdAt}
+							{#if page.created_at}
 								<dt>Created</dt>
-								<dd>{new Date(page.createdAt).toLocaleString()}</dd>
+								<dd>{new Date(page.created_at).toLocaleString()}</dd>
 							{/if}
 							<!-- "Last updated" moved to the byline under the title —
 							     it is the one line a reader wants before the prose,
@@ -734,9 +733,9 @@
 							<dt>Sources</dt>
 							<dd>{dataSources.length}</dd>
 							<dt>New entities</dt>
-							<dd>{page.newEntityCount}</dd>
+							<dd>{page.new_entity_count}</dd>
 							<dt>New topics</dt>
-							<dd>{page.newTopicCount}</dd>
+							<dd>{page.new_topic_count}</dd>
 							<dt>Page ID</dt>
 							<dd class="metadata-mono">{page.id}</dd>
 						</dl>

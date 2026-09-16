@@ -7,7 +7,7 @@
 
 <script lang="ts">
 	import { subjectHref } from "$lib/wiki/links";
-	import type { OrganizationPage as OrganizationPageType } from "$lib/wiki/types";
+	import type { WikiOrganizationApi } from "$lib/wiki/api";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
 	import SubjectBacklinks from "./SubjectBacklinks.svelte";
 	import NotesRail from "./NotesRail.svelte";
@@ -17,7 +17,8 @@
 	import { updateOrganization } from "$lib/wiki/api";
 
 	interface Props {
-		page: OrganizationPageType;
+		/** The wire shape. See PersonPage for why the converter is gone. */
+		page: WikiOrganizationApi;
 	}
 
 	let { page }: Props = $props();
@@ -29,22 +30,39 @@
 		});
 	}
 
-	function formatOrgType(type: string): string {
+	/**
+	 * The badge over an organization's name, from its stored type.
+	 *
+	 * One map where there were two: the converter folded `company` into
+	 * `employer` and `university` into `school`, and this function then turned
+	 * those into words. A type with no entry keeps its own word instead of
+	 * flattening to "Organization".
+	 */
+	function orgLabel(type: string | null): string {
 		const labels: Record<string, string> = {
 			employer: "Employer",
+			company: "Employer",
 			school: "School",
+			university: "School",
 			community: "Community",
+			church: "Community",
+			club: "Community",
 			institution: "Institution",
-			other: "Organization",
+			government: "Institution",
+			hospital: "Institution",
 		};
-		return labels[type] || type;
+		if (!type) return "Organization";
+		const key = type.toLowerCase();
+		return labels[key] ?? type.charAt(0).toUpperCase() + type.slice(1);
 	}
 
-	function formatPeriod(period: { start: Date; end?: Date }): string {
-		const start = formatDate(period.start);
-		const end = period.end ? formatDate(period.end) : "Present";
+	/** "March 2019 — Present", from the two wire dates. */
+	const period = $derived.by(() => {
+		if (!page.start_date) return null;
+		const start = formatDate(new Date(page.start_date));
+		const end = page.end_date ? formatDate(new Date(page.end_date)) : "Present";
 		return `${start} — ${end}`;
-	}
+	});
 
 	async function saveAliases(next: string[]) {
 		const saved = await updateOrganization(page.id, { aliases: next });
@@ -58,20 +76,21 @@
 		<div class="page-content">
 			<!-- Header -->
 			<header class="page-header">
-				{#if page.cover}
+				<!-- `cover_image` has a PUT that accepts it and no client that
+				     sends one, so this has never drawn. Kept as the one place
+				     an org cover would go if anything ever wrote one. -->
+				{#if page.cover_image}
 					<div class="org-logo">
-						<img src={page.cover} alt={page.title} />
+						<img src={page.cover_image} alt={page.name} />
 					</div>
 				{/if}
-				<h1 class="page-title">{page.title}</h1>
-				{#if page.subtitle}
-					<p class="page-subtitle">{page.subtitle}</p>
-				{/if}
+				<h1 class="page-title">{page.name}</h1>
+				<!-- A subtitle was read here and never set. -->
 				<div class="page-meta">
-					<span class="meta-item org-badge">{formatOrgType(page.orgType)}</span>
-					{#if page.role}
+					<span class="meta-item org-badge">{orgLabel(page.organization_type)}</span>
+					{#if page.role_title}
 						<span class="meta-sep">·</span>
-						<span class="meta-item">{page.role}</span>
+						<span class="meta-item">{page.role_title}</span>
 					{/if}
 				</div>
 			</header>
@@ -83,7 +102,7 @@
 			<div class="org-aliases">
 				<AliasEditor
 					aliases={page.aliases ?? []}
-					canonicalName={page.title}
+					canonicalName={page.name}
 					onSave={saveAliases}
 				/>
 			</div>
@@ -94,11 +113,13 @@
 			<section class="section" id="article">
 				<EntityArticleSection
 					article={page.article}
-					articleUpdatedAt={page.articleUpdatedAt}
-					name={page.title}
+					articleUpdatedAt={page.article_updated_at
+						? new Date(page.article_updated_at)
+						: null}
+					name={page.name}
 									subjectType="organization"
 					subjectId={page.id}
-					maintained={page.articleMaintained}
+					maintained={page.article_maintained}
 					onChanged={() => location.reload()}
 				/>
 			</section>
@@ -122,20 +143,20 @@
 			{/if}
 
 			<!-- Your Role -->
-			{#if page.role || page.period}
+			{#if page.role_title || period}
 				<section class="section" id="your-role">
 					<h2 class="section-title">Your Role</h2>
 					<dl class="info-list">
-						{#if page.role}
+						{#if page.role_title}
 							<div class="info-item">
 								<dt>Position</dt>
-								<dd>{page.role}</dd>
+								<dd>{page.role_title}</dd>
 							</div>
 						{/if}
-						{#if page.period}
+						{#if period}
 							<div class="info-item">
 								<dt>Period</dt>
-								<dd>{formatPeriod(page.period)}</dd>
+								<dd>{period}</dd>
 							</div>
 						{/if}
 					</dl>
