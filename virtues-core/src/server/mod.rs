@@ -807,7 +807,26 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Media API (content-addressed storage for page-embedded media)
         .route("/api/media/upload", post(api::upload_media_handler))
         .route("/api/media/:id", get(api::get_media_handler))
-        // Wiki API
+        // ── Wiki API ────────────────────────────────────────────────────
+        //
+        // TWO ADDRESSING SHAPES, and both are right. Don't unify them.
+        //
+        //   generic   /api/wiki/articles/:subject_type/:subject_id
+        //             /api/wiki/notes/:subject_type/:subject_id
+        //             /api/wiki/subjects/:subject_type/:subject_id/backlinks
+        //   per-kind  /api/wiki/person/:id, /place/:id, /organization/:id
+        //
+        // The test is whether the PAYLOAD varies by kind. An article is the
+        // same row whatever it is about, so its route takes the subject as a
+        // parameter and one handler serves every rung. An entity's own fields
+        // are not: a person has a relationship, a place has coordinates, an
+        // organization has a type. A generic entity route would return a union
+        // the client has to discriminate anyway — the per-kind route has
+        // already done that, in the one place it costs nothing.
+        //
+        // What was genuinely wrong here was duplicate SPELLINGS of one route,
+        // not the shape: organizations had four routes for two handlers.
+        //
         // Wiki - Person
         // Mention review queue (entity resolution HITL)
         .route("/api/wiki/people", get(api::wiki_list_people_handler))
@@ -821,21 +840,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/place/:id",
             get(api::wiki_get_place_handler).put(api::wiki_update_place_handler),
         )
-        // Wiki - Organization (table `wiki_orgs`; both URL forms supported)
+        // Wiki - Organization. The table is `wiki_orgs` and the id prefix is
+        // `org_`, but the ROUTE spells it out, matching `subject_type =
+        // 'organization'` everywhere else. `/orgs` and `/org/:id` also existed,
+        // pointed at these same handlers, and no client has ever called either.
         .route(
             "/api/wiki/organizations",
             get(api::wiki_list_organizations_handler),
         )
         .route(
-            "/api/wiki/orgs",
-            get(api::wiki_list_organizations_handler),
-        )
-        .route(
             "/api/wiki/organization/:id",
-            get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
-        )
-        .route(
-            "/api/wiki/org/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
         // Wiki - Thing: retired. Things are gone entirely as of the wiki_things
