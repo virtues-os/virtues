@@ -158,5 +158,4 @@ export interface WikiPageBase {
 	// Timestamps
 	createdAt: Date;
 	updatedAt: Date;
-	lastEditedBy: AuthorType;
 }

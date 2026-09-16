@@ -36,9 +36,6 @@ export interface WikiPersonApi {
 	aliases: string[];
 	/** Is the record keeping this article up to date? Off unless asked. */
 	article_auto_update?: boolean;
-	first_seen: string | null;
-	last_seen: string | null;
-	seen_count: number | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -54,6 +51,9 @@ export interface WikiPlaceApi {
 	address: string | null;
 	latitude: number | null;
 	longitude: number | null;
+	/** Visits, COUNTED from wiki_refs. The columns of these names had no
+	 *  writer, so this section reported "Total visits: 0" for somewhere you go
+	 *  weekly; these now carry the real count and its two dates. */
 	seen_count: number | null;
 	first_seen: string | null;
 	last_seen: string | null;
@@ -77,9 +77,6 @@ export interface WikiOrganizationApi {
 	role_title: string | null;
 	start_date: string | null;
 	end_date: string | null;
-	seen_count: number | null;
-	first_seen: string | null;
-	last_seen: string | null;
 	created_at: string;
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */
@@ -94,17 +91,8 @@ export interface WikiDayApi {
 	start_timezone: string | null;
 	/** The day's prose, from wiki_day_prose. The article page is its only home (0106). */
 	article?: string | null;
-	last_edited_by: string | null;
-	cover_image: string | null;
-	data_quality: {
-		coverage: { who: number; whom: number; what: number; when: number; where: number; why: number; how: number };
-		overall: number;
-		note: string;
-	} | null;
 	new_entity_count: number;
 	new_topic_count: number;
-	readiness_score: number | null;
-	readiness_details: { hrv: number; rhr: number; sleep_duration: number; deep_rem: number; consistency: number } | null;
 	sleep_cycles: Array<{
 		start_time: string;
 		end_time: string;
@@ -130,7 +118,6 @@ export interface WikiPersonListItem {
 	name: string;
 	picture: string | null;
 	relationship_category: string | null;
-	last_seen: string | null;
 	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
 	ref_count: number;
 }
@@ -140,7 +127,6 @@ export interface WikiPlaceListItem {
 	name: string;
 	category: string | null;
 	address: string | null;
-	seen_count: number | null;
 	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
 	ref_count: number;
 }

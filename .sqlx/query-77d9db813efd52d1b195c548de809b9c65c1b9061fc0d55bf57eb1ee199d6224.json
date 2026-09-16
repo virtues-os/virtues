@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, name, content, article, article_updated_at, cover_image,\n            organization_type, relationship_type, role_title, aliases,\n            start_date, end_date, seen_count,\n            first_seen, last_seen,\n            created_at, updated_at\n        FROM wiki_orgs\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id, name, content, cover_image,\n            organization_type, relationship_type, role_title, aliases,\n            start_date, end_date,\n            created_at, updated_at\n        FROM wiki_orgs\n        WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -20,71 +20,46 @@
       },
       {
         "ordinal": 3,
-        "name": "article",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 4,
-        "name": "article_updated_at",
-        "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 5,
         "name": "cover_image",
         "type_info": "Text"
       },
       {
-        "ordinal": 6,
+        "ordinal": 4,
         "name": "organization_type",
         "type_info": "Text"
       },
       {
-        "ordinal": 7,
+        "ordinal": 5,
         "name": "relationship_type",
         "type_info": "Text"
       },
       {
-        "ordinal": 8,
+        "ordinal": 6,
         "name": "role_title",
         "type_info": "Text"
       },
       {
-        "ordinal": 9,
+        "ordinal": 7,
         "name": "aliases",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 10,
+        "ordinal": 8,
         "name": "start_date",
         "type_info": "Date"
       },
       {
-        "ordinal": 11,
+        "ordinal": 9,
         "name": "end_date",
         "type_info": "Date"
       },
       {
-        "ordinal": 12,
-        "name": "seen_count",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 13,
-        "name": "first_seen",
-        "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 14,
-        "name": "last_seen",
-        "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 15,
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 16,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -102,11 +77,6 @@
       true,
       true,
       true,
-      true,
-      true,
-      false,
-      true,
-      true,
       false,
       true,
       true,
@@ -114,5 +84,5 @@
       false
     ]
   },
-  "hash": "0cac190b243d536cb45b9a798677599465f9213cc2e44bfe92e8f241a7aba35d"
+  "hash": "77d9db813efd52d1b195c548de809b9c65c1b9061fc0d55bf57eb1ee199d6224"
 }

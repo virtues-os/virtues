@@ -582,11 +582,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                     println!("  {line}");
                 }
             }
-            if let Some(dq) = &day.data_quality {
-                println!();
-                println!("Data quality: {dq}");
-            }
-
             // Show events that were created
             let events = crate::api::wiki::get_day_events(pool, day.id.clone()).await?;
             println!();
