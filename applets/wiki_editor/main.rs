@@ -114,10 +114,12 @@ async fn main() -> Result<()> {
 
 /// What is new beneath a subject since its article was last written.
 ///
-/// A year rests on its days, so the days written up since the last edition ARE
-/// the change, and handing them over costs one query. An entity rests on
-/// records that reference it, and those are better searched than dumped, so it
-/// gets a count and goes looking if it wants detail.
+/// Each rung rests on a different thing, so each is handed a different thing.
+/// A year rests on its days, and the days written up ARE the change, at one
+/// query. A chapter rests on the years inside it, not their days. An entity
+/// rests on records that reference it, and those are better searched than
+/// dumped, so it gets a count and goes looking if it wants detail. A story
+/// rests on nothing at all, which is the rung's whole point.
 async fn changed_since(
     pool: &sqlx::PgPool,
     article: &virtues::api::wiki_editor::DueArticle,
@@ -129,6 +131,9 @@ async fn changed_since(
         return Ok("Nothing is gathered for a story. Its material is wherever the \
                    record happens to keep it, so searching IS the work here."
             .to_string());
+    }
+    if article.subject_type == "chapter" {
+        return chapter_handover(pool, &article.subject_id).await;
     }
     if article.subject_type != "year" {
         return Ok("New records reference this subject. Search for them.".to_string());
@@ -155,4 +160,118 @@ async fn changed_since(
          against the article: what is here and not there is what you are for.\n{}",
         lines.join("\n")
     ))
+}
+
+/// A chapter's era, handed over one year at a time.
+///
+/// **Years, not days.** A chapter can span a decade, and its days would be
+/// four thousand lines of hand-over for a page whose whole job is to say what
+/// a year cannot. The level directly beneath a chapter is the year, so that is
+/// the level it is given.
+///
+/// Their own three fields ride along. The title, summary and changepoint are
+/// the spine of a chapter article, and an agent that has to go looking for
+/// them spends its budget re-finding what the caller already had — the same
+/// mistake the first year revision made.
+async fn chapter_handover(pool: &sqlx::PgPool, chapter_id: &str) -> Result<String> {
+    use sqlx::Row;
+
+    let ch = sqlx::query(
+        "SELECT title, summary, changepoint, started_at, ended_at, kind \
+         FROM wiki_chapters WHERE id = $1",
+    )
+    .bind(chapter_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some(ch) = ch else {
+        return Ok(String::new());
+    };
+
+    let title: Option<String> = ch.try_get("title")?;
+    let summary: Option<String> = ch.try_get("summary")?;
+    let changepoint: Option<String> = ch.try_get("changepoint")?;
+    let started_at: chrono::NaiveDate = ch.try_get("started_at")?;
+    let ended_at: Option<chrono::NaiveDate> = ch.try_get("ended_at")?;
+    let kind: String = ch.try_get("kind")?;
+
+    let mut out = String::new();
+    out.push_str("THEIRS — the era as they drew it. These are not yours to revise:\n");
+    match (&title, kind.as_str()) {
+        (Some(t), _) => out.push_str(&format!("- they call it: {t}\n")),
+        (None, "unknown") => out.push_str(
+            "- they left this stretch unnamed, and that is an answer. Do not \
+             supply the name they withheld.\n",
+        ),
+        _ => {}
+    }
+    out.push_str(&match ended_at {
+        Some(e) => format!("- {started_at} to {e}\n"),
+        None => format!("- {started_at} to now; this era has not ended\n"),
+    });
+    if let Some(s) = summary.as_deref().filter(|s| !s.trim().is_empty()) {
+        out.push_str(&format!("- their sentence about it: {}\n", s.trim()));
+    }
+    if let Some(c) = changepoint.as_deref().filter(|c| !c.trim().is_empty()) {
+        out.push_str(&format!("- what ended it, in their words: {}\n", c.trim()));
+    }
+
+    // One row per year of the era: how much of it is written up, and the year
+    // article's own opening line where one exists. `ended_at IS NULL` is the
+    // running chapter and means "through today".
+    let rows = sqlx::query(&format!(
+        r#"
+        WITH span AS (SELECT started_at, ended_at FROM wiki_chapters WHERE id = $1),
+             yrs AS (
+               SELECT EXTRACT(YEAR FROM d.date)::int AS y,
+                      count(*) FILTER (WHERE d.narrated_at IS NOT NULL) AS narrated
+               FROM wiki_days d, span s
+               WHERE d.date >= s.started_at
+                 AND (s.ended_at IS NULL OR d.date < s.ended_at)
+               GROUP BY 1
+             )
+        SELECT yrs.y, yrs.narrated, wy.title AS year_title, {lede} AS lede
+        FROM yrs
+        LEFT JOIN wiki_years wy ON wy.id = 'year_' || yrs.y
+        LEFT JOIN wiki_articles a
+               ON a.subject_type = 'year' AND a.subject_id = 'year_' || yrs.y
+        LEFT JOIN app_pages p ON p.id = a.page_id
+        ORDER BY yrs.y
+        "#,
+        lede = virtues::api::wiki::lede_sql("p.content")
+    ))
+    .bind(chapter_id)
+    .fetch_all(pool)
+    .await?;
+
+    if rows.is_empty() {
+        out.push_str(
+            "\nTHE RECORD HAS NOTHING INSIDE THIS ERA. It happened before the box \
+             existed, or nothing was collected. Their fields above are the whole \
+             article; do not invent the rest of it.",
+        );
+        return Ok(out);
+    }
+
+    out.push_str(
+        "\nTHE YEARS INSIDE IT, each with what is written up and the year \
+         article's opening line. Start here, then go looking for what runs \
+         ACROSS them — a thread confined to one of these years belongs on that \
+         year's page, not this one:\n",
+    );
+    for r in &rows {
+        let y: i32 = r.try_get("y")?;
+        let narrated: i64 = r.try_get("narrated")?;
+        let year_title: Option<String> = r.try_get("year_title")?;
+        let lede: Option<String> = r.try_get("lede")?;
+        out.push_str(&format!("- {y}"));
+        if let Some(t) = year_title.as_deref().filter(|t| !t.trim().is_empty()) {
+            out.push_str(&format!(" \"{}\"", t.trim()));
+        }
+        out.push_str(&format!(" — {narrated} days written up"));
+        match lede.as_deref().filter(|l| !l.trim().is_empty()) {
+            Some(l) => out.push_str(&format!("; the year's article opens: {}\n", l.trim())),
+            None => out.push_str("; no year article yet\n"),
+        }
+    }
+    Ok(out)
 }
