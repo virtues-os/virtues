@@ -888,7 +888,7 @@ async fn plaid_callback(
 ) -> axum::response::Response {
     let session = match read_session_cookie(headers) {
         Some(id) => match take_link_session(&state.db, &id).await {
-            Ok(session) => session,
+            Ok(session) => session.map(|row| (id, row)),
             Err(e) => {
                 tracing::error!(error = %e, "plaid link session lookup failed");
                 return err(StatusCode::INTERNAL_SERVER_ERROR, "plaid session lookup failed");
@@ -899,7 +899,7 @@ async fn plaid_callback(
     // No cookie or no live row: we don't know which box started this, so there
     // is nowhere to bounce back to. Explain it instead of 400-ing into a blank
     // page — the user is sitting in front of this.
-    let Some((link_token, return_url, rust_state)) = session else {
+    let Some((session_id, (link_token, return_url, rust_state))) = session else {
         return plaid_session_lost_page();
     };
     if !is_valid_return_url(&return_url) {
@@ -964,7 +964,7 @@ async fn plaid_callback(
         Ok(s) => s,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
-    match virtues_helpers::crypto::sign_exchange_token(
+    let token = match virtues_helpers::crypto::sign_exchange_token(
         &secret,
         "plaid",
         payload.secrets,
@@ -972,9 +972,62 @@ async fn plaid_callback(
         payload.expires_in,
         payload.scopes,
     ) {
-        Ok(token) => finish_plaid(&return_url, &rust_state, "exchange_token", &token, cfg),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &format!("sign failed: {e}")),
+        Ok(t) => t,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("sign failed: {e}")),
+    };
+    // Record the sig before the browser sees the token, as the authorize-code
+    // callback does — otherwise `/exchange` has nothing to burn and refuses a
+    // token that was never spent. If we cannot record it, the token is already
+    // unspendable: bounce as a failure rather than hand over a dead token and
+    // let the box discover it one HTTP call later.
+    let sig = token.rsplit('.').next().unwrap_or_default();
+    if let Err(e) = put_plaid_exchange_session(&state.db, &session_id, &return_url, &rust_state, sig).await
+    {
+        tracing::error!(error = %e, "plaid exchange session store failed");
+        return finish_plaid(&return_url, &rust_state, "error", "token_exchange_failed", cfg);
     }
+    finish_plaid(&return_url, &rust_state, "exchange_token", &token, cfg)
+}
+
+/// Make a minted Plaid exchange_token spendable, exactly once.
+///
+/// The authorize-code providers already have their `oauth_session` row open at
+/// the callback, so they only UPDATE it with the sig. Plaid's session lives in
+/// `plaid_link_session` and is DELETED as it is read, so there is no row to
+/// update and nothing carries the sig — `consume_exchange` then matches
+/// nothing and every Plaid connect dies at the box's `/exchange` with
+/// "already used or unknown", with the provider credential already minted and
+/// now unreachable. The failure class: adding a single-use ledger keyed on one
+/// table, while a second flow mints tokens without ever writing to it.
+///
+/// So insert the finished row here — the same shape the authorize-code path
+/// leaves behind after its callback, differing only in that Plaid never had a
+/// code_verifier and the row is born already past the callback.
+async fn put_plaid_exchange_session(
+    db: &sqlx::PgPool,
+    session_id: &str,
+    return_url: &str,
+    rust_state: &str,
+    sig: &str,
+) -> Result<(), sqlx::Error> {
+    // Second inserter into this table, so it sweeps too: a fleet that only
+    // ever connects banks would otherwise never collect its own expired rows.
+    let _ = sqlx::query("DELETE FROM oauth_session WHERE expires_at < now()")
+        .execute(db)
+        .await;
+    sqlx::query(
+        "INSERT INTO oauth_session
+            (session_id, provider, return_url, rust_state, exchange_sig, expires_at)
+         VALUES ($1, 'plaid', $2, $3, $4, now() + make_interval(secs => $5))",
+    )
+    .bind(session_id)
+    .bind(return_url)
+    .bind(rust_state)
+    .bind(sig)
+    .bind(OAUTH_SESSION_TTL_SECS as f64)
+    .execute(db)
+    .await
+    .map(|_| ())
 }
 
 /// `redirect_back` plus expiry of the session cookie — the row is already gone,
@@ -1605,5 +1658,30 @@ mod tests {
         });
         assert_eq!(extract_public_token(&v).as_deref(), Some("p"));
         assert_eq!(extract_institution(&v), None);
+    }
+
+    /// A Plaid exchange_token is spendable exactly once — the property the
+    /// authorize-code path gets from `bind_exchange_sig` and Plaid had from
+    /// nothing at all, so every bank connect died at the box's `/exchange`
+    /// with "already used or unknown".
+    #[sqlx::test]
+    async fn plaid_exchange_sig_is_spendable_once(pool: sqlx::PgPool) {
+        let sig = "plaid-sig-1";
+        put_plaid_exchange_session(
+            &pool,
+            "sess-plaid-1",
+            "http://192.168.1.40:7117/oauth/callback",
+            "rust-state",
+            sig,
+        )
+        .await
+        .expect("record the sig");
+
+        assert!(consume_exchange(&pool, sig).await.unwrap(), "first spend must succeed");
+        assert!(!consume_exchange(&pool, sig).await.unwrap(), "replay must not");
+        assert!(
+            !consume_exchange(&pool, "never-minted").await.unwrap(),
+            "a sig that was never bound must not spend"
+        );
     }
 }
