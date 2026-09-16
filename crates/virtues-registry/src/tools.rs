@@ -710,7 +710,7 @@ WIKI TABLES (entity resolution + temporal context)
 ENTITIES (resolved nouns in user's life)
   wiki_people       People with names, emails, relationship info
   wiki_places       Places with name, address, coordinates, visit stats
-  wiki_orgs         Organizations with type, role, interaction history
+  wiki_orgs         Organizations with type, role, and the span you were there
 
 TEMPORAL (daily/yearly context)
   wiki_days         Day summaries with autobiography, context vector

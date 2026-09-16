@@ -58,9 +58,9 @@
 
 	/** "March 2019 — Present", from the two wire dates. */
 	const period = $derived.by(() => {
-		if (!page.start_date) return null;
-		const start = formatDate(new Date(page.start_date));
-		const end = page.end_date ? formatDate(new Date(page.end_date)) : "Present";
+		if (!page.started_at) return null;
+		const start = formatDate(new Date(page.started_at));
+		const end = page.ended_at ? formatDate(new Date(page.ended_at)) : "Present";
 		return `${start} — ${end}`;
 	});
 

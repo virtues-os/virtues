@@ -114,8 +114,8 @@ pub struct WikiOrganization {
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
     pub role_title: Option<String>,
-    pub start_date: Option<NaiveDate>,
-    pub end_date: Option<NaiveDate>,
+    pub started_at: Option<NaiveDate>,
+    pub ended_at: Option<NaiveDate>,
     /// Surfaces this entity also answers to (0037).
     pub aliases: Vec<String>,
     pub created_at: DateTime<Utc>,
@@ -215,8 +215,8 @@ pub struct UpdateWikiOrganizationRequest {
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
     pub role_title: Option<String>,
-    pub start_date: Option<NaiveDate>,
-    pub end_date: Option<NaiveDate>,
+    pub started_at: Option<NaiveDate>,
+    pub ended_at: Option<NaiveDate>,
     /// Surfaces this entity also answers to. 0037 calls an alias "the record of
     /// a human decision" and built the column for exactly this — then nothing
     /// ever wrote it: 3 of 573 people on a real box have one. Stored
@@ -580,7 +580,7 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
         SELECT
             id, name, content, cover_image,
             organization_type, relationship_type, role_title, aliases,
-            start_date, end_date,
+            started_at, ended_at,
             created_at, updated_at
         FROM wiki_orgs
         WHERE id = $1
@@ -606,8 +606,8 @@ pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganizat
         organization_type: row.organization_type,
         relationship_type: row.relationship_type,
         role_title: row.role_title,
-        start_date: row.start_date,
-        end_date: row.end_date,
+        started_at: row.started_at,
+        ended_at: row.ended_at,
         aliases: serde_json::from_value(row.aliases).unwrap_or_default(),
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -661,8 +661,8 @@ pub async fn update_organization(
             organization_type = COALESCE($5, organization_type),
             relationship_type = COALESCE($6, relationship_type),
             role_title = COALESCE($7, role_title),
-            start_date = COALESCE($8, start_date),
-            end_date = COALESCE($9, end_date),
+            started_at = COALESCE($8, started_at),
+            ended_at = COALESCE($9, ended_at),
             aliases = COALESCE($10, aliases),
             updated_at = now()
         WHERE id = $1
@@ -674,8 +674,8 @@ pub async fn update_organization(
         req.organization_type,
         req.relationship_type,
         req.role_title,
-        req.start_date,
-        req.end_date,
+        req.started_at,
+        req.ended_at,
         normalize_aliases(req.aliases.as_ref())
     )
     .execute(pool)
