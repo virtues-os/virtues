@@ -8,7 +8,8 @@
 <script lang="ts">
 	import { subjectHref } from "$lib/wiki/links";
 	import { untrack } from "svelte";
-	import type { PersonPage as PersonPageType } from "$lib/wiki/types";
+	import type { WikiPersonApi } from "$lib/wiki/api";
+	import { parseDateSlug } from "$lib/utils/dateUtils";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
 	import SubjectBacklinks from "./SubjectBacklinks.svelte";
 	import NotesRail from "./NotesRail.svelte";
@@ -18,19 +19,25 @@
 	import { updatePerson } from "$lib/wiki/api";
 
 	interface Props {
-		page: PersonPageType;
+		/**
+		 * The wire shape, not a converted one. There used to be a `PersonPage`
+		 * type and a converter between; both are gone. The converter's real
+		 * output was camelCase renames and four fields it never set —
+		 * `company`, `role`, `location`, `connectionTier` — which this file
+		 * read in nineteen places and rendered as nothing.
+		 */
+		page: WikiPersonApi;
 	}
 
 	let { page }: Props = $props();
 
-	// Connection tier display
-	const tierLabels: Record<string, string> = {
-		"inner-circle": "Inner Circle",
-		"close": "Close",
-		"regular": "Regular",
-		"distant": "Distant",
-		"acquaintance": "Acquaintance",
-	};
+	// Dates arrive as ISO strings. `parseDateSlug` reads them as LOCAL dates;
+	// `new Date("1997-04-02")` is UTC midnight, which renders as the 1st for
+	// everyone west of Greenwich — and a birthday is exactly the field where
+	// being a day out is noticed.
+	const birthday = $derived(page.birthday ? parseDateSlug(page.birthday) : null);
+	const diedOn = $derived(page.died_on ? parseDateSlug(page.died_on) : null);
+	const relationship = $derived(page.relationship_category ?? "Contact");
 
 	function formatBirthday(date: Date): string {
 		return date.toLocaleDateString("en-US", {
@@ -46,14 +53,12 @@
 		Boolean(
 			page.emails?.length ||
 				page.phones?.length ||
-				page.socials?.linkedin ||
-				page.socials?.twitter ||
-				page.socials?.instagram
+				page.linkedin ||
+				page.x ||
+				page.instagram
 		)
 	);
-	const hasAbout = $derived(
-		Boolean(page.location || page.company || page.role || page.birthday || page.diedOn)
-	);
+	const hasAbout = $derived(Boolean(birthday || diedOn));
 
 	/** Died, at the precision the person gave — never more exact than they said. */
 	function formatDeath(date: Date, precision?: string): string {
@@ -98,9 +103,9 @@
 	/** "1948 – 2019" under the name once a death is recorded; birthday alone
 	 *  stays where it was (the About list). */
 	const lifespan = $derived.by(() => {
-		if (!page.diedOn) return null;
-		const died = page.diedOn.getFullYear();
-		return page.birthday ? `${page.birthday.getFullYear()} – ${died}` : `died ${died}`;
+		if (!diedOn) return null;
+		const died = diedOn.getFullYear();
+		return birthday ? `${birthday.getFullYear()} – ${died}` : `died ${died}`;
 	});
 
 </script>
@@ -110,16 +115,12 @@
 		<div class="person-content">
 			<!-- Header -->
 			<header class="person-header">
-				<h1 class="person-title">{page.title}</h1>
-				{#if page.nickname && page.nickname !== page.title}
+				<h1 class="person-title">{page.name}</h1>
+				{#if page.nickname && page.nickname !== page.name}
 					<p class="person-subtitle">"{page.nickname}"</p>
 				{/if}
 				<div class="person-meta">
-					<span class="meta-badge">{page.relationship}</span>
-					{#if page.connectionTier}
-						<span class="meta-sep">·</span>
-						<span class="meta-tier">{tierLabels[page.connectionTier]}</span>
-					{/if}
+					<span class="meta-badge">{relationship}</span>
 					{#if lifespan}
 						<span class="meta-sep">·</span>
 						<span class="meta-lifespan">{lifespan}</span>
@@ -134,7 +135,7 @@
 					<input
 						class="bond-input"
 						bind:value={bondDraft}
-						placeholder="What {page.title} means, in a sentence of your own."
+						placeholder="What {page.name} means, in a sentence of your own."
 						autofocus
 						onkeydown={(e) => {
 							if (e.key === "Enter") void saveBond();
@@ -151,7 +152,7 @@
 				{:else}
 					<button class="bond-invite" type="button" onclick={startBondEdit}>
 						The record shows how often you cross paths. Only you can say what
-						{page.title} means — write it in a sentence.
+						{page.name} means — write it in a sentence.
 					</button>
 				{/if}
 			</div>
@@ -163,7 +164,7 @@
 			<div class="person-aliases">
 				<AliasEditor
 					aliases={page.aliases ?? []}
-					canonicalName={page.title}
+					canonicalName={page.name}
 					onSave={saveAliases}
 				/>
 			</div>
@@ -174,11 +175,13 @@
 			<section class="section" id="article">
 				<EntityArticleSection
 					article={page.article}
-					articleUpdatedAt={page.articleUpdatedAt}
-					name={page.title}
+					articleUpdatedAt={page.article_updated_at
+						? new Date(page.article_updated_at)
+						: null}
+					name={page.name}
 					subjectType="person"
 					subjectId={page.id}
-					maintained={page.articleMaintained}
+					maintained={page.article_maintained}
 					onChanged={() => location.reload()}
 				/>
 			</section>
@@ -196,7 +199,7 @@
 			<!-- Contact -->
 			<section class="section" id="contact">
 				<h2 class="section-title">Contact</h2>
-				{#if page.emails?.length || page.phones?.length || page.socials}
+				{#if hasContact}
 					<dl class="info-list">
 						{#if page.emails && page.emails.length > 0}
 							<div class="info-row">
@@ -218,22 +221,22 @@
 								</dd>
 							</div>
 						{/if}
-						{#if page.socials?.linkedin}
+						{#if page.linkedin}
 							<div class="info-row">
 								<dt>LinkedIn</dt>
-								<dd><a href="https://linkedin.com/in/{page.socials.linkedin}" target="_blank" class="info-link">{page.socials.linkedin}</a></dd>
+								<dd><a href="https://linkedin.com/in/{page.linkedin}" target="_blank" class="info-link">{page.linkedin}</a></dd>
 							</div>
 						{/if}
-						{#if page.socials?.twitter}
+						{#if page.x}
 							<div class="info-row">
 								<dt>Twitter</dt>
-								<dd><a href="https://x.com/{page.socials.twitter}" target="_blank" class="info-link">@{page.socials.twitter}</a></dd>
+								<dd><a href="https://x.com/{page.x}" target="_blank" class="info-link">@{page.x}</a></dd>
 							</div>
 						{/if}
-						{#if page.socials?.instagram}
+						{#if page.instagram}
 							<div class="info-row">
 								<dt>Instagram</dt>
-								<dd><a href="https://instagram.com/{page.socials.instagram}" target="_blank" class="info-link">@{page.socials.instagram}</a></dd>
+								<dd><a href="https://instagram.com/{page.instagram}" target="_blank" class="info-link">@{page.instagram}</a></dd>
 							</div>
 						{/if}
 					</dl>
@@ -247,44 +250,25 @@
 			<!-- About -->
 			<section class="section" id="about">
 				<h2 class="section-title">About</h2>
-				{#if page.location || page.company || page.role || page.birthday || page.diedOn}
-					<dl class="info-list">
-						{#if page.role || page.company}
-							<div class="info-row">
-								<dt>Work</dt>
-								<dd>
-									{#if page.role && page.company}
-										{page.role} at {page.company}
-									{:else if page.role}
-										{page.role}
-									{:else}
-										{page.company}
-									{/if}
-								</dd>
-							</div>
-						{/if}
-						{#if page.location}
-							<div class="info-row">
-								<dt>Location</dt>
-								<dd>{page.location}</dd>
-							</div>
-						{/if}
-						{#if page.birthday}
-							<div class="info-row">
-								<dt>Birthday</dt>
-								<dd>{formatBirthday(page.birthday)}</dd>
-							</div>
-						{/if}
-						{#if page.diedOn}
-							<div class="info-row">
-								<dt>Died</dt>
-								<dd>{formatDeath(page.diedOn, page.diedPrecision)}</dd>
-							</div>
-						{/if}
-					</dl>
-				{:else}
-					<p class="empty-placeholder">No info</p>
-				{/if}
+				<!-- "Work" and "Location" rows lived here and could never draw:
+				     `role`, `company` and `location` were optional fields on a
+				     page type no converter ever filled. The wire has no such
+				     columns, so the section is what the record can actually
+				     say. -->
+				<dl class="info-list">
+					{#if birthday}
+						<div class="info-row">
+							<dt>Birthday</dt>
+							<dd>{formatBirthday(birthday)}</dd>
+						</div>
+					{/if}
+					{#if diedOn}
+						<div class="info-row">
+							<dt>Died</dt>
+							<dd>{formatDeath(diedOn, page.died_precision ?? undefined)}</dd>
+						</div>
+					{/if}
+				</dl>
 			</section>
 			{/if}
 

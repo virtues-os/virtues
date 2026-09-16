@@ -7,7 +7,7 @@
 
 <script lang="ts">
 	import { subjectHref } from "$lib/wiki/links";
-	import type { PlacePage as PlacePageType } from "$lib/wiki/types";
+	import type { WikiPlaceApi } from "$lib/wiki/api";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
 	import SubjectBacklinks from "./SubjectBacklinks.svelte";
@@ -17,19 +17,29 @@
 	import { updatePlace } from "$lib/wiki/api";
 
 	interface Props {
-		page: PlacePageType;
+		/** The wire shape. See PersonPage for why the converter is gone. */
+		page: WikiPlaceApi;
 	}
 
 	let { page }: Props = $props();
+
+	// `seen_count`/`first_seen`/`last_seen` are WIRE fields, counted live from
+	// `wiki_refs` — the columns of those names were dropped in migration 0025
+	// after reading "Total visits: 0" on a place visited weekly.
+	const coordinates = $derived(
+		page.latitude && page.longitude ? { lat: page.latitude, lng: page.longitude } : null
+	);
+	const firstVisit = $derived(page.first_seen ? new Date(page.first_seen) : null);
+	const lastVisit = $derived(page.last_seen ? new Date(page.last_seen) : null);
 
 	// "Don't record here": the phone keeps no audio while you are inside this
 	// place. The flag lives on the place row; the phone caches the muted
 	// places when the app opens and honors them offline, so a flip here
 	// reaches the mic the next time the app is opened, not this instant.
-	let muted = $state(page.isAudioMuted ?? false);
+	let muted = $state(page.is_audio_muted ?? false);
 	let muteFailed = $state<string | null>(null);
 	$effect(() => {
-		muted = page.isAudioMuted ?? false;
+		muted = page.is_audio_muted ?? false;
 	});
 
 	async function toggleMuted() {
@@ -51,26 +61,38 @@
 		});
 	}
 
-	function formatPlaceType(type: string): string {
+	/**
+	 * The badge over a place's name, from its stored category.
+	 *
+	 * This was two maps: the converter turned `cafe` into `third-place`, and
+	 * this function turned `third-place` into "Third Place". One map, one
+	 * hop. A category with no entry keeps its own word rather than becoming
+	 * "Other", which was losing information to render a vaguer label.
+	 */
+	function placeLabel(category: string | null): string {
 		const labels: Record<string, string> = {
 			home: "Home",
 			work: "Work",
-			"third-place": "Third Place",
-			transit: "Transit",
+			gym: "Third Place",
+			cafe: "Third Place",
+			library: "Third Place",
+			airport: "Transit",
+			station: "Transit",
 			travel: "Travel",
-			other: "Other",
 		};
-		return labels[type] || type;
+		if (!category) return "Place";
+		const key = category.toLowerCase();
+		return labels[key] ?? category.charAt(0).toUpperCase() + category.slice(1);
 	}
 
 	// Map data for single location
 	const stopPoints = $derived(
-		page.coordinates
+		coordinates
 			? [
 					{
-						lat: page.coordinates.lat,
-						lng: page.coordinates.lng,
-						label: page.title,
+						lat: coordinates.lat,
+						lng: coordinates.lng,
+						label: page.name,
 						timeMs: Date.now(),
 					},
 				]
@@ -84,16 +106,12 @@
 		<div class="page-content">
 			<!-- Header -->
 			<header class="page-header">
-				<h1 class="page-title">{page.title}</h1>
-				{#if page.subtitle}
-					<p class="page-subtitle">{page.subtitle}</p>
-				{/if}
+				<h1 class="page-title">{page.name}</h1>
+				<!-- A subtitle and a city were read here and never set: two more
+				     optional fields on a page type nothing filled. The address
+				     below is what the record actually holds. -->
 				<div class="page-meta">
-					<span class="meta-item place-badge">{formatPlaceType(page.placeType)}</span>
-					{#if page.city}
-						<span class="meta-sep">·</span>
-						<span class="meta-item">{page.city}</span>
-					{/if}
+					<span class="meta-item place-badge">{placeLabel(page.category)}</span>
 				</div>
 			</header>
 
@@ -103,17 +121,19 @@
 			<section class="section" id="article">
 				<EntityArticleSection
 					article={page.article}
-					articleUpdatedAt={page.articleUpdatedAt}
-					name={page.title}
+					articleUpdatedAt={page.article_updated_at
+						? new Date(page.article_updated_at)
+						: null}
+					name={page.name}
 									subjectType="place"
 					subjectId={page.id}
-					maintained={page.articleMaintained}
+					maintained={page.article_maintained}
 					onChanged={() => location.reload()}
 				/>
 			</section>
 
 			<!-- Map -->
-			{#if page.coordinates}
+			{#if coordinates}
 				<section class="section" id="map">
 					<MovementMap
 						track={stopPoints}
@@ -142,7 +162,7 @@
 			{/if}
 
 			<!-- Location Details -->
-			{#if page.address || page.coordinates}
+			{#if page.address || coordinates}
 				<section class="section" id="location">
 					<h2 class="section-title">Location</h2>
 					<dl class="info-list">
@@ -152,11 +172,11 @@
 								<dd>{page.address}</dd>
 							</div>
 						{/if}
-						{#if page.coordinates}
+						{#if coordinates}
 							<div class="info-item">
 								<dt>Coordinates</dt>
 								<dd class="coords">
-									{page.coordinates.lat.toFixed(6)}, {page.coordinates.lng.toFixed(6)}
+									{coordinates.lat.toFixed(6)}, {coordinates.lng.toFixed(6)}
 								</dd>
 							</div>
 						{/if}
@@ -165,7 +185,7 @@
 			{/if}
 
 			<!-- Recording: the one thing a place can ask of the phone -->
-			{#if page.coordinates}
+			{#if coordinates}
 				<section class="section" id="recording">
 					<h2 class="section-title">Recording</h2>
 					<dl class="info-list">
@@ -192,26 +212,26 @@
 			{/if}
 
 			<!-- Visit History -->
-			{#if page.firstVisit || page.lastVisit || page.visitCount}
+			{#if firstVisit || lastVisit || page.seen_count}
 				<section class="section" id="visit-history">
 					<h2 class="section-title">Visit History</h2>
 					<dl class="info-list">
-						{#if page.firstVisit}
+						{#if firstVisit}
 							<div class="info-item">
 								<dt>First visit</dt>
-								<dd>{formatDate(page.firstVisit)}</dd>
+								<dd>{formatDate(firstVisit)}</dd>
 							</div>
 						{/if}
-						{#if page.lastVisit}
+						{#if lastVisit}
 							<div class="info-item">
 								<dt>Last visit</dt>
-								<dd>{formatDate(page.lastVisit)}</dd>
+								<dd>{formatDate(lastVisit)}</dd>
 							</div>
 						{/if}
-						{#if page.visitCount}
+						{#if page.seen_count}
 							<div class="info-item">
 								<dt>Total visits</dt>
-								<dd>{page.visitCount}</dd>
+								<dd>{page.seen_count}</dd>
 							</div>
 						{/if}
 					</dl>
