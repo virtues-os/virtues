@@ -104,11 +104,6 @@ export interface WikiDayApi {
 	updated_at: string;
 }
 
-export interface IdResolution {
-	entity_type: string;
-	id: string;
-}
-
 // ============================================================================
 // List Item Types
 // ============================================================================
@@ -146,19 +141,6 @@ export interface WikiOrganizationListItem {
 // ============================================================================
 
 type FetchFn = typeof fetch;
-
-/**
- * Parse an entity ID to extract the type.
- * IDs follow the format: {type}_{hash} (e.g., person_abc123)
- */
-export function parseEntityId(id: string): IdResolution | null {
-	const parts = id.split('_');
-	if (parts.length < 2) return null;
-	return {
-		entity_type: parts[0],
-		id: id
-	};
-}
 
 // --- Person ---
 
@@ -806,20 +788,6 @@ export async function setArticleMaintenance(
 	if (!res.ok) throw new Error('Could not change that');
 }
 
-export async function setArticleAutoUpdate(
-	subjectType: string,
-	subjectId: string,
-	autoUpdate: boolean,
-	fetchFn: FetchFn = fetch
-): Promise<void> {
-	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/auto-update`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ auto_update: autoUpdate })
-	});
-	if (!res.ok) throw new Error('Could not change that');
-}
-
 export async function listPeople(fetchFn: FetchFn = fetch): Promise<WikiPersonListItem[]> {
 	const res = await fetchFn("/api/wiki/people");
 	if (!res.ok) return [];
@@ -1087,44 +1055,6 @@ export async function getChapters(fetchFn: FetchFn = fetch): Promise<ChapterApi[
 }
 
 // ============================================================================
-// Citation Types
-// ============================================================================
-
-export interface CitationApi {
-	id: string;
-	source_type: string;
-	source_id: string;
-	target_table: string;
-	target_id: string;
-	citation_index: number;
-	label: string | null;
-	preview: string | null;
-	is_hidden: boolean | null;
-	added_by: string | null;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface CreateCitationRequest {
-	source_type?: string; // Set from path in handler
-	source_id?: string; // Set from path in handler
-	target_table: string;
-	target_id: string;
-	citation_index: number;
-	label?: string;
-	preview?: string;
-	is_hidden?: boolean;
-	added_by?: string;
-}
-
-export interface UpdateCitationRequest {
-	label?: string;
-	preview?: string;
-	is_hidden?: boolean;
-	citation_index?: number;
-}
-
-// ============================================================================
 // Temporal Event Types
 // ============================================================================
 
@@ -1186,73 +1116,6 @@ export interface UpdateTemporalEventRequest {
 	user_location?: string;
 	user_notes?: string;
 	is_user_edited?: boolean;
-}
-
-// ============================================================================
-// Citation API Functions
-// ============================================================================
-
-/**
- * Get citations for a wiki page.
- * @param sourceType - The type of wiki page (person, place, organization, telos, act, chapter, day)
- * @param sourceId - The UUID of the wiki page
- */
-export async function getCitations(
-	sourceType: string,
-	sourceId: string,
-	fetchFn: FetchFn = fetch
-): Promise<CitationApi[]> {
-	const res = await fetchFn(`/api/wiki/${sourceType}/${sourceId}/citations`);
-	if (!res.ok) return [];
-	return res.json();
-}
-
-/**
- * Create a citation for a wiki page.
- */
-export async function createCitation(
-	sourceType: string,
-	sourceId: string,
-	data: CreateCitationRequest,
-	fetchFn: FetchFn = fetch
-): Promise<CitationApi | null> {
-	const res = await fetchFn(`/api/wiki/${sourceType}/${sourceId}/citations`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) return null;
-	return res.json();
-}
-
-/**
- * Update a citation.
- */
-export async function updateCitation(
-	citationId: string,
-	data: UpdateCitationRequest,
-	fetchFn: FetchFn = fetch
-): Promise<CitationApi | null> {
-	const res = await fetchFn(`/api/wiki/citations/${citationId}`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) return null;
-	return res.json();
-}
-
-/**
- * Delete a citation.
- */
-export async function deleteCitation(
-	citationId: string,
-	fetchFn: FetchFn = fetch
-): Promise<boolean> {
-	const res = await fetchFn(`/api/wiki/citations/${citationId}`, {
-		method: "DELETE",
-	});
-	return res.ok;
 }
 
 // ============================================================================
