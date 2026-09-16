@@ -100,7 +100,22 @@ Read against the code on 2026-09-09.
   same code path; the next upload overwrites it with the truth and the row
   self-heals. Revoking Full Disk Access for real would have cost a gap in the
   record (iMessages and Safari history stop) to test one log line.
-- **Open tension this exposed: an applet's events are text, not keys.** An
+- **CLOSED 2026-09-16 (`08a59447`), verified on dragon.** The runner now
+  UNWRAPS a structured applet line instead of quoting it: `kind` and the
+  applet's own level become the box's fields, the applet's extra fields ride
+  in `detail`, and a panic is still passed through verbatim. The same
+  permission event that was unfindable is now returned by
+  `jq 'select(.kind=="collector.permission.granted")'`, inside its run span.
+  Two things fell out: applet lines carry their TRUE level (every routine
+  applet INFO had been inflated to a box WARN), and because that would have
+  walked applet errors back into the crash beacon, applet lines are stamped
+  `source=applet:<id>` and the beacon excludes them.
+  **Build trap:** `cargo build -p virtues --bin virtues -p virtues-applets`
+  silently builds NO applet binaries — the `--bin` filter applies across
+  packages. I deployed yesterday's applets against today's daemon and spent a
+  round wondering why nothing parsed. Build applets in their own invocation
+  and check the binary timestamps.
+- **The tension it resolved: an applet's events were text, not keys.** An
   applet is a subprocess, so its structured fields arrive inside the runner's
   `message` string — the verified line reads
   `applet stderr: … the Mac collector regained a permission kind="collector.permission.granted" …`,
