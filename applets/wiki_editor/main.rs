@@ -237,7 +237,7 @@ async fn chapter_handover(pool: &sqlx::PgPool, chapter_id: &str) -> Result<Strin
         LEFT JOIN app_pages p ON p.id = a.page_id
         ORDER BY yrs.y
         "#,
-        lede = virtues::api::wiki::lede_sql("p.content")
+        lede = virtues::api::wiki_editor::lede_sql("p.content")
     ))
     .bind(chapter_id)
     .fetch_all(pool)
