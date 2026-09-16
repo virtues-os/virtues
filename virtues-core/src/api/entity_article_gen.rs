@@ -310,7 +310,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         ORDER BY d.date DESC
         LIMIT 6
         "#,
-        lede = crate::api::wiki::lede_sql("dp.prose")
+        lede = crate::api::wiki_editor::lede_sql("dp.prose")
     ))
     .bind(&entity.id)
     .fetch_all(pool)

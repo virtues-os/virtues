@@ -11,10 +11,11 @@ use virtues_registry::models::ModelSlot;
 
 use crate::error::Result;
 
-use super::wiki::{
-    create_temporal_event, delete_auto_events_for_day, get_day_sources, get_or_create_day,
-    CreateTemporalEventRequest, DaySource, WikiDay,
+use super::wiki_days::{get_or_create_day, WikiDay};
+use super::wiki_events::{
+    create_temporal_event, delete_auto_events_for_day, CreateTemporalEventRequest,
 };
+use super::wiki_streams::{get_day_sources, DaySource};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -687,7 +688,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     // `data_quality` went with the prompt that forbids them, and
     // `last_edited_by` was a freeze flag that no longer decides anything —
     // the article is edited, and its history says who wrote each version.
-    let day = crate::api::wiki::get_or_create_day(pool, date).await?;
+    let day = crate::api::wiki_days::get_or_create_day(pool, date).await?;
     sqlx::query("UPDATE wiki_days SET start_timezone = $1, updated_at = now() WHERE id = $2")
         .bind(&day_tz)
         .bind(&day.id)
@@ -704,7 +705,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     // Re-fetch: `day` was read before the article landed, so its `article`
     // field predates the write — returning it as-is showed callers (the CLI,
     // the API response) yesterday's prose under a "narrated" banner.
-    let day = crate::api::wiki::get_or_create_day(pool, date).await?;
+    let day = crate::api::wiki_days::get_or_create_day(pool, date).await?;
     Ok(Some(day))
 }
 

@@ -86,7 +86,7 @@ pub fn system_prompt(subject_type: &str, rules: &[String]) -> Result<String> {
 /// skip exists because a human edit that adds a heading above it must not turn
 /// that heading into the summary.
 ///
-/// **One rule, three languages.** [`crate::api::wiki::lede_sql`] is the SQL
+/// **One rule, three languages.** [`crate::api::wiki_editor::lede_sql`] is the SQL
 /// spelling, for list queries that must not fetch whole articles; `lede()` in
 /// `apps/web/src/lib/wiki/lede.ts` is the client's. This one and the SQL one
 /// are checked against each other by `lede_and_lede_sql_agree`, because three
@@ -97,6 +97,31 @@ pub fn lede(article: &str) -> Option<&str> {
         .split("\n\n")
         .map(str::trim)
         .find(|b| !b.is_empty() && !b.starts_with('#'))
+}
+
+/// THE LEDE, in SQL — an article's opening paragraph, which is the short form
+/// every rung above it reads.
+///
+/// `text_expr` is any SQL expression yielding article prose:
+/// `wiki_day_prose.prose` for a day, `app_pages.content` for every other
+/// subject. The rule is not day-specific and never was.
+///
+/// The first block that is neither blank nor a markdown heading. Every brief
+/// requires an article to open with a lede carrying no heading; the skip
+/// exists because a human edit that adds a heading above it must not turn that
+/// heading into the summary.
+///
+/// **This is one of two implementations of one rule** — the other is
+/// [`crate::api::wiki_editor::lede`], for callers that already hold the text —
+/// and `lede_and_lede_sql_agree` is the test that keeps them from drifting.
+/// The third, in TypeScript, is `lede()` in `apps/web/src/lib/wiki/lede.ts`,
+/// and it is one function rather than a copy per component for the same
+/// reason.
+pub fn lede_sql(text_expr: &str) -> String {
+    format!(
+        "(SELECT btrim(b) FROM unnest(string_to_array({text_expr}, E'\\n\\n')) AS b \
+          WHERE btrim(b) <> '' AND left(btrim(b), 1) <> '#' LIMIT 1)"
+    )
 }
 
 /// Split prose into sentences, for provenance.
@@ -1426,4 +1451,42 @@ mod tests {
         );
         assert_eq!(change_line("A thing happened.", "A thing happened."), "no change");
     }
+    /// The two spellings of the lede rule must return the same block.
+    ///
+    /// There is no way to share one implementation across Rust and SQL — the
+    /// SQL exists precisely so a list query need not fetch whole articles —
+    /// so what keeps them honest is this: every case that has ever been
+    /// ambiguous, run through both. The TypeScript copy is the third, and its
+    /// divergence is what prompted the test: the chronicle's hand-written
+    /// version returned `# A heading` as the lede.
+    #[sqlx::test]
+    async fn lede_and_lede_sql_agree(pool: sqlx::PgPool) {
+        let cases = [
+            "Plain opening paragraph.\n\n## A thread\n\nMore.",
+            "# A title above it\n\nThe real lede.\n\n## Thread",
+            "## Straight into a heading\n\nThen prose.",
+            "\n\n   \n\nLeading blank blocks.\n\nSecond.",
+            "Only one paragraph.",
+            "#not a heading, no space\n\nSecond block.",
+            "",
+            "   ",
+            "###### Deep heading\n\nProse under it.",
+            "Trailing whitespace on the block.   \n\n## Next",
+        ];
+
+        for case in cases {
+            let from_sql: Option<String> =
+                sqlx::query_scalar(&format!("SELECT {}", lede_sql("$1")))
+                    .bind(case)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("the lede SQL runs");
+            let from_rust = crate::api::wiki_editor::lede(case).map(str::to_string);
+            assert_eq!(
+                from_sql, from_rust,
+                "the two spellings of the lede rule disagreed on {case:?}"
+            );
+        }
+    }
+
 }
