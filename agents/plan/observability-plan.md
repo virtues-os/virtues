@@ -83,9 +83,23 @@ Read against the code on 2026-09-09.
   chasing something.
 - Applet subprocess stderr re-emitted line by line at `warn` inside the run
   span. The 500-char tail on the run row stays as the UI summary.
-- **Gate:** on dragon, `journalctl -u virtues -o json -n 2000 | jq -r
-  '.MESSAGE | fromjson | .span.run_id' | sort | uniq -c` shows run ids, and
-  a chosen failed run's full stderr is found by that id alone.
+- **Gate MET on dragon 2026-09-16.** One run id returns that run's whole
+  stderr, line by line, and nothing else. Two notes for whoever runs this
+  next:
+  - **`jq` must tolerate non-JSON lines.** journald's stream carries systemd's
+    own plain-text lines, and bare `jq` aborts the whole pipe on the first
+    one — returning nothing, which reads as "the keys are missing" rather
+    than "your filter died". Use `-o cat` and `jq -R 'fromjson? | …'`. This
+    cost twenty minutes of believing the feature was broken.
+  - **A successful applet run logs nothing**, so it has no keyed lines. The
+    span only appears on lines that exist. That is correct, and it means
+    this gate needs a run that actually says something.
+- **Known limitation, found while verifying:** `with_current_span(true)` +
+  `with_span_list(false)` serializes only the INNERMOST span, so a line
+  logged inside a nested span shows that span's fields and not the request's.
+  In practice every line checked on the box carried what a reader needs,
+  because handlers log at their own level. If a nested span ever hides a key
+  that matters, the fix is `with_span_list(true)` and a bigger line.
 
 ### Slice 2 — the client door — **BUILT 2026-09-15**
 
