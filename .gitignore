@@ -211,3 +211,11 @@ tmp/*
 # `git add -A` away from a public repo, which is a mistake this checkout has
 # already made with other stray files.
 .webui_secret_key
+
+# The generated three-year demo seed. `tools/gen-demo-seed.py` is the source and
+# is deterministic — same script, same SQL — so the ~5 MB it emits is a build
+# artifact rather than a fact about the project. Committing it would put a fresh
+# 5 MB in the permanent history of a public repo on every regeneration, against
+# a 30 KB generator and a 412 KB largest-committed seed. Rebuild with
+# `python3 tools/gen-demo-seed.py` (stdlib only), then `seeds/demo3y/run.sh`.
+virtues-core/seeds/demo3y/
