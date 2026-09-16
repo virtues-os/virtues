@@ -51,6 +51,7 @@
 		findWriteItUpOutput,
 	} from "$lib/components/chat/interview/interview";
 	import Composing from "$lib/components/chat/Composing.svelte";
+	import Trivet from "$lib/components/chat/Trivet.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
@@ -1776,12 +1777,20 @@
 									     the chapters the person just named. -->
 									<ChapterLifelineLive />
 								{/if}
+								<!-- One element, two poses: the mark's points while a turn
+								     works, the figure they imply while it does not. Always
+								     something in the margin, so nothing jumps when the turn
+								     starts — and the room is never empty of its occupant. -->
 								{#if chat.status === "submitted" || chat.status === "streaming"}
 									<Composing label="Composing a reply" />
+								{:else}
+									<Trivet />
 								{/if}
 							{:else if inInterview}
 								{#if reveal.chars || chat.status === "submitted" || chat.status === "streaming"}
 									<Composing label="Composing a reply" />
+								{:else}
+									<Trivet />
 								{/if}
 							{:else if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">
