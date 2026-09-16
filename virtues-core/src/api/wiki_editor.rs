@@ -1,6 +1,6 @@
 //! The wiki editor: one role, one constitution, one brief per subject kind.
 //!
-//! Design: `agents/plan/article-resolution-plan.md`. How the prompts are
+//! Design: `agents/record/article-resolution.md`. How the prompts are
 //! organized and why: `agents/build/wiki-editor.md`.
 //!
 //! This module holds the parts that are pure functions of text — prompt
