@@ -102,6 +102,7 @@ pub async fn compute_novelty_for_day(pool: &PgPool, date: NaiveDate) -> anyhow::
     let baseline = load_baseline(pool, date, true).await?;
 
     let mut scored = 0u32;
+    let mut failed = 0u32;
     for (i, (event_id, _summary, started_at, tz)) in events.iter().enumerate() {
         let embedding = match embeddings.get(i) {
             Some(e) => e,
@@ -119,6 +120,7 @@ pub async fn compute_novelty_for_day(pool: &PgPool, date: NaiveDate) -> anyhow::
 
         if let Err(e) = store_scores(pool, event_id, embedding, novelty_z, local_z).await {
             tracing::warn!(event_id = %event_id, error = %e, "Failed to store novelty");
+            failed += 1;
             continue;
         }
         if novelty_z.is_some() {
@@ -133,8 +135,27 @@ pub async fn compute_novelty_for_day(pool: &PgPool, date: NaiveDate) -> anyhow::
         baseline_days = baseline.as_ref().map_or(0, |b| b.distinct_days),
         baseline_events = baseline.as_ref().map_or(0, |b| b.embeddings.len()),
         lof_ready = baseline.as_ref().map_or(false, |b| b.lof.is_some()),
+        failed,
         "Novelty computation complete"
     );
+
+    // A single store failure is a row that moved under us — skip it. EVERY
+    // store failing is the query, the schema or the connection, and carrying on
+    // means the caller reports a tidy zero for a pipeline that wrote nothing.
+    // That is how the `$5` typo above survived: 2,171 consecutive failures, all
+    // logged at warn, summarised as "0 events rescored" and read as "nothing
+    // needed rescoring".
+    //
+    // `failed > 1` matters: a day can hold exactly one scoreable event, and
+    // failing the whole run because that one row went away would trade a silent
+    // bug for a noisy one. Two in a row is no longer a coincidence.
+    if failed > 1 && scored == 0 {
+        anyhow::bail!(
+            "novelty: all {failed} score writes failed for {date} — \
+             the last error is logged above"
+        );
+    }
+
     Ok(scored)
 }
 
@@ -201,10 +222,16 @@ async fn store_scores(
     novelty_z: Option<f64>,
     local_z: Option<f64>,
 ) -> anyhow::Result<()> {
+    // `$4`, not `$5`. This read `$5` with four binds, so EVERY store failed —
+    // "bind message supplies 4 parameters, but prepared statement requires 5" —
+    // and the caller turned that into a warning and moved on. No embedding was
+    // ever written, so the baseline stayed empty, so `scored` was 0 for every
+    // day of every box, and `reindex` printed a cheerful success line over it.
+    // `sqlx::query` is untyped, so nothing caught it at compile time.
     sqlx::query(
         "UPDATE wiki_events
          SET embedding = $1, novelty_z = $2, local_novelty_z = $3
-         WHERE id = $5",
+         WHERE id = $4",
     )
     .bind(embedding_to_bytes(embedding))
     .bind(novelty_z)
