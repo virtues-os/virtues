@@ -213,6 +213,11 @@ export interface Applet {
 	pulse: AppletRun['status'][];
 	/** The last successful run's summary — what the applet last produced. */
 	last_success_summary: string | null;
+	/** LLM spend charged to this applet over the last 7 days, in micros-USD.
+	 *  0 for everything deterministic, which is most of them. `null` means the
+	 *  box could not read it — NOT that it was free; render those differently
+	 *  from a real zero or the column quietly reassures. */
+	spend_week_micros: number | null;
 	created_at: string;
 	updated_at: string;
 	last_run: AppletLastRun | null;

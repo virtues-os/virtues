@@ -5,6 +5,7 @@
 	import { listApplets, adminReconcile, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { describeSchedule, relativeTime } from '$lib/applets/palette';
+	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import AppletCard from './AppletCard.svelte';
 	import GitImportModal from './GitImportModal.svelte';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
@@ -247,6 +248,20 @@
 			format: 'badge',
 			getValue: (a) => (a.archived_at ? 'finished' : a.enabled ? 'on' : 'off'),
 			badgeColors: { on: 'badge-success', off: 'badge-muted', finished: 'badge-info' }
+		},
+		// Cost is not a per-row fact for most of this table — every sync, every
+		// indexer, every ingest is deterministic and spends nothing, so the
+		// column reads "—" on the large majority of rows by design. It earns
+		// its width on the few that do spend: an AI-authored applet on an
+		// hourly schedule is the one thing here that can quietly run up a bill,
+		// and this is where you would find out. `null` is unknown, not free
+		// (see `spend_week_micros`), so both render "—" rather than "$0.00"
+		// claiming something the box could not confirm.
+		{
+			key: 'spend_week_micros',
+			label: 'Cost / week',
+			getValue: (a) =>
+				a.spend_week_micros ? formatMicrosPrecise(a.spend_week_micros) : '—'
 		},
 		{
 			key: 'last_run',

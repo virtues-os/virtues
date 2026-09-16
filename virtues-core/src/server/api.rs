@@ -256,7 +256,8 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
             -- requests PER APPLET — around fifty on a page — for two small
             -- facts that the database can hand over in the same pass.
             p.pulse,
-            s.summary AS last_success_summary
+            s.summary AS last_success_summary,
+            w.cost_micros AS spend_week_micros
            FROM app_applets t
            LEFT JOIN LATERAL (
                SELECT array_agg(status ORDER BY started_at DESC) AS pulse
@@ -270,6 +271,23 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                   AND result_summary IS NOT NULL AND btrim(result_summary) <> ''
                 ORDER BY started_at DESC LIMIT 1
            ) s ON TRUE
+           -- What this applet has actually spent on AI in the last week.
+           -- Deterministic applets (every sync, every indexer) sum to zero,
+           -- which is the point: the number only appears where something is
+           -- burning money, so an AI-authored applet that runs hourly on a big
+           -- model is visible as such before the bill is.
+           --
+           -- Joined through the run, the same path `spend_micros_last_day`
+           -- takes for the cap. The `::bigint` cast is load-bearing —
+           -- SUM(bigint) is NUMERIC in Postgres and sqlx will not decode that
+           -- as i64.
+           LEFT JOIN LATERAL (
+               SELECT COALESCE(SUM(c.cost_micros), 0)::bigint AS cost_micros
+                 FROM app_ai_calls c
+                 JOIN app_applet_runs ar ON ar.id = c.applet_run_id
+                WHERE ar.applet_id = t.id
+                  AND c.created_at > now() - interval '7 days'
+           ) w ON TRUE
            LEFT JOIN app_applet_runs r ON r.id = (
                SELECT id FROM app_applet_runs
                WHERE applet_id = t.id
@@ -335,6 +353,21 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         .unwrap_or_default();
                     let last_success_summary: Option<String> =
                         r.try_get("last_success_summary").unwrap_or(None);
+                    // The SQL COALESCEs to 0, so a real "spent nothing" arrives
+                    // as 0 and NULL can only mean the decode failed. Those must
+                    // not collapse into each other: this is a money figure, and
+                    // a silently-zero money column reads as good news. So it
+                    // stays Option — null travels to the client as "unknown" —
+                    // and a failure says so once per list rather than never.
+                    let spend_week_micros: Option<i64> =
+                        match r.try_get::<Option<i64>, _>("spend_week_micros") {
+                            Ok(v) => v,
+                            Err(e) => {
+                                tracing::warn!(applet_id = %id, error = %e,
+                                    "could not decode applet weekly spend");
+                                None
+                            }
+                        };
                     let last_run_status: Option<String> =
                         r.try_get("last_run_status").unwrap_or(None);
                     let last_run = last_run_status.map(|s| {
@@ -375,6 +408,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "has_face": has_face,
                         "pulse": pulse,
                         "last_success_summary": last_success_summary,
+                        "spend_week_micros": spend_week_micros,
                         "created_at": created,
                         "updated_at": updated,
                         "last_run": last_run,
