@@ -9,10 +9,17 @@
  * a whole section of the day page was gated on. Components take the wire shape
  * now, as the year page always has.
  *
- * This one stays because it is not a rename: `DayEvent` is consumed by
- * DaylineChart, DaylineStrip, EventTimeline and DayPage, and moving four chart
- * components onto snake_case is a change to make on its own, with the charts
- * in front of you.
+ * **This one stays, and not for lack of appetite.** It looks like the four that
+ * went and is nothing like them. It parses two strings into dates; it COMPUTES
+ * `durationMinutes`, which is not on the wire at all; it applies defaults; it
+ * distinguishes `|| undefined` from `?? undefined` so that an empty string and
+ * an absent value are told apart; and it guards two jsonb columns that arrive
+ * untyped. Delete it and every one of those moves into the eighty-eight places
+ * that read the result.
+ *
+ * The four that went renamed fields and filled in blanks that stayed blank.
+ * The test is whether the translation does work the caller would otherwise
+ * have to do — not whether a translation exists.
  */
 
 import type { TemporalEventApi } from "./api";
