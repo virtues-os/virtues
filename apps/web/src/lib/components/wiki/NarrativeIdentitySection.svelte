@@ -211,10 +211,13 @@
 		margin-bottom: 2rem;
 	}
 
+	/* 400: JJannon has one cut, so the 500 this carried resolved back to the
+	   regular and said nothing (agents/build/typography.md). Size and full ink
+	   already outrank the standfirst — same as the wiki overview's mast. */
 	.mast h1 {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 2rem;
-		font-weight: 500;
+		font-weight: 400;
 		letter-spacing: -0.01em;
 		color: var(--color-foreground);
 		margin: 0 0 0.625rem;

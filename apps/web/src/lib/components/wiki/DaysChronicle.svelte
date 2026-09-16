@@ -180,10 +180,16 @@
 		margin-bottom: 0.25rem;
 	}
 
+	/* The 500 here was the only thing separating a month from the days under it,
+	   and it never rendered: JJannon ships one cut, so the request resolved back
+	   to the regular silently (agents/build/typography.md). At 18px the heading
+	   sat 3px above a 15px serif lede — barely a rank at all. Taken up to the
+	   scale's section-title size instead, which is where the markdown tokens
+	   already put an h2 (and --md-h2-weight is 400 for this same reason). */
 	.month-head h2 {
 		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.125rem;
-		font-weight: 500;
+		font-size: var(--md-h2-size);
+		font-weight: 400;
 		color: var(--color-foreground);
 		margin: 0;
 	}
