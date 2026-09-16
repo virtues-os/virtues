@@ -2,6 +2,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { listApplets, adminReconcile, type Applet } from '$lib/api/client';
@@ -387,26 +388,16 @@
 				{/snippet}
 				{#snippet children()}
 					<div class="new-menu" role="menu">
-						<button
-							type="button"
-							class="new-menu-item"
-							role="menuitem"
-							disabled={reconciling}
+						<MenuItem
+							icon="ri:refresh-line"
+							label="Re-read from disk"
+							description="Pick up applet folders that changed outside the app"
+							loading={reconciling}
 							onclick={() => {
 								moreMenuOpen = false;
 								void reconcile();
 							}}
-						>
-							<Icon icon="ri:refresh-line" width="16" />
-							<div class="new-menu-text">
-								<div class="new-menu-title">
-									{reconciling ? 'Re-reading…' : 'Re-read from disk'}
-								</div>
-								<div class="new-menu-desc">
-									Pick up applet folders that changed outside the app
-								</div>
-							</div>
-						</button>
+						/>
 					</div>
 				{/snippet}
 			</Popover>
@@ -418,20 +409,18 @@
 				{/snippet}
 				{#snippet children()}
 					<div class="new-menu" role="menu">
-						<button type="button" class="new-menu-item" role="menuitem" onclick={startChatFlow}>
-							<Icon icon="ri:chat-smile-2-line" width="16" />
-							<div class="new-menu-text">
-								<div class="new-menu-title">From chat</div>
-								<div class="new-menu-desc">Describe it in plain language</div>
-							</div>
-						</button>
-						<button type="button" class="new-menu-item" role="menuitem" onclick={startGitImportFlow}>
-							<Icon icon="ri:git-repository-line" width="16" />
-							<div class="new-menu-text">
-								<div class="new-menu-title">From Git</div>
-								<div class="new-menu-desc">Import applets from a repo</div>
-							</div>
-						</button>
+						<MenuItem
+							icon="ri:chat-smile-2-line"
+							label="From chat"
+							description="Describe it in plain language"
+							onclick={startChatFlow}
+						/>
+						<MenuItem
+							icon="ri:git-repository-line"
+							label="From Git"
+							description="Import applets from a repo"
+							onclick={startGitImportFlow}
+						/>
 					</div>
 				{/snippet}
 			</Popover>
@@ -536,11 +525,6 @@
 		align-items: center;
 		gap: 0.75rem;
 	}
-	.new-menu-item:disabled {
-		opacity: 0.6;
-		cursor: default;
-	}
-
 	.new-menu {
 		display: flex;
 		flex-direction: column;
@@ -550,41 +534,6 @@
 		border-radius: 8px;
 		background: var(--color-surface, #fff);
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
-	}
-	.new-menu-item {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.625rem;
-		padding: 0.5rem 0.625rem;
-		border: none;
-		border-radius: 6px;
-		background: transparent;
-		text-align: left;
-		cursor: pointer;
-		color: var(--color-foreground, inherit);
-		font: inherit;
-	}
-	.new-menu-item:hover {
-		background: var(--color-surface-elevated, #f3f4f6);
-	}
-	.new-menu-item :global(svg) {
-		margin-top: 0.125rem;
-		color: var(--color-foreground-subtle, #6b7280);
-		flex-shrink: 0;
-	}
-	.new-menu-text {
-		display: flex;
-		flex-direction: column;
-		gap: 0.0625rem;
-		min-width: 0;
-	}
-	.new-menu-title {
-		font-size: 0.8125rem;
-		font-weight: 500;
-	}
-	.new-menu-desc {
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle, #9ca3af);
 	}
 	.reconcile-msg {
 		font-size: 0.75rem;

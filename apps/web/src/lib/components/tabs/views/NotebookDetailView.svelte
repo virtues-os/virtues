@@ -9,6 +9,7 @@
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import RefPicker from '$lib/components/RefPicker.svelte';
 	import IconPicker from '$lib/components/IconPicker.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { Popover } from '$lib/floating';
@@ -679,25 +680,24 @@
 							{#snippet children({ close }: { close: () => void })}
 								<div class="menu">
 									{#if !showMemo}
-										<button
-											class="menu-item"
+										<MenuItem
+											icon="ri:sticky-note-line"
+											label="Add a status note"
 											onclick={() => {
 												close();
 												memoOpen = true;
 											}}
-										>
-											<Icon icon="ri:sticky-note-line" width="15" /> Add a status note
-										</button>
+										/>
 									{/if}
-									<button
-										class="menu-item danger"
+									<MenuItem
+										icon="ri:delete-bin-line"
+										label="Delete notebook"
+										destructive
 										onclick={() => {
 											close();
 											doDelete();
 										}}
-									>
-										<Icon icon="ri:delete-bin-line" width="15" /> Delete notebook
-									</button>
+									/>
 								</div>
 							{/snippet}
 						</Popover>
@@ -904,13 +904,6 @@
 
 	/* Overflow menu */
 	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }
-	.menu-item {
-		display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
-		padding: 7px 9px; border: none; border-radius: 7px; background: transparent;
-		font: inherit; font-size: 0.85rem; color: var(--color-foreground); cursor: pointer;
-	}
-	.menu-item:hover { background: var(--color-surface-elevated); }
-	.menu-item.danger { color: var(--color-error, #dc2626); }
 
 	/* Ask bar — a line, not a slab.
 	   It was the largest, highest-contrast object on the page and the least

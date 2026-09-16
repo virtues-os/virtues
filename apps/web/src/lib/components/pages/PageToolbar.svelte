@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import MenuItem from "$lib/components/MenuItem.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
@@ -177,19 +178,14 @@
 			{/snippet}
 			{#snippet children({ close })}
 				<div class="overflow-menu">
-					<button
-						class="overflow-item"
+					<MenuItem
+						icon={copied ? "ri:check-line" : "ri:file-copy-line"}
+						label={copied ? "Copied!" : "Copy as Markdown"}
 						onclick={() => {
 							onCopyMarkdown();
 							close();
 						}}
-					>
-						<Icon
-							icon={copied ? "ri:check-line" : "ri:file-copy-line"}
-							width="15"
-						/>
-						<span>{copied ? "Copied!" : "Copy as Markdown"}</span>
-					</button>
+					/>
 					<div class="overflow-divider"></div>
 					{#if showDeleteConfirm}
 						<div class="delete-confirm">
@@ -215,13 +211,12 @@
 							</div>
 						</div>
 					{:else}
-						<button
-							class="overflow-item overflow-item-danger"
+						<MenuItem
+							icon="ri:delete-bin-line"
+							label="Delete page"
+							destructive
 							onclick={() => (showDeleteConfirm = true)}
-						>
-							<Icon icon="ri:delete-bin-line" width="15" />
-							<span>Delete page</span>
-						</button>
+						/>
 					{/if}
 				</div>
 			{/snippet}
@@ -308,35 +303,6 @@
 		flex-direction: column;
 		padding: 4px;
 		min-width: 190px;
-	}
-
-	.overflow-item {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 7px 10px;
-		border: none;
-		background: none;
-		color: var(--color-foreground);
-		font-size: 13px;
-		text-align: left;
-		border-radius: 6px;
-		cursor: pointer;
-		transition:
-			color 0.12s ease,
-			background-color 0.12s ease;
-	}
-
-	.overflow-item:hover {
-		background: var(--hover-bg);
-	}
-
-	.overflow-item-danger {
-		color: var(--color-foreground-muted);
-	}
-
-	.overflow-item-danger:hover {
-		color: var(--color-error);
 	}
 
 	.overflow-divider {

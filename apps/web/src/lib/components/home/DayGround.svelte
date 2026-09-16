@@ -184,6 +184,11 @@
 	.map :global(.leaflet-control-attribution) {
 		background: color-mix(in srgb, var(--color-surface) 78%, transparent);
 		color: var(--color-foreground-muted);
+		/* Leaflet's own chrome, required by the map license and conventionally
+		   the smallest thing on a map. Raising it to the 11px floor would make
+		   the credit compete with the track, which the rule above says it must
+		   never do. */
+		/* design-ok: the tile provider's attribution, not our type. */
 		font-size: 9px;
 		line-height: 1.4;
 		padding: 1px 5px;
