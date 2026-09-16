@@ -161,6 +161,25 @@ PEOPLE = [
     ("p3y_tam", "Tam Nguyen", "friend", "moderate", 200, DAYS, 4, "Neighbor two doors down."),
     ("p3y_bird", "Birdie Lowell", "family", "close", 0, DAYS, 5, "Grandmother. Letters, then calls."),
     ("p3y_curt", "Curt Halloway", "professional", "weak", 0, 120, 2, "Chicago landlord. Deposit disputes."),
+    # The second ring: people a life actually contains and a demo usually
+    # lacks — neighbours, trades, the doctor, the people you only see in one
+    # context. A cast of six makes every list look like a test fixture.
+    ("p3y_sofia", "Sofia Marchetti", "friend", "moderate", 470, DAYS, 4, "Bea's oldest friend. Cooks like it's a sport."),
+    ("p3y_abe", "Abe Ferreira", "professional", "weak", 520, DAYS, 2, "The plumber. Twice, memorably."),
+    ("p3y_wren", "Wren Calloway", "colleague", "moderate", 760, DAYS, 4, "Writes the docs. Argues about commas, correctly."),
+    ("p3y_otis", "Otis Bramble", "friend", "weak", 330, DAYS, 3, "Neighbour with the loud truck and the good tomatoes."),
+    ("p3y_maeve", "Maeve Sullivan", "family", "moderate", 0, DAYS, 3, "Cousin. Christmas and crises."),
+    ("p3y_dr_park", "Dr. Ellen Park", "professional", "weak", 560, DAYS, 2, "GP. The one who asked about sleep first."),
+    ("p3y_tobias", "Tobias Renn", "colleague", "moderate", 900, DAYS, 4, "Hardware. Patient about firmware."),
+    ("p3y_pia", "Pia Halloran", "friend", "moderate", 640, DAYS, 3, "Book club, loosely defined."),
+    ("p3y_hector", "Hector Salas", "professional", "weak", 600, DAYS, 2, "Bike shop. Knows the creak."),
+    ("p3y_lin", "Lin Ashworth", "colleague", "weak", 1000, DAYS, 3, "First beta tester who filed a real bug."),
+    ("p3y_greta", "Greta Voss", "friend", "weak", 250, 780, 3, "Climbing partner until the shoulder."),
+    ("p3y_ray", "Ray Okonjo", "family", "weak", 0, DAYS, 2, "Uncle Hal's brother. Once a year."),
+    ("p3y_juno", "Juno Ellery", "colleague", "moderate", 840, DAYS, 3, "Illustrator. Fast and unhurried at once."),
+    ("p3y_stef", "Stef Nowak", "friend", "moderate", 180, DAYS, 3, "Austin. Met in a queue, stayed a friend."),
+    ("p3y_bram", "Bram Teague", "professional", "weak", 700, DAYS, 2, "Accountant's associate. Emails only."),
+    ("p3y_nyla", "Nyla Osei", "friend", "moderate", 540, DAYS, 4, "Walt's sister. Better company than Walt."),
 ]
 
 PLACES = [
@@ -183,6 +202,22 @@ PLACES = [
     ("p3y_pl_nells", "Nell's", "residence", 0.0132, -0.0098, "Hyde Park, Austin, TX"),
     ("p3y_pl_lisbon", "Lisbon", "travel", 8.43, 88.6, "Lisboa, Portugal"),
     ("p3y_pl_dogpark", "Norwood dog park", "outdoors", 0.0043, 0.0087, "Austin, TX"),
+    ("p3y_pl_taqueria", "Vera's Taqueria", "restaurant", 0.0061, 0.0034, "E 1st St, Austin, TX"),
+    ("p3y_pl_bookshop", "Bell & Marrow Books", "shop", 0.0038, -0.0072, "S 1st St, Austin, TX"),
+    ("p3y_pl_barton", "Barton Springs", "outdoors", -0.0091, -0.0136, "Austin, TX"),
+    ("p3y_pl_hardware", "Cobb Hardware", "shop", 0.0079, 0.0051, "Manor Rd, Austin, TX"),
+    ("p3y_pl_dentist", "Hyde Park Dental", "health", 0.0141, -0.0087, "Austin, TX"),
+    ("p3y_pl_coffee2", "Radio Coffee", "cafe", -0.0044, -0.0121, "S 1st St, Austin, TX"),
+    ("p3y_pl_venue", "The Parish", "venue", 0.0031, -0.0104, "E 6th St, Austin, TX"),
+    ("p3y_pl_studio", "The workshop", "work", 0.0102, 0.0038, "Austin, TX"),
+    ("p3y_pl_pool", "Deep Eddy", "outdoors", -0.0027, -0.0188, "Austin, TX"),
+    ("p3y_pl_sofia", "Sofia's", "residence", 0.0118, 0.0094, "Austin, TX"),
+    ("p3y_pl_parents", "Rockford", "travel", 11.99, 8.79, "Rockford, IL"),
+    ("p3y_pl_chi_bar", "The Owl", "venue", 11.61, 10.11, "Logan Square, Chicago, IL"),
+    ("p3y_pl_chi_climb", "Brooklyn Boulders", "gym", 11.63, 10.15, "Chicago, IL"),
+    ("p3y_pl_denver", "Denver", "travel", 9.46, -7.28, "Denver, CO"),
+    ("p3y_pl_conf", "Web Summit", "venue", 8.44, 88.58, "Lisboa, Portugal"),
+    ("p3y_pl_lake", "Lake Travis", "outdoors", 0.1204, -0.2311, "Travis County, TX"),
 ]
 
 ORGS = [
@@ -194,6 +229,11 @@ ORGS = [
     ("p3y_org_clinic", "Hyde Park Family Medicine", "clinic", "provider", None, None, None),
     ("p3y_org_gym", "Eastside Barbell", "company", "member", None, date(2024, 2, 1), None),
     ("p3y_org_bank", "Third Coast Credit Union", "bank", "customer", None, None, None),
+    ("p3y_org_dental", "Hyde Park Dental", "clinic", "provider", None, None, None),
+    ("p3y_org_club", "Bell & Marrow Reading Group", "club", "member", None, date(2024, 9, 5), None),
+    ("p3y_org_client", "Kestrel Labs", "company", "client", "Design lead (contract)",
+     date(2025, 3, 10), date(2025, 9, 30)),
+    ("p3y_org_utility", "Austin Energy", "utility", "customer", None, None, None),
 ]
 
 # Chapters must tile the span without overlapping — `wiki_chapters_no_overlap`
@@ -374,13 +414,44 @@ def build():
                               "created_at", "updated_at"])
     articles = tbl("wiki_articles", ["id", "subject_type", "subject_id", "page_id",
                                      "last_written_at", "maintenance", "theirs", "removed"])
+    # The rooms nothing had ever seeded. `id` is omitted on the three identity
+    # tables (notebook items, notes, memories) — Postgres generates it.
+    notebooks = tbl("app_notebooks", ["id", "name", "icon", "accent_color", "sort_order",
+                                      "instructions", "auto_add_materials",
+                                      "created_at", "updated_at"])
+    nbitems = tbl("app_notebook_items", ["notebook_id", "url", "sort_order", "added_at",
+                                         "role", "added_by"])
+    notes = tbl("wiki_notes", ["subject_type", "subject_id", "kind", "body", "author",
+                               "created_at", "source_refs", "resolved_at", "resolution",
+                               "resolved_by"])
+    memories = tbl("app_assistant_memories", ["lane", "body", "author", "created_at",
+                                              "updated_at", "retired_at", "retired_reason"])
+    marks = tbl("data_content_bookmark", ["id", "url", "title", "description",
+                                          "source_platform", "bookmark_type", "author",
+                                          "tags", "occurred_at", "source_stream_id",
+                                          "source_table", "source_provider", "note",
+                                          "enrichment_status"])
+    docs = tbl("data_content_document", ["id", "title", "content", "content_summary",
+                                         "document_type", "tags", "is_authored",
+                                         "occurred_at", "source_stream_id", "source_table",
+                                         "source_provider"])
+    web = tbl("data_activity_web_browsing", ["id", "url", "domain", "page_title",
+                                             "occurred_at", "source_stream_id",
+                                             "source_table", "source_provider"])
+    applets = tbl("app_applets", ["id", "name", "owner", "agent", "schedule", "enabled",
+                                  "config", "triggers", "description", "created_at",
+                                  "updated_at"])
+    runs = tbl("app_applet_runs", ["id", "applet_id", "status", "started_at", "completed_at",
+                                   "records_processed", "trigger", "result_summary", "error",
+                                   "message", "created_at"])
 
     # ---- entities -------------------------------------------------------
-    for pid, name, rel, bond, f, l, w, notes in PEOPLE:
+    # `blurb`, not `notes` — the latter is the wiki_notes table three hundred
+    # lines down, and binding it here shadowed it into a string.
+    for pid, name, rel, bond, _first, _last, w, blurb in PEOPLE:
         handle = name.split()[0].lower()
         people.add(pid, name, [f"{handle}@example.com"],
-                   [f"+1512555{RNG.randint(1000, 9999):04d}"], rel, None, notes,
-                   {"weight": w}, [], bond)
+                   [PHONE[pid]], rel, None, blurb, {"weight": w}, [], bond)
 
     for pid, name, cat, dlat, dlon, addr in PLACES:
         places.add(pid, name, cat, addr, round(LAT0 + dlat, 6), round(LON0 + dlon, 6),
@@ -432,18 +503,31 @@ def build():
             n += 1
             continue
 
-        _day_health(d, off, hr, hrv, steps, sleep, workout, migraine, instrumented, weekend)
-        _day_location(d, off, lpoint, lvisit, instrumented, lisbon, chi, weekend)
-        _day_comms(d, off, msg, email, lisbon)
-        _day_money(d, off, txn, lisbon, chi)
-        _day_weather(d, off, wx, lisbon)
-        _day_calendar(d, off, cal, weekend, chi)
-        _day_events(d, off, did, events, migraine, instrumented, lisbon, chi, weekend)
+        # One dict per day, filled by each stream writer and read by the event
+        # writer last. The summaries have to be composed from what the day
+        # actually holds: the first version drew them from a five-item list, so
+        # 3,257 events carried 13 distinct strings between them, the embedding
+        # space had 13 points in it, and `build_lof_model` correctly refused to
+        # score local novelty at all ("no spread in outlierness").
+        ctx = {}
+        _day_health(d, off, hr, hrv, steps, sleep, workout, migraine, instrumented, weekend, ctx)
+        _day_location(d, off, lpoint, lvisit, instrumented, lisbon, chi, weekend, ctx)
+        _day_comms(d, off, msg, email, lisbon, ctx)
+        _day_money(d, off, txn, lisbon, chi, ctx)
+        _day_weather(d, off, wx, lisbon, ctx)
+        _day_calendar(d, off, cal, weekend, chi, ctx)
+        _day_events(d, off, did, events, migraine, instrumented, lisbon, chi, weekend, ctx)
+        _day_web(d, off, web, chi)
         n += 1
 
     facts = compute_facts(t)
     _chats(chats, cmsg, facts)
     _pages_and_articles(pages, articles, facts)
+    _notebooks(notebooks, nbitems)
+    _user_pages(pages)
+    _notes_and_memories(notes, memories)
+    _saves_and_docs(marks, docs)
+    _applets(applets, runs)
 
     return t, n
 
@@ -453,7 +537,7 @@ def build():
 # --------------------------------------------------------------------------
 
 
-def _day_health(d, off, hr, hrv, steps, sleep, workout, migraine, instrumented, weekend):
+def _day_health(d, off, hr, hrv, steps, sleep, workout, migraine, instrumented, weekend, ctx):
     k = d.isoformat()
     # Sleep. The migraine days are preceded by a short, poor night — the
     # correlation has to be IN the data or "why do I have a migraine today?"
@@ -469,8 +553,11 @@ def _day_health(d, off, hr, hrv, steps, sleep, workout, migraine, instrumented, 
 
     # HRV: one morning reading, depressed on and around a migraine day.
     base = 41 if short else RNG.uniform(56, 78)
-    hrv.add(f"p3y_hrv_{k}", round(base + RNG.uniform(-4, 4), 1), ts(d, 7, 12),
+    hrv_val = round(base + RNG.uniform(-4, 4), 1)
+    hrv.add(f"p3y_hrv_{k}", hrv_val, ts(d, 7, 12),
             f"p3y_s_hrv_{k}", "data_health_hrv", "demo")
+    ctx["hrv"] = hrv_val
+    ctx["sleep_min"] = dur
 
     # Resting heart rate through the day, and a dense series when instrumented.
     hours = range(6, 23) if instrumented else (7, 12, 18, 22)
@@ -483,6 +570,7 @@ def _day_health(d, off, hr, hrv, steps, sleep, workout, migraine, instrumented, 
 
     steps_total = RNG.randint(1400, 3600) if migraine else (
         RNG.randint(6200, 14800) if weekend else RNG.randint(4100, 10200))
+    ctx["steps"] = steps_total
     if instrumented:
         for h in range(7, 22):
             steps.add(f"p3y_st_{k}_{h}", max(0, int(steps_total / 15 + RNG.randint(-260, 420))),
@@ -508,9 +596,10 @@ def _day_health(d, off, hr, hrv, steps, sleep, workout, migraine, instrumented, 
     start = ts(d, 17 if not weekend else 9, RNG.randint(0, 40))
     workout.add(f"p3y_wk_{k}", w[0], start, start + timedelta(minutes=w[1]), w[1], w[2], w[3],
                 w[4], w[5], f"p3y_s_wk_{k}", "data_health_workout", "demo")
+    ctx["workout"] = w
 
 
-def _day_location(d, off, lpoint, lvisit, instrumented, lisbon, chi, weekend):
+def _day_location(d, off, lpoint, lvisit, instrumented, lisbon, chi, weekend, ctx):
     k = d.isoformat()
     if lisbon:
         stops = [("Lisbon", 8.43, 88.6, 8, 20)]
@@ -538,6 +627,7 @@ def _day_location(d, off, lpoint, lvisit, instrumented, lisbon, chi, weekend):
                    s, e, int((e - s).total_seconds() // 60),
                    f"p3y_s_lv_{k}_{i}", "data_location_visit", "demo")
 
+    ctx["stops"] = [nm for nm, *_ in stops]
     if not instrumented:
         return
     # A real trace on instrumented days — enough for the movement map to draw a
@@ -562,14 +652,17 @@ def _day_location(d, off, lpoint, lvisit, instrumented, lisbon, chi, weekend):
 PHONE = {p[0]: f"+1512555{2000 + i * 7:04d}" for i, p in enumerate(PEOPLE)}
 
 
-def _day_comms(d, off, msg, email, lisbon):
+def _day_comms(d, off, msg, email, lisbon, ctx):
     k = d.isoformat()
+    spoke = []
     # Contact frequency decays for the Chicago half and rises for the Austin
     # half, so "who have I lost touch with" is answerable from counts alone.
     live = [p for p in PEOPLE if p[4] <= off <= p[5]]
     count = RNG.randint(1, 3) if lisbon else RNG.randint(2, 7)
     for i in range(count):
         pid, name, *_rest = RNG.choices(live, weights=[p[6] for p in live])[0]
+        if name not in spoke:
+            spoke.append(name)
         handle = name.split()[0].lower()
         inbound = RNG.random() < 0.55
         body = RNG.choice([
@@ -585,6 +678,7 @@ def _day_comms(d, off, msg, email, lisbon):
                 True, False, False, ts(d, RNG.randint(8, 22), RNG.randint(0, 59)),
                 f"p3y_s_ms_{k}_{i}", "data_communication_message", "demo")
 
+    ctx["spoke"] = spoke
     if RNG.random() < 0.6:
         subj = RNG.choice([
             "Re: invoice", "Your order has shipped", "Notes from today",
@@ -598,8 +692,9 @@ def _day_comms(d, off, msg, email, lisbon):
                   f"p3y_s_em_{k}", "data_communication_email", "demo")
 
 
-def _day_money(d, off, txn, lisbon, chi):
+def _day_money(d, off, txn, lisbon, chi, ctx):
     k = d.isoformat()
+    bought = []
     cur = "EUR" if lisbon else "USD"
     # The subscription nobody uses. Charged on the 6th of every month for the
     # whole span — this is what makes "what am I still paying for that I never
@@ -644,6 +739,8 @@ def _day_money(d, off, txn, lisbon, chi):
             # than drifting at random, so "am I spending more?" has a real
             # answer and a real cause underneath it.
             amount = int(amount * (1.0 if chi else 1.45 if off < BEA_ARRIVES else 2.15))
+        bought.append((merchant, amount))
+        ctx["bought"] = bought
         txn.add(f"p3y_tx_{k}_{i}", "p3y_acct_card", f"p3y_txid_{k}_{i}",
                 amount, cur, merchant, cat, merchant.upper(),
                 ["Shops", cat.title()], False, "debit",
@@ -652,7 +749,7 @@ def _day_money(d, off, txn, lisbon, chi):
                 f"p3y_s_tx_{k}_{i}", "data_financial_transaction", "demo")
 
 
-def _day_weather(d, off, wx, lisbon):
+def _day_weather(d, off, wx, lisbon, ctx):
     k = d.isoformat()
     lat, lon = (38.72, -9.14) if lisbon else (LAT0, LON0)
     seasonal = 20 + 12 * math.sin((d.timetuple().tm_yday - 100) / 365 * 2 * math.pi)
@@ -664,10 +761,12 @@ def _day_weather(d, off, wx, lisbon):
            round(RNG.uniform(38, 88), 1), rain, round(RNG.uniform(3, 27), 1),
            hi, lo, 61 if rain > 1 else 2,
            f"p3y_s_wx_{k}", "data_environment_weather", "demo")
+    ctx["weather"] = (hi, lo, rain)
 
 
-def _day_calendar(d, off, cal, weekend, chi):
+def _day_calendar(d, off, cal, weekend, chi, ctx):
     k = d.isoformat()
+    ctx["meetings"] = []
     # The ghost: a calendar block with nothing behind it. The day page must
     # render this as an honest `unknown`, never as a thing that happened.
     if off == GHOST_EVENT:
@@ -685,16 +784,25 @@ def _day_calendar(d, off, cal, weekend, chi):
             ("Market run", "Mueller Farmers Market"), ("Client call", None),
         ])
         h = RNG.randint(9, 18)
+        ctx["meetings"].append(title)
         cal.add(f"p3y_cal_{k}_{i}", title, None, "Work" if chi or h < 17 else "Personal",
                 "confirmed", [], where, ts(d, h, 0), ts(d, h + 1, 0), False,
                 title.startswith("Dinner"), f"p3y_s_cal_{k}_{i}",
                 "data_calendar_event", "demo")
 
 
-def _day_events(d, off, did, events, migraine, instrumented, lisbon, chi, weekend):
-    """The derived layer. Thin on purpose relative to the streams beneath it —
-    on a real box these come out of the segmentation pass, and the point of
-    seeding raw data first is that the pass can be re-run to replace them."""
+def _day_events(d, off, did, events, migraine, instrumented, lisbon, chi, weekend, ctx):
+    """The derived layer, composed from what the day actually holds.
+
+    Every summary is built out of `ctx` — the workout and its distance, the
+    places, who was messaged, the weather, what was spent — so no two days read
+    alike and the embedding space has real spread. That matters mechanically,
+    not only aesthetically: local novelty is a LOF z-score, and LOF needs
+    variance in outlierness to be computable at all.
+
+    On a real box these come out of the segmentation pass; seeding the streams
+    first means that pass can be re-run to replace them.
+    """
     k = d.isoformat()
     seq = 0
 
@@ -705,54 +813,137 @@ def _day_events(d, off, did, events, migraine, instrumented, lisbon, chi, weeken
                    onts, topics or [], entities or [], summary, kind, conf)
         seq += 1
 
-    ev(0, 7, "Asleep", "Home", ["data_health_sleep"],
-       "A short night — under five hours." if migraine else "A full night.",
+    def money(n=2):
+        b = ctx.get("bought", [])[:n]
+        return ", ".join(f"${a / 100:.2f} at {m}" for m, a in b)
+
+    def who(n=3):
+        p = ctx.get("spoke", [])[:n]
+        if not p:
+            return ""
+        if len(p) == 1:
+            return p[0]
+        return ", ".join(p[:-1]) + " and " + p[-1]
+
+    def sky():
+        if "weather" not in ctx:
+            return ""
+        hi, lo, rain = ctx["weather"]
+        if rain > 8:
+            return f"Heavy rain, {hi:.0f}°C."
+        if rain > 1:
+            return f"Wet, {hi:.0f}°C."
+        if hi > 33:
+            return f"{hi:.0f}°C and nowhere to put it."
+        if lo < 2:
+            return f"Down to {lo:.0f}°C overnight."
+        return f"{hi:.0f}°C."
+
+    # --- sleep -----------------------------------------------------------
+    mins = ctx.get("sleep_min", 0)
+    hrv_v = ctx.get("hrv")
+    sleep_txt = f"{mins // 60}h{mins % 60:02d}"
+    ev(0, 7, "Asleep", "Home", ["data_health_sleep", "data_health_hrv"],
+       f"{sleep_txt} down, HRV {hrv_v}." + (" Short, and it shows in the morning."
+                                           if mins < 330 else ""),
        kind="sleep", conf="high")
 
+    # --- the migraine days -----------------------------------------------
     if migraine:
+        late = next((f"${a / 100:.2f} at {m}" for m, a in ctx.get("bought", [])
+                     if m == "Jo's"), None)
         ev(7, 12, "A slow morning", "Home",
            ["data_health_heart_rate", "data_health_hrv", "data_health_sleep"],
-           "Migraine. Low light, no screen, and almost no movement until the afternoon.",
+           f"Migraine. {sleep_txt} of sleep behind it and HRV at {hrv_v}, the lowest "
+           f"in weeks. Low light, no screen, {ctx.get('steps', 0):,} steps for the "
+           f"whole day." + (f" A late coffee the night before — {late}." if late else ""),
            conf="high", topics=["health"], entities=[])
         ev(12, 22, "Recovering", "Home", ["data_location_visit", "data_health_steps"],
-           "Fourteen hundred steps for the whole day.", conf="medium")
+           f"Lifted by the afternoon. {sky()} Nothing on the calendar, and nothing "
+           f"attempted.", conf="medium")
         return
 
+    # --- the ghost -------------------------------------------------------
     if off == GHOST_EVENT:
         ev(15, 16, None, None, ["data_calendar_event"],
-           "A calendar block with nothing behind it — no location, no messages, no spend.",
-           kind="unknown", conf="low")
+           "A calendar block — \u201cCoffee \u2014 J.\u201d \u2014 with nothing behind it. "
+           "No location, no messages, no spend in the hour either side. I cannot say "
+           "whether it happened.", kind="unknown", conf="low")
 
+    # --- travel ----------------------------------------------------------
     if lisbon:
-        ev(8, 20, "Lisbon", "Lisbon", ["data_location_visit", "data_financial_transaction"],
-           "Out most of the day. Everything priced in euros.", conf="medium",
-           topics=["travel"], entities=[])
+        spend = money(2)
+        ev(8, 20, "Lisbon", "Lisbon",
+           ["data_location_visit", "data_financial_transaction", "data_environment_weather"],
+           f"Out most of the day. {sky()} "
+           + (f"Everything in euros — {spend}." if spend else "Everything in euros."),
+           conf="medium", topics=["travel"], entities=[])
+        if ctx.get("spoke"):
+            ev(21, 23, "Evening", "Lisbon", ["data_communication_message"],
+               f"Messages home to {who(2)}.", conf="medium")
         return
 
+    # --- the two novelty cases, described rather than scored -------------
+    w = ctx.get("workout")
     if off == FIRST_KAYAK:
         ev(9, 12, "Kayaking on the lake", "Lady Bird Lake",
            ["data_health_workout", "data_location_visit", "data_location_point"],
-           "First time on the water. Nothing else in the record looks like it.",
+           f"Three hours on the water — {w[3]} km, average heart rate {w[4]}. "
+           f"{sky()} Nothing else in the record looks like it.",
            conf="high", topics=["outdoors", "first"])
     elif off == RAN_INSTEAD:
         ev(17, 18, "Ran instead of lifting", "Mueller Trails",
            ["data_health_workout", "data_health_heart_rate"],
-           "An ordinary workout, at the far edge of its own kind — nine kilometres "
-           "on a day that is usually a lifting day.",
-           conf="high", topics=["fitness"])
+           f"{w[3]} km at an average of {w[4]} bpm, on an evening that is normally "
+           f"a barbell and forty minutes indoors.", conf="high", topics=["fitness"])
     elif chi:
         ev(9, 18, "At the agency", "The agency",
-           ["data_location_visit", "data_calendar_event"], "A studio day.", conf="high")
+           ["data_location_visit", "data_calendar_event"],
+           _work_line(ctx, sky, money, "A studio day"), conf="high")
     elif weekend:
-        ev(10, 15, "Out", "Austin", ["data_location_visit"],
-           "Market, then errands.", conf="medium")
+        stops = [p for p in ctx.get("stops", []) if p != "Home"]
+        where = stops[0] if stops else "Austin"
+        ev(10, 15, "Out", where, ["data_location_visit", "data_financial_transaction"],
+           f"{where}" + (f", then {money(1)}" if ctx.get("bought") else "") + f". {sky()}",
+           conf="medium")
     else:
         ev(9, 17, "Working", "Office" if off < D(2025, 1, 15) else "Home",
            ["data_location_visit", "data_calendar_event", "data_activity_app_session"],
-           "A working day.", conf="high")
+           _work_line(ctx, sky, money, "A working day"), conf="high")
 
-    ev(18, 23, "Evening", "Home", ["data_location_visit", "data_communication_message"],
-       "Home by six.", conf="medium")
+    # --- the workout, when it is not the day's headline -------------------
+    if w and off not in (FIRST_KAYAK, RAN_INSTEAD):
+        kindname = w[0].replace("_", " ")
+        dist = f", {w[3]} km" if w[3] else ""
+        ev(17, 18, kindname.title(), ctx.get("stops", ["Home"])[-1],
+           ["data_health_workout"],
+           f"{w[1]} minutes of {kindname}{dist}, average {w[4]} bpm.", conf="high",
+           topics=["fitness"])
+
+    # --- the evening ------------------------------------------------------
+    people = who(3)
+    steps = ctx.get("steps", 0)
+    ev(18, 23, "Evening", "Home",
+       ["data_location_visit", "data_communication_message", "data_health_steps"],
+       (f"Home by six. Messages with {people}. " if people else "Home by six. ")
+       + f"{steps:,} steps on the day.", conf="medium")
+
+
+def _work_line(ctx, sky, money, opener):
+    """One sentence about a working day, built from that day's own contents."""
+    bits = [opener + "."]
+    meetings = ctx.get("meetings", [])
+    if len(meetings) == 1:
+        bits.append(f"One thing on the calendar: {meetings[0]}.")
+    elif meetings:
+        bits.append(f"{len(meetings)} on the calendar — {', '.join(meetings[:2])}.")
+    else:
+        bits.append("Nothing on the calendar.")
+    spend = money(1)
+    if spend:
+        bits.append(f"{spend}.")
+    bits.append(sky())
+    return " ".join(b for b in bits if b)
 
 
 # --------------------------------------------------------------------------
@@ -1129,7 +1320,7 @@ RUNSH = """\
 set -eu
 DB="${DB:-virtues}"
 cd "$(dirname "$0")"
-for f in 01_entities.sql 02_streams.sql 03_derived.sql 04_creation.sql 99_reanchor.sql; do
+for f in 01_entities.sql 02_streams.sql 03_derived.sql 04_creation.sql 05_content.sql 99_reanchor.sql; do
   echo "→ $f"
   psql -v ON_ERROR_STOP=1 -d "$DB" -f "$f" >/dev/null
 done
@@ -1145,6 +1336,308 @@ HEADER = """\
 -- reaches model providers at runtime.
 """
 
+def _day_web(d, off, web, chi):
+    k = d.isoformat()
+    for i in range(RNG.randint(1, 4)):
+        dom, title = RNG.choice([
+            ("news.ycombinator.com", "Hacker News"),
+            ("en.wikipedia.org", RNG.choice(["Kayak", "Subsidiarity", "Lisbon", "Migraine",
+                                             "Local outlier factor", "Jacques Jannon"])),
+            ("github.com", RNG.choice(["sqlx", "llama.cpp", "svelte", "pgvector"])),
+            ("apartments.com" if chi else "austinmonthly.com", "Listings"),
+            ("kagi.com", "Search"),
+            ("bell-and-marrow.example.com", "Bell & Marrow Books"),
+        ])
+        web.add(f"p3y_web_{k}_{i}", f"https://{dom}/", dom, title,
+                ts(d, RNG.randint(8, 23), RNG.randint(0, 59)),
+                f"p3y_s_web_{k}_{i}", "data_activity_web_browsing", "demo")
+
+
+NOTEBOOKS = [
+    # (id, name, icon, accent, instructions, auto_add, [(url, role)])
+    ("p3y_nb_house", "The Selden St house", "\U0001F3E1", "#7A5C3E",
+     "Everything about buying and keeping this house. Inspection notes are the "
+     "important part; the rest is sentiment.", True,
+     [("/place/place_demo_home", "pin"), ("/person/person_demo_rachel", "library"),
+      ("/page/p3y_up_inspection", "manuscript"), ("/page/p3y_up_closing", "library")]),
+    ("p3y_nb_migraine", "Migraines", "\U0001FA7A", "#8C3B3B",
+     "Track what precedes one. Do not speculate about causes — collect, then look.",
+     True,
+     [("/chat/p3y_chat_00", "pin"), ("/page/p3y_up_triggers", "manuscript"),
+      ("/person/p3y_dr_park", "library")]),
+    ("p3y_nb_lisbon", "Lisbon", "\u2708\uFE0F", "#3E6B7A", None, False,
+     [("/place/p3y_pl_lisbon", "pin"), ("/page/p3y_up_packing", "library"),
+      ("/place/p3y_pl_conf", "library")]),
+    ("p3y_nb_independent", "Going independent", "\U0001F5DD\uFE0F", "#4A5D3A",
+     "The decision, the runway maths, and who I told in what order.", True,
+     [("/org/org_demo_employer", "library"), ("/org/p3y_org_client", "library"),
+      ("/page/p3y_up_runway", "manuscript"), ("/chat/p3y_chat_03", "pin")]),
+    ("p3y_nb_chicago", "Chicago, before", "\U0001F5C3\uFE0F", "#5A5A6B", None, False,
+     [("/person/p3y_theo", "pin"), ("/person/p3y_junie", "library"),
+      ("/place/p3y_pl_chicago_apt", "library"), ("/org/p3y_org_agency", "library")]),
+    ("p3y_nb_reading", "Reading", "\U0001F4DA", "#6B5A3E",
+     "Books and long pieces only. Links to tools go somewhere else.", True,
+     [("/page/p3y_up_reading", "manuscript"), ("/person/p3y_pia", "library")]),
+]
+
+
+def _notebooks(notebooks, nbitems):
+    """Six notebooks with their children — the room has never had any data.
+
+    A notebook item is a URL into the record (`/person/`, `/place/`, `/org/`,
+    `/page/`, `/chat/`), so the children are real refs rather than copies, and
+    the roles exercise all three: `pin` is the spine, `manuscript` is the thing
+    being written, `library` is everything gathered around it.
+    """
+    now = ts(ANCHOR_END, 9, 0)
+    for i, (nid, name, icon, accent, instr, auto, items) in enumerate(NOTEBOOKS):
+        made = ts(START + timedelta(days=400 + i * 90), 10, 0)
+        notebooks.add(nid, name, icon, accent, i, instr, auto, made, now)
+        for j, (url, role) in enumerate(items):
+            # Some of it gathered by hand, some pulled in by the magnet — a
+            # notebook where every row says "user" hides half the feature.
+            by = "user" if role != "library" or j % 3 else "magnet"
+            nbitems.add(nid, url, j, made + timedelta(days=j), role, by)
+
+
+USER_PAGES = [
+    ("p3y_up_inspection", "Inspection — 1847 Selden", "\U0001F50D",
+     "Roof: 4-6 years left, seller won't budge. Foundation: two hairlines, both "
+     "old, [@Cora Delgado](/person/person_demo_rachel) says they're settlement not "
+     "movement and the report agrees.\n\nHVAC is the real number — 2009, and the "
+     "inspector's face did a thing when he said it.\n\n**Walk away number: 5%.** "
+     "Wrote it down so I'd hold to it. Held to it."),
+    ("p3y_up_triggers", "What precedes a migraine", "\U0001F4C9",
+     "Keeping this by hand because the server can't see everything.\n\n- Short "
+     "sleep — every time, no exceptions yet\n- Late coffee — most times\n- Bright "
+     "afternoon, especially on the water\n- NOT stress, as far as I can tell. The "
+     "worst weeks of the Canopy thing had none.\n\n[@Dr. Ellen Park]"
+     "(/person/p3y_dr_park) asked about sleep before anything else, which I "
+     "thought was a stock question and turned out not to be."),
+    ("p3y_up_runway", "Runway", "\U0001F4B0",
+     "Savings covers 11 months at the current burn, 7 if the health insurance goes "
+     "the way [@Sam Whitlock](/person/p3y_sam_whitlock) thinks.\n\nKestrel "
+     "contract would cover 4 of those on its own.\n\nThe honest version: I am not "
+     "doing this because the maths works. The maths merely doesn't forbid it."),
+    ("p3y_up_packing", "Lisbon list", "\U0001F9F3",
+     "Adapter. The good shoes, not the comfortable ones — eleven days is long "
+     "enough to regret either.\n\nTalk is 20 minutes with 5 for questions. "
+     "Rehearse on the plane, not in the room."),
+    ("p3y_up_closing", "Closing day", "\U0001F511",
+     "Wire went out 9:40, cleared 2:15, keys 4:30. [@Cora Delgado]"
+     "(/person/person_demo_rachel) brought bread and salt, which she said is a "
+     "thing her mother did.\n\nSlept on the floor of the front room because the "
+     "bed didn't come until Tuesday. Best night's sleep in a year."),
+    ("p3y_up_reading", "Reading, 2025", "\U0001F4D6",
+     "**Finished:** Middlemarch (again, properly this time) · The Peregrine · "
+     "A Pattern Language, in pieces\n\n**Abandoned:** two books about "
+     "productivity, without regret\n\n**Next:** whatever [@Pia Halloran]"
+     "(/person/p3y_pia) brings on Thursday"),
+    ("p3y_up_names", "Names for the thing", "\u2234",
+     "Ruled out: anything with *self*, anything with *mind*, anything a search "
+     "engine already owns.\n\nWhat I keep coming back to is that the argument is "
+     "about custody, not intelligence. Name the virtue, not the machine."),
+    ("p3y_up_garden", "The bed by the fence", "\U0001F33F",
+     "Tomatoes from [@Otis Bramble](/person/p3y_otis) — the ones that taste like "
+     "something. Basil died twice; third time in the shade and it lived.\n\n"
+     "Note for next spring: the fence side gets four hours, not six. Plan for "
+     "four."),
+    ("p3y_up_letter", "Letter to Theo, unsent", "\u2709\uFE0F",
+     "Drafted this three times over two years and never sent any of them.\n\n"
+     "[@Theo Brandt](/person/p3y_theo) — there was no falling out, which is "
+     "somehow the harder thing to write about. We just stopped, and I moved, and "
+     "the stopping got easier than the starting would have been.\n\nKeeping it "
+     "here rather than sending it, which I recognise is the coward's archive."),
+    ("p3y_up_workshop", "Workshop setup", "\U0001F527",
+     "Bench height 92cm — measured off the one at [@The agency]"
+     "(/org/p3y_org_agency) that never hurt my back.\n\nPower on the wall side, "
+     "not the floor. Learned that twice."),
+]
+
+
+def _user_pages(pages):
+    """Pages a person wrote, as opposed to articles the box wrote.
+
+    Entity refs are inline markdown — `[@Label](/person/id)` — because that is
+    how the app stores them; there is no link table. So these also give the
+    backlink panels something real to resolve.
+    """
+    for i, (pid, title, icon, content) in enumerate(USER_PAGES):
+        made = ts(START + timedelta(days=430 + i * 55), 21, 30)
+        pages.add(pid, title, content, icon, [], "page", made,
+                  made + timedelta(days=RNG.randint(0, 40)))
+
+
+def _notes_and_memories(notes, memories):
+    """Marginalia on the record, and what the assistant has been told to keep.
+
+    Deliberately not all resolved and not all from the same author: an open
+    correction beside an accepted one is the only way the room shows its own
+    states.
+    """
+    now = ts(ANCHOR_END, 9, 0)
+    rows = [
+        ("person", "p3y_sam_ortiz", "correction",
+         "This is not the same Sam as the accountant. Two different people, and "
+         "the record has merged them at least once.", "human", None, None, None),
+        ("person", "p3y_sam_whitlock", "provenance",
+         "Only ever appears in email, never in messages — so the interaction "
+         "count is low but the relationship is not.", "ai", None, None, None),
+        ("day", None, "observation",
+         "Nothing reached the server for nine days here. The gap is the device, "
+         "not the life.", "ai", now, "accepted", "human"),
+        ("place", "place_demo_home", "memo",
+         "Bought in August. Everything before that date at this address is the "
+         "showings, not living here.", "human", None, None, None),
+        ("person", "p3y_theo", "appraisal",
+         "The drop in contact lines up with the move rather than with anything "
+         "between you, as far as the record shows.", "ai", now, "absorbed", "ai"),
+        ("chapter", "p3y_ch_unknown", "memo",
+         "I have not named this stretch and I would rather it stayed unnamed "
+         "than got a tidy label.", "human", None, None, None),
+        ("organization", "org_demo_employer", "correction",
+         "End date is the last day worked, not the last day paid.", "human",
+         now, "accepted", "human"),
+        ("year", "year_2025", "style_note",
+         "Write this one plainly. It does not need a shape put on it yet.",
+         "human", None, None, None),
+        ("story", "p3y_st_migraines", "observation",
+         "Seven episodes in the record. Short sleep precedes every one; late "
+         "caffeine precedes four.", "ai", None, None, None),
+        ("person", "p3y_bea", "style_note",
+         "Do not summarise her. Quote what was actually said or leave it out.",
+         "human", None, None, None),
+    ]
+    # `wiki_notes_machine_must_cite`: an AI-authored note must carry at least
+    # one source ref. A person may assert; the machine may only point. Good
+    # rule, and the reason these carry real record URLs rather than an empty
+    # array — a note the box wrote with nothing behind it is exactly the thing
+    # the constraint exists to forbid.
+    cites = {
+        "p3y_sam_whitlock": ["/record/data_communication_email/p3y_em_2024-06-14"],
+        "p3y_theo": ["/person/p3y_theo",
+                     "/record/data_communication_message/p3y_ms_2024-01-07_0"],
+        "p3y_st_migraines": ["/record/data_health_sleep/p3y_sl_2025-06-11",
+                             "/record/data_health_hrv/p3y_hrv_2025-06-11"],
+    }
+    for st, sid, kind, body, author, res_at, res, res_by in rows:
+        if st == "day" and sid is None:
+            sid = f"day_{(START + timedelta(days=OUTAGE[0])).isoformat()}"
+        refs = cites.get(sid, [])
+        if author == "ai" and not refs:
+            refs = [f"/record/wiki_days/day_"
+                    f"{(START + timedelta(days=OUTAGE[0])).isoformat()}"]
+        notes.add(st, sid, kind, body, author, now, refs, res_at, res, res_by)
+
+    mem = [
+        ("facts", "Lives at 1847 Selden St, Austin. Bought August 2024.", "ai", None, None),
+        ("facts", "Bea is the partner. Do not call her a friend.", "human", None, None),
+        ("facts", "Left Canopy in January 2025; independent since.", "ai", None, None),
+        ("facts", "Two Sams. Ortiz is the friend, Whitlock is the accountant.",
+         "human", None, None),
+        ("manner", "Short answers. I will ask if I want more.", "human", None, None),
+        ("manner", "Never open with a compliment.", "human", None, None),
+        ("manner", "If the record does not say, say that it does not say.", "human", None, None),
+        ("manner", "American spelling.", "human", None, None),
+        ("practices", "Sunday evening is for the week ahead. Do not schedule then.",
+         "human", None, None),
+        ("practices", "Lift Monday, Wednesday, Friday, evenings.", "ai", None, None),
+        ("practices", "No screens after the migraine starts — do not offer to read "
+         "anything aloud either.", "human", None, None),
+        ("practices", "Used to run every morning before the move.", "ai",
+         ts(ANCHOR_END - timedelta(days=200), 9, 0), "no longer true"),
+    ]
+    for lane, body, author, retired, reason in mem:
+        memories.add(lane, body, author, now, now, retired, reason)
+
+
+def _saves_and_docs(marks, docs):
+    """Saves and documents, across every enrichment state the rooms render.
+
+    Uniformly-enriched saves hide the states a real box spends most of its time
+    in, which is the same reason `demo_bookmarks.sql` is deliberately uneven.
+    """
+    saves = [
+        ("How to read a home inspection report", "housebuying.example.com", "article", "done"),
+        ("Local Outlier Factor, explained", "stats.example.com", "article", "done"),
+        ("The Peregrine — J.A. Baker", "bell-and-marrow.example.com", "book", "done"),
+        ("Bench heights and back pain", "woodworking.example.com", "article", "pending"),
+        ("Lisbon in eleven days", "travel.example.com", "article", "done"),
+        ("llama.cpp server flags", "github.example.com", "repo", "done"),
+        ("Migraine triggers: what the evidence says", "health.example.com",
+         "article", "failed"),
+        ("A Pattern Language, notes", "arch.example.com", "article", "skipped"),
+        ("Tomato varieties for shade", "garden.example.com", "article", "done"),
+        ("Austin Energy rate schedule", "austinenergy.example.com", "document", "pending"),
+        ("Kayak rentals, Lady Bird Lake", "atx.example.com", "listing", "done"),
+        ("On keeping a daybook", "essays.example.com", "essay", "done"),
+    ]
+    for i, (title, dom, btype, status) in enumerate(saves):
+        when = ts(START + timedelta(days=200 + i * 68), 22, 10)
+        marks.add(f"p3y_bm_{i:02d}", f"https://{dom}/{i}", title, None, dom, btype,
+                  None, [], when, f"p3y_s_bm_{i:02d}", "data_content_bookmark",
+                  "demo", None, status)
+
+    papers = [
+        ("Closing statement — 1847 Selden St", "contract", False),
+        ("Kestrel Labs — statement of work", "contract", False),
+        ("Canopy separation letter", "letter", False),
+        ("Lisbon — conference talk notes", "notes", True),
+        ("Inspection report, 1847 Selden St", "report", False),
+        ("Homeowner's insurance policy", "policy", False),
+        ("Tax return, prior year", "tax", False),
+        ("Bench plans", "notes", True),
+    ]
+    for i, (title, dtype, authored) in enumerate(papers):
+        when = ts(START + timedelta(days=380 + i * 84), 14, 0)
+        docs.add(f"p3y_doc_{i:02d}", title, None,
+                 "Filed from the Drive folder.", dtype, [], authored, when,
+                 f"p3y_s_doc_{i:02d}", "data_content_document", "demo")
+
+
+def _applets(applets, runs):
+    """Applets and their run history, including the runs that did not succeed.
+
+    ("Applets" is the shipping name — it was renamed to "Routines" and back on
+    2026-09-16; see agents/build/voice.md.)
+    """
+    now = ts(ANCHOR_END, 9, 0)
+    defs = [
+        ("p3y_ap_day", "Write yesterday", "0 4 * * *",
+         "Segments the day and writes it up, every morning at four."),
+        ("p3y_ap_wiki", "Keep the articles current", "0 5 * * *",
+         "Revisits any subject whose evidence changed."),
+        ("p3y_ap_finance", "Pull transactions", "0 */6 * * *",
+         "Six-hourly sync from the bank."),
+        ("p3y_ap_weekly", "Sunday letter", "0 18 * * 0",
+         "A short account of the week, in the evening."),
+        ("p3y_ap_garden", "Frost watch", "0 20 * * *",
+         "Tells me the night before, between November and March, and says nothing "
+         "otherwise."),
+    ]
+    for aid, name, sched, desc in defs:
+        applets.add(aid, name, "user", None, sched, True, {}, [], desc,
+                    ts(START + timedelta(days=500), 9, 0), now)
+
+    statuses = (["success"] * 16) + ["error", "skipped", "budget_exceeded", "cancelled"]
+    n = 0
+    for aid, *_ in defs:
+        for back in range(40):
+            st = RNG.choice(statuses)
+            start = ts(ANCHOR_END - timedelta(days=back), 4, RNG.randint(0, 40))
+            runs.add(f"p3y_run_{n:04d}", aid, st, start,
+                     start + timedelta(minutes=RNG.randint(1, 26)),
+                     RNG.randint(0, 900) if st == "success" else 0, "cron",
+                     {"success": "Done.",
+                      "error": None,
+                      "skipped": "Nothing to do — no new evidence.",
+                      "budget_exceeded": "Stopped at the ceiling.",
+                      "cancelled": None}[st],
+                     "model call failed after 3 attempts" if st == "error" else None,
+                     None, start)
+            n += 1
+
+
 GROUPS = {
     "01_entities": ["wiki_people", "wiki_places", "wiki_orgs", "wiki_chapters",
                     "wiki_stories", "wiki_years", "data_financial_account"],
@@ -1154,7 +1647,11 @@ GROUPS = {
                    "data_communication_email", "data_financial_transaction",
                    "data_calendar_event", "data_environment_weather"],
     "03_derived": ["wiki_days", "wiki_events"],
-    "04_creation": ["app_chats", "app_chat_messages", "app_pages", "wiki_articles"],
+    "04_creation": ["app_chats", "app_chat_messages", "app_pages", "wiki_articles",
+                    "app_notebooks", "app_notebook_items", "wiki_notes",
+                    "app_assistant_memories", "app_applets", "app_applet_runs"],
+    "05_content": ["data_content_bookmark", "data_content_document",
+                   "data_activity_web_browsing"],
 }
 
 
