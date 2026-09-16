@@ -348,7 +348,7 @@ async fn overlay_article(
     legacy_at: Option<DateTime<Utc>>,
 ) -> (Option<String>, Option<DateTime<Utc>>, bool) {
     match crate::api::wiki_articles::get_article_prose(pool, subject_type, subject_id).await {
-        Ok(Some(a)) => (Some(a.content), Some(a.updated_at), a.auto_update),
+        Ok(Some(a)) => (Some(a.content), Some(a.updated_at), a.maintained),
         // A read failure must not take the whole entity page down with it — the
         // records below the article are the more important half.
         Ok(None) => (legacy, legacy_at, false),

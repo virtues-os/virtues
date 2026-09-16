@@ -57,8 +57,9 @@ pub struct Article {
     pub subject_type: String,
     pub subject_id: String,
     pub page_id: String,
-    pub auto_update: bool,
-    pub source_ref_count: i32,
+    /// always | auto | never. Replaced `auto_update`, whose second, hidden
+    /// meaning was "the person edited this once".
+    pub maintenance: String,
 }
 
 /// Look up a subject's article. `None` is the ordinary case, not an error:
@@ -70,7 +71,7 @@ pub async fn get_article(
 ) -> Result<Option<Article>> {
     let row = sqlx::query!(
         r#"
-        SELECT id, subject_type, subject_id, page_id, auto_update, source_ref_count
+        SELECT id, subject_type, subject_id, page_id, maintenance
         FROM wiki_articles
         WHERE subject_type = $1 AND subject_id = $2
         "#,
@@ -86,8 +87,7 @@ pub async fn get_article(
         subject_type: r.subject_type,
         subject_id: r.subject_id,
         page_id: r.page_id,
-        auto_update: r.auto_update,
-        source_ref_count: r.source_ref_count,
+        maintenance: r.maintenance,
     }))
 }
 
@@ -97,7 +97,8 @@ pub async fn get_article(
 pub struct ArticleProse {
     pub content: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub auto_update: bool,
+    /// Whether the record keeps this article up to date.
+    pub maintained: bool,
 }
 
 /// Read a subject's article prose.
@@ -115,7 +116,7 @@ pub async fn get_article_prose(
 ) -> Result<Option<ArticleProse>> {
     let row = sqlx::query!(
         r#"
-        SELECT p.content, p.updated_at, a.auto_update
+        SELECT p.content, p.updated_at, (a.maintenance <> 'never') AS "maintained!"
         FROM wiki_articles a
         JOIN app_pages p ON p.id = a.page_id
         WHERE a.subject_type = $1 AND a.subject_id = $2
@@ -130,7 +131,7 @@ pub async fn get_article_prose(
     Ok(row.filter(|r| !r.content.trim().is_empty()).map(|r| ArticleProse {
         content: r.content,
         updated_at: r.updated_at,
-        auto_update: r.auto_update,
+        maintained: r.maintained,
     }))
 }
 
@@ -191,7 +192,7 @@ pub async fn create_article(
         r#"
         INSERT INTO wiki_articles (id, subject_type, subject_id, page_id, last_written_at)
         VALUES ($1, $2, $3, $4, now())
-        RETURNING id, subject_type, subject_id, page_id, auto_update, source_ref_count
+        RETURNING id, subject_type, subject_id, page_id, maintenance
         "#,
         &article_id,
         subject_type,
@@ -211,8 +212,7 @@ pub async fn create_article(
         subject_type: row.subject_type,
         subject_id: row.subject_id,
         page_id: row.page_id,
-        auto_update: row.auto_update,
-        source_ref_count: row.source_ref_count,
+        maintenance: row.maintenance,
     })
 }
 
@@ -249,6 +249,41 @@ pub struct SubjectBacklink {
     /// otherwise the page route. So a backlink always opens something real.
     pub route: String,
     pub is_article: bool,
+}
+
+/// How an article is maintained, in the vocabulary the column actually has.
+///
+/// The UI shipped with a two-state toggle (`set_auto_update`, now retired)
+/// that could only say auto or never. The column carries a third — `always`,
+/// for an article someone wants revisited whenever anything moves — and a
+/// two-state control must not silently flatten it.
+pub async fn set_maintenance(
+    pool: &PgPool,
+    subject_type: &str,
+    subject_id: &str,
+    mode: &str,
+) -> Result<()> {
+    if !matches!(mode, "always" | "auto" | "never") {
+        return Err(Error::InvalidInput(format!(
+            "maintenance is always, auto or never — not {mode:?}"
+        )));
+    }
+    let n = sqlx::query!(
+        "UPDATE wiki_articles SET maintenance = $3 WHERE subject_type = $1 AND subject_id = $2",
+        subject_type,
+        subject_id,
+        mode
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to set maintenance: {}", e)))?
+    .rows_affected();
+    if n == 0 {
+        return Err(Error::NotFound(format!(
+            "No article for {subject_type} {subject_id}"
+        )));
+    }
+    Ok(())
 }
 
 /// "Mentioned in N articles" — every page whose prose links to this subject.
@@ -526,74 +561,6 @@ fn diff_lines(before: &str, after: &str) -> Vec<DiffLine> {
     out
 }
 
-/// Turn maintenance on or off for one article.
-///
-/// `false` means the AI never touches it — not a pending-approval queue,
-/// nothing held for review. The sweep skips it, and it changes only when a
-/// person regenerates it or flips this back. The switch IS the consent.
-/// Set how an article is maintained, in the vocabulary the column actually
-/// has. `set_auto_update` is the two-state toggle the UI shipped with; this is
-/// the full setting, including `always` — an article someone wants revisited
-/// whenever anything moves, which the toggle can preserve but never set.
-pub async fn set_maintenance(
-    pool: &PgPool,
-    subject_type: &str,
-    subject_id: &str,
-    mode: &str,
-) -> Result<()> {
-    if !matches!(mode, "always" | "auto" | "never") {
-        return Err(Error::InvalidInput(format!(
-            "maintenance is always, auto or never — not {mode:?}"
-        )));
-    }
-    let n = sqlx::query!(
-        "UPDATE wiki_articles SET maintenance = $3 WHERE subject_type = $1 AND subject_id = $2",
-        subject_type,
-        subject_id,
-        mode
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to set maintenance: {}", e)))?
-    .rows_affected();
-    if n == 0 {
-        return Err(Error::NotFound(format!(
-            "No article for {subject_type} {subject_id}"
-        )));
-    }
-    Ok(())
-}
-
-pub async fn set_auto_update(
-    pool: &PgPool,
-    subject_type: &str,
-    subject_id: &str,
-    on: bool,
-) -> Result<()> {
-    // `on` is the two states the UI offers. The column carries a third,
-    // 'always', for an article someone wants revisited whenever anything
-    // moves; nothing sets it yet, and the toggle must not silently clear it.
-    let n = sqlx::query!(
-        "UPDATE wiki_articles SET maintenance = CASE \
-             WHEN $3 THEN (CASE WHEN maintenance = 'always' THEN 'always' ELSE 'auto' END) \
-             ELSE 'never' END \
-         WHERE subject_type = $1 AND subject_id = $2",
-        subject_type,
-        subject_id,
-        on
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to set maintenance: {}", e)))?
-    .rows_affected();
-
-    if n == 0 {
-        return Err(Error::NotFound(format!(
-            "No article for {subject_type}/{subject_id}"
-        )));
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
@@ -618,7 +585,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(kind, "article");
-        assert!(!a.auto_update, "maintenance is opt-in, never on by default");
+        assert_eq!(a.maintenance, "auto", "an article is maintained unless the owner says otherwise");
 
         // (The old `date must stay NULL` assertion is gone with the column —
         // reflections were retired 2026-08-03, the column dropped 2026-08-28;

@@ -68,54 +68,6 @@ struct DueEntity {
     refs: i64,
 }
 
-/// Maintenance: rewrite articles whose subject has outgrown them.
-///
-/// The candidate set is no longer "every entity on the box" — it is the
-/// articles a person switched maintenance on for, and each carries its own
-/// threshold. An article with `auto_update = false` is never a candidate, and
-/// that means exactly what it says: the AI does not touch it. Not a queue, not
-/// a review inbox; the sweep skips it.
-///
-/// **Rewriting is not implemented here, and cannot be.** An article is an
-/// `app_pages` row, and once its `yjs_state` is non-null the CRDT is
-/// authoritative: a pool-only write to `content` is overwritten from the CRDT
-/// on the next save, silently. Maintenance therefore belongs in an applet's
-/// AGENT phase, which holds a real `YjsState` and edits through the same
-/// find/replace path the assistant already uses on pages — which is also the
-/// only way to get reviewable diffs instead of a 100% rewrite every edition.
-///
-/// Until that lands this returns the count it *would* write, and logs it. The
-/// set is empty on any box where nobody has opted in, so this is dormant rather
-/// than broken.
-pub async fn refresh_due_entity_articles(pool: &PgPool) -> Result<usize> {
-    let due: Vec<(String, String, i64)> = sqlx::query_as(
-        r#"
-        SELECT a.subject_id, a.subject_type, c.refs
-        FROM wiki_articles a
-        JOIN LATERAL (
-            SELECT count(*) AS refs FROM wiki_refs r WHERE r.entity_id = a.subject_id
-        ) c ON true
-        WHERE a.auto_update
-          AND a.subject_type IN ('person', 'place', 'organization')
-          AND c.refs - a.source_ref_count >= a.refresh_after_new_refs
-        ORDER BY c.refs - a.source_ref_count DESC
-        LIMIT $1
-        "#,
-    )
-    .bind(MAX_ENTITIES_PER_RUN)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to find due articles: {}", e)))?;
-
-    if !due.is_empty() {
-        tracing::warn!(
-            count = due.len(),
-            "articles are due for maintenance, but rewriting needs the agent phase \
-             (a pool-only write to a CRDT-backed page is silently discarded) — skipping"
-        );
-    }
-    Ok(0)
-}
 
 /// Write a subject's first article, now, because someone asked for it.
 ///
@@ -168,13 +120,6 @@ pub async fn write_entity_article_now(
     let created =
         crate::api::wiki_articles::create_article(pool, subject_type, subject_id, &title, &article)
             .await?;
-
-    sqlx::query("UPDATE wiki_articles SET source_ref_count = $2 WHERE id = $1")
-        .bind(&created.id)
-        .bind(refs as i32)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to stamp ref count: {}", e)))?;
 
     // Record what the editor just wrote. Without this the article has no
     // `machine_text`, and the first revision cannot tell the machine's own
