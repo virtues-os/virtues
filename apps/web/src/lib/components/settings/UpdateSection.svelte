@@ -16,6 +16,7 @@
 	 */
 	import { onMount, onDestroy } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import {
 		getUpdateStatus,
 		setUpdateChannel,
@@ -169,10 +170,9 @@
 <section class="updates">
 	<header>
 		<h3>Updates</h3>
-		<button class="check-btn" onclick={check} disabled={loading}>
-			<Icon icon={loading ? 'ri:loader-4-line' : 'ri:refresh-line'} width="14" />
-			<span>{loading ? 'Checking…' : 'Check again'}</span>
-		</button>
+		<Button variant="secondary" size="sm" icon="ri:refresh-line" {loading} onclick={check}>
+			Check again
+		</Button>
 	</header>
 
 	{#if restart}
@@ -284,10 +284,16 @@
 						disconnects every device using it — not just this one.
 					{/if}
 				</p>
-				<button class="install-btn" onclick={install} disabled={!!restart}>
-					<Icon icon={staged ? 'ri:restart-line' : 'ri:download-2-line'} width="14" />
-					<span>{staged ? 'Install and restart' : 'Download and install'}</span>
-				</button>
+				<Button
+					variant="primary"
+					size="sm"
+					class="self-start"
+					icon={staged ? 'ri:restart-line' : 'ri:download-2-line'}
+					disabled={!!restart}
+					onclick={install}
+				>
+					{staged ? 'Install and restart' : 'Download and install'}
+				</Button>
 				{#if applyError}
 					<!-- The box's own reason, verbatim. The common one is that this
 					     is a dev checkout with no /usr/local/bin/virtues, which is
@@ -340,24 +346,6 @@
 		font-size: 14px;
 		font-weight: 600;
 		margin: 0;
-	}
-
-	.check-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		padding: 4px 8px;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: none;
-		cursor: pointer;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
-
-	.check-btn:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
-		color: var(--color-foreground);
 	}
 
 	.facts {
@@ -486,33 +474,9 @@
 		line-height: 1.5;
 	}
 
-	/* The one affirmative action in this section, so it carries the accent
-	   rather than sitting as another outlined button beside "Check again". */
-	.install-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 6px;
-		align-self: flex-start;
-		margin-top: 2px;
-		padding: 6px 12px;
-		border: 1px solid transparent;
-		border-radius: 6px;
-		background: var(--color-primary);
-		color: var(--color-background);
-		cursor: pointer;
-		font-size: 13px;
-		font-weight: 500;
-	}
-
-	.install-btn:hover:not(:disabled) {
-		background: var(--primary-hover, var(--color-primary));
-	}
-
-	.install-btn:disabled {
-		opacity: 0.55;
-		cursor: default;
-	}
+	/* The one affirmative action in this section carries `Button`'s `primary`,
+	   so it is the filled one beside an outlined "Check again" — the same claim
+	   the hand-rolled rule here used to make in its own colors. */
 
 	.apply-error {
 		color: var(--error);

@@ -25,6 +25,7 @@
 	import { onDestroy } from 'svelte';
 
 	import { apiGet, apiSend } from '$lib/api/client';
+	import Button from '$lib/components/Button.svelte';
 
 	type Net = { ssid: string; signal: number; secured: boolean; enterprise: boolean };
 	type Status = { connectivity: string; ssid: string | null; ip: string | null };
@@ -261,20 +262,21 @@
 				onkeydown={(e) => e.key === 'Enter' && join()}
 			/>
 			<div class="mt-2 flex gap-3">
-				<button
-					class="joinbtn"
+				<Button
+					variant="secondary"
+					size="sm"
 					disabled={chosen.enterprise ? !(identity.trim() && psk) : psk.length < 8}
-					onclick={join}>Join network</button
+					onclick={join}>Join network</Button
 				>
-				<button class="cancelbtn" onclick={() => (chosen = null)}>Cancel</button>
+				<Button variant="ghost" size="sm" onclick={() => (chosen = null)}>Cancel</Button>
 			</div>
 		</div>
 	{:else}
 		{#if joinError}<p class="mt-3 text-xs warntext">{joinError}</p>{/if}
 		{#if networks.length === 0}
-			<button class="scanbtn" disabled={scanning} onclick={scan}>
-				{scanning ? 'Scanning…' : 'Find Wi-Fi networks'}
-			</button>
+			<Button variant="secondary" size="sm" loading={scanning} onclick={scan}>
+				Find Wi-Fi networks
+			</Button>
 			{#if scanError}<p class="mt-2 text-xs warntext">{scanError}</p>{/if}
 		{:else}
 			<div class="mt-3">
@@ -287,9 +289,9 @@
 						</span>
 					</button>
 				{/each}
-				<button class="scanbtn mt-2" disabled={scanning} onclick={scan}>
-					{scanning ? 'Scanning…' : 'Scan again'}
-				</button>
+				<Button variant="secondary" size="sm" class="mt-2" loading={scanning} onclick={scan}>
+					Scan again
+				</Button>
 			</div>
 		{/if}
 	{/if}
@@ -357,25 +359,5 @@
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		color: var(--color-foreground);
-	}
-	.joinbtn,
-	.scanbtn {
-		font-size: 0.8125rem;
-		padding: 0.4rem 0.9rem;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		color: var(--color-foreground);
-	}
-	.joinbtn:disabled,
-	.scanbtn:disabled {
-		opacity: 0.45;
-	}
-	.joinbtn:hover:not(:disabled),
-	.scanbtn:hover:not(:disabled) {
-		background: var(--color-background-secondary);
-	}
-	.cancelbtn {
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
 	}
 </style>

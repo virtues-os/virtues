@@ -7,6 +7,7 @@
 	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from './Icon.svelte';
+	import Button from './Button.svelte';
 	import { addCollection } from '@iconify/svelte';
 	import { onMount } from 'svelte';
 	import { PIN_COLORS, accentCss } from '$lib/sidebar/pin-colors';
@@ -412,9 +413,14 @@
 			{#if visibleIcons.length === 0}
 				<div class="empty">No icons found</div>
 			{:else if hasMoreIcons && !search}
-				<button class="load-more-btn" onclick={() => allIconsPage++}>
+				<Button
+					variant="secondary"
+					size="sm"
+					class="w-full mt-2"
+					onclick={() => allIconsPage++}
+				>
 					Load more
-				</button>
+				</Button>
 			{/if}
 		{:else}
 			<div class="emoji-grid">
@@ -530,8 +536,8 @@
 		background: var(--color-border);
 	}
 
-	/* The custom well wears a colour wheel until something is chosen, then the
-	   chosen colour — so it reads as "pick your own", not as a tenth hue. */
+	/* The custom well wears a color wheel until something is chosen, then the
+	   chosen color — so it reads as "pick your own", not as a tenth hue. */
 	.swatch-custom {
 		position: relative;
 		overflow: hidden;
@@ -705,20 +711,4 @@
 		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 	}
 
-	.load-more-btn {
-		width: 100%;
-		padding: 8px;
-		font-size: 12px;
-		color: var(--color-primary);
-		background: none;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		cursor: pointer;
-		margin-top: 8px;
-		transition: background 100ms;
-	}
-
-	.load-more-btn:hover {
-		background: var(--color-surface-overlay);
-	}
 </style>

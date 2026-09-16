@@ -15,6 +15,7 @@
 <script lang="ts">
 	import { Page } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { sourcesStore, type Connection } from '$lib/stores/sources.svelte';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -75,7 +76,7 @@
 >
 	{#snippet actions()}
 		{#if source}
-			<button type="button" class="primary" onclick={() => void connect()}>{connectLabel}</button>
+			<Button variant="primary" size="sm" onclick={() => void connect()}>{connectLabel}</Button>
 		{/if}
 	{/snippet}
 
@@ -150,20 +151,6 @@
 		background: var(--color-error-subtle);
 		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-size: 0.8125rem;
-	}
-
-	.primary {
-		padding: 0.375rem 0.75rem;
-		border-radius: 6px;
-		border: 1px solid var(--color-border, #d1d5db);
-		background: var(--color-background, #fff);
-		color: var(--color-foreground, #111827);
-		font-size: 0.8125rem;
-		font-weight: 500;
-		cursor: pointer;
-	}
-	.primary:hover {
-		background: var(--color-muted, #f3f4f6);
 	}
 
 	.repo {

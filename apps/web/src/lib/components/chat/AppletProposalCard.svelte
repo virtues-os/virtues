@@ -120,9 +120,7 @@
 			</span>
 			<button type="button" class="link" onclick={open}>Open</button>
 		{:else}
-			<Button variant="primary" onclick={enable} disabled={working}>
-				{working ? 'Turning on…' : 'Turn it on'}
-			</Button>
+			<Button variant="primary" onclick={enable} loading={working}>Turn it on</Button>
 			<button type="button" class="link" onclick={() => (dismissed = true)}>Not now</button>
 		{/if}
 	</div>

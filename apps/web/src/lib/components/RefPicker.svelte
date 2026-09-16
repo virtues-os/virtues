@@ -18,6 +18,7 @@
 	 */
 
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
@@ -302,19 +303,19 @@
 		<div class="footer">
 			{#if mode === 'multi' && selectedItems.length > 0}
 				<span class="selection-count">{selectedItems.length} selected</span>
-				<button type="button" class="confirm-btn" onclick={handleConfirm}>
+				<Button variant="primary" size="sm" onclick={handleConfirm}>
 					Add selected
-				</button>
+				</Button>
 			{:else if footerAction}
-				<button
-					type="button"
-					class="footer-action-btn"
-					class:destructive={footerAction.variant === 'destructive'}
+				<Button
+					variant={footerAction.variant === 'destructive' ? 'danger' : 'ghost'}
+					size="sm"
+					class="ml-auto"
+					icon={footerAction.icon}
 					onclick={footerAction.action}
 				>
-					<Icon icon={footerAction.icon} width="14" />
 					{footerAction.label}
-				</button>
+				</Button>
 			{/if}
 		</div>
 	{/if}
@@ -510,46 +511,4 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.confirm-btn {
-		padding: 6px 12px;
-		font-size: 12px;
-		background: var(--color-primary);
-		border: none;
-		border-radius: 4px;
-		color: white;
-		cursor: pointer;
-		transition: opacity 0.15s ease;
-	}
-
-	.confirm-btn:hover {
-		opacity: 0.9;
-	}
-
-	.footer-action-btn {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		margin-left: auto;
-		padding: 4px 8px;
-		font-size: 11px;
-		background: none;
-		border: none;
-		border-radius: 4px;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		transition: all 0.15s ease;
-	}
-
-	.footer-action-btn:hover {
-		background: var(--color-surface);
-		color: var(--color-foreground);
-	}
-
-	.footer-action-btn.destructive {
-		color: var(--color-error);
-	}
-
-	.footer-action-btn.destructive:hover {
-		background: color-mix(in srgb, var(--color-error) 10%, transparent);
-	}
 </style>

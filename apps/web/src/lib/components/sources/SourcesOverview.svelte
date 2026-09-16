@@ -15,6 +15,7 @@
 <script lang="ts">
 	import { Page } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { getStreamHealth, getStreamDays, type StreamHealth, type StreamDays } from '$lib/api/client';
 	import StreamGrid, { type GridRow } from './StreamGrid.svelte';
 	import { domainOf, domainLabel, domainRank } from '$lib/sources/domains';
@@ -262,9 +263,14 @@
 							<span class="why">{c.statusReason ?? 'This connection stopped working.'}</span>
 						</div>
 						{#if c.kind === 'credential'}
-							<button type="button" class="act" onclick={() => void reconnect(c.sourceId)}>
+							<Button
+								variant="secondary"
+								size="sm"
+								class="shrink-0"
+								onclick={() => void reconnect(c.sourceId)}
+							>
 								Reconnect
-							</button>
+							</Button>
 						{/if}
 					</li>
 				{/each}
@@ -473,22 +479,6 @@
 	}
 	/* The remedy, so it reads as the thing to do rather than as the damage:
 	   the page's own quiet button, not an outline in the error colour. */
-	.act {
-		flex-shrink: 0;
-		padding: 0.3125rem 0.75rem;
-		border-radius: 6px;
-		border: 1px solid var(--color-border, #d1d5db);
-		background: var(--color-background, #fff);
-		color: var(--color-foreground, #111827);
-		font-size: 0.75rem;
-		font-weight: 500;
-		white-space: nowrap;
-		cursor: pointer;
-	}
-	.act:hover {
-		background: var(--color-muted, #f3f4f6);
-	}
-
 	/* ── Misc ─────────────────────────────────────────────────────────── */
 	.error {
 		padding: 0.5rem 0.75rem;

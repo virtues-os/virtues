@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page } from "$lib";
+	import { Button, Page } from "$lib";
 	import type { DriveFile, DriveUsage } from "$lib/api/client";
 	import {
 		listDriveFiles,
@@ -596,28 +596,26 @@
 
 			<!-- Actions -->
 			<div class="flex items-center gap-2">
-				<button
-					class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground hover:bg-surface-elevated rounded-lg transition-colors"
-					onclick={navigateToTrash}
+				<Button
+					variant="ghost"
+					size="sm"
+					icon="ri:delete-bin-line"
+					onclick={navigateToTrash}>Trash</Button
 				>
-					<Icon icon="ri:delete-bin-line" />
-					Trash
-				</button>
-				<button
-					class="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground hover:bg-surface-elevated rounded-lg transition-colors"
+				<Button
+					variant="ghost"
+					size="sm"
+					icon="ri:folder-add-line"
 					onclick={() => (showNewFolderModal = true)}
+					>New folder</Button
 				>
-					<Icon icon="ri:folder-add-line" />
-					New folder
-				</button>
-				<button
-					class="flex items-center gap-2 px-3 py-1.5 text-sm bg-foreground text-background hover:bg-foreground/90 rounded-lg transition-colors"
-					onclick={() => fileInput?.click()}
+				<Button
+					variant="primary"
+					size="sm"
+					icon="ri:upload-2-line"
 					disabled={uploading}
+					onclick={() => fileInput?.click()}>Upload</Button
 				>
-					<Icon icon="ri:upload-2-line" />
-					Upload
-				</button>
 				<input
 					bind:this={fileInput}
 					type="file"
@@ -696,13 +694,11 @@
 					<p class="text-foreground-muted mb-4">
 						Drag and drop files here or click Upload to get started
 					</p>
-					<button
-						class="inline-flex items-center gap-2 px-4 py-2 bg-foreground text-background rounded-lg hover:bg-foreground/90 transition-colors"
+					<Button
+						icon="ri:upload-2-line"
 						onclick={() => fileInput?.click()}
+						>Upload files</Button
 					>
-						<Icon icon="ri:upload-2-line" />
-						Upload files
-					</button>
 				</div>
 			{:else}
 				<UniversalDataGrid
@@ -849,22 +845,20 @@
 		onkeydown={(e) => e.key === "Enter" && handleCreateFolder()}
 	/>
 	{#snippet footer()}
-		<button
-			class="modal-btn modal-btn-secondary"
+		<Button
+			variant="secondary"
+			size="sm"
 			onclick={() => {
 				showNewFolderModal = false;
 				newFolderName = "";
-			}}
+			}}>Cancel</Button
 		>
-			Cancel
-		</button>
-		<button
-			class="modal-btn modal-btn-primary"
-			onclick={handleCreateFolder}
-			disabled={creatingFolder || !newFolderName.trim()}
+		<Button
+			size="sm"
+			loading={creatingFolder}
+			disabled={!newFolderName.trim()}
+			onclick={handleCreateFolder}>Create</Button
 		>
-			{creatingFolder ? "Creating..." : "Create"}
-		</button>
 	{/snippet}
 </Modal>
 
@@ -885,19 +879,17 @@
 		</p>
 	{/if}
 	{#snippet footer()}
-		<button
-			class="modal-btn modal-btn-secondary"
-			onclick={() => (fileToDelete = null)}
+		<Button
+			variant="secondary"
+			size="sm"
+			onclick={() => (fileToDelete = null)}>Cancel</Button
 		>
-			Cancel
-		</button>
-		<button
-			class="modal-btn bg-error text-white hover:bg-error disabled:opacity-50"
-			onclick={handleDelete}
-			disabled={deleting}
+		<Button
+			variant="danger"
+			size="sm"
+			loading={deleting}
+			onclick={handleDelete}>Move to Trash</Button
 		>
-			{deleting ? "Moving..." : "Move to Trash"}
-		</button>
 	{/snippet}
 </Modal>
 

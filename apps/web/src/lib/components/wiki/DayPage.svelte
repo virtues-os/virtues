@@ -36,7 +36,7 @@
 	import TableOfContents, { type TocHeading } from "$lib/components/TableOfContents.svelte";
 
 	import Icon from "$lib/components/Icon.svelte";
-
+	import Button from "$lib/components/Button.svelte";
 
 	interface Props {
 		/** The wire shape. See PersonPage for why the converter is gone. */
@@ -624,9 +624,9 @@
 							<div class="section-header-row">
 								<h2 class="section-title">Event Timeline</h2>
 								<div class="section-actions">
-								<button class="section-action-btn" type="button" onclick={() => timelineRef?.toggleAll()}>
+								<Button variant="ghost" size="sm" onclick={() => timelineRef?.toggleAll()}>
 									{timelineRef?.allExpanded ? 'Collapse all' : 'Expand all'}
-								</button>
+								</Button>
 							</div>
 							</div>
 							<EventTimeline bind:this={timelineRef} events={dayEvents} timezone={page.start_timezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} pageDate={date} />
@@ -955,21 +955,6 @@
 		align-items: center;
 		gap: 0.25rem;
 		flex-shrink: 0;
-	}
-
-	.section-action-btn {
-		background: none;
-		border: none;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		padding: 0.125rem 0.25rem;
-		border-radius: 3px;
-	}
-
-	.section-action-btn:hover {
-		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
 	}
 
 	/* Footer sections */

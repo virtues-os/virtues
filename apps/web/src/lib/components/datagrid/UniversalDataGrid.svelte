@@ -41,6 +41,7 @@
 	import { flip } from 'svelte/animate';
 	import { cubicOut } from 'svelte/easing';
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { dataGridPrefs, type ViewMode, type Density } from '$lib/stores/dataGridPrefs.svelte';
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 	import DataGridFilterRail from './DataGridFilterRail.svelte';
@@ -860,7 +861,7 @@
 				{#if bulkActions}
 					{@render bulkActions(selectedItems, clearSelection)}
 				{/if}
-				<button class="bulk-clear" onclick={clearSelection}>Clear</button>
+				<Button variant="ghost" size="sm" onclick={clearSelection}>Clear</Button>
 			{:else}
 			<div class="search-container">
 				<Icon icon="ri:search-line" width="16" />
@@ -1022,9 +1023,9 @@
 			<Icon icon="ri:error-warning-line" width="24" />
 			<span>{effectiveError}</span>
 			{#if serverMode}
-				<button class="retry-btn" onclick={retryServer}>Retry</button>
+				<Button variant="secondary" size="sm" onclick={retryServer}>Retry</Button>
 			{:else if onRetry}
-				<button class="retry-btn" onclick={onRetry}>Retry</button>
+				<Button variant="secondary" size="sm" onclick={onRetry}>Retry</Button>
 			{/if}
 		</div>
 	{:else if displayedItems.length === 0 && !isNarrowed}
@@ -1037,7 +1038,9 @@
 			<Icon icon="ri:search-line" width="32" />
 			{#if searchQuery.trim()}
 				<p>No results for "{searchQuery}"</p>
-				<button class="clear-search-btn" onclick={() => (searchQuery = '')}>Clear search</button>
+				<Button variant="secondary" size="sm" onclick={() => (searchQuery = '')}>
+					Clear search
+				</Button>
 			{:else}
 				<p>No results match the active filters</p>
 			{/if}
@@ -1351,14 +1354,14 @@
 
 	{#if totalPages > 1 && !effectiveLoading && !effectiveError && displayedItems.length > 0}
 		<div class="pagination">
-			<button
-				class="page-btn"
+			<Button
+				variant="secondary"
+				size="sm"
 				disabled={currentPage <= 1 || (serverMode && serverLoading)}
 				onclick={() => currentPage--}
-				type="button"
 			>
 				Previous
-			</button>
+			</Button>
 			{#if serverMode}
 				<!-- An honest range: the server knows the true total, so say it. -->
 				<span class="page-info">
@@ -1370,14 +1373,14 @@
 			{:else}
 				<span class="page-info">{currentPage} / {totalPages}</span>
 			{/if}
-			<button
-				class="page-btn"
+			<Button
+				variant="secondary"
+				size="sm"
 				disabled={currentPage >= totalPages || (serverMode && serverLoading)}
 				onclick={() => currentPage++}
-				type="button"
 			>
 				Next
-			</button>
+			</Button>
 		</div>
 	{/if}
 </div>
@@ -1489,22 +1492,6 @@
 
 	/* Recovery actions, not calls to action — an outline in the primary colour
 	   gave "Clear search" the same weight as a submit button. */
-	.clear-search-btn {
-		margin-top: 0.5rem;
-		padding: 0.375rem 0.75rem;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		cursor: pointer;
-	}
-
-	.clear-search-btn:hover {
-		background: var(--color-background-hover);
-		color: var(--color-foreground);
-	}
-
 	/* Toolbar control buttons (density, view, filter) — share visual weight */
 	.ctrl-btn {
 		position: relative;
@@ -1652,21 +1639,6 @@
 	@keyframes spin {
 		from { transform: rotate(0deg); }
 		to { transform: rotate(360deg); }
-	}
-
-	.retry-btn {
-		padding: 0.375rem 0.75rem;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		cursor: pointer;
-	}
-
-	.retry-btn:hover {
-		background: var(--color-background-hover);
-		color: var(--color-foreground);
 	}
 
 	.empty-state :global(svg) {
@@ -1966,18 +1938,6 @@
 
 	.bulk-count { font-size: 0.75rem; color: var(--color-foreground); white-space: nowrap; }
 	.bulk-sp { flex: 1; }
-	.bulk-clear {
-		border: none;
-		background: none;
-		padding: 0;
-		font: inherit;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		text-decoration: underline;
-	}
-	.bulk-clear:hover { color: var(--color-foreground); }
-
 	/* ============================================
 	   SKELETON
 	   ============================================ */
@@ -2218,27 +2178,6 @@
 		justify-content: center;
 		gap: 1rem;
 		padding: 0.75rem 0;
-	}
-
-	.page-btn {
-		padding: 0.25rem 0.625rem;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		background: none;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		cursor: pointer;
-		transition: all 0.1s ease;
-	}
-
-	.page-btn:hover:not(:disabled) {
-		color: var(--color-foreground);
-		border-color: var(--color-border-strong);
-	}
-
-	.page-btn:disabled {
-		opacity: 0.35;
-		cursor: default;
 	}
 
 	.page-info {

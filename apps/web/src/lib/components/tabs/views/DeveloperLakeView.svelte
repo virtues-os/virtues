@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import Icon from "$lib/components/Icon.svelte";
-	import { EmptyState, LoadingState, ErrorState } from "$lib";
+	import { Button, EmptyState, LoadingState, ErrorState } from "$lib";
 	import { getLakeSummary, getLakeStreams } from "$lib/api/client";
 	import { createResource } from "$lib/utils/resource.svelte";
 
@@ -90,17 +90,13 @@
 				</p>
 			</div>
 		</div>
-		<button
-			onclick={res.reload}
-			disabled={res.loading}
-			class="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-foreground-muted hover:bg-surface-elevated hover:text-foreground disabled:opacity-50"
+		<Button
+			variant="ghost"
+			size="sm"
+			icon="ri:refresh-line"
+			loading={res.loading}
+			onclick={res.reload}>Refresh</Button
 		>
-			<Icon
-				icon="ri:refresh-line"
-				class={res.loading ? "animate-spin" : ""}
-			/>
-			Refresh
-		</button>
 	</div>
 
 	<!-- Content -->

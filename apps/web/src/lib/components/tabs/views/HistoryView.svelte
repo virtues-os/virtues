@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { Page } from "$lib";
+	import { Button, Page } from "$lib";
 	import UniversalDataGrid, {
 		type Column,
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
@@ -100,9 +100,9 @@
 	maxWidth="wide"
 >
 	{#snippet actions()}
-		<button class="new-btn" onclick={handleNewChat}>
-			<Icon icon="ri:add-line" width="16" /> New Chat
-		</button>
+		<Button variant="secondary" size="sm" icon="ri:add-line" onclick={handleNewChat}
+			>New Chat</Button
+		>
 	{/snippet}
 
 	<UniversalDataGrid
@@ -149,13 +149,6 @@
 </Page>
 
 <style>
-	.new-btn {
-		display: inline-flex; align-items: center; gap: 5px;
-		padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 8px;
-		background: var(--color-surface-elevated); color: var(--color-foreground);
-		font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
-	}
-	.new-btn:hover { background: var(--color-surface); }
 
 	.title-text {
 		font-weight: 500;

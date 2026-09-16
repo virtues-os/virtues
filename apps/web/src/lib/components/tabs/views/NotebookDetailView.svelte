@@ -2,6 +2,7 @@
 	import type { Tab } from '$lib/tabs/types';
 	import type { NotebookDetail, NotebookGraph } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
+	import { Button } from '$lib';
 	import { notebookStore } from '$lib/stores/notebook.svelte';
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -737,9 +738,11 @@
 						onItemContextMenu={rowMenu}
 					>
 						{#snippet bulkActions(rows: MemberRow[], clear: () => void)}
-							<button class="bulk-btn danger" onclick={() => removeMembers(rows, clear)}>
-								Remove
-							</button>
+							<Button
+								variant="danger"
+								size="sm"
+								onclick={() => removeMembers(rows, clear)}>Remove</Button
+							>
 						{/snippet}
 
 						{#snippet rowActions(row: MemberRow)}
@@ -972,13 +975,6 @@
 		white-space: nowrap; font-weight: 450;
 	}
 
-	.bulk-btn {
-		border: 1px solid var(--color-border); border-radius: 6px;
-		background: var(--color-background-hover); padding: 3px 10px;
-		font: inherit; font-size: 0.75rem; color: var(--color-foreground-muted); cursor: pointer;
-	}
-	.bulk-btn:hover { color: var(--color-foreground); }
-	.bulk-btn.danger { color: var(--color-error, #dc2626); }
 	.row-act {
 		display: grid; place-items: center; width: 24px; height: 24px;
 		border: none; border-radius: 6px; background: transparent;

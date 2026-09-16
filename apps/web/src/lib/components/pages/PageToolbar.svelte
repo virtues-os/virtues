@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import Button from "$lib/components/Button.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import CoverImagePicker from "$lib/components/CoverImagePicker.svelte";
 	import DisplaySettingsPopover from "$lib/components/pages/DisplaySettingsPopover.svelte";
@@ -204,21 +205,23 @@
 						<div class="delete-confirm">
 							<p class="delete-confirm-text">Delete this page?</p>
 							<div class="delete-confirm-actions">
-								<button
-									class="delete-confirm-btn delete-confirm-cancel"
+								<Button
+									variant="secondary"
+									size="sm"
 									onclick={() => (showDeleteConfirm = false)}
 								>
 									Cancel
-								</button>
-								<button
-									class="delete-confirm-btn delete-confirm-delete"
+								</Button>
+								<Button
+									variant="danger"
+									size="sm"
 									onclick={() => {
 										onDelete();
 										close();
 									}}
 								>
 									Delete
-								</button>
+								</Button>
 							</div>
 						</div>
 					{:else}
@@ -289,10 +292,19 @@
 		color: var(--color-primary);
 	}
 
+	/* The "Aa" that opens display settings. The serif is load-bearing here and
+	   stays: the glyphs ARE the control's icon, previewing letterforms the way
+	   its siblings preview their verbs. What goes is `font-weight: 600` —
+	   JJannon ships one cut, so the weight resolved back to the regular and
+	   returned silently, and this label had been drawn at 400 all along while
+	   the stylesheet claimed otherwise. Sized to 16px so it reads at the
+	   optical weight the 600 was asking for and matches the 15px icons beside
+	   it; `--font-serif-ui` because it sits in a fixed 28px chrome row, which
+	   is exactly the case those corrected vertical metrics exist for. */
 	.toolbar-action-text {
-		font-size: 13px;
-		font-weight: 600;
-		font-family: var(--font-serif, Georgia, serif);
+		font-size: 16px;
+		font-weight: 400;
+		font-family: var(--font-serif-ui, Georgia, serif);
 	}
 
 	.toolbar-emoji {
@@ -360,32 +372,4 @@
 		justify-content: flex-end;
 	}
 
-	.delete-confirm-btn {
-		padding: 6px 12px;
-		font-size: 12px;
-		font-weight: 500;
-		border: none;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: all 0.15s ease;
-	}
-
-	.delete-confirm-cancel {
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground-muted);
-	}
-
-	.delete-confirm-cancel:hover {
-		background: var(--color-border);
-		color: var(--color-foreground);
-	}
-
-	.delete-confirm-delete {
-		background: var(--color-error);
-		color: white;
-	}
-
-	.delete-confirm-delete:hover {
-		filter: brightness(1.1);
-	}
 </style>
