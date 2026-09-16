@@ -1,6 +1,4 @@
 export { default as YearPage } from './YearPage.svelte';
-export { default as WikiRightRail } from './WikiRightRail.svelte';
-export { default as WikiRailContents } from './WikiRailContents.svelte';
 export { default as WikiCollapsibleSection } from './WikiCollapsibleSection.svelte';
 
 // Day page

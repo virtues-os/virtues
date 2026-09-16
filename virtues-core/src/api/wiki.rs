@@ -1260,53 +1260,6 @@ pub async fn on_this_day(pool: &PgPool, date: NaiveDate) -> Result<Vec<OnThisDay
 
 
 // ============================================================================
-// ID Resolution - Parse entity type from ID
-// ============================================================================
-
-/// Result of resolving an ID to its entity type
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IdResolution {
-    pub entity_type: String,
-    pub id: String,
-}
-
-/// Resolve an entity ID to find its type
-/// IDs follow the format: {type}_{hash} (e.g., person_abc123, place_xyz789)
-/// For days, the ID format is: day_{YYYY-MM-DD}
-///
-/// This is the function migration 0015's comment means when it says
-/// "parse_entity_id" — no such function has ever existed, and the comment
-/// cannot be corrected in place because sqlx checksums an applied migration
-/// and a box refuses to boot when one changes under it. The claim itself is
-/// true: `chapter` is in the allowlist below.
-pub fn resolve_id(id: &str) -> Result<IdResolution> {
-    // Parse the prefix from the ID
-    let parts: Vec<&str> = id.splitn(2, '_').collect();
-    if parts.len() != 2 {
-        return Err(Error::NotFound(format!(
-            "Invalid entity ID format: {}",
-            id
-        )));
-    }
-
-    let entity_type = parts[0];
-
-    // Validate known entity types
-    let valid_types = ["person", "place", "org", "day", "telos", "act", "chapter", "page", "chat", "year", "source"];
-    if !valid_types.contains(&entity_type) {
-        return Err(Error::NotFound(format!(
-            "Unknown entity type in ID: {}",
-            id
-        )));
-    }
-
-    Ok(IdResolution {
-        entity_type: entity_type.to_string(),
-        id: id.to_string(),
-    })
-}
-
-// ============================================================================
 // Temporal Event Types
 // ============================================================================
 
