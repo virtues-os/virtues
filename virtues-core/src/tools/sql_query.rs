@@ -281,7 +281,12 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("wiki_days", TableMetadata {
         description: "Day records; a day's prose lives in the wiki_day_prose view (day_id, date, prose)",
         category: "wiki_temporal",
-        key_columns: &["date", "start_timezone", "last_edited_by"],
+        // `last_edited_by` was here until 0025 dropped it, and this catalog is
+        // serialized straight to the model — so the agent was being handed a
+        // column whose every mention it wrote came back as an error. `narrated_at`
+        // is the live column that answers what the model actually wants to know
+        // about a day.
+        key_columns: &["date", "start_timezone", "narrated_at"],
         join_hint: Some("JOIN wiki_day_prose ON wiki_day_prose.day_id = wiki_days.id"),
     });
     // A VIEW, not a table — and cataloged on purpose. The wiki_days entry

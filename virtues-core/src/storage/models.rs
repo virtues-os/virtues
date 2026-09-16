@@ -242,7 +242,10 @@ impl StreamKeyParser {
         ))
     }
 
-    /// Static helper used by stream-encryption key derivation.
+    /// Static helper. Its doc used to say "used by stream-encryption key
+    /// derivation" — there is no stream encryption, and this has no callers;
+    /// the comment was the last trace of a feature that was specified in
+    /// `.env.example` and never built.
     pub fn parse_date_from_key(key: &str) -> crate::error::Result<NaiveDate> {
         Self::new(key).date().ok_or_else(|| {
             crate::error::Error::Other(format!("Failed to parse date from storage key: {}", key))
