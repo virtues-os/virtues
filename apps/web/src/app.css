@@ -69,7 +69,19 @@
 }
 
 /* Avenir (sans) — self-hosted so it renders off-Apple (Jetson/Linux), not just
-   where it's a system font. Three static weights cover regular/medium/bold. */
+   where it's a system font. Three static weights cover regular/medium/bold.
+
+   ⚠ LICENSE UNVERIFIED — A HUMAN MUST ANSWER THIS. Avenir is a commercial
+   Linotype/Monotype family. Every other face we self-host is free to
+   redistribute (IBM Plex Mono is OFL); these three .woff2 files are not
+   obviously covered by anything on record. Self-hosting redistributes the
+   webfont from a PUBLIC repo and from every box we ship, which is a heavier
+   use than "it happens to be installed on this Mac." Nobody on the build side
+   can settle this by reading code, so do not treat the files' presence as
+   evidence that a web license exists. Until a human confirms one: do not add
+   weights, do not copy these files into another repo or another product, and
+   do not remove them either — swapping the sans is a design decision, not a
+   cleanup. See agents/build/typography.md. */
 @font-face {
 	font-family: 'Avenir';
 	src: url('/fonts/Avenir-Regular.woff2') format('woff2');
@@ -118,6 +130,28 @@
 	font-display: swap;
 }
 
+/* JJannon (serif) — ONE CUT. Read this before designing anything with it.
+   `JJannon-Display-Regular.woff2` is the only serif file we have: no bold, no
+   semibold, no italic, no second optical size. The three @font-face rules
+   below all point at that same file — 'JJannon' at 300, 'JJannon' at 400, and
+   'JJannon UI' with corrected metrics — so the family looks richer in this
+   stylesheet than it is on disk.
+
+   The consequence is a CONSTRAINT, not a taste: "the serif is never bold and
+   never italic" cannot be violated, only faked. Ask a browser for JJannon 700
+   and CSS font matching stays inside the family and hands back the one cut, so
+   the heading silently renders regular; ask for italic and the browser
+   synthesizes an oblique — a mechanical slant, not a drawn italic, and it
+   looks it. There is no fall-through to another family for weight or style:
+   family fallback happens only for missing glyphs and while the file loads.
+
+   So a serif hierarchy CANNOT be set with weight or slope. Set it with size,
+   case, color, and space — which is what the design grammar already asks for.
+   The 300 and 400 registrations exist so that either number in a `font-weight`
+   resolves without synthesis; they are the same ink.
+
+   Anyone proposing a serif system here (including an outside agency) is
+   proposing a license purchase and a new file, not a CSS change. */
 @font-face {
 	font-family: 'JJannon';
 	src: url('/fonts/JJannon-Display-Regular.woff2') format('woff2');
@@ -165,13 +199,15 @@
 	line-gap-override: 0%;
 }
 
-@font-face {
-	font-family: 'Lora';
-	src: url('/fonts/Lora-VariableFont_wght.ttf') format('truetype');
-	font-weight: 300 700;
-	font-style: normal;
-	font-display: swap;
-}
+/* No serif fallback webfont. Lora used to be registered here — a 212 KB
+   UNCOMPRESSED .ttf, the only non-woff2 face we shipped — and it sat second in
+   `--font-serif`, behind JJannon. It could never earn that: family fallback is
+   reached only for a glyph JJannon lacks or during the swap window, and in
+   both cases Lora's own coverage is Latin, the same ground a system serif
+   already covers for free. So the user paid a quarter of a megabyte for the
+   flash before the real serif landed. The fallback is now a system stack —
+   zero bytes, drawn on frame one. If a serif fallback ever has to come back,
+   it comes back as woff2. */
 
 /* Themed root background. On the mobile shell the page paints edge-to-edge
    (viewport-fit=cover), so this is what shows behind translucent chrome, in
