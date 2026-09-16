@@ -36,6 +36,22 @@
 	let saving = $state(false);
 	let err = $state<string | null>(null);
 
+	/**
+	 * Their prompt differs from the one we ship.
+	 *
+	 * Either they edited it, or they are on a box that predates us recording
+	 * what we shipped. This deliberately does not guess which: both mean "what
+	 * you are running is not what we would give you now", and the honest
+	 * affordance for both is the same one.
+	 */
+	const customized = $derived(
+		Boolean(
+			action?.agent_shipped &&
+				action?.agent &&
+				action.agent.trim() !== action.agent_shipped.trim()
+		)
+	);
+
 	let edit = $state<{ name: string; agent: string; schedule: string; memory: string }>({
 		name: '',
 		agent: '',
@@ -217,6 +233,19 @@
 
 	function markDirty() {
 		isDirty = true;
+	}
+
+	/**
+	 * Take the shipped prompt back.
+	 *
+	 * Loads it into the editor rather than saving it, so the change is visible
+	 * and reversible before it is committed — replacing prose someone wrote
+	 * should not happen on one click with nothing shown.
+	 */
+	function useShippedPrompt() {
+		if (!action?.agent_shipped) return;
+		edit.agent = action.agent_shipped;
+		markDirty();
 	}
 
 	async function save() {
@@ -537,6 +566,21 @@
 							<span class="hint">
 								<Icon icon="ri:lock-line" width="12" /> Read-only — this prompt ships with the applet
 							</span>
+						{:else if customized}
+							<!-- The only channel an edited applet has. A prompt you
+							     wrote is never overwritten on upgrade, which is right
+							     and also means a fix we ship cannot reach you — so
+							     this line is how you find out one exists. -->
+							<div class="prompt-drift">
+								<span>
+									You've edited this. The version that ships with the applet
+									has changed since — improvements and fixes land there, not
+									here.
+								</span>
+								<button type="button" class="linkish" onclick={useShippedPrompt}>
+									Use the version that ships
+								</button>
+							</div>
 						{/if}
 					</label>
 				{/if}
@@ -1226,4 +1270,30 @@
 		font-size: 0.75rem;
 		font-style: normal;
 	}
+
+	/* The prompt you are running is not the prompt we ship. Stated plainly and
+	   quietly: it is information, not a warning — an edited prompt is a
+	   legitimate thing to have. */
+	.prompt-drift {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.4rem;
+		margin-top: 0.4rem;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--color-foreground-subtle);
+	}
+
+	.prompt-drift .linkish {
+		background: none;
+		border: 0;
+		padding: 0;
+		cursor: pointer;
+		color: var(--color-foreground);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		font-size: inherit;
+	}
+
 </style>

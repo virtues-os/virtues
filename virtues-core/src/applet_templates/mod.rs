@@ -1284,25 +1284,44 @@ async fn upsert_row(
         // wrote.
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, schedule, enabled, config, condition,
-            triggers, credential_id, command, device_id, until, description
+            id, name, owner, agent, agent_shipped, schedule, enabled, config,
+            condition, triggers, credential_id, command, device_id, until,
+            description
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
-            agent          = COALESCE(app_applets.agent, EXCLUDED.agent),
+            agent = CASE
+                -- A hole. An agent applet with no prompt is a scheduled no-op
+                -- that reports success, which is how the Morning Examen ran
+                -- every morning doing nothing on every box.
+                WHEN app_applets.agent IS NULL THEN EXCLUDED.agent
+                -- They never touched it — the row still holds exactly what we
+                -- last gave them — so a fix reaches them.
+                WHEN app_applets.agent = app_applets.agent_shipped THEN EXCLUDED.agent
+                -- We have never recorded what we shipped, so this row predates
+                -- the column. Adopt: see 0028 for why this one-time reading of
+                -- an ambiguous state goes this way.
+                WHEN app_applets.agent_shipped IS NULL THEN EXCLUDED.agent
+                -- Theirs. Left exactly as written; the UI shows them that a
+                -- newer version exists and what it changes.
+                ELSE app_applets.agent
+            END,
+            agent_shipped  = EXCLUDED.agent,
             device_id      = EXCLUDED.device_id,
             updated_at     = now()
         "#
     } else if template.owner == "ai" {
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, schedule, enabled, config, condition,
-            triggers, credential_id, command, device_id, until, description
+            id, name, owner, agent, agent_shipped, schedule, enabled, config,
+            condition, triggers, credential_id, command, device_id, until,
+            description
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             agent          = EXCLUDED.agent,
+            agent_shipped  = EXCLUDED.agent,
             schedule  = EXCLUDED.schedule,
             config         = app_applets.config || EXCLUDED.config,
             condition      = EXCLUDED.condition,
@@ -1314,14 +1333,16 @@ async fn upsert_row(
     } else {
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, schedule, enabled, config, condition,
-            triggers, credential_id, command, device_id, until, description
+            id, name, owner, agent, agent_shipped, schedule, enabled, config,
+            condition, triggers, credential_id, command, device_id, until,
+            description
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             owner          = EXCLUDED.owner,
             agent          = EXCLUDED.agent,
+            agent_shipped  = EXCLUDED.agent,
             config         = EXCLUDED.config,
             condition      = EXCLUDED.condition,
             triggers       = EXCLUDED.triggers,
@@ -1894,6 +1915,77 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
             Some("Mine. Leave it."),
             "a user-owned applet's prompt is editable, so reconcile must never \
              overwrite one that is actually there"
+        );
+    }
+
+    /// A prompt fix reaches a box that never edited its copy, and stops at one
+    /// that did.
+    ///
+    /// The Morning Examen was caught inventing a Gospel citation on a box with
+    /// no readings cached. Fixing the manifest could not reach a single
+    /// existing install: a user-owned applet's row is the user's after the
+    /// first seed, so reconcile updated `device_id` and left the prompt. That
+    /// is right in the case it was written for and wrong in every other, and
+    /// the missing piece was never a way to detect an edit — it was that we
+    /// never recorded what the default HAD been.
+    #[sqlx::test]
+    async fn a_prompt_fix_reaches_an_untouched_box_and_stops_at_an_edited_one(
+        pool: sqlx::PgPool,
+    ) {
+        reconcile_templates(&pool).await.expect("reconcile");
+
+        // What we ship is recorded beside what the row holds.
+        let (agent, shipped): (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT agent, agent_shipped FROM app_applets WHERE id = 'applet_morning_examen'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(agent.is_some() && agent == shipped, "seeded and tracked");
+
+        // A box that never opened the editor: the row still holds exactly what
+        // we last gave it, so a new prompt lands.
+        sqlx::query(
+            "UPDATE app_applets SET agent = 'OLD SHIPPED TEXT', \
+                                    agent_shipped = 'OLD SHIPPED TEXT' \
+             WHERE id = 'applet_morning_examen'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        reconcile_templates(&pool).await.expect("reconcile");
+        let landed: Option<String> =
+            sqlx::query_scalar("SELECT agent FROM app_applets WHERE id = 'applet_morning_examen'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            landed.is_some_and(|a| a.contains("Examen")),
+            "an untouched prompt takes the fix — this is the whole point, and \
+             it is the case nearly every box is in"
+        );
+
+        // A box where somebody wrote their own: untouched, and still tracking
+        // what we ship so the UI can show them the difference.
+        sqlx::query(
+            "UPDATE app_applets SET agent = 'Mine. Skip the Gospel.' \
+             WHERE id = 'applet_morning_examen'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        reconcile_templates(&pool).await.expect("reconcile");
+        let (theirs, still_tracked): (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT agent, agent_shipped FROM app_applets WHERE id = 'applet_morning_examen'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(theirs.as_deref(), Some("Mine. Skip the Gospel."));
+        assert!(
+            still_tracked.is_some_and(|s| s.contains("Examen")),
+            "their edit stands, and `agent_shipped` still says what we ship — \
+             which is what lets the page offer a diff rather than a surprise"
         );
     }
 
