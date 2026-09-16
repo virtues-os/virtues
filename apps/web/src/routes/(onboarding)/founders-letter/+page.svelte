@@ -6,8 +6,10 @@
   questions at the one moment the box had nothing to show for them: nothing
   kicks when a source connects, entities resolve on a 15-minute tick, and the
   first narrated day lands the following morning. Everything except the letter
-  moved into the app as the getting-started page (HomeView's first dress —
-  see GettingStarted.svelte and agents/plan/getting-started-plan.md), and
+  moved into the app: first as a getting-started page dressed on Home, then
+  from 2026-09-13 as one seeded chat room (see
+  apps/web/src/lib/components/chat/getting-started/, whose four steps are
+  derived from the record rather than stored), and
   "onboarding" left the vocabulary with it: what remains is a letter, so the
   route says so. /onboarding and /setup redirect here for old links and
   OTA-skewed bundles.
