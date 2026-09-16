@@ -42,6 +42,7 @@
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { getLocalDateSlug, formatLongDate } from '$lib/utils/dateUtils';
+	import { lede } from '$lib/wiki/lede';
 	import {
 		listPeople,
 		listPlaces,
@@ -486,14 +487,6 @@
 
 			// recent is date DESC; the latest narrated day is the featured entry.
 			const featured = recent.find((d) => d.article);
-			// The lede: the article's first block that is neither blank nor a
-			// heading. Same rule the server applies in SQL (day_lede_sql).
-			const ledeOf = (prose: string | null | undefined): string | null =>
-				prose
-					?.split(/\n\s*\n/)
-					.map((b) => b.trim())
-					.find((b) => b !== "" && !b.startsWith("#")) ?? null;
-
 			if (featured) {
 				latestEntry = {
 					slug: featured.date,
@@ -506,7 +499,7 @@
 					// The day's own opening paragraph, which is its short form
 					// everywhere. `epigraph` was a column the narrate prompt
 					// forbids, so this card showed nothing on every box.
-					lede: ledeOf(featured.article),
+					lede: lede(featured.article),
 				};
 			}
 

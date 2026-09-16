@@ -1,44 +1,35 @@
-//! Entity article generation — the wikipedia-style written record on each
-//! entity page.
+//! An entity's FIRST DRAFT — the opening article on a person, place or
+//! organization page.
 //!
-//! Where the day summary narrates a *day*, this narrates a *relationship*: a
-//! short, grounded article about a person, place, or organization, written
-//! from the raw records that reference it (`wiki_refs`) and revised
-//! only when enough NEW evidence has accumulated since the last edition —
-//! growth-gated, not timer-gated, so a quiet entity never burns a model call
-//! and an active one stays current.
+//! **This module writes once.** It is the one-shot half of article resolution
+//! (`agents/record/article-resolution.md`): there is no existing text to
+//! respect and nothing to go looking for, so one call with a dossier in the
+//! prompt is the whole job. Everything after the first draft — deciding the
+//! article is due, researching what changed, and making a surgical edit that
+//! cannot lose a sentence the person wrote — belongs to the `wiki_editor`
+//! applet and its agent phase, which is the only place a Yjs-aware writer can
+//! run.
 //!
 //! It is an *article*, not a summary: it summarizes nothing, because the thing
 //! it would summarize (the records) is rendered directly beneath it on the
 //! page. It is the prose the page is written in.
 //!
-//! Shape: gate → dossier → `BearerClient` → write back. The article lives in its own `article` column; `content` and
-//! `notes` remain the user's own writing and are never touched here.
+//! Shape: dossier → `BearerClient` → `create_article`. The prose lands in the
+//! article's own page, where the person's edits and the editor's share one
+//! document.
 //!
-//! Cost note: this runs on the **Lite** slot and ships **disabled**. On a box
-//! with real history several hundred entities clear the gate on day one, and
-//! there is no per-day spend ceiling anywhere in the system — so the slot and
-//! the off-by-default switch are the cost controls.
+//! **The gate is consent.** An entity has no article until someone asks for
+//! one, and none is maintained until they set `maintenance` on it. Writing
+//! once and maintaining forever are different decisions and get different
+//! switches. The thresholds that used to decide this for them
+//! (`MIN_REFS_TO_WRITE`, `MIN_NEW_REFS`) are gone: on the real box they
+//! cleared 226 entities on five months of records — hundreds of unrequested
+//! model calls, recurring forever, with nothing in the UI to say the box was
+//! spending on them.
 
 use sqlx::PgPool;
 
 use crate::error::{Error, Result};
-
-// MIN_REFS_TO_WRITE and MIN_NEW_REFS are gone (migration 0081).
-//
-// They were a machine deciding which of your relationships deserved prose. On
-// the real box that meant 226 entities cleared the bar on a corpus of five
-// months — hundreds of unrequested model calls, recurring forever, with nothing
-// in the UI to say the box was spending on them.
-//
-// The gate is consent now. An entity has no article until someone clicks
-// "Write the article", and none is maintained until they turn maintenance on,
-// per-article, with its own `refresh_after_new_refs`. Writing once and
-// maintaining forever are different decisions and get different switches.
-
-/// Editions per run. The applet runs hourly; a bounded batch drains a backlog
-/// without a cost spike.
-const MAX_ENTITIES_PER_RUN: i64 = 2;
 
 /// Most recent records shown to the model.
 const DOSSIER_RECORDS: usize = 40;
@@ -319,7 +310,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         ORDER BY d.date DESC
         LIMIT 6
         "#,
-        lede = crate::api::wiki::day_lede_sql("dp.prose")
+        lede = crate::api::wiki::lede_sql("dp.prose")
     ))
     .bind(&entity.id)
     .fetch_all(pool)
