@@ -9,6 +9,7 @@
 	 * - Binding mode (default): User needs to select/open a page to edit
 	 * - Permission mode: AI wants to edit a specific page, user must allow/deny
 	 */
+	import Button from '$lib/components/Button.svelte';
 
 	interface Props {
 		/** Entity ID (page_id, person_id, etc.) */
@@ -132,9 +133,7 @@
 			{/if}
 		{:else if entityId}
 			<!-- Binding mode: Open & Edit -->
-			<button class="action-btn bind-btn" onclick={handleBind} type="button">
-				Open & Edit
-			</button>
+			<Button variant="primary" size="sm" onclick={handleBind}>Open & Edit</Button>
 		{/if}
 	</div>
 </div>
@@ -238,11 +237,6 @@
 
 	.action-btn.selected {
 		cursor: default;
-	}
-
-	.bind-btn {
-		background: var(--color-primary);
-		color: white;
 	}
 
 	.allow-btn {

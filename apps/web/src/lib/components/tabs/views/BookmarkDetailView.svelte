@@ -14,7 +14,7 @@
 -->
 
 <script lang="ts">
-	import { Page } from '$lib';
+	import { Button, Page } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
 	import type { Tab } from '$lib/tabs/types';
 	import {
@@ -168,7 +168,9 @@
 					<span>Saved</span>
 				{/if}
 				{#if dirty && !savingNote}
-					<button class="note-save" onclick={saveNote}>Save note</button>
+					<Button variant="secondary" size="sm" onclick={saveNote}
+						>Save note</Button
+					>
 				{/if}
 			</div>
 		</section>
@@ -321,16 +323,6 @@
 	}
 	.note-error {
 		color: var(--color-error, #dc2626);
-	}
-	.note-save {
-		padding: 0.2rem 0.6rem;
-		font: inherit;
-		font-size: 0.75rem;
-		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 0.25rem;
-		cursor: pointer;
 	}
 
 	.hero {

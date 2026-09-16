@@ -41,6 +41,7 @@
 	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import { Button } from '$lib';
 	import { getLocalDateSlug, formatLongDate } from '$lib/utils/dateUtils';
 	import { lede } from '$lib/wiki/lede';
 	import {
@@ -842,10 +843,12 @@
 							<!-- People arrived only by resolution before this: from a
 							     contact sync or an email sender. The people who matter
 							     most are often the ones you never email. -->
-							<button type="button" class="add-entity" onclick={addPerson}>
-								<Icon icon="ri:user-add-line" width="14" />
-								<span>New person</span>
-							</button>
+							<Button
+								variant="ghost"
+								size="sm"
+								icon="ri:user-add-line"
+								onclick={addPerson}>New person</Button
+							>
 						{/snippet}
 						{#snippet tableRow(entity: UnifiedEntity)}
 							<td class="col-name">
@@ -972,21 +975,7 @@
 		margin: 0 auto;
 	}
 
-	.add-entity {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3125rem;
-		padding: 0.25rem 0.5rem;
-		border-radius: 4px;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-	}
 
-	.add-entity:hover {
-		color: var(--color-foreground);
-		background: var(--color-surface-hover);
-	}
 
 	/* ===== Overview: essay column + marginalia rail ===== */
 
@@ -1001,10 +990,16 @@
 		margin-bottom: 2.5rem;
 	}
 
+	/* 400 is the only weight this face has. A 500 request on JJannon resolves
+	   back to the regular inside the family and returns silently, so the mast
+	   never once rendered the way the declaration read (agents/build/typography.md).
+	   The rank it was reaching for is already here: 32px in full foreground
+	   above a 17px muted standfirst. Stated rather than omitted so the next
+	   reader doesn't re-add it. */
 	.mast h1 {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 2rem;
-		font-weight: 500;
+		font-weight: 400;
 		letter-spacing: -0.01em;
 		color: var(--color-foreground);
 		margin: 0 0 0.625rem;

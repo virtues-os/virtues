@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Tab } from "$lib/tabs/types";
     import Icon from "$lib/components/Icon.svelte";
+    import { Button } from "$lib";
     import { getDeveloperTables, ApiError } from "$lib/api/client";
     import { onMount } from "svelte";
 
@@ -181,14 +182,13 @@
                                 >⌘+Enter</kbd
                             > to run
                         </div>
-                        <button
-                            onclick={runQuery}
-                            disabled={loading}
-                            class="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-foreground-muted hover:bg-surface-elevated hover:text-foreground disabled:opacity-50"
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            icon="ri:play-fill"
+                            {loading}
+                            onclick={runQuery}>Run</Button
                         >
-                            <Icon icon="ri:play-fill" />
-                            {loading ? "Running..." : "Run"}
-                        </button>
                     </div>
                 </div>
             </div>

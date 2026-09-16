@@ -6,6 +6,7 @@
 	 * Shows different states: page_created, edit_applied, edit_failed
 	 */
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	interface Props {
@@ -62,10 +63,14 @@
 	</div>
 	<div class="result-actions">
 		{#if config.showOpenButton && pageId}
-			<button class="open-btn" onclick={handleOpenPage} type="button">
-				<Icon icon="ri:external-link-line" width="14" />
+			<Button
+				variant="ghost"
+				size="sm"
+				icon="ri:external-link-line"
+				onclick={handleOpenPage}
+			>
 				Open
-			</button>
+			</Button>
 		{/if}
 	</div>
 </div>
@@ -136,25 +141,5 @@
 		background: var(--color-surface-elevated);
 		border-color: var(--color-error-subtle);
 		color: var(--color-error);
-	}
-
-	/* Open button */
-	.open-btn {
-		display: flex;
-		align-items: center;
-		gap: 0.25rem;
-		padding: 0.375rem 0.625rem;
-		background: transparent;
-		border: none;
-		border-radius: var(--radius-full);
-		font-size: 0.75rem;
-		font-weight: 500;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		transition: all 0.15s ease;
-	}
-
-	.open-btn:hover {
-		color: var(--color-foreground);
 	}
 </style>

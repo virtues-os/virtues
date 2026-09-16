@@ -495,9 +495,12 @@
 			<section class="face-block">
 				<div class="face-head">
 					<h2>What it shows</h2>
-					<button type="button" class="open-view" onclick={openView}>
-						<Icon icon="ri:external-link-line" width="12" /> Open full page
-					</button>
+					<Button
+						variant="secondary"
+						size="sm"
+						icon="ri:external-link-line"
+						onclick={openView}>Open full page</Button
+					>
 				</div>
 				<FaceFrame appletId={action.id} height="460px" />
 			</section>
@@ -868,19 +871,6 @@
 	.del .dim {
 		color: var(--color-foreground-subtle);
 	}
-	.open-view {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		padding: 0.25rem 0.6rem;
-		font-size: 0.8125rem;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
-		cursor: pointer;
-	}
-	.open-view:hover { border-color: var(--color-foreground-subtle); }
 
 	.detail {
 		display: flex;

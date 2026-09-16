@@ -470,17 +470,17 @@
 										Turn on <span class="text-foreground">Virtues</span> in the list,
 										then leave it — this Mac notices within a few minutes.
 									</div>
-									<button
-										class="fix-btn mt-2"
+									<Button
+										variant="secondary"
+										size="sm"
+										class="mt-2"
+										icon="ri:external-link-line"
 										onclick={(e) => {
 											// The whole row is the drill-down now; this must not also open it.
 											e.stopPropagation();
 											perm.open?.();
-										}}
+										}}>Open {perm.label} on this Mac</Button
 									>
-										<Icon icon="ri:external-link-line" width="13" />
-										Open {perm.label} on this Mac
-									</button>
 								{:else}
 									<!-- Was unconditional, so a browser on a phone got told to
 									     "turn on Virtues in the list" and that "this Mac notices
@@ -724,23 +724,7 @@
 	.dot-on {
 		background: var(--color-success);
 	}
-	.fix-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		padding: 3px 9px;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: none;
-		cursor: pointer;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
 
-	.fix-btn:hover {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-		color: var(--color-foreground);
-	}
 
 	/* Matches the grid's own hideOnMobile header behavior for the paired-at
 	   cell, which the custom tableRow has to hide itself. */

@@ -16,6 +16,7 @@
 -->
 <script lang="ts">
 	import { Page } from '$lib';
+	import Button from '$lib/components/Button.svelte';
 	import UniversalDataGrid, {
 		type Column
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
@@ -281,9 +282,9 @@
 	>
 		{#snippet rowActions(row: Row)}
 			{#if row.source}
-				<button type="button" class="connect" onclick={() => void connect(row.source!)}>
+				<Button variant="secondary" size="sm" onclick={() => void connect(row.source!)}>
 					{connectLabel(row)}
-				</button>
+				</Button>
 			{/if}
 		{/snippet}
 
@@ -313,21 +314,6 @@
 		font-size: 0.8125rem;
 		line-height: 1.55;
 		color: var(--color-foreground-subtle, #9ca3af);
-	}
-
-	.connect {
-		padding: 0.25rem 0.625rem;
-		border-radius: 6px;
-		border: 1px solid var(--color-border, #d1d5db);
-		background: var(--color-background, #fff);
-		color: var(--color-foreground, #111827);
-		font-size: 0.75rem;
-		font-weight: 500;
-		white-space: nowrap;
-		cursor: pointer;
-	}
-	.connect:hover {
-		background: var(--color-muted, #f3f4f6);
 	}
 
 </style>

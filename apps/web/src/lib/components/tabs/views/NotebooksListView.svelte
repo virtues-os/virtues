@@ -4,7 +4,7 @@
 	import { accentCss } from '$lib/sidebar/pin-colors';
 	import { notebookStore } from '$lib/stores/notebook.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { Page } from '$lib';
+	import { Button, Page } from '$lib';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { NotebookSummary } from '$lib/api/client';
 
@@ -130,9 +130,13 @@
 				onblur={commitDraft}
 			/>
 		{:else}
-			<button class="new-btn" onclick={startDraft} disabled={creating}>
-				<Icon icon="ri:add-line" width="16" /> New Notebook
-			</button>
+			<Button
+				variant="secondary"
+				size="sm"
+				icon="ri:add-line"
+				loading={creating}
+				onclick={startDraft}>New Notebook</Button
+			>
 		{/if}
 	{/snippet}
 
@@ -141,7 +145,9 @@
 			<Icon icon="ri:layout-masonry-line" width="28" />
 			<p>No Notebooks yet.</p>
 			{#if !drafting}
-				<button class="new-btn ghost" onclick={startDraft}>Create your first Notebook</button>
+				<Button variant="secondary" size="sm" onclick={startDraft}
+					>Create your first Notebook</Button
+				>
 			{/if}
 		</div>
 	{:else}
@@ -216,14 +222,6 @@
 </Page>
 
 <style>
-	.new-btn {
-		display: inline-flex; align-items: center; gap: 5px;
-		padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 8px;
-		background: var(--color-surface-elevated); color: var(--color-foreground);
-		font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
-	}
-	.new-btn:hover { background: var(--color-surface); }
-	.new-btn.ghost { background: transparent; margin-top: 10px; }
 	.name-input {
 		padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 8px;
 		background: var(--color-surface-elevated); color: var(--color-foreground);

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { listApplets, adminReconcile, type Applet } from '$lib/api/client';
@@ -404,9 +405,9 @@
 			</Popover>
 			<Popover bind:open={newMenuOpen} placement="bottom-end" offset={4}>
 				{#snippet trigger({ toggle })}
-					<button type="button" class="new-btn" onclick={toggle}>
-						<Icon icon="ri:add-line" width="14" /> New
-					</button>
+					<Button variant="primary" size="sm" icon="ri:add-line" onclick={toggle}>
+						New
+					</Button>
 				{/snippet}
 				{#snippet children()}
 					<div class="new-menu" role="menu">
@@ -504,14 +505,19 @@
 		gap: 1rem;
 		flex-wrap: wrap;
 	}
-	/* Matches PageHeading's level-1 title (text-3xl / font-serif / medium) and
-	   its description, so a hand-rolled header still reads as a page title. */
+	/* Matches PageHeading's level-1 title and its description, so a hand-rolled
+	   header still reads as a page title. That component dropped its own 500
+	   for the same reason this one does — JJannon ships one cut, so the weight
+	   resolved back to the regular and returned silently — and took the size up
+	   to the scale's 36 (agents/build/design-grammar.md §4) to carry the rank
+	   that the weight never did. Both numbers follow it, or the two page titles
+	   stop matching. */
 	.section-header h2 {
 		margin: 0;
 		font-family: var(--font-serif, ui-serif, Georgia, serif);
-		font-size: 1.875rem;
-		line-height: 2.25rem;
-		font-weight: 500;
+		font-size: 36px;
+		line-height: 1.15;
+		font-weight: 400;
 	}
 	.subtitle {
 		margin: 0.5rem 0 0;
@@ -542,21 +548,6 @@
 	.new-menu-item:disabled {
 		opacity: 0.6;
 		cursor: default;
-	}
-	.new-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		padding: 0.375rem 0.625rem;
-		font-size: 0.8125rem;
-		border: 1px solid var(--color-foreground, #111827);
-		border-radius: 6px;
-		background: var(--color-foreground, #111827);
-		color: var(--color-surface, #fff);
-		cursor: pointer;
-	}
-	.new-btn:hover {
-		opacity: 0.88;
 	}
 
 	.new-menu {

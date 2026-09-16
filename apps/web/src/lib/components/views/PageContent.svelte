@@ -7,6 +7,7 @@
 	 */
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import Button from "$lib/components/Button.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import CodeMirrorEditor from "$lib/components/pages/CodeMirrorEditor.svelte";
 	import type { DocStats } from "$lib/components/pages/CodeMirrorEditor.svelte";
@@ -586,12 +587,9 @@
 			>
 				{error}
 			</div>
-			<button
-				onclick={handleBackClick}
-				class="text-primary hover:underline mt-4 inline-block"
-			>
-				Back to Pages
-			</button>
+			<div class="mt-4">
+				<Button variant="secondary" onclick={handleBackClick}>Back to Pages</Button>
+			</div>
 		</div>
 	{:else if pageData}
 		<div class="page-layout">
@@ -844,11 +842,16 @@
 		margin-bottom: 0.5rem;
 	}
 
+	/* 400, and it must stay equal to .shared-page-title in the public /s/[token]
+	   view or the same page reads differently to its author and its reader.
+	   The 500 was never drawn either way: JJannon ships one cut and the request
+	   resolves back to the regular in silence (agents/build/typography.md). At
+	   32px in full ink above the body the title already leads the document. */
 	.page-title-input {
 		flex: 1;
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 2rem;
-		font-weight: 500;
+		font-weight: 400;
 		line-height: 1.2;
 		color: var(--color-foreground);
 		background: transparent;

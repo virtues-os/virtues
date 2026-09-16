@@ -16,6 +16,7 @@
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import AliasEditor from "./AliasEditor.svelte";
+	import Button from "$lib/components/Button.svelte";
 	import { updatePerson } from "$lib/wiki/api";
 
 	interface Props {
@@ -142,9 +143,9 @@
 							if (e.key === "Escape") bondEditing = false;
 						}}
 					/>
-					<button class="bond-btn" onclick={saveBond} disabled={bondSaving}>
-						{bondSaving ? "Saving…" : "Save"}
-					</button>
+					<Button variant="secondary" size="sm" onclick={saveBond} loading={bondSaving}>
+						Save
+					</Button>
 				{:else if bond}
 					<button class="bond-line" type="button" onclick={startBondEdit} title="Edit">
 						{bond}
@@ -389,17 +390,6 @@
 		border-radius: 6px;
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground);
-	}
-
-	.bond-btn {
-		font: inherit;
-		font-size: 0.8125rem;
-		padding: 0.375rem 0.875rem;
-		border-radius: 6px;
-		border: 1px solid var(--color-border);
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
-		cursor: pointer;
 	}
 
 	/* Sits between the header and the article's rule, indented to the same
