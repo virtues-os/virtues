@@ -459,8 +459,40 @@ fn subject_of(line: &str) -> String {
 
 const WELCOME: &str = "# Getting started\n\nWelcome in. Virtues records, remembers, and recounts your life.\n\nFour things have to be in place before it can start: connecting AI, introductions, your integrations, and your story.";
 
-const GRADUATED: &str =
-    "That is all four. This room stays open for questions about your setup; the rest of Virtues is yours.";
+/// The ending. Four steps close and nothing used to happen — Adam, having
+/// finished: "the end of the chat was uneventful and i didnt know where to go
+/// next as a user." This is the one moment the whole room was for, so it says
+/// what now EXISTS rather than that the setup is over, and the client puts a
+/// door under it to each thing named.
+fn graduated_line(state: &GettingStartedState) -> String {
+    let mut has: Vec<String> = Vec::new();
+    if state.step("interview").map(|s| s.status == StepStatus::Done).unwrap_or(false) {
+        has.push("your story, written down in your own words".to_string());
+    }
+    let sources = state
+        .step("connect_world")
+        .and_then(|s| s.sources.as_deref())
+        .filter(|v| !v.is_empty());
+    if let Some(v) = sources {
+        has.push(format!("a record being written from {}", list(v)));
+    }
+
+    let mut out = if has.is_empty() {
+        "That is all four, and your server is yours to use.".to_string()
+    } else {
+        format!("That is all four. Your server now holds {}.", list(&has))
+    };
+    out.push(' ');
+    out.push_str(match state.first_day {
+        Some(_) => "Your first page is on Home, and there will be one every morning.",
+        None if sources.is_some() => {
+            "Tomorrow morning there will be a page on Home for today, and one every morning after."
+        }
+        None => "Connect something in Settings whenever you like, and the pages begin the next morning.",
+    });
+    out.push_str(" This room stays here for anything about the setup.");
+    out
+}
 
 /// What a step says once it is settled — done or set aside. Two names and
 /// only two: "your server" is the box, "your assistant" is who you talk to
@@ -558,7 +590,7 @@ fn script(state: &GettingStartedState) -> Vec<(String, String)> {
             }
         }
     }
-    out.push(("graduated".to_string(), GRADUATED.to_string()));
+    out.push(("graduated".to_string(), graduated_line(state)));
     out
 }
 
@@ -579,6 +611,15 @@ fn script(state: &GettingStartedState) -> Vec<(String, String)> {
 /// truncated one's `length` — are not the room's to remove.
 pub async fn narrate(pool: &PgPool, state: &GettingStartedState) -> Result<()> {
     let lines = script(state);
+    /* THE FLOOR. Reconciling to the script alone can rewind the room past
+     * work that is already done: a rule change reopened introductions after
+     * the interview had been written, so the thread deleted everything below
+     * it and came to read "next, your integrations" followed by an entire
+     * life story. The person's own turns cannot be deleted and should not be;
+     * the room's lines must not contradict them. So every settled step keeps
+     * BOTH its lines, wherever it sits in the walk — the script decides what
+     * to add next, never what to take back from a step that is finished.
+     */
     let mut wanted: Vec<String> = lines
         .iter()
         .filter(|(_, text)| !text.is_empty())
@@ -595,6 +636,7 @@ pub async fn narrate(pool: &PgPool, state: &GettingStartedState) -> Result<()> {
     for step in &state.steps {
         if step.status != StepStatus::Open {
             wanted.push(subject_of(&format!("ask:{}", step.id)));
+            wanted.push(subject_of(&format!("done:{}", step.id)));
         }
     }
 
@@ -815,15 +857,30 @@ mod tests {
         // The script itself moves on ...
         let script_subjects: Vec<String> = script(&s).into_iter().map(|(l, _)| l).collect();
         assert!(!script_subjects.iter().any(|l| l == "ask:connect_ai"));
-        // ... but the settled step keeps whatever it was asked, so the line
-        // survives narrate()'s reconciliation.
+        // ... but a settled step keeps BOTH its lines, so they survive
+        // narrate()'s reconciliation — the floor that stops the room rewinding
+        // past work already done. A rule change once reopened introductions
+        // after the interview was written, and the thread deleted everything
+        // below it: "next, your integrations" above an entire life story.
         let kept: Vec<String> = s
             .steps
             .iter()
             .filter(|st| st.status != StepStatus::Open)
-            .map(|st| format!("gs:ask:{}", st.id))
+            .flat_map(|st| [format!("gs:ask:{}", st.id), format!("gs:done:{}", st.id)])
             .collect();
         assert!(kept.iter().any(|l| l == "gs:ask:connect_ai"));
+        assert!(kept.iter().any(|l| l == "gs:done:connect_ai"));
+
+        // A step finished LOW in the walk keeps its lines when one above it
+        // reopens — the case that produced the incoherent transcript.
+        let rewound = state([Done, Open, Skipped, Done], true, false);
+        let floor: Vec<String> = rewound
+            .steps
+            .iter()
+            .filter(|st| st.status != StepStatus::Open)
+            .map(|st| format!("gs:done:{}", st.id))
+            .collect();
+        assert!(floor.iter().any(|l| l == "gs:done:interview"));
     }
 
     /// A name can arrive without anyone being asked — signing in to a
