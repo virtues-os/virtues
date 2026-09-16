@@ -42,6 +42,7 @@
 	import RoomCover from "$lib/components/chat/getting-started/RoomCover.svelte";
 	import StepEyebrow from "$lib/components/chat/getting-started/StepEyebrow.svelte";
 	import IntroductionsRecorded from "$lib/components/chat/getting-started/IntroductionsRecorded.svelte";
+	import GraduatedDoors from "$lib/components/chat/getting-started/GraduatedDoors.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
@@ -1458,6 +1459,24 @@
 		if (isGettingStartedChat(currentChatConversationId)) gettingStarted.start();
 	});
 
+	/** A turn just settled in the room, so ask the box where the walk stands.
+	 *
+	 *  The server narrates the coda the moment the assistant's turn is on
+	 *  disk (see api/chat.rs), but the CLIENT only learns a step moved on the
+	 *  store's 30-second poll — so the ending sat unread while the person
+	 *  typed their next message over the top of it. Asking on `ready` closes
+	 *  that window: the answer moves the walk signature, and the effect below
+	 *  re-reads the thread with the new lines in it. */
+	let lastTurnStatus = $state<string | null>(null);
+	$effect(() => {
+		const status = chat.status;
+		const wasStreaming = lastTurnStatus === "streaming" || lastTurnStatus === "submitted";
+		lastTurnStatus = status;
+		if (!isGettingStartedChat(currentChatConversationId)) return;
+		if (status !== "ready" || !wasStreaming) return;
+		untrack(() => void gettingStarted.refresh());
+	});
+
 	/** The room speaks server-side, so when its state moves the thread has
 	 *  new lines in it. Re-read on any change of the walk — the step
 	 *  statuses and the interview's start are the whole of it. */
@@ -2218,7 +2237,14 @@
 												     the tool. See after this loop. -->
 											{:else if part.type === "tool-write_it_up" && isGettingStartedChat(currentChatConversationId) && (part as any).state === "output-available" && (part as any).output?.document_page_id}
 												<!-- In the getting-started room the interview closes inline
-												     and the thread goes on: the two doors, here. -->
+												     and the thread goes on: the two doors, here — and the
+												     plate with them. The close ANSWERS THE OPENING, which
+												     was a lifeline of a fictional life at the top of the
+												     interview; this is the same drawing made of their own
+												     chapters, and it only reads as an answer if it sits at
+												     the moment of the close. It stood above the composer
+												     until 2026-09-16, where it was permanent furniture and
+												     every later message pushed in above it. -->
 												{@const out = (part as any).output}
 												<InterviewClosedCard
 													pageId={out.document_page_id}
@@ -2226,6 +2252,9 @@
 													alreadyExisted={out.document_already_existed ?? false}
 													chaptersError={out.chapters_error ?? null}
 												/>
+												{#if !out.chapters_error}
+													<ChapterLifelineLive />
+												{/if}
 											{:else if part.type === "tool-write_it_up"}
 												<!-- Nothing inline: the standing card in place of the composer
 												     holds the two doors (it used to render here as well, so the
@@ -2341,6 +2370,12 @@
 												     printed above the sentence it belongs to is what
 												     made this read backwards. -->
 												<IntroductionsRecorded fields={introductionsRecorded(message)} />
+											{/if}
+											{#if message.subject === "gs:graduated"}
+												<!-- The room's last line names what now exists; these
+												     are the way in to each thing it named. Under the
+												     sentence, never instead of it. -->
+												<GraduatedDoors />
 											{/if}
 											{#if messageMetadata.get(message.id)?.stopped}
 												<StoppedNotice />

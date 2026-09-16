@@ -9,13 +9,11 @@
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ConnectAiActions from "./ConnectAiActions.svelte";
 	import IntegrationsPicker from "./IntegrationsPicker.svelte";
-	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
 	import Act from "./ui/Act.svelte";
 	import Choices from "./ui/Choices.svelte";
 
 	const step = $derived(gettingStarted.steps.find((s) => s.status === "open") ?? null);
 	const interviewUnderway = $derived(gettingStarted.interviewUnderway);
-	const interviewDone = $derived(gettingStarted.step("interview")?.status === "done");
 	/** The first day the box wrote up, once one exists: the promise, shown
 	 *  rather than told — a door to the page itself. */
 	const firstDay = $derived(gettingStarted.state?.first_day ?? null);
@@ -32,11 +30,14 @@
 	}
 </script>
 
-{#if interviewDone}
-	<!-- The close answers the opening: the same plate, drawn from the
-	     chapters the person named. -->
-	<ChapterLifelineLive />
-{:else if step && !interviewUnderway}
+<!-- NOT the chapters plate. It used to stand here whenever the interview was
+     done, which made a MOMENT into furniture: it never went away, and every
+     message sent afterwards slid in above it — ask "what's next?" and your own
+     question appears over the top of your life. The plate belongs beside the
+     close that produced it, inline in the thread, and ChatView renders it
+     there with the two doors. The permanent way back is the Chapters door on
+     that card. -->
+{#if step && !interviewUnderway}
 	<section class="controls" aria-label="What this step needs">
 		{#if step.id === "connect_ai"}
 			<ConnectAiActions />
