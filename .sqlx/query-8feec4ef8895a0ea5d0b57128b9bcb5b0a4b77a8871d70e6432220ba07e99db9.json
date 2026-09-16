@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id, name, content, cover_image,\n            organization_type, relationship_type, role_title, aliases,\n            start_date, end_date,\n            created_at, updated_at\n        FROM wiki_orgs\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id, name, content, cover_image,\n            organization_type, relationship_type, role_title, aliases,\n            started_at, ended_at,\n            created_at, updated_at\n        FROM wiki_orgs\n        WHERE id = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -45,12 +45,12 @@
       },
       {
         "ordinal": 8,
-        "name": "start_date",
+        "name": "started_at",
         "type_info": "Date"
       },
       {
         "ordinal": 9,
-        "name": "end_date",
+        "name": "ended_at",
         "type_info": "Date"
       },
       {
@@ -84,5 +84,5 @@
       false
     ]
   },
-  "hash": "77d9db813efd52d1b195c548de809b9c65c1b9061fc0d55bf57eb1ee199d6224"
+  "hash": "8feec4ef8895a0ea5d0b57128b9bcb5b0a4b77a8871d70e6432220ba07e99db9"
 }

@@ -122,23 +122,28 @@ pub async fn write_entity_article_now(
 }
 
 /// The subject's display name, for the article page's title.
-async fn entity_title(pool: &PgPool, subject_type: &str, subject_id: &str) -> Result<String> {
-    let sql = match subject_type {
+/// Named `entity_*` and taking `entity_*` because that is what it means: the
+/// three ENTITY-shaped subjects and no others. A subject is the wider word —
+/// a day and a year are subjects too — and this function has nothing to say
+/// about them. See `agents/build/glossary.md`.
+async fn entity_title(pool: &PgPool, entity_type: &str, entity_id: &str) -> Result<String> {
+    let sql = match entity_type {
         "person" => "SELECT name FROM wiki_people WHERE id = $1",
         "place" => "SELECT name FROM wiki_places WHERE id = $1",
         "organization" => "SELECT name FROM wiki_orgs WHERE id = $1",
         other => {
             return Err(Error::InvalidInput(format!(
-                "Cannot write an article for subject type {other}"
+                "Not an entity: {other}. A day or a year is a subject with an \
+                 article, but it is not something this writer can title."
             )))
         }
     };
     sqlx::query_scalar(sql)
-        .bind(subject_id)
+        .bind(entity_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to load subject: {}", e)))?
-        .ok_or_else(|| Error::NotFound(format!("No {subject_type}: {subject_id}")))
+        .map_err(|e| Error::Database(format!("Failed to load the entity: {}", e)))?
+        .ok_or_else(|| Error::NotFound(format!("No {entity_type}: {entity_id}")))
 }
 
 /// Assemble everything the editor reads: header facts, the recent record,

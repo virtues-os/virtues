@@ -271,7 +271,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("wiki_orgs", TableMetadata {
         description: "The organizations in the owner's life, resolved to one row each",
         category: "wiki_entity",
-        key_columns: &["name", "organization_type", "relationship_type", "role_title", "start_date", "end_date"],
+        key_columns: &["name", "organization_type", "relationship_type", "role_title", "started_at", "ended_at"],
         join_hint: None,
     });
 

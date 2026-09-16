@@ -108,6 +108,21 @@ Other rules that follow from a shared tree:
   `sqlx::migrate!` keys on the version, and renumbering after a box has applied
   it breaks that box's upgrades. Migration 52 once killed a box for 3¼ hours.
 
+  **A migration number above the directory's highest is a PRE-SQUASH number.**
+  Comments across the tree cite migrations 0037, 0051, 0071, 0080, 0081, 0101
+  and others — around forty of them. None of those files exist, and a reader
+  who goes looking concludes the comment is wrong. They are not: they name
+  migrations from the 106-file chain that `d34f1e2b` collapsed on 2026-08-18,
+  and they are readable there:
+
+  ```sh
+  git show d34f1e2b^:virtues-core/migrations/ | grep 0081
+  ```
+
+  Don't add new ones — cite what changed, not a number nobody can resolve — and
+  don't "fix" an old one by deleting the number, which throws away the only
+  handle on when it happened.
+
   **`make migration` COMMITS the placeholder, so renaming it leaves a tracked
   deletion.** Stage that deletion with your migration or the next thing that
   checks the tree refuses to run — `tools/squash-migrations.sh` will not touch a

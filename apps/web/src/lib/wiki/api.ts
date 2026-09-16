@@ -75,8 +75,8 @@ export interface WikiOrganizationApi {
 	organization_type: string | null;
 	relationship_type: string | null;
 	role_title: string | null;
-	start_date: string | null;
-	end_date: string | null;
+	started_at: string | null;
+	ended_at: string | null;
 	created_at: string;
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */
