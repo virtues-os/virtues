@@ -120,8 +120,8 @@ INSERT INTO data_content_bookmark (
 --    the same platform, which the type facet needs in order to mean anything.
 (
     '23f80cfb-3259-5af8-bfd2-4b328a57f81c',
-    'https://www.example-realty.com/listing/cherrywood-1912',
-    '1912 Cherrywood Rd — 3 bed, 2 bath',
+    'https://www.example-realty.com/listing/bramble-1912',
+    '1912 Bramble Rd — 3 bed, 2 bath',
     'Bungalow, 1,480 sq ft, original stucco, needs work.',
     'safari', 'reading_list', NULL,
     NULL,
@@ -131,8 +131,8 @@ INSERT INTO data_content_bookmark (
     'mac_bookmarks', 'mac', NULL,
     '{}'::jsonb,
     'done', '2026-02-12 09:22:00+00', 'zai/glm-4.7-flash',
-    '{"description":"A property listing for a 1,480 sq ft bungalow on Cherrywood Road with original stucco and a covered porch, described as needing renovation.","medium":"product","subject":["property listing","bungalow","East Austin","renovation","real estate"],"entities":["Cherrywood Road","Austin"],"style":null,"likely_queries":["cherrywood bungalow listing austin","house with the porch showing friday","1912 cherrywood road"]}'::jsonb,
-    E'A property listing for a 1,480 sq ft bungalow on Cherrywood Road with original stucco and a covered porch, described as needing renovation.\nMedium: product\nSubject: property listing, bungalow, East Austin, renovation, real estate\nMentions: Cherrywood Road, Austin\ncherrywood bungalow listing austin. house with the porch showing friday. 1912 cherrywood road'
+    '{"description":"A property listing for a 1,480 sq ft bungalow on Bramble Road with original stucco and a covered porch, described as needing renovation.","medium":"product","subject":["property listing","bungalow","East Austin","renovation","real estate"],"entities":["Bramble Road","Austin"],"style":null,"likely_queries":["bramble bungalow listing austin","house with the porch showing friday","1912 bramble road"]}'::jsonb,
+    E'A property listing for a 1,480 sq ft bungalow on Bramble Road with original stucco and a covered porch, described as needing renovation.\nMedium: product\nSubject: property listing, bungalow, East Austin, renovation, real estate\nMentions: Bramble Road, Austin\nbramble bungalow listing austin. house with the porch showing friday. 1912 bramble road'
 ),
 
 -- PENDING — saved minutes ago, not yet swept. Keeps the status line honest.
@@ -204,8 +204,8 @@ INSERT INTO data_content_bookmark (
 --     restore rather than duplicate.
 (
     'cecf7892-97bc-54bf-8655-bd9101803066',
-    'https://www.example-realty.com/listing/manor-rd-404',
-    '404 Manor Rd — sold',
+    'https://www.example-realty.com/listing/harrow-rd-404',
+    '404 Harrow Rd — sold',
     NULL,
     'safari', 'bookmark', NULL,
     NULL, NULL,
@@ -214,8 +214,8 @@ INSERT INTO data_content_bookmark (
     'mac_bookmarks', 'mac', '2026-02-07 08:00:00+00',
     '{}'::jsonb,
     'done', '2026-01-28 19:20:00+00', 'zai/glm-4.7-flash',
-    '{"description":"A property listing for a house on Manor Road, since marked sold.","medium":"product","subject":["property listing","East Austin","real estate"],"entities":["Manor Road"],"style":null,"likely_queries":["manor road listing austin","the one with the dark kitchen"]}'::jsonb,
-    E'A property listing for a house on Manor Road, since marked sold.\nMedium: product\nSubject: property listing, East Austin, real estate\nMentions: Manor Road\nmanor road listing austin. the one with the dark kitchen'
+    '{"description":"A property listing for a house on Harrow Road, since marked sold.","medium":"product","subject":["property listing","East Austin","real estate"],"entities":["Harrow Road"],"style":null,"likely_queries":["harrow road listing austin","the one with the dark kitchen"]}'::jsonb,
+    E'A property listing for a house on Harrow Road, since marked sold.\nMedium: product\nSubject: property listing, East Austin, real estate\nMentions: Harrow Road\nharrow road listing austin. the one with the dark kitchen'
 )
 
 ON CONFLICT DO NOTHING;
