@@ -5,6 +5,7 @@
 	 * and never touch this component.
 	 */
 	import Modal from '$lib/components/Modal.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { dialogStore } from '$lib/stores/dialog.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import { tick } from 'svelte';
@@ -30,6 +31,9 @@
 		if (dialogStore.pending) contextMenu.hide();
 	});
 
+	/** A confirm marked danger; a prompt never is. */
+	const isDanger = $derived(pending?.kind === 'confirm' && pending.danger);
+
 	function accept() {
 		dialogStore.accept(pending?.kind === 'prompt' ? value : undefined);
 	}
@@ -54,18 +58,17 @@
 		/>
 	{/if}
 	{#snippet footer()}
-		<button class="modal-btn modal-btn-secondary" onclick={() => dialogStore.cancel()}>
+		<Button variant="secondary" size="sm" onclick={() => dialogStore.cancel()}>
 			{pending?.cancelLabel ?? 'Cancel'}
-		</button>
-		<button
-			class="modal-btn"
-			class:modal-btn-primary={!(pending?.kind === 'confirm' && pending.danger)}
-			class:danger-btn={pending?.kind === 'confirm' && pending.danger}
+		</Button>
+		<Button
+			variant={isDanger ? 'danger' : 'primary'}
+			size="sm"
 			disabled={pending?.kind === 'prompt' && !value.trim()}
 			onclick={accept}
 		>
 			{pending?.confirmLabel ?? (pending?.kind === 'prompt' ? 'Create' : 'Confirm')}
-		</button>
+		</Button>
 	{/snippet}
 </Modal>
 
@@ -77,10 +80,4 @@
 		color: var(--color-foreground-muted);
 	}
 	.with-body { margin-top: 14px; }
-	.danger-btn {
-		border: none;
-		background: var(--color-error, #dc2626);
-		color: #fff;
-	}
-	.danger-btn:disabled { opacity: 0.6; cursor: default; }
 </style>
