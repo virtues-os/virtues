@@ -78,6 +78,9 @@ pub mod years;
 pub mod lifeline;
 pub mod link_session;
 pub mod wiki_articles;
+pub mod wiki_days;
+pub mod wiki_events;
+pub mod wiki_streams;
 pub mod wiki_editor;
 pub mod wiki_notes;
 
@@ -231,54 +234,42 @@ pub use token_estimation::{
 };
 pub use home::{get_calendar_upcoming, get_current_weather, get_unnamed_places};
 pub use wiki::{
-    create_temporal_event,
-    delete_auto_events_for_day,
-    delete_temporal_event,
+    get_entity_record_facets,
+    get_entity_records_page,
     get_narrative_identity,
-    NarrativeIdentity,
-    get_day_chats,
-    get_day_events,
-    get_day_sources,
-    get_day_streams,
-    get_timeline_day,
-    get_today_streams,
-    get_events_by_date,
-    get_or_create_day,
     get_organization,
     get_person,
     get_wiki_place,
-    day_activity,
-    DayActivity,
-    on_this_day,
-    OnThisDayEntry,
-    get_entity_records_page,
-    get_entity_record_facets,
-    EntityRecord,
-    EntityRecordsPage,
-    EntityRecordFacet,
-    list_days,
     list_organizations,
     list_people,
     list_wiki_places,
     update_organization,
     update_person,
-    update_temporal_event,
     update_wiki_place,
-    CreateTemporalEventRequest,
-    DaySource,
-    DayStream,
-    DayStreamsResponse,
-    StreamRecord,
-    TemporalEvent,
-    UpdateTemporalEventRequest,
+    EntityRecord,
+    EntityRecordFacet,
+    EntityRecordsPage,
+    NarrativeIdentity,
     UpdateWikiOrganizationRequest,
     UpdateWikiPersonRequest,
     UpdateWikiPlaceRequest,
-    WikiDay,
     WikiOrganization,
     WikiOrganizationListItem,
     WikiPerson,
     WikiPersonListItem,
     WikiPlace,
     WikiPlaceListItem,
+};
+pub use wiki_days::{
+    day_activity, get_or_create_day, get_timeline_day, list_days, on_this_day, DayActivity,
+    OnThisDayEntry, WikiDay,
+};
+pub use wiki_events::{
+    create_temporal_event, delete_auto_events_for_day, delete_temporal_event, get_day_events,
+    get_events_by_date, update_temporal_event, CreateTemporalEventRequest, TemporalEvent,
+    UpdateTemporalEventRequest,
+};
+pub use wiki_streams::{
+    get_day_chats, get_day_sources, get_day_streams, get_today_streams, DaySource, DayStream,
+    DayStreamsResponse, StreamRecord,
 };

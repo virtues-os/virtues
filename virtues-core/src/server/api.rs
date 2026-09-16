@@ -2635,7 +2635,7 @@ pub async fn day_heart_rate_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => api_response(
-            crate::api::wiki::get_day_heart_rate(state.db.pool(), parsed_date, query.tz.as_deref())
+            crate::api::wiki_streams::get_day_heart_rate(state.db.pool(), parsed_date, query.tz.as_deref())
                 .await,
         ),
         Err(_) => error_response(Error::InvalidInput(format!(
