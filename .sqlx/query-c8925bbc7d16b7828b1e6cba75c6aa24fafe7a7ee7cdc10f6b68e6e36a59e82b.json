@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id,\n            name,\n            category,\n            address,\n            latitude,\n            longitude,\n            radius_m,\n            seen_count,\n            is_audio_muted,\n            metadata,\n            created_at,\n            updated_at\n        FROM wiki_places\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id,\n            name,\n            category,\n            address,\n            latitude,\n            longitude,\n            radius_m,\n            is_audio_muted,\n            metadata,\n            created_at,\n            updated_at\n        FROM wiki_places\n        WHERE (metadata->>'is_known_location')::boolean = true\n           OR is_audio_muted\n        ORDER BY created_at ASC\n        ",
   "describe": {
     "columns": [
       {
@@ -40,34 +40,27 @@
       },
       {
         "ordinal": 7,
-        "name": "seen_count",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 8,
         "name": "is_audio_muted",
         "type_info": "Bool"
       },
       {
-        "ordinal": 9,
+        "ordinal": 8,
         "name": "metadata",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": [
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -80,9 +73,8 @@
       false,
       false,
       false,
-      false,
       false
     ]
   },
-  "hash": "f4c34f8e9bea75a046abb0ba1c8cb14b5f907804672107ab19976bd8db648586"
+  "hash": "c8925bbc7d16b7828b1e6cba75c6aa24fafe7a7ee7cdc10f6b68e6e36a59e82b"
 }

@@ -243,19 +243,35 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("wiki_people", TableMetadata {
         description: "The people in the owner's life, resolved to one row each",
         category: "wiki_entity",
-        key_columns: &["name", "emails", "phones", "relationship_category", "nickname", "notes", "first_seen", "last_seen", "seen_count", "birthday"],
+        key_columns: &["name", "emails", "phones", "relationship_category", "nickname", "bond", "birthday", "died_on"],
         join_hint: None,
     });
     m.insert("wiki_places", TableMetadata {
         description: "The places of the owner's life, resolved to one row each",
         category: "wiki_entity",
-        key_columns: &["name", "category", "address", "latitude", "longitude", "radius_m", "seen_count", "first_seen", "last_seen"],
+        key_columns: &["name", "category", "address", "latitude", "longitude", "radius_m"],
         join_hint: None,
+    });
+    // Advertised because they are real subjects now. The fence below keys on
+    // having a description, so a table stays invisible to the agent until
+    // someone writes one — which is why these two were dark while they were
+    // empty, and why they belong here the moment they are not.
+    m.insert("wiki_years", TableMetadata {
+        description: "A year of the owner's life as a subject: their own title and summary for it",
+        category: "wiki_entity",
+        key_columns: &["year", "title", "summary"],
+        join_hint: Some("id is 'year_YYYY'; the days of a year are wiki_days filtered by EXTRACT(YEAR FROM date)"),
+    });
+    m.insert("wiki_stories", TableMetadata {
+        description: "Subjects the owner named themselves — a theme or thread that mattered, not a span",
+        category: "wiki_entity",
+        key_columns: &["title", "summary", "started_at", "ended_at"],
+        join_hint: Some("dates are optional and often absent; a story is not a time range"),
     });
     m.insert("wiki_orgs", TableMetadata {
         description: "The organizations in the owner's life, resolved to one row each",
         category: "wiki_entity",
-        key_columns: &["name", "organization_type", "relationship_type", "role_title", "start_date", "end_date", "seen_count", "first_seen", "last_seen"],
+        key_columns: &["name", "organization_type", "relationship_type", "role_title", "start_date", "end_date"],
         join_hint: None,
     });
 
