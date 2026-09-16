@@ -180,6 +180,10 @@ tmp/*
 # `settings.local.json` stays ignored; that one is genuinely per-machine.
 !.claude/settings.json
 
+# Skills are on-demand reference material — shared for the same reason the
+# rules and hooks are.
+!.claude/skills/
+
 # Agent scratch. `.worktrees/` has already been swept into a commit as an
 # embedded git repo once — worktrees are not the workflow here (see the
 # Branching section of CLAUDE.md), but ignore the path so a stray one is inert.
