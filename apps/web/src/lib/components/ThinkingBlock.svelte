@@ -25,8 +25,6 @@
 		toolCalls: ToolCallPart[];
 		/** Reasoning/thinking text from the model */
 		reasoningContent?: string;
-		/** Whether response content is currently streaming */
-		isStreaming: boolean;
 		/** Duration in seconds spent thinking */
 		duration?: number;
 	}
@@ -35,7 +33,6 @@
 		isThinking,
 		toolCalls = [],
 		reasoningContent = "",
-		isStreaming,
 		duration = 0,
 	}: Props = $props();
 
@@ -85,6 +82,10 @@
 	});
 
 
+	/** What we actually timed: the caller's measurement, or this session's clock.
+	 *  Zero means we were not here for it — see the header. */
+	const knownDuration = $derived(duration || calculatedDuration);
+
 	// Format duration
 	function formatDuration(seconds: number): string {
 		if (seconds < 1) return "<1s";
@@ -101,8 +102,59 @@
 		return tool.type || "tool";
 	}
 
-	// Get human-readable description of what the tool is doing
-	function getToolDescription(tool: ToolCallPart): string {
+	/**
+	 * A tool's name as a person would say it, for the collapsed header.
+	 *
+	 * The header used to print the raw ids — `semantic_search, sql_query` —
+	 * while the expanded list beneath it spoke prose. Two registers for one
+	 * fact, and the register the user meets FIRST was the internal one.
+	 */
+	const TOOL_NOUNS: Record<string, string> = {
+		think: "thinking",
+		web_search: "the web",
+		semantic_search: "your records",
+		sql_query: "your data",
+		read_asset: "a file",
+		get_page_content: "a page",
+		create_page: "a new page",
+		edit_page: "a page",
+		generate_image: "an image",
+		code_interpreter: "a calculation",
+		dispatch_subagents: "a parallel search",
+		run_applet: "an applet",
+		update_memory: "memory",
+		write_it_up: "an article",
+		revise_article: "an article",
+		dayline_event: "your day",
+		get_project_item: "a project",
+	};
+
+	function humanToolName(name: string): string {
+		return TOOL_NOUNS[name] ?? name.replace(/_/g, " ");
+	}
+
+	/** `pending ? a : b` — one place, so no description forgets the distinction. */
+	function tense(pending: boolean, doing: string, done: string): string {
+		return pending ? doing : done;
+	}
+
+	/**
+	 * What one tool call is doing, or did.
+	 *
+	 * TENSE IS A PARAMETER, not a per-string accident. This list read
+	 * "Searching:", "Searched the web for", "Queried messages" and "Planning:"
+	 * in one column — every tense at once, so nothing told you whether a line
+	 * was happening or had happened. The row already knows (`isPending` draws
+	 * the spinner); it just wasn't telling the words.
+	 *
+	 * The twelve branches that used to sit at the bottom of this switch —
+	 * `calendar`, `get_contacts`, `recall`, `query_database` and friends — named
+	 * no tool that exists. Meanwhile two dozen real ones (pages, applets,
+	 * images, subagents) had no prose at all and fell to the default, which
+	 * `.replace(/\b\w/g, (c) => c)` left lowercase: it replaced each word's
+	 * first letter with itself. An unmapped tool rendered as "create page".
+	 */
+	function getToolDescription(tool: ToolCallPart, pending = false): string {
 		const name = getToolName(tool);
 		const input = tool.input || {};
 
@@ -110,77 +162,97 @@
 			case "think": {
 				const thought = (input.thought as string) || "";
 				const preview = thought.length > 80 ? thought.slice(0, 80) + "…" : thought;
-				return `Planning: "${preview}"`;
+				return `${tense(pending, "Planning", "Planned")}: "${preview}"`;
 			}
 			case "web_search":
-				return `Searched the web for "${input.query || "information"}"`;
+				return `${tense(pending, "Searching", "Searched")} the web for "${input.query || "information"}"`;
 			case "semantic_search": {
 				// The tool takes `queries` (up to four phrasings of one need) and
 				// keeps `query` only for back-compat — and its own description tells
-				// the model to prefer the array. Reading `query` alone therefore
-				// rendered `Searching: ""` for every call that followed that advice,
-				// which read as a search with nothing in it rather than the widest
-				// search we do. Take whichever arrived; show the rest as a count,
-				// since four phrasings of one question is noise to read in full.
-				// Same precedence the tool itself applies: take `queries`, and fall
-				// back to `query` only when it yielded nothing usable.
+				// the model to prefer the array. Reading `query` alone rendered
+				// `Searching: ""` for every call that followed that advice, which
+				// read as a search with nothing in it rather than the widest search
+				// we do. Same precedence the tool itself applies; the other
+				// phrasings become a count, since four wordings of one question are
+				// noise to read in full.
 				const list = (
 					Array.isArray(input.queries) ? (input.queries as unknown[]) : []
 				).filter((q): q is string => typeof q === "string" && q.trim() !== "");
 				if (list.length === 0 && typeof input.query === "string" && input.query.trim()) {
 					list.push(input.query);
 				}
-				if (list.length === 0) return "Searching";
+				const verb = tense(pending, "Searching", "Searched");
+				if (list.length === 0) return `${verb} your records`;
 				const first = list[0].slice(0, 60);
 				const more = list.length > 1 ? ` +${list.length - 1} more` : "";
-				return `Searching: "${first}"${more}`;
+				return `${verb} your records for "${first}"${more}`;
 			}
 			case "sql_query": {
 				const op = input.operation as string;
 				if (op === "list_tables") {
-					return "Listed available data tables";
-				} else if (op === "get_schema") {
-					const tables = input.tables as string[] | undefined;
-					if (tables?.length) {
-						const formatted = tables.slice(0, 2).map(t => t.replace(/^data_|^wiki_|^narrative_/, "").replace(/_/g, " ")).join(", ");
-						return `Got schema for ${formatted}${tables.length > 2 ? ` +${tables.length - 2} more` : ""}`;
-					}
-					return "Got table schema";
-				} else if (op === "query") {
-					const sql = (input.sql as string) || "";
-					// Extract table name from query
-					const tableMatch = sql.match(/FROM\s+([a-z_]+)/i);
-					const tableName = tableMatch?.[1]?.replace(/^data_|^wiki_|^narrative_/, "").replace(/_/g, " ") || "";
-					if (tableName) {
-						return `Queried ${tableName}`;
-					}
-					return "Queried personal data";
+					return tense(pending, "Listing what data there is", "Listed what data there is");
 				}
-				return "Queried data";
+				if (op === "get_schema") {
+					const tables = input.tables as string[] | undefined;
+					const verb = tense(pending, "Checking the shape of", "Checked the shape of");
+					if (tables?.length) {
+						const formatted = tables
+							.slice(0, 2)
+							.map((t) => plainTableName(t))
+							.join(", ");
+						const more = tables.length > 2 ? ` +${tables.length - 2} more` : "";
+						return `${verb} ${formatted}${more}`;
+					}
+					return `${verb} a table`;
+				}
+				if (op === "query") {
+					const sql = (input.sql as string) || "";
+					const tableName = plainTableName(sql.match(/FROM\s+([a-z_]+)/i)?.[1] ?? "");
+					const verb = tense(pending, "Reading", "Read");
+					return tableName ? `${verb} your ${tableName}` : `${verb} your data`;
+				}
+				return tense(pending, "Reading your data", "Read your data");
 			}
 			case "read_asset":
-				return "Looked at a file";
-			case "query_database":
-			case "database_query":
-				return "Queried your personal data";
-			case "calendar":
-			case "get_calendar":
-				return "Checked your calendar";
-			case "location":
-			case "get_location":
-				return "Reviewed your location history";
-			case "contacts":
-			case "get_contacts":
-				return "Looked up your contacts";
-			case "notes":
-			case "get_notes":
-				return "Searched your notes";
-			case "memory":
-			case "recall":
-				return "Recalled from memory";
-			default:
-				return name.replace(/_/g, " ").replace(/\b\w/g, (c) => c);
+				return tense(pending, "Opening a file", "Opened a file");
+			case "get_page_content":
+				return tense(pending, "Reading a page", "Read a page");
+			case "create_page":
+				return tense(pending, "Writing a new page", "Wrote a new page");
+			case "edit_page":
+				return tense(pending, "Editing a page", "Edited a page");
+			case "generate_image":
+				return tense(pending, "Making an image", "Made an image");
+			case "code_interpreter":
+				return tense(pending, "Working something out", "Worked something out");
+			case "dispatch_subagents":
+				return tense(pending, "Searching several ways at once", "Searched several ways at once");
+			case "run_applet":
+				return tense(pending, "Running an applet", "Ran an applet");
+			case "update_memory":
+				return tense(pending, "Noting something to remember", "Noted something to remember");
+			case "write_it_up":
+				return tense(pending, "Writing it up", "Wrote it up");
+			case "revise_article":
+				return tense(pending, "Revising an article", "Revised an article");
+			case "dayline_event":
+				return tense(pending, "Marking your day", "Marked your day");
+			default: {
+				// Sentence case, not the machine's name. Whatever is here is a
+				// tool nobody has written a line for yet, so at least say it the
+				// way a person would read it.
+				const words = humanToolName(name);
+				return words.charAt(0).toUpperCase() + words.slice(1);
+			}
 		}
+	}
+
+	/** `data_communication_message` -> `messages`. The prefixes are our namespaces. */
+	function plainTableName(table: string): string {
+		return table
+			.replace(/^(data|wiki|narrative)_/, "")
+			.replace(/^(communication|health|financial|activity|content)_/, "")
+			.replace(/_/g, " ");
 	}
 
 	// Check if we have content
@@ -188,7 +260,10 @@
 
 	// Get unique tools for collapsed summary (filter out "think" — rendered inline, not as a tool)
 	const uniqueToolNames = $derived.by(() => {
-		const names = toolCalls.map((t) => getToolName(t)).filter((n) => n !== "think");
+		const names = toolCalls
+			.map((t) => getToolName(t))
+			.filter((n) => n !== "think")
+			.map(humanToolName);
 		return [...new Set(names)];
 	});
 </script>
@@ -226,10 +301,16 @@
 				<span class="thinking-text"
 					>{thinkingLabel}<span class="dots">{dots}</span></span
 				>
-			{:else}
+			{:else if knownDuration > 0}
 				<span class="duration-text">
-					Thought for {formatDuration(duration || calculatedDuration)}
+					Thought for {formatDuration(knownDuration)}
 				</span>
+			{:else}
+				<!-- A turn we did not watch: nothing records how long the box
+				     thought, so a reopened chat reported "Thought for <1s" on every
+				     block — a measurement of our own absence, stated as a fact
+				     about the box. Say what we know instead. -->
+				<span class="duration-text">Worked on this</span>
 			{/if}
 
 			{#if uniqueToolNames.length > 0}
@@ -278,7 +359,7 @@
 									<span class="tool-icon" class:error={isError}>·</span>
 								{/if}
 								<span class="tool-description">
-									{getToolDescription(tool)}
+									{getToolDescription(tool, isPending)}
 								</span>
 							</li>
 						{/if}
