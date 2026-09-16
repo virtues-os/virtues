@@ -1546,6 +1546,7 @@
 													duration={isLastMessage
 														? thinkingDuration
 														: 0}
+													agentMode={selectedAgentMode}
 												/>
 											{/if}
 
@@ -1790,6 +1791,7 @@
 											toolCalls={[]}
 											reasoningContent=""
 											duration={0}
+											agentMode={selectedAgentMode}
 										/>
 									</div>
 								</div>

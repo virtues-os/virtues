@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { slide } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
+	import ThinkingMark from "./ThinkingMark.svelte";
 
 	interface ToolCallPart {
 		type: string;
@@ -31,6 +32,12 @@
 		narration?: string[];
 		/** Duration in seconds spent thinking */
 		duration?: number;
+		/**
+		 * Which mode the turn is running in. Deep Research and Council are, by
+		 * construction, turns that go out to the record — so the mark starts a
+		 * dimension up rather than waiting for the first tool to prove it.
+		 */
+		agentMode?: "chat" | "deep_research" | "council";
 	}
 
 	let {
@@ -39,6 +46,7 @@
 		reasoningContent = "",
 		narration = [],
 		duration = 0,
+		agentMode = "chat",
 	}: Props = $props();
 
 	// Expansion state - always starts collapsed (user can expand manually)
@@ -48,6 +56,74 @@
 	let thinkingStartTime = $state<number | null>(null);
 	let calculatedDuration = $state(0);
 	let hasStartedThinking = $state(false);
+
+	/**
+	 * HOW DEEP, in dots. See ThinkingMark for what the dots mean and why they
+	 * are dots; this is the only place that decides which number is true.
+	 *
+	 * There is no enum for "kind of thinking" anywhere in the system, and there
+	 * should not be one — nothing on the wire knows it. What we do know is the
+	 * tool in flight, how long the turn has run, how many calls it has made, and
+	 * the mode the person chose. `ToolCategory` in the registry looks like the
+	 * answer and is not: it is a grouping for settings UI, where `think` and
+	 * `code_interpreter` are Data and `read_asset` is Search. The switch in
+	 * `getToolDescription` below is the real table of tools we have something to
+	 * say about, so the depth lives beside it and the two cannot drift.
+	 *
+	 * Depth is how far it went. The WORDS say what kind of work it is. Keeping
+	 * those orthogonal is what stops this needing twenty states.
+	 */
+	const TOOL_DEPTH: Record<string, 3 | 4 | 5> = {
+		// Reasoning in place, with what is already loaded.
+		think: 3,
+		code_interpreter: 3,
+		// Out to something: the record, the web, a file, a page, an applet.
+		semantic_search: 4,
+		sql_query: 4,
+		sql_write: 4,
+		web_search: 4,
+		read_asset: 4,
+		get_page_content: 4,
+		create_page: 4,
+		edit_page: 4,
+		revise_article: 4,
+		write_it_up: 4,
+		generate_image: 4,
+		update_memory: 4,
+		set_user_name: 4,
+		set_assistant_name: 4,
+		propose_narrative_identity_edit: 4,
+		dayline_event: 4,
+		get_project_item: 4,
+		record_introductions: 4,
+		skip_step: 4,
+		list_applets: 4,
+		get_applet: 4,
+		setup_applet: 4,
+		edit_applet: 4,
+		delete_applet: 4,
+		run_applet: 4,
+		update_applet_memory: 4,
+		// Many passes at once, by definition: this one IS the fan-out.
+		dispatch_subagents: 5,
+	};
+
+	/** A turn this long is a long one, whatever it is doing. */
+	const LONG_TURN_MS = 15_000;
+	/** Past this, settle into the calmer form of whatever is playing. */
+	const SUSTAINED_MS = 4_000;
+	/** Enough calls that the turn is plainly working through something. */
+	const MANY_TOOLS = 6;
+	/** How long the landing stays on screen after the turn ends. */
+	const LANDING_MS = 2_000;
+
+	/**
+	 * Elapsed time is the only honest signal for "this is deep". Nothing else
+	 * in the system distinguishes a 2-second semantic_search from a 40-second
+	 * one — same tool, same arguments, same everything but the clock. Half a
+	 * second of resolution is plenty for a threshold measured in seconds.
+	 */
+	let elapsedMs = $state(0);
 
 	/**
 	 * THE LABEL IS WHAT IS HAPPENING, not a word drawn from a hat.
@@ -67,21 +143,32 @@
 	 * what `getToolDescription` already derives for free, and would not know
 	 * WHY the call is being made, which is the one thing the narration does.
 	 */
+	/**
+	 * The tool in flight. Prefer one still running; fall back to the most
+	 * recent, which is what the gap between a tool returning and the next one
+	 * starting looks like. Both the label and the depth read this, so they can
+	 * never describe different calls.
+	 */
+	const toolInFlight = $derived.by(() => {
+		const pending = toolCalls.filter(
+			(t) => t.state === "pending" || t.state === "input-available" || !t.state,
+		);
+		return pending.at(-1) ?? toolCalls.at(-1);
+	});
+
 	const thinkingLabel = $derived.by(() => {
 		const said = lastIntent(narration);
 		if (said) return said;
 
-		// Nothing said yet — the tool in flight is the next best truth. Prefer
-		// one still running; fall back to the most recent, which is what the
-		// gap between a tool returning and the next one starting looks like.
-		const pending = toolCalls.filter(
-			(t) => t.state === "pending" || t.state === "input-available" || !t.state,
-		);
-		const current = pending.at(-1) ?? toolCalls.at(-1);
+		// Nothing said yet — the tool in flight is the next best truth.
+		const current = toolInFlight;
 		if (current && getToolName(current) !== "think") {
 			return getToolDescription(current, true);
 		}
-		return "Thinking";
+		// Long and silent: "Thinking" stops being informative somewhere around
+		// the fifteen-second mark, and saying so is the one thing we know that
+		// the model has not already said.
+		return elapsedMs > LONG_TURN_MS ? "Sitting with this one" : "Thinking";
 	});
 
 	/**
@@ -102,16 +189,78 @@
 		return last;
 	}
 
+	/**
+	 * How many dots. The order of these tests is the order of confidence: what
+	 * the turn has already done outranks what it happens to be doing right now,
+	 * because a turn that has run fifteen seconds is a long one even while its
+	 * current call is a quick read.
+	 */
+	const thinkingDepth = $derived.by((): 1 | 3 | 4 | 5 => {
+		if (!isThinking) return 1;
+		if (elapsedMs > LONG_TURN_MS) return 5;
+		if (toolCalls.length >= MANY_TOOLS) return 5;
+
+		// The same call the label is describing — including the one that just
+		// returned, so the gap before the next starts does not flick a dot off.
+		const name = toolInFlight ? getToolName(toolInFlight) : "";
+		if (name === "dispatch_subagents") return 5;
+
+		const floor = agentMode === "chat" ? 3 : 4;
+		const base = name ? (TOOL_DEPTH[name] ?? 4) : 3;
+		return Math.max(floor, base) as 3 | 4 | 5;
+	});
+
+	/** Past a few seconds, every movement settles into its calmer form. */
+	const sustained = $derived(elapsedMs > SUSTAINED_MS);
+
+	/** The landing outlives the turn by one movement. */
+	let landing = $state(false);
+	let landingTimer: ReturnType<typeof setTimeout> | null = null;
+
 	// Track thinking start time - only trigger once per thinking session
 	$effect(() => {
 		if (isThinking && !hasStartedThinking) {
 			hasStartedThinking = true;
 			thinkingStartTime = Date.now();
+			landing = false;
+			if (landingTimer) {
+				clearTimeout(landingTimer);
+				landingTimer = null;
+			}
 		} else if (!isThinking && hasStartedThinking) {
 			calculatedDuration = thinkingStartTime ? (Date.now() - thinkingStartTime) / 1000 : 0;
 			thinkingStartTime = null;
 			hasStartedThinking = false;
+			// Three premises fall into one conclusion. This is the ONLY place
+			// the single dot is used, which is what keeps it meaning something.
+			landing = true;
+			landingTimer = setTimeout(() => {
+				landing = false;
+				landingTimer = null;
+			}, LANDING_MS);
 		}
+	});
+
+	// The clock behind the depth thresholds and the long-wait line. Half-second
+	// resolution: these are thresholds measured in seconds, and a 60Hz counter
+	// would re-derive the label on every frame for no one's benefit.
+	$effect(() => {
+		if (!isThinking) {
+			elapsedMs = 0;
+			return;
+		}
+		const startedAt = Date.now();
+		elapsedMs = 0;
+		const id = setInterval(() => {
+			elapsedMs = Date.now() - startedAt;
+		}, 500);
+		return () => clearInterval(id);
+	});
+
+	$effect(() => {
+		return () => {
+			if (landingTimer) clearTimeout(landingTimer);
+		};
 	});
 
 
@@ -270,6 +419,32 @@
 				return tense(pending, "Revising an article", "Revised an article");
 			case "dayline_event":
 				return tense(pending, "Marking your day", "Marked your day");
+			case "sql_write":
+				return tense(pending, "Writing to your records", "Wrote to your records");
+			case "set_user_name":
+			case "set_assistant_name":
+				return tense(pending, "Learning a name", "Learned a name");
+			case "propose_narrative_identity_edit":
+				return tense(
+					pending,
+					"Suggesting a change to how you're described",
+					"Suggested a change to how you're described",
+				);
+			case "list_applets":
+			case "get_applet":
+				return tense(pending, "Checking what's set up", "Checked what's set up");
+			case "setup_applet":
+				return tense(pending, "Setting up an applet", "Set up an applet");
+			case "edit_applet":
+				return tense(pending, "Changing an applet", "Changed an applet");
+			case "delete_applet":
+				return tense(pending, "Removing an applet", "Removed an applet");
+			case "update_applet_memory":
+				return tense(pending, "Noting something for next time", "Noted something for next time");
+			case "get_project_item":
+				return tense(pending, "Opening something you're working on", "Opened something you're working on");
+			case "record_introductions":
+				return tense(pending, "Writing the introductions", "Wrote the introductions");
 			default: {
 				// Sentence case, not the machine's name. Whatever is here is a
 				// tool nobody has written a line for yet, so at least say it the
@@ -332,6 +507,13 @@
 		{/if}
 
 		<span class="header-content">
+			{#if isThinking || landing}
+				<!-- How deep, in dots. It says nothing the label does not, and
+				     that is the point: it is readable at a glance, from across
+				     the desk, without reading a word. -->
+				<ThinkingMark depth={thinkingDepth} {sustained} />
+			{/if}
+
 			{#if isThinking}
 				<!-- The one place the box says it is working. Its only aria was
 				     `aria-expanded`, so a screen reader was told a button could
