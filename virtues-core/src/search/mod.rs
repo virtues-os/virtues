@@ -14,9 +14,14 @@
 //!   endpoint may be llama-server + EmbeddingGemma, the Dragon NPU daemon
 //!   serving gte-small, or any BYO OpenAI-compatible server — one path for all)
 //! - `indexer.rs`  - Background job that embeds new records
-//! - `query.rs`    - Vector search (query embedding + pgvector ANN lookup)
-//! - `reranker.rs` - sidecar client, :18182 (cross-encoder, gte-reranker-modernbert-base;
-//!   search falls back to bi-encoder cosine if it's down)
+//! - `query.rs`    - Hybrid retrieval: dense ANN ⊕ BM25, z-fused with a
+//!   query-adaptive weight, RRF across phrasings, then a conditional rerank
+//! - `reranker.rs` - inference-contract client, :18182 (`/v1/rerank`; the
+//!   endpoint may be the Dragon NPU daemon serving answerai-colbert-small-v1@256,
+//!   llama-server + gte-reranker-modernbert-base, or any BYO server speaking the
+//!   same contract — one path for all). If it is down, search falls back to the
+//!   FUSED HYBRID ranking, not to "bi-encoder cosine": the dense arm is only one
+//!   of the two arms that produced the order being kept.
 
 pub mod bm25;
 pub mod embedder;

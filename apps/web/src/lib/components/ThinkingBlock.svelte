@@ -115,8 +115,25 @@
 			case "web_search":
 				return `Searched the web for "${input.query || "information"}"`;
 			case "semantic_search": {
-				const q = ((input.query as string) || "").slice(0, 60);
-				return `Searching: "${q}"`;
+				// The tool takes `queries` (up to four phrasings of one need) and
+				// keeps `query` only for back-compat — and its own description tells
+				// the model to prefer the array. Reading `query` alone therefore
+				// rendered `Searching: ""` for every call that followed that advice,
+				// which read as a search with nothing in it rather than the widest
+				// search we do. Take whichever arrived; show the rest as a count,
+				// since four phrasings of one question is noise to read in full.
+				// Same precedence the tool itself applies: take `queries`, and fall
+				// back to `query` only when it yielded nothing usable.
+				const list = (
+					Array.isArray(input.queries) ? (input.queries as unknown[]) : []
+				).filter((q): q is string => typeof q === "string" && q.trim() !== "");
+				if (list.length === 0 && typeof input.query === "string" && input.query.trim()) {
+					list.push(input.query);
+				}
+				if (list.length === 0) return "Searching";
+				const first = list[0].slice(0, 60);
+				const more = list.length > 1 ? ` +${list.length - 1} more` : "";
+				return `Searching: "${first}"${more}`;
 			}
 			case "sql_query": {
 				const op = input.operation as string;
@@ -282,11 +299,15 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		padding: 4px 8px;
+		padding: 4px 12px;
 		margin: 0;
 		background: transparent;
 		border: none;
-		border-radius: 6px;
+		/* A pill, not a 6px chip. The hover ground is a lozenge sitting one line
+		   above a user bubble that is itself a pill (ChatView, 1.5rem) — two
+		   different roundings stacked in the same column read as two different
+		   kits. */
+		border-radius: var(--radius-full);
 		cursor: default;
 		color: var(--color-foreground-muted);
 		font-size: 13px;

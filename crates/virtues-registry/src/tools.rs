@@ -717,11 +717,44 @@ TEMPORAL (daily/yearly context)
   wiki_events       Timeline events within a day
 
 REFERENCES
-  entity_references Junction table linking entities to ontology records
+  wiki_refs         Junction table linking entities to ontology records.
+                    Columns: entity_type, entity_id, source_table, source_id,
+                    role, occurred_at. `role` is one of sender, recipient,
+                    attendee, location, merchant. This is the ONLY way to get
+                    from a data_* row to a resolved person/place/org — data
+                    tables carry raw identifiers, never an entity id.
+
+NARRATIVE (life story structure)
+  wiki_years        Year-level summaries
+  wiki_chapters     Named spans of life
+  wiki_stories      Story-level groupings within a chapter
+  wiki_articles     Resolved articles about a subject
+  wiki_day_prose    The day's written prose
+  wiki_notes        User-authored notes
+  wiki_rules        User-authored rules
 
 ================================================================================
-NARRATIVE TABLES (life story structure — wiki_* prefix)
+COLUMN NAMING (house rules — guess with these, not with English)
 ================================================================================
+These are conventions, not English defaults, so a plausible-sounding column name
+is usually wrong. The schema was renamed to hold to them:
+
+- Time: `occurred_at` for an instant; `started_at`/`ended_at` for a span.
+  `created_at`/`updated_at` mean when WE wrote the row — never when the thing
+  happened, so never filter an event by them. A table has one or the other:
+  data_health_sleep is a span and has NO occurred_at.
+- Booleans carry `is_`/`has_`: `is_pending`, `is_all_day`, `is_read`,
+  `has_attachments`. Never a bare adjective.
+- Quantities carry their unit: `duration_minutes`, `hrv_ms`, `amount_cents`
+  where cents is the unit. (data_financial_transaction is the exception: its
+  column is `amount`, in cents.)
+- Message bodies are `body`, not `content`/`body_text`. Places are
+  `location_name`, not `location`. Raw contact strings are `from_identifier` /
+  `to_identifiers` / `from_handle`, not `from_address` or `sender_url`.
+- Plural table names except `data_*`, which is singular (one observation).
+
+If you are not certain of a column, call get_schema — it costs one round trip,
+and a wrong column costs the same round trip plus a wasted query.
 
 ================================================================================
 QUERY TIPS (PostgreSQL dialect)
@@ -731,7 +764,7 @@ QUERY TIPS (PostgreSQL dialect)
 - Truncate to a period: date_trunc('month', now()), date_trunc('day', now())
 - Cast a timestamp to a date: timestamp::date  (today = current_date)
 - Financial: amount/100.0 for dollars
-- JOIN data tables to wiki_* for resolved names
+- JOIN data tables to wiki_people/places/orgs THROUGH wiki_refs (see above)
 - Always LIMIT results (max 200)
 
 ================================================================================
@@ -744,21 +777,23 @@ FROM data_financial_transaction
 WHERE occurred_at >= date_trunc('month', now())
 GROUP BY category ORDER BY dollars DESC
 
--- Most contacted people this week
-SELECT wp.name, COUNT(*) as messages
+-- Most contacted people this week (data row -> entity, via wiki_refs)
+SELECT p.name, COUNT(*) as messages
 FROM data_communication_message m
-JOIN wiki_people wp ON m.sender_url = wp.url OR m.recipient_url = wp.url
+JOIN wiki_refs r ON r.source_table = 'data_communication_message'
+                AND r.source_id = m.id AND r.role = 'sender'
+JOIN wiki_people p ON p.id = r.entity_id
 WHERE m.occurred_at > now() - interval '7 days'
-GROUP BY wp.name ORDER BY messages DESC LIMIT 10
+GROUP BY p.name ORDER BY messages DESC LIMIT 10
 
--- Sleep patterns last 2 weeks
+-- Sleep patterns last 2 weeks (a span: started_at/ended_at, no occurred_at)
 SELECT started_at::date as day, duration_minutes, sleep_quality_score
 FROM data_health_sleep
 WHERE started_at > now() - interval '14 days'
-ORDER BY occurred_at DESC
+ORDER BY started_at DESC
 
 -- Calendar events today
-SELECT title, started_at, ended_at, location
+SELECT title, started_at, ended_at, location_name
 FROM data_calendar_event
 WHERE started_at::date = current_date
 ORDER BY started_at"#.to_string(),
