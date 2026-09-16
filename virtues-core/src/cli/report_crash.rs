@@ -61,7 +61,11 @@ pub async fn run() -> Result<(), crate::Error> {
         service_result = %service_result,
         exit_code = %exit_code,
         exit_status = %exit_status,
-        version = env!("CARGO_PKG_VERSION"),
+        // The RELEASE version, not `CARGO_PKG_VERSION` — which is pinned at
+        // "0.1.0" in Cargo.toml and told every crash record on a
+        // v0.1.7-staging.78 box that it was 0.1.0. The first question about a
+        // crash is which build died.
+        version = %crate::codename::version(),
         "the server exited abnormally"
     );
 
@@ -71,7 +75,7 @@ pub async fn run() -> Result<(), crate::Error> {
 
     let payload = json!({
         "box_id": diag::box_id(),
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::codename::version(),
         "service_result": service_result,
         "exit_code": exit_code,
         "exit_status": exit_status,

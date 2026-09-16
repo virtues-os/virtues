@@ -114,6 +114,12 @@ pub fn init_with(default_filter: &str, format: Format) {
     } else {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(env_filter)
+            // Color only for a human at a terminal. The formatter's default is
+            // ANSI-always, which is wrong for every text-mode consumer we have:
+            // an applet's stderr is a pipe read by the runner, so the escape
+            // codes ended up INSIDE the runner's JSON `message` field, where
+            // they break grep and read as line noise. Seen on a real box.
+            .with_ansi(console::Term::stderr().is_term())
             .with_writer(std::io::stderr)
             .try_init();
     }
