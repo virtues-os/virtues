@@ -42,6 +42,7 @@
 	import { cubicOut } from 'svelte/easing';
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
 	import { dataGridPrefs, type ViewMode, type Density } from '$lib/stores/dataGridPrefs.svelte';
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 	import DataGridFilterRail from './DataGridFilterRail.svelte';
@@ -912,9 +913,7 @@
 							{#snippet children()}
 								<div class="add-popover" role="menu">
 									{#each availableFilters as def (def.id)}
-										<button type="button" class="add-row" onclick={() => pickAddFilter(def)}>
-											{def.label}
-										</button>
+										<MenuItem label={def.label} onclick={() => pickAddFilter(def)} />
 									{/each}
 								</div>
 							{/snippet}
@@ -944,31 +943,25 @@
 						{/snippet}
 						{#snippet children({ close }: { close: () => void })}
 							<div class="menu-popover" role="menu">
-								<button
-									type="button"
-									class="menu-opt"
-									class:on={!activeGroupCol}
+								<MenuItem
+									role="menuitemradio"
+									label="No grouping"
+									checked={!activeGroupCol}
 									onclick={() => {
 										setGroupKey('');
 										close();
 									}}
-								>
-									<Icon icon="ri:check-line" width="14" />
-									<span>No grouping</span>
-								</button>
+								/>
 								{#each groupableCols as col (String(col.key))}
-									<button
-										type="button"
-										class="menu-opt"
-										class:on={groupKey === String(col.key)}
+									<MenuItem
+										role="menuitemradio"
+										label={col.label}
+										checked={groupKey === String(col.key)}
 										onclick={() => {
 											setGroupKey(String(col.key));
 											close();
 										}}
-									>
-										<Icon icon="ri:check-line" width="14" />
-										<span>{col.label}</span>
-									</button>
+									/>
 								{/each}
 							</div>
 						{/snippet}
@@ -1544,27 +1537,6 @@
 		border-radius: 8px;
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 	}
-	.menu-opt {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.375rem 0.5rem;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-		text-align: left;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-	.menu-opt:hover { background: var(--color-background-hover); }
-	/* The checkmark holds its column whether or not it's shown, so the labels
-	   line up instead of shifting by 14px between states. */
-	.menu-opt :global(svg) { opacity: 0; flex-shrink: 0; color: var(--color-foreground-muted); }
-	.menu-opt.on :global(svg) { opacity: 1; }
-	.menu-opt:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
-
 	/* Filter add: button + popover wrapper */
 	.filter-add {
 		position: relative;
@@ -1601,22 +1573,6 @@
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-	}
-
-	.add-row {
-		padding: 0.375rem 0.5rem;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-		text-align: left;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-
-	.add-row:hover {
-		background: var(--color-background-hover);
 	}
 
 	/* States */

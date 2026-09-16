@@ -7,6 +7,7 @@
 	 */
 	import Icon from './Icon.svelte';
 	import Button from './Button.svelte';
+	import MenuItem from './MenuItem.svelte';
 	import { backendUrl } from '$lib/config/backend';
 	import {
 		listDriveFiles,
@@ -387,10 +388,12 @@
 		<!-- Footer with remove option -->
 	{#if value}
 		<div class="picker-footer">
-			<button class="remove-btn" onclick={handleRemove}>
-				<Icon icon="ri:delete-bin-line" width="14" />
-				Remove cover
-			</button>
+			<MenuItem
+				icon="ri:delete-bin-line"
+				label="Remove cover"
+				destructive
+				onclick={handleRemove}
+			/>
 		</div>
 	{/if}
 </div>
@@ -636,25 +639,6 @@
 	.picker-footer {
 		padding: 8px 12px;
 		border-top: 1px solid var(--color-border);
-	}
-
-	.remove-btn {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		width: 100%;
-		padding: 8px 12px;
-		font-size: 13px;
-		color: var(--color-error);
-		background: none;
-		border: none;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: background 100ms;
-	}
-
-	.remove-btn:hover {
-		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 	}
 
 	/* Spinner */
