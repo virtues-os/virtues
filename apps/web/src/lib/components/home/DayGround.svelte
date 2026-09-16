@@ -63,6 +63,10 @@
 		tiles?.remove();
 		tiles = L.tileLayer(backendUrl(`/api/map/tiles/${tileStyle()}/{z}/{x}/{y}`), {
 			maxZoom: 19,
+			// Carried on the layer so it survives the theme swap, which
+			// rebuilds the layer. Crediting the map data is a condition of
+			// using it, display-only panel or not.
+			attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
 			// Blank tile when the box is offline / upstream fails — grey gaps,
 			// not broken images.
 			errorTileUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=",
@@ -118,7 +122,7 @@
 		L = (leaflet as any).default ?? leaflet;
 		map = L.map(container, {
 			zoomControl: false,
-			attributionControl: false,
+			attributionControl: true,
 			scrollWheelZoom: false,
 			dragging: false,
 			doubleClickZoom: false,
@@ -127,6 +131,8 @@
 			touchZoom: false,
 			tap: false,
 		});
+		// Drop Leaflet's own "Leaflet" flag — the data credit stays.
+		map.attributionControl.setPrefix(false);
 		setTiles();
 		renderTrack();
 		renderMark();
@@ -172,5 +178,20 @@
 		background: var(--color-surface);
 		font-family: var(--font-sans);
 		cursor: default;
+	}
+
+	/* The credit line: legible, but never competing with the track. */
+	.map :global(.leaflet-control-attribution) {
+		background: color-mix(in srgb, var(--color-surface) 78%, transparent);
+		color: var(--color-foreground-muted);
+		font-size: 9px;
+		line-height: 1.4;
+		padding: 1px 5px;
+		box-shadow: none;
+	}
+
+	.map :global(.leaflet-control-attribution a) {
+		color: var(--color-foreground-muted);
+		text-decoration: none;
 	}
 </style>
