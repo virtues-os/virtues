@@ -14,9 +14,14 @@ default_enabled = false
 # [config.limits] is parsed as config.limits.agent — the column stays NULL,
 # the agent phase never runs, and nothing complains.
 agent = """
-The subprocess has already chosen the article and told you which one. If it
-reported that nothing is due, reply "nothing due" and stop — do not go looking
-for work.
+The subprocess has already chosen the article and told you which one, and
+whether this is a FIRST WRITE or a REVISION. If it reported that nothing is
+due, reply "nothing due" and stop — do not go looking for work.
+
+Those two tasks are not the same. On a FIRST WRITE there is no article yet: the
+text you are shown is the owner's own seeding sentence, and "the evidence
+confirms what is already written" is never a reason to decline, because nothing
+is written. Research, then write the piece.
 
 Your job is ONE revision of ONE article, and the rules for writing it are in
 your instructions above. This says only how to go about it.
