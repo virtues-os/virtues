@@ -221,7 +221,9 @@
 
 		map = L.map(container, {
 			zoomControl: interactive,
-			attributionControl: false,
+			// Attribution shows even on the static variant: crediting OSM and
+			// the tile source is a condition of using them, not a UI choice.
+			attributionControl: true,
 			scrollWheelZoom: false,
 			dragging: interactive,
 			doubleClickZoom: interactive,
@@ -230,6 +232,8 @@
 			touchZoom: interactive,
 			tap: interactive,
 		});
+		// Drop Leaflet's own "Leaflet" flag — the data credit stays.
+		map.attributionControl.setPrefix(false);
 
 		// Tiles are served + cached by the box itself (see agents/record/map-atlas-plan.md):
 		// the browser never talks to a third-party tile provider, and cached areas
@@ -333,6 +337,21 @@
 		height: 24px;
 		line-height: 22px;
 		font-size: 16px;
+	}
+
+	/* The credit line: legible, but never competing with the track. */
+	.movement-map :global(.leaflet-control-attribution) {
+		background: color-mix(in srgb, var(--color-surface) 78%, transparent);
+		color: var(--color-foreground-muted);
+		font-size: 9px;
+		line-height: 1.4;
+		padding: 1px 5px;
+		box-shadow: none;
+	}
+
+	.movement-map :global(.leaflet-control-attribution a) {
+		color: var(--color-foreground-muted);
+		text-decoration: none;
 	}
 
 	.movement-map :global(.leaflet-tooltip) {
