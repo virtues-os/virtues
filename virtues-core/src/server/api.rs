@@ -2303,29 +2303,6 @@ pub async fn set_article_maintenance_handler(
     }
 }
 
-/// Turn maintenance on or off for one article.
-pub async fn set_article_auto_update_handler(
-    State(state): State<AppState>,
-    Path((subject_type, subject_id)): Path<(String, String)>,
-    Json(body): Json<serde_json::Value>,
-) -> Response {
-    let on = body.get("auto_update").and_then(|v| v.as_bool()).unwrap_or(false);
-    match crate::api::wiki_articles::set_auto_update(
-        state.db.pool(),
-        &subject_type,
-        &subject_id,
-        on,
-    )
-    .await
-    {
-        Ok(()) => success_message(if on {
-            "This article will be kept up to date"
-        } else {
-            "This article will no longer be updated automatically"
-        }),
-        Err(e) => error_response(e),
-    }
-}
 
 /// Reclassify a person as an organization.
 ///

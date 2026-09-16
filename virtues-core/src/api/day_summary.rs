@@ -794,7 +794,7 @@ async fn save_day_article(
 
     if updated.rows_affected() > 0 {
         sqlx::query(
-            "UPDATE wiki_articles SET last_written_at = now(), dirty_at = NULL WHERE id = $1",
+            "UPDATE wiki_articles SET last_written_at = now() WHERE id = $1",
         )
         .bind(&article.id)
         .execute(pool)
@@ -806,10 +806,6 @@ async fn save_day_article(
             "kept day article was touched in the last 15 minutes — someone may have it \
              open; leaving it and trying again on a later run"
         );
-        sqlx::query("UPDATE wiki_articles SET dirty_at = now() WHERE id = $1")
-            .bind(&article.id)
-            .execute(pool)
-            .await?;
     }
     Ok(())
 }

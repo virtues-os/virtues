@@ -41,10 +41,6 @@ name = "day_summary_eod"
 path = "day_summary_eod/main.rs"
 
 [[bin]]
-name = "entity_article"
-path = "entity_article/main.rs"
-
-[[bin]]
 name = "embedding_index"
 path = "embedding_index/main.rs"
 
