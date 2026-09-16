@@ -852,8 +852,13 @@ async fn check_for_update(app: &AppHandle) {
 /// effect on quit whether or not anyone clicks this.
 ///
 /// On relaunch the helper-reconcile redeploys the new sidecars — loop closed.
-/// `app.restart()` never returns.
-fn apply_update(app: AppHandle) {
+/// `app.restart()` never returns, so `true` is a value no caller ever reads —
+/// `false` is the whole signal: nothing was staged and this did nothing.
+///
+/// Returning it is not ceremony. The SPA chip calls this, and a chip whose
+/// button can silently do nothing is the exact failure this session was
+/// opened to fix on the other track.
+fn apply_update(app: AppHandle) -> bool {
     // try_state: only macOS manages UpdateState (Windows/Linux ship without a
     // self-updater), and this is now reachable from the SPA on every platform.
     let staged = app
@@ -862,6 +867,7 @@ fn apply_update(app: AppHandle) {
     if staged {
         app.restart();
     }
+    false
 }
 
 /// The updater's state for the SPA — drives the sidebar's "Relaunch to X"
@@ -887,9 +893,13 @@ fn update_state_cmd(app: AppHandle) -> Option<UpdateStateView> {
 /// Restart into a staged update, from the SPA chip. No-op when nothing is
 /// staged — the chip only renders when `staged_version` says so, but a stale
 /// click after a background apply must not restart an already-current app.
+///
+/// `false` means exactly that no-op happened, so the chip can clear itself
+/// instead of standing there as a button that does nothing when pressed.
+/// A `true` is unreachable: the restart does not return.
 #[tauri::command]
-fn apply_update_cmd(app: AppHandle) {
-    apply_update(app);
+fn apply_update_cmd(app: AppHandle) -> bool {
+    apply_update(app)
 }
 
 /// Run an update check now, at the UI's request (This Mac's "Check now").

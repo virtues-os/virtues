@@ -112,15 +112,24 @@ export async function checkAppUpdate(): Promise<void> {
 	}
 }
 
-/** Restart into a staged app update. No-op when nothing is staged. */
-export async function applyAppUpdate(): Promise<void> {
+/**
+ * Restart into a staged app update.
+ *
+ * Resolves `false` when nothing happened — no shell, a shell too old for the
+ * command, or a shell that found nothing staged after all. It never resolves
+ * `true`: a successful apply restarts the process, so the caller is gone. The
+ * point of the return is that a caller can tell "restarting" from "that did
+ * nothing", and a chip that does nothing when pressed can take itself down.
+ */
+export async function applyAppUpdate(): Promise<boolean> {
 	const invoke = await getInvoke();
-	if (!invoke) return;
+	if (!invoke) return false;
 	try {
-		await invoke('apply_update_cmd');
+		return (await invoke<boolean>('apply_update_cmd')) ?? false;
 	} catch {
 		// Shell too old for the command — the chip that calls this only renders
 		// when appUpdateState() answered, so this is belt-and-braces.
+		return false;
 	}
 }
 

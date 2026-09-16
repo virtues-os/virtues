@@ -1186,11 +1186,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     // Add static file serving for SPA frontend
     // This serves the SvelteKit static build and falls back to 200.html for SPA routing
-    let static_dir =
-        std::env::var("STATIC_DIR").unwrap_or_else(|_| "../../apps/web/build".to_string());
-    let static_path = std::path::Path::new(&static_dir);
+    //
+    // The directory comes from `api::web_bundle` rather than being read again
+    // here: `/api/web-bundle/version` describes whatever this serves, and two
+    // copies of the same `STATIC_DIR` default were one edit away from making
+    // that a lie.
+    let static_path = crate::api::web_bundle::static_dir();
 
-    let app = if static_path.exists() && static_path.is_dir() {
+    let app = if static_path.is_dir() {
         use tower_http::services::{ServeDir, ServeFile};
 
         let fallback_file = static_path.join("200.html");
@@ -1201,18 +1204,18 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // which fetches the SPA from the box on every cold start, moves ~0.8 MB
         // instead of ~2.6 MB. A build without siblings serves exactly as before.
         let serve_dir = if fallback_file.exists() {
-            ServeDir::new(&static_dir)
+            ServeDir::new(&static_path)
                 .precompressed_gzip()
                 .fallback(ServeFile::new(fallback_file))
         } else {
             // Try index.html as fallback if 200.html doesn't exist
             let index_file = static_path.join("index.html");
-            ServeDir::new(&static_dir)
+            ServeDir::new(&static_path)
                 .precompressed_gzip()
                 .fallback(ServeFile::new(index_file))
         };
 
-        tracing::info!("Static file serving enabled from: {}", static_dir);
+        tracing::info!("Static file serving enabled from: {}", static_path.display());
         // HTML DOCUMENTS ARE NEVER CACHED. `ServeDir` sends `last-modified` and
         // no `cache-control`, which licenses a browser to cache heuristically —
         // and on 2026-08-10 that made the appliance's panel keep rendering a
@@ -1234,7 +1237,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     } else {
         tracing::info!(
             "No static directory found at: {} - static serving disabled",
-            static_dir
+            static_path.display()
         );
         app
     };
