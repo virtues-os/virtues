@@ -94,6 +94,24 @@ Read against the code on 2026-09-09.
   - **A successful applet run logs nothing**, so it has no keyed lines. The
     span only appears on lines that exist. That is correct, and it means
     this gate needs a run that actually says something.
+- **Verified on dragon 2026-09-16 without touching a real grant.** The
+  transition compares the STORED permission copy against what the Mac
+  reports, so flipping the stored copy in `app_device.device_info` fires the
+  same code path; the next upload overwrites it with the truth and the row
+  self-heals. Revoking Full Disk Access for real would have cost a gap in the
+  record (iMessages and Safari history stop) to test one log line.
+- **Open tension this exposed: an applet's events are text, not keys.** An
+  applet is a subprocess, so its structured fields arrive inside the runner's
+  `message` string — the verified line reads
+  `applet stderr: … the Mac collector regained a permission kind="collector.permission.granted" …`,
+  and `.kind` at the top level is null. So applet events cannot be filtered
+  the way box events can, which is the one thing this plan is FOR.
+  The double-encoding fix (applets emit text) is what made them unqueryable;
+  the two goals pull against each other. The resolution, when it is worth
+  doing: applets go back to emitting JSON and the RUNNER parses each line and
+  hoists at least `kind` into a real field, giving readability and
+  queryability at once. Not done — recorded so the next person does not
+  rediscover it from scratch.
 - **Known limitation, found while verifying:** `with_current_span(true)` +
   `with_span_list(false)` serializes only the INNERMOST span, so a line
   logged inside a nested span shows that span's fields and not the request's.
