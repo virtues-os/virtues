@@ -80,13 +80,22 @@
 	 * ("What do you remember of 2019?"). An `href` action has the same limit
 	 * whenever it is a flex item, since flex blockifies its children.
 	 * There is no CSS fix; keep inline labels short.
-	 */
+	  *
+ * FORWARDING A CLASS: a Tailwind layout utility passed as `class` is silently
+ * EATEN. Svelte compiles this component's scoped rules as `.v-textaction.svelte-HASH`
+ * (specificity 0,2,0) while Tailwind sits in `@layer utilities`, which loses to
+ * unlayered CSS outright — so any utility setting a property declared below
+ * (`margin`, `padding`, `display`, `border`, `background`) dies with no warning. Put layout on a
+ * WRAPPER element, never on this component. Utilities for properties this
+ * component does not declare do pass through.
+ */
 	let {
 		quiet = false,
 		inline = false,
 		loading = false,
 		loadingLabel,
 		disabled = false,
+		title,
 		href,
 		type = "button",
 		onclick,
@@ -102,6 +111,16 @@
 		/** What to say while `loading` — "Writing…", "Saving…". Omit to keep the label. */
 		loadingLabel?: string;
 		disabled?: boolean;
+		/**
+		 * A tooltip saying what pressing the verb DOES, when the verb alone
+		 * cannot. Added 2026-09-16: two agents converting in parallel hit the
+		 * same wall on the same afternoon — one wrapped the component in a
+		 * bare `<span title>` and relied on the attribute resolving up the
+		 * ancestor chain, the other left four sites unconverted rather than
+		 * drop the copy. Two answers to one question is the disease this
+		 * whole pass exists to end, so the primitive grew the prop.
+		 */
+		title?: string;
 		/** Renders an `<a>` instead of a `<button>`. For real navigation only. */
 		href?: string;
 		type?: "button" | "submit" | "reset";
@@ -118,6 +137,7 @@
 {#if asLink}
 	<a
 		{href}
+		{title}
 		class="v-textaction {className}"
 		data-quiet={quiet ? "true" : undefined}
 		data-inline={inline ? "true" : undefined}
@@ -128,6 +148,7 @@
 {:else}
 	<button
 		{type}
+		{title}
 		class="v-textaction {className}"
 		data-quiet={quiet ? "true" : undefined}
 		data-inline={inline ? "true" : undefined}

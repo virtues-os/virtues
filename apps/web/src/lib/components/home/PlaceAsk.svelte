@@ -12,6 +12,7 @@
 	them teaches you to ignore the question.
 -->
 <script lang="ts">
+	import TextAction from "$lib/components/TextAction.svelte";
 	import { getUnnamedPlaces, updatePlace, type UnnamedPlace } from "$lib/wiki/api";
 
 	/** Below this the answer is not worth the interruption. */
@@ -89,10 +90,18 @@
 					}
 				}}
 			/>
-			<button class="save" type="button" onclick={save} disabled={saving || !name.trim()}>
-				{saving ? "Saving…" : "Save"}
-			</button>
-			<button class="skip" type="button" onclick={skip} disabled={saving}>Not this one</button>
+			<!-- `shrink-0` is a Tailwind utility, not a scoped class: the primitive
+			     sets no flex-shrink of its own, so nothing here is silently eaten. -->
+			<TextAction
+				class="shrink-0"
+				loading={saving}
+				loadingLabel="Saving…"
+				disabled={!name.trim()}
+				onclick={save}
+			>
+				Save
+			</TextAction>
+			<TextAction quiet class="shrink-0" disabled={saving} onclick={skip}>Not this one</TextAction>
 		</div>
 		{#if error}<p class="err">{error}</p>{/if}
 	</section>
@@ -126,16 +135,6 @@
 	}
 	.row input::placeholder { color: var(--color-foreground-subtle); }
 	.row input:focus { outline: none; border-bottom-color: var(--color-primary); }
-
-	.save, .skip {
-		flex: none; background: none; border: 0; padding: 0; cursor: pointer;
-		font-family: var(--font-sans); font-size: 14px;
-	}
-	.save { font-weight: 500; color: var(--color-primary); }
-	.save:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
-	.save:disabled { color: var(--color-foreground-disabled); cursor: default; }
-	.skip { color: var(--color-foreground-subtle); }
-	.skip:hover:not(:disabled) { color: var(--color-foreground-muted); }
 
 	.err { font-family: var(--font-sans); font-size: 13px; color: var(--color-error); margin: 12px 0 0; }
 </style>

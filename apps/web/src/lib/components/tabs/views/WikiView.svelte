@@ -26,6 +26,7 @@
 
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
+	import { TextAction } from '$lib';
 	import { WIKI_SECTION_RE } from '$lib/tabs/registry';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import {
@@ -568,9 +569,9 @@
 					</p>
 					<p class="today-line">
 						Today's entry is
-						<button onclick={() => openDay(todaySlug)} class="today-link">
+						<TextAction inline onclick={() => openDay(todaySlug)}>
 							{todayFormatted}
-						</button>
+						</TextAction>
 					</p>
 				</header>
 
@@ -713,9 +714,9 @@
 									</li>
 								{/each}
 							</ul>
-							<button class="wc-all" onclick={() => goTo('/wiki/history')}>
-								All history →
-							</button>
+							<p class="wc-all">
+								<TextAction onclick={() => goTo('/wiki/history')}>All history →</TextAction>
+							</p>
 						{/if}
 					</div>
 					<aside class="sec-aside">
@@ -1067,20 +1068,6 @@
 		color: var(--color-primary);
 	}
 
-	.today-link {
-		color: var(--color-primary);
-		background: none;
-		border: none;
-		padding: 0;
-		font: inherit;
-		font-weight: 500;
-		cursor: pointer;
-	}
-
-	.today-link:hover {
-		text-decoration: underline;
-	}
-
 	/* Each section is one grid row: the essay column and its margin. */
 	.sec {
 		display: grid;
@@ -1318,13 +1305,7 @@
 	}
 
 	.wc-all {
-		margin-top: 0.625rem;
-		background: none;
-		border: none;
-		padding: 0;
-		font-size: 0.8125rem;
-		color: var(--color-primary);
-		cursor: pointer;
+		margin: 0.625rem 0 0;
 	}
 
 	/* Where it's thin */
@@ -1427,10 +1408,11 @@
 	   base rules it restates (same selectors, same specificity — a media query
 	   adds none).
 
-	   `.today-link` is deliberately not here: it is a link inside a sentence,
-	   and a 44pt box around it would reach into the lines above and below and
-	   swallow their taps. Inline prose links are the honest exception to the
-	   floor; a list row is not. */
+	   Today's-entry link is deliberately not here: it is a link inside a
+	   sentence, and a 44pt box around it would reach into the lines above and
+	   below and swallow their taps. Inline prose links are the honest exception
+	   to the floor; a list row is not. `TextAction inline` now carries that
+	   exemption itself, which is why the link takes no rule here at all. */
 	@media (max-width: 768px), (pointer: coarse) {
 		.wc-row {
 			padding: 0.75rem 0;

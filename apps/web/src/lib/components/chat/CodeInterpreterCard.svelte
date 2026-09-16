@@ -7,6 +7,7 @@
 	 */
 	import { slide } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
+	import IconButton from "$lib/components/IconButton.svelte";
 
 	interface CodeOutput {
 		stdout?: string;
@@ -110,19 +111,14 @@
 		</div>
 		<div class="header-right">
 			{#if outputText()}
-				<button
-					class="copy-btn"
+				<IconButton
+					icon={copySuccess
+						? "ri:check-line"
+						: "ri:file-copy-line"}
+					label={copySuccess ? "Copied" : "Copy output"}
+					size="sm"
 					onclick={handleCopy}
-					type="button"
-					title={copySuccess ? "Copied!" : "Copy output"}
-				>
-					<Icon
-						icon={copySuccess
-							? "ri:check-line"
-							: "ri:file-copy-line"}
-						width="16"
-					/>
-				</button>
+				/>
 			{/if}
 			<Icon
 				icon={expanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
@@ -240,24 +236,6 @@
 		align-items: center;
 		gap: 0.5rem;
 		color: var(--color-foreground-muted);
-	}
-
-	.copy-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0.25rem;
-		background: transparent;
-		border: none;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		border-radius: 0.25rem;
-		transition: all 0.15s ease;
-	}
-
-	.copy-btn:hover {
-		background: var(--color-surface-hover);
-		color: var(--color-text);
 	}
 
 	/* Content */

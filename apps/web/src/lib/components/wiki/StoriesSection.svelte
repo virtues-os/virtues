@@ -12,6 +12,7 @@
 	 * recognise than to explain.
 	 */
 	import { onMount } from 'svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import {
 		listStories,
 		createStory,
@@ -143,7 +144,7 @@
 								no page yet
 							{/if}
 						</span>
-						<button type="button" class="linkish" onclick={() => remove(s)}>Remove</button>
+						<TextAction quiet onclick={() => remove(s)}>Remove</TextAction>
 					</p>
 				</li>
 			{/each}
@@ -161,7 +162,9 @@
 			onkeydown={(e) => e.key === 'Enter' && start()}
 		/>
 	{:else}
-		<button type="button" class="linkish add" onclick={() => (naming = true)}>Name a story</button>
+		<div class="add">
+			<TextAction onclick={() => (naming = true)}>Name a story</TextAction>
+		</div>
 	{/if}
 
 	{#if failed}<p class="failed">{failed}</p>{/if}
@@ -284,23 +287,9 @@
 		margin-top: 1rem;
 	}
 
-	.quiet,
-	.linkish {
+	.quiet {
 		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle);
-	}
-
-	.linkish {
-		background: none;
-		border: 0;
-		padding: 0;
-		cursor: pointer;
-		text-decoration: underline;
-		text-underline-offset: 2px;
-	}
-
-	.linkish:hover {
-		color: var(--color-foreground);
 	}
 
 	.failed {

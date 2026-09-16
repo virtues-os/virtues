@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Button, Page } from "$lib";
+	import { Button, IconButton, Page, TextAction } from "$lib";
 	import type { DriveFile, DriveUsage } from "$lib/api/client";
 	import {
 		listDriveFiles,
@@ -584,12 +584,13 @@
 							>{crumb.name}</span
 						>
 					{:else}
-						<button
-							class="text-foreground-muted hover:text-foreground transition-colors"
+						<TextAction
+							inline
+							quiet
 							onclick={() => navigateToFolder(crumb.path)}
 						>
 							{crumb.name}
-						</button>
+						</TextAction>
 					{/if}
 				{/each}
 			</nav>
@@ -757,16 +758,15 @@
 							class="px-3 py-2.5 text-sm text-foreground-subtle hide-mobile"
 						>
 							{#if extractionLabel(file) === "failed"}
-								<button
-									class="text-danger underline decoration-dotted"
+								<TextAction
+									inline
 									onclick={(e) => {
 										e.stopPropagation();
 										handleReextract(file);
 									}}
-									title="Extraction failed — click to retry"
 								>
 									failed — retry
-								</button>
+								</TextAction>
 							{:else}
 								{extractionLabel(file) ?? ""}
 							{/if}
@@ -777,16 +777,16 @@
 							{formatDate(file.updated_at)}
 						</td>
 						<td class="px-3 py-2.5 text-right">
-							<button
-								class="p-1 text-foreground-subtle hover:text-foreground transition-colors"
+							<IconButton
+								icon="ri:more-2-fill"
+								label="Actions for {file.filename}"
+								size="sm"
+								haspopup="menu"
 								onclick={(e) => {
 									e.stopPropagation();
 									showFileContextMenu(e, file);
 								}}
-								aria-label="Actions for {file.filename}"
-							>
-								<Icon icon="ri:more-2-fill" />
-							</button>
+							/>
 						</td>
 					{/snippet}
 

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Citation } from "$lib/types/Citation";
 	import Icon from "$lib/components/Icon.svelte";
+	import IconButton from "$lib/components/IconButton.svelte";
 
 	let {
 		citation = null,
@@ -13,14 +14,17 @@
 	}>();
 
 	let panelEl: HTMLElement | null = $state(null);
-	let closeButtonEl: HTMLButtonElement | null = $state(null);
 
-	// Focus the close button when panel opens
+	// Focus the close button when the panel opens. The close button is the
+	// first focusable node inside the panel, so it is asked for the same way
+	// the Tab trap below asks for `firstElement` — `bind:this` cannot serve
+	// here, because a `bind:this` on a component yields the component instance
+	// rather than its DOM node, and the focus would silently stop happening.
 	$effect(() => {
-		if (open && closeButtonEl) {
+		if (open && panelEl) {
 			// Small delay to ensure DOM is ready
 			requestAnimationFrame(() => {
-				closeButtonEl?.focus();
+				panelEl?.querySelector<HTMLElement>("button")?.focus();
 			});
 		}
 	});
@@ -174,15 +178,12 @@
 						>
 					</div>
 				</div>
-				<button
-					bind:this={closeButtonEl}
-					class="close-button"
+				<IconButton
+					icon="ri:close-line"
+					label="Close panel"
+					size="touch"
 					onclick={onClose}
-					aria-label="Close panel"
-				>
-					<Icon icon="ri:close-line" width="20" height="20"
-					/>
-				</button>
+				/>
 			</header>
 
 			<!-- Content -->
@@ -390,21 +391,6 @@
 		font-size: 0.75rem;
 		color: var(--color-foreground-muted);
 		letter-spacing: 0.025em;
-	}
-
-	.close-button {
-		padding: 8px;
-		border: none;
-		background: transparent;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		border-radius: 6px;
-		transition: all 0.15s;
-	}
-
-	.close-button:hover {
-		background: var(--color-border-subtle);
-		color: var(--color-foreground);
 	}
 
 	.panel-content {

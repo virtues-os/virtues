@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import {
 		getAppletSource,
 		getAppletSourceFile,
@@ -99,9 +100,16 @@
 			{#if listing.origin_root === 'shipped'}
 				<!-- Copies the folder onto this box; the shipped version is
 				     untouched, and deleting the copy reverts. -->
-				<button type="button" class="fork" disabled={forking} onclick={() => void fork()}>
-					{forking ? 'Copying…' : 'Make it mine'}
-				</button>
+				<span class="fork">
+					<TextAction
+						inline
+						loading={forking}
+						loadingLabel="Copying…"
+						onclick={() => void fork()}
+					>
+						Make it mine
+					</TextAction>
+				</span>
 			{/if}
 		</div>
 
@@ -165,19 +173,11 @@
 	.provenance code {
 		font-size: 0.6875rem;
 	}
+	/* Placement only. The action inside is `inline`, so it takes this row's
+	   12px rather than §6's standalone 14px — a provenance line is running
+	   metadata, and a taller face here would break the line it terminates. */
 	.fork {
 		margin-left: auto;
-		padding: 0.1875rem 0.5rem;
-		border-radius: 5px;
-		border: 1px solid var(--color-border, #d1d5db);
-		background: var(--color-background, #fff);
-		color: var(--color-foreground, #111827);
-		font-size: 0.6875rem;
-		font-weight: 500;
-		cursor: pointer;
-	}
-	.fork:hover:not(:disabled) {
-		background: var(--color-muted, #f3f4f6);
 	}
 
 	.panes {

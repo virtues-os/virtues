@@ -16,7 +16,14 @@
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page, Button, Badge, LoadingState, ErrorState } from "$lib";
+	import {
+		Page,
+		Button,
+		IconButton,
+		Badge,
+		LoadingState,
+		ErrorState,
+	} from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import UniversalDataGrid, {
 		type Column,
@@ -635,13 +642,12 @@
 		>
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-lg font-semibold">Add a device</h2>
-				<button
+				<IconButton
+					icon="ri:close-line"
+					label="Close"
+					size="xs"
 					onclick={closeAdd}
-					class="text-foreground-muted hover:text-foreground"
-					aria-label="Close"
-				>
-					<Icon icon="ri:close-line" />
-				</button>
+				/>
 			</div>
 
 			{#if mintLoading}
