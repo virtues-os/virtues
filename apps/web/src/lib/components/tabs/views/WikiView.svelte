@@ -49,6 +49,8 @@
 		listDays,
 		listDayActivity,
 		listYears,
+		getChapters,
+		type ChapterApi,
 		type YearSummaryApi,
 		listOnThisDay,
 		getNarrativeIdentity,
@@ -120,6 +122,9 @@
 	// window of day activity, with a comment explaining that no years endpoint
 	// existed — so a year before the record simply was not a year, and every
 	// row linked to the days index regardless of which year you clicked.
+	/** Their chapters, for the front page. */
+	let overviewChapters = $state<ChapterApi[]>([]);
+
 	let years = $state<YearSummaryApi[]>([]);
 	let yearsLoaded = $state(false);
 
@@ -413,7 +418,7 @@
 			const recentStart = new Date();
 			recentStart.setDate(recentStart.getDate() - 45);
 
-			const [activity, otd, recent, identity, lifeline, edits, openNotes] =
+			const [activity, otd, recent, identity, lifeline, edits, openNotes, chapters] =
 				await Promise.all([
 					listDayActivity(getLocalDateSlug(startDate), getLocalDateSlug(endDate)),
 					listOnThisDay(),
@@ -423,7 +428,10 @@
 					getLifeline(560),
 					listHistory(6),
 					countOpenNotes(),
+					getChapters(),
 				]);
+
+			overviewChapters = chapters ?? [];
 
 			if (lifeline && lifeline.lanes.length) {
 				const n = lifeline.lanes[0]?.density.length ?? 0;
@@ -598,38 +606,35 @@
 					</button>
 				{/if}
 
-				<section class="sec">
-					<div class="sec-main">
-						<h2>Activity</h2>
-						{#if loadingActivity}
-							<p class="quiet">Loading activity…</p>
-						{:else}
-							<ActivityHeatmap
-								{activityData}
-								onDayClick={(_d, slug) => openDay(slug)}
-							/>
-						{/if}
-					</div>
-					<aside class="sec-aside">
-						{#if !loadingActivity}
-							<dl class="stat-stack">
-								<div>
-									<dt>Days recorded</dt>
-									<dd>{activityStats.recorded}</dd>
-								</div>
-								<div>
-									<dt>Narrated</dt>
-									<dd>{activityStats.narrated}</dd>
-								</div>
-								<div>
-									<dt>Awaiting narration</dt>
-									<dd>{activityStats.stubs}</dd>
-								</div>
-							</dl>
-							<p class="aside-note">The last six months, day by day.</p>
-						{/if}
-					</aside>
-				</section>
+				<!-- Their own partition of their life, directly under the wire that
+				     draws it. The front page led with a heatmap of how much data
+				     arrived, which is a fact about the collector rather than about
+				     the life; the chapters are the first thing here the person
+				     actually wrote. -->
+				{#if overviewChapters.length}
+					<section class="sec">
+						<div class="sec-main">
+							<h2>Chapters</h2>
+							<ol class="chapter-list">
+								{#each overviewChapters as c (c.id)}
+									<li>
+										<span class="ch-name">{c.title ?? 'An unnamed stretch'}</span>
+										<span class="ch-span">
+											{c.started_at.slice(0, 4)} – {c.ended_at ? c.ended_at.slice(0, 4) : 'now'}
+										</span>
+									</li>
+								{/each}
+							</ol>
+						</div>
+						<aside class="sec-aside">
+							<p class="aside-note">
+								Named by you, never inferred. Every day the record holds falls inside
+								exactly one.
+							</p>
+							<a class="aside-link" href="/wiki/chapters">All chapters →</a>
+						</aside>
+					</section>
+				{/if}
 
 				<section class="sec">
 					<div class="sec-main">
@@ -784,6 +789,42 @@
 			</div>
 		{:else if section === 'days'}
 			<div class="days-wrap">
+				<!-- The heatmap moved here from the front page. How much data
+				     arrived is a fact about the collector rather than about the
+				     life, and on the days index its counts are the subject. -->
+				<section class="sec">
+					<div class="sec-main">
+						<h2>Activity</h2>
+						{#if loadingActivity}
+							<p class="quiet">Loading activity…</p>
+						{:else}
+							<ActivityHeatmap
+								{activityData}
+								onDayClick={(_d, slug) => openDay(slug)}
+							/>
+						{/if}
+					</div>
+					<aside class="sec-aside">
+						{#if !loadingActivity}
+							<dl class="stat-stack">
+								<div>
+									<dt>Days recorded</dt>
+									<dd>{activityStats.recorded}</dd>
+								</div>
+								<div>
+									<dt>Narrated</dt>
+									<dd>{activityStats.narrated}</dd>
+								</div>
+								<div>
+									<dt>Awaiting narration</dt>
+									<dd>{activityStats.stubs}</dd>
+								</div>
+							</dl>
+							<p class="aside-note">The last six months, day by day.</p>
+						{/if}
+					</aside>
+				</section>
+
 				<DaysChronicle onOpenDay={openDay} />
 			</div>
 		{:else if section === 'entities'}
@@ -862,6 +903,31 @@
 </div>
 
 <style>
+	.chapter-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+
+	.chapter-list li {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.3rem 0;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.ch-name {
+		font-family: var(--font-serif);
+	}
+
+	.ch-span {
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+
 	.wiki-view {
 		display: flex;
 		flex-direction: column;
