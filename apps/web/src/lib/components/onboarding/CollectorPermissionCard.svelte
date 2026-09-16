@@ -14,6 +14,15 @@
     - DONE = daemon running AND Full Disk Access granted (Messages is the
       marquee Mac data). Accessibility stays optional/amber.
     - Browser (non-Tauri): can't drive a local daemon — nudge the desktop app.
+
+  ORPHANED ON PURPOSE (2026-09-16). Its only importer was ConnectWorld.svelte,
+  which was deleted unreferenced along with the rest of the old document
+  onboarding. This is KEPT because it is the remedy to a problem the room
+  currently states and cannot solve: `getting_started::compute` builds a
+  `detail` reading "this Mac is running without Screen Recording" from
+  `setup.degraded`, the room says it in `settled_line`, and there is no door
+  under it. Wire this into the integrations step, or into Sources beside the
+  device row — do not delete it as dead code without answering that.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";

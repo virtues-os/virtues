@@ -98,8 +98,8 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 				// appliance, setup_complete also requires the linked account, and
 				// the airlock's account step is skippable: gating the shell on it
 				// bounced "Enter Virtues" straight back to the letter forever,
-				// with AccountGate (the remedy) stranded behind the wall it was
-				// meant to open. The account is Home's getting-started business.
+				// with the remedy stranded behind the wall it was meant to open.
+				// Connecting AI is the getting-started room's first step now.
 				// `active` covers both finished and dismissed, which is the whole
 				// reason it replaced a separate skipped flag.
 				// A status of `onboarding` opens the letter on its own, whatever

@@ -2007,10 +2007,12 @@
 						/>
 					{/if}
 					{#if isGettingStartedChat(currentChatConversationId)}
-						<!-- One door, two labels: the skip before AI, "come back
-						     to this later" after. Nothing else lives up here —
-						     progress is numbered in the thread, on the axis the
-						     eye is already reading along. -->
+						<!-- One door. A glyph through the walk, and a word
+						     ("Stop for now") once the interview is underway,
+						     which is the one beat with no controls of its own.
+						     Nothing else lives up here — progress is numbered in
+						     the thread, on the axis the eye is already reading
+						     along. -->
 						<GettingStartedDoor />
 					{/if}
 					<!-- On the phone the ghost toggle lives in the shell's top bar

@@ -361,28 +361,6 @@ export async function getCensus(): Promise<Census> {
 	return res.json();
 }
 
-export interface NarrativeDraft {
-	document: string;
-	/** Proposed only. Nothing binds the assistant until it is confirmed. */
-	proposed_rules: string[];
-}
-
-/** Draft the document from the answers. Spends money; POST, never on load. */
-export async function draftNarrative(): Promise<NarrativeDraft> {
-	const res = await fetch(`${API_BASE}/narrative/draft`, { method: 'POST' });
-	if (!res.ok) {
-		let detail = res.statusText;
-		try {
-			const b = await res.json();
-			if (b?.error) detail = b.error;
-		} catch {
-			/* status text is all we have */
-		}
-		throw new Error(detail);
-	}
-	return res.json();
-}
-
 /**
  * Replace the rule set with exactly what was confirmed.
  *
