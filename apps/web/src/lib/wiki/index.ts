@@ -12,3 +12,6 @@ export * from "./api";
 
 // Converters
 export * from "./converters";
+
+// The lede rule, one spelling
+export * from "./lede";

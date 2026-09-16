@@ -15,6 +15,7 @@
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import { listDayActivity, listDays, type DayActivityApi } from '$lib/wiki/api';
 	import { toActivityLevels } from '$lib/wiki/activity';
+	import { ledeSentence } from '$lib/wiki/lede';
 
 	interface Props {
 		onOpenDay: (slug: string) => void;
@@ -38,30 +39,6 @@
 	}
 
 	const CHRONICLE_DAYS = 180;
-
-	/**
-	 * The first sentence of the article's lede — the paragraph before the first
-	 * `## ` heading — as plain text. Markdown links keep their label, emphasis
-	 * marks are dropped. The row is one line; CSS clips whatever is left.
-	 */
-	function ledeOf(article: string | null | undefined): string | null {
-		if (!article) return null;
-		const body = article.split(/\n#{1,6} /)[0];
-		const paragraph = body
-			.split(/\n\s*\n/)
-			.map((s) => s.trim())
-			.find((s) => s.length > 0);
-		if (!paragraph) return null;
-		const plain = paragraph
-			.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-			.replace(/[*_`]/g, '')
-			.replace(/\s+/g, ' ')
-			.trim();
-		// First sentence: a terminal mark followed by a space and a capital,
-		// so "Toys \"R\" Us." and "St. Mary" don't cut early.
-		const m = plain.match(/^[\s\S]*?[.!?]["')]?(?=\s+[A-Z])/);
-		return (m ? m[0] : plain) || null;
-	}
 
 	let loading = $state(true);
 	let activityData = $state<Map<string, number>>(new Map());
@@ -112,7 +89,7 @@
 						weekday: 'short',
 						day: 'numeric',
 					}),
-					lede: ledeOf(day.article),
+					lede: ledeSentence(day.article),
 					narrated,
 					eventCount: countByDate.get(day.date)?.event_count ?? 0,
 				});

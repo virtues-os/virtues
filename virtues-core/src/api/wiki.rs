@@ -1184,19 +1184,27 @@ pub struct OnThisDayEntry {
     pub event_count: i64,
 }
 
-/// THE LEDE, in SQL — the day's opening paragraph, which is the short form
-/// every rung above the day reads.
+/// THE LEDE, in SQL — an article's opening paragraph, which is the short form
+/// every rung above it reads.
 ///
-/// `$prose` is a `wiki_day_prose.prose` expression. The first block that is
-/// neither blank nor a markdown heading: the narrate prompt requires the
-/// article to open with a lede carrying no heading, and a human edit that
-/// adds one above it must not turn the heading into the summary.
+/// `text_expr` is any SQL expression yielding article prose:
+/// `wiki_day_prose.prose` for a day, `app_pages.content` for every other
+/// subject. The rule is not day-specific and never was.
 ///
-/// Defined once and interpolated, because two callers wanted it and a second
-/// hand-written copy is how two spellings of one rule start disagreeing.
-pub fn day_lede_sql(prose: &str) -> String {
+/// The first block that is neither blank nor a markdown heading. Every brief
+/// requires an article to open with a lede carrying no heading; the skip
+/// exists because a human edit that adds a heading above it must not turn that
+/// heading into the summary.
+///
+/// **This is one of two implementations of one rule** — the other is
+/// [`crate::api::wiki_editor::lede`], for callers that already hold the text —
+/// and `lede_and_lede_sql_agree` is the test that keeps them from drifting.
+/// The third, in TypeScript, is `lede()` in `apps/web/src/lib/wiki/lede.ts`,
+/// and it is one function rather than a copy per component for the same
+/// reason.
+pub fn lede_sql(text_expr: &str) -> String {
     format!(
-        "(SELECT btrim(b) FROM unnest(string_to_array({prose}, E'\\n\\n')) AS b \
+        "(SELECT btrim(b) FROM unnest(string_to_array({text_expr}, E'\\n\\n')) AS b \
           WHERE btrim(b) <> '' AND left(btrim(b), 1) <> '#' LIMIT 1)"
     )
 }
@@ -1221,7 +1229,7 @@ pub async fn on_this_day(pool: &PgPool, date: NaiveDate) -> Result<Vec<OnThisDay
         GROUP BY d.id, d.date, dp.prose, d.narrated_at
         ORDER BY d.date DESC
         "#,
-        lede = day_lede_sql("dp.prose")
+        lede = lede_sql("dp.prose")
     ))
     .bind(chrono::Datelike::month(&date) as i32)
     .bind(chrono::Datelike::day(&date) as i32)
@@ -3127,5 +3135,43 @@ mod tests {
             normalize_aliases(Some(&empty)).expect("some"),
             serde_json::json!([])
         );
+    }
+
+    /// The two spellings of the lede rule must return the same block.
+    ///
+    /// There is no way to share one implementation across Rust and SQL — the
+    /// SQL exists precisely so a list query need not fetch whole articles —
+    /// so what keeps them honest is this: every case that has ever been
+    /// ambiguous, run through both. The TypeScript copy is the third, and its
+    /// divergence is what prompted the test: the chronicle's hand-written
+    /// version returned `# A heading` as the lede.
+    #[sqlx::test]
+    async fn lede_and_lede_sql_agree(pool: sqlx::PgPool) {
+        let cases = [
+            "Plain opening paragraph.\n\n## A thread\n\nMore.",
+            "# A title above it\n\nThe real lede.\n\n## Thread",
+            "## Straight into a heading\n\nThen prose.",
+            "\n\n   \n\nLeading blank blocks.\n\nSecond.",
+            "Only one paragraph.",
+            "#not a heading, no space\n\nSecond block.",
+            "",
+            "   ",
+            "###### Deep heading\n\nProse under it.",
+            "Trailing whitespace on the block.   \n\n## Next",
+        ];
+
+        for case in cases {
+            let from_sql: Option<String> =
+                sqlx::query_scalar(&format!("SELECT {}", lede_sql("$1")))
+                    .bind(case)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("the lede SQL runs");
+            let from_rust = crate::api::wiki_editor::lede(case).map(str::to_string);
+            assert_eq!(
+                from_sql, from_rust,
+                "the two spellings of the lede rule disagreed on {case:?}"
+            );
+        }
     }
 }

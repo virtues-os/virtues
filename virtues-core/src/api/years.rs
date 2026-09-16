@@ -178,7 +178,7 @@ pub async fn days_of(pool: &PgPool, year: i32) -> Result<Vec<YearDay>> {
         WHERE EXTRACT(YEAR FROM d.date) = $1
         ORDER BY d.date
         "#,
-        lede = crate::api::wiki::day_lede_sql("dp.prose")
+        lede = crate::api::wiki::lede_sql("dp.prose")
     ))
     .bind(year)
     .fetch_all(pool)
