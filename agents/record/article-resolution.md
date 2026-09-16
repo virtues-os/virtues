@@ -233,6 +233,74 @@ every box would have refused to start on upgrade. Restored byte-for-byte; the
 correction moved into a doc comment. Applied migrations are immutable, comments
 included.
 
+## The shape underneath it
+
+Three structural decisions came out of building the rungs, and each is the
+answer to a problem that had already shipped twice.
+
+### One registry, because a rung is not one fact
+
+Every subject kind carries the same handful of facts: the word the schema
+calls it, the prefix its ids start with, the table its row is in, the route the
+client shows it at, the brief the editor writes it from. Those were spelled out
+in ten places, each enumerating one facet, and the cost showed up the moment a
+rung was added. Chapters needed seven sites touched; three were missed, and all
+three were defects — `check_links` skipped chapter and story links entirely,
+`get_subject_backlinks` searched for an href nothing can write, and @-mention
+autocomplete could not produce either.
+
+`api/subjects.rs` is now the one table. **Adding a rung is a row.** It is kept
+honest from both sides: a test reads `pg_get_constraintdef` and compares the
+registry to the schema's CHECK in both directions, and another reads the
+client's `links.ts` and fails if its route table disagrees — the same lockstep
+the plugin ACL uses, because there is no codegen between Rust and TypeScript.
+
+Two distinctions the registry makes explicit rather than implying:
+
+**A subject's `kind` is not its id `prefix`.** `organization` is the schema's
+word and `org_ab12` is the id. They differ for exactly one kind, and a lookup
+keyed on the wrong one returns zero rows rather than an error — which is the
+worst way for a mismatch to behave.
+
+**"Entity" is one of three subject shapes, never a synonym for "subject."**
+`wiki_articles.subject_type` holds all eight; `wiki_refs.entity_type` holds
+three, because a record can only point AT an entity. A record cannot reference
+a year — a year is a partition we impose, not something an email mentions. The
+two lists are different on purpose, and aligning them, which looks like
+obvious tidying, would be wrong. `agents/build/glossary.md` carries the three
+shapes; the registry is that section in code.
+
+### Components take the wire shape
+
+Every wiki component typed against a converted "page type" — an API type
+through a converter into a `PersonPage`. Reference-counting settled what the
+layer was for: thirteen of the fourteen types it exported had no consumer
+outside its own directory.
+
+The reason this was a correctness problem and not a tidiness one is that
+**optional fields type-check, compile, and render as nothing**. PersonPage read
+`company`, `role`, `location` and `connectionTier` in nineteen places — a whole
+Work row that could never draw. The day page gated an entire Entities section,
+its heading and its table-of-contents entry on a structure the converter
+hardcoded empty. A day full of people listed none, while the metadata block
+below it reported how many were new.
+
+1,256 lines became 171.
+
+### A converter that computes is a boundary; one that renames is a tax
+
+The one converter kept is the line worth drawing. `apiToDayEvent` looks like
+the four that were deleted and is nothing like them: it parses two strings into
+dates, **computes** `durationMinutes` which is not on the wire at all, applies
+defaults, distinguishes `|| undefined` from `?? undefined` so an empty string
+and an absent value differ, and guards two jsonb columns that arrive untyped.
+Delete it and every one of those moves into the eighty-eight call sites that
+read the result.
+
+The four that went did none of that. They renamed fields and filled in blanks
+that stayed blank. **The test is whether the translation does work the caller
+would otherwise have to do** — not whether a translation exists.
+
 ## What shipped
 
 Migrations `0022` (article resolution columns, subject-type vocabulary aligned
