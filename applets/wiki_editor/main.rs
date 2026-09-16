@@ -79,12 +79,28 @@ async fn main() -> Result<()> {
         // agent's option, not its only way to find out why it was woken.
         let changed = changed_since(&pool, &article).await?;
 
+        // A FIRST WRITE is not a revision, and the difference decides the run.
+        // `machine_text` is NULL when the record has never written this article
+        // — a story seeded with the owner's one sentence, say. Told to
+        // "revise", the editor compares the evidence against that sentence,
+        // finds it already said, and correctly declines: the restraint rule
+        // firing on a page that has never been written at all.
+        let never_written = article.machine_text.is_none();
+        let task = if never_written {
+            "WRITE this article for the first time. The record has never written it: \
+             what follows is the owner's own seeding text, which is theirs to keep \
+             and not an article. Research the subject and write the piece."
+        } else {
+            "REVISE this article. Change what the new evidence actually changes and \
+             leave every sentence that is still true exactly as it is."
+        };
+
         output(
             &format!(
-                "Revise the article for subject_type={} subject_id={}.\n\n\
-                 WHAT CHANGED SINCE THE LAST EDITION:\n{changed}\n\n\
-                 THE ARTICLE AS IT STANDS — revise THIS text and pass the whole result \
-                 to `revise_article`:\n\n{current}",
+                "{task}\n\nsubject_type={} subject_id={}\n\n\
+                 WHAT THE RECORD HAS:\n{changed}\n\n\
+                 THE PAGE AS IT STANDS — pass the whole finished text to \
+                 `revise_article`:\n\n{current}",
                 article.subject_type, article.subject_id
             ),
             &input.config,
@@ -106,6 +122,14 @@ async fn changed_since(
     pool: &sqlx::PgPool,
     article: &virtues::api::wiki_editor::DueArticle,
 ) -> Result<String> {
+    if article.subject_type == "story" {
+        // A story has nothing beneath it to hand over — that is the rung's whole
+        // point. Saying "new records reference this" would be a lie: nothing
+        // references a story.
+        return Ok("Nothing is gathered for a story. Its material is wherever the \
+                   record happens to keep it, so searching IS the work here."
+            .to_string());
+    }
     if article.subject_type != "year" {
         return Ok("New records reference this subject. Search for them.".to_string());
     }

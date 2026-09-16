@@ -168,11 +168,29 @@ pub async fn start_article(pool: &PgPool, id: &str) -> Result<String> {
     // `machine_text` stays NULL on purpose: the editor wrote none of this, and
     // claiming it would let the next pass treat the person's own summary as
     // its own prose to rewrite.
-    sqlx::query("UPDATE wiki_articles SET update_requested_at = now() WHERE id = $1")
-        .bind(&created.id)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to queue the story: {e}")))?;
+    //
+    // Their seed sentence is recorded as THEIRS at the same time, and that
+    // second half matters as much as the first. The editor's first write
+    // returns the whole page — their sentence included, because it is supposed
+    // to keep it — and that text becomes `machine_text`. From the next pass on,
+    // the editor would see no difference between its own output and the live
+    // page, conclude it had written every word, and be free to rewrite the one
+    // sentence on the page that was never its own. Recording it here is what
+    // makes the invariant protect a seeded article at all.
+    let theirs: Vec<String> = story
+        .summary
+        .as_deref()
+        .map(crate::api::wiki_editor::sentences)
+        .unwrap_or_default();
+
+    sqlx::query(
+        "UPDATE wiki_articles SET update_requested_at = now(), theirs = $2 WHERE id = $1",
+    )
+    .bind(&created.id)
+    .bind(serde_json::json!(theirs))
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to queue the story: {e}")))?;
     Ok(created.id)
 }
 
@@ -249,6 +267,19 @@ mod tests {
              the next pass treats their own sentence as its prose to rewrite"
         );
         assert!(requested.is_some(), "and it is queued for the editor to fill");
+
+        // Their seed sentence is theirs from the start. The editor's first
+        // write returns the whole page, their sentence included, and that
+        // becomes `machine_text` — so without this the next pass would see no
+        // difference from its own output, conclude it wrote every word, and be
+        // free to rewrite the one sentence that was never its own.
+        let theirs: serde_json::Value =
+            sqlx::query_scalar("SELECT theirs FROM wiki_articles WHERE id = $1")
+                .bind(&article_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(theirs[0], "Two finished, one abandoned.");
 
         assert!(
             start_article(&pool, &s.id).await.is_err(),
