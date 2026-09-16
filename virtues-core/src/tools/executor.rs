@@ -916,12 +916,15 @@ impl ToolExecutor {
                 .filter(|s| !s.is_empty())
                 .map(str::to_string)
         };
-        let birth_date = field("birth_date");
-        if let Some(d) = &birth_date {
-            chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| {
-                ToolError::InvalidParameters(format!("birth_date must be YYYY-MM-DD, got {d}"))
-            })?;
-        }
+        /* Take the date AS WRITTEN. Demanding YYYY-MM-DD from a model sitting
+         * behind a conversation cost a real birth date: someone typed
+         * "June 6 1997" and the model, facing a tool that rejects the WHOLE
+         * call on a bad format, quietly dropped the field instead — so the
+         * write looked clean, the step closed on four of five, and the one
+         * value the lifeline is drawn against was never recorded. A format
+         * requirement belongs on this side of the wire, not on the model's.
+         */
+        let birth_date = field("birth_date").and_then(|d| Self::parse_birth_date(&d));
         let home_timezone = field("home_timezone");
         if let Some(tz) = &home_timezone {
             if tz.parse::<chrono_tz::Tz>().is_err() {
@@ -978,11 +981,69 @@ impl ToolExecutor {
             .map_err(|e| ToolError::ExecutionFailed(format!("record assistant name: {e}")))?;
         }
 
+        /* What is STILL MISSING, named, so a partial write cannot look like a
+         * complete one. Two of five landed once and nobody noticed, because
+         * the tool answered the same way either way. */
+        let missing: Vec<&str> = [
+            ("their full name", full_name.is_none()),
+            ("what to call them", preferred_name.is_none()),
+            ("their birth date", birth_date.is_none()),
+            ("the city they live in", home_timezone.is_none()),
+        ]
+        .into_iter()
+        .filter_map(|(label, absent)| absent.then_some(label))
+        .collect();
+
+        let message = if missing.is_empty() {
+            "Written down and shown under your turn. Say nothing further about it; if they correct anything, call this again with only what changed.".to_string()
+        } else {
+            format!(
+                "Written down and shown under your turn, but STILL MISSING: {}. Ask for what is missing in one short question — this step is not finished without it, and the birth date in particular is what their whole record is laid out against.",
+                missing.join(", ")
+            )
+        };
+
         Ok(ToolResult::success(serde_json::json!({
             "card": "introductions",
             "fields": fields,
-            "message": "Written down and shown under your turn. Say nothing further about it; if they correct anything, call this again with only what changed."
+            "missing": missing,
+            "message": message
         })))
+    }
+
+    
+
+    /// A birth date the way a person writes one. ISO first (what a careful
+    /// model sends), then the ordinary spellings; a two-digit year is refused
+    /// rather than guessed, because 1997 and 2097 are both readings of "97".
+    fn parse_birth_date(raw: &str) -> Option<chrono::NaiveDate> {
+        let cleaned = raw.trim().replace(',', " ");
+        let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+        const FORMATS: &[&str] = &[
+            "%Y-%m-%d", "%Y/%m/%d", "%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y",
+            "%m/%d/%Y", "%d-%m-%Y",
+        ];
+        let parsed = FORMATS
+            .iter()
+            .find_map(|f| chrono::NaiveDate::parse_from_str(&cleaned, f).ok())
+            // "6th June 1997" and friends: drop the ordinal suffix and retry.
+            .or_else(|| {
+                let no_ordinal = regex::Regex::new(r"(?i)(\d{1,2})(st|nd|rd|th)\b")
+                    .ok()?
+                    .replace_all(&cleaned, "$1")
+                    .to_string();
+                FORMATS
+                    .iter()
+                    .find_map(|f| chrono::NaiveDate::parse_from_str(&no_ordinal, f).ok())
+            })?;
+        /* A living person's birth year. `%Y` reads "97" as the year 97 without
+         * complaint, so "6/6/97" parsed clean and would have drawn a lifeline
+         * two thousand years long. Refused rather than guessed: 1997 and 2097
+         * are both readings, a missing date gets asked for again, and a wrong
+         * one silently mis-draws everything. */
+        let year = chrono::Datelike::year(&parsed);
+        let this_year = chrono::Datelike::year(&chrono::Utc::now().date_naive());
+        (1900..=this_year).contains(&year).then_some(parsed)
     }
 
     /// Set the user's preferred name
@@ -1370,5 +1431,45 @@ mod memory_contract {
         crate::api::assistant_memories::retire_memory(&pool, id).await.unwrap();
         let prompt = crate::api::chat::build_system_prompt_for_audit(&pool).await;
         assert!(!prompt.contains("My words now."), "retired memory still rendered");
+    }
+}
+
+#[cfg(test)]
+mod birth_date_tests {
+    use super::ToolExecutor;
+    use chrono::NaiveDate;
+
+    /// A date arrives the way a person types it. Demanding ISO from the model
+    /// lost one: "June 6 1997" was dropped rather than risk a rejected call.
+    #[test]
+    fn a_birth_date_is_read_the_way_people_write_one() {
+        let june6 = NaiveDate::from_ymd_opt(1997, 6, 6).unwrap();
+        for written in [
+            "1997-06-06",
+            "June 6 1997",
+            "June 6, 1997",
+            "6 June 1997",
+            "6th June 1997",
+            "Jun 6 1997",
+            "06/06/1997",
+            "1997/06/06",
+            "  June 6   1997 ",
+        ] {
+            assert_eq!(
+                ToolExecutor::parse_birth_date(written),
+                Some(june6),
+                "could not read {written:?}"
+            );
+        }
+    }
+
+    /// Refused rather than guessed: "97" is 1997 or 2097 and nothing in the
+    /// string says which. A missing date is asked for again; a wrong one is
+    /// not, and it silently mis-draws the whole lifeline.
+    #[test]
+    fn an_ambiguous_year_is_refused() {
+        for written in ["6/6/97", "June 6 97", "sometime in the nineties", ""] {
+            assert_eq!(ToolExecutor::parse_birth_date(written), None, "accepted {written:?}");
+        }
     }
 }

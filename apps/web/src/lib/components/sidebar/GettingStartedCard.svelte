@@ -11,6 +11,11 @@
 	import { GETTING_STARTED_CHAT_ID } from "$lib/components/chat/getting-started/getting-started";
 
 	const open = $derived(gettingStarted.openCount);
+	/* Name the thing, do not count it. "1 thing left" sends someone hunting
+	   for which; "Introductions" is the answer they were going to have to
+	   find anyway. The count returns only when there are several, where a
+	   list would not fit. */
+	const next = $derived(gettingStarted.steps.find((s) => s.status === "open")?.title ?? null);
 
 	function go() {
 		windowShellStore.openTabFromRoute(`/chat/${GETTING_STARTED_CHAT_ID}`, {
@@ -22,7 +27,9 @@
 
 <button type="button" class="card" onclick={go}>
 	<span class="title">Getting started</span>
-	<span class="count">{open === 1 ? "1 thing left" : `${open} things left`}</span>
+	<span class="count">
+		{open === 1 && next ? next : open === 1 ? "1 thing left" : `${open} things left`}
+	</span>
 </button>
 
 <style>
