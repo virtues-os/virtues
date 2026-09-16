@@ -14,6 +14,7 @@
 
 <script lang="ts">
 	import Markdown from '$lib/components/Markdown.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import { writeArticle, setArticleMaintenance, getArticle } from '$lib/wiki/api';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
@@ -126,27 +127,23 @@
 				: ''}
 			{#if canWrite}
 				<span class="colophon-sep">·</span>
-				<button
-					type="button"
-					class="linkish"
+				<TextAction
+					inline
+					onclick={toggleMaintenance}
 					title={maintained
 						? 'The record revises this article as new evidence arrives, leaving anything you wrote untouched. Turning it off stops that.'
 						: 'Let the record keep this updated. It edits around your own sentences rather than over them.'}
-					onclick={toggleMaintenance}
 				>
 					{maintained ? 'Keeping this updated' : 'Keep this updated'}
-				</button>
+				</TextAction>
 				<span class="colophon-sep">·</span>
-				<button
-					type="button"
-					class="linkish"
+				<TextAction
+					inline
+					onclick={openInEditor}
 					title={maintained
 						? 'Edit freely. Your sentences stay yours, and the record edits around them.'
 						: 'Open in the editor.'}
-					onclick={openInEditor}
-				>
-					Edit
-				</button>
+				>Edit</TextAction>
 			{/if}
 		</p>
 		{#if maintained && canWrite}
@@ -161,9 +158,9 @@
 	<p class="stub">
 		{#if canWrite}
 			No article yet.
-			<button type="button" class="linkish" disabled={writing} onclick={write}>
-				{writing ? 'Writing…' : `Write the article`}
-			</button>
+			<TextAction inline loading={writing} loadingLabel="Writing…" onclick={write}>
+				Write the article
+			</TextAction>
 		{:else}
 			No article yet about {name}.
 		{/if}
@@ -180,26 +177,6 @@
 		font-size: 1.0313rem;
 		line-height: 1.65;
 		color: var(--color-foreground);
-	}
-
-	/* A verb in running text, not a button that competes with the prose. The
-	   offer should read as a sentence the page is saying, since most entities
-	   will never have an article and a row of grey buttons on 573 pages is a
-	   chore list. */
-	.linkish {
-		background: none;
-		border: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-accent, currentColor);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-		cursor: pointer;
-	}
-
-	.linkish:disabled {
-		opacity: 0.6;
-		cursor: default;
 	}
 
 	.colophon-sep {

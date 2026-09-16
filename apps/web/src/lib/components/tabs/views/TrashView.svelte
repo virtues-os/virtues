@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Button, Page } from "$lib";
+	import { Button, IconButton, Page } from "$lib";
 	import type { DriveFile } from "$lib/api/client";
 	import {
 		listDriveTrash,
@@ -392,28 +392,25 @@
 				</td>
 				<td class="px-3 py-2.5 text-right">
 					<div class="flex items-center justify-end gap-1">
-						<button
-							class="p-1 text-foreground-subtle hover:text-success transition-colors"
+						<IconButton
+							icon="ri:arrow-go-back-line"
+							label="Restore {file.filename}"
+							size="sm"
 							onclick={(e) => {
 								e.stopPropagation();
 								fileToRestore = file;
 							}}
-							aria-label="Restore {file.filename}"
-							title="Restore"
-						>
-							<Icon icon="ri:arrow-go-back-line" />
-						</button>
-						<button
-							class="p-1 text-foreground-subtle hover:text-error transition-colors"
+						/>
+						<IconButton
+							icon="ri:delete-bin-7-line"
+							label="Delete {file.filename} forever"
+							size="sm"
+							variant="danger"
 							onclick={(e) => {
 								e.stopPropagation();
 								fileToPurge = file;
 							}}
-							aria-label="Delete forever {file.filename}"
-							title="Delete forever"
-						>
-							<Icon icon="ri:delete-bin-7-line" />
-						</button>
+						/>
 					</div>
 				</td>
 			{/snippet}
@@ -432,28 +429,25 @@
 						{file.days_remaining === 1 ? "day" : "days"} left
 					</span>
 					<div class="flex items-center gap-1">
-						<button
-							class="p-1 text-foreground-subtle hover:text-success transition-colors"
+						<IconButton
+							icon="ri:arrow-go-back-line"
+							label="Restore {file.filename}"
+							size="sm"
 							onclick={(e) => {
 								e.stopPropagation();
 								fileToRestore = file;
 							}}
-							aria-label="Restore {file.filename}"
-							title="Restore"
-						>
-							<Icon icon="ri:arrow-go-back-line" />
-						</button>
-						<button
-							class="p-1 text-foreground-subtle hover:text-error transition-colors"
+						/>
+						<IconButton
+							icon="ri:delete-bin-7-line"
+							label="Delete {file.filename} forever"
+							size="sm"
+							variant="danger"
 							onclick={(e) => {
 								e.stopPropagation();
 								fileToPurge = file;
 							}}
-							aria-label="Delete forever {file.filename}"
-							title="Delete forever"
-						>
-							<Icon icon="ri:delete-bin-7-line" />
-						</button>
+						/>
 					</div>
 				</div>
 			{/snippet}

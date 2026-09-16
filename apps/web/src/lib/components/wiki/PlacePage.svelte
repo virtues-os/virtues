@@ -14,6 +14,7 @@
 	import NotesRail from "./NotesRail.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
+	import TextAction from "$lib/components/TextAction.svelte";
 	import { updatePlace } from "$lib/wiki/api";
 
 	interface Props {
@@ -192,16 +193,15 @@
 						<div class="info-item">
 							<dt>Microphone</dt>
 							<dd>
-								<button
-									type="button"
-									class="linkish"
+								<TextAction
+									inline
+									onclick={toggleMuted}
 									title={muted
 										? "The phone keeps no audio while you are here. Turn this off to record here again."
 										: "Ask the phone to keep no audio while you are here. The mic stays on; nothing is kept."}
-									onclick={toggleMuted}
 								>
 									{muted ? "Not recording here" : "Don't record here"}
-								</button>
+								</TextAction>
 								{#if muteFailed}
 									<span class="mute-failed">{muteFailed}</span>
 								{/if}
@@ -363,22 +363,6 @@
 		margin: 0;
 		font-size: 0.875rem;
 		color: var(--color-foreground);
-	}
-
-	.linkish {
-		background: none;
-		border: 0;
-		padding: 0;
-		font: inherit;
-		color: var(--color-foreground);
-		text-decoration: underline;
-		text-underline-offset: 0.15em;
-		text-decoration-color: var(--color-border);
-		cursor: pointer;
-	}
-
-	.linkish:hover {
-		text-decoration-color: currentColor;
 	}
 
 	.mute-failed {

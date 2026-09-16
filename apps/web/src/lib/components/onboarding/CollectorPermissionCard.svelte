@@ -26,7 +26,7 @@
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import { Button } from "$lib";
+	import { Button, TextAction } from "$lib";
 	import { isTauri } from "$lib/utils/platform";
 	import * as api from "$lib/api/client";
 	import {
@@ -165,12 +165,14 @@
 						<span class="text-foreground">Full Disk Access</span>
 						<span class="text-foreground-subtle">— Messages, read locally, never sent to Virtues</span>
 						{#if !status.hasFullDiskAccess}
-							<button
-								class="text-xs text-primary hover:underline mt-1 block"
-								onclick={() => openFullDiskAccess()}
-							>
-								Open Full Disk Access → turn on Virtues Collector
-							</button>
+							<!-- The wrapper carries the line break and the spacing: the
+							     primitive is `display: inline; margin: 0` from a scoped
+							     rule, which outranks a forwarded `block`/`mt-*`. -->
+							<div class="mt-1">
+								<TextAction onclick={() => openFullDiskAccess()}>
+									Open Full Disk Access → turn on Virtues Collector
+								</TextAction>
+							</div>
 							<span class="text-xs text-foreground-subtle mt-0.5 block">
 								Not listed? Click <strong>+</strong> and add
 								<code>~/.virtues/bin/virtues-collector</code>.
@@ -191,12 +193,11 @@
 						<span class="text-foreground">Accessibility</span>
 						<span class="text-foreground-subtle">— optional; adds what's on your screen, kept on your server</span>
 						{#if !status.hasAccessibility}
-							<button
-								class="text-xs text-primary hover:underline mt-1 block"
-								onclick={() => openAccessibilitySettings()}
-							>
-								Open Accessibility → turn on Virtues Collector
-							</button>
+							<div class="mt-1">
+								<TextAction onclick={() => openAccessibilitySettings()}>
+									Open Accessibility → turn on Virtues Collector
+								</TextAction>
+							</div>
 						{/if}
 					</div>
 				</li>

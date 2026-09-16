@@ -58,7 +58,15 @@
 	 * because grammar §5 gives the accent exactly two meanings — *now* and
 	 * *pressable* — and a lit toggle is *now*. Four of the five hand-rolled
 	 * toggle states had already arrived at the accent independently.
-	 */
+	  *
+ * FORWARDING A CLASS: a Tailwind layout utility passed as `class` is silently
+ * EATEN. Svelte compiles this component's scoped rules as `.v-iconbtn.svelte-HASH`
+ * (specificity 0,2,0) while Tailwind sits in `@layer utilities`, which loses to
+ * unlayered CSS outright — so any utility setting a property declared below
+ * (`margin`, `padding`, `display`, `border`, `border-radius`, `background`, `color`) dies with no warning. Put layout on a
+ * WRAPPER element, never on this component. Utilities for properties this
+ * component does not declare do pass through.
+ */
 	let {
 		icon,
 		label,

@@ -5,6 +5,12 @@
 	// other thing here that can be acted on (agents/build/design-grammar.md).
 	// The provider's own text is shown only when it adds something we could
 	// not say better, and never more than a line of it.
+	//
+	// The verb is `TextAction` whether it navigates or acts: this block had the
+	// same `.notice-action` class on two `<a>`s and two `<button>`s, which is
+	// the pair `TextAction`'s `href` exists to keep as one component.
+	import TextAction from "$lib/components/TextAction.svelte";
+
 	interface Props {
 		error: { message?: string } | null;
 		onRetry: () => void;
@@ -162,19 +168,19 @@
 			{/if}
 			<div class="notice-actions">
 				{#if isBilling}
-					<a href="/billing" class="notice-action">
+					<TextAction href="/billing">
 						{kind === "wallet_empty" || kind === "topup_disabled" ? "Add credits" : "Manage billing"}
-					</a>
+					</TextAction>
 				{:else if kind === "reconnect"}
 					<!-- The account gate lives on the getting-started page now,
 					     which shows itself at the app root while unsatisfied. -->
-					<a href="/" class="notice-action">Reconnect</a>
+					<TextAction href="/">Reconnect</TextAction>
 				{:else if canSwitch}
-					<button type="button" class="notice-action" onclick={onSwitchAndRetry}>
+					<TextAction onclick={onSwitchAndRetry}>
 						Switch to {recommendedName} and try again
-					</button>
+					</TextAction>
 				{:else if kind !== "too_large"}
-					<button type="button" class="notice-action" onclick={onRetry}>Try again</button>
+					<TextAction onclick={onRetry}>Try again</TextAction>
 				{/if}
 			</div>
 		</div>
@@ -214,23 +220,5 @@
 
 	.notice-actions:empty {
 		display: none;
-	}
-
-	.notice-action {
-		display: inline-block;
-		padding: 0;
-		border: 0;
-		background: none;
-		font-family: var(--font-sans);
-		font-size: 14px;
-		font-weight: 500;
-		line-height: 1.5;
-		color: var(--color-primary);
-		text-decoration: none;
-		cursor: pointer;
-	}
-
-	.notice-action:hover {
-		text-decoration: underline;
 	}
 </style>

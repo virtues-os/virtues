@@ -23,6 +23,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import { getYear, updateYear, writeYearArticle, type YearApi } from '$lib/wiki/api';
 
 	interface Props {
@@ -119,13 +120,11 @@
 					{page.title ?? page.year}
 					{#if page.title}<span class="numeral">{page.year}</span>{/if}
 				</h1>
-				<button
-					type="button"
-					class="linkish"
+				<TextAction
 					onclick={() => {
 						titleDraft = page?.title ?? '';
 						editingTitle = true;
-					}}>{page.title ? 'Rename' : 'Name this year'}</button
+					}}>{page.title ? 'Rename' : 'Name this year'}</TextAction
 				>
 			{/if}
 
@@ -145,13 +144,11 @@
 			></textarea>
 		{:else if page.summary}
 			<blockquote class="summary">{page.summary}</blockquote>
-			<button
-				type="button"
-				class="linkish"
+			<TextAction
 				onclick={() => {
 					summaryDraft = page?.summary ?? '';
 					editingSummary = true;
-				}}>Edit</button
+				}}>Edit</TextAction
 			>
 		{/if}
 
@@ -162,13 +159,11 @@
 					people, and the part only you can write.
 				</p>
 				{#if !page.summary}
-					<button
-						type="button"
-						class="linkish"
+					<TextAction
 						onclick={() => {
 							summaryDraft = '';
 							editingSummary = true;
-						}}>What do you remember of {page.year}?</button
+						}}>What do you remember of {page.year}?</TextAction
 					>
 				{/if}
 			</section>
@@ -181,9 +176,9 @@
 					{page.days_recorded === 1 ? 'day' : 'days'}, {page.days_narrated} written up.
 				</p>
 				{#if page.days_narrated > 0 && !page.has_article}
-					<button type="button" class="linkish" disabled={writing} onclick={write}>
-						{writing ? 'Writing…' : 'Write the article'}
-					</button>
+					<TextAction loading={writing} loadingLabel="Writing…" onclick={write}>
+						Write the article
+					</TextAction>
 				{/if}
 			</section>
 		{/if}
@@ -350,18 +345,4 @@
 		font-size: 0.875rem;
 	}
 
-	.linkish {
-		background: none;
-		border: 0;
-		padding: 0;
-		cursor: pointer;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-	}
-
-	.linkish:hover:not(:disabled) {
-		color: var(--color-foreground);
-	}
 </style>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { Button, Input, Badge, SudoModal, Page } from '$lib';
+	import { Button, Input, Badge, SudoModal, Page, TextAction } from '$lib';
 	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
@@ -739,7 +739,7 @@
 				The balance could not be read.
 				<span class="error-code">{usageError}</span>
 				{#if isSubscribed || standingUnknown}
-					<button class="link-btn" onclick={() => void loadUsage()}>Check again</button>
+					<TextAction inline onclick={() => void loadUsage()}>Check again</TextAction>
 				{/if}
 			</p>
 		{:else if usage}
@@ -1282,18 +1282,6 @@
 		border-color: color-mix(in srgb, var(--color-success) 22%, transparent);
 		background: var(--color-success-subtle);
 	}
-	.link-btn {
-		background: none;
-		border: none;
-		padding: 0;
-		margin-left: 6px;
-		font: inherit;
-		color: inherit;
-		text-decoration: underline;
-		text-underline-offset: 2px;
-		cursor: pointer;
-	}
-
 	/* ─── Controls ──────────────────────────────────────────────────────────
 	   Real actions use the shared Button (variant="primary"), because a
 	   hand-rolled one here painted itself with `bg-accent text-on-accent` —

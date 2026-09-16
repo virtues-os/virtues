@@ -11,6 +11,7 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { getChapters, updateChapter, deleteChapter, type ChapterApi } from '$lib/wiki/api';
 
@@ -142,16 +143,14 @@
 								onkeydown={(e) => e.key === 'Enter' && saveTitle(ch)}
 							/>
 						{:else}
-							<button
-								type="button"
-								class="linkish"
+							<TextAction
 								onclick={() => {
 									renameDraft = ch.title ?? '';
 									editing = ch.id;
-								}}>{ch.title ? 'Rename' : 'Name it'}</button
+								}}>{ch.title ? 'Rename' : 'Name it'}</TextAction
 							>
 							{#if ch.title}
-								<button type="button" class="linkish" onclick={() => unname(ch)}>Unname</button>
+								<TextAction quiet onclick={() => unname(ch)}>Unname</TextAction>
 							{/if}
 						{/if}
 						{#if chapterError === ch.id && errorText}
@@ -180,21 +179,6 @@
 		display: flex;
 		gap: 0.75rem;
 		align-items: baseline;
-	}
-
-	.linkish {
-		background: none;
-		border: 0;
-		padding: 0;
-		cursor: pointer;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-	}
-
-	.linkish:hover {
-		color: var(--color-foreground);
 	}
 
 	.rename {

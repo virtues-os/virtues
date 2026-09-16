@@ -26,6 +26,7 @@
 
 	import { apiGet, apiSend } from '$lib/api/client';
 	import Button from '$lib/components/Button.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 
 	type Net = { ssid: string; signal: number; secured: boolean; enterprise: boolean };
 	type Status = { connectivity: string; ssid: string | null; ip: string | null };
@@ -225,9 +226,11 @@
 					{/if}
 				</div>
 				{#if relayError}<p class="mt-1 text-xs warntext">{relayError}</p>{/if}
-				<button class="relaybtn" disabled={relayBusy} onclick={toggleRelay}>
-					{relay.enabled ? 'Turn off' : 'Turn on'}
-				</button>
+				<div class="relayact">
+					<TextAction quiet loading={relayBusy} onclick={toggleRelay}>
+						{relay.enabled ? 'Turn off' : 'Turn on'}
+					</TextAction>
+				</div>
 			</div>
 		</div>
 	{/if}
@@ -318,18 +321,11 @@
 	.dot.off {
 		background: var(--color-foreground-subtle, #999);
 	}
-	.relaybtn {
+	/* Placement only. The action itself is TextAction — the margin lives on a
+	   wrapper because the primitive's own `margin: 0` is a scoped rule and
+	   outranks anything forwarded onto it. */
+	.relayact {
 		margin-top: 0.35rem;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-	}
-	.relaybtn:disabled {
-		opacity: 0.45;
-	}
-	.relaybtn:hover:not(:disabled) {
-		color: var(--color-foreground);
 	}
 	.warntext {
 		color: var(--color-warning, #c92);

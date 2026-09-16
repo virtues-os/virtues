@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import { patchApplet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { describeSchedule } from '$lib/applets/palette';
@@ -82,7 +83,7 @@
 	<div class="head">
 		<Icon icon={enabled ? 'ri:check-line' : 'ri:flashlight-line'} width="15" />
 		<div class="titles">
-			<button type="button" class="name" onclick={open}>{name}</button>
+			<TextAction onclick={open}>{name}</TextAction>
 			{#if description}
 				<p class="desc">{description}</p>
 			{/if}
@@ -113,15 +114,15 @@
 			<span class="state">
 				{updated ? 'Updated and running.' : 'Running.'}
 			</span>
-			<button type="button" class="link" onclick={open}>Open</button>
+			<TextAction quiet onclick={open}>Open</TextAction>
 		{:else if dismissed}
 			<span class="state">
 				Left off. You can turn it on any time.
 			</span>
-			<button type="button" class="link" onclick={open}>Open</button>
+			<TextAction quiet onclick={open}>Open</TextAction>
 		{:else}
 			<Button variant="primary" onclick={enable} loading={working}>Turn it on</Button>
-			<button type="button" class="link" onclick={() => (dismissed = true)}>Not now</button>
+			<TextAction quiet onclick={() => (dismissed = true)}>Not now</TextAction>
 		{/if}
 	</div>
 </div>
@@ -150,21 +151,6 @@
 	}
 	.titles {
 		min-width: 0;
-	}
-	.name {
-		display: block;
-		padding: 0;
-		border: none;
-		background: none;
-		font: inherit;
-		font-weight: 600;
-		font-size: 0.9375rem;
-		color: var(--color-foreground);
-		text-align: left;
-		cursor: pointer;
-	}
-	.name:hover {
-		text-decoration: underline;
 	}
 	.desc {
 		margin: 0.125rem 0 0;
@@ -202,19 +188,6 @@
 	.state {
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
-	}
-	.link {
-		padding: 0;
-		border: none;
-		background: none;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		text-decoration: underline;
-	}
-	.link:hover {
-		color: var(--color-foreground);
 	}
 	.err {
 		margin: 0.5rem 0 0;

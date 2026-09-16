@@ -16,6 +16,8 @@
 	import { Page } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import { getStreamHealth, getStreamDays, type StreamHealth, type StreamDays } from '$lib/api/client';
 	import StreamGrid, { type GridRow } from './StreamGrid.svelte';
 	import { domainOf, domainLabel, domainRank } from '$lib/sources/domains';
@@ -191,18 +193,19 @@
 			<span class="live" class:on={flowing.length > 0}>
 				<span class="dot"></span>{lastSeen ? relativeTime(lastSeen) : '—'}
 			</span>
-			<button
-				type="button"
-				class="ghost icon-only"
-				onclick={() => void loadStreams()}
-				aria-label="Refresh"
+			<!-- The pair reads as one row: the reload is chrome (a ghost glyph,
+			     no edge), and Catalog is the row's one real action, so the two
+			     are not two bordered boxes of different heights arguing. -->
+			<IconButton
+				icon="ri:refresh-line"
+				label="Refresh"
+				size="md"
 				disabled={refreshing}
-			>
-				<Icon icon="ri:refresh-line" width="15" />
-			</button>
-			<button type="button" class="ghost" onclick={openCatalog}>
-				<Icon icon="ri:apps-line" width="15" /> Catalog
-			</button>
+				onclick={() => void loadStreams()}
+			/>
+			<Button variant="secondary" size="sm" icon="ri:apps-line" onclick={openCatalog}>
+				Catalog
+			</Button>
 		</div>
 	{/snippet}
 
@@ -213,9 +216,12 @@
 		<div class="notice" class:ok={notice.good}>
 			<Icon icon={notice.good ? 'ri:check-line' : 'ri:information-line'} width="16" />
 			<span>{notice.text}</span>
-			<button type="button" class="x" onclick={() => (noticeDismissed = true)} aria-label="Dismiss">
-				<Icon icon="ri:close-line" width="15" />
-			</button>
+			<IconButton
+				icon="ri:close-line"
+				label="Dismiss"
+				size="xs"
+				onclick={() => (noticeDismissed = true)}
+			/>
 		</div>
 	{/if}
 
@@ -286,9 +292,8 @@
 			<p class="muted">This box is running a build without the arrivals grid yet.</p>
 		{:else if byDomain.length === 0}
 			<p class="muted">
-				Nothing has arrived yet. The <button type="button" class="inline" onclick={openCatalog}
-					>catalog</button
-				> lists everything Virtues can draw from.
+				Nothing has arrived yet. The <TextAction inline onclick={openCatalog}>catalog</TextAction>
+				lists everything Virtues can draw from.
 			</p>
 		{:else}
 			{#each byDomain as g (g.domain)}
@@ -323,22 +328,6 @@
 	.live.on .dot {
 		background: var(--color-success, #16a34a);
 	}
-	.ghost {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0.3125rem 0.625rem;
-		border-radius: 6px;
-		border: 1px solid var(--color-border, #d1d5db);
-		background: var(--color-background, #fff);
-		color: var(--color-foreground, #111827);
-		font-size: 0.75rem;
-		font-weight: 500;
-		cursor: pointer;
-	}
-	.ghost:hover {
-		background: var(--color-muted, #f3f4f6);
-	}
 
 	/* ── Chapters ─────────────────────────────────────────────────────── */
 	.chapter {
@@ -359,9 +348,6 @@
 	}
 	.section {
 		margin-bottom: 0.625rem;
-	}
-	.icon-only {
-		padding: 0.3125rem 0.4375rem;
 	}
 
 	/* ── Vitals ───────────────────────────────────────────────────────── */
@@ -511,14 +497,4 @@
 	.notice span {
 		flex: 1;
 	}
-	.x {
-		display: inline-flex;
-		border: none;
-		background: transparent;
-		color: inherit;
-		opacity: 0.7;
-		cursor: pointer;
-		padding: 0;
-	}
-
 </style>

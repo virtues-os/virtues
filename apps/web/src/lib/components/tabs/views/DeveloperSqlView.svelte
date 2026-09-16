@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { Tab } from "$lib/tabs/types";
     import Icon from "$lib/components/Icon.svelte";
-    import { Button } from "$lib";
+    import { Button, IconButton } from "$lib";
     import { getDeveloperTables, ApiError } from "$lib/api/client";
     import { onMount } from "svelte";
 
@@ -145,9 +145,11 @@
             <div class="flex items-center gap-2">
                 <span class="text-xs text-warning">Read-only</span>
                 <div class="info-wrapper">
-                    <button class="info-btn" title="Why read-only?">
-                        <Icon icon="ri:information-line" class="text-sm" />
-                    </button>
+                    <IconButton
+                        icon="ri:information-line"
+                        label="Why read-only?"
+                        size="sm"
+                    />
                     <div class="info-popover">
                         <div class="info-title">Database is Read-Only</div>
                         <p>
@@ -327,26 +329,6 @@
         position: relative;
     }
 
-    .info-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0.25rem;
-        border: none;
-        background: transparent;
-        color: var(--color-foreground-muted);
-        cursor: pointer;
-        border-radius: 4px;
-        transition:
-            color 150ms ease,
-            background-color 150ms ease;
-    }
-
-    .info-btn:hover {
-        color: var(--color-foreground);
-        background: var(--hover-bg);
-    }
-
     .info-popover {
         position: absolute;
         top: 100%;
@@ -372,7 +354,7 @@
     }
 
     .info-wrapper:hover .info-popover,
-    .info-btn:focus + .info-popover {
+    .info-wrapper:focus-within .info-popover {
         opacity: 1;
         visibility: visible;
         transform: translateY(0);

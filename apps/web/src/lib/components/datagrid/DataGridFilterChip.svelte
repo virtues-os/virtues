@@ -10,6 +10,7 @@
 
 <script lang="ts" generics="T">
 	import Icon from '$lib/components/Icon.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import type { FilterDef, FilterOption, FilterValue } from './types';
 	import { describeFilter, isFilterActive } from './types';
@@ -197,9 +198,7 @@
 		{/snippet}
 	</Popover>
 	{#if active && removable}
-		<button type="button" class="chip-clear" onclick={onClear} aria-label="Remove filter">
-			<Icon icon="ri:close-line" width="12" />
-		</button>
+		<IconButton icon="ri:close-line" label="Remove filter" size="xs" onclick={onClear} />
 	{/if}
 </span>
 
@@ -247,28 +246,7 @@
 		text-overflow: ellipsis;
 	}
 
-	.chip-clear {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 18px;
-		height: 18px;
-		padding: 0;
-		font: inherit;
-		background: transparent;
-		border: none;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		border-radius: 4px;
-	}
-
-	.chip-clear:hover {
-		color: var(--color-foreground);
-		background: var(--color-background-hover);
-	}
-
-	.chip-body:focus-visible,
-	.chip-clear:focus-visible {
+	.chip-body:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}

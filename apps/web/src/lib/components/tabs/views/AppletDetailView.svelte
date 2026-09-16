@@ -4,6 +4,7 @@
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { routeToEntityId } from '$lib/tabs/types';
@@ -580,9 +581,9 @@
 									has changed since — improvements and fixes land there, not
 									here.
 								</span>
-								<button type="button" class="linkish" onclick={useShippedPrompt}>
+								<TextAction inline onclick={useShippedPrompt}>
 									Use the version that ships
-								</button>
+								</TextAction>
 							</div>
 						{/if}
 					</label>
@@ -1273,17 +1274,6 @@
 		font-size: 0.8125rem;
 		line-height: 1.5;
 		color: var(--color-foreground-subtle);
-	}
-
-	.prompt-drift .linkish {
-		background: none;
-		border: 0;
-		padding: 0;
-		cursor: pointer;
-		color: var(--color-foreground);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-		font-size: inherit;
 	}
 
 </style>

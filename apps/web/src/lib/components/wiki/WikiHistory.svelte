@@ -14,6 +14,7 @@
 	 * the default posture is a feed you can skim and ignore.
 	 */
 	import { onMount } from 'svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import {
 		listHistory,
 		getArticleHistory,
@@ -118,14 +119,13 @@
 						{#if reverted[key(e)]}
 							<span class="quiet small">{reverted[key(e)]}</span>
 						{:else}
-							<button
-								type="button"
-								class="revert"
-								disabled={reverting === key(e)}
+							<TextAction
+								loading={reverting === key(e)}
+								loadingLabel="Putting back…"
 								onclick={() => revert(e)}
 							>
-								{reverting === key(e) ? 'Putting back…' : 'Put this version back'}
-							</button>
+								Put this version back
+							</TextAction>
 						{/if}
 					</p>
 				{/if}
@@ -139,26 +139,6 @@
 
 	.actions {
 		margin: 0.5rem 0 0;
-	}
-
-	.revert {
-		background: none;
-		border: 0;
-		padding: 0;
-		cursor: pointer;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-	}
-
-	.revert:hover:not(:disabled) {
-		color: var(--color-foreground);
-	}
-
-	.revert:disabled {
-		cursor: default;
-		opacity: 0.6;
 	}
 
 	.feed {

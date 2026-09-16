@@ -16,6 +16,7 @@
 	import { Page } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import { sourcesStore, type Connection } from '$lib/stores/sources.svelte';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -87,7 +88,7 @@
 	{#if source?.repo}
 		<p class="repo">
 			<Icon icon="ri:code-line" width="14" />
-			<button type="button" class="link" onclick={readCode}>Read the code</button>
+			<TextAction inline onclick={readCode}>Read the code</TextAction>
 			{#if source.repo_ref}<code>{source.repo_ref}</code>{/if}
 			<span class="aside">— provenance, not how it updates</span>
 		</p>
@@ -167,18 +168,6 @@
 	.aside {
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
-	.link {
-		border: none;
-		background: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
-	}
-	.link:hover {
-		text-decoration: underline;
-	}
-
 	.connections {
 		list-style: none;
 		margin: 0;

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { listApplets, adminReconcile, type Applet } from '$lib/api/client';
@@ -374,9 +375,15 @@
 			     lives behind the overflow now: reachable, not offered. -->
 			<Popover bind:open={moreMenuOpen} placement="bottom-end" offset={4}>
 				{#snippet trigger({ toggle })}
-					<button type="button" class="icon-btn" onclick={toggle} aria-label="More">
-						<Icon icon="ri:more-2-fill" width="16" />
-					</button>
+					<IconButton
+						icon="ri:more-2-fill"
+						label="More"
+						size="md"
+						variant="secondary"
+						expanded={moreMenuOpen}
+						haspopup="menu"
+						onclick={toggle}
+					/>
 				{/snippet}
 				{#snippet children()}
 					<div class="new-menu" role="menu">
@@ -528,22 +535,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-	}
-	.icon-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 6px;
-		background: var(--color-surface, #fff);
-		color: var(--color-foreground-subtle, #6b7280);
-		cursor: pointer;
-	}
-	.icon-btn:hover {
-		background: var(--color-surface-elevated, #f3f4f6);
-		color: var(--color-foreground, #111827);
 	}
 	.new-menu-item:disabled {
 		opacity: 0.6;

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import Button from "$lib/components/Button.svelte";
+	import IconButton from "$lib/components/IconButton.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import CoverImagePicker from "$lib/components/CoverImagePicker.svelte";
 	import DisplaySettingsPopover from "$lib/components/pages/DisplaySettingsPopover.svelte";
@@ -99,16 +100,11 @@
 		</Popover>
 		<Popover bind:open={showCoverPicker} placement="bottom-start">
 			{#snippet trigger({ toggle })}
-				<button
+				<IconButton
+					icon={coverUrl ? "ri:image-edit-line" : "ri:image-line"}
+					label={coverUrl ? "Change cover" : "Add cover"}
 					onclick={toggle}
-					class="toolbar-action"
-					title={coverUrl ? "Change cover" : "Add cover"}
-				>
-					<Icon
-						icon={coverUrl ? "ri:image-edit-line" : "ri:image-line"}
-						width="15"
-					/>
-				</button>
+				/>
 			{/snippet}
 			{#snippet children({ close })}
 				<CoverImagePicker value={coverUrl} onSelect={onCoverSelect} {close} />
@@ -135,14 +131,12 @@
 				<DisplaySettingsPopover />
 			{/snippet}
 		</Popover>
-		<button
+		<IconButton
+			icon="ri:check-double-line"
+			label={pageDisplay.spellcheck ? "Spell check on" : "Spell check off"}
+			pressed={pageDisplay.spellcheck}
 			onclick={() => pageDisplay.toggleSpellcheck()}
-			class="toolbar-action"
-			class:active={pageDisplay.spellcheck}
-			title={pageDisplay.spellcheck ? "Spell check on" : "Spell check off"}
-		>
-			<Icon icon="ri:check-double-line" width="15" />
-		</button>
+		/>
 	</div>
 
 	<div class="toolbar-gap"></div>
@@ -150,40 +144,36 @@
 	<!-- Actions -->
 	<div class="toolbar-group">
 		{#if onToggleReferences}
-			<button
+			<IconButton
+				icon="ri:links-line"
+				label="References"
+				pressed={referencesActive}
 				onclick={onToggleReferences}
-				class="toolbar-action"
-				class:active={referencesActive}
-				title="References"
-			>
-				<Icon icon="ri:links-line" width="15" />
-			</button>
+			/>
 		{/if}
 		<Popover bind:open={showVersionHistory} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<button onclick={toggle} class="toolbar-action" title="Version history">
-					<Icon icon="ri:history-line" width="15" />
-				</button>
+				<IconButton icon="ri:history-line" label="Version history" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
 				<VersionHistoryPanel {close} {pageId} {yjsDoc} />
 			{/snippet}
 		</Popover>
 		{#if onShare}
-			<button
+			<!-- No `pressed`. Sharing is not a toggle this button flips: clicking it
+			     copies the link and raises a toast, so `aria-pressed="false"` would
+			     tell a screen reader "off" about a thing that has no on. The state
+			     IS carried — by the icon, which becomes a link once one exists, and
+			     by the label, which changes with it. -->
+			<IconButton
+				icon={isShared ? "ri:link" : "ri:share-line"}
+				label={isShared ? "Manage share link" : "Share page"}
 				onclick={onShare}
-				class="toolbar-action"
-				class:active={isShared}
-				title={isShared ? "Manage share link" : "Share page"}
-			>
-				<Icon icon={isShared ? "ri:link" : "ri:share-line"} width="15" />
-			</button>
+			/>
 		{/if}
 		<Popover bind:open={showOverflow} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<button onclick={toggle} class="toolbar-action" title="More">
-					<Icon icon="ri:more-2-fill" width="15" />
-				</button>
+				<IconButton icon="ri:more-2-fill" label="More" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
 				<div class="overflow-menu">
