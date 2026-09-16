@@ -4,8 +4,8 @@
 	The wikipedia-style article at the top of an entity page, rendered in the
 	same linked-prose register as the day narration (Markdown, quiet refs).
 
-	Articles are OPT-IN (migration 0081). Nothing is written until someone asks,
-	and nothing is maintained until they say so — two decisions, two switches.
+	Articles are OPT-IN. Nothing is written until someone asks, and nothing is
+	maintained until they say so — two decisions, two switches.
 	So the empty state is an OFFER, not a warning: the record below is the
 	product, and prose is an addition to it. An earlier version promised "one
 	will be written once the record holds enough", which is now simply untrue —
@@ -14,7 +14,7 @@
 
 <script lang="ts">
 	import Markdown from '$lib/components/Markdown.svelte';
-	import { writeArticle, setArticleAutoUpdate, getArticle } from '$lib/wiki/api';
+	import { writeArticle, setArticleMaintenance, getArticle } from '$lib/wiki/api';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	interface Props {
@@ -26,7 +26,7 @@
 		subjectType?: 'person' | 'place' | 'organization';
 		subjectId?: string;
 		/** Is the record keeping this article up to date? */
-		autoUpdate?: boolean;
+		maintained?: boolean;
 		/** Re-fetch the entity after a write. */
 		onChanged?: () => void;
 	}
@@ -37,15 +37,15 @@
 		name,
 		subjectType,
 		subjectId,
-		autoUpdate = false,
+		maintained: maintainedProp = false,
 		onChanged
 	}: Props = $props();
 
 	let writing = $state(false);
 	let failed = $state<string | null>(null);
-	let maintained = $state(autoUpdate);
+	let maintained = $state(maintainedProp);
 	$effect(() => {
-		maintained = autoUpdate;
+		maintained = maintainedProp;
 	});
 
 	const canWrite = $derived(Boolean(subjectType && subjectId));
@@ -64,21 +64,28 @@
 		}
 	}
 
+	// `auto`, not `always`, when switching back on: `always` exists for an
+	// article the person wants revisited on every pass, and a two-state control
+	// has no way to say which of the two "on" means. The queue treats them
+	// identically today, so the only thing lost by choosing `auto` is a
+	// distinction this button was never able to make.
 	async function toggleMaintenance() {
 		if (!subjectType || !subjectId) return;
 		const next = !maintained;
 		maintained = next;
 		try {
-			await setArticleAutoUpdate(subjectType, subjectId, next);
+			await setArticleMaintenance(subjectType, subjectId, next ? 'auto' : 'never');
 		} catch (e) {
 			maintained = !next;
 			failed = e instanceof Error ? e.message : 'Could not change that';
 		}
 	}
 
-	// An article IS a page — Edit opens the page editor. One pen at a time:
-	// the first real edit claims the article (the server flips auto_update
-	// off), so the affordance says so before you commit to it.
+	// An article IS a page — Edit opens the page editor. Editing does NOT take
+	// the record's pen away: both keep writing the one document, and what
+	// protects the person's words is that the server refuses any machine edit
+	// that would lose them. The one-pen rule this comment used to describe was
+	// overruled — see agents/record/article-resolution.md.
 	async function openInEditor() {
 		if (!subjectType || !subjectId) return;
 		try {

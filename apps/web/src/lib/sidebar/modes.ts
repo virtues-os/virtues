@@ -144,9 +144,9 @@ export const WIKI_MODE: SidebarMode = {
 		{ id: 'people', label: 'People', icon: 'ri:user-line', href: '/wiki/people' },
 		{ id: 'places', label: 'Places', icon: 'ri:map-pin-line', href: '/wiki/places' },
 		{ id: 'orgs', label: 'Orgs', icon: 'ri:building-line', href: '/wiki/orgs' },
-		// The review surface. `auto_update` is the consent; this is where you
-		// see what that consent produced — without it the record edits its own
-		// prose in a room nobody visits.
+		// The review surface. Maintenance is the consent; this is where you see
+		// what that consent produced — without it the record edits its own prose
+		// in a room nobody visits.
 		{ id: 'history', label: 'History', icon: 'ri:history-line', href: '/wiki/history' },
 	],
 };

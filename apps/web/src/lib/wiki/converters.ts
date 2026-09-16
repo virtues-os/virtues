@@ -64,7 +64,7 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 		content: api.content ?? "",
 		article: api.article ?? undefined,
 		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
-		articleAutoUpdate: api.article_auto_update ?? false,
+		articleMaintained: api.article_maintained ?? false,
 
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
@@ -108,7 +108,7 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 		content: api.content ?? "",
 		article: api.article ?? undefined,
 		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
-		articleAutoUpdate: api.article_auto_update ?? false,
+		articleMaintained: api.article_maintained ?? false,
 
 		// Connections (populated from entity_edges later)
 
@@ -160,7 +160,7 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 		content: api.content ?? "",
 		article: api.article ?? undefined,
 		articleUpdatedAt: api.article_updated_at ? new Date(api.article_updated_at) : undefined,
-		articleAutoUpdate: api.article_auto_update ?? false,
+		articleMaintained: api.article_maintained ?? false,
 
 		// Connections (populated from entity_edges later)
 

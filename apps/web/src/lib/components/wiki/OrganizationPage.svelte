@@ -98,7 +98,7 @@
 					name={page.title}
 									subjectType="organization"
 					subjectId={page.id}
-					autoUpdate={page.articleAutoUpdate}
+					maintained={page.articleMaintained}
 					onChanged={() => location.reload()}
 				/>
 			</section>

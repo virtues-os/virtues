@@ -968,11 +968,12 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                         let mut doc = page_doc.write().await;
                                         if let Some((full_state, changed)) = apply_yjs_update(&mut doc, update_bytes) {
                                             drop(doc);
-                                            // Every changing update, not once per cached doc: the
-                                            // WHERE auto_update=true makes it a no-op after the
-                                            // first flip, and re-enabling the toggle mid-session
-                                            // must re-arm the claim — a memo held that flag
-                                            // hostage until cache eviction.
+                                            // Every changing update, not once per cached doc.
+                                            // The stamp is "when were they last in here", which
+                                            // the editor reads to stay out of a page somebody is
+                                            // working in — so a memo that fired once per cached
+                                            // doc would report a session's first keystroke as its
+                                            // last, and let the editor in while they typed.
                                             if changed {
                                                 note_human_edit(&state.pool, &page_id).await;
                                             }
@@ -992,11 +993,12 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                         let mut doc = page_doc.write().await;
                                         if let Some((full_state, changed)) = apply_yjs_update(&mut doc, update_bytes) {
                                             drop(doc);
-                                            // Every changing update, not once per cached doc: the
-                                            // WHERE auto_update=true makes it a no-op after the
-                                            // first flip, and re-enabling the toggle mid-session
-                                            // must re-arm the claim — a memo held that flag
-                                            // hostage until cache eviction.
+                                            // Every changing update, not once per cached doc.
+                                            // The stamp is "when were they last in here", which
+                                            // the editor reads to stay out of a page somebody is
+                                            // working in — so a memo that fired once per cached
+                                            // doc would report a session's first keystroke as its
+                                            // last, and let the editor in while they typed.
                                             if changed {
                                                 note_human_edit(&state.pool, &page_id).await;
                                             }
