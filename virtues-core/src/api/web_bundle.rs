@@ -45,10 +45,19 @@ use crate::server::webhook::AppState;
 /// `apps/web/scripts/write-bundle-manifest.mjs`.
 const MANIFEST_NAME: &str = ".virtues-bundle.json";
 
-/// Resolve the directory the box serves the web UI from. Mirrors the same
-/// `STATIC_DIR` default as `server/mod.rs` — the two must agree, or the box
-/// would hand out a manifest describing a build it is not serving.
-fn static_dir() -> PathBuf {
+/// Resolve the directory the box serves the web UI from.
+///
+/// THE one definition. It used to be two — this and an identical literal in
+/// `server/mod.rs` — under a comment saying "the two must agree, or the box
+/// would hand out a manifest describing a build it is not serving". That is
+/// the right requirement and a convention is the wrong way to hold it: the
+/// consequence of a drift is a client told the box serves a build it does not.
+/// `server/mod.rs` calls this now, so agreement is structural.
+///
+/// The default is relative to the process's working directory, which is what
+/// makes `make dev` work from a checkout. A box sets `STATIC_DIR` outright
+/// (`/usr/local/share/virtues/web`; see `cli/upgrade.rs`).
+pub fn static_dir() -> PathBuf {
     PathBuf::from(
         std::env::var("STATIC_DIR").unwrap_or_else(|_| "../../apps/web/build".to_string()),
     )

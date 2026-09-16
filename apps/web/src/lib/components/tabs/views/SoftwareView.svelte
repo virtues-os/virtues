@@ -22,9 +22,6 @@
 	import { BUILD, buildLabel } from '$lib/build';
 	import { shellIdentity, describeOtaCheck, type ShellIdentity } from '$lib/tauri/bridge';
 
-	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
-	const BUILD_COMMIT: string = __BUILD_COMMIT__;
-
 	let shell = $state<ShellIdentity | null>(null);
 	let version = $state('');
 	let commit = $state('');
@@ -37,11 +34,16 @@
 			if (r.ok) {
 				const d = await r.json();
 				version = d.version || '';
-				commit = d.commit || BUILD_COMMIT;
+				commit = d.commit || '';
 				builtAt = d.built_at || '';
 			}
 		} catch {
-			commit = BUILD_COMMIT;
+			// Silence, not a substitute. Both of these used to fall back to
+			// __BUILD_COMMIT__ — this BUNDLE's commit — and print it in the row
+			// labelled "Server", on the one page whose whole subject is that
+			// the three artifacts are separate things allowed to differ. A box
+			// that cannot be asked leaves its row empty; the dashes are honest
+			// and the reader can see which artifact failed to answer.
 		}
 	});
 

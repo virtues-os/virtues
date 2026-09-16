@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { onMount } from "svelte";
+	import { updated } from "$app/state";
 	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { appUpdateState, applyAppUpdate } from "$lib/tauri/bridge";
+	import { onBoxBuildChanged } from "$lib/build";
 	import AtlasIcon from "./AtlasIcon.svelte";
 
 	interface Props {
@@ -74,32 +76,65 @@
 	// relaunched, so "until something reloads it" rounds to never, exactly as
 	// the shell's own comment says of "next launch".
 	//
-	// `/health` already reports the box's commit, and the running bundle knows
-	// its own, so the difference IS the signal — no new endpoint, no version
-	// negotiation. `dev` is skipped because a dev SPA and a dev binary are
-	// built separately and always differ, which would pin the chip open.
-	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
-	const BUILD_COMMIT: string = __BUILD_COMMIT__;
-	let boxCommit = $state<string | null>(null);
-	const uiStale = $derived(
-		BUILD_COMMIT !== "dev" && !!boxCommit && boxCommit !== BUILD_COMMIT
-	);
+	// THE SIGNAL IS BUNDLE-TO-BUNDLE, and it took a pinned-open chip to learn
+	// why it has to be. This used to compare the SPA's baked commit against
+	// `/health`'s — but `/health` reports the BOX BINARY's commit, and the two
+	// are different artifacts that the product deliberately lets drift:
+	// `virtues upgrade --only web` refreshes the served build with no binary
+	// swap ("no migration, no restart", cli/upgrade.rs), and a hand-built box
+	// carries a binary from one commit beside a CI-built dist from another.
+	// So the comparison was wrong in both directions at once — pinned open
+	// whenever the binary was merely DIFFERENT (and `reload` could never
+	// change the binary, so the chip came straight back, forever), and silent
+	// after a web-only refresh, which is the one case a reload would have
+	// fixed. The old comment called the difference "the signal"; it was two
+	// questions wearing one name.
+	//
+	// SvelteKit already answers the real question. It bakes a build id into
+	// this bundle and publishes the deployed one at `/_app/version.json`;
+	// `updated.current` is the comparison. Same kind on both sides, so it
+	// converges by construction: reload, and the page that comes back IS the
+	// deployed build. No `dev` special case is needed either — a vite dev
+	// server has no version.json to disagree with.
+	const uiStale = $derived(updated.current);
+
+	// The dist's own short sha, for the chip's second line. Read from
+	// `/api/web-bundle/version`, which describes the build the box is SERVING
+	// — the only identity that says anything about the thing being offered.
+	// Fetched only when the chip is about to show, because that is the only
+	// time anyone reads it.
+	let distSha = $state<string | null>(null);
 
 	async function pollUpdate() {
 		const s = await appUpdateState();
 		stagedVersion = s?.stagedVersion ?? null;
 
-		// Cheap and unauthenticated; served by the box we're already rendering.
+		// No try/catch: `check()` answers `false` on every failure path rather
+		// than throwing — non-2xx, unparseable, offline — so a dropped poll or a
+		// box mid-upgrade cannot flap the chip, and a box with no version.json
+		// at all (headless, or a dev box serving from vite) cannot pin it open.
+		// It is also hardwired to `false` in a dev build, which is what the old
+		// hand-rolled `!== "dev"` guard was for.
+		await updated.check();
+		if (!updated.current) return;
 		try {
-			const res = await fetch("/health", { cache: "no-store" });
-			if (res.ok) {
-				const h = await res.json();
-				boxCommit = typeof h?.commit === "string" ? h.commit : null;
-			}
+			const res = await fetch("/api/web-bundle/version", { cache: "no-store" });
+			// 404 is an ordinary answer here (a dev box serving from vite, a
+			// headless install): the chip simply shows no identity line.
+			distSha = res.ok ? ((await res.json())?.sha ?? null) : null;
 		} catch {
-			// Offline or mid-upgrade — keep the last verdict rather than
-			// flapping the chip on a dropped poll.
+			distSha = null;
 		}
+	}
+
+	/** Relaunch into the staged release, or take the chip down if there is none. */
+	async function relaunch() {
+		if (await applyAppUpdate()) return; // unreachable: the app restarts
+		// The shell had nothing staged after all. Rather than leave a button
+		// that does nothing when pressed, drop the chip and re-read the state
+		// that produced it.
+		stagedVersion = null;
+		void pollUpdate();
 	}
 
 	onMount(() => {
@@ -114,9 +149,14 @@
 		// The shell checks every 6h; ten minutes keeps the chip honest without
 		// chatter on an IPC call that answers from memory.
 		const updateId = setInterval(pollUpdate, 600_000);
+		// A box that restarts under us is worth knowing about before the next
+		// tick of that timer — ten minutes of a page quietly holding chunks the
+		// box no longer has is ten minutes too many. See $lib/build.
+		const offBoxMoved = onBoxBuildChanged(() => void pollUpdate());
 		return () => {
 			clearInterval(id);
 			clearInterval(updateId);
+			offBoxMoved();
 		};
 	});
 
@@ -157,22 +197,30 @@
 	class:collapsed
 	style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay}ms"
 >
-	<!-- ONE chip, two tracks — never both at once. A staged shell release wins
-	     because relaunching also reloads the UI, so offering "Reload" beside it
-	     would be offering the smaller half of what the other button already
-	     does. Neither ever acts on its own: an update that interrupts what you
-	     were typing is worse than an update that waits. -->
+	<!-- TWO tracks, and each gets its own chip when it has something to say.
+	     This was one chip with the app update winning outright, on the argument
+	     that relaunching also reloads the UI — true, and still the reason it is
+	     listed first. What the argument missed is that it only holds if the
+	     relaunch HAPPENS. A staged release is set the moment the background
+	     updater stages it and clears only when the process restarts, and this is
+	     a menu-bar resident designed never to restart — the same premise the
+	     chip below is built on. So a staged update parks in that slot for days
+	     and silently blanks the other track for the whole time.
+
+	     Neither ever acts on its own: an update that interrupts what you were
+	     typing is worse than an update that waits. -->
 	{#if stagedVersion && !collapsed}
 		<button
 			type="button"
 			class="relaunch"
-			onclick={() => void applyAppUpdate()}
+			onclick={() => void relaunch()}
 			title="Restart into the downloaded update — takes a few seconds"
 		>
 			<span class="relaunch-label">Relaunch to update</span>
 			<span class="relaunch-version">v{stagedVersion}</span>
 		</button>
-	{:else if uiStale && !collapsed}
+	{/if}
+	{#if uiStale && !collapsed}
 		<button
 			type="button"
 			class="relaunch"
@@ -180,7 +228,7 @@
 			title="Your server is serving a newer interface — reload to pick it up"
 		>
 			<span class="relaunch-label">Reload for the latest</span>
-			<span class="relaunch-version">{boxCommit?.slice(0, 7)}</span>
+			{#if distSha}<span class="relaunch-version">{distSha}</span>{/if}
 		</button>
 	{/if}
 
