@@ -22,6 +22,29 @@
 # must not look like a new bug, and a genuinely new swallow must not hide behind
 # a line that shifted.
 #
+# ONE awk PASS, NOT `grep -A6 | grep | sed`. BSD grep bus-errors partway through
+# this tree, and because the script sets `pipefail` but not `-e`, the crash
+# stopped nothing: the walk simply ended after virtues-core, never read applets/
+# or services/, and printed "no new swallowed query errors". A check that says
+# nothing is wrong because it died is worse than no check. Running --update in
+# that state wrote a baseline with 13 signatures silently dropped — a ratchet
+# loosened by a segfault. awk does the same window in one portable pass and
+# cannot crash on it.
+#
+# TWO SHAPES ARE SKIPPED, because they are not what this check is about and were
+# 31% of everything it had ever found (46 of 139 baselined instances):
+#
+#   row.try_get("x").ok()    reads a COLUMN off a row already in hand. The
+#                            query's own error was handled where the row was
+#                            fetched, usually a `?` a few lines up. An absent or
+#                            NULL column is a real answer about the data.
+#   tx.rollback().await.ok() discards the error from a ROLLBACK, unactionable by
+#                            construction: the transaction is already being
+#                            abandoned and there is no second thing to try.
+#
+# Both were caught only for sitting inside the six-line window. Every one had to
+# be read and hand-annotated to be dismissed, and the next would too.
+#
 #   Fix one:      use `?`, or annotate `// absent-ok: <why absence is a real answer>`
 #   Re-baseline:  tools/check-swallowed-queries.sh --update  (only to REMOVE entries)
 
@@ -30,19 +53,46 @@ cd "$(dirname "$0")/.."
 BASELINE="tools/swallowed-queries.baseline"
 
 scan() {
-  while IFS= read -r file; do
-    while IFS=: read -r line _; do
-      [ -n "$line" ] || continue
-      ctx=$(sed -n "$((line > 2 ? line - 2 : 1)),$((line + 2))p" "$file")
-      case "$ctx" in *absent-ok:*) continue ;; esac
-      code=$(sed -n "${line}p" "$file" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-      printf '%s\t%s\n' "$file" "$code"
-    done < <(
-      grep -nE -A6 '\.(fetch_one|fetch_all|fetch_optional|execute)\(' "$file" 2>/dev/null |
-        grep -E '^[0-9]+-.*\.(ok\(\)|unwrap_or\(|unwrap_or_default\(\)|unwrap_or_else\()' |
-        sed 's/^\([0-9]*\)-.*/\1/'
-    )
-  done < <(find virtues-core crates applets services -name '*.rs' -not -path '*/target/*' 2>/dev/null)
+  # ONE awk pass over every file, rather than a shell loop spawning
+  # grep+sed+sed per file inside nested process substitutions.
+  #
+  # That shape was not merely slow, it was WRONG, in two compounding ways:
+  #
+  #   - BSD grep bus-errors partway through this tree. `pipefail` is set but
+  #     `-e` is not, so the crash stopped nothing and the walk just ended early.
+  #   - The counts were not even reproducible. Scanning virtues-core alone
+  #     found 62 signatures and applets alone found 5, but the two together
+  #     found 65 — the nested `while read < <(...)` loops were losing rows.
+  #
+  # Both failures are silent and both report success, and `--update` run in
+  # that state writes a baseline with the missing rows deleted: a ratchet
+  # loosened by a crash. One awk process, no per-file subshells, no pipeline to
+  # half-die.
+  awk '
+    function flush(   i, j, ctx, code, ok) {
+      for (i in hit) {
+        ok = 0
+        for (j = (i > 2 ? i - 2 : 1); j <= i + 2; j++)
+          if ((j in L) && L[j] ~ /absent-ok:/) ok = 1
+        if (!ok) {
+          code = L[i]
+          sub(/^[ \t]+/, "", code); sub(/[ \t]+$/, "", code)
+          print F "\t" code
+        }
+      }
+      delete hit; delete L; anchor = 0
+    }
+    # A new file starts: settle the previous one while F and L still describe it.
+    FNR == 1 && NR > 1 { flush() }
+    { L[FNR] = $0; F = FILENAME }
+    # The anchor line itself is never a hit: `grep -A6` printed it as "NNN:"
+    # and the old filter accepted only context lines ("NNN-").
+    /\.(fetch_one|fetch_all|fetch_optional|execute)\(/ { anchor = FNR; next }
+    anchor && FNR > anchor && FNR <= anchor + 6 \
+      && /\.(ok\(\)|unwrap_or\(|unwrap_or_default\(\)|unwrap_or_else\()/ \
+      && !/try_get|rollback/ { hit[FNR] = 1 }
+    END { flush() }
+  ' $(find virtues-core crates applets services -name '*.rs' -not -path '*/target/*' 2>/dev/null)
 }
 
 current=$(scan | sort | uniq -c | sed 's/^ *//')
