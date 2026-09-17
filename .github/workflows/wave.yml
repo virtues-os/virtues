@@ -51,7 +51,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  web:
+  # Named apart from ci.yml's `web`/`rust`. Both workflows report against the
+  # same commit, so identical job names give `gh pr checks` two rows called
+  # "rust" with no way to tell which failed — which is exactly how the first
+  # run of this gate was misread.
+  svelte-check:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@v4
@@ -78,7 +82,7 @@ jobs:
         working-directory: apps/web
         run: pnpm check
 
-  rust:
+  cargo-check:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     env:
       # Read the committed query cache instead of a live database. This is also
