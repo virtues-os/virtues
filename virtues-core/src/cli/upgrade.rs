@@ -1048,15 +1048,14 @@ pub(crate) fn read_box_env_var(key: &str) -> Option<String> {
     None
 }
 
-/// Resolved on-box install destinations. The binaries live next to
-/// `/usr/local/bin/virtues`; the shipped dirs follow the env vars the
-/// installer writes into the box env file, falling back to the same
-/// `/usr/local` well-known defaults `virtues-installer` uses so a manual
-/// `sudo virtues upgrade` (which doesn't load that env file) still targets the
-/// right paths. Mirrors `InstallConfig` in the installer crate.
+/// Resolved on-box install destinations for the shipped data dirs. (Binaries
+/// are not among them: they install into release slots, see `slot_*`.) The
+/// dirs follow the env vars the installer writes into the box env file,
+/// falling back to the same `/usr/local` well-known defaults
+/// `virtues-installer` uses so a manual `sudo virtues upgrade` (which doesn't
+/// load that env file) still targets the right paths. Mirrors `InstallConfig`
+/// in the installer crate.
 struct InstallDirs {
-    /// Directory holding `virtues`, `virtues-wireguard`, `llama-server`.
-    bin_dir: PathBuf,
     web: PathBuf,
     actions: PathBuf,
     applets_bin: PathBuf,
@@ -1064,10 +1063,6 @@ struct InstallDirs {
 
 impl InstallDirs {
     fn resolve() -> Self {
-        let bin_dir = Path::new(BINARY_PATH)
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("/usr/local/bin"));
         let env_dir = |var: &str, default: &str| {
             std::env::var(var)
                 .ok()
@@ -1090,7 +1085,6 @@ impl InstallDirs {
                 .unwrap_or_else(|| PathBuf::from(default))
         };
         Self {
-            bin_dir,
             web: env_dir("STATIC_DIR", "/usr/local/share/virtues/web"),
             actions: env_dir_multi(
                 &["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"],

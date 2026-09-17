@@ -1,44 +1,35 @@
-//! Entity article generation — the wikipedia-style written record on each
-//! entity page.
+//! An entity's FIRST DRAFT — the opening article on a person, place or
+//! organization page.
 //!
-//! Where the day summary narrates a *day*, this narrates a *relationship*: a
-//! short, grounded article about a person, place, or organization, written
-//! from the raw records that reference it (`wiki_refs`) and revised
-//! only when enough NEW evidence has accumulated since the last edition —
-//! growth-gated, not timer-gated, so a quiet entity never burns a model call
-//! and an active one stays current.
+//! **This module writes once.** It is the one-shot half of article resolution
+//! (`agents/record/article-resolution.md`): there is no existing text to
+//! respect and nothing to go looking for, so one call with a dossier in the
+//! prompt is the whole job. Everything after the first draft — deciding the
+//! article is due, researching what changed, and making a surgical edit that
+//! cannot lose a sentence the person wrote — belongs to the `wiki_editor`
+//! applet and its agent phase, which is the only place a Yjs-aware writer can
+//! run.
 //!
 //! It is an *article*, not a summary: it summarizes nothing, because the thing
 //! it would summarize (the records) is rendered directly beneath it on the
 //! page. It is the prose the page is written in.
 //!
-//! Shape: gate → dossier → `BearerClient` → write back. The article lives in its own `article` column; `content` and
-//! `notes` remain the user's own writing and are never touched here.
+//! Shape: dossier → `BearerClient` → `create_article`. The prose lands in the
+//! article's own page, where the person's edits and the editor's share one
+//! document.
 //!
-//! Cost note: this runs on the **Lite** slot and ships **disabled**. On a box
-//! with real history several hundred entities clear the gate on day one, and
-//! there is no per-day spend ceiling anywhere in the system — so the slot and
-//! the off-by-default switch are the cost controls.
+//! **The gate is consent.** An entity has no article until someone asks for
+//! one, and none is maintained until they set `maintenance` on it. Writing
+//! once and maintaining forever are different decisions and get different
+//! switches. The thresholds that used to decide this for them
+//! (`MIN_REFS_TO_WRITE`, `MIN_NEW_REFS`) are gone: on the real box they
+//! cleared 226 entities on five months of records — hundreds of unrequested
+//! model calls, recurring forever, with nothing in the UI to say the box was
+//! spending on them.
 
 use sqlx::PgPool;
 
 use crate::error::{Error, Result};
-
-// MIN_REFS_TO_WRITE and MIN_NEW_REFS are gone (migration 0081).
-//
-// They were a machine deciding which of your relationships deserved prose. On
-// the real box that meant 226 entities cleared the bar on a corpus of five
-// months — hundreds of unrequested model calls, recurring forever, with nothing
-// in the UI to say the box was spending on them.
-//
-// The gate is consent now. An entity has no article until someone clicks
-// "Write the article", and none is maintained until they turn maintenance on,
-// per-article, with its own `refresh_after_new_refs`. Writing once and
-// maintaining forever are different decisions and get different switches.
-
-/// Editions per run. The applet runs hourly; a bounded batch drains a backlog
-/// without a cost spike.
-const MAX_ENTITIES_PER_RUN: i64 = 2;
 
 /// Most recent records shown to the model.
 const DOSSIER_RECORDS: usize = 40;
@@ -48,15 +39,15 @@ const MAX_TOTAL_CHARS: usize = 14000;
 
 const SYSTEM_PROMPT: &str = r#"You are the editor of a private wiki about one person's life — their own personal wikipedia, readable only by them. You are writing the article for ONE entity in that wiki: a person they know, a place they go, or an organization in their life. "You"/"your" in the article always refers to the wiki's owner; the entity is written about in the third person.
 
-You are given the entity's structured facts, the raw records that reference it (messages, emails, calendar events, visits, transactions), narrated days it appears in, and the previous edition of the article if one exists.
+You are given the entity's structured facts, the raw records that reference it (messages, emails, calendar events, visits, transactions), and narrated days it appears in.
 
 WRITE:
 - Two to four short paragraphs, in the register of a well-edited encyclopedia that happens to be about a private life: precise, warm, unhurried. Markdown is allowed but keep it to plain paragraphs — no headings, no lists.
-- Open with what the entity IS in the owner's life (the relationship, the role, the pattern), then how it shows up in the record (rhythms, places, recurring context), then what has changed lately if the previous edition missed it.
+- Open with what the entity IS in the owner's life (the relationship, the role, the pattern), then how it shows up in the record (rhythms, places, recurring context).
 - LINK entities: when you mention an entity listed under "Entities you may link", link it by copying its exact markdown link, e.g. [Maya](/person/person_ab12) or [March 3, 2026](/day/day_2026-03-03) for a listed day. Link each once, on first mention. Never invent a link or link anything not listed.
 - Ground every claim in the material given. Describe patterns, never essence ("your lunches with her tend to…", never "she is the kind of person who…"). If the record is one-sided (only messages, only transactions), say so plainly.
 - Absence of data is not data: never invent feelings, motives, or events. No flattery, no horoscope lines that could be true of anyone.
-- This is an edition, not an append: rewrite the whole article, carrying forward what the previous edition got right.
+- This is the article's FIRST edition. Write it whole. It is maintained afterwards by editing, not by rewriting, so do not write anything that would have to be replaced wholesale to stay true.
 
 Output only the article."#;
 
@@ -68,54 +59,6 @@ struct DueEntity {
     refs: i64,
 }
 
-/// Maintenance: rewrite articles whose subject has outgrown them.
-///
-/// The candidate set is no longer "every entity on the box" — it is the
-/// articles a person switched maintenance on for, and each carries its own
-/// threshold. An article with `auto_update = false` is never a candidate, and
-/// that means exactly what it says: the AI does not touch it. Not a queue, not
-/// a review inbox; the sweep skips it.
-///
-/// **Rewriting is not implemented here, and cannot be.** An article is an
-/// `app_pages` row, and once its `yjs_state` is non-null the CRDT is
-/// authoritative: a pool-only write to `content` is overwritten from the CRDT
-/// on the next save, silently. Maintenance therefore belongs in an applet's
-/// AGENT phase, which holds a real `YjsState` and edits through the same
-/// find/replace path the assistant already uses on pages — which is also the
-/// only way to get reviewable diffs instead of a 100% rewrite every edition.
-///
-/// Until that lands this returns the count it *would* write, and logs it. The
-/// set is empty on any box where nobody has opted in, so this is dormant rather
-/// than broken.
-pub async fn refresh_due_entity_articles(pool: &PgPool) -> Result<usize> {
-    let due: Vec<(String, String, i64)> = sqlx::query_as(
-        r#"
-        SELECT a.subject_id, a.subject_type, c.refs
-        FROM wiki_articles a
-        JOIN LATERAL (
-            SELECT count(*) AS refs FROM wiki_refs r WHERE r.entity_id = a.subject_id
-        ) c ON true
-        WHERE a.auto_update
-          AND a.subject_type IN ('person', 'place', 'organization')
-          AND c.refs - a.source_ref_count >= a.refresh_after_new_refs
-        ORDER BY c.refs - a.source_ref_count DESC
-        LIMIT $1
-        "#,
-    )
-    .bind(MAX_ENTITIES_PER_RUN)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to find due articles: {}", e)))?;
-
-    if !due.is_empty() {
-        tracing::warn!(
-            count = due.len(),
-            "articles are due for maintenance, but rewriting needs the agent phase \
-             (a pool-only write to a CRDT-backed page is silently discarded) — skipping"
-        );
-    }
-    Ok(0)
-}
 
 /// Write a subject's first article, now, because someone asked for it.
 ///
@@ -169,51 +112,59 @@ pub async fn write_entity_article_now(
         crate::api::wiki_articles::create_article(pool, subject_type, subject_id, &title, &article)
             .await?;
 
-    sqlx::query("UPDATE wiki_articles SET source_ref_count = $2 WHERE id = $1")
-        .bind(&created.id)
-        .bind(refs as i32)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to stamp ref count: {}", e)))?;
+    // Record what the editor just wrote. Without this the article has no
+    // `machine_text`, and the first revision cannot tell the machine's own
+    // first draft from something the person typed — it would mark the whole
+    // article as theirs and then be forbidden from ever editing it.
+    crate::api::wiki_editor::record_edition(pool, &created.id, &article).await?;
 
     Ok(created)
 }
 
 /// The subject's display name, for the article page's title.
-async fn entity_title(pool: &PgPool, subject_type: &str, subject_id: &str) -> Result<String> {
-    let sql = match subject_type {
+/// Named `entity_*` and taking `entity_*` because that is what it means: the
+/// three ENTITY-shaped subjects and no others. A subject is the wider word —
+/// a day and a year are subjects too — and this function has nothing to say
+/// about them. See `agents/build/glossary.md`.
+async fn entity_title(pool: &PgPool, entity_type: &str, entity_id: &str) -> Result<String> {
+    let sql = match entity_type {
         "person" => "SELECT name FROM wiki_people WHERE id = $1",
         "place" => "SELECT name FROM wiki_places WHERE id = $1",
         "organization" => "SELECT name FROM wiki_orgs WHERE id = $1",
         other => {
             return Err(Error::InvalidInput(format!(
-                "Cannot write an article for subject type {other}"
+                "Not an entity: {other}. A day or a year is a subject with an \
+                 article, but it is not something this writer can title."
             )))
         }
     };
     sqlx::query_scalar(sql)
-        .bind(subject_id)
+        .bind(entity_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to load subject: {}", e)))?
-        .ok_or_else(|| Error::NotFound(format!("No {subject_type}: {subject_id}")))
+        .map_err(|e| Error::Database(format!("Failed to load the entity: {}", e)))?
+        .ok_or_else(|| Error::NotFound(format!("No {entity_type}: {entity_id}")))
 }
 
 /// Assemble everything the editor reads: header facts, the recent record,
-/// co-occurring entities (the link allowlist), narrated days, and the
-/// previous edition.
+/// co-occurring entities (the link allowlist), and narrated days.
+///
+/// It deliberately reads NO never-written column. `seen_count`, `first_seen`,
+/// `last_seen`, `article` and `wiki_people.notes` have no writer anywhere, so
+/// every one of them either fed the model a zero or fed it nothing — and
+/// "Interactions on record: 0" was reaching the prompt for entities with
+/// thousands of refs. The honest count is `entity.refs`, straight from
+/// `wiki_refs`, and it is already in the header line.
 async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
     use sqlx::Row;
 
     let mut p = String::new();
 
     // ── Header facts + previous edition, per kind ──
-    let (name, facts, previous): (String, String, Option<String>) = match entity.kind.as_str() {
+    let (name, facts): (String, String) = match entity.kind.as_str() {
         "person" => {
             let row = sqlx::query(
-                "SELECT name, relationship_category, nickname, notes, \
-                        first_seen::text AS fi, last_seen::text AS li, \
-                        seen_count, article \
+                "SELECT name, relationship_category, nickname \
                  FROM wiki_people WHERE id = $1",
             )
             .bind(&entity.id)
@@ -228,26 +179,11 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("nickname") {
                 f.push_str(&format!("- Nickname: {}\n", v));
             }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("notes") {
-                f.push_str(&format!("- Owner's own notes: {}\n", cap(&v, 400)));
-            }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("fi") {
-                f.push_str(&format!("- First interaction on record: {}\n", v));
-            }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("li") {
-                f.push_str(&format!("- Most recent interaction: {}\n", v));
-            }
-            if let Ok(v) = row.try_get::<i64, _>("seen_count") {
-                f.push_str(&format!("- Interactions on record: {}\n", v));
-            }
-            let prev: Option<String> = row.try_get("article").ok().flatten();
-            (name, f, prev)
+            (name, f)
         }
         "place" => {
             let row = sqlx::query(
-                "SELECT name, category, address, seen_count, \
-                        first_seen::text AS fv, last_seen::text AS lv, article \
-                 FROM wiki_places WHERE id = $1",
+                "SELECT name, category, address FROM wiki_places WHERE id = $1",
             )
             .bind(&entity.id)
             .fetch_one(pool)
@@ -261,26 +197,11 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("address") {
                 f.push_str(&format!("- Address: {}\n", v));
             }
-            // `seen_count` is bigint — the pre-fix code asked for a phantom
-            // `ref_count` as i32, so this line failed twice over. The rename
-            // sweep (4526df11) missed these two raw-query sites; only
-            // `sqlx::query!` sites got compiler coverage.
-            if let Ok(v) = row.try_get::<i64, _>("seen_count") {
-                f.push_str(&format!("- Visits on record: {}\n", v));
-            }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("fv") {
-                f.push_str(&format!("- First visit: {}\n", v));
-            }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("lv") {
-                f.push_str(&format!("- Most recent visit: {}\n", v));
-            }
-            let prev: Option<String> = row.try_get("article").ok().flatten();
-            (name, f, prev)
+            (name, f)
         }
         _ => {
             let row = sqlx::query(
-                "SELECT name, organization_type, relationship_type, role_title, \
-                        first_seen::text AS fi, last_seen::text AS li, article \
+                "SELECT name, organization_type, relationship_type, role_title \
                  FROM wiki_orgs WHERE id = $1",
             )
             .bind(&entity.id)
@@ -298,14 +219,7 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             if let Ok(Some(v)) = row.try_get::<Option<String>, _>("role_title") {
                 f.push_str(&format!("- Owner's role: {}\n", v));
             }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("fi") {
-                f.push_str(&format!("- First interaction on record: {}\n", v));
-            }
-            if let Ok(Some(v)) = row.try_get::<Option<String>, _>("li") {
-                f.push_str(&format!("- Most recent interaction: {}\n", v));
-            }
-            let prev: Option<String> = row.try_get("article").ok().flatten();
-            (name, f, prev)
+            (name, f)
         }
     };
 
@@ -388,9 +302,12 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             links.push(format!("- [{}](/{}/{})", n, route, eid));
         }
     }
-    let days: Vec<(chrono::NaiveDate, Option<String>)> = sqlx::query_as(
+    // The day's LEDE, not its `epigraph`: that column is NULL on every row of
+    // every box, because the narrate prompt forbids the model to write one.
+    // Six narrated days were being offered to the editor as bare dates.
+    let days: Vec<(chrono::NaiveDate, Option<String>)> = sqlx::query_as(&format!(
         r#"
-        SELECT DISTINCT d.date, d.epigraph
+        SELECT DISTINCT d.date, {lede} AS lede
         FROM wiki_days d
         JOIN wiki_day_prose dp ON dp.day_id = d.id AND dp.prose IS NOT NULL
         JOIN wiki_refs er ON date(er.occurred_at) = d.date
@@ -398,19 +315,20 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
         ORDER BY d.date DESC
         LIMIT 6
         "#,
-    )
+        lede = crate::api::wiki_editor::lede_sql("dp.prose")
+    ))
     .bind(&entity.id)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
-    for (date, epigraph) in &days {
+    for (date, lede) in &days {
         let label = date.format("%B %-d, %Y");
-        match epigraph {
+        match lede {
             Some(e) => links.push(format!(
                 "- [{}](/day/day_{}) — narrated day: \"{}\"",
                 label,
                 date.format("%Y-%m-%d"),
-                cap(e, 100)
+                cap(e, 200)
             )),
             None => links.push(format!("- [{}](/day/day_{})", label, date.format("%Y-%m-%d"))),
         }
@@ -420,11 +338,6 @@ async fn build_dossier(pool: &PgPool, entity: &DueEntity) -> Result<String> {
             "\n## Entities you may link (copy the exact markdown link)\n{}\n",
             links.join("\n")
         ));
-    }
-
-    // ── Previous edition ──
-    if let Some(prev) = previous {
-        p.push_str(&format!("\n## Previous edition of this article\n{}\n", cap(&prev, 2000)));
     }
 
     if p.len() > MAX_TOTAL_CHARS {
@@ -462,9 +375,11 @@ async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
         "entity_article",
         SYSTEM_PROMPT,
         user_prompt,
-        900,
+        // Arrangement of the person's own words: thinking off, no cap. The
+        // 900-token literal that sat here was a guess that stopped being
+        // true the day the model started thinking inside it.
+        crate::virtues_api::request::Thinking::Off,
         0.4,
-        None,
     )
     .await
 }

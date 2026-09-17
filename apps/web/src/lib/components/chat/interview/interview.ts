@@ -23,13 +23,22 @@ export function isInterviewChat(convId: string | null | undefined): boolean {
 /** The opening, in three parts: the heading alone (the lifeline plate
  *  renders right after it, bleeding past the column — see the message
  *  template in ChatView), then the intro and the example table, then the ask. */
-const INTERVIEW_OPENING = "# The story of your life: chapters & identity";
-const INTERVIEW_OPENING_BODY =
-	"In order to help the Virtues platform generate more powerful insights " +
-	"in your life, we’ll guide you in briefly describing your past " +
-	"chapters.\n\n" +
-	"We define chapters as seven major arcs in your life; see the table " +
-	"below for an example.\n\n" +
+export const INTERVIEW_OPENING = "# The story of your life: chapters & identity";
+
+/** Under the heading, before the plate: what the plate is an example of,
+ *  and why the interview exists at all. The "why" is the point — the
+ *  record holds what happened; this is how the AI is grounded in who the
+ *  person is and what they value, not just in what they did. */
+export const INTERVIEW_OPENING_LEAD =
+	"This lifeline is an example of what you will make here: your life from " +
+	"beginning to end, its chapters, its turning points, and the stories " +
+	"that matter. It gives the AI a grounding in who you are, your " +
+	"temperament, your virtues and vices, and the person you want to become, " +
+	"so that it keeps the record of your life the way you would.";
+
+export const INTERVIEW_OPENING_BODY =
+	"A chapter is one of the major arcs of a life, usually about seven of " +
+	"them. The table below is an example.\n\n" +
 	// A made-up life (see ChapterLifeline.svelte, which draws the same
 	// one). The interview prompt tells the model this table is an
 	// example, and the repo's rule is that nothing from a real life ships.
@@ -43,15 +52,13 @@ const INTERVIEW_OPENING_BODY =
 	"| The workshop | 2023 – 2025 |\n" +
 	"| Out on my own | 2025 – now |";
 
-/** The ask comes last, after the shape has been seen; the retention
- *  promise rides with it because it is the one thing to know before
- *  answering. */
-const INTERVIEW_OPENING_ASK =
+/** The ask comes last, after the shape has been seen. No retention
+ *  promise here: it was made once, when AI was connected, and repeating
+ *  it at the moment of answering read as a warning. */
+export const INTERVIEW_OPENING_ASK =
 	"Yours will look nothing like these. What would your chapters be? " +
 	"Rough names and rough years are enough; months and dates are welcome " +
-	"where you remember them.\n\n" +
-	"What you say here stays on your server. The model conducting this is " +
-	"sent your words under a no-retention agreement and keeps nothing.";
+	"where you remember them.";
 
 /** The narrative interview opens ALREADY SPEAKING: an authored first line,
  *  shown free (never persisted, no model call). The interview prompt knows
@@ -79,7 +86,7 @@ export function applyInterviewOpening(chat: Chat, convId: string | null | undefi
 			// the first (the heading), so the shape is seen before the
 			// example table, and the ask lands last.
 			parts: [
-				{ type: "text", text: INTERVIEW_OPENING },
+				{ type: "text", text: INTERVIEW_OPENING + "\n\n" + INTERVIEW_OPENING_LEAD },
 				{ type: "text", text: INTERVIEW_OPENING_BODY },
 				{ type: "text", text: INTERVIEW_OPENING_ASK },
 			],

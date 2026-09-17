@@ -24,20 +24,25 @@ export interface PlannedChapter {
 	label: string;
 }
 
+/** A moment worth a mark on the wire: one of the stories the record keeps.
+ *  The example shows a few so the plate shows what the words promise —
+ *  chapters, and the stories inside them — not chapters alone. */
+export interface LifeStory {
+	t: number;
+	label: string;
+}
+
 export interface Life {
 	/** Birth, when known: the α end of the wire and the age ruler's zero.
 	 *  Unknown (the profile has no birth date) hides the age row; the
 	 *  scale then starts at the first chapter. */
 	birth: number | null;
 	now: number;
-	/** When the record begins — draws coverage strips inside the boxes,
-	 *  dense after it, sparse before. Only the fictional life claims one:
-	 *  for a real person the strips would be invented, so none are drawn. */
-	box: number | null;
 	chapters: LifeChapter[];
+	/** Marked moments inside the chapters. The example carries three; a
+	 *  real life carries none until the interview has asked for them. */
+	stories: LifeStory[];
 	planned: PlannedChapter | null;
-	/** The caption when nothing is hovered. */
-	caption: string;
 	ariaLabel: string;
 }
 
@@ -50,7 +55,6 @@ const F_NOW = new Date(2026, 7, 17).getTime();
 export const FICTIONAL_LIFE: Life = {
 	birth: F_BIRTH,
 	now: F_NOW,
-	box: new Date(2025, 1, 9).getTime(),
 	chapters: [
 		{ t0: F_BIRTH, t1: new Date(2003, 7, 20).getTime(), label: "Childhood on the coast", ep: "three towns before the first classroom" },
 		{ t0: new Date(2003, 7, 20).getTime(), t1: new Date(2009, 5, 10).getTime(), label: "Grade school, inland", ep: "snow days and the lake" },
@@ -60,10 +64,15 @@ export const FICTIONAL_LIFE: Life = {
 		{ t0: new Date(2023, 6, 1).getTime(), t1: new Date(2025, 5, 1).getTime(), label: "The workshop", ep: "two years of hard problems" },
 		{ t0: new Date(2025, 5, 1).getTime(), t1: null, label: "Out on my own", ep: "the shop with my name on it" },
 	],
+	// Three of its stories, inside the wider chapters where a label fits.
+	stories: [
+		{ t: new Date(2006, 1, 14).getTime(), label: "the lake, frozen" },
+		{ t: new Date(2012, 6, 3).getTime(), label: "first show" },
+		{ t: new Date(2020, 2, 20).getTime(), label: "the year at a desk" },
+	],
 	planned: { t0: F_NOW + 10 * (YR / 12), t1: F_NOW + 4.2 * YR, label: "The shop, grown" },
-	caption: "One life on one wire: every day falls inside exactly one chapter.",
 	ariaLabel:
-		"One fictional life drawn on one wire: seven chapters as spans from birth toward now, named above, aged below. The table that follows lists the same chapters.",
+		"One fictional life drawn on one wire: seven chapters as spans from birth toward now, named above, aged below, three stories marked inside them, and one planned chapter dashed ahead of now. The table that follows lists the same chapters.",
 };
 
 /** A `YYYY-MM-DD` from the API, read as a local calendar day. */
@@ -95,10 +104,9 @@ export function lifeFromRecord(chapters: ChapterApi[], birthDate: string | null 
 	return {
 		birth: birthDate ? dayOf(birthDate) : null,
 		now,
-		box: null,
 		chapters: spans,
+		stories: [],
 		planned: null,
-		caption: `Your life on one wire: ${n} ${n === 1 ? "chapter" : "chapters"}, from ${from} to now.`,
 		ariaLabel: `Your life drawn on one wire: ${n} chapters as spans from ${from} toward now, named above.`,
 	};
 }

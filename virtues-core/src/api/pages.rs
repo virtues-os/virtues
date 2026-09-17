@@ -494,14 +494,19 @@ struct RawRefSearchResult {
 
 /// Compute the canonical URL for an entity based on its type and ID
 /// All URLs follow the format: /{type}/{id}
+///
+/// `entity_type` here is an id PREFIX (`org`), not a subject_type
+/// (`organization`), because every caller has an id. Wiki subjects answer from
+/// the registry so this cannot drift from the rest of the wiki again; the rest
+/// are namespaces with no subject behind them.
 fn get_entity_url(entity_type: &str, id: &str) -> String {
+    if let Some(subject) = crate::api::subjects::by_id(id) {
+        if let Some(route) = subject.route {
+            return format!("/{route}/{id}");
+        }
+    }
     match entity_type {
-        "person" => format!("/person/{}", id),
-        "place" => format!("/place/{}", id),
-        "org" => format!("/org/{}", id),
         "page" => format!("/page/{}", id),
-        "day" => format!("/day/{}", id),
-        "year" => format!("/year/{}", id),
         "source" => format!("/source/{}", id),
         "chat" => format!("/chat/{}", id),
         "notebook" => format!("/notebook/{}", id),
@@ -628,6 +633,36 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
 // Version History Operations
 // ============================================================================
 
+/// Cut a version from bytes the server already holds.
+///
+/// `create_version` takes a base64 snapshot from a client request, which is
+/// the only way versions were ever made: no component under `components/wiki/`
+/// calls it, so a wiki article's history was whatever the generic page editor
+/// happened to autosave. The editor cuts its own versions — one before it
+/// edits, carrying the person's changes, and one after, carrying its own —
+/// so the history of an article is a real account of who wrote what.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_version_from_snapshot(
+    pool: &PgPool,
+    page_id: &str,
+    snapshot: &[u8],
+    content_preview: &str,
+    created_by: &str,
+    description: Option<&str>,
+) -> Result<PageVersionSummary> {
+    create_version(
+        pool,
+        page_id,
+        CreateVersionRequest {
+            snapshot: BASE64.encode(snapshot),
+            content_preview: content_preview.chars().take(500).collect(),
+            created_by: created_by.to_string(),
+            description: description.map(|s| s.to_string()),
+        },
+    )
+    .await
+}
+
 /// Create a new version snapshot for a page
 pub async fn create_version(
     pool: &PgPool,
@@ -680,7 +715,14 @@ pub async fn create_version(
     sqlx::query(
         r#"
         DELETE FROM app_page_versions
-        WHERE page_id = $1 AND id NOT IN (
+        WHERE page_id = $1
+          -- A version the PERSON wrote is never pruned. The cap exists to stop
+          -- machine editions accumulating, and an article the record maintains
+          -- reaches fifty of those in a year — at which point the oldest row
+          -- the cap would drop is the person's own first edit, the one version
+          -- on the page nobody can reconstruct.
+          AND created_by IS DISTINCT FROM 'user'
+          AND id NOT IN (
             SELECT id FROM app_page_versions
             WHERE page_id = $1
             ORDER BY version_number DESC

@@ -226,9 +226,13 @@
 		color: var(--color-foreground-subtle);
 		margin-bottom: 0.75rem;
 	}
+	/* 400, not 500: JJannon ships one cut, so a weight request stays inside the
+	   family and returns the regular with no warning (agents/build/typography.md).
+	   Nothing is lost — the rank here is already carried by size and ink, 28px in
+	   full foreground over an 11px mono eyebrow and a subtle dateline. */
 	.title {
 		font-family: var(--font-serif);
-		font-weight: 500;
+		font-weight: 400;
 		font-size: 1.75rem;
 		line-height: 1.2;
 		margin: 0;

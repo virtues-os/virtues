@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT p.content, p.updated_at, (a.maintenance <> 'never') AS \"maintained!\"\n        FROM wiki_articles a\n        JOIN app_pages p ON p.id = a.page_id\n        WHERE a.subject_type = $1 AND a.subject_id = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "content",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "maintained!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "82f023cec18389a0a66473e5d4ca9a1d01fd49ced065af8f69783b87ffef196f"
+}

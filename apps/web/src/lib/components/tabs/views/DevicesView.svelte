@@ -16,7 +16,14 @@
 -->
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page, Button, Badge, LoadingState, ErrorState } from "$lib";
+	import {
+		Page,
+		Button,
+		IconButton,
+		Badge,
+		LoadingState,
+		ErrorState,
+	} from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import UniversalDataGrid, {
 		type Column,
@@ -470,17 +477,17 @@
 										Turn on <span class="text-foreground">Virtues</span> in the list,
 										then leave it — this Mac notices within a few minutes.
 									</div>
-									<button
-										class="fix-btn mt-2"
+									<Button
+										variant="secondary"
+										size="sm"
+										class="mt-2"
+										icon="ri:external-link-line"
 										onclick={(e) => {
 											// The whole row is the drill-down now; this must not also open it.
 											e.stopPropagation();
 											perm.open?.();
-										}}
+										}}>Open {perm.label} on this Mac</Button
 									>
-										<Icon icon="ri:external-link-line" width="13" />
-										Open {perm.label} on this Mac
-									</button>
 								{:else}
 									<!-- Was unconditional, so a browser on a phone got told to
 									     "turn on Virtues in the list" and that "this Mac notices
@@ -635,13 +642,12 @@
 		>
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-lg font-semibold">Add a device</h2>
-				<button
+				<IconButton
+					icon="ri:close-line"
+					label="Close"
+					size="xs"
 					onclick={closeAdd}
-					class="text-foreground-muted hover:text-foreground"
-					aria-label="Close"
-				>
-					<Icon icon="ri:close-line" />
-				</button>
+				/>
 			</div>
 
 			{#if mintLoading}
@@ -724,23 +730,7 @@
 	.dot-on {
 		background: var(--color-success);
 	}
-	.fix-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		padding: 3px 9px;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: none;
-		cursor: pointer;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
 
-	.fix-btn:hover {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-		color: var(--color-foreground);
-	}
 
 	/* Matches the grid's own hideOnMobile header behavior for the paired-at
 	   cell, which the custom tableRow has to hide itself. */

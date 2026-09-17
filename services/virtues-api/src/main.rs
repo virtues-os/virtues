@@ -39,6 +39,12 @@ use crate::config::Config;
 pub struct AppState {
     pub config: Arc<Config>,
     pub http_client: reqwest::Client,
+    /// For streamed chat completions only: a connect timeout and an idle
+    /// timeout between bytes, no total. `http_client`'s 300s total is right
+    /// for a call that returns nothing until the end; on a stream it cut any
+    /// reply still producing tokens at five minutes, and the box then saved
+    /// the half-reply as finished (VIR-334).
+    pub stream_client: reqwest::Client,
     /// Postgres pool backing the accounts/ledger/device_keys/blocklist tables.
     /// The only budget store — required at boot (`VIRTUES_API_DATABASE_URL`).
     pub db: sqlx::PgPool,
@@ -105,6 +111,14 @@ async fn main() -> Result<()> {
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300)) // 5 min for long completions
         .build()?;
+    // Five minutes of silence is a dead upstream, not a slow model. Matches
+    // the total this replaced, so no reply that survived before is cut now;
+    // a model that reasons without streaming its reasoning is silent until
+    // its first token, and nothing upstream promises a keep-alive meanwhile.
+    let stream_client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(300))
+        .build()?;
 
     // DB connect + migrate. Required — the accounts/ledger schema is the only
     // budget store (there is no RAM-budget fallback), so fail fast at boot
@@ -138,6 +152,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState {
         config,
         http_client,
+        stream_client,
         db,
         blocklist,
         catalog,

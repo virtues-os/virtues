@@ -94,45 +94,10 @@ Other rules that follow from a shared tree:
 - **The commit message must describe everything in the commit**, not just the
   part you meant. With agents interleaving, `git log` is the only per-topic
   navigation anyone has.
-- **Claim a migration number before writing the SQL:**
-
-  ```sh
-  make migration NAME=add_foo
-  ```
-
-  It takes the next number, writes a placeholder, and commits it under the lock
-  — so the number is yours before anyone else looks. (The chain was squashed to
-  a single `0001_initial.sql` on 2026-08-18, so the next number is 0002; the
-  counter reads the directory, so this keeps working.) Two agents reaching for the
-  same number is the *default* outcome otherwise, and git will not warn you:
-  `sqlx::migrate!` keys on the version, and renumbering after a box has applied
-  it breaks that box's upgrades. Migration 52 once killed a box for 3¼ hours.
-
-  **`make migration` COMMITS the placeholder, so renaming it leaves a tracked
-  deletion.** Stage that deletion with your migration or the next thing that
-  checks the tree refuses to run — `tools/squash-migrations.sh` will not touch a
-  migrations directory with uncommitted changes, correctly, because it cannot
-  tell your leftover from another agent's in-flight work. Four accumulated
-  before anyone noticed.
-
-  **The placeholder is `.sql.pending`, and you must rename it to `.sql` once the
-  SQL is written.** `sqlx::migrate!` globs `*.sql`, so a bare placeholder is a
-  *valid migration that does nothing* — and any box that boots in the window
-  between claiming the number and writing the SQL records it as applied. The
-  real SQL then never runs, and its checksum no longer matches what the DB
-  stored, so the **next boot refuses to start**. That happened to the shared dev
-  box on 2026-08-04. The `.pending` suffix reserves the number (the counter
-  reads any filename starting with digits) while keeping it invisible to sqlx
-  until you rename it.
-
-  **The counter only sees your own branch.** A number claimed on an unmerged
-  branch is invisible here — which is exactly why everyone works on `wave`. If
-  you must merge a branch carrying migrations, check for duplicate numbers
-  first:
-
-  ```sh
-  ls virtues-core/migrations | sed -n 's/^\([0-9]*\).*/\1/p' | sort | uniq -d
-  ```
+- **Claim a migration number before writing the SQL** (`make migration
+  NAME=add_foo`). The procedure, and the three traps that have each cost a box,
+  are in `.claude/rules/migrations.md`, which loads when you open anything under
+  `virtues-core/migrations/`.
 - **Claim verification modestly.** A green `cargo check` on a shared tree may
   reflect another agent's half-finished edits.
 
@@ -191,45 +156,12 @@ cd apps/web && pnpm check   # Svelte
 cargo test -p virtues --lib # the crate is `virtues`, not `virtues-core`
 ```
 
-**If the suite fails a different random test on every run, it is not your
-change.** `#[sqlx::test]` provisions a scratch database per test, and under
-parallelism Postgres.app's app-permission gate rejects passwordless (`trust`)
-connections from processes it does not recognise — `rejected "trust"
-authentication`. A red suite then tells you nothing, which is exactly when a
-real regression walks through.
-
-Fixed on this machine by requiring a password for the app role over TCP, which
-removes the condition the gate keys on rather than working around it. In
-`~/Library/Application Support/Postgres/var-18/pg_hba.conf`, *above* the
-general `trust` lines (first match wins):
-
-```
-host    all   virtues   127.0.0.1/32   scram-sha-256
-host    all   virtues   ::1/128        scram-sha-256
-```
-
-then `ALTER ROLE virtues WITH PASSWORD 'virtues';` to match `.env`, and
-`SELECT pg_reload_conf();`. Scoped to `virtues` deliberately: `adamjace` and
-`postgres` are login roles with no password, so a blanket rule locks them out
-of TCP.
-
-**The `virtues` role is NOT a superuser** (since 2026-08-18). It has exactly
-`LOGIN CREATEDB CREATEROLE`: CREATEDB for `#[sqlx::test]`'s scratch databases,
-CREATEROLE so `server/faces.rs` can provision `virtues_face_reader`. It was
-`SUPERUSER` with the password `virtues`, which — with the pg_hba rule above
-opening loopback TCP — handed the cluster to any local process that guessed
-once. `make db` downgrades an existing role idempotently.
-
-Two consequences worth knowing before you debug a permissions error:
-
-- `pgvector` is not a trusted extension, so `CREATE EXTENSION vector` needs
-  superuser. `make db` installs it into `template1` instead, and every database
-  created afterwards inherits it — which is what makes migration 0001's
-  `CREATE EXTENSION IF NOT EXISTS` a no-op rather than a failure.
-- In PG16+ a CREATEROLE role may only grant membership in roles it has ADMIN
-  on. `make db` grants `virtues_face_reader`/`virtues_applet_writer` to
-  `virtues` WITH ADMIN OPTION for this reason. Without it, faces.rs cannot grant
-  them to itself and the symptom reads as an applet permissions bug.
+**When the Rust suite fails a different random test on every run, or Postgres
+refuses a permission you thought you had**, it is almost never your change —
+read the `postgres-dev` skill. It holds the Postgres.app app-permission gate
+that rejects passwordless loopback connections under `#[sqlx::test]`
+parallelism, the `pg_hba.conf` fix that removes the condition rather than
+working around it, and the two consequences of `virtues` not being a superuser.
 
 **One `make dev` serves every agent** — do not start a second one, and do not
 kill the running one. `cargo check` will *block* on the shared target-dir lock
@@ -294,37 +226,18 @@ Write the FAILURE CLASS, not the incident. Every one of those comments was
 valuable because it narrated a real bug, and every one survived
 de-identification unchanged.
 
-### Column naming
+### Rules that load when they apply
 
-Renaming 21 columns on 2026-08-17/18 established these. The schema had **seven**
-names for "when this happened" and had grown a configuration field to paper over
-it.
+Three bodies of law used to live here and now load only when you open a file
+they govern (`.claude/rules/`, `paths:` frontmatter). They are not optional and
+not lesser — they are conditional, and an always-on file is where a conditional
+rule goes to be ignored:
 
-- `occurred_at` — an instant. When the thing happened.
-- `started_at` / `ended_at` — a span.
-- `created_at` / `updated_at` — when WE wrote the row. Never the event; that
-  conflation is what produced `created_time` sitting beside `created_at`.
-- `is_` / `has_` for booleans; no bare adjectives (`active` → `is_active`).
-- A unit suffix on every quantity: `_cents`, `_ms`, `_bytes`, `_meters`.
-- Prefixes stay: `app_` product state, `data_` ingested, `wiki_` derived,
-  `search_` indexes. Not decoration — this schema is shown to an LLM at runtime
-  and drives a table-driven UI, so the prefix is a namespace the model matches.
-- `data_*` singular (one observation); everything else plural.
+| Rule | Loads when you touch | What it governs |
+|---|---|---|
+| `columns.md` | `*.sql`, Rust under `virtues-core/` | the seven-names-for-one-thing law, and the sweep a rename needs because `sqlx::query` is untyped |
+| `query-errors.md` | any `*.rs` | why `.ok()` on a `fetch_*` turns a broken query into a plausible number |
+| `migrations.md` | `virtues-core/migrations/**` | claiming a number, the pre-squash citations, and the `.sql.pending` rename that has to happen |
 
-**Renames the compiler cannot check.** `sqlx::query` is untyped, so a renamed
-column breaks at runtime, not build time. When you rename one, sweep: SQL
-strings, `row.get("…")` accessors **including nested generics like
-`::<DateTime<Utc>, _>`** (a `[^>]*` regex silently misses those), the
-`sql_query.rs` catalog the model reads, and the registry's `timestamp_column`.
-Leave alone: JSON payload keys and tool arguments that merely share a word with
-a column.
-
-### Do not swallow a query error
-
-`.ok()`, `.unwrap_or(0)` and `.unwrap_or_default()` directly on a `fetch_*`
-result turn a broken query into a plausible number, and nothing ever surfaces.
-That is not hypothetical: it is why sleep read "0.0 hours", why every
-date-scoped search returned nothing, why resting heart rate was a hardcoded
-62.0, and why the box reported zero paired devices on every box forever. Use
-`?`. If you genuinely mean "absent is fine", say so in a comment naming what
-absence means.
+If you are editing one of those files, assume the rule is already in front of
+you. If you are reasoning about them from elsewhere, go read it.

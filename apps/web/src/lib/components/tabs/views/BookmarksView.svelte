@@ -23,9 +23,8 @@
 -->
 
 <script lang="ts">
-	import { Page } from '$lib';
+	import { Button, Page } from '$lib';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import Icon from '$lib/components/Icon.svelte';
 	import UniversalDataGrid, {
 		type Column,
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
@@ -301,10 +300,14 @@
 				aria-label="URL to save"
 				disabled={saving}
 			/>
-			<button class="save-button" type="submit" disabled={saving || !url.trim()}>
-				<Icon icon="ri:add-line" width="16" />
-				{saving ? 'Saving…' : 'Save'}
-			</button>
+			<Button
+				variant="secondary"
+				size="sm"
+				type="submit"
+				icon="ri:add-line"
+				loading={saving}
+				disabled={!url.trim()}>Save</Button
+			>
 		</form>
 	{/snippet}
 
@@ -407,31 +410,6 @@
 	.save-input:focus {
 		outline: none;
 		border-color: var(--color-foreground-muted);
-	}
-
-	.save-button {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		white-space: nowrap;
-		padding: 0.4rem 0.9rem;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 0.375rem;
-		cursor: pointer;
-		transition: all 0.12s ease;
-	}
-
-	.save-button:hover:not(:disabled) {
-		border-color: var(--color-foreground-muted);
-	}
-
-	.save-button:disabled {
-		opacity: 0.5;
-		cursor: default;
 	}
 
 	.save-error {

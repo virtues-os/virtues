@@ -35,10 +35,7 @@ export interface WikiPersonApi {
 	/** Surfaces this entity also answers to (migration 0037). */
 	aliases: string[];
 	/** Is the record keeping this article up to date? Off unless asked. */
-	article_auto_update?: boolean;
-	first_seen: string | null;
-	last_seen: string | null;
-	seen_count: number | null;
+	article_maintained?: boolean;
 	created_at: string;
 	updated_at: string;
 }
@@ -54,6 +51,9 @@ export interface WikiPlaceApi {
 	address: string | null;
 	latitude: number | null;
 	longitude: number | null;
+	/** Visits, COUNTED from wiki_refs. The columns of these names had no
+	 *  writer, so this section reported "Total visits: 0" for somewhere you go
+	 *  weekly; these now carry the real count and its two dates. */
 	seen_count: number | null;
 	first_seen: string | null;
 	last_seen: string | null;
@@ -62,7 +62,7 @@ export interface WikiPlaceApi {
 	created_at: string;
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */
-	article_auto_update?: boolean;
+	article_maintained?: boolean;
 }
 
 export interface WikiOrganizationApi {
@@ -75,15 +75,12 @@ export interface WikiOrganizationApi {
 	organization_type: string | null;
 	relationship_type: string | null;
 	role_title: string | null;
-	start_date: string | null;
-	end_date: string | null;
-	seen_count: number | null;
-	first_seen: string | null;
-	last_seen: string | null;
+	started_at: string | null;
+	ended_at: string | null;
 	created_at: string;
 	updated_at: string;
 	/** Is the record keeping this article up to date? Off unless asked. */
-	article_auto_update?: boolean;
+	article_maintained?: boolean;
 	aliases?: string[];
 }
 
@@ -94,18 +91,8 @@ export interface WikiDayApi {
 	start_timezone: string | null;
 	/** The day's prose, from wiki_day_prose. The article page is its only home (0106). */
 	article?: string | null;
-	epigraph: string | null;
-	last_edited_by: string | null;
-	cover_image: string | null;
-	data_quality: {
-		coverage: { who: number; whom: number; what: number; when: number; where: number; why: number; how: number };
-		overall: number;
-		note: string;
-	} | null;
 	new_entity_count: number;
 	new_topic_count: number;
-	readiness_score: number | null;
-	readiness_details: { hrv: number; rhr: number; sleep_duration: number; deep_rem: number; consistency: number } | null;
 	sleep_cycles: Array<{
 		start_time: string;
 		end_time: string;
@@ -117,11 +104,6 @@ export interface WikiDayApi {
 	updated_at: string;
 }
 
-export interface IdResolution {
-	entity_type: string;
-	id: string;
-}
-
 // ============================================================================
 // List Item Types
 // ============================================================================
@@ -131,7 +113,6 @@ export interface WikiPersonListItem {
 	name: string;
 	picture: string | null;
 	relationship_category: string | null;
-	last_seen: string | null;
 	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
 	ref_count: number;
 }
@@ -141,7 +122,6 @@ export interface WikiPlaceListItem {
 	name: string;
 	category: string | null;
 	address: string | null;
-	seen_count: number | null;
 	/** Records mentioning this entity. The index's sort key — see wiki.rs. */
 	ref_count: number;
 }
@@ -161,19 +141,6 @@ export interface WikiOrganizationListItem {
 // ============================================================================
 
 type FetchFn = typeof fetch;
-
-/**
- * Parse an entity ID to extract the type.
- * IDs follow the format: {type}_{hash} (e.g., person_abc123)
- */
-export function parseEntityId(id: string): IdResolution | null {
-	const parts = id.split('_');
-	if (parts.length < 2) return null;
-	return {
-		entity_type: parts[0],
-		id: id
-	};
-}
 
 // --- Person ---
 
@@ -523,8 +490,8 @@ export interface WikiArticleApi {
 	subject_type: string;
 	subject_id: string;
 	page_id: string;
-	auto_update: boolean;
-	source_ref_count: number;
+	/** always | auto | never — see `Maintenance`. */
+	maintenance: Maintenance;
 }
 
 /** A subject's article row, or null when no article exists yet. */
@@ -635,16 +602,188 @@ export async function writeArticle(
 }
 
 /** Turn maintenance on or off. Off means the AI never touches this article. */
-export async function setArticleAutoUpdate(
-	subjectType: string,
-	subjectId: string,
-	autoUpdate: boolean,
+/** The owner's own page: their name, their document, and the apparatus. */
+export interface MeApi {
+	person_id: string | null;
+	name: string | null;
+	birth_date: string | null;
+	article: string | null;
+	article_updated_at: string | null;
+	page_id: string | null;
+	chapters: ChapterApi[];
+	years: number[];
+}
+
+export async function getMe(fetchFn: FetchFn = fetch): Promise<MeApi | null> {
+	const res = await fetchFn('/api/wiki/me');
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** A subject the person named because it mattered. Not a span. */
+export interface StoryApi {
+	id: string;
+	title: string;
+	summary: string | null;
+	started_at: string | null;
+	ended_at: string | null;
+	started_precision: string | null;
+	ended_precision: string | null;
+	has_article: boolean;
+}
+
+export async function listStories(fetchFn: FetchFn = fetch): Promise<StoryApi[]> {
+	const res = await fetchFn('/api/wiki/stories');
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/** Only the person starts one — the editor may not create a subject. */
+export async function createStory(title: string, fetchFn: FetchFn = fetch): Promise<StoryApi> {
+	const res = await fetchFn('/api/wiki/stories', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title })
+	});
+	if (!res.ok) throw new Error('Could not start that');
+	return res.json();
+}
+
+export async function updateStory(
+	id: string,
+	fields: Partial<Pick<StoryApi, 'title' | 'summary' | 'started_at' | 'ended_at'>>,
 	fetchFn: FetchFn = fetch
 ): Promise<void> {
-	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/auto-update`, {
+	const res = await fetchFn(`/api/wiki/story/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ auto_update: autoUpdate })
+		body: JSON.stringify(fields)
+	});
+	if (!res.ok) throw new Error('Could not save that');
+}
+
+export async function deleteStory(id: string, fetchFn: FetchFn = fetch): Promise<void> {
+	const res = await fetchFn(`/api/wiki/story/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error('Could not remove that');
+}
+
+/** Give a story a page, seeded with their words for the editor to fill. */
+export async function startStoryArticle(id: string, fetchFn: FetchFn = fetch): Promise<void> {
+	const res = await fetchFn(`/api/wiki/story/${id}/article`, { method: 'POST' });
+	if (!res.ok) throw new Error('Could not start that page');
+}
+
+/** Correct a chapter — a boundary, a name, or the sentence about why it ended. */
+export async function updateChapter(
+	id: string,
+	fields: { title?: string; started_at?: string; ended_at?: string; changepoint?: string; summary?: string },
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/chapter/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(fields)
+	});
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.error ?? 'Could not save that');
+	}
+}
+
+/** Unname a chapter. The years it covered stay, as an unnamed stretch. */
+export async function deleteChapter(id: string, fetchFn: FetchFn = fetch): Promise<void> {
+	const res = await fetchFn(`/api/wiki/chapter/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error('Could not remove that');
+}
+
+/** One day of a year, with the line the year reads. */
+export interface YearDayApi {
+	date: string;
+	narrated: boolean;
+	event_count: number;
+	lede: string | null;
+}
+
+/** A year: a subject with a page, not a folder of days. */
+export interface YearApi {
+	id: string;
+	year: number;
+	title: string | null;
+	summary: string | null;
+	days_recorded: number;
+	days_narrated: number;
+	has_article: boolean;
+	chapters: string[];
+	days: YearDayApi[];
+	article: string | null;
+	/** Decided by the box, because what the page may OFFER depends on it. */
+	state: 'before_record' | 'thin' | 'dense';
+}
+
+export type YearSummaryApi = Omit<YearApi, 'days' | 'article' | 'state'>;
+
+/** Every year of the life, newest first. Reading this writes nothing. */
+export async function listYears(fetchFn: FetchFn = fetch): Promise<YearSummaryApi[]> {
+	const res = await fetchFn('/api/wiki/years');
+	if (!res.ok) return [];
+	return res.json();
+}
+
+export async function getYear(year: number, fetchFn: FetchFn = fetch): Promise<YearApi | null> {
+	const res = await fetchFn(`/api/wiki/year/${year}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+/** The two things only the person can say about a year. */
+export async function updateYear(
+	year: number,
+	fields: { title?: string; summary?: string },
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/year/${year}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(fields)
+	});
+	if (!res.ok) throw new Error('Could not save that');
+}
+
+/** Write the year's first article. Refused for a year with no narrated day. */
+export async function writeYearArticle(year: number, fetchFn: FetchFn = fetch): Promise<string> {
+	const res = await fetchFn(`/api/wiki/year/${year}/article`, { method: 'POST' });
+	if (!res.ok) throw new Error('Could not write that article');
+	return res.json();
+}
+
+/** Put an article back to a named version. Adds a version; never rewinds. */
+export async function revertArticle(
+	subjectType: string,
+	subjectId: string,
+	versionNumber: number,
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/revert`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ version_number: versionNumber })
+	});
+	if (!res.ok) throw new Error('Could not revert that');
+}
+
+/** How an article is maintained: always, auto, or never. */
+export type Maintenance = 'always' | 'auto' | 'never';
+
+export async function setArticleMaintenance(
+	subjectType: string,
+	subjectId: string,
+	maintenance: Maintenance,
+	fetchFn: FetchFn = fetch
+): Promise<void> {
+	const res = await fetchFn(`/api/wiki/articles/${subjectType}/${subjectId}/maintenance`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ maintenance })
 	});
 	if (!res.ok) throw new Error('Could not change that');
 }
@@ -756,19 +895,6 @@ export async function getDayByDate(
 	return res.json();
 }
 
-export async function updateDay(
-	date: string,
-	data: Partial<WikiDayApi>,
-	fetchFn: FetchFn = fetch
-): Promise<WikiDayApi | null> {
-	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) return null;
-	return res.json();
-}
 
 export async function listDays(
 	startDate?: string,
@@ -873,7 +999,8 @@ export async function getEntityRecordFacets(
 /** A past year's entry sharing today's month and day. */
 export interface OnThisDayApi {
 	date: string;
-	epigraph: string | null;
+	/** The day article's opening paragraph. */
+	lede: string | null;
 	narrated: boolean;
 	event_count: number;
 }
@@ -928,44 +1055,6 @@ export async function getChapters(fetchFn: FetchFn = fetch): Promise<ChapterApi[
 }
 
 // ============================================================================
-// Citation Types
-// ============================================================================
-
-export interface CitationApi {
-	id: string;
-	source_type: string;
-	source_id: string;
-	target_table: string;
-	target_id: string;
-	citation_index: number;
-	label: string | null;
-	preview: string | null;
-	is_hidden: boolean | null;
-	added_by: string | null;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface CreateCitationRequest {
-	source_type?: string; // Set from path in handler
-	source_id?: string; // Set from path in handler
-	target_table: string;
-	target_id: string;
-	citation_index: number;
-	label?: string;
-	preview?: string;
-	is_hidden?: boolean;
-	added_by?: string;
-}
-
-export interface UpdateCitationRequest {
-	label?: string;
-	preview?: string;
-	is_hidden?: boolean;
-	citation_index?: number;
-}
-
-// ============================================================================
 // Temporal Event Types
 // ============================================================================
 
@@ -997,6 +1086,9 @@ export interface TemporalEventApi {
 	hr_z: number | null;
 	// Entity/topic novelty
 	entities: string[] | null;
+	/** `{entity_id: name}` — resolved server-side, because nothing on this
+	 *  side can turn `person_a1b2c3d4` into a person. */
+	entity_names: Record<string, string> | null;
 	topic_novelty: Record<string, number> | null;
 	entity_novelty: Record<string, number> | null;
 	entity_timestamps: Record<string, string> | null;
@@ -1027,73 +1119,6 @@ export interface UpdateTemporalEventRequest {
 	user_location?: string;
 	user_notes?: string;
 	is_user_edited?: boolean;
-}
-
-// ============================================================================
-// Citation API Functions
-// ============================================================================
-
-/**
- * Get citations for a wiki page.
- * @param sourceType - The type of wiki page (person, place, organization, telos, act, chapter, day)
- * @param sourceId - The UUID of the wiki page
- */
-export async function getCitations(
-	sourceType: string,
-	sourceId: string,
-	fetchFn: FetchFn = fetch
-): Promise<CitationApi[]> {
-	const res = await fetchFn(`/api/wiki/${sourceType}/${sourceId}/citations`);
-	if (!res.ok) return [];
-	return res.json();
-}
-
-/**
- * Create a citation for a wiki page.
- */
-export async function createCitation(
-	sourceType: string,
-	sourceId: string,
-	data: CreateCitationRequest,
-	fetchFn: FetchFn = fetch
-): Promise<CitationApi | null> {
-	const res = await fetchFn(`/api/wiki/${sourceType}/${sourceId}/citations`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) return null;
-	return res.json();
-}
-
-/**
- * Update a citation.
- */
-export async function updateCitation(
-	citationId: string,
-	data: UpdateCitationRequest,
-	fetchFn: FetchFn = fetch
-): Promise<CitationApi | null> {
-	const res = await fetchFn(`/api/wiki/citations/${citationId}`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) return null;
-	return res.json();
-}
-
-/**
- * Delete a citation.
- */
-export async function deleteCitation(
-	citationId: string,
-	fetchFn: FetchFn = fetch
-): Promise<boolean> {
-	const res = await fetchFn(`/api/wiki/citations/${citationId}`, {
-		method: "DELETE",
-	});
-	return res.ok;
 }
 
 // ============================================================================

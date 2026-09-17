@@ -82,11 +82,18 @@ pub const PAGE_VERSION_PREFIX: &str = "ver";
 pub const PAGE_SHARE_PREFIX: &str = "share";
 
 // Wiki articles (the record's prose about a subject — the join row; the prose
-// itself is an app_pages row with kind='article'). See migration 0081.
+// itself is an app_pages row with kind='article').
 pub const WIKI_ARTICLE_PREFIX: &str = "article";
 
 // Chapters of a life (wiki_chapters, migration 0015) — authored in the
 // narrative interview, never inferred.
+//
+// Migration 0015's own comment says a `parse_entity_id` handles this prefix.
+// **No function of that name has ever existed**, and the comment cannot be
+// corrected in place: sqlx checksums an applied migration, and a box refuses
+// to boot when one changes underneath it. The claim is true in substance —
+// this prefix is generated here and parsed by splitting on the first `_`,
+// which is all any caller does.
 pub const CHAPTER_PREFIX: &str = "chapter";
 
 // Sidebar pins (user's globally-pinned URLs)

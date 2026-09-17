@@ -59,6 +59,19 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
+      # The page grammar's countable limits (agents/build/design-grammar.md §9),
+      # as a ratchet against a frozen baseline: 419 hex literals accumulated in
+      # a document whose §6 says "Nothing else." Fails only on an INCREASE; the
+      # script says why it is not a wall.
+      #
+      # First in this job, before pnpm install, because it needs neither node
+      # nor pnpm — only awk and find. It reads apps/web/src, so it belongs to
+      # the web job rather than beside the other shell ratchets in `rust`:
+      # there it sat behind cargo build, clippy and a Postgres service, which
+      # is a paid runner spent to report a CSS nit.
+      - name: No new design grammar violations
+        run: tools/design-lint.sh
+
       - name: Install web dependencies
         working-directory: apps/web
         run: pnpm install --frozen-lockfile
@@ -145,6 +158,10 @@ jobs:
       - name: No new swallowed query errors
         run: tools/check-swallowed-queries.sh
 
+      # The same ratchet shape over the page grammar. Every limit in
+      # agents/build/design-grammar.md §9 is a NUMBER — shadows, mono kickers,
+      # sub-11px type, off-grid spacing — and nothing counted them, so Getting
+      # Started was redesigned eight times on taste alone while 60 shadows and
       # The box parses the Improv pair packet in Rust; the iPhone builds it in
       # Swift. Nothing compiles the two together, so they drifted for four days
       # and BLE pairing failed at parse_rpc every time.

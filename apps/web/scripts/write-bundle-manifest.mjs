@@ -41,6 +41,10 @@ function deriveChannel(raw) {
  * dev builds all report `dev`, and two builds of one tag can differ. The hash
  * is what a client actually compares, so a same-tag rebuild still updates and
  * an identical rebuild does not.
+ *
+ * The `.gz` siblings precompress.mjs writes are an encoding of these files,
+ * not content, and the phone's OTA tarball excludes them — so they are left
+ * out here too, and the hash of a bundle is the hash of what a client unpacks.
  */
 function hashTree(dir) {
 	const files = [];
@@ -48,7 +52,7 @@ function hashTree(dir) {
 		for (const entry of readdirSync(d)) {
 			const p = join(d, entry);
 			if (statSync(p).isDirectory()) walk(p);
-			else files.push(p);
+			else if (!p.endsWith('.gz')) files.push(p);
 		}
 	})(dir);
 

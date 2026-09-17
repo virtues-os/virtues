@@ -20,6 +20,7 @@
 	 * it — and mostly it has not, yet. So an empty processed window reports how
 	 * far interpretation actually reaches instead of just looking broken.
 	 */
+	import TextAction from '$lib/components/TextAction.svelte';
 	import {
 		getFeed,
 		getProcessed,
@@ -178,13 +179,9 @@
 					Virtues has processed <strong>{coverageDays} days</strong>, covering
 					{coverageLine}. Everything outside that exists as raw records only.
 					{#if coverageStart !== null}
-						<button
-							type="button"
-							class="link"
-							onclick={() => ongoto?.((coverageStart + coverageEnd!) / 2)}
-						>
+						<TextAction inline onclick={() => ongoto?.((coverageStart + coverageEnd!) / 2)}>
 							Go there →
-						</button>
+						</TextAction>
 					{/if}
 				{:else}
 					No days have been processed yet.
@@ -336,12 +333,4 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	.link {
-		padding: 0;
-		background: none;
-		border: none;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
-	}
 </style>

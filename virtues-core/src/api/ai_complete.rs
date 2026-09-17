@@ -145,7 +145,7 @@ pub async fn ai_complete_handler(
                 &messages,
                 &[],   // no tools — pure prose
                 None,  // no provider options (no reasoning)
-                None,  // no thought signature
+                Some(0.7), // the temperature chat turns run at
                 // No output ceiling. The 512 that sat here was "so a misread
                 // prompt can't fill the doc"; on a model that thinks, a
                 // ceiling sized for the answer is spent on the thinking and

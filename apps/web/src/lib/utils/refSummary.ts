@@ -48,8 +48,6 @@ async function fetchByType(type: string, id: string): Promise<RefSummary | null>
 			const p = await r.json();
 			const facts: RefFact[] = [];
 			if (p.relationship_category) facts.push({ label: "Relationship", value: p.relationship_category });
-			const seen = relativeTime(p.last_seen);
-			if (seen) facts.push({ label: "Last seen", value: seen });
 			if (p.ref_count) facts.push({ label: "Interactions", value: String(p.ref_count) });
 			return {
 				type,
@@ -89,8 +87,6 @@ async function fetchByType(type: string, id: string): Promise<RefSummary | null>
 			const facts: RefFact[] = [];
 			if (o.role_title) facts.push({ label: "Role", value: o.role_title });
 			if (o.relationship_type) facts.push({ label: "Relationship", value: o.relationship_type });
-			const seen = relativeTime(o.last_seen);
-			if (seen) facts.push({ label: "Last seen", value: seen });
 			return {
 				type,
 				name: o.name || id,

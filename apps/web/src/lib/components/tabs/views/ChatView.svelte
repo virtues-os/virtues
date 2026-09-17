@@ -3,19 +3,42 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
-	import {
-		getSelectedModel,
-		getDefaultModel,
-		getModels,
-		setSelectedModel,
-		initializeSelectedModel,
-		getInitializationPromise,
-	} from "$lib/stores/models.svelte";
+	import { getInitializationPromise } from "$lib/stores/models.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import SelectionPopover from "$lib/components/SelectionPopover.svelte";
 	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
+
+	// ── the controller ─────────────────────────────────────────────────────
+	// This view is markup plus thin bindings; the state it renders lives in
+	// $lib/components/chat/state, one module per responsibility. Each says at
+	// its head what it owns.
+	import {
+		generateHex16,
+		extractConversationId,
+		isContextViewRoute,
+		isNewChat,
+		isTemporaryRoute,
+	} from "$lib/components/chat/state/chatRoute";
+	import {
+		type MessageMeta,
+		toUiMessage as toUiMessageWith,
+		deduplicateMessages,
+		isSettledLine,
+		introductionsRecorded,
+		eyebrowsFor,
+	} from "$lib/components/chat/state/transcript";
+	import {
+		AttachmentsController,
+		formatFileSize,
+	} from "$lib/components/chat/state/attachments.svelte";
+	import { StagedRefsController } from "$lib/components/chat/state/stagedRefs.svelte";
+	import { ModelChoiceController } from "$lib/components/chat/state/modelChoice.svelte";
+	import { OpeningRevealController } from "$lib/components/chat/state/openingReveal.svelte";
+	import { ToolSideEffects } from "$lib/components/chat/state/toolSideEffects";
+	import { observeComposerReserve } from "$lib/components/chat/state/composerReserve";
+	import { readDraft, writeDraft, NEW_CHAT_DRAFT_ID } from "$lib/components/chat/state/drafts";
 
 	// ── the narrative interview ────────────────────────────────────────────
 	// The one chat that is not a chat. Its substance — the id, the authored
@@ -27,22 +50,25 @@
 		applyInterviewOpening,
 		findWriteItUpOutput,
 	} from "$lib/components/chat/interview/interview";
-	import InterviewCompanion from "$lib/components/chat/interview/InterviewCompanion.svelte";
+	import Composing from "$lib/components/chat/Composing.svelte";
+	import Trivet from "$lib/components/chat/Trivet.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
 	import {
-		GS_PREFIX,
+		GS_INTERVIEW_OPENING_ID,
 		SKIP_COMMAND,
 		isGettingStartedChat,
-		applyGettingStartedOpening,
+		applyInterviewOpening as applyRoomInterviewOpening,
 	} from "$lib/components/chat/getting-started/getting-started";
-	import GettingStartedMessage from "$lib/components/chat/getting-started/GettingStartedMessage.svelte";
-	import IntroductionsConfirmCard from "$lib/components/chat/getting-started/IntroductionsConfirmCard.svelte";
-	import LockedComposer from "$lib/components/chat/getting-started/LockedComposer.svelte";
+	import RoomControls from "$lib/components/chat/getting-started/RoomControls.svelte";
+	import GettingStartedDoor from "$lib/components/chat/getting-started/GettingStartedDoor.svelte";
+	import RoomCover from "$lib/components/chat/getting-started/RoomCover.svelte";
+	import StepEyebrow from "$lib/components/chat/getting-started/StepEyebrow.svelte";
+	import IntroductionsRecorded from "$lib/components/chat/getting-started/IntroductionsRecorded.svelte";
+	import GraduatedDoors from "$lib/components/chat/getting-started/GraduatedDoors.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
-	import { normalizeImage } from "$lib/multimodal/normalizeImage";
 	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
 	import type { Citation } from "$lib/types/Citation";
@@ -56,11 +82,8 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
-	import { animateChatEdit } from "$lib/ai/aiPresence";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
-	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import {
-		updateChat,
 		deleteChat,
 		getChat,
 		getChatUsage,
@@ -72,7 +95,13 @@
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
-	import { editAllowListStore, type EditableResourceType } from "$lib/stores/editAllowList.svelte";
+	import { editAllowListStore } from "$lib/stores/editAllowList.svelte";
+	import {
+		activePageContext,
+		bindPage,
+		grantEditPermission,
+		openCreatedPage,
+	} from "$lib/components/chat/state/pageBinding";
 	import PageBindingInline from "$lib/components/chat/PageBindingInline.svelte";
 	import ChapterLifeline from "$lib/components/chat/interview/ChapterLifeline.svelte";
 	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
@@ -84,82 +113,27 @@
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
 	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
 	import { ChatError } from "$lib/components/chat";
-	import { createYjsDocument } from "$lib/yjs";
-	import type { EntityResult } from "$lib/components/RefPicker.svelte";
 	import type { AgentModeId } from "$lib/config/agentModes";
-
-	// Generate a random 16-char hex ID (matches backend format)
-	function generateHex16(): string {
-		const bytes = new Uint8Array(8);
-		crypto.getRandomValues(bytes);
-		return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-	}
-
-	// Type for tool result parts in messages
-	interface ToolResultPart {
-		type: string;
-		state?: string;
-		toolCallId: string;
-		output?: {
-			page_id?: string;
-			title?: string;
-		};
-	}
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-
-	// Extract conversationId from tab route (format: /chat/chat_abc123 or / for new chat)
-	// Returns the full chat ID including 'chat_' prefix, or undefined for new chat
-	// Strips query params like ?view=context
-	// svelte-ignore state_referenced_locally
-	function extractConversationId(route: string): string | undefined {
-		// Strip query params first
-		const pathOnly = route.split('?')[0];
-		if (pathOnly === '/' || pathOnly === '/chat') return undefined;
-		// Route format: /chat/chat_abc123 → extract chat_abc123 (full ID)
-		const match = pathOnly.match(/^\/chat\/(chat_[^/]+)$/);
-		return match?.[1];
-	}
-
-	// Check if route has ?view=context query param
-	function isContextViewRoute(route: string): boolean {
-		return route.includes('?view=context');
-	}
-
 	// Derived: are we showing the context panel?
 	const isContextView = $derived(isContextViewRoute(tab.route));
 
-	// Check if route represents a new/unsaved chat
-	function isNewChat(route: string): boolean {
-		const pathOnly = route.split('?')[0];
-		return pathOnly === '/' || pathOnly === '/chat';
-	}
-
-	// Temporary ("ghost") chat — opened via /?temporary=1. Never persisted to
-	// history; nothing is written to the sidebar/session list. The request also
-	// carries a `temporary` flag so the backend can skip storage.
-	function isTemporaryRoute(route: string): boolean {
-		return /[?&]temporary=1\b/.test(route);
-	}
 	// svelte-ignore state_referenced_locally
 	let isGhost = $state(isTemporaryRoute(tab.route));
 
 	// Capture initial conversationId from tab prop (intentionally captures initial value only)
 	// svelte-ignore state_referenced_locally
 	const initialConversationId = extractConversationId(tab.route);
-	
+
 	// UI state
 	let conversationId = $state(initialConversationId || `chat_${generateHex16()}`);
-	let messagesContainer: HTMLDivElement | null = $state(null);
 	let scrollContainer: HTMLDivElement | null = $state(null);
 	// The composer is absolutely positioned OVER the scroller, so the transcript
-	// has to reserve its height itself. That reserve was a fixed 10rem, sized
-	// for a one-line pill; a composer grown to its 200px cap (plus attachment
-	// previews) overhung it and painted over the tail of the last reply. The
-	// observer below writes the live height into a CSS variable the transcript
-	// pads from, and re-pins the scroll when the reader was already at the end.
+	// has to reserve its height itself — see composerReserve, which the effect
+	// below hands the two elements to.
 	let composerEl: HTMLDivElement | null = $state(null);
 	let enableTransitions = $state(false);
 	// A NEW chat has nothing to load. Starting this at a blanket `true` meant
@@ -177,127 +151,26 @@
 	// composer). Local to the view — a tab drag-away mid-queue is an accepted edge.
 	let queuedMessages = $state<string[]>([]);
 
-	// Track D: highlight-to-reference. Select text in a message → comment bar →
-	// stage a reference chip above the composer that scopes the next message.
-	// Empty note = quote; typed note = quote + comment. Ephemeral. The in-text
-	// mark uses the app's own --color-highlight token (one warm marker, not a
-	// per-ref rainbow) — references are distinguished by being listed, not colored.
-	type StagedRef = {
-		id: string;
-		messageId: string;
-		text: string;
-		range: Range;
-	};
-	type SelectionDraft = {
-		text: string;
-		messageId: string;
-		rect: { top: number; left: number; bottom: number; width: number };
-		range: Range;
-	};
-	let stagedRefs = $state<StagedRef[]>([]);
-	let selectionDraft = $state<SelectionDraft | null>(null);
-
-	function handleWindowMouseup(e: MouseEvent) {
-		const sel = window.getSelection();
-		const text = sel && !sel.isCollapsed ? sel.toString().trim() : "";
-		if (text && sel && sel.rangeCount > 0) {
-			const range = sel.getRangeAt(0);
-			const node = range.commonAncestorContainer;
-			const el = (node.nodeType === 1 ? node : node.parentElement) as HTMLElement | null;
-			const wrapper = el?.closest(".message-wrapper") as HTMLElement | null;
-			// Only chat messages; ignore selections inside the popover itself.
-			if (!wrapper || el?.closest(".vref-bar")) return;
-			const rect = range.getBoundingClientRect();
-			selectionDraft = {
-				text,
-				messageId: wrapper.getAttribute("data-message-id") || "",
-				rect: { top: rect.top, left: rect.left, bottom: rect.bottom, width: rect.width },
-				range: range.cloneRange(),
-			};
-			return;
-		}
-		// Collapsed selection = a click → dismiss the popover if clicking outside it.
-		if (selectionDraft && !(e.target as HTMLElement)?.closest(".vref-bar")) {
-			selectionDraft = null;
-		}
-	}
-
-	function addStagedRef() {
-		if (!selectionDraft) return;
-		const d = selectionDraft;
-		stagedRefs = [
-			...stagedRefs,
-			{
-				id: crypto?.randomUUID?.() ?? `ref-${stagedRefs.length}-${d.text.length}`,
-				messageId: d.messageId,
-				text: d.text,
-				range: d.range,
-			},
-		];
-		selectionDraft = null;
-		window.getSelection()?.removeAllRanges();
-		repaintHighlights();
-	}
-
-	function removeStagedRef(id: string) {
-		stagedRefs = stagedRefs.filter((r) => r.id !== id);
-		repaintHighlights();
-	}
-
-	function clearStagedRefs() {
-		stagedRefs = [];
-		repaintHighlights();
-	}
-
-	// Paint staged refs with the CSS Custom Highlight API under one name — no DOM
-	// mutation, no reflow, themed via --color-highlight. Only committed refs are
-	// painted; the pending selection keeps the browser's own native highlight so
-	// it never double-marks (and Cmd+C keeps copying it).
-	function repaintHighlights() {
-		const cssAny = CSS as any;
-		if (typeof CSS === "undefined" || !cssAny.highlights || typeof (window as any).Highlight === "undefined") return;
-		const ranges = stagedRefs.map((r) => r.range);
-		if (ranges.length === 0) {
-			cssAny.highlights.delete("vref");
-			return;
-		}
-		try {
-			cssAny.highlights.set("vref", new (window as any).Highlight(...ranges));
-		} catch {
-			/* range invalidated by a re-render — drop silently */
-		}
-	}
+	// Track D: highlight-to-reference (see state/stagedRefs).
+	const refs = new StagedRefsController();
 
 	// Repaint whenever the staged set changes.
 	$effect(() => {
-		void stagedRefs;
-		repaintHighlights();
+		void refs.staged;
+		refs.repaint();
 	});
 
-	function serializeRef(r: StagedRef): string {
-		return `> ${r.text.replace(/\s*\n\s*/g, " ")}`;
-	}
+	// Track E1: multimodal attachments (see state/attachments).
+	const attachments = new AttachmentsController();
 
-	// Track E1: multimodal attachments. Files are read to base64 data URLs (so they
-	// round-trip to the provider and render on reload) and sent as AI SDK file parts.
-	type Attachment = {
-		id: string;
-		mediaType: string;
-		url: string; // data URL
-		filename: string;
-		size: number;
-		kind: "image" | "pdf" | "audio" | "text";
-		width?: number;
-		height?: number;
-	};
+	// What the picker shows, what goes on the wire, and the capability gate
+	// that judges the staged attachments against it (see state/modelChoice).
+	const models = new ModelChoiceController(() => attachments.items);
 
-	function formatFileSize(bytes: number): string {
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	function switchToRecommendedAndRetry() {
+		models.switchToRecommended();
+		chat.regenerate();
 	}
-	let attachments = $state<Attachment[]>([]);
-	let dragActive = $state(false);
 
 	// Click an in-message image to open it in a shared-element lightbox.
 	let lightbox = $state<{ src: string; alt: string; rect: DOMRect } | null>(null);
@@ -305,159 +178,7 @@
 		const el = e.currentTarget as HTMLImageElement;
 		lightbox = { src, alt, rect: el.getBoundingClientRect() };
 	}
-	// The catalog, read from the one store that loads it. This used to be a
-	// SECOND fetch of /api/models with a `.catch(() => {})`, so the list the
-	// attachment gate judged against and the list everything else used were
-	// different objects that could disagree about what models exist. There is
-	// no picker in the composer, so the only readers left are the capability
-	// gate and the two recovery buttons below.
-	const availableModels = $derived(getModels());
 
-	// Text/code/doc extensions — MIME is unreliable for these, so check the name too.
-	const TEXT_EXT =
-		/\.(md|markdown|txt|text|csv|tsv|json|html?|xml|ya?ml|toml|ini|env|log|ts|tsx|js|jsx|mjs|cjs|py|rb|rs|go|java|c|h|cpp|cc|cs|php|swift|kt|sh|bash|zsh|sql|css|scss)$/i;
-
-	function attachmentKind(file: File): Attachment["kind"] | null {
-		const mt = (file.type || "").toLowerCase();
-		if (mt.startsWith("image/")) return "image";
-		if (mt === "application/pdf") return "pdf";
-		if (mt.startsWith("audio/")) return "audio";
-		if (mt.startsWith("text/") || mt === "application/json" || TEXT_EXT.test(file.name))
-			return "text";
-		return null;
-	}
-
-	function readAsDataURL(file: File): Promise<string> {
-		return new Promise((resolve, reject) => {
-			const r = new FileReader();
-			r.onload = () => resolve(r.result as string);
-			r.onerror = () => reject(r.error);
-			r.readAsDataURL(file);
-		});
-	}
-
-	function readAsText(file: File): Promise<string> {
-		return new Promise((resolve, reject) => {
-			const r = new FileReader();
-			r.onload = () => resolve(r.result as string);
-			r.onerror = () => reject(r.error);
-			r.readAsText(file);
-		});
-	}
-
-	function base64Utf8(s: string): string {
-		const bytes = new TextEncoder().encode(s);
-		let bin = "";
-		for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-		return btoa(bin);
-	}
-
-	async function addFiles(files: File[]) {
-		const MAX = 100 * 1024 * 1024; // 100 MB, matches the media backend cap
-		const MAX_TEXT = 100 * 1024; // inline-text cap (~25k tokens) before truncating
-		for (const file of files) {
-			const kind = attachmentKind(file);
-			if (!kind || file.size > MAX) continue;
-			try {
-				let mediaType = file.type || "application/octet-stream";
-				let url: string;
-				let width: number | undefined;
-				let height: number | undefined;
-
-				if (kind === "image") {
-					const norm = await normalizeImage(file);
-					url = norm.dataUrl;
-					mediaType = norm.mediaType;
-					width = norm.width || undefined;
-					height = norm.height || undefined;
-				} else if (kind === "text") {
-					let text = await readAsText(file);
-					if (text.length > MAX_TEXT) text = text.slice(0, MAX_TEXT) + "\n…[truncated]";
-					mediaType = "text/plain";
-					url = `data:text/plain;base64,${base64Utf8(text)}`;
-				} else {
-					url = await readAsDataURL(file);
-				}
-
-				attachments = [
-					...attachments,
-					{
-						id: crypto?.randomUUID?.() ?? `att-${attachments.length}-${file.size}`,
-						mediaType,
-						url,
-						filename: file.name,
-						size: file.size,
-						kind,
-						width,
-						height,
-					},
-				];
-			} catch {
-				/* unreadable / undecodable file — skip */
-			}
-		}
-	}
-
-	function removeAttachment(id: string) {
-		attachments = attachments.filter((a) => a.id !== id);
-	}
-
-	// Capability gate: does the active model support every attached modality? If not,
-	// surface a switch to a model that does (or note none is available).
-	const capabilityIssue = $derived.by(() => {
-		if (attachments.length === 0) return null;
-		const model =
-			availableModels.find((m) => m.id === selectedModelValue?.id) ??
-			selectedModelValue ??
-			null;
-		// No catalog means no capabilities to judge, not a model that lacks
-		// them. Reading absent flags as "unsupported" told anyone whose
-		// catalog failed to load that they could not attach an image, while
-		// the box would have taken it happily.
-		if (!model || availableModels.length === 0) return null;
-		const needs = {
-			image: attachments.some((a) => a.kind === "image"),
-			pdf: attachments.some((a) => a.kind === "pdf"),
-			audio: attachments.some((a) => a.kind === "audio"),
-		};
-		const lacks: string[] = [];
-		if (needs.image && !model?.supportsVision) lacks.push("images");
-		if (needs.pdf && !model?.supportsPdf) lacks.push("PDFs");
-		if (needs.audio && !model?.supportsAudio) lacks.push("audio");
-		if (lacks.length === 0) return null;
-		const candidate =
-			availableModels.find(
-				(m) =>
-					(!needs.image || m.supportsVision) &&
-					(!needs.pdf || m.supportsPdf) &&
-					(!needs.audio || m.supportsAudio),
-			) ?? null;
-		return { lacks, modelName: model?.displayName ?? "This model", candidate };
-	});
-
-	function switchToCapableModel() {
-		const candidate = capabilityIssue?.candidate;
-		if (candidate) selectedModelValue = candidate;
-	}
-
-	// Runtime recovery: when a picked model errors (unsupported tools, context
-	// overflow, a gateway quirk), let the user drop to the Recommended model and
-	// re-run in one click — a plain retry would just re-hit the same model.
-	const recommendedFallback = $derived.by(() => {
-		const rec = getDefaultModel();
-		const currentId = selectedModelValue?.id ?? getDefaultModel()?.id;
-		// Only worth offering when we'd actually change models.
-		return rec && rec.id !== currentId ? rec : null;
-	});
-
-	function switchToRecommendedAndRetry() {
-		const rec = getDefaultModel();
-		if (rec) {
-			selectedModelValue = rec;
-			setSelectedModel(rec);
-		}
-		chat.regenerate();
-	}
 	let loadedMessages = $state<any[]>([]);
 
 	// Track tab route to reset state when switching conversations
@@ -479,9 +200,12 @@
 	}>({});
 
 	// Keep a map of message metadata (agentId, provider, etc.) for rendering
-	let messageMetadata = $state<
-		Map<string, { agentId?: string; provider?: string; stopped?: boolean }>
-	>(new Map());
+	let messageMetadata = $state<Map<string, MessageMeta>>(new Map());
+
+	/** The converter, bound to this view's metadata map. */
+	function toUiMessage(msg: any) {
+		return toUiMessageWith(msg, messageMetadata);
+	}
 
 	// Citation panel state
 	let citationPanelOpen = $state(false);
@@ -527,48 +251,14 @@
 		selectedCitation = null;
 	}
 
-	// Helper to get the first bound page from the edit allow list
-	function getBoundPage() {
-		return editAllowListStore.items.find((i) => i.type === 'page');
-	}
-
-	function handlePageClear() {
-		const pages = editAllowListStore.items.filter((i) => i.type === 'page');
-		for (const page of pages) {
-			editAllowListStore.remove('page', page.id);
-		}
-	}
-
-	function handleRemoveItem(type: string, id: string) {
-		editAllowListStore.remove(type as EditableResourceType, id);
-	}
-
-	function handlePageSelect(pageId: string, pageTitle: string) {
-		// Create Yjs document for the page and bind
-		// NOTE: No auto-open - user can open the page manually if they want to see it
-		handlePageClear();
-		const yjsDoc = createYjsDocument(pageId);
-		editAllowListStore.addPage(pageId, pageTitle, yjsDoc);
-	}
-
 	/**
 	 * Handle permission allow for AI edit.
 	 * Adds permission then regenerates the AI's last response (which had permission_needed).
 	 * regenerate() removes that assistant message and re-requests — no duplicate user messages.
 	 */
 	async function handlePermissionAllow(entityId: string, entityType: string, title: string) {
-		// Add to allow list (await ensures backend has the permission before retry)
-		if (entityType === 'page') {
-			const yjsDoc = createYjsDocument(entityId);
-			await editAllowListStore.addPage(entityId, title, yjsDoc);
-		} else {
-			// folder / action / wiki_entry — no Yjs doc, granted generically by (type, id)
-			await editAllowListStore.add({
-				type: entityType as EditableResourceType,
-				id: entityId,
-				title
-			});
-		}
+		// Await ensures the backend has the permission before the retry.
+		await grantEditPermission(entityId, entityType, title);
 
 		// Regenerate = remove last assistant message + re-request
 		if (chat.status === 'ready') {
@@ -588,49 +278,10 @@
 		// The tool result already shows the permission was needed
 	}
 
-
-
-	function handleSelectEntities(entities: EntityResult[]) {
-		// Add each entity to the edit allow list
-		for (const entity of entities) {
-			// Map entity_type to our EditableResourceType
-			const type = entity.entity_type === 'page' ? 'page' :
-			             entity.entity_type === 'folder' ? 'folder' : 'page';
-
-			// For pages, create Yjs document for real-time sync
-			if (entity.entity_type === 'page') {
-				const yjsDoc = createYjsDocument(entity.id);
-				editAllowListStore.addPage(entity.id, entity.name, yjsDoc);
-			} else {
-				editAllowListStore.add({
-					type: type as 'page' | 'folder' | 'wiki_entry',
-					id: entity.id,
-					title: entity.name
-				});
-			}
-		}
-	}
-
-	// Track tool calls that were already complete when we mounted (loaded from history)
-	// Only auto-open pages created AFTER mount (during streaming)
-	let initialCompletedToolCalls: Set<string> | null = null;
-	let initialLoadComplete = false;
-
-	/**
-	 * Handle create_page tool result - auto-open the new page
-	 * Called from $effect when create_page completes during streaming
-	 */
-	function handlePageCreated(pageId: string, title: string) {
-		// Auto-bind and open the newly created page in split view
-		handlePageClear();
-		// Don't create Yjs doc here — PageContent will create one when the tab mounts.
-		// Creating a second doc causes two WebSocket connections to the same room,
-		// which races with the server's Y.Text initialization.
-		editAllowListStore.addPage(pageId, title);
-
-		// Open the page BESIDE the chat (Category A) — never navigate the chat in place.
-		windowShellStore.openRouteBeside(`/page/${pageId}`);
-	}
+	// The two tool results that reach outside the transcript — create_page
+	// opens a page beside the chat, edit_page animates one (see
+	// state/toolSideEffects for why both seed before they act).
+	const tools = new ToolSideEffects();
 
 	// Effect to handle create_page side effects (auto-open new pages)
 	// Only triggers for pages created during this session, not when reopening old chats
@@ -640,37 +291,8 @@
 		// Don't auto-open during initial load - wait until loading is complete
 		if (isLoading) return;
 
-		// First run after load: capture already-completed tool calls (loaded from history)
-		if (initialCompletedToolCalls === null) {
-			initialCompletedToolCalls = new Set();
-			for (const message of chat.messages) {
-				if (message.role !== 'assistant') continue;
-				for (const part of message.parts as ToolResultPart[]) {
-					if (part.type === 'tool-create_page' && part.state === 'output-available') {
-						initialCompletedToolCalls.add(part.toolCallId);
-					}
-				}
-			}
-			initialLoadComplete = true;
-			return; // Don't auto-open on first run
-		}
-
-		// Only process new pages after initial load is complete
-		if (!initialLoadComplete) return;
-
-		// Subsequent runs: only auto-open for NEW completions (not loaded from history)
-		for (const message of chat.messages) {
-			if (message.role !== 'assistant') continue;
-
-			for (const part of message.parts as ToolResultPart[]) {
-				if (part.type === 'tool-create_page' && part.state === 'output-available') {
-					const output = part.output;
-					if (output?.page_id && !initialCompletedToolCalls.has(part.toolCallId)) {
-						handlePageCreated(output.page_id, output.title ?? "");
-						initialCompletedToolCalls.add(part.toolCallId); // Mark as handled
-					}
-				}
-			}
+		for (const page of tools.collectNewPages(chat.messages)) {
+			openCreatedPage(page.pageId, page.title);
 		}
 	});
 
@@ -678,41 +300,10 @@
 	// the backend sends a transient data-narrative-document part, because tool
 	// parts land in the messages array mutably where no effect observes them.)
 
-
-
 	// Effect to drive the AI presence animation when a chat `edit_page` lands.
-	// Mirrors the create_page effect: seed historical edits on the first settled
-	// run (so we don't replay them), then animate only new ones, deduped by
-	// edit_id. The animation is a no-op if the page isn't open in a pane.
-	let editAnimSeeded = false;
-	const animatedEditIds = new Set<string>();
 	$effect(() => {
 		if (!chat?.messages || isLoading) return;
-
-		const collectNew = (animate: boolean) => {
-			for (const message of chat.messages) {
-				if (message.role !== "assistant") continue;
-				for (const part of message.parts as ToolResultPart[]) {
-					if (part.type !== "tool-edit_page" || part.state !== "output-available")
-						continue;
-					const output = part.output as any;
-					const edit = output?.edit;
-					if (!edit?.edit_id || animatedEditIds.has(edit.edit_id)) continue;
-					animatedEditIds.add(edit.edit_id);
-					if (animate && output?.applied) {
-						animateChatEdit(edit.page_id, edit.replace || "");
-					}
-				}
-			}
-		};
-
-		// First settled run: seed history without animating.
-		if (!editAnimSeeded) {
-			collectNew(false);
-			editAnimSeeded = true;
-			return;
-		}
-		collectNew(true);
+		tools.animateNewEdits(chat.messages);
 	});
 
 	// Context usage state
@@ -760,106 +351,52 @@
 		windowShellStore.openChatContext(conversationId, currentPane);
 	}
 
-	// Handle compaction completion from ContextViewPanel - refresh messages
-	async function handleCompacted() {
+	/** Re-read the stored transcript. Used after a compaction, and after the
+	 *  getting-started room speaks (its lines are appended server-side, so
+	 *  the thread has to be re-read to show them). */
+	async function reloadMessages() {
 		if (!conversationId) return;
 		try {
 			const data = await getChat<{ messages?: any[] }>(conversationId);
 			loadedMessages = data.messages || [];
-			chat.messages = deduplicateMessages(loadedMessages).map((msg: any) => ({
-				id: msg.id,
-				role: msg.role as "user" | "assistant" | "checkpoint",
-				parts: convertMessageToParts(msg),
-			})) as unknown as typeof chat.messages;
+			chat.messages = deduplicateMessages(loadedMessages).map(
+				toUiMessage,
+			) as unknown as typeof chat.messages;
+			// Re-reading drops the interview's opening, which is shown rather
+			// than stored; put it back where it belongs.
+			applyRoomInterviewOpening(chat, conversationId, gettingStarted.state);
 		} catch {
 			// Non-critical refresh — leave the current messages in place on failure.
 		}
 	}
+	const handleCompacted = reloadMessages;
 
-	// Helper function to convert database messages to Chat parts
-	function convertMessageToParts(msg: any) {
-		// Carry agent/provider + the user-stopped flag (subject='cancelled') so the
-		// "Stopped" notice survives a reload.
-		const stopped = msg.subject === "cancelled";
-		if (msg.agentId || msg.provider || stopped) {
-			messageMetadata.set(msg.id, {
-				agentId: msg.agentId,
-				provider: msg.provider,
-				stopped,
-			});
-		}
-
-		// If message already has parts array (e.g., checkpoint messages), use it directly
-		if (msg.parts && Array.isArray(msg.parts) && msg.parts.length > 0) {
-			return msg.parts;
-		}
-
-		// Otherwise, construct parts from individual fields (legacy format)
-		const parts: any[] = [];
-
-		if (msg.reasoning) {
-			parts.push({
-				type: "reasoning" as const,
-				text: msg.reasoning,
-				state: "done" as const,
-			});
-		}
-
-		if (msg.content) {
-			parts.push({
-				type: "text" as const,
-				text: msg.content,
-			});
-		}
-
-		if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
-			for (const toolCall of msg.tool_calls) {
-				parts.push({
-					type: `tool-${toolCall.tool_name}` as const,
-					toolCallId:
-						toolCall.tool_call_id ||
-						`${msg.id}_${toolCall.tool_name}_${Date.now()}`,
-					toolName: toolCall.tool_name,
-					input: toolCall.arguments,
-					state: "output-available" as const,
-					output: toolCall.result,
-				});
-			}
-		}
-
-		return parts;
-	}
-
-	// Helper function to deduplicate messages by ID
-	function deduplicateMessages(messages: any[]): any[] {
-		if (!messages || messages.length === 0) return [];
-		const seen = new Set<string>();
-		return messages.filter((msg) => {
-			if (seen.has(msg.id)) {
-				return false;
-			}
-			seen.add(msg.id);
-			return true;
+	// A chat that opens with your message last and no reply may be a turn the
+	// box is still running (VIR-323): a turn outlives its request now, so ask
+	// for its live stream. The SDK replays what was said and follows the rest;
+	// a 204 means nothing is running and the load stands as it is. Never for a
+	// ghost: its transcript lives in this tab and nowhere the box could resume.
+	function resumeIfDangling() {
+		if (isGhost) return;
+		const last = chat.messages[chat.messages.length - 1];
+		if (!last || last.role !== "user") return;
+		if (chat.status !== "ready") return;
+		void chat.resumeStream().catch((e: unknown) => {
+			console.warn("[ChatView] could not rejoin the running turn:", e);
 		});
 	}
 
 	// Chat instance - fetched from shared store to survive remounts
 	let chat = $state<Chat>(null!);
 	let currentChatConversationId = $state<string | null>(null);
-
-	// The id that goes on the wire — ONLY when the person moved the picker off
-	// what we prefilled for them. What the picker is showing is not a choice.
-	//
-	// The box resolves every unpinned turn from the slot (see
-	// `api/model_choice.rs`), which is what lets a slot swap reach a
-	// conversation already in progress, and what keeps a client that failed to
-	// load the catalog able to chat at all. This function returned `""` in
-	// that case, and the box rejected it with a 400 listing 244 allowed ids
-	// and never the one it refused.
-	function getCurrentModel(): string | undefined {
-		const id = selectedModelValue?.id;
-		return id && id !== prefilledModelId ? id : undefined;
-	}
+	// The interview's chrome (no thinking block, the resident companion)
+	// applies in the old standalone room and in the getting-started room
+	// while the interview is underway there.
+	// Setup and the interview are both rooms where the machine's workings are
+	// not the subject: no thinking block, no tool names.
+	const inInterview = $derived(
+		currentChatConversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(currentChatConversationId),
+	);
 
 	// Getter for the chat's Notebook (room) ID — sent with each message so the agent
 	// gets the active-space context block and the server keeps the binding fresh.
@@ -877,26 +414,19 @@
 			// Get or create new instance with model, space, active page, persona, and agent mode getters
 			chat = chatInstances.getOrCreate({
 				conversationId,
-				getModel: getCurrentModel,
+				getModel: () => models.idForWire(),
 				getNotebookId,
-				getActivePageContext: () => {
-					const page = getBoundPage();
-					if (!page) return null;
-
-					// Include the current Yjs content so AI edits match what's in the editor
-					const content = page.yjsDoc?.ytext.toString() || '';
-
-					return {
-						page_id: page.id,
-						page_title: page.title || undefined,
-						content: content
-					};
-				},
+				getActivePageContext: activePageContext,
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
 			});
+			// The draft this conversation left behind, if the composer is empty.
+			if (!isGhost && !input) {
+				const draft = readDraft(draftId);
+				if (draft) input = draft;
+			}
 			currentChatConversationId = conversationId;
 		}
 	}
@@ -946,11 +476,10 @@
 			titleGenerated = false;
 			isAwaitingResponse = false;
 			// Reset page create tracking (for auto-open)
-			initialCompletedToolCalls = null;
-			initialLoadComplete = false;
+			tools.reset();
 			// NOTE: We no longer unbind the active page when switching chats.
 			// Binding is now additive/persistent to the chat session context.
-			// handlePageClear();
+			// clearBoundPages();
 
 			// Load conversation if switching to an existing one
 			if (currentTabConversationId && !isNewChat(currentTabRoute)) {
@@ -971,13 +500,10 @@
 							loadedMessages = data.messages || [];
 							chat.messages = deduplicateMessages(
 								loadedMessages,
-							).map((msg: any) => ({
-								id: msg.id,
-								role: msg.role as "user" | "assistant" | "checkpoint",
-								parts: convertMessageToParts(msg),
-							})) as unknown as typeof chat.messages;
+							).map(toUiMessage) as unknown as typeof chat.messages;
+							resumeIfDangling();
 							applyInterviewOpening(chat, currentTabConversationId);
-							applyGettingStartedOpening(chat, currentTabConversationId, gettingStarted.state);
+							applyRoomInterviewOpening(chat, currentTabConversationId, gettingStarted.state);
 							// The picker is deliberately left alone on a tab
 							// switch. It used to be re-seeded from the model
 							// that last answered THIS conversation, which is
@@ -1004,8 +530,11 @@
 					} finally {
 						if (!signal.aborted) {
 							isLoading = false;
-							// Scroll to bottom after loading existing chat
-							setTimeout(() => scrollToBottom("instant"), 10);
+							// Scroll to bottom after loading existing chat — but
+							// the getting-started room opens on its cover.
+							setTimeout(() => {
+								if (!openAtStart()) scrollToBottom("instant");
+							}, 10);
 						}
 					}
 				})();
@@ -1078,12 +607,9 @@
 					}>(tabConversationId);
 					loadedMessages = data.messages || [];
 					chat.messages = deduplicateMessages(loadedMessages).map(
-						(msg: any) => ({
-							id: msg.id,
-							role: msg.role as "user" | "assistant" | "checkpoint",
-							parts: convertMessageToParts(msg),
-						}),
+						toUiMessage,
 					) as unknown as typeof chat.messages;
+					resumeIfDangling();
 				} catch (error) {
 					console.error("[ChatView] Error loading conversation:", error);
 				}
@@ -1094,14 +620,14 @@
 			// After the load, not inside it: a failed fetch must still leave
 			// the interview speaking rather than showing a blank room.
 			applyInterviewOpening(chat, tabConversationId);
-			applyGettingStartedOpening(chat, tabConversationId, gettingStarted.state);
+			applyRoomInterviewOpening(chat, tabConversationId, gettingStarted.state);
 
 			// What the picker SHOWS, for every chat old or new: the owner's
 			// standing preference, else the Virtues default. Deliberately not
 			// the model that last answered this conversation — a chat is not
 			// pinned to the model it opened with, so showing the last one
 			// would name a model the next turn may not use.
-			prefillModelDisplay(profileDefaultModelId);
+			models.prefillDisplay(profileDefaultModelId);
 
 			// Stage 3: Post-load tasks (depend on conversation being loaded)
 			if (tabConversationId) {
@@ -1119,7 +645,7 @@
 
 			isLoading = false;
 			setTimeout(() => {
-				scrollToBottom("instant");
+				if (!openAtStart()) scrollToBottom("instant");
 				enableTransitions = true;
 			}, 50);
 
@@ -1149,8 +675,7 @@
 			chatInstances.release(currentChatConversationId);
 		}
 		// Clear any staged highlight ranges from the global CSS highlight registry.
-		stagedRefs = [];
-		repaintHighlights();
+		refs.clear();
 	});
 
 	// Derive thinking state from chat status
@@ -1161,6 +686,16 @@
 
 	// Deduplicated messages for rendering
 	const uniqueMessages = $derived(chat?.messages ? deduplicateMessages(chat.messages) : []);
+	/** The interview's opening plate is in this thread — mid-thread here,
+	 *  not first as in the old standalone room — so the container must not
+	 *  clip paint at its edge. Without this the plate lost both ends. */
+	const roomHoldsPlate = $derived(uniqueMessages.some((m) => m.id === GS_INTERVIEW_OPENING_ID));
+
+	/** The one line per step that carries its number — keyed by message id. */
+	const eyebrowFor = $derived(
+		eyebrowsFor(uniqueMessages as { id: string; subject?: string }[]),
+	);
+
 
 	// Get the last assistant message
 	const lastAssistantMessage = $derived.by(() => {
@@ -1201,6 +736,28 @@
 	let input = $state("");
 	let inputFocused = $state(false);
 
+	// Draft persistence — see state/drafts for why an unsent chat shares one key.
+	const draftId = $derived(extractConversationId(tab.route) ?? NEW_CHAT_DRAFT_ID);
+	let draftTimer: ReturnType<typeof setTimeout> | null = null;
+	$effect(() => {
+		const id = draftId;
+		const text = input;
+		if (isGhost) return;
+		if (draftTimer) clearTimeout(draftTimer);
+		draftTimer = setTimeout(() => {
+			draftTimer = null;
+			writeDraft(id, text);
+		}, 250);
+	});
+	onDestroy(() => {
+		// A tab closed inside the debounce window still keeps its draft.
+		if (draftTimer) {
+			clearTimeout(draftTimer);
+			draftTimer = null;
+			if (!isGhost) writeDraft(draftId, input);
+		}
+	});
+
 	// Auto-focus chat input when new chat tab becomes active
 	$effect(() => {
 		if (active && isEmpty && !isLoading) {
@@ -1215,33 +772,6 @@
 	let titleGenerated = $state(false);
 	let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
 	let refreshDataTimeout: ReturnType<typeof setTimeout> | null = null;
-
-	// Model selection state - use bindable for ChatInput toolbar
-	let selectedModelValue = $state<
-		import("$lib/config/models").ModelOption | undefined
-	>(undefined);
-	/** The id we put in the picker ourselves, so `getCurrentModel` can tell a
-	 *  prefill apart from a choice. Picking this exact model back is the same
-	 *  as not choosing: either way the box resolves the slot. */
-	let prefilledModelId = $state<string | undefined>(undefined);
-
-	/** Show what the next turn will use: the owner's pin, else the Virtues
-	 *  default. Records what it showed; sends nothing. */
-	function prefillModelDisplay(profileDefaultModelId?: string) {
-		// Re-seed on every mount UNLESS a recovery button picked something this
-		// session. The store's seeder only runs once per session, so changing
-		// your pin in Settings used to leave the attachment capability gate
-		// judging against the model you were pinned to before — warning that
-		// you cannot send an image to a model that was no longer answering.
-		const picked =
-			selectedModelValue && selectedModelValue.id !== prefilledModelId;
-		if (!picked) setSelectedModel(undefined);
-		initializeSelectedModel(profileDefaultModelId);
-		const shown = getSelectedModel() ?? getDefaultModel();
-		if (!shown) return; // catalog not loaded — the box still knows
-		selectedModelValue = shown;
-		prefilledModelId = shown.id;
-	}
 
 	// Agent mode and persona selection state - used for tool filtering on backend
 	let selectedAgentMode = $state<AgentModeId>('chat');
@@ -1258,11 +788,7 @@
 	// Sync selected model with store (only on initial load). Still a prefill,
 	// not a choice — record it as one.
 	$effect(() => {
-		const storeModel = getSelectedModel();
-		if (storeModel && !selectedModelValue) {
-			selectedModelValue = storeModel;
-			prefilledModelId = storeModel.id;
-		}
+		models.adoptStoreSelection();
 	});
 
 	// Safety timeout
@@ -1280,7 +806,7 @@
 						chat.clearError();
 					}
 				}
-			}, 300000); // 5 minutes to match backend streaming timeout
+			}, 300000); // 5 minutes: the box's stream has no total timeout any more, only a 300s idle one
 
 			return () => {
 				if (thinkingTimeout) {
@@ -1316,10 +842,58 @@
 		// Never while a turn is streaming: the transcript is the SDK's to
 		// write then. Reading `status` here re-runs this once it settles.
 		if (chat.status !== "ready") return;
-		untrack(() => applyGettingStartedOpening(chat, convId, state));
+		untrack(() => applyRoomInterviewOpening(chat, convId, state));
 	});
 	$effect(() => {
 		if (isGettingStartedChat(currentChatConversationId)) gettingStarted.start();
+	});
+
+	/** A turn just settled in the room, so ask the box where the walk stands.
+	 *
+	 *  The server narrates the coda the moment the assistant's turn is on
+	 *  disk (see api/chat.rs), but the CLIENT only learns a step moved on the
+	 *  store's 30-second poll — so the ending sat unread while the person
+	 *  typed their next message over the top of it. Asking on `ready` closes
+	 *  that window: the answer moves the walk signature, and the effect below
+	 *  re-reads the thread with the new lines in it. */
+	let lastTurnStatus = $state<string | null>(null);
+	$effect(() => {
+		const status = chat.status;
+		const wasStreaming = lastTurnStatus === "streaming" || lastTurnStatus === "submitted";
+		lastTurnStatus = status;
+		if (!isGettingStartedChat(currentChatConversationId)) return;
+		if (status !== "ready" || !wasStreaming) return;
+		untrack(() => void gettingStarted.refresh());
+	});
+
+	// The getting-started interview's opening, revealed as a turn arrives
+	// (see state/openingReveal).
+	const reveal = new OpeningRevealController(() => chat?.messages ?? []);
+	$effect(() => {
+		if (!gettingStarted.revealOpening) return;
+		if (!reveal.hasOpening()) return;
+		gettingStarted.revealOpening = false;
+		untrack(() => reveal.start());
+	});
+	onDestroy(() => reveal.stop());
+
+	/** The room speaks server-side, so when its state moves the thread has
+	 *  new lines in it. Re-read on any change of the walk — the step
+	 *  statuses and the interview's start are the whole of it. */
+	let lastWalk = $state<string | null>(null);
+	$effect(() => {
+		const st = gettingStarted.state;
+		if (!isGettingStartedChat(currentChatConversationId) || !st) return;
+		const walk =
+			st.steps.map((x) => `${x.id}:${x.status}`).join("|") + `|${st.interview_started_at ?? ""}`;
+		if (lastWalk === null) {
+			lastWalk = walk;
+			return;
+		}
+		if (lastWalk === walk) return;
+		lastWalk = walk;
+		if (chat.status !== "ready") return;
+		untrack(() => void reloadMessages());
 	});
 
 	const interviewClosedPart = $derived(
@@ -1360,11 +934,24 @@
 	$effect(() => {
 		if (!chatTitle || !tab) return;
 		if (!PLACEHOLDER_LABELS.has(tab.label)) return;
+		// Never write a label that is already there. This effect READS
+		// `tab.label` and WRITES it, so it is only safe while every write
+		// changes the value — and the guard above assumed a saved title is
+		// never itself a placeholder. A chat actually titled "New Chat" breaks
+		// that assumption: the write lands, `updatePane` hands back a fresh
+		// `panes` array, the effect re-runs on the same placeholder and writes
+		// again. The result is `effect_update_depth_exceeded`, which takes the
+		// whole window's reactivity down, and it reads as a sidebar bug because
+		// WindowTabBar's DnD effect rebuilds on every `panes` change and lands
+		// on top of the stack trace.
+		if (tab.label === chatTitle) return;
 		windowShellStore.updateTab(tab.id, { label: chatTitle });
 	});
 
 	// A real, saved chat the user can act on (not the empty new-chat state, not a ghost).
-	const canManageChat = $derived(!isEmpty && !isGhost);
+	// Getting started has no menu: it cannot be deleted or renamed, and its
+	// header holds one control, the door.
+	const canManageChat = $derived(!isEmpty && !isGhost && !isGettingStartedChat(currentChatConversationId));
 
 	async function deleteThisChat() {
 		try {
@@ -1414,7 +1001,7 @@
 		// summary of it in the sidebar — this chat had renamed itself after
 		// the person's own childhood. The server refuses this too (the id
 		// decides, never the client); this only saves the round trip.
-		if (conversationId === INTERVIEW_CHAT_ID) {
+		if (conversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(conversationId)) {
 			titleGenerated = true;
 			return;
 		}
@@ -1447,35 +1034,24 @@
 		const composer = composerEl;
 		const scroller = scrollContainer;
 		if (!composer || !scroller) return;
-		// The composer overlays the scroller, so when a draft grows the composer's
-		// top edge climbs into the transcript. The transcript gets the same
-		// height back as padding (the CSS var), and the view scrolls by the same
-		// amount, so the line that sat just above the composer's old edge sits
-		// just above its new one — at any scroll position, not only pinned to
-		// the end. A reader who was at the end stays at the end; that case is
-		// kept explicit because at send time the new message lands while the
-		// composer is still collapsing, and "keep my offset" would leave them
-		// one message short of it (VIR-332).
-		let lastHeight = composer.offsetHeight;
-		scroller.style.setProperty("--composer-height", `${lastHeight}px`);
-		const observer = new ResizeObserver(() => {
-			const height = composer.offsetHeight;
-			const delta = height - lastHeight;
-			if (delta === 0) return;
-			lastHeight = height;
-			// Both reads come BEFORE the padding moves. Shrinking the padding
-			// shrinks scrollHeight, and the browser clamps scrollTop to the new
-			// end on its own — adding the delta after that clamp would move the
-			// reader twice.
-			const wasAtBottom =
-				scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 8;
-			const kept = scroller.scrollTop + delta;
-			scroller.style.setProperty("--composer-height", `${height}px`);
-			scroller.scrollTop = wasAtBottom ? scroller.scrollHeight : kept;
-		});
-		observer.observe(composer);
-		return () => observer.disconnect();
+		return observeComposerReserve(composer, scroller);
 	});
+
+	/**
+	 * Where a room opens. A chat opens at its newest message; the
+	 * getting-started room opens at the TOP, on the cover — the painting is
+	 * the first thing in it and the first thing anyone should see, and on a
+	 * short window the walk's own length was starting it half scrolled off.
+	 * Only on load: once the person is in the conversation, new turns pull
+	 * the view down as they do anywhere else.
+	 */
+	function openAtStart(behavior: ScrollBehavior = "instant") {
+		if (isGettingStartedChat(currentChatConversationId)) {
+			scrollContainer?.scrollTo({ top: 0, behavior });
+			return true;
+		}
+		return false;
+	}
 
 	function scrollToBottom(behavior: ScrollBehavior = "smooth") {
 		if (scrollContainer) {
@@ -1540,32 +1116,30 @@
 	async function handleChatSubmit(value: string) {
 		let messageToSend = value.trim();
 
-		// The one slash command: does what the door does. Deterministic and
-		// client-side; the model never sees it. Any other slash text sends.
+		// The one slash command, and it does exactly what the door does: leave.
+		// It used to also skip connect_ai, which was the key out of a locked
+		// app; nothing is locked now, so the room keeps its place and you come
+		// back to it from the sidebar. Deterministic and client-side; the model
+		// never sees it. Any other slash text sends.
 		if (messageToSend === SKIP_COMMAND) {
 			input = "";
-			try {
-				await gettingStarted.skip("connect_ai", true);
-			} catch {
-				/* the door will say why on its own attempt */
-			}
 			void goto("/home");
 			return;
 		}
 
 		// Track D: prepend any staged highlight references as quoted context +
 		// comments. Only present on a direct send (cleared before queue-drain).
-		if (stagedRefs.length > 0) {
-			const refsBlock = stagedRefs.map(serializeRef).join("\n\n");
+		if (refs.staged.length > 0) {
+			const refsBlock = refs.serialize();
 			messageToSend = refsBlock + (messageToSend ? `\n\n${messageToSend}` : "");
-			clearStagedRefs();
+			refs.clear();
 		}
 
 		// Track E1: block sending if an attachment isn't supported by the active
 		// model — the capability banner prompts a switch instead.
-		if (capabilityIssue) return;
+		if (models.capabilityIssue) return;
 
-		if (!messageToSend && attachments.length === 0) return;
+		if (!messageToSend && attachments.count === 0) return;
 
 		if (chat.status !== "ready") {
 			// Queue text; attachments stay staged and ride along when the drain
@@ -1577,13 +1151,7 @@
 		input = "";
 
 		// Capture + clear attachments as AI SDK file parts.
-		const files = attachments.map((a) => ({
-			type: "file" as const,
-			mediaType: a.mediaType,
-			url: a.url,
-			filename: a.filename,
-		}));
-		attachments = [];
+		const files = attachments.takeAsFileParts();
 
 		// New turn → clear any leftover Deep Research panel from the previous turn.
 		chatInstances.clearSubagents(conversationId);
@@ -1686,13 +1254,13 @@
 	});
 </script>
 
-<svelte:window onmouseup={handleWindowMouseup} />
+<svelte:window onmouseup={(e) => refs.handleWindowMouseup(e)} />
 
-{#if selectionDraft}
+{#if refs.draft && !isGettingStartedChat(currentChatConversationId)}
 	<SelectionPopover
-		rect={selectionDraft.rect}
-		onAdd={addStagedRef}
-		onClose={() => (selectionDraft = null)}
+		rect={refs.draft.rect}
+		onAdd={() => refs.add()}
+		onClose={() => (refs.draft = null)}
 	/>
 {/if}
 
@@ -1716,19 +1284,19 @@
 		ondragover={(e) => {
 			if (e.dataTransfer?.types.includes("Files")) {
 				e.preventDefault();
-				dragActive = true;
+				attachments.dragActive = true;
 			}
 		}}
 		ondragleave={(e) => {
 			// Only clear when leaving the root, not when crossing child boundaries.
 			if (!e.relatedTarget || !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
-				dragActive = false;
+				attachments.dragActive = false;
 			}
 		}}
 		ondrop={(e) => {
 			e.preventDefault();
-			dragActive = false;
-			if (e.dataTransfer?.files?.length) addFiles(Array.from(e.dataTransfer.files));
+			attachments.dragActive = false;
+			if (e.dataTransfer?.files?.length) attachments.add(Array.from(e.dataTransfer.files));
 		}}
 	>
 		{#snippet renderFilePart(part: any, compact = false)}
@@ -1757,7 +1325,7 @@
 			<div class="chat-area" class:ghost={isGhost}>
 				<!-- Top-right chrome: temporary-chat toggle + live context ring -->
 				<div class="chat-topbar-right">
-					{#if !isGhost && contextUsage && extractConversationId(tab.route)}
+					{#if !isGhost && contextUsage && extractConversationId(tab.route) && !isGettingStartedChat(currentChatConversationId)}
 						<ContextIndicator
 							conversationId={extractConversationId(tab.route)!}
 							usagePercentage={contextUsage.percentage}
@@ -1766,6 +1334,15 @@
 							status={contextUsage.status}
 							onclick={handleContextClick}
 						/>
+					{/if}
+					{#if isGettingStartedChat(currentChatConversationId)}
+						<!-- One door. A glyph through the walk, and a word
+						     ("Stop for now") once the interview is underway,
+						     which is the one beat with no controls of its own.
+						     Nothing else lives up here — progress is numbered in
+						     the thread, on the axis the eye is already reading
+						     along. -->
+						<GettingStartedDoor />
 					{/if}
 					<!-- On the phone the ghost toggle lives in the shell's top bar
 					     (the modal top-right slot), not here. -->
@@ -1804,8 +1381,18 @@
 					>
 						<div
 							class="messages-container"
-							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID}
+							class:bleeds={uniqueMessages[0]?.id === INTERVIEW_OPENING_ID ||
+								roomHoldsPlate ||
+								isGettingStartedChat(currentChatConversationId)}
+							class:room={isGettingStartedChat(currentChatConversationId)}
 						>
+							{#if isGettingStartedChat(currentChatConversationId) && uniqueMessages.length > 0}
+								<!-- The frontispiece, at the measure of the words.
+								     It ran the full width of the pane as an oil
+								     painting and made the room read as two products
+								     stacked. -->
+								<RoomCover />
+							{/if}
 							{#each uniqueMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
 								{@const exchangeIndex = isUserMessage
@@ -1824,10 +1411,12 @@
 								>
 									<div
 										class="message-wrapper"
-										class:bleeds={message.id === INTERVIEW_OPENING_ID}
+										class:bleeds={message.id === INTERVIEW_OPENING_ID || message.id === GS_INTERVIEW_OPENING_ID}
+										class:settled={isSettledLine(message)}
 										class:user-has-attachment={isUserMessage &&
 											message.parts.some((p: any) => p.type === "file")}
 										data-message-id={message.id}
+										data-subject={message.subject}
 										data-role={message.role}
 										data-agent-id={messageMetadata.get(
 											message.id,
@@ -1839,11 +1428,7 @@
 													p.type === "text" && p.text,
 											)}
 									>
-										{#if message.id.startsWith(GS_PREFIX)}
-											<!-- Getting started's synthetic top: mast, cards,
-											     the promise, the authored first line. -->
-											<GettingStartedMessage id={message.id} onSend={(t) => void handleChatSubmit(t)} />
-										{:else if message.role === "checkpoint"}
+										{#if message.role === "checkpoint"}
 											<!-- Compaction checkpoint message -->
 											{@const checkpointPart = message.parts.find((p: any) => p.type === "checkpoint")}
 											{#if checkpointPart}
@@ -1876,6 +1461,61 @@
 												message.parts.filter((p: any) =>
 													p.type.startsWith("tool-"),
 												)}
+											<!-- A turn is several runs of text with tool calls
+											     between them. A run with a tool call AFTER it was
+											     the model saying what it was about to do; the run
+											     with nothing after it is the reply. Only the reply
+											     belongs in the transcript — the rest is working-out
+											     and goes to the thinking block, which is where the
+											     status label comes from.
+											     "Has a tool after it" rather than "is not the last
+											     one" because it has to hold mid-turn too: the line
+											     the model just wrote is its answer until a tool
+											     starts, and at that moment it becomes narration and
+											     moves. A message stored before `parts` carried this
+											     order has one text run and no tool before it, so it
+											     is all reply and nothing moves. -->
+											{@const lastToolPartIndex =
+												message.parts.reduce(
+													(last: number, p: any, i: number) =>
+														p.type.startsWith("tool-") ? i : last,
+													-1,
+												)}
+											{@const lastTextPartIndex =
+												message.parts.reduce(
+													(last: number, p: any, i: number) =>
+														p.type === "text" && p.text?.trim() ? i : last,
+													-1,
+												)}
+											<!-- Where the reply starts. Normally just past the last
+											     tool call. But a turn that ENDED on a tool call — an
+											     error, a stop, the model quitting — never wrote one,
+											     and treating all of its text as narration would
+											     leave a blank message on screen with the words
+											     hidden in a collapsed block. So once the turn is
+											     over, the last thing it said stands as the reply.
+											     While it is still streaming we do NOT do that: there
+											     genuinely is no reply yet, and the line the model
+											     wrote is already showing as the status label. -->
+											{@const bodyFromIndex =
+												isStreaming ||
+												message.parts.some(
+													(p: any, i: number) =>
+														p.type === "text" &&
+														p.text?.trim() &&
+														i > lastToolPartIndex,
+												)
+													? lastToolPartIndex + 1
+													: lastTextPartIndex}
+											{@const messageNarration =
+												message.parts
+													.filter(
+														(p: any, i: number) =>
+															p.type === "text" &&
+															p.text?.trim() &&
+															i < bodyFromIndex,
+													)
+													.map((p: any) => p.text.trim())}
 											{@const messageReasoning =
 												messageReasoningParts
 													.map(
@@ -1886,7 +1526,8 @@
 													.join("\n")}
 											{@const hasThinkingContent =
 												messageReasoning ||
-												messageToolParts.length > 0}
+												messageToolParts.length > 0 ||
+												messageNarration.length > 0}
 
 											{@const subagents =
 												isLastMessage
@@ -1901,7 +1542,7 @@
 												/>
 											{/if}
 
-											{#if currentChatConversationId !== INTERVIEW_CHAT_ID && (hasThinkingContent || (isStreaming && isLastMessage))}
+											{#if !inInterview && (hasThinkingContent || (isStreaming && isLastMessage))}
 												<!-- Interview room excluded: the companion below is
 												     its one indicator, and the model's reasoning
 												     about the person must never surface as chrome
@@ -1913,25 +1554,30 @@
 															"streaming"}
 													toolCalls={messageToolParts}
 													reasoningContent={messageReasoning}
-													{isStreaming}
+													narration={messageNarration}
 													duration={isLastMessage
 														? thinkingDuration
 														: 0}
+													agentMode={selectedAgentMode}
 												/>
 											{/if}
 
+											{#if eyebrowFor.has(message.id)}
+												<StepEyebrow stepId={eyebrowFor.get(message.id)!} />
+											{/if}
 											{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
-												{#if part.type === "text" && part.text.trim()}
+												{#if part.type === "text" && part.text.trim() && partIndex >= bodyFromIndex}
+													{@const shown = reveal.revealed(message.id, part.text)}
 													<div
 														class="text-base text-foreground assistant-response"
 													>
 														<Markdown
-															content={part.text}
-															{isStreaming}
+															content={shown.content}
+															isStreaming={isStreaming || shown.arriving}
 															citations={citationContext}
 															onCitationClick={openCitationPanel}
 														/>
-														{#if message.id === INTERVIEW_OPENING_ID && partIndex === 0}
+														{#if (message.id === INTERVIEW_OPENING_ID && partIndex === 0) || (message.id === GS_INTERVIEW_OPENING_ID && reveal.plateReady)}
 															<!-- Right under the heading, wider than the column:
 															     one fictional life on one wire, α toward Ω. The
 															     table that follows lists the same chapters. -->
@@ -1952,12 +1598,30 @@
 													onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
 													onDeny={() => handlePermissionDeny()}
 												/>
-											{:else if part.type === "tool-show_step" && (part as any).state === "output-available" && (part as any).output?.step}
-												<!-- The model opened a step: the same card, opened here. -->
-												<GettingStartedMessage id={`gs-card-${(part as any).output.step}`} forceOpen onSend={(t) => void handleChatSubmit(t)} />
-											{:else if part.type === "tool-record_introductions" && (part as any).state === "output-available" && (part as any).output?.fields}
-												<!-- The four facts as heard, for confirmation; the card writes. -->
-												<IntroductionsConfirmCard fields={(part as any).output.fields} />
+											{:else if part.type === "tool-record_introductions"}
+												<!-- Nothing here: the receipt goes under the whole
+												     turn, not wherever in it the model reached for
+												     the tool. See after this loop. -->
+											{:else if part.type === "tool-write_it_up" && isGettingStartedChat(currentChatConversationId) && (part as any).state === "output-available" && (part as any).output?.document_page_id}
+												<!-- In the getting-started room the interview closes inline
+												     and the thread goes on: the two doors, here — and the
+												     plate with them. The close ANSWERS THE OPENING, which
+												     was a lifeline of a fictional life at the top of the
+												     interview; this is the same drawing made of their own
+												     chapters, and it only reads as an answer if it sits at
+												     the moment of the close. It stood above the composer
+												     until 2026-09-16, where it was permanent furniture and
+												     every later message pushed in above it. -->
+												{@const out = (part as any).output}
+												<InterviewClosedCard
+													pageId={out.document_page_id}
+													chaptersWritten={out.chapters_written ?? 0}
+													alreadyExisted={out.document_already_existed ?? false}
+													chaptersError={out.chapters_error ?? null}
+												/>
+												{#if !out.chapters_error}
+													<ChapterLifelineLive />
+												{/if}
 											{:else if part.type === "tool-write_it_up"}
 												<!-- Nothing inline: the standing card in place of the composer
 												     holds the two doors (it used to render here as well, so the
@@ -1972,8 +1636,9 @@
 														title={output.title}
 														pageId={output.page_id}
 														onOpenPage={(id) => {
-													// Open the created page beside the chat (Category A).
-													windowShellStore.openRouteBeside(`/page/${id}`);
+													// Open the created page WITHOUT creating a split: beside the
+													// chat only when already in split view, else a new tab here.
+													windowShellStore.openRouteInSplitOrActive(`/page/${id}`);
 												}}
 														/>
 												{/if}
@@ -1984,7 +1649,7 @@
 														entityId={output.page_id}
 														entityTitle={output.page_title}
 														message={output.message}
-														onBind={handlePageSelect}
+														onBind={bindPage}
 													/>
 												{:else if output?.edit}
 													{@const editPageId = output.edit.page_id}
@@ -1995,8 +1660,9 @@
 														replace={output.edit.replace || ''}
 														isFullReplace={!output.edit.find}
 														onViewPage={editPageId ? () => {
-															// View the edited page beside the chat (Category A).
-															windowShellStore.openRouteBeside(`/page/${editPageId}`);
+															// View the edited page WITHOUT creating a split: beside the
+															// chat only when already in split view, else a new tab here.
+															windowShellStore.openRouteInSplitOrActive(`/page/${editPageId}`);
 														} : undefined}
 													/>
 												{/if}
@@ -2021,7 +1687,7 @@
 											{/if}
 											{:else if part.type === "tool-code_interpreter"}
 												{@const toolPart = part as any}
-												{@const isRunning = toolPart.state === "pending" || toolPart.state === "input-available"}
+												{@const isRunning = toolPart.state === "input-streaming" || toolPart.state === "input-available"}
 												{@const isError = toolPart.state === "output-error"}
 												<CodeInterpreterCard
 													status={isRunning ? 'running' : isError ? 'error' : 'success'}
@@ -2067,8 +1733,25 @@
 													</div>
 												{/if}
 											{/each}
+											{#if introductionsRecorded(message)}
+												<!-- Under the words, always: the model may call the
+												     tool before it writes its sentence, and a receipt
+												     printed above the sentence it belongs to is what
+												     made this read backwards. -->
+												<IntroductionsRecorded fields={introductionsRecorded(message)} />
+											{/if}
+											{#if message.subject === "gs:graduated"}
+												<!-- The room's last line names what now exists; these
+												     are the way in to each thing it named. Under the
+												     sentence, never instead of it. -->
+												<GraduatedDoors />
+											{/if}
 											{#if messageMetadata.get(message.id)?.stopped}
 												<StoppedNotice />
+											{:else if messageMetadata.get(message.id)?.cutShort}
+												<StoppedNotice reason="length" />
+											{:else if messageMetadata.get(message.id)?.interrupted}
+												<StoppedNotice reason="interrupted" />
 											{/if}
 										{:else}
 											{@const fileParts = message.parts.filter((p: any) => p.type === "file")}
@@ -2095,13 +1778,33 @@
 							<!-- Optimistic thinking indicator: shows immediately on submit,
 							     only until the AI SDK creates the assistant message (at text-start).
 							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
+							{#if isGettingStartedChat(currentChatConversationId)}
+								<!-- The step's controls, right under what the room
+								     just said: pinned above the composer they sat a
+								     screen away from it on a short thread. -->
+								<RoomControls />
+							{/if}
 							{#if currentChatConversationId === INTERVIEW_CHAT_ID}
 								{#if interviewClosed}
 									<!-- The close answers the opening: the same plate, drawn from
 									     the chapters the person just named. -->
 									<ChapterLifelineLive />
 								{/if}
-								<InterviewCompanion status={chat.status} activity={uniqueMessages.length} />
+								<!-- One element, two poses: the mark's points while a turn
+								     works, the figure they imply while it does not. Always
+								     something in the margin, so nothing jumps when the turn
+								     starts — and the room is never empty of its occupant. -->
+								{#if chat.status === "submitted" || chat.status === "streaming"}
+									<Composing label="Composing a reply" />
+								{:else}
+									<Trivet />
+								{/if}
+							{:else if inInterview}
+								{#if reveal.chars || chat.status === "submitted" || chat.status === "streaming"}
+									<Composing label="Composing a reply" />
+								{:else}
+									<Trivet />
+								{/if}
 							{:else if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">
 									<div class="message-wrapper" data-role="assistant">
@@ -2109,8 +1812,8 @@
 											isThinking={true}
 											toolCalls={[]}
 											reasoningContent=""
-											isStreaming={true}
 											duration={0}
+											agentMode={selectedAgentMode}
 										/>
 									</div>
 								</div>
@@ -2119,20 +1822,26 @@
 							<ChatError
 											error={chat.error ?? null}
 											onRetry={() => chat.regenerate()}
-											recommendedName={recommendedFallback?.displayName}
-											onSwitchAndRetry={recommendedFallback
+											recommendedName={models.recommendedFallback?.displayName}
+											onSwitchAndRetry={models.recommendedFallback
 												? switchToRecommendedAndRetry
 												: undefined}
 										/>
 						</div>
 					</div>
 
-					{#if isEmpty && !isGhost && mobileLayout.isMobile}
-						<!-- The phone's opening image: the mark assembling itself in
-						     the space a conversation will fill. Desktop centers the
-						     composer instead; the phone docks it permanently, which
-						     left this expanse truly blank. Decorative, so hidden
-						     from the tree and transparent to touches. -->
+					{#if isEmpty && !isGhost && attachments.count === 0}
+						<!-- The opening image: the mark assembling itself in the space
+						     a conversation will fill. Both layouts left this expanse
+						     blank — the phone docks the composer to the bottom, the
+						     desktop floats it at center, and either way a new chat
+						     opened onto nothing at all (VIR-313). Positioned off the
+						     midpoint, so it sits above the composer in both. It yields to
+						     staged attachments: the row of chips grows upward from the
+						     composer and would otherwise collide with the word, and once
+						     someone has dropped a file the blank canvas has done its job.
+						     Decorative, so hidden from the tree and transparent to
+						     touches. -->
 						<div class="init-hero" aria-hidden="true" out:fade={{ duration: 200 }}>
 							<svg class="init-mark" viewBox="0 0 12 10.5" width="30" height="26.25" fill="currentColor">
 								<circle class="init-dot init-dot-1" cx="6" cy="2.4" r="1.5" />
@@ -2164,17 +1873,17 @@
 						class:has-messages={!isEmpty}
 						class:transitions-enabled={enableTransitions}
 						class:focused={inputFocused}
-						class:drag-active={dragActive}
+						class:drag-active={attachments.dragActive}
 					>
-						{#if dragActive}
+						{#if attachments.dragActive}
 							<div class="drop-hint">
 								<Icon icon="ri:download-2-line" width="15" />
 								<span>Drop to attach &middot; images, PDFs, or audio</span>
 							</div>
 						{/if}
-						{#if attachments.length > 0}
+						{#if attachments.count > 0}
 							<div class="attachments">
-								{#each attachments as a (a.id)}
+								{#each attachments.items as a (a.id)}
 									<div class="attachment">
 										{#if a.kind === "image"}
 											<img src={a.url} alt={a.filename} class="attachment-thumb" />
@@ -2191,14 +1900,21 @@
 											</span>
 										{/if}
 										<div class="attachment-meta">
-											<span class="attachment-name">{a.filename}</span>
+											<!-- An image carries only its size (VIR-237): a screenshot's
+											     generated filename says nothing the thumbnail has not
+											     already shown. Every other kind keeps its name, because a
+											     type icon and a byte count cannot tell two PDFs apart. The
+											     name still reaches assistive tech through the img alt. -->
+											{#if a.kind !== "image"}
+												<span class="attachment-name">{a.filename}</span>
+											{/if}
 											<span class="attachment-size">{formatFileSize(a.size)}</span>
 										</div>
 										<button
 											type="button"
 											class="attachment-remove"
 											aria-label="Remove attachment"
-											onclick={() => removeAttachment(a.id)}
+											onclick={() => attachments.remove(a.id)}
 										>
 											<Icon icon="ri:close-line" width="13" />
 										</button>
@@ -2206,23 +1922,23 @@
 								{/each}
 							</div>
 						{/if}
-						{#if capabilityIssue}
+						{#if models.capabilityIssue}
 							<div class="capability-banner">
 								<span>
-									{capabilityIssue.modelName} can't read {capabilityIssue.lacks.join(" or ")}.
+									{models.capabilityIssue.modelName} can't read {models.capabilityIssue.lacks.join(" or ")}.
 								</span>
-								{#if capabilityIssue.candidate}
-									<button type="button" class="capability-switch" onclick={switchToCapableModel}>
-										Switch to {capabilityIssue.candidate.displayName}
+								{#if models.capabilityIssue.candidate}
+									<button type="button" class="capability-switch" onclick={() => models.switchToCapable()}>
+										Switch to {models.capabilityIssue.candidate.displayName}
 									</button>
 								{:else}
-									<span class="capability-none">No available model can read {capabilityIssue.lacks.join(" or ")} yet.</span>
+									<span class="capability-none">No available model can read {models.capabilityIssue.lacks.join(" or ")} yet.</span>
 								{/if}
 							</div>
 						{/if}
-						{#if stagedRefs.length > 0}
+						{#if refs.staged.length > 0}
 							<div class="staged-refs">
-								{#each stagedRefs as r (r.id)}
+								{#each refs.staged as r (r.id)}
 									<div class="staged-ref">
 										<Icon
 											icon="ri:double-quotes-l"
@@ -2236,7 +1952,7 @@
 											type="button"
 											class="queued-remove"
 											aria-label="Remove reference"
-											onclick={() => removeStagedRef(r.id)}
+											onclick={() => refs.remove(r.id)}
 										>
 											<Icon icon="ri:close-line" width="13" />
 										</button>
@@ -2270,20 +1986,31 @@
 								alreadyExisted={interviewClosedPart?.document_already_existed ?? false}
 								chaptersError={interviewClosedPart?.chapters_error ?? null}
 							/>
-						{:else if isGettingStartedChat(currentChatConversationId) && gettingStarted.locked}
-							<!-- No model yet: one line, not a dead input. -->
-							<LockedComposer />
+						{:else if isGettingStartedChat(currentChatConversationId) && !gettingStarted.aiConnected}
+							<!-- No model yet. The composer STAYS and says why it
+							     cannot be used: the app is no longer closed off, so
+							     the thing that genuinely does not work has to
+							     explain itself where it is, rather than the whole
+							     surface disappearing around it. -->
+							<ChatInput
+								bind:value={input}
+								disabled={true}
+								sendDisabled={true}
+								maxWidth="max-w-3xl"
+								placeholder="Connect AI above to write here"
+								onSubmit={() => {}}
+							/>
 						{:else}
 						<ChatInput
-							allowEmptySubmit={stagedRefs.length > 0 || attachments.length > 0}
-							onAttach={addFiles}
+							allowEmptySubmit={refs.staged.length > 0 || attachments.count > 0}
+							onAttach={(f) => attachments.add(f)}
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
 							sendDisabled={chat.status !== "ready"}
 							isStreaming={chat.status === "streaming"}
 							maxWidth="max-w-3xl"
-							placeholder={isGhost ? "Write a message (temporary)…" : "Write a message..."}
+							placeholder={isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
 						/>
@@ -2407,6 +2134,8 @@
 		align-items: center;
 		gap: 6px;
 	}
+
+
 
 	.ghost-toggle {
 		display: inline-flex;
@@ -2690,10 +2419,10 @@
 		z-index: 1;
 		/* Keep scroll position stable as streamed content grows above the fold */
 		overflow-anchor: auto;
-		/* Use standard scrollbar styling — preserves overlay scrollbar behavior on macOS
-		   (unlike ::-webkit-scrollbar which forces classic scrollbars that steal layout space) */
-		scrollbar-width: thin;
-		scrollbar-color: var(--color-border) transparent;
+		/* Scrollbar: inherited from the :root rule in app.css. This was the one
+		   place in the app that got it right — standard properties, so overlay
+		   behaviour survived — and the comment explaining why is now that
+		   rule's comment. */
 	}
 
 	.chat-layout.visible {
@@ -2740,13 +2469,12 @@
 		width: 100%;
 		max-width: 48rem;
 		padding: 0 2rem 2rem 2rem;
-		/* 78px is what this measured when it was written as "1rem plus the
-		   floating tab bar's reserve": the bar is gone, but on desktop — where
-		   no bar ever rendered — that sum had become the composer's resting
-		   inset off the window edge, so the number stays and the derivation
-		   goes. The phone override below is where the bar's room actually
-		   came out. */
-		padding-bottom: 78px;
+		/* The composer's resting inset off the window edge. It sat at 78px,
+		   a leftover of "1rem plus the floating tab bar's reserve" kept after
+		   the bar went; on a desktop window that read as the composer
+		   floating a hand's width above the bottom (Adam, 2026-09-14). The
+		   phone override below sets its own. */
+		padding-bottom: 1.5rem;
 		background-color: var(--color-surface);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
@@ -2820,9 +2548,14 @@
 		max-width: 15rem;
 	}
 
+	/* Four times the area of the old 2.25rem chip (VIR-238), which was too
+	   small to tell one screenshot from another. Linear 4x (9rem) was the
+	   other reading of the ticket and is far too tall — it would own the
+	   composer. The icon below stays at 2.25rem: a file chip is identified by
+	   its name, which it keeps, so it has nothing to gain from the height. */
 	.attachment-thumb {
-		width: 2.25rem;
-		height: 2.25rem;
+		width: 4.5rem;
+		height: 4.5rem;
 		border-radius: 0.4rem;
 		object-fit: cover;
 		flex-shrink: 0;
@@ -3082,6 +2815,51 @@
 	.message-wrapper.bleeds {
 		contain: layout;
 	}
+
+	/* ── The room's rhythm ──
+	   The getting-started room is one voice writing down the page, not two
+	   people taking turns: its lines are separate assistant messages only
+	   because the server appends them one at a time. At the default turn
+	   spacing they drift 3rem apart (a paragraph's trailing margin, the
+	   wrapper's padding twice, and the list's gap, none of which collapse
+	   through `contain`) while the paragraphs INSIDE one message sit 1rem
+	   apart — so the page reads as pulled apart. Here the gap is the only
+	   spacing left, set to the paragraph's own rhythm. A user turn keeps its
+	   bubble, which separates itself. */
+	.messages-container.room {
+		gap: 1rem;
+	}
+	.messages-container.room .message-wrapper:not([data-role="user"]) {
+		padding: 0;
+	}
+	/* `.markdown > .streamdown-content > <blocks>` — Streamdown nests its
+	   output one level, so the original `.markdown > :last-child` matched
+	   that wrapper and never the last paragraph. The trailing margin stayed,
+	   and the room's lines sat 2rem apart while paragraphs inside a line sat
+	   at 1rem — the very thing this rule was written to fix. */
+	.messages-container.room .message-wrapper:not([data-role="user"]) :global(.markdown > * > :last-child) {
+		margin-bottom: 0;
+	}
+
+	/* ── The standfirst ──
+	   The welcome's opening line is the most important sentence in the
+	   product and was set as body copy, indistinguishable from the admin
+	   paragraph beneath it. It carries the page's one voice change: the
+	   book's serif, a size up, with air under it. Everything else in the
+	   room stays body. */
+	/* Descendant, not child: Streamdown nests its output one level inside
+	   `.markdown`, so `>` never matched. */
+	.messages-container.room .message-wrapper[data-subject="gs:welcome"] :global(.markdown p:first-of-type) {
+		font-family: var(--md-heading-major-family, var(--font-serif));
+		font-size: 1.3125rem;
+		line-height: 1.5;
+		margin-bottom: 1.25rem;
+	}
+
+	/* `.settled` is still set on every line the room speaks about a step that
+	   is already done — the hook is kept, the check that hung in the margin is
+	   not. It read as a UI artifact stuck onto prose, in a green nothing else
+	   in the room uses, and it broke the column's left edge. */
 
 	.message-wrapper :global(h1),
 	.message-wrapper :global(h2),

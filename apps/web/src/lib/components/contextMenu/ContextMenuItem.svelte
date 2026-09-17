@@ -1,7 +1,27 @@
 <script lang="ts">
-	import Icon from '$lib/components/Icon.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 
+	/**
+	 * The context menu's row: an adapter, not a row.
+	 *
+	 * The markup and CSS that used to live here IS the app's menu row, and it
+	 * was unreachable from anywhere else because this component takes a
+	 * `ContextMenuItem` off the store and calls the store on click. Six other
+	 * menus re-rolled it under six names as a result. The row moved to
+	 * `MenuItem.svelte`; what stays here is the only part that was ever
+	 * specific to the context menu — the store, the submenu, the dividers.
+	 *
+	 * `iconColor` does not survive the move. It was a per-item inline `color:`
+	 * on the glyph — a literal in the pane, which design-grammar.md §5 will not
+	 * have. Nothing sets it: `ContextMenuItem.iconColor` is declared on the
+	 * store's type and read by `ContextMenuSubmenu` (where it paints a color
+	 * swatch, and still does), but no call site in the tree assigns it on a
+	 * TOP-LEVEL item, which is all this component renders. If that changes, the
+	 * answer is `MenuItem`'s `leading` snippet — a swatch is a leading element,
+	 * not a tinted icon — or `destructive`, which is a state rather than a
+	 * paint.
+	 */
 	interface Props {
 		item: ContextMenuItem;
 		focused?: boolean;
@@ -38,151 +58,30 @@
 	<div class="divider"></div>
 {/if}
 
-<button
-	class="menu-item"
-	class:focused
-	class:disabled={item.disabled}
-	class:checked={item.checked}
-	class:destructive={item.variant === 'destructive'}
-	class:has-submenu={!!item.submenu}
-	class:loading={isLoading}
+<MenuItem
+	icon={item.icon}
+	label={item.label}
+	shortcut={item.shortcut}
+	checked={item.checked}
+	destructive={item.variant === 'destructive'}
+	disabled={item.disabled}
+	loading={isLoading}
+	submenu={!!item.submenu}
+	expanded={item.submenu ? contextMenu.openSubmenuId === item.id : undefined}
+	{focused}
 	onclick={handleClick}
 	onmouseenter={handleMouseEnter}
 	onmouseleave={handleMouseLeave}
-	disabled={item.disabled || isLoading}
-	role="menuitem"
-	aria-disabled={item.disabled}
-	aria-haspopup={item.submenu ? 'menu' : undefined}
-	aria-expanded={item.submenu && contextMenu.openSubmenuId === item.id ? 'true' : undefined}
->
-	{#if item.icon}
-		<span class="item-icon" style={item.iconColor ? `color: ${item.iconColor}` : undefined}>
-			{#if isLoading}
-				<Icon icon="ri:loader-4-line" width="16" class="spin" />
-			{:else}
-				<Icon icon={item.icon} width="16" />
-			{/if}
-		</span>
-	{:else if isLoading}
-		<span class="item-icon">
-			<Icon icon="ri:loader-4-line" width="16" class="spin" />
-		</span>
-	{/if}
-
-	<span class="item-label">{item.label}</span>
-
-	{#if item.shortcut}
-		<span class="item-shortcut">{item.shortcut}</span>
-	{/if}
-
-	{#if item.submenu}
-		<span class="item-chevron">
-			<Icon icon="ri:arrow-right-s-line" width="16" />
-		</span>
-	{/if}
-</button>
+/>
 
 {#if item.dividerAfter}
 	<div class="divider"></div>
 {/if}
 
 <style>
-	@reference "../../../app.css";
-
-	.menu-item {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		width: 100%;
-		padding: 6px 10px;
-		border: none;
-		border-radius: 6px;
-		background: transparent;
-		color: var(--color-foreground);
-		font-size: 13px;
-		text-align: left;
-		cursor: pointer;
-		transition: background-color 100ms ease;
-	}
-
-	.menu-item:hover:not(.disabled),
-	.menu-item.focused:not(.disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-	}
-
-	.menu-item.disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.menu-item.destructive {
-		color: var(--color-error, #ef4444);
-	}
-
-	.menu-item.destructive:hover:not(.disabled),
-	.menu-item.destructive.focused:not(.disabled) {
-		background: color-mix(in srgb, var(--color-error, #ef4444) 12%, transparent);
-	}
-
-	.menu-item.loading {
-		pointer-events: none;
-	}
-
-	.item-icon {
-		flex-shrink: 0;
-		width: 16px;
-		height: 16px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: var(--color-foreground-muted);
-	}
-
-	.menu-item.destructive .item-icon {
-		color: var(--color-error, #ef4444);
-	}
-
-	.menu-item.checked {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
-	}
-
-	.item-label {
-		flex: 1;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.item-shortcut {
-		flex-shrink: 0;
-		font-size: 11px;
-		color: var(--color-foreground-muted);
-		opacity: 0.7;
-	}
-
-	.item-chevron {
-		flex-shrink: 0;
-		margin-left: auto;
-		color: var(--color-foreground-muted);
-	}
-
 	.divider {
 		height: 1px;
 		background: var(--color-border);
 		margin: 4px 8px;
-	}
-
-	/* Spin animation for loading state */
-	:global(.spin) {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
 	}
 </style>

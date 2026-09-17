@@ -137,10 +137,10 @@ impl AgentLoop {
         initial_messages: Vec<Value>,
         tools: Vec<Value>,
         context: ToolContext,
-        initial_thought_signature: Option<String>,
         cancel_token: Option<CancellationToken>,
     ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send + '_>> {
         let llm_config = self.llm_config.clone();
+        let pool = self._pool.clone();
         let tool_executor = self.tool_executor.clone();
         let config = self.config.clone();
         let executor_config = ExecutorConfig {
@@ -151,7 +151,19 @@ impl AgentLoop {
         Box::pin(stream! {
             let mut messages = initial_messages;
             let mut step: u32 = 0;
-            let mut next_thought_signature = initial_thought_signature;
+
+            // Ask the model to RETURN its thinking. Claude 5 omits the text
+            // unless told `display: summarized`; Gemini needs
+            // `includeThoughts`. The catalog carries the right options per
+            // family (`ReasoningFacts::display_options`), and a BYO endpoint,
+            // which never sees the gateway's providerOptions, gets none.
+            let display_options: Option<Value> = if crate::api::settings_byo::byo_is_active(&pool).await {
+                None
+            } else {
+                crate::api::model_catalog::reasoning_facts(&model)
+                    .map(|f| f.display_options)
+                    .filter(|v| v.as_object().is_some_and(|o| !o.is_empty()))
+            };
 
             // Emit loop started
             yield AgentEvent::LoopStarted {
@@ -182,23 +194,7 @@ impl AgentLoop {
 
                 tracing::info!(step, "Agent loop step");
 
-                // Build provider options for reasoning models
-                // None until plan phase 2d attaches the catalog's display
-                // options. The function this replaced matched `claude-3` /
-                // `o1` / `deepseek` by substring and built a legacy
-                // `budget_tokens` thinking shape that the proxy dropped and
-                // that Claude 4.7+ now rejects with a 400.
-                let provider_options: Option<serde_json::Value> = None;
-
-                // Use the next_thought_signature if available, otherwise look in history
-                let thought_signature = if next_thought_signature.is_some() {
-                    next_thought_signature.take()
-                } else {
-                    messages.iter().rev()
-                        .filter_map(|m| m.get("thought_signature").and_then(|s| s.as_str()))
-                        .next()
-                        .map(|s| s.to_string())
-                };
+                let provider_options = display_options.clone();
 
                 // Stream events through a channel for incremental delivery.
                 // Previously events were collected into a Vec and yielded in a
@@ -221,7 +217,10 @@ impl AgentLoop {
                         &msgs,
                         &tls,
                         provider_options,
-                        thought_signature,
+                        // The temperature chat has always run at. It lived in
+                        // the proxy as a default nobody on the box could see;
+                        // now the box says it, and the proxy default can go.
+                        Some(0.7),
                         None, // agent loop: no fixed output cap
                         |event| {
                             let _ = ev_tx.send(event);
@@ -232,9 +231,6 @@ impl AgentLoop {
 
                 // Yield events incrementally as they arrive from the stream
                 while let Some(event) = ev_rx.recv().await {
-                    if let AgentEvent::ThoughtSignature { ref signature } = event {
-                        next_thought_signature = Some(signature.clone());
-                    }
                     yield event;
                 }
 
@@ -247,17 +243,39 @@ impl AgentLoop {
                 let result = match result {
                     Ok(r) => r,
                     Err(e) => {
-                        yield AgentEvent::error(
-                            e.to_string(),
-                            Some(ErrorCode::LlmError),
-                            false,
-                        );
+                        // An interrupted stream is not an LLM error: the model
+                        // was mid-sentence when the bytes stopped. The text
+                        // that streamed is already with the caller; this event
+                        // is what stops it being saved as the whole answer.
+                        let code = match e {
+                            stream::StreamError::Interrupted(_) => ErrorCode::Interrupted,
+                            _ => ErrorCode::LlmError,
+                        };
+                        yield AgentEvent::error(e.to_string(), Some(code), false);
                         break;
                     }
                 };
 
+                // The step's reasoning blocks, for the row and for the echo
+                // below. Before the completion check, so a final step's
+                // thinking is stored too.
+                if !result.reasoning_details.is_empty() {
+                    yield AgentEvent::ReasoningDetails { details: result.reasoning_details.clone() };
+                }
+
                 // Check if we're done (no tool calls)
                 if result.tool_calls.is_empty() {
+                    if result.finish_reason == StepReason::MaxTokens {
+                        // `finish_reason: length` used to be mapped and then
+                        // ignored, so a reply the model never finished read
+                        // as one it did.
+                        yield AgentEvent::error(
+                            "The model reached its output limit before it finished; \
+                             what it wrote is above.",
+                            Some(ErrorCode::OutputLimit),
+                            false,
+                        );
+                    }
                     yield AgentEvent::step_complete(step, result.finish_reason);
                     break;
                 }
@@ -314,7 +332,7 @@ impl AgentLoop {
                 messages.push(executor::build_assistant_tool_message(
                     &result.content,
                     &result.tool_calls,
-                    result.thought_signature.as_deref(),
+                    &result.reasoning_details,
                 ));
 
                 // 2. Add tool result messages

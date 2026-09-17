@@ -27,7 +27,6 @@
 		priorSleepEvents?: DayEvent[];
 		timezone: string | null;
 		pageDate?: Date;
-		readinessScore?: number | null;
 		sleepCycles?: ScoredSleepCycle[];
 		// Location data
 		movementStops?: TimelineDayLocationChunk[];
@@ -38,7 +37,7 @@
 	}
 
 	let {
-		events, priorSleepEvents = [], timezone, pageDate, readinessScore, sleepCycles = [],
+		events, priorSleepEvents = [], timezone, pageDate, sleepCycles = [],
 		movementStops = [], movementTrack = [], dedupedMarkers = [],
 		dayDateSlug = "", hasLocationData = false,
 	}: Props = $props();
@@ -186,11 +185,15 @@
 			}
 			if (e.entityNovelty) {
 				for (const [entityId, z] of Object.entries(e.entityNovelty)) {
-					// Clean up entity ID for display: "person_demo_maya" → "Maya"
-					const displayName = entityId
-						.replace(/^(person|place|org)_demo_/, "")
-						.replace(/_/g, " ")
-						.replace(/\b\w/g, (c) => c.toUpperCase());
+					// The name comes from the server, which is the only place that
+					// can supply one. This used to strip `person_demo_` off the id
+					// with a regex and title-case the rest — which is right on the
+					// seeded demo box and, on a real one, labels the dot
+					// "Person A1b2c3d4e5f6g7h8", because a generated id is a hash.
+					// A dot whose subject no longer exists is not drawn at all,
+					// rather than drawn as its own id.
+					const displayName = e.entityNames[entityId];
+					if (!displayName) continue;
 					// Use entity-specific timestamp if available
 					const tsIso = e.entityTimestamps?.[entityId];
 					const xHourOverride = tsIso
@@ -354,7 +357,7 @@
 
 		// Start from readiness at wake time (or baseline if no readiness/wake)
 		const wH = wakeHour;
-		const rZ = readinessScore != null ? ((readinessScore - 50) / 50) * Y_MAX : 0;
+		const rZ = 0;
 		const anchorX = wH !== null ? hourToX(wH) : hourToX(0);
 		const anchorY = wH !== null ? yToSvg(rZ) : yToSvg(0);
 
@@ -363,7 +366,7 @@
 				x: anchorX,
 				y: anchorY,
 				isUnknown: false,
-				label: wH !== null ? `Readiness ${readinessScore ?? 0}%` : "Start of day",
+				label: "Start of day",
 			},
 			...pts,
 		];
@@ -815,16 +818,10 @@
 			{/each}
 		{/if}
 
-		<!-- Readiness diamond at wake time (replaces midnight anchor) -->
-		{#if readinessScore != null && wakeX !== null}
-			{@const wx = wakeX!}
-			{@const rZ = ((readinessScore - 50) / 50) * Y_MAX}
-			<g transform="translate({wx}, {yToSvg(rZ)})">
-				<polygon points="0,-6 5,0 0,6 -5,0"
-					fill="var(--color-primary, #4f46e5)"
-					stroke="var(--color-background, #fff)" stroke-width="1.5" />
-			</g>
-		{:else if eventPoints.length > 0}
+		<!-- The readiness diamond that stood here drew from `readiness_score`, a
+		     column with no writer on any box, so it never once appeared and the
+		     fallback below was always what rendered. -->
+		{#if eventPoints.length > 0}
 			<!-- Fallback: small dot at curve start -->
 			<circle
 				cx={hourToX(0)}
@@ -1225,13 +1222,6 @@
 			<!-- Border -->
 			<rect x={SM.left} y={SM.top} width={plotW} height={plotH}
 				fill="none" stroke="var(--color-border, #e5e5e5)" stroke-width="0.75" rx="2" />
-			<!-- Readiness badge -->
-			{#if readinessScore != null}
-				<text x={SM.left + plotW - 4} y={SM.top + 14} text-anchor="end"
-					class="axis-label" fill="var(--color-foreground-muted, #888)">
-					Readiness {readinessScore}%
-				</text>
-			{/if}
 		</svg>
 	{:else}
 		<!-- No scored cycles — the sleep events on a SPAN axis: the night from

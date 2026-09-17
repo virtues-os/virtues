@@ -52,8 +52,18 @@
 			width: "20%",
 			minWidth: "150px",
 			sortable: true,
+			// The grid's mobile card mode reads columns, not `tableRow`, so
+			// without these it shows the raw ISO instant and the raw slug.
+			getValue: (c) => fmtWhen(c.created_at),
 		},
-		{ key: "feature", label: "Feature", icon: "ri:price-tag-3-line", width: "20%", minWidth: "120px" },
+		{
+			key: "feature",
+			label: "What for",
+			icon: "ri:price-tag-3-line",
+			width: "20%",
+			minWidth: "120px",
+			getValue: (c) => (c.feature ? featureLabel(c.feature) : "—"),
+		},
 		{ key: "model", label: "Model", icon: "ri:cpu-line", width: "30%", minWidth: "170px" },
 		{
 			// Prompt + completion + reasoning: three columns of small numbers
@@ -84,7 +94,21 @@
 	 * the price belongs to the user's provider and is theirs to look up.
 	 */
 	function cost(c: AiCallRow): string {
-		return c.route === "byo" ? "your key" : formatMicrosPrecise(c.cost_micros);
+		return c.route === "byo" ? "on your key" : formatMicrosPrecise(c.cost_micros);
+	}
+
+	/**
+	 * The feature slug as a person would say it: `day_summary` → "Day summary".
+	 *
+	 * A twin of `kindLabelOf` in BillingView, which labels the by-kind
+	 * buckets above this log from the same slugs. Duplicated rather than
+	 * imported: BillingView imports this file, so importing back would be a
+	 * cycle, and a two-line map does not warrant a third file. Change both.
+	 */
+	function featureLabel(label: string): string {
+		return label === "other"
+			? "Other"
+			: label.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 	}
 
 	function fmtWhen(ts: string): string {
@@ -104,8 +128,8 @@
 	     spending on one page, with nothing saying how they differ, is how you
 	     get a reader adding them together. -->
 	<p class="chapter-lede">
-		Every paid call, itemized. The “Usage” lines in the wallet ledger above are
-		these, totalled.
+		Every AI call, one per line. The Usage lines under Wallet activity above are
+		these, added up.
 	</p>
 	<UniversalDataGrid
 		items={[]}
@@ -114,14 +138,14 @@
 		server={fetchCalls}
 		pageSize={25}
 		emptyIcon="ri:sparkling-line"
-		emptyMessage="No AI calls recorded yet"
+		emptyMessage="No AI calls yet"
 		loadingMessage="Reading the call log…"
-		searchPlaceholder="Search by feature or model…"
+		searchPlaceholder="Search by purpose or model…"
 		defaultViewMode="table"
 	>
 		{#snippet tableRow(call: AiCallRow)}
 			<td class="cell when">{fmtWhen(call.created_at)}</td>
-			<td class="cell">{call.feature ?? "—"}</td>
+			<td class="cell">{call.feature ? featureLabel(call.feature) : "—"}</td>
 			<td class="cell mono">{call.model ?? "—"}</td>
 			<td class="cell num hide-mobile">{tokens(call).toLocaleString()}</td>
 			<td class="cell num" class:muted={call.route === "byo"}>{cost(call)}</td>

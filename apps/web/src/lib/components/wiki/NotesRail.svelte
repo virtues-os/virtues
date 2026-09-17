@@ -17,6 +17,7 @@
 	 * the editing back to you; the machine's only channel in is the note itself.
 	 */
 	import { onMount } from 'svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import WikiCollapsibleSection from './WikiCollapsibleSection.svelte';
 	import { listNotes, createNote, resolveNote, type WikiNote } from '$lib/wiki/api';
 
@@ -105,12 +106,12 @@
 
 						<p class="actions">
 							<span class="by">{note.author === 'ai' ? 'From the record' : 'You'}</span>
-							<button type="button" disabled={busy} onclick={() => close(note.id, 'accepted')}>
+							<TextAction disabled={busy} onclick={() => close(note.id, 'accepted')}>
 								Accept
-							</button>
-							<button type="button" disabled={busy} onclick={() => close(note.id, 'dismissed')}>
+							</TextAction>
+							<TextAction quiet disabled={busy} onclick={() => close(note.id, 'dismissed')}>
 								Dismiss
-							</button>
+							</TextAction>
 						</p>
 					</li>
 				{/each}
@@ -196,22 +197,6 @@
 
 	.by {
 		color: var(--color-foreground-subtle);
-	}
-
-	.actions button {
-		background: none;
-		border: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-accent, currentColor);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-		cursor: pointer;
-	}
-
-	.actions button:disabled {
-		opacity: 0.5;
-		cursor: default;
 	}
 
 	.add {

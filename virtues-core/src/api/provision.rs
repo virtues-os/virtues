@@ -164,9 +164,12 @@ pub(crate) async fn scan_or_cached() -> Result<Vec<Network>, String> {
     }
 }
 
-/// The switchover, factored out so the JSON route and the HTML portal perform
-/// exactly the same sequence. Returns `None` on success, or NetworkManager's
-/// own words on failure.
+/// The switchover, factored out so the JSON route, the settings page and the
+/// BLE provisioner perform exactly the same sequence. Returns `None` on
+/// success, or NetworkManager's own words on failure.
+///
+/// `identity.is_some()` selects the 802.1X (EAP) branch; `psk` is then the
+/// account password rather than a pre-shared key.
 ///
 /// **Sequential, and it has to be.** Measured on the Q6A 2026-08-07: the radio
 /// scans happily while hosting the AP, but cannot hold an AP and a client
@@ -175,12 +178,6 @@ pub(crate) async fn scan_or_cached() -> Result<Vec<Network>, String> {
 /// So the AP comes down first, and the caller loses its link to us partway
 /// through. The lock stops `maintenance::setup_ap` from putting the AP back on
 /// top of the association being formed.
-pub(crate) async fn perform_join(ssid: &str, psk: Option<&str>) -> Option<String> {
-    perform_join_full(ssid, psk, None).await
-}
-
-/// The full join, including the 802.1X branch. `identity.is_some()` selects
-/// EAP; `psk` is then the account password rather than a pre-shared key.
 pub(crate) async fn perform_join_full(
     ssid: &str,
     psk: Option<&str>,

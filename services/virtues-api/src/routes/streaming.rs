@@ -30,6 +30,9 @@ use crate::{
 pub struct StreamChunk {
     pub choices: Option<Vec<StreamChoice>>,
     pub usage: Option<StreamUsage>,
+    /// Present when the upstream reports a failure in-stream. Never read
+    /// past `is_some()`: the value could quote request text.
+    pub error: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +62,41 @@ pub struct StreamUsage {
     pub total_tokens: u32,
     #[serde(default)]
     pub cost: Option<f64>,
+}
+
+/// The one frame a chat-completions stream has for "this broke": an
+/// OpenAI-shaped `error` object in place of a chunk. The box's parser
+/// (`agent/stream.rs`) stops on it and reports the reply as interrupted.
+/// The message is transport text, never prompt or completion content.
+fn error_frame(message: &str) -> String {
+    serde_json::json!({
+        "error": { "code": "upstream_stream_broken", "message": message }
+    })
+    .to_string()
+}
+
+/// Resolve a stream's cost: Vercel-reported (authoritative) or token × live
+/// catalog pricing (fallback). `None` usage, or an unknown rate, is 0 — served
+/// unbilled rather than invented (see `providers::calculate_cost`).
+fn resolve_cost_micros(
+    catalog: &crate::catalog::Catalog,
+    model: &str,
+    usage: Option<StreamUsage>,
+) -> i64 {
+    match usage {
+        Some(u) => {
+            if let Some(cost_usd) = u.cost {
+                (cost_usd * 1_000_000.0).round() as i64
+            } else if u.prompt_tokens + u.completion_tokens > 0 {
+                calculate_cost(catalog, model, u.prompt_tokens, u.completion_tokens)
+                    .map(|c| (c * 1_000_000.0).round() as i64)
+                    .unwrap_or(0)
+            } else {
+                0
+            }
+        }
+        None => 0,
+    }
 }
 
 /// Create SSE streaming response with caller-supplied charge callback.
@@ -131,22 +169,46 @@ where
     tokio::spawn(async move {
         let mut buffer = String::new();
         let mut final_usage: Option<StreamUsage> = None;
+        // The upstream said it was done. A stream that ends any other way —
+        // a read error, the idle timeout, or bytes that simply stop — is
+        // reported to the box as an error frame rather than passed off as a
+        // clean end, which is what the box used to see and save (VIR-334).
+        let mut saw_done = false;
+        // The read-error branch sends its own frame; the trailer below must
+        // not send a second one for the same break.
+        let mut reported = false;
         // `FnOnce` callback wrapped in Option so we can take() inside the
         // loop without moving across iterations.
         let mut on_complete = Some(on_complete);
 
         tokio::pin!(bytes_stream);
 
-        while let Some(chunk_result) = bytes_stream.next().await {
-            let chunk = match chunk_result {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!("Stream error: {}", e);
-                    break;
+        let mut upstream_open = true;
+        'read: while upstream_open {
+            match bytes_stream.next().await {
+                Some(Ok(chunk)) => buffer.push_str(&String::from_utf8_lossy(&chunk)),
+                Some(Err(e)) => {
+                    // reqwest's error text names the transport failure, never
+                    // the body, so it is safe to log and to forward.
+                    tracing::error!(model = %model, "upstream stream broke: {}", e);
+                    let _ = tx
+                        .send(Ok(SseEvent::default().data(error_frame(&format!(
+                            "the connection to the model dropped mid-reply: {e}"
+                        )))))
+                        .await;
+                    reported = true;
+                    break 'read;
                 }
-            };
-
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
+                None => {
+                    // The upstream closed. A final line that arrived without
+                    // its newline is still a line — left in the buffer it
+                    // would turn a `[DONE]` into a false "ended early".
+                    upstream_open = false;
+                    if !buffer.trim().is_empty() && !buffer.ends_with('\n') {
+                        buffer.push('\n');
+                    }
+                }
+            }
 
             // Process complete lines
             while let Some(line_end) = buffer.find('\n') {
@@ -161,34 +223,11 @@ where
                     let data = &line[6..];
 
                     if data == "[DONE]" {
+                        saw_done = true;
                         // Send [DONE] event
                         let _ = tx.send(Ok(SseEvent::default().data("[DONE]"))).await;
 
-                        // Resolve cost: Vercel-reported (authoritative) or
-                        // token × live catalog pricing (fallback).
-                        let cost_micros = match final_usage.take() {
-                            Some(u) => {
-                                if let Some(cost_usd) = u.cost {
-                                    (cost_usd * 1_000_000.0).round() as i64
-                                } else if u.prompt_tokens + u.completion_tokens > 0 {
-                                    // `None` = unknown rate; serve unbilled
-                                    // rather than invent one (see
-                                    // providers::calculate_cost).
-                                    calculate_cost(
-                                        &catalog,
-                                        &model,
-                                        u.prompt_tokens,
-                                        u.completion_tokens,
-                                    )
-                                    .map(|c| (c * 1_000_000.0).round() as i64)
-                                    .unwrap_or(0)
-                                } else {
-                                    0
-                                }
-                            }
-                            None => 0,
-                        };
-
+                        let cost_micros = resolve_cost_micros(&catalog, &model, final_usage.take());
                         if cost_micros > 0 {
                             if let Some(cb) = on_complete.take() {
                                 cb(cost_micros).await;
@@ -199,7 +238,7 @@ where
                                 );
                             }
                         }
-                        break;
+                        break 'read;
                     }
 
                     // Parse chunk and extract usage if present
@@ -207,11 +246,40 @@ where
                         if let Some(usage) = chunk.usage {
                             final_usage = Some(usage);
                         }
+                        // An upstream that reports its own failure as an
+                        // `error` chunk has said how it ended; forwarding it
+                        // is the whole report, so no second frame below.
+                        if chunk.error.is_some() {
+                            saw_done = true;
+                        }
                     }
 
                     // Forward the data to client
                     let _ = tx.send(Ok(SseEvent::default().data(data))).await;
                 }
+            }
+        }
+
+        if !saw_done {
+            // Bytes stopped without the sentinel. A read error already sent
+            // its own frame above; this frame covers the upstream closing
+            // quietly. The usage trailer rides with the last chunk, so an
+            // unfinished stream almost never carries one — the turn goes
+            // unbilled, and that is logged rather than guessed at.
+            if !reported {
+                let _ = tx
+                    .send(Ok(SseEvent::default().data(error_frame(
+                        "the model's reply ended before it was finished",
+                    ))))
+                    .await;
+            }
+            let cost_micros = resolve_cost_micros(&catalog, &model, final_usage.take());
+            if cost_micros > 0 {
+                if let Some(cb) = on_complete.take() {
+                    cb(cost_micros).await;
+                }
+            } else {
+                tracing::warn!(model = %model, "upstream stream ended without [DONE]; turn unbilled");
             }
         }
 

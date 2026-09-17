@@ -84,9 +84,22 @@ export const SETTINGS_MODE: SidebarMode = {
 		// other screens — which is a subject someone comes to deliberately, not a
 		// reading they glance at while checking temperatures.
 		{ id: 'display', label: 'Display', icon: 'ri:tv-2-line', href: '/virtues/display' },
+		// SQL, Terminal and Lake are NOT here. They lived in this list for a
+		// while, on the argument that they already sit under `/virtues/*` —
+		// true of the route, and beside the point for the nav: they are tools,
+		// not preferences, and putting them here forced Settings' in-page nav to
+		// grow a second row of tabs to hold their sub-sections. They have their
+		// own rail door again (DEVELOPER_MODE below, `developer` in rooms.ts).
 	],
 };
 
+/**
+ * Developer. A rail door of its own, beside Sources and Settings at the foot.
+ *
+ * This constant sat unreferenced for a while, after the three rows were folded
+ * into Settings — it is live again rather than rewritten, because the fold
+ * changed nothing about what belongs in here.
+ */
 export const DEVELOPER_MODE: SidebarMode = {
 	id: 'developer',
 	title: 'Developer',
@@ -126,22 +139,27 @@ export const WIKI_MODE: SidebarMode = {
 		{ id: 'lifeline', label: 'Lifeline', icon: 'ri:pulse-line', href: '/wiki/lifeline' },
 		{
 			id: 'identity',
-			label: 'Narrative Identity',
-			icon: 'ri:compass-3-line',
+			// "You", not "Narrative Identity": that is the name of the artifact,
+			// not the name of the subject, and the room is the owner's own page.
+			label: 'You',
+			icon: 'ri:user-star-line',
 			href: '/wiki/identity',
 		},
 		// The life's own partition — authored in the interview, never inferred.
 		// Its own room: wiki_chapters is structure, not part of the identity
 		// document.
 		{ id: 'chapters', label: 'Chapters', icon: 'ri:contacts-book-2-line', href: '/wiki/chapters' },
+		// Beside Chapters on purpose: both are subjects the person named, and
+		// neither is derived from the record the way Days and Years are.
+		{ id: 'stories', label: 'Stories', icon: 'ri:book-2-line', href: '/wiki/stories' },
 		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', href: '/wiki/days' },
 		{ id: 'years', label: 'Years', icon: 'ri:calendar-2-line', href: '/wiki/years' },
 		{ id: 'people', label: 'People', icon: 'ri:user-line', href: '/wiki/people' },
 		{ id: 'places', label: 'Places', icon: 'ri:map-pin-line', href: '/wiki/places' },
 		{ id: 'orgs', label: 'Orgs', icon: 'ri:building-line', href: '/wiki/orgs' },
-		// The review surface. `auto_update` is the consent; this is where you
-		// see what that consent produced — without it the record edits its own
-		// prose in a room nobody visits.
+		// The review surface. Maintenance is the consent; this is where you see
+		// what that consent produced — without it the record edits its own prose
+		// in a room nobody visits.
 		{ id: 'history', label: 'History', icon: 'ri:history-line', href: '/wiki/history' },
 	],
 };

@@ -98,8 +98,8 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 				// appliance, setup_complete also requires the linked account, and
 				// the airlock's account step is skippable: gating the shell on it
 				// bounced "Enter Virtues" straight back to the letter forever,
-				// with AccountGate (the remedy) stranded behind the wall it was
-				// meant to open. The account is Home's getting-started business.
+				// with the remedy stranded behind the wall it was meant to open.
+				// Connecting AI is the getting-started room's first step now.
 				// `active` covers both finished and dismissed, which is the whole
 				// reason it replaced a separate skipped flag.
 				// A status of `onboarding` opens the letter on its own, whatever
@@ -117,29 +117,6 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		} catch (e) {
 			// Re-throw the redirect; swallow only network/parse errors so a
 			// transient box blip never traps the user out of their app.
-			if (e && typeof e === 'object' && 'status' in e) throw e;
-		}
-
-		// THE LOCK. No model, and the door unused: the app is one room. Every
-		// route but the getting-started chat (and Billing, where the BYO form
-		// still lives) lands in it. Derived server-side so the phone, which
-		// loads this same SPA from the box, gets the same verdict. A 404 is an
-		// older box without the endpoint: unlocked — a phone that updated
-		// ahead of its server must never strand here. A blip: unlocked, same
-		// reason as every gate above.
-		try {
-			const gs = await fetch('/api/getting-started');
-			if (gs.ok) {
-				const state = (await gs.json()) as { locked?: boolean };
-				const allowed =
-					url.pathname === '/chat/chat_getting_started' ||
-					url.pathname.startsWith('/virtues/billing') ||
-					url.pathname.startsWith('/virtues/byo-key');
-				if (state.locked === true && !allowed) {
-					throw redirect(303, '/chat/chat_getting_started');
-				}
-			}
-		} catch (e) {
 			if (e && typeof e === 'object' && 'status' in e) throw e;
 		}
 

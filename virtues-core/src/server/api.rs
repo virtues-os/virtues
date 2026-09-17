@@ -256,7 +256,8 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
             -- requests PER APPLET — around fifty on a page — for two small
             -- facts that the database can hand over in the same pass.
             p.pulse,
-            s.summary AS last_success_summary
+            s.summary AS last_success_summary,
+            w.cost_micros AS spend_week_micros
            FROM app_applets t
            LEFT JOIN LATERAL (
                SELECT array_agg(status ORDER BY started_at DESC) AS pulse
@@ -270,6 +271,23 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                   AND result_summary IS NOT NULL AND btrim(result_summary) <> ''
                 ORDER BY started_at DESC LIMIT 1
            ) s ON TRUE
+           -- What this applet has actually spent on AI in the last week.
+           -- Deterministic applets (every sync, every indexer) sum to zero,
+           -- which is the point: the number only appears where something is
+           -- burning money, so an AI-authored applet that runs hourly on a big
+           -- model is visible as such before the bill is.
+           --
+           -- Joined through the run, the same path `spend_micros_last_day`
+           -- takes for the cap. The `::bigint` cast is load-bearing —
+           -- SUM(bigint) is NUMERIC in Postgres and sqlx will not decode that
+           -- as i64.
+           LEFT JOIN LATERAL (
+               SELECT COALESCE(SUM(c.cost_micros), 0)::bigint AS cost_micros
+                 FROM app_ai_calls c
+                 JOIN app_applet_runs ar ON ar.id = c.applet_run_id
+                WHERE ar.applet_id = t.id
+                  AND c.created_at > now() - interval '7 days'
+           ) w ON TRUE
            LEFT JOIN app_applet_runs r ON r.id = (
                SELECT id FROM app_applet_runs
                WHERE applet_id = t.id
@@ -335,6 +353,21 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         .unwrap_or_default();
                     let last_success_summary: Option<String> =
                         r.try_get("last_success_summary").unwrap_or(None);
+                    // The SQL COALESCEs to 0, so a real "spent nothing" arrives
+                    // as 0 and NULL can only mean the decode failed. Those must
+                    // not collapse into each other: this is a money figure, and
+                    // a silently-zero money column reads as good news. So it
+                    // stays Option — null travels to the client as "unknown" —
+                    // and a failure says so once per list rather than never.
+                    let spend_week_micros: Option<i64> =
+                        match r.try_get::<Option<i64>, _>("spend_week_micros") {
+                            Ok(v) => v,
+                            Err(e) => {
+                                tracing::warn!(applet_id = %id, error = %e,
+                                    "could not decode applet weekly spend");
+                                None
+                            }
+                        };
                     let last_run_status: Option<String> =
                         r.try_get("last_run_status").unwrap_or(None);
                     let last_run = last_run_status.map(|s| {
@@ -375,6 +408,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "has_face": has_face,
                         "pulse": pulse,
                         "last_success_summary": last_success_summary,
+                        "spend_week_micros": spend_week_micros,
                         "created_at": created,
                         "updated_at": updated,
                         "last_run": last_run,
@@ -2139,29 +2173,170 @@ pub async fn write_article_handler(
     )
 }
 
-/// Turn maintenance on or off for one article.
-pub async fn set_article_auto_update_handler(
+/// The owner's own page: their name, their document, and the apparatus.
+///
+/// Also the one place that ensures they have a row among the people of their
+/// own wiki — nothing else ever created one.
+pub async fn wiki_me_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::me::get_me(state.db.pool()).await)
+}
+
+/// The stories: subjects the person named because they mattered.
+pub async fn wiki_list_stories_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::stories::list_stories(state.db.pool()).await)
+}
+
+pub async fn wiki_get_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::stories::get_story(state.db.pool(), &id).await)
+}
+
+/// Start a story. Only the person may: the editor's constitution forbids it
+/// from creating a subject, because naming one is a claim about what mattered.
+pub async fn wiki_create_story_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let title = body.get("title").and_then(|v| v.as_str()).unwrap_or("");
+    api_response(crate::api::stories::create_story(state.db.pool(), title).await)
+}
+
+pub async fn wiki_update_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(fields): Json<crate::api::stories::StoryFields>,
+) -> Response {
+    api_response(crate::api::stories::update_story(state.db.pool(), &id, &fields).await)
+}
+
+pub async fn wiki_delete_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::stories::delete_story(state.db.pool(), &id).await {
+        Ok(()) => success_message("Removed"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Give a story a page. Seeded with THEIR words, not a machine draft — a story
+/// has nothing beneath it to draft from, and the editor fills it by searching.
+pub async fn wiki_start_story_article_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::stories::start_article(state.db.pool(), &id).await)
+}
+
+/// Edit a chapter. There has never been a way to change one.
+pub async fn wiki_update_chapter_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(edit): Json<crate::api::narrative_draft::ChapterEdit>,
+) -> Response {
+    api_response(crate::api::narrative_draft::update_chapter(state.db.pool(), &id, &edit).await)
+}
+
+/// Unname a chapter, leaving the years it covered as an unnamed stretch.
+pub async fn wiki_delete_chapter_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::narrative_draft::delete_chapter(state.db.pool(), &id).await)
+}
+
+/// Every year of the life, newest first. Derived — opening the index writes
+/// nothing.
+pub async fn wiki_list_years_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::years::list_years(state.db.pool()).await)
+}
+
+/// One year's page. Creates its row on the way, which is the lazy half of the
+/// partition: every year is there to read, and none is written until asked for.
+pub async fn wiki_get_year_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+) -> Response {
+    api_response(crate::api::years::get_year(state.db.pool(), year).await)
+}
+
+/// Set what only the person can say about a year.
+pub async fn wiki_update_year_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let title = body.get("title").and_then(|v| v.as_str());
+    let summary = body.get("summary").and_then(|v| v.as_str());
+    match crate::api::years::update_year(state.db.pool(), year, title, summary).await {
+        Ok(()) => success_message("Saved"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Write a year's first article.
+pub async fn wiki_write_year_article_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+) -> Response {
+    api_response(crate::api::years::write_year_article(state.db.pool(), year).await)
+}
+
+/// Put a named version of an article back.
+///
+/// Rule 4 of the wiki's paradigm — every edit is a revision you can read AND
+/// revert — has been half true since the history feed shipped: the diff was
+/// readable and there was no way to undo it.
+pub async fn revert_article_handler(
     State(state): State<AppState>,
     Path((subject_type, subject_id)): Path<(String, String)>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    let on = body.get("auto_update").and_then(|v| v.as_bool()).unwrap_or(false);
-    match crate::api::wiki_articles::set_auto_update(
+    let Some(version) = body.get("version_number").and_then(|v| v.as_i64()) else {
+        return error_response(Error::InvalidInput(
+            "version_number is required".to_string(),
+        ));
+    };
+    match crate::api::wiki_editor::revert_article(
         state.db.pool(),
+        &state.yjs_state,
         &subject_type,
         &subject_id,
-        on,
+        version,
     )
     .await
     {
-        Ok(()) => success_message(if on {
-            "This article will be kept up to date"
-        } else {
-            "This article will no longer be updated automatically"
+        Ok(change) => success_message(&format!("Reverted to v{version} — {change}")),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Set how an article is maintained: always, auto, or never.
+pub async fn set_article_maintenance_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mode = body.get("maintenance").and_then(|v| v.as_str()).unwrap_or("");
+    match crate::api::wiki_articles::set_maintenance(
+        state.db.pool(),
+        &subject_type,
+        &subject_id,
+        mode,
+    )
+    .await
+    {
+        Ok(()) => success_message(match mode {
+            "always" => "The record will revisit this whenever anything changes",
+            "never" => "The record will leave this article alone",
+            _ => "The record will keep this up to date",
         }),
         Err(e) => error_response(e),
     }
 }
+
 
 /// Reclassify a person as an organization.
 ///
@@ -2305,22 +2480,6 @@ pub async fn wiki_get_day_handler(
 }
 
 
-/// Update a day by date
-pub async fn wiki_update_day_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-    Json(request): Json<crate::api::UpdateWikiDayRequest>,
-) -> Response {
-    match date.parse::<chrono::NaiveDate>() {
-        Ok(parsed_date) => {
-            api_response(crate::api::update_day(state.db.pool(), parsed_date, request).await)
-        }
-        Err(_) => error_response(Error::InvalidInput(format!(
-            "Invalid date format: {}",
-            date
-        ))),
-    }
-}
 
 /// List days in a date range
 pub async fn wiki_list_days_handler(
@@ -2510,7 +2669,7 @@ pub async fn day_heart_rate_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => api_response(
-            crate::api::wiki::get_day_heart_rate(state.db.pool(), parsed_date, query.tz.as_deref())
+            crate::api::wiki_streams::get_day_heart_rate(state.db.pool(), parsed_date, query.tz.as_deref())
                 .await,
         ),
         Err(_) => error_response(Error::InvalidInput(format!(
@@ -2813,8 +2972,23 @@ pub async fn chat_handler(
         axum::extract::State(state.db.pool().clone()),
         axum::extract::State(state.yjs_state.clone()),
         axum::extract::State(state.chat_cancel_state.clone()),
+        axum::extract::State(state.live_turns.clone()),
         user,
         Json(request),
+    )
+    .await
+}
+
+/// GET /api/chat/:id/stream - Rejoin the turn still running for a chat (VIR-323)
+pub async fn live_turn_stream_handler(
+    State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
+    axum::extract::Path(chat_id): axum::extract::Path<String>,
+) -> Response {
+    crate::api::chat::live_turn_stream_handler(
+        axum::extract::State(state.live_turns.clone()),
+        user,
+        axum::extract::Path(chat_id),
     )
     .await
 }

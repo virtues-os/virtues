@@ -13,6 +13,7 @@
 		label,
 		helperText,
 		warning,
+		error,
 		success = false,
 		loading = false,
 		clearable = false,
@@ -47,6 +48,19 @@
 		label?: string;
 		helperText?: string;
 		warning?: boolean | string;
+		/**
+		 * The field is wrong. `true` tints the border and shows the mark; a
+		 * string does that and says why, in place of `helperText` — exactly
+		 * `warning`'s two forms, one register louder.
+		 *
+		 * This used to be unreachable: `.error` was set only when `onSave`
+		 * REJECTED, so a caller validating its own field — every form that
+		 * checks a value before it sends it — had no way to say so, and either
+		 * abused `warning` for it or printed its own red line under the box.
+		 * The component drew an error state that its own props could not ask
+		 * for.
+		 */
+		error?: boolean | string;
 		success?: boolean;
 		loading?: boolean;
 		clearable?: boolean;
@@ -79,6 +93,12 @@
 		value !== undefined && value !== null && String(value).length > 0,
 	);
 
+	// The caller's error and a rejected auto-save are the same state to the
+	// reader, so they are one class and one mark. They differ in who lowers
+	// them: `saveError` clears itself on focus, the prop stands until the
+	// caller withdraws it.
+	let hasError = $derived(!!error || saveError);
+
 	// Generate ID for label association if not provided
 	let inputId = $derived(
 		id ||
@@ -87,9 +107,18 @@
 				: undefined),
 	);
 
-	// Warning message (if warning is a string, use it; otherwise use helperText)
+	// The message's own id, generated once and independent of `inputId` —
+	// `aria-describedby` has to point somewhere even for an unlabelled field.
+	const messageId = `input-msg-${Math.random().toString(36).slice(2, 11)}`;
+
+	// Error outranks warning outranks helper: a field that is both unsaved and
+	// wrong has one thing to tell you first.
 	let displayHelperText = $derived(
-		typeof warning === "string" ? warning : helperText,
+		typeof error === "string"
+			? error
+			: typeof warning === "string"
+				? warning
+				: helperText,
 	);
 
 	function handleClear() {
@@ -165,7 +194,7 @@
 		class:has-content={hasContent}
 		class:saving={isSaving}
 		class:saved={hasSaved || success}
-		class:error={saveError}
+		class:error={hasError}
 		class:warning={!!warning}
 		class:disabled
 		onmouseenter={() => (isHovered = true)}
@@ -185,6 +214,8 @@
 			{max}
 			{autocomplete}
 			class="input-field"
+			aria-invalid={hasError ? "true" : undefined}
+			aria-describedby={displayHelperText ? messageId : undefined}
 			oninput={handleInput}
 			{onchange}
 			onblur={handleBlur}
@@ -221,7 +252,7 @@
 					class:visible={isHovered &&
 						!isFocused &&
 						!hasSaved &&
-						!saveError &&
+						!hasError &&
 						!isSaving &&
 						!warning}
 				>
@@ -265,7 +296,7 @@
 					class="icon icon-warning"
 					class:visible={!!warning &&
 						!isFocused &&
-						!saveError &&
+						!hasError &&
 						!isSaving}
 				>
 					<Icon icon="ri:alert-line" width="14" height="14"
@@ -290,7 +321,7 @@
 					class="icon icon-check"
 					class:visible={!isFocused &&
 						(hasSaved || success) &&
-						!saveError &&
+						!hasError &&
 						!isSaving &&
 						!loading &&
 						!warning}
@@ -302,7 +333,7 @@
 				<!-- Error X -->
 				<div
 					class="icon icon-error"
-					class:visible={saveError && !isFocused}
+					class:visible={hasError && !isFocused}
 				>
 					<Icon icon="ri:close-line" width="14" height="14"
 					/>
@@ -314,7 +345,18 @@
 	</div>
 
 	{#if displayHelperText}
-		<p class="input-helper" class:warning={typeof warning === "string"}>
+		<!-- `aria-describedby` on the field points here, so the reason is part of
+		     the field's own announcement instead of a sentence a screen reader
+		     meets by itself further down the form. `role="alert"` is the error
+		     case only — a helper line is information, not an interruption. -->
+		<p
+			id={messageId}
+			class="input-helper"
+			class:warning={typeof warning === "string" &&
+				typeof error !== "string"}
+			class:error={typeof error === "string"}
+			role={typeof error === "string" ? "alert" : undefined}
+		>
 			{displayHelperText}
 		</p>
 	{/if}
@@ -354,6 +396,10 @@
 
 	.input-helper.warning {
 		color: var(--color-warning);
+	}
+
+	.input-helper.error {
+		color: var(--color-error);
 	}
 
 	/* ===================================
@@ -457,6 +503,21 @@
 			var(--color-error) 50%
 		);
 		animation: shake 0.4s ease-out;
+	}
+
+	/* An error the CALLER raised does not go away because the field has focus.
+	   The save-rejection error could get away with `:not(.focused)` — focusing
+	   clears it outright — but a validation error stands until the caller
+	   withdraws it, and a border that disappears the moment you click in to fix
+	   the field is a field with no error on it. The shake stays unfocused-only:
+	   it announces the arrival of the news, and nobody needs it announced again
+	   while they are typing the correction. */
+	.input-wrapper.error.focused .input-field {
+		border-color: color-mix(
+			in srgb,
+			var(--color-border-strong) 50%,
+			var(--color-error) 50%
+		);
 	}
 
 	@keyframes shake {
@@ -647,5 +708,28 @@
 
 	.input-wrapper.focused .focus-ring {
 		opacity: 1;
+	}
+
+	/* ===================================
+	   REDUCED MOTION
+	   =================================== */
+	/* Keep the information, drop the travel (design-grammar §7). The shake is
+	   the one thing here that moves the reader rather than the ink, and until
+	   today it could only be fired by a rejected auto-save — now `error` is a
+	   prop, so any caller's validation can shake the page of a reader who asked
+	   the OS for stillness. The tinted border and the mark carry the state on
+	   their own; nothing is lost by holding still. */
+	@media (prefers-reduced-motion: reduce) {
+		.input-wrapper.error:not(.focused) .input-field {
+			animation: none;
+		}
+
+		.input-field,
+		.placeholder,
+		.icon,
+		.icon-clear,
+		.focus-ring {
+			transition: none;
+		}
 	}
 </style>

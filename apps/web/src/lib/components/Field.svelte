@@ -2,7 +2,7 @@
 	import type { Snippet } from "svelte";
 
 	/**
-	 * One labelled reading inside a `<Card list>`.
+	 * One labeled reading inside a `<Card list>`.
 	 *
 	 * Exists for the distinction in `unknown`, which every screen in this app
 	 * has got wrong at least once: **"we could not ask" is not "the answer is
@@ -30,7 +30,7 @@
 	 *
 	 * `note` is the line beneath the value — freshness, units, a verdict. It
 	 * carries the tone, because the value itself is a fact and facts are not
-	 * coloured; only what we make of them is.
+	 * colored; only what we make of them is.
 	 */
 	let {
 		label,

@@ -6,6 +6,7 @@
 	 */
 	import { slide } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
+	import IconButton from "$lib/components/IconButton.svelte";
 
 	interface Props {
 		/** Status of the edit */
@@ -101,14 +102,12 @@
 		</div>
 		<div class="header-right">
 			{#if onViewPage}
-				<button
-					class="view-btn"
+				<IconButton
+					icon="ri:external-link-line"
+					label="Open page"
+					size="sm"
 					onclick={handleViewPage}
-					type="button"
-					title="Open page"
-				>
-					<Icon icon="ri:external-link-line" width="16" />
-				</button>
+				/>
 			{/if}
 			<Icon
 				icon={expanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
@@ -177,24 +176,6 @@
 		align-items: center;
 		gap: 0.5rem;
 		color: var(--color-foreground-muted);
-	}
-
-	.view-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0.25rem;
-		background: transparent;
-		border: none;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		border-radius: 0.25rem;
-		transition: all 0.15s ease;
-	}
-
-	.view-btn:hover {
-		background: var(--color-surface-hover);
-		color: var(--color-text);
 	}
 
 	/* Content */

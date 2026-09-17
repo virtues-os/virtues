@@ -45,15 +45,6 @@
 			format: 'badge',
 			badgeColors: relationshipColors,
 		},
-		{
-			key: 'last_seen',
-			label: 'Last Interaction',
-			icon: 'ri:calendar-line',
-			width: '25%',
-			minWidth: '140px',
-			hideOnMobile: true,
-			getValue: (item) => formatRelativeDate(item.last_seen),
-		},
 	];
 
 	async function loadPeople() {
@@ -135,13 +126,6 @@
 				<span class="badge {getRelationshipClass(person.relationship_category)}">
 					{person.relationship_category}
 				</span>
-			{:else}
-				<span class="empty-cell">—</span>
-			{/if}
-		</td>
-		<td class="col-last-interaction hide-mobile">
-			{#if person.last_seen}
-				<span class="date-text">{formatRelativeDate(person.last_seen)}</span>
 			{:else}
 				<span class="empty-cell">—</span>
 			{/if}

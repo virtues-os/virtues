@@ -6,6 +6,7 @@
 	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { formatTimeAgo } from '$lib/utils/dateUtils';
 	import type { YjsDocument } from '$lib/yjs';
@@ -97,18 +98,16 @@
 <div class="version-panel">
 	<div class="panel-header">
 		<span>Versions</span>
-		<button
-			class="save-btn"
+		<Button
+			variant="secondary"
+			size="sm"
+			icon="ri:add-line"
+			loading={saving}
+			disabled={!yjsDoc}
 			onclick={handleSave}
-			disabled={saving || !yjsDoc}
 		>
-			{#if saving}
-				<Icon icon="ri:loader-4-line" width="12" class="spin"/>
-			{:else}
-				<Icon icon="ri:add-line" width="12"/>
-			{/if}
 			Save
-		</button>
+		</Button>
 	</div>
 
 	{#if error}
@@ -136,17 +135,15 @@
 							<span class="badge-auto">Auto</span>
 						{/if}
 					</div>
-					<button
-						class="restore-btn"
-						onclick={() => handleRestore(version.id)}
+					<Button
+						variant="ghost"
+						size="sm"
+						loading={restoringId === version.id}
 						disabled={restoringId !== null}
+						onclick={() => handleRestore(version.id)}
 					>
-						{#if restoringId === version.id}
-							<Icon icon="ri:loader-4-line" width="11" class="spin"/>
-						{:else}
-							Restore
-						{/if}
-					</button>
+						Restore
+					</Button>
 				</div>
 			{/each}
 		{/if}
@@ -170,30 +167,6 @@
 		font-weight: 500;
 		color: var(--color-foreground);
 		border-bottom: 1px solid var(--color-border);
-	}
-
-	.save-btn {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		padding: 4px 8px;
-		font-size: 11px;
-		font-weight: 500;
-		color: var(--color-primary);
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 4px;
-		cursor: pointer;
-		transition: all 100ms;
-	}
-
-	.save-btn:hover {
-		background: var(--hover-bg);
-	}
-
-	.save-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
 	}
 
 	.error {
@@ -262,28 +235,6 @@
 		color: var(--color-foreground-muted);
 		background: color-mix(in srgb, var(--color-foreground-muted) 12%, transparent);
 		border-radius: 3px;
-	}
-
-	.restore-btn {
-		padding: 3px 8px;
-		font-size: 11px;
-		font-weight: 500;
-		color: var(--color-foreground-muted);
-		background: transparent;
-		border: 1px solid transparent;
-		border-radius: 4px;
-		cursor: pointer;
-		transition: all 100ms;
-	}
-
-	.restore-btn:hover {
-		color: var(--color-foreground);
-		border-color: var(--color-border);
-	}
-
-	.restore-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
 	}
 
 	:global(.spin) {

@@ -99,6 +99,12 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
     "create_page",
     "get_page_content",
     "edit_page",
+    // The wiki editor's write door. `edit_page` is also here, and an agent
+    // handed both will reach for the familiar one — which is how the first
+    // real run revised an article through the generic editor and skipped every
+    // check this tool exists to enforce. The brief says which to use; the
+    // allowlist is what makes it available at all.
+    "revise_article",
     "code_interpreter",
     "list_applets",
     "get_applet",

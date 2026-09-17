@@ -532,7 +532,7 @@ mod server {
                     // the switchover. With no AP hosted, this is just a plain
                     // nmcli connect and the radio is free the whole time.
                     let psk = (!password.is_empty()).then_some(password.as_str());
-                    match crate::api::provision::perform_join(&ssid, psk).await {
+                    match crate::api::provision::perform_join_full(&ssid, psk, None).await {
                         None => {
                             let url = crate::cli::link::primary_ip()
                                 .map(|ip| format!("http://{ip}:8000"))

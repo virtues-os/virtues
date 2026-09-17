@@ -110,9 +110,13 @@ pub enum AgentEvent {
         recoverable: bool,
     },
 
-    /// Gemini thought signature (opaque, for subsequent tool calls)
-    ThoughtSignature {
-        signature: String,
+    /// The gateway's normalized reasoning blocks for one step (text and
+    /// provider signatures), merged by index. The loop echoes them on the
+    /// assistant message it builds for the next step, so a model that thought
+    /// before calling a tool can resume that thought after the result; the
+    /// chat handler stores them on the row.
+    ReasoningDetails {
+        details: Vec<Value>,
     },
 }
 
@@ -158,6 +162,12 @@ pub enum ErrorCode {
     ToolError,
     /// Request was cancelled
     Cancelled,
+    /// The stream ended before the model finished (dropped connection, idle
+    /// timeout, gateway error frame). What streamed is kept; it is partial.
+    Interrupted,
+    /// The model hit its output cap (`finish_reason: length`) before it
+    /// finished. What streamed is kept; it is partial.
+    OutputLimit,
     /// Rate limited
     RateLimited,
     /// Invalid request

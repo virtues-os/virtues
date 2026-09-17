@@ -7,6 +7,8 @@
 	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from './Icon.svelte';
+	import Button from './Button.svelte';
+	import MenuItem from './MenuItem.svelte';
 	import { addCollection } from '@iconify/svelte';
 	import { onMount } from 'svelte';
 	import { PIN_COLORS, accentCss } from '$lib/sidebar/pin-colors';
@@ -412,9 +414,14 @@
 			{#if visibleIcons.length === 0}
 				<div class="empty">No icons found</div>
 			{:else if hasMoreIcons && !search}
-				<button class="load-more-btn" onclick={() => allIconsPage++}>
+				<Button
+					variant="secondary"
+					size="sm"
+					class="w-full mt-2"
+					onclick={() => allIconsPage++}
+				>
 					Load more
-				</button>
+				</Button>
 			{/if}
 		{:else}
 			<div class="emoji-grid">
@@ -433,10 +440,12 @@
 	<!-- Footer with remove option (conditional) -->
 	{#if showRemove && value}
 		<div class="picker-footer">
-			<button class="remove-btn" onclick={handleRemove}>
-				<Icon icon="ri:delete-bin-line" width="14" />
-				Remove icon
-			</button>
+			<MenuItem
+				icon="ri:delete-bin-line"
+				label="Remove icon"
+				destructive
+				onclick={handleRemove}
+			/>
 		</div>
 	{/if}
 </div>
@@ -530,8 +539,8 @@
 		background: var(--color-border);
 	}
 
-	/* The custom well wears a colour wheel until something is chosen, then the
-	   chosen colour — so it reads as "pick your own", not as a tenth hue. */
+	/* The custom well wears a color wheel until something is chosen, then the
+	   chosen color — so it reads as "pick your own", not as a tenth hue. */
 	.swatch-custom {
 		position: relative;
 		overflow: hidden;
@@ -686,39 +695,4 @@
 		border-top: 1px solid var(--color-border);
 	}
 
-	.remove-btn {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		width: 100%;
-		padding: 8px 12px;
-		font-size: 13px;
-		color: var(--color-error);
-		background: none;
-		border: none;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: background 100ms;
-	}
-
-	.remove-btn:hover {
-		background: color-mix(in srgb, var(--color-error) 10%, transparent);
-	}
-
-	.load-more-btn {
-		width: 100%;
-		padding: 8px;
-		font-size: 12px;
-		color: var(--color-primary);
-		background: none;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		cursor: pointer;
-		margin-top: 8px;
-		transition: background 100ms;
-	}
-
-	.load-more-btn:hover {
-		background: var(--color-surface-overlay);
-	}
 </style>

@@ -4,7 +4,7 @@
 --
 -- Character: UX designer, early 30s, lives in Mueller (East Austin), works
 --            downtown at Canopy (B2B SaaS). This is the start of the baseline —
---            no house-hunting, no Rachel, generic work topics.
+--            no house-hunting, no Cora, generic work topics.
 --
 -- Event IDs: ev_b0001 through ev_b0210 (approximately)
 -- Day IDs:   day_2025-11-24 through day_2025-12-14
@@ -13,7 +13,7 @@
 -- Example: 06:30 CST = 12:30 UTC, midnight CST = 06:00 UTC next day.
 --
 -- Thanksgiving: Thursday Nov 27 — quiet day at home, no office.
--- Game nights at Jess's: Fri Nov 28 and Fri Dec 12 (skip Dec 5).
+-- Game nights at Nell's: Fri Nov 28 and Fri Dec 12 (skip Dec 5).
 -- Mom calls: Sat Nov 29 and Sun Dec 7 (skip one weekend).
 --
 -- Usage: psql "$DATABASE_URL" -f core/seeds/demo_narrative.sql
@@ -115,7 +115,7 @@ INSERT INTO wiki_events (
     '2025-11-24T14:15:00Z', '2025-11-24T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Monday standup with Maya and David, planning the week.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Monday standup with Mara and David, planning the week.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, 'NEW', 77
 ) ON CONFLICT DO NOTHING;
 
@@ -237,7 +237,7 @@ INSERT INTO wiki_events (
     '2025-11-25T14:15:00Z', '2025-11-25T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Standup with Maya and David, talked about the short week ahead of Thanksgiving.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Standup with Mara and David, talked about the short week ahead of Thanksgiving.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, 'NEW', 75
 ) ON CONFLICT DO NOTHING;
 
@@ -383,7 +383,7 @@ INSERT INTO wiki_events (
     '2025-11-26T14:15:00Z', '2025-11-26T14:30:00Z',
     'Design standup', 'Office', '["calendar"]', FALSE, FALSE,
 
-    'Quick pre-holiday standup, just Maya on the call.', '["meeting", "standup"]', '["person_demo_maya", "place_demo_office", "org_demo_employer"]',
+    'Quick pre-holiday standup, just Mara on the call.', '["meeting", "standup"]', '["person_demo_maya", "place_demo_office", "org_demo_employer"]',
     NULL, 'NEW', 76
 ) ON CONFLICT DO NOTHING;
 
@@ -399,7 +399,7 @@ INSERT INTO wiki_events (
     NULL, 'NEW', 71
 ) ON CONFLICT DO NOTHING;
 
--- E29: Lunch with Maya at Tatsu-ya (Wednesday = Tatsu-ya day)
+-- E29: Lunch with Mara at Tatsu-ya (Wednesday = Tatsu-ya day)
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
@@ -407,7 +407,7 @@ INSERT INTO wiki_events (
     '2025-11-26T17:30:00Z', '2025-11-26T18:30:00Z',
     'Lunch at Ramen Tatsu-ya', 'Ramen Tatsu-ya', '["location_visit"]', FALSE, FALSE,
 
-    'Pre-Thanksgiving ramen with Maya at Tatsu-ya.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
+    'Pre-Thanksgiving ramen with Mara at Tatsu-ya.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
     NULL, 'NEW', 73
 ) ON CONFLICT DO NOTHING;
 
@@ -517,11 +517,11 @@ INSERT INTO wiki_events (
     '2025-11-27T20:45:00Z', '2025-11-28T04:00:00Z',
     'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE,
 
-    'Ate Thanksgiving dinner, watched a movie, texted Jess about plans for tomorrow.', '["food", "leisure", "messaging", "cooking"]', '["place_demo_home"]',
+    'Ate Thanksgiving dinner, watched a movie, texted Nell about plans for tomorrow.', '["food", "leisure", "messaging", "cooking"]', '["place_demo_home"]',
     NULL, 'NEW', 63
 ) ON CONFLICT DO NOTHING;
 
--- ── Friday, November 28, 2025 (Black Friday — game night at Jess's) ────────
+-- ── Friday, November 28, 2025 (Black Friday — game night at Nell's) ────────
 
 -- E39: Sleep
 INSERT INTO wiki_events (
@@ -571,15 +571,15 @@ INSERT INTO wiki_events (
     NULL, 'NEW', 67
 ) ON CONFLICT DO NOTHING;
 
--- E43: Game night at Jess's
+-- E43: Game night at Nell's
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0043', 'day_2025-11-28',
     '2025-11-29T00:00:00Z', '2025-11-29T04:00:00Z',
-    'Game night', 'Jess''s Place', '["location_visit"]', FALSE, FALSE,
+    'Game night', 'Nell''s Place', '["location_visit"]', FALSE, FALSE,
 
-    'Game night at Jess''s with Priya — played Catan and Codenames, ate leftover pie.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]',
+    'Game night at Nell''s with Priya — played Catan and Codenames, ate leftover pie.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]',
     NULL, 'NEW', 71
 ) ON CONFLICT DO NOTHING;
 
@@ -781,7 +781,7 @@ INSERT INTO wiki_events (
     '2025-12-01T14:15:00Z', '2025-12-01T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Monday standup with Maya and David, recapping what got done before the break.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Monday standup with Mara and David, recapping what got done before the break.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, 'NEW', 78
 ) ON CONFLICT DO NOTHING;
 
@@ -903,7 +903,7 @@ INSERT INTO wiki_events (
     '2025-12-02T14:15:00Z', '2025-12-02T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Standup with Maya and David, discussed upcoming sprint goals.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Standup with Mara and David, discussed upcoming sprint goals.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, 'NEW', 70
 ) ON CONFLICT DO NOTHING;
 
@@ -1065,7 +1065,7 @@ INSERT INTO wiki_events (
     NULL, 'NEW', 70
 ) ON CONFLICT DO NOTHING;
 
--- E83: Lunch with Maya at Tatsu-ya
+-- E83: Lunch with Mara at Tatsu-ya
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
@@ -1073,7 +1073,7 @@ INSERT INTO wiki_events (
     '2025-12-03T17:30:00Z', '2025-12-03T18:30:00Z',
     'Lunch at Ramen Tatsu-ya', 'Ramen Tatsu-ya', '["location_visit"]', FALSE, FALSE,
 
-    'Wednesday ramen with Maya at Tatsu-ya, talked about holiday plans.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
+    'Wednesday ramen with Mara at Tatsu-ya, talked about holiday plans.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
     NULL, 'NEW', 70
 ) ON CONFLICT DO NOTHING;
 
@@ -1365,7 +1365,7 @@ INSERT INTO wiki_events (
     '2025-12-05T21:30:00Z', '2025-12-06T04:30:00Z',
     'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE,
 
-    'Quiet Friday night in — cooked a proper dinner, watched a movie, texted Jess about next week.', '["food", "leisure", "messaging", "cooking"]', '["place_demo_home"]',
+    'Quiet Friday night in — cooked a proper dinner, watched a movie, texted Nell about next week.', '["food", "leisure", "messaging", "cooking"]', '["place_demo_home"]',
     NULL, 'NEW', 60
 ) ON CONFLICT DO NOTHING;
 
@@ -1579,7 +1579,7 @@ INSERT INTO wiki_events (
     '2025-12-08T14:15:00Z', '2025-12-08T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Monday standup with Maya and David, planning the sprint.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Monday standup with Mara and David, planning the sprint.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, 'NEW', 77
 ) ON CONFLICT DO NOTHING;
 
@@ -1701,7 +1701,7 @@ INSERT INTO wiki_events (
     '2025-12-09T14:15:00Z', '2025-12-09T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Standup with Maya and David, discussed the data viz sprint.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Standup with Mara and David, discussed the data viz sprint.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, 'NEW', 77
 ) ON CONFLICT DO NOTHING;
 
@@ -1847,7 +1847,7 @@ INSERT INTO wiki_events (
     '2025-12-10T14:15:00Z', '2025-12-10T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Standup with Maya and David, midweek check-in.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Standup with Mara and David, midweek check-in.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, 'NEW', 72
 ) ON CONFLICT DO NOTHING;
 
@@ -1863,7 +1863,7 @@ INSERT INTO wiki_events (
     NULL, 'NEW', 70
 ) ON CONFLICT DO NOTHING;
 
--- E148: Lunch with Maya at Tatsu-ya
+-- E148: Lunch with Mara at Tatsu-ya
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
@@ -1871,7 +1871,7 @@ INSERT INTO wiki_events (
     '2025-12-10T17:30:00Z', '2025-12-10T18:30:00Z',
     'Lunch at Ramen Tatsu-ya', 'Ramen Tatsu-ya', '["location_visit"]', FALSE, FALSE,
 
-    'Wednesday ramen with Maya, she was excited about a new hire starting next month.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
+    'Wednesday ramen with Mara, she was excited about a new hire starting next month.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
     NULL, 'NEW', 71
 ) ON CONFLICT DO NOTHING;
 
@@ -1969,7 +1969,7 @@ INSERT INTO wiki_events (
     '2025-12-11T14:15:00Z', '2025-12-11T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Thursday standup with Maya and David.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Thursday standup with Mara and David.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, 'NEW', 75
 ) ON CONFLICT DO NOTHING;
 
@@ -2045,7 +2045,7 @@ INSERT INTO wiki_events (
     NULL, 'NEW', 65
 ) ON CONFLICT DO NOTHING;
 
--- ── Friday, December 12, 2025 (Game night at Jess's) ──────────────────────
+-- ── Friday, December 12, 2025 (Game night at Nell's) ──────────────────────
 
 -- E163: Sleep
 INSERT INTO wiki_events (
@@ -2119,7 +2119,7 @@ INSERT INTO wiki_events (
     NULL, 'NEW', 67
 ) ON CONFLICT DO NOTHING;
 
--- E169: Lunch (with Maya, casual)
+-- E169: Lunch (with Mara, casual)
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
@@ -2127,7 +2127,7 @@ INSERT INTO wiki_events (
     '2025-12-12T17:30:00Z', '2025-12-12T18:15:00Z',
     'Lunch', 'Office', '["app_usage"]', FALSE, FALSE,
 
-    'Ate lunch with Maya in the break room, chatted about weekend plans.', '["food", "social", "lunch"]', '["person_demo_maya", "place_demo_office"]',
+    'Ate lunch with Mara in the break room, chatted about weekend plans.', '["food", "social", "lunch"]', '["person_demo_maya", "place_demo_office"]',
     NULL, 'NEW', 71
 ) ON CONFLICT DO NOTHING;
 
@@ -2151,7 +2151,7 @@ INSERT INTO wiki_events (
     '2025-12-12T21:00:00Z', '2025-12-12T21:30:00Z',
     'Bike commute', NULL, '["location_visit"]', FALSE, FALSE,
 
-    'Biked home to change before heading to Jess''s.', '["commute", "cycling"]', '[]',
+    'Biked home to change before heading to Nell''s.', '["commute", "cycling"]', '[]',
     NULL, 'NEW', 128
 ) ON CONFLICT DO NOTHING;
 
@@ -2167,15 +2167,15 @@ INSERT INTO wiki_events (
     NULL, 'NEW', 71
 ) ON CONFLICT DO NOTHING;
 
--- E173: Game night at Jess's
+-- E173: Game night at Nell's
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, agent_action, avg_hr
 ) VALUES (
     'ev_b0173', 'day_2025-12-12',
     '2025-12-13T00:00:00Z', '2025-12-13T04:30:00Z',
-    'Game night', 'Jess''s Place', '["location_visit"]', FALSE, FALSE,
+    'Game night', 'Nell''s Place', '["location_visit"]', FALSE, FALSE,
 
-    'Game night at Jess''s with Priya — played Ticket to Ride and Wavelength, great time.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]',
+    'Game night at Nell''s with Priya — played Ticket to Ride and Wavelength, great time.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]',
     NULL, 'NEW', 74
 ) ON CONFLICT DO NOTHING;
 
@@ -2326,9 +2326,9 @@ INSERT INTO wiki_events (
 --   Jan 1: Quiet recovery day
 --   Jan 2: Light WFH day
 --
--- Game night at Jess's: Dec 19 (Fri), Jan 2 (Fri). Skipping Dec 26 (Christmas).
+-- Game night at Nell's: Dec 19 (Fri), Jan 2 (Fri). Skipping Dec 26 (Christmas).
 -- Mom call: Dec 20 (Sat), Dec 27 (Sat), Jan 3 (Sat)
--- No house-hunting, no Rachel.
+-- No house-hunting, no Cora.
 -- =============================================================================
 
 -- Idempotency: clear any existing events in this range
@@ -2404,7 +2404,7 @@ INSERT INTO wiki_events (
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
-('ev_b0215', 'day_2025-12-15', '2025-12-15T14:15:00Z', '2025-12-15T14:45:00Z', 'Design standup', 'Office', '["calendar", "transcription"]', FALSE, FALSE, 'Monday standup with Maya and David, reviewing sprint priorities.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 73) ON CONFLICT DO NOTHING;
+('ev_b0215', 'day_2025-12-15', '2025-12-15T14:15:00Z', '2025-12-15T14:45:00Z', 'Design standup', 'Office', '["calendar", "transcription"]', FALSE, FALSE, 'Monday standup with Mara and David, reviewing sprint priorities.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 73) ON CONFLICT DO NOTHING;
 
 -- Focused design work (09:00-11:30 CST = 15:00-17:30 UTC)
 INSERT INTO wiki_events (
@@ -2506,10 +2506,10 @@ INSERT INTO wiki_events (
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
-('ev_b0233', 'day_2025-12-16', '2025-12-17T03:30:00Z', '2025-12-17T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Scrolled through Instagram and texted Jess about Friday plans.', '["leisure", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 61) ON CONFLICT DO NOTHING;
+('ev_b0233', 'day_2025-12-16', '2025-12-17T03:30:00Z', '2025-12-17T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Scrolled through Instagram and texted Nell about Friday plans.', '["leisure", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 61) ON CONFLICT DO NOTHING;
 
 -- =============================================================================
--- WEDNESDAY December 17, 2025 — Lunch at Tatsu-ya with Maya
+-- WEDNESDAY December 17, 2025 — Lunch at Tatsu-ya with Mara
 -- =============================================================================
 
 INSERT INTO wiki_events (
@@ -2542,11 +2542,11 @@ INSERT INTO wiki_events (
 ) VALUES
 ('ev_b0239', 'day_2025-12-17', '2025-12-17T15:00:00Z', '2025-12-17T17:30:00Z', 'Focused work', 'Office', '["app_usage"]', FALSE, FALSE, 'Deep work session on the settings page flow.', '["design", "figma", "focus", "deep-work"]', '["place_demo_office", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
--- Wednesday: Lunch at Tatsu-ya with Maya
+-- Wednesday: Lunch at Tatsu-ya with Mara
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
-('ev_b0240', 'day_2025-12-17', '2025-12-17T17:30:00Z', '2025-12-17T18:30:00Z', 'Lunch with Maya', 'Ramen Tatsu-ya', '["location_visit", "transcription"]', FALSE, FALSE, 'Weekly lunch at Tatsu-ya with Maya, talked about holiday plans.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]', NULL, NULL, NULL, 'NEW', 72) ON CONFLICT DO NOTHING;
+('ev_b0240', 'day_2025-12-17', '2025-12-17T17:30:00Z', '2025-12-17T18:30:00Z', 'Lunch with Mara', 'Ramen Tatsu-ya', '["location_visit", "transcription"]', FALSE, FALSE, 'Weekly lunch at Tatsu-ya with Mara, talked about holiday plans.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]', NULL, NULL, NULL, 'NEW', 72) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
@@ -2630,7 +2630,7 @@ INSERT INTO wiki_events (
 ('ev_b0255', 'day_2025-12-18', '2025-12-19T04:00:00Z', '2025-12-19T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Browsed holiday gift ideas online.', '["leisure", "browsing", "errands"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 63) ON CONFLICT DO NOTHING;
 
 -- =============================================================================
--- FRIDAY December 19, 2025 — Shorter day, game night at Jess's, Mom call
+-- FRIDAY December 19, 2025 — Shorter day, game night at Nell's, Mom call
 -- =============================================================================
 
 INSERT INTO wiki_events (
@@ -2675,11 +2675,11 @@ INSERT INTO wiki_events (
 ) VALUES
 ('ev_b0263', 'day_2025-12-19', '2025-12-19T23:00:00Z', '2025-12-19T23:45:00Z', 'Phone call with Mom', 'Home', '["transcription"]', FALSE, FALSE, 'Weekly call with Mom, talked about Christmas plans and what to bring.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
 
--- Game night at Jess's
+-- Game night at Nell's
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
-('ev_b0264', 'day_2025-12-19', '2025-12-20T01:00:00Z', '2025-12-20T05:00:00Z', 'Game night', 'Jess''s Place', '["location_visit", "transcription"]', FALSE, FALSE, 'Game night at Jess''s with Priya, played Catan and drank mulled wine.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]', NULL, NULL, NULL, 'NEW', 71) ON CONFLICT DO NOTHING;
+('ev_b0264', 'day_2025-12-19', '2025-12-20T01:00:00Z', '2025-12-20T05:00:00Z', 'Game night', 'Nell''s Place', '["location_visit", "transcription"]', FALSE, FALSE, 'Game night at Nell''s with Priya, played Catan and drank mulled wine.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]', NULL, NULL, NULL, 'NEW', 71) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
@@ -2958,7 +2958,7 @@ INSERT INTO wiki_events (
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
-('ev_b0314', 'day_2025-12-26', '2025-12-27T00:00:00Z', '2025-12-27T04:00:00Z', 'Evening', 'Home', '["app_usage"]', FALSE, FALSE, 'Watched a couple episodes of a show and messaged Jess about New Year''s plans.', '["leisure", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
+('ev_b0314', 'day_2025-12-26', '2025-12-27T00:00:00Z', '2025-12-27T04:00:00Z', 'Evening', 'Home', '["app_usage"]', FALSE, FALSE, 'Watched a couple episodes of a show and messaged Nell about New Year''s plans.', '["leisure", "messaging"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
@@ -3115,7 +3115,7 @@ INSERT INTO wiki_events (
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
-('ev_b0342', 'day_2025-12-30', '2025-12-30T18:00:00Z', '2025-12-30T20:00:00Z', 'WFH afternoon', 'Home', '["app_usage"]', FALSE, FALSE, 'Quick video call with Maya to sync on January plans, then signed off.', '["work", "meeting"]', '["person_demo_maya", "place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
+('ev_b0342', 'day_2025-12-30', '2025-12-30T18:00:00Z', '2025-12-30T20:00:00Z', 'WFH afternoon', 'Home', '["app_usage"]', FALSE, FALSE, 'Quick video call with Mara to sync on January plans, then signed off.', '["work", "meeting"]', '["person_demo_maya", "place_demo_home", "org_demo_employer"]', NULL, NULL, NULL, 'NEW', 70) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
@@ -3133,7 +3133,7 @@ INSERT INTO wiki_events (
 ('ev_b0345', 'day_2025-12-30', '2025-12-31T03:00:00Z', '2025-12-31T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Read a bit before bed, thinking about New Year''s resolutions.', '["leisure", "reflection"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 58) ON CONFLICT DO NOTHING;
 
 -- =============================================================================
--- WEDNESDAY December 31, 2025 — New Year's Eve (social evening with Jess & Priya)
+-- WEDNESDAY December 31, 2025 — New Year's Eve (social evening with Nell & Priya)
 -- =============================================================================
 
 INSERT INTO wiki_events (
@@ -3159,13 +3159,13 @@ INSERT INTO wiki_events (
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
-('ev_b0350', 'day_2025-12-31', '2025-12-31T22:00:00Z', '2025-12-31T23:00:00Z', 'Getting ready', 'Home', '["location_visit"]', FALSE, FALSE, 'Got ready and made appetizers to bring to Jess''s NYE party.', '["routine", "food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
+('ev_b0350', 'day_2025-12-31', '2025-12-31T22:00:00Z', '2025-12-31T23:00:00Z', 'Getting ready', 'Home', '["location_visit"]', FALSE, FALSE, 'Got ready and made appetizers to bring to Nell''s NYE party.', '["routine", "food"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
--- NYE party at Jess's
+-- NYE party at Nell's
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
-('ev_b0351', 'day_2025-12-31', '2026-01-01T00:00:00Z', '2026-01-01T06:30:00Z', 'New Year''s Eve at Jess''s', 'Jess''s Place', '["location_visit", "transcription"]', FALSE, FALSE, 'New Year''s Eve party at Jess''s with Priya and a few others, champagne at midnight.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]', NULL, NULL, NULL, 'NEW', 74) ON CONFLICT DO NOTHING;
+('ev_b0351', 'day_2025-12-31', '2026-01-01T00:00:00Z', '2026-01-01T06:30:00Z', 'New Year''s Eve at Nell''s', 'Nell''s Place', '["location_visit", "transcription"]', FALSE, FALSE, 'New Year''s Eve party at Nell''s with Priya and a few others, champagne at midnight.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]', NULL, NULL, NULL, 'NEW', 74) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
@@ -3212,7 +3212,7 @@ INSERT INTO wiki_events (
 ('ev_b0359', 'day_2026-01-01', '2026-01-02T05:00:00Z', '2026-01-02T06:00:00Z', 'Wind down', 'Home', '["app_usage"]', FALSE, FALSE, 'Early to bed, ready to get back to normal.', '["leisure"]', '["place_demo_home"]', NULL, NULL, NULL, 'NEW', 60) ON CONFLICT DO NOTHING;
 
 -- =============================================================================
--- FRIDAY January 2, 2026 — Light WFH, game night at Jess's
+-- FRIDAY January 2, 2026 — Light WFH, game night at Nell's
 -- =============================================================================
 
 INSERT INTO wiki_events (
@@ -3245,11 +3245,11 @@ INSERT INTO wiki_events (
 ) VALUES
 ('ev_b0365', 'day_2026-01-02', '2026-01-02T21:00:00Z', '2026-01-02T21:45:00Z', 'Phone call with Mom', 'Home', '["transcription"]', FALSE, FALSE, 'Quick call with Mom, talked about how the holidays went.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]', NULL, NULL, NULL, 'NEW', 72) ON CONFLICT DO NOTHING;
 
--- Game night at Jess's
+-- Game night at Nell's
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES
-('ev_b0366', 'day_2026-01-02', '2026-01-03T01:00:00Z', '2026-01-03T05:00:00Z', 'Game night', 'Jess''s Place', '["location_visit", "transcription"]', FALSE, FALSE, 'First game night of the new year at Jess''s, played Ticket to Ride with Priya.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
+('ev_b0366', 'day_2026-01-02', '2026-01-03T01:00:00Z', '2026-01-03T05:00:00Z', 'Game night', 'Nell''s Place', '["location_visit", "transcription"]', FALSE, FALSE, 'First game night of the new year at Nell''s, played Ticket to Ride with Priya.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]', NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
@@ -3342,10 +3342,10 @@ INSERT INTO wiki_events (
 --            downtown at Canopy (B2B SaaS). See seed_baseline_guide.md.
 --
 -- Key narrative beats:
---   - Jan 8 (Thu):  Rachel Torres contacts her about house hunting (first appearance)
+--   - Jan 8 (Thu):  Cora Delgado contacts her about house hunting (first appearance)
 --   - ~Jan 12+:     Onboarding redesign project starts ramping up at work
---   - Jan 25 (Sun): Second Rachel appearance — house showing (not the S 3rd house)
---   - Game nights at Jess's: Jan 9 and Jan 16 (skip Jan 23)
+--   - Jan 25 (Sun): Second Cora appearance — house showing (not the Selden house)
+--   - Game nights at Nell's: Jan 9 and Jan 16 (skip Jan 23)
 --   - Mom calls weekly: Jan 10, Jan 17, Jan 24
 --
 -- Event IDs: ev_b0421 through ev_b0630
@@ -3451,7 +3451,7 @@ INSERT INTO wiki_events (
     '2026-01-05T14:15:00Z', '2026-01-05T15:00:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'First standup of the new year with Maya and David, reviewed Q1 priorities.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'First standup of the new year with Mara and David, reviewed Q1 priorities.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, NULL, NULL, 'NEW', 77
 ) ON CONFLICT DO NOTHING;
 
@@ -3683,7 +3683,7 @@ INSERT INTO wiki_events (
     '2026-01-07T12:30:00Z', '2026-01-07T13:15:00Z',
     'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE,
 
-    'Morning coffee and caught up on texts from Jess about Friday plans.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
+    'Morning coffee and caught up on texts from Nell about Friday plans.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
     NULL, NULL, NULL, 'NEW', 63
 ) ON CONFLICT DO NOTHING;
 
@@ -3719,7 +3719,7 @@ INSERT INTO wiki_events (
     '2026-01-07T14:15:00Z', '2026-01-07T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Quick standup with Maya and David, everyone aligned on settings page progress.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Quick standup with Mara and David, everyone aligned on settings page progress.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, NULL, NULL, 'NEW', 73
 ) ON CONFLICT DO NOTHING;
 
@@ -3735,15 +3735,15 @@ INSERT INTO wiki_events (
     NULL, NULL, NULL, 'NEW', 64
 ) ON CONFLICT DO NOTHING;
 
--- Lunch with Maya at Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
+-- Lunch with Mara at Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0449', 'day_2026-01-07',
     '2026-01-07T17:30:00Z', '2026-01-07T18:30:00Z',
-    'Lunch with Maya', 'Ramen Tatsu-ya', '["location_visit", "transcription"]', FALSE, FALSE,
+    'Lunch with Mara', 'Ramen Tatsu-ya', '["location_visit", "transcription"]', FALSE, FALSE,
 
-    'Weekly lunch at Ramen Tatsu-ya with Maya, talked about team goals for Q1.', '["social", "food", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
+    'Weekly lunch at Ramen Tatsu-ya with Mara, talked about team goals for Q1.', '["social", "food", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
     NULL, NULL, NULL, 'NEW', 75
 ) ON CONFLICT DO NOTHING;
 
@@ -3783,7 +3783,7 @@ INSERT INTO wiki_events (
     NULL, NULL, NULL, 'NEW', 68
 ) ON CONFLICT DO NOTHING;
 
--- ── Thursday, January 8, 2026 — RACHEL FIRST CONTACT ────────────────────────
+-- ── Thursday, January 8, 2026 — CORA FIRST CONTACT ────────────────────────
 
 -- Sleep (00:00-06:20 CST = 06:00-12:20 UTC)
 INSERT INTO wiki_events (
@@ -3805,7 +3805,7 @@ INSERT INTO wiki_events (
     '2026-01-08T12:20:00Z', '2026-01-08T13:10:00Z',
     'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE,
 
-    'Coffee and morning routine, checked email — saw a message from a realtor named Rachel Torres.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
+    'Coffee and morning routine, checked email — saw a message from a realtor named Cora Delgado.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
     NULL, NULL, NULL, 'NEW', 68
 ) ON CONFLICT DO NOTHING;
 
@@ -3841,7 +3841,7 @@ INSERT INTO wiki_events (
     '2026-01-08T14:15:00Z', '2026-01-08T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Standup with Maya and David, discussed design review feedback from Tuesday.', '["meeting", "standup", "design", "design-review"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Standup with Mara and David, discussed design review feedback from Tuesday.', '["meeting", "standup", "design", "design-review"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, NULL, NULL, 'NEW', 72
 ) ON CONFLICT DO NOTHING;
 
@@ -3893,15 +3893,15 @@ INSERT INTO wiki_events (
     NULL, NULL, NULL, 'NEW', 133
 ) ON CONFLICT DO NOTHING;
 
--- ** RACHEL FIRST CONTACT ** Phone call (17:00-17:20 CST = 23:00-23:20 UTC)
+-- ** CORA FIRST CONTACT ** Phone call (17:00-17:20 CST = 23:00-23:20 UTC)
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0462', 'day_2026-01-08',
     '2026-01-08T23:00:00Z', '2026-01-08T23:20:00Z',
-    'Phone call with Rachel Torres', 'Home', '["message", "transcription"]', FALSE, FALSE,
+    'Phone call with Cora Delgado', 'Home', '["message", "transcription"]', FALSE, FALSE,
 
-    'Rachel Torres from Torres Realty called about house hunting — she has some listings in East Austin and Bouldin Creek she thinks would be a good fit.', '["phone-call", "house-hunting", "real-estate"]', '["person_demo_rachel", "org_demo_realty", "place_demo_home"]',
+    'Cora Delgado from Delgado Realty called about house hunting — she has some listings in East Austin and Bouldin Creek she thinks would be a good fit.', '["phone-call", "house-hunting", "real-estate"]', '["person_demo_rachel", "org_demo_realty", "place_demo_home"]',
     NULL, NULL, NULL, 'NEW', 65
 ) ON CONFLICT DO NOTHING;
 
@@ -3925,11 +3925,11 @@ INSERT INTO wiki_events (
     '2026-01-09T01:00:00Z', '2026-01-09T04:00:00Z',
     'Dinner and browsing', 'Home', '["app_usage"]', FALSE, FALSE,
 
-    'Made tacos for dinner, then browsed Zillow looking at East Austin listings Rachel mentioned.', '["food", "leisure", "browsing", "house-hunting", "real-estate"]', '["place_demo_home"]',
+    'Made tacos for dinner, then browsed Zillow looking at East Austin listings Cora mentioned.', '["food", "leisure", "browsing", "house-hunting", "real-estate"]', '["place_demo_home"]',
     NULL, NULL, NULL, 'NEW', 61
 ) ON CONFLICT DO NOTHING;
 
--- ── Friday, January 9, 2026 — Game night at Jess's ─────────────────────────
+-- ── Friday, January 9, 2026 — Game night at Nell's ─────────────────────────
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
@@ -3951,7 +3951,7 @@ INSERT INTO wiki_events (
     '2026-01-09T12:30:00Z', '2026-01-09T13:15:00Z',
     'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE,
 
-    'Coffee and morning routine, texted Jess to confirm game night tonight.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
+    'Coffee and morning routine, texted Nell to confirm game night tonight.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
     NULL, NULL, NULL, 'NEW', 66
 ) ON CONFLICT DO NOTHING;
 
@@ -3987,7 +3987,7 @@ INSERT INTO wiki_events (
     '2026-01-09T14:15:00Z', '2026-01-09T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Friday standup — reviewed the week and Maya mentioned the onboarding funnel might become a priority soon.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Friday standup — reviewed the week and Mara mentioned the onboarding funnel might become a priority soon.', '["meeting", "standup", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, NULL, NULL, 'NEW', 78
 ) ON CONFLICT DO NOTHING;
 
@@ -4051,15 +4051,15 @@ INSERT INTO wiki_events (
     NULL, NULL, NULL, 'NEW', 66
 ) ON CONFLICT DO NOTHING;
 
--- Game night at Jess's (19:00-23:00 CST = 01:00-05:00+1 UTC)
+-- Game night at Nell's (19:00-23:00 CST = 01:00-05:00+1 UTC)
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0475', 'day_2026-01-09',
     '2026-01-10T01:00:00Z', '2026-01-10T05:00:00Z',
-    'Game night', 'Jess''s Place', '["location_visit", "transcription"]', FALSE, FALSE,
+    'Game night', 'Nell''s Place', '["location_visit", "transcription"]', FALSE, FALSE,
 
-    'Game night at Jess''s with Priya — played Catan and Ticket to Ride, ordered pizza.', '["social", "games", "food"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]',
+    'Game night at Nell''s with Priya — played Catan and Ticket to Ride, ordered pizza.', '["social", "games", "food"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]',
     NULL, NULL, NULL, 'NEW', 74
 ) ON CONFLICT DO NOTHING;
 
@@ -4237,7 +4237,7 @@ INSERT INTO wiki_events (
     '2026-01-12T12:30:00Z', '2026-01-12T13:15:00Z',
     'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE,
 
-    'Coffee and morning routine, saw a Slack message from Maya about the onboarding project kickoff this week.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
+    'Coffee and morning routine, saw a Slack message from Mara about the onboarding project kickoff this week.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
     NULL, NULL, NULL, 'NEW', 67
 ) ON CONFLICT DO NOTHING;
 
@@ -4273,7 +4273,7 @@ INSERT INTO wiki_events (
     '2026-01-12T14:15:00Z', '2026-01-12T15:30:00Z',
     'Standup and onboarding kickoff', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
-    'Standup followed by onboarding redesign kickoff meeting with Maya and David — reviewed funnel metrics and drop-off points.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Standup followed by onboarding redesign kickoff meeting with Mara and David — reviewed funnel metrics and drop-off points.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, NULL, NULL, 'NEW', 71
 ) ON CONFLICT DO NOTHING;
 
@@ -4545,15 +4545,15 @@ INSERT INTO wiki_events (
     NULL, NULL, NULL, 'NEW', 66
 ) ON CONFLICT DO NOTHING;
 
--- Lunch with Maya at Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
+-- Lunch with Mara at Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0515', 'day_2026-01-14',
     '2026-01-14T17:30:00Z', '2026-01-14T18:30:00Z',
-    'Lunch with Maya', 'Ramen Tatsu-ya', '["location_visit", "transcription"]', FALSE, FALSE,
+    'Lunch with Mara', 'Ramen Tatsu-ya', '["location_visit", "transcription"]', FALSE, FALSE,
 
-    'Lunch at Ramen Tatsu-ya with Maya, talked about the onboarding project scope and user research plans.', '["social", "food", "ramen", "onboarding"]', '["person_demo_maya", "place_demo_ramen"]',
+    'Lunch at Ramen Tatsu-ya with Mara, talked about the onboarding project scope and user research plans.', '["social", "food", "ramen", "onboarding"]', '["person_demo_maya", "place_demo_ramen"]',
     NULL, NULL, NULL, 'NEW', 71
 ) ON CONFLICT DO NOTHING;
 
@@ -4651,7 +4651,7 @@ INSERT INTO wiki_events (
     '2026-01-15T14:15:00Z', '2026-01-15T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Standup with Maya and David, shared progress on onboarding wireframes.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Standup with Mara and David, shared progress on onboarding wireframes.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, NULL, NULL, 'NEW', 72
 ) ON CONFLICT DO NOTHING;
 
@@ -4727,7 +4727,7 @@ INSERT INTO wiki_events (
     NULL, NULL, NULL, 'NEW', 68
 ) ON CONFLICT DO NOTHING;
 
--- ── Friday, January 16, 2026 — Game night at Jess's ────────────────────────
+-- ── Friday, January 16, 2026 — Game night at Nell's ────────────────────────
 
 -- Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
 INSERT INTO wiki_events (
@@ -4749,7 +4749,7 @@ INSERT INTO wiki_events (
     '2026-01-16T12:30:00Z', '2026-01-16T13:15:00Z',
     'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE,
 
-    'Coffee and morning routine, confirmed game night plans with Jess.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
+    'Coffee and morning routine, confirmed game night plans with Nell.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
     NULL, NULL, NULL, 'NEW', 65
 ) ON CONFLICT DO NOTHING;
 
@@ -4837,15 +4837,15 @@ INSERT INTO wiki_events (
     NULL, NULL, NULL, 'NEW', 121
 ) ON CONFLICT DO NOTHING;
 
--- Game night at Jess's (19:00-23:00 CST = 01:00-05:00+1 UTC)
+-- Game night at Nell's (19:00-23:00 CST = 01:00-05:00+1 UTC)
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0539', 'day_2026-01-16',
     '2026-01-17T01:00:00Z', '2026-01-17T05:00:00Z',
-    'Game night', 'Jess''s Place', '["location_visit", "transcription"]', FALSE, FALSE,
+    'Game night', 'Nell''s Place', '["location_visit", "transcription"]', FALSE, FALSE,
 
-    'Game night at Jess''s place with Priya — played Catan and a new card game Priya brought.', '["social", "games", "food"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]',
+    'Game night at Nell''s place with Priya — played Catan and a new card game Priya brought.', '["social", "games", "food"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]',
     NULL, NULL, NULL, 'NEW', 68
 ) ON CONFLICT DO NOTHING;
 
@@ -5363,7 +5363,7 @@ INSERT INTO wiki_events (
     '2026-01-21T14:15:00Z', '2026-01-21T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Standup — shared research findings with Maya and David, aligned on onboarding design direction.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Standup — shared research findings with Mara and David, aligned on onboarding design direction.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, NULL, NULL, 'NEW', 78
 ) ON CONFLICT DO NOTHING;
 
@@ -5379,15 +5379,15 @@ INSERT INTO wiki_events (
     NULL, NULL, NULL, 'NEW', 68
 ) ON CONFLICT DO NOTHING;
 
--- Lunch with Maya at Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
+-- Lunch with Mara at Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
     'ev_b0583', 'day_2026-01-21',
     '2026-01-21T17:30:00Z', '2026-01-21T18:30:00Z',
-    'Lunch with Maya', 'Ramen Tatsu-ya', '["location_visit", "transcription"]', FALSE, FALSE,
+    'Lunch with Mara', 'Ramen Tatsu-ya', '["location_visit", "transcription"]', FALSE, FALSE,
 
-    'Lunch at Ramen Tatsu-ya with Maya, chatted about the research sessions and weekend plans.', '["social", "food", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
+    'Lunch at Ramen Tatsu-ya with Mara, chatted about the research sessions and weekend plans.', '["social", "food", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
     NULL, NULL, NULL, 'NEW', 74
 ) ON CONFLICT DO NOTHING;
 
@@ -5449,7 +5449,7 @@ INSERT INTO wiki_events (
     '2026-01-22T12:20:00Z', '2026-01-22T13:10:00Z',
     'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE,
 
-    'Coffee and morning routine, checked texts from Rachel about scheduling a house showing this weekend.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
+    'Coffee and morning routine, checked texts from Cora about scheduling a house showing this weekend.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
     NULL, NULL, NULL, 'NEW', 64
 ) ON CONFLICT DO NOTHING;
 
@@ -5485,7 +5485,7 @@ INSERT INTO wiki_events (
     '2026-01-22T14:15:00Z', '2026-01-22T14:45:00Z',
     'Design standup', 'Office', '["calendar", "message"]', FALSE, FALSE,
 
-    'Standup with Maya and David, talked about finishing the onboarding prototype this week.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+    'Standup with Mara and David, talked about finishing the onboarding prototype this week.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
     NULL, NULL, NULL, 'NEW', 73
 ) ON CONFLICT DO NOTHING;
 
@@ -5583,7 +5583,7 @@ INSERT INTO wiki_events (
     '2026-01-23T12:30:00Z', '2026-01-23T13:15:00Z',
     'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE,
 
-    'Coffee and morning routine, texted Jess — she''s busy this weekend so no game night.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
+    'Coffee and morning routine, texted Nell — she''s busy this weekend so no game night.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
     NULL, NULL, NULL, 'NEW', 67
 ) ON CONFLICT DO NOTHING;
 
@@ -5679,7 +5679,7 @@ INSERT INTO wiki_events (
     '2026-01-23T23:00:00Z', '2026-01-23T23:35:00Z',
     'Phone call with Mom', 'Home', '["message", "transcription"]', FALSE, FALSE,
 
-    'Weekly call with Mom, told her about seeing a house this weekend with Rachel.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]',
+    'Weekly call with Mom, told her about seeing a house this weekend with Cora.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]',
     NULL, NULL, NULL, 'NEW', 69
 ) ON CONFLICT DO NOTHING;
 
@@ -5769,7 +5769,7 @@ INSERT INTO wiki_events (
     NULL, NULL, NULL, 'NEW', 67
 ) ON CONFLICT DO NOTHING;
 
--- ── Sunday, January 25, 2026 — RACHEL SECOND APPEARANCE (house showing) ────
+-- ── Sunday, January 25, 2026 — CORA SECOND APPEARANCE (house showing) ────
 
 -- Sleep (00:00-07:30 CST = 06:00-13:30 UTC)
 INSERT INTO wiki_events (
@@ -5807,7 +5807,7 @@ INSERT INTO wiki_events (
     NULL, NULL, NULL, 'NEW', 67
 ) ON CONFLICT DO NOTHING;
 
--- ** RACHEL SECOND APPEARANCE ** House showing (11:00-11:45 CST = 17:00-17:45 UTC)
+-- ** CORA SECOND APPEARANCE ** House showing (11:00-11:45 CST = 17:00-17:45 UTC)
 INSERT INTO wiki_events (
     id, day_id, started_at, ended_at, auto_label, auto_location, source_ontologies, is_user_added, is_user_edited, event_summary, topics, entities, novelty_z, topic_novelty, entity_novelty, agent_action, avg_hr
 ) VALUES (
@@ -5815,7 +5815,7 @@ INSERT INTO wiki_events (
     '2026-01-25T17:00:00Z', '2026-01-25T17:45:00Z',
     'House showing', 'East Austin', '["location_visit", "transcription"]', FALSE, FALSE,
 
-    'Toured a 2-bed bungalow on Webberville Rd with Rachel — cute but the kitchen was too small and the yard was tiny, not feeling it.', '["house-hunting", "real-estate", "neighborhood"]', '["person_demo_rachel", "org_demo_realty"]',
+    'Toured a 2-bed bungalow on Alder Rd with Cora — cute but the kitchen was too small and the yard was tiny, not feeling it.', '["house-hunting", "real-estate", "neighborhood"]', '["person_demo_rachel", "org_demo_realty"]',
     NULL, NULL, NULL, 'NEW', 82
 ) ON CONFLICT DO NOTHING;
 
@@ -5872,8 +5872,8 @@ INSERT INTO wiki_events (
 --
 -- Character: UX designer, early 30s, Mueller (East Austin), works at Canopy.
 -- Onboarding funnel redesign is the primary work focus.
--- No Rachel / house-hunting in this window.
--- Game night at Jess's: Friday Feb 6.
+-- No Cora / house-hunting in this window.
+-- Game night at Nell's: Friday Feb 6.
 -- Mom calls: Saturday Jan 31, Friday Feb 6, Saturday Feb 7.
 -- All times UTC (CST = UTC-6).
 --
@@ -5941,7 +5941,7 @@ INSERT INTO wiki_events (
 ('ev_b0635', 'day_2026-01-26', '2026-01-26T14:15:00Z', '2026-01-26T15:00:00Z',
  'Design standup', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
- 'Monday standup with Maya and David reviewing onboarding funnel metrics from last week.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+ 'Monday standup with Mara and David reviewing onboarding funnel metrics from last week.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 73),
 ('ev_b0636', 'day_2026-01-26', '2026-01-26T15:00:00Z', '2026-01-26T17:30:00Z',
  'Focused design work', 'Office', '["app_usage"]', FALSE, FALSE,
@@ -5984,7 +5984,7 @@ INSERT INTO wiki_events (
 ('ev_b0642', 'day_2026-01-27', '2026-01-27T12:30:00Z', '2026-01-27T13:15:00Z',
  'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE,
 
- 'Morning coffee and checked texts from Jess about weekend plans.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
+ 'Morning coffee and checked texts from Nell about weekend plans.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
  NULL, NULL, NULL, 'NEW', 67),
 ('ev_b0643', 'day_2026-01-27', '2026-01-27T13:15:00Z', '2026-01-27T13:45:00Z',
  'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE,
@@ -5999,7 +5999,7 @@ INSERT INTO wiki_events (
 ('ev_b0645', 'day_2026-01-27', '2026-01-27T14:15:00Z', '2026-01-27T15:00:00Z',
  'Design standup', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
- 'Tuesday standup with Maya and David, discussed funnel drop-off at the email verification step.', '["meeting", "standup", "design", "onboarding", "form-validation"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+ 'Tuesday standup with Mara and David, discussed funnel drop-off at the email verification step.', '["meeting", "standup", "design", "onboarding", "form-validation"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 73),
 ('ev_b0646', 'day_2026-01-27', '2026-01-27T15:00:00Z', '2026-01-27T16:00:00Z',
  'Design review', 'Office', '["calendar", "app_usage"]', FALSE, FALSE,
@@ -6057,7 +6057,7 @@ INSERT INTO wiki_events (
 ('ev_b0655', 'day_2026-01-28', '2026-01-28T14:15:00Z', '2026-01-28T15:00:00Z',
  'Design standup', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
- 'Wednesday standup, Maya flagged a navigation redesign issue in the onboarding flow.', '["meeting", "standup", "design", "onboarding", "navigation"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+ 'Wednesday standup, Mara flagged a navigation redesign issue in the onboarding flow.', '["meeting", "standup", "design", "onboarding", "navigation"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 71),
 ('ev_b0656', 'day_2026-01-28', '2026-01-28T15:00:00Z', '2026-01-28T17:30:00Z',
  'Focused design work', 'Office', '["app_usage"]', FALSE, FALSE,
@@ -6067,7 +6067,7 @@ INSERT INTO wiki_events (
 ('ev_b0657', 'day_2026-01-28', '2026-01-28T17:30:00Z', '2026-01-28T18:30:00Z',
  'Lunch at Ramen Tatsu-ya', 'Ramen Tatsu-ya', '["location_visit"]', FALSE, FALSE,
 
- 'Weekly lunch with Maya at Tatsu-ya, talked about the onboarding sprint timeline.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
+ 'Weekly lunch with Mara at Tatsu-ya, talked about the onboarding sprint timeline.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
  NULL, NULL, NULL, 'NEW', 70),
 ('ev_b0658', 'day_2026-01-28', '2026-01-28T18:30:00Z', '2026-01-28T22:30:00Z',
  'Afternoon work', 'Office', '["app_usage", "message"]', FALSE, FALSE,
@@ -6173,7 +6173,7 @@ INSERT INTO wiki_events (
 ('ev_b0675', 'day_2026-01-30', '2026-01-30T14:15:00Z', '2026-01-30T15:00:00Z',
  'Design standup', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
- 'Friday standup with Maya and David, wrapped up the week on onboarding progress.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+ 'Friday standup with Mara and David, wrapped up the week on onboarding progress.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 76),
 ('ev_b0676', 'day_2026-01-30', '2026-01-30T15:00:00Z', '2026-01-30T17:30:00Z',
  'Focused design work', 'Office', '["app_usage"]', FALSE, FALSE,
@@ -6279,7 +6279,7 @@ INSERT INTO wiki_events (
 ('ev_b0693', 'day_2026-02-01', '2026-02-01T21:00:00Z', '2026-02-02T01:00:00Z',
  'Evening at home', 'Home', '["app_usage"]', FALSE, FALSE,
 
- 'Watched a design talk on YouTube and texted with Maya about Monday plans.', '["leisure", "messaging", "browsing"]', '["place_demo_home"]',
+ 'Watched a design talk on YouTube and texted with Mara about Monday plans.', '["leisure", "messaging", "browsing"]', '["place_demo_home"]',
  NULL, NULL, NULL, 'NEW', 63),
 ('ev_b0694', 'day_2026-02-01', '2026-02-02T01:00:00Z', '2026-02-02T04:00:00Z',
  'Wind down', 'Home', '["app_usage"]', FALSE, FALSE,
@@ -6375,7 +6375,7 @@ INSERT INTO wiki_events (
 ('ev_b0709', 'day_2026-02-03', '2026-02-03T14:15:00Z', '2026-02-03T15:00:00Z',
  'Design standup', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
- 'Tuesday standup with Maya and David, reviewed async nav prototype feedback.', '["meeting", "standup", "design", "onboarding", "navigation"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+ 'Tuesday standup with Mara and David, reviewed async nav prototype feedback.', '["meeting", "standup", "design", "onboarding", "navigation"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 71),
 ('ev_b0710', 'day_2026-02-03', '2026-02-03T15:00:00Z', '2026-02-03T16:00:00Z',
  'Design review', 'Office', '["calendar", "app_usage"]', FALSE, FALSE,
@@ -6404,7 +6404,7 @@ INSERT INTO wiki_events (
  NULL, NULL, NULL, 'NEW', 66) ON CONFLICT DO NOTHING;
 
 -- =============================================================================
--- Wednesday, February 4, 2026 (10 events — Ramen with Maya)
+-- Wednesday, February 4, 2026 (10 events — Ramen with Mara)
 -- =============================================================================
 
 INSERT INTO wiki_events (
@@ -6433,7 +6433,7 @@ INSERT INTO wiki_events (
 ('ev_b0719', 'day_2026-02-04', '2026-02-04T14:15:00Z', '2026-02-04T15:00:00Z',
  'Design standup', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
- 'Wednesday standup, discussed onboarding funnel conversion improvements with Maya and David.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+ 'Wednesday standup, discussed onboarding funnel conversion improvements with Mara and David.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 70),
 ('ev_b0720', 'day_2026-02-04', '2026-02-04T15:00:00Z', '2026-02-04T17:30:00Z',
  'Focused design work', 'Office', '["app_usage"]', FALSE, FALSE,
@@ -6443,7 +6443,7 @@ INSERT INTO wiki_events (
 ('ev_b0721', 'day_2026-02-04', '2026-02-04T17:30:00Z', '2026-02-04T18:30:00Z',
  'Lunch at Ramen Tatsu-ya', 'Ramen Tatsu-ya', '["location_visit"]', FALSE, FALSE,
 
- 'Wednesday ramen lunch with Maya, talked about upcoming user research sessions.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
+ 'Wednesday ramen lunch with Mara, talked about upcoming user research sessions.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
  NULL, NULL, NULL, 'NEW', 76),
 ('ev_b0722', 'day_2026-02-04', '2026-02-04T18:30:00Z', '2026-02-04T22:30:00Z',
  'Afternoon work', 'Office', '["app_usage", "message"]', FALSE, FALSE,
@@ -6520,7 +6520,7 @@ INSERT INTO wiki_events (
  NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 -- =============================================================================
--- Friday, February 6, 2026 (10 events — Mom call, Game night at Jess's)
+-- Friday, February 6, 2026 (10 events — Mom call, Game night at Nell's)
 -- =============================================================================
 
 INSERT INTO wiki_events (
@@ -6534,7 +6534,7 @@ INSERT INTO wiki_events (
 ('ev_b0736', 'day_2026-02-06', '2026-02-06T12:30:00Z', '2026-02-06T13:15:00Z',
  'Morning routine', 'Home', '["app_usage"]', FALSE, FALSE,
 
- 'Morning coffee and texts with Jess confirming game night tonight.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
+ 'Morning coffee and texts with Nell confirming game night tonight.', '["routine", "morning", "coffee", "messaging"]', '["place_demo_home"]',
  NULL, NULL, NULL, 'NEW', 68),
 ('ev_b0737', 'day_2026-02-06', '2026-02-06T13:15:00Z', '2026-02-06T13:45:00Z',
  'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE,
@@ -6549,7 +6549,7 @@ INSERT INTO wiki_events (
 ('ev_b0739', 'day_2026-02-06', '2026-02-06T14:15:00Z', '2026-02-06T15:00:00Z',
  'Design standup', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
- 'Friday standup, wrapped up the week on onboarding with Maya and David.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+ 'Friday standup, wrapped up the week on onboarding with Mara and David.', '["meeting", "standup", "design", "onboarding"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 70),
 ('ev_b0740', 'day_2026-02-06', '2026-02-06T15:00:00Z', '2026-02-06T17:30:00Z',
  'Focused design work', 'Office', '["app_usage"]', FALSE, FALSE,
@@ -6567,14 +6567,14 @@ INSERT INTO wiki_events (
  'Weekly call with Mom, talked about her book club and weekend plans.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]',
  NULL, NULL, NULL, 'NEW', 67),
 ('ev_b0743', 'day_2026-02-06', '2026-02-07T00:00:00Z', '2026-02-07T00:30:00Z',
- 'Drive to Jess''s', NULL, '["location_visit"]', FALSE, FALSE,
+ 'Drive to Nell''s', NULL, '["location_visit"]', FALSE, FALSE,
 
- 'Drove to Jess''s place on South Lamar for game night.', '["commute", "driving"]', '[]',
+ 'Drove to Nell''s place on South Lamar for game night.', '["commute", "driving"]', '[]',
  NULL, NULL, NULL, 'NEW', 68),
 ('ev_b0744', 'day_2026-02-06', '2026-02-07T00:30:00Z', '2026-02-07T05:00:00Z',
- 'Game night', 'Jess''s Place', '["location_visit"]', FALSE, FALSE,
+ 'Game night', 'Nell''s Place', '["location_visit"]', FALSE, FALSE,
 
- 'Game night at Jess''s with Jess and Priya, played Catan and Codenames.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]',
+ 'Game night at Nell''s with Nell and Priya, played Catan and Codenames.', '["social", "games"]', '["person_demo_jess", "person_demo_priya", "place_demo_jess"]',
  NULL, NULL, NULL, 'NEW', 69) ON CONFLICT DO NOTHING;
 
 -- =============================================================================
@@ -6617,7 +6617,7 @@ INSERT INTO wiki_events (
 ('ev_b0751', 'day_2026-02-07', '2026-02-08T02:00:00Z', '2026-02-08T04:00:00Z',
  'Wind down', 'Home', '["app_usage"]', FALSE, FALSE,
 
- 'Browsed the internet and texted with Jess about last night''s game.', '["leisure", "messaging", "browsing"]', '["place_demo_home"]',
+ 'Browsed the internet and texted with Nell about last night''s game.', '["leisure", "messaging", "browsing"]', '["place_demo_home"]',
  NULL, NULL, NULL, 'NEW', 58) ON CONFLICT DO NOTHING;
 
 -- =============================================================================
@@ -6693,7 +6693,7 @@ INSERT INTO wiki_events (
 ('ev_b0763', 'day_2026-02-09', '2026-02-09T14:15:00Z', '2026-02-09T15:00:00Z',
  'Design standup', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
- 'Monday standup with Maya and David, planning the onboarding user research sessions for this week.', '["meeting", "standup", "design", "onboarding", "ux-research"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+ 'Monday standup with Mara and David, planning the onboarding user research sessions for this week.', '["meeting", "standup", "design", "onboarding", "ux-research"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 73),
 ('ev_b0764', 'day_2026-02-09', '2026-02-09T15:00:00Z', '2026-02-09T17:30:00Z',
  'Focused design work', 'Office', '["app_usage"]', FALSE, FALSE,
@@ -6708,7 +6708,7 @@ INSERT INTO wiki_events (
 ('ev_b0766', 'day_2026-02-09', '2026-02-09T18:30:00Z', '2026-02-09T22:30:00Z',
  'Afternoon work', 'Office', '["app_usage", "message"]', FALSE, FALSE,
 
- 'Continued onboarding research prep and coordinated participant scheduling with Maya.', '["work", "ux-research", "usability-testing", "onboarding"]', '["person_demo_maya", "place_demo_office", "org_demo_employer"]',
+ 'Continued onboarding research prep and coordinated participant scheduling with Mara.', '["work", "ux-research", "usability-testing", "onboarding"]', '["person_demo_maya", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 66),
 ('ev_b0767', 'day_2026-02-09', '2026-02-09T22:30:00Z', '2026-02-09T23:00:00Z',
  'Bike commute', NULL, '["location_visit", "steps"]', FALSE, FALSE,
@@ -6751,7 +6751,7 @@ INSERT INTO wiki_events (
 ('ev_b0773', 'day_2026-02-10', '2026-02-10T14:15:00Z', '2026-02-10T15:00:00Z',
  'Design standup', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
- 'Tuesday standup with Maya and David, finalized the onboarding research plan.', '["meeting", "standup", "design", "onboarding", "ux-research"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+ 'Tuesday standup with Mara and David, finalized the onboarding research plan.', '["meeting", "standup", "design", "onboarding", "ux-research"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 70),
 ('ev_b0774', 'day_2026-02-10', '2026-02-10T15:00:00Z', '2026-02-10T16:00:00Z',
  'Design review', 'Office', '["calendar", "app_usage"]', FALSE, FALSE,
@@ -6780,7 +6780,7 @@ INSERT INTO wiki_events (
  NULL, NULL, NULL, 'NEW', 68) ON CONFLICT DO NOTHING;
 
 -- =============================================================================
--- Wednesday, February 11, 2026 (10 events — Ramen with Maya, LAST DAY)
+-- Wednesday, February 11, 2026 (10 events — Ramen with Mara, LAST DAY)
 -- =============================================================================
 
 INSERT INTO wiki_events (
@@ -6809,7 +6809,7 @@ INSERT INTO wiki_events (
 ('ev_b0783', 'day_2026-02-11', '2026-02-11T14:15:00Z', '2026-02-11T15:00:00Z',
  'Design standup', 'Office', '["calendar", "message", "transcription"]', FALSE, FALSE,
 
- 'Wednesday standup with Maya and David, confirmed the first user research session for Thursday.', '["meeting", "standup", "design", "onboarding", "ux-research", "usability-testing"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
+ 'Wednesday standup with Mara and David, confirmed the first user research session for Thursday.', '["meeting", "standup", "design", "onboarding", "ux-research", "usability-testing"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
  NULL, NULL, NULL, 'NEW', 75),
 ('ev_b0784', 'day_2026-02-11', '2026-02-11T15:00:00Z', '2026-02-11T17:30:00Z',
  'Focused design work', 'Office', '["app_usage"]', FALSE, FALSE,
@@ -6819,7 +6819,7 @@ INSERT INTO wiki_events (
 ('ev_b0785', 'day_2026-02-11', '2026-02-11T17:30:00Z', '2026-02-11T18:30:00Z',
  'Lunch at Ramen Tatsu-ya', 'Ramen Tatsu-ya', '["location_visit"]', FALSE, FALSE,
 
- 'Wednesday ramen with Maya, talked about being nervous for the first onboarding research session.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
+ 'Wednesday ramen with Mara, talked about being nervous for the first onboarding research session.', '["food", "social", "ramen"]', '["person_demo_maya", "place_demo_ramen"]',
  NULL, NULL, NULL, 'NEW', 73),
 ('ev_b0786', 'day_2026-02-11', '2026-02-11T18:30:00Z', '2026-02-11T22:30:00Z',
  'Afternoon work', 'Office', '["app_usage", "message"]', FALSE, FALSE,

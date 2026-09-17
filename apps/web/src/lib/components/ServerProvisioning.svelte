@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import Button from "$lib/components/Button.svelte";
     /**
      * Server Provisioning Overlay
      *
@@ -128,12 +129,9 @@
                 </div>
             {:else}
                 <div class="error-actions">
-                    <button
-                        class="retry-button"
-                        onclick={() => window.location.reload()}
-                    >
+                    <Button onclick={() => window.location.reload()}>
                         Refresh
-                    </button>
+                    </Button>
                     <!--
                         The manual, not the repo. This pointed at
                         github.com/jaces/virtues/blob/main/docs/troubleshooting.md
@@ -266,22 +264,6 @@
         flex-direction: column;
         gap: 0.75rem;
         margin-top: 0.5rem;
-    }
-
-    .retry-button {
-        padding: 0.625rem 1.5rem;
-        background: var(--color-primary, #3b82f6);
-        color: white;
-        border: none;
-        border-radius: 0.5rem;
-        font-size: 0.875rem;
-        font-weight: 500;
-        cursor: pointer;
-        transition: opacity 0.15s ease;
-    }
-
-    .retry-button:hover {
-        opacity: 0.9;
     }
 
     .support-link {

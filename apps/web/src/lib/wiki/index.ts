@@ -1,14 +1,14 @@
 /**
  * Wiki Module
  *
- * Personal wiki with discriminated page types.
+ * The client's wiki surface: the API types and fetchers, the two shapes the
+ * day charts read, the one event converter, and the lede rule.
+ *
+ * It used to say "discriminated page types". There are none — components take
+ * the wire shape.
  */
 
-// Types (from new modular structure)
 export * from "./types";
-
-// API client
 export * from "./api";
-
-// Converters
 export * from "./converters";
+export * from "./lede";

@@ -41,6 +41,8 @@
 	import { flip } from 'svelte/animate';
 	import { cubicOut } from 'svelte/easing';
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
 	import { dataGridPrefs, type ViewMode, type Density } from '$lib/stores/dataGridPrefs.svelte';
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 	import DataGridFilterRail from './DataGridFilterRail.svelte';
@@ -71,6 +73,14 @@
 		pageSize?: number;
 		/** Default view mode when no stored preference exists for this entityType. */
 		defaultViewMode?: ViewMode;
+		/**
+		 * What the phone shows in place of the table. Default 'grid', because a
+		 * table needs width. A consumer whose table is already one column (All
+		 * chats: a title and a time) passes 'table' and keeps its rows — the
+		 * phone then renders the same list the desk does, and the mode is
+		 * pinned: no stored preference and no toggle can put cards back.
+		 */
+		mobileViewMode?: ViewMode;
 		/** Minimum card width in grid mode (CSS value). Default: '200px'. */
 		gridMinWidth?: string;
 		/** If provided, row click toggles an inline detail row instead of firing onItemClick. */
@@ -147,6 +157,7 @@
 		searchPlaceholder = 'Search...',
 		pageSize = 16,
 		defaultViewMode = 'table',
+		mobileViewMode = 'grid',
 		gridMinWidth = '200px',
 		expandDetail,
 		animateMount = false,
@@ -493,7 +504,7 @@
 	// column on its own and is fine there. An explicit user preference still
 	// wins over both.
 	const fallbackViewMode = $derived<ViewMode>(
-		mobileLayout.isMobile && defaultViewMode === 'table' ? 'grid' : defaultViewMode
+		mobileLayout.isMobile && defaultViewMode === 'table' ? mobileViewMode : defaultViewMode
 	);
 
 	// svelte-ignore state_referenced_locally
@@ -501,7 +512,7 @@
 		dataGridPrefs.hasViewMode(entityType)
 			? dataGridPrefs.getViewMode(entityType)
 			: mobileLayout.isMobile
-				? 'grid'
+				? mobileViewMode
 				: defaultViewMode
 	);
 	// svelte-ignore state_referenced_locally
@@ -546,8 +557,15 @@
 	 * Wall, the consumer later stops passing `wallTile`, and the grid would
 	 * render a mode with no renderer. Fall back rather than blank.
 	 */
+	/**
+	 * A consumer that keeps its table on the phone pins it there: the phone
+	 * has no room for a second reading of the same list, and anyone who
+	 * opened the page before the pin has 'grid' stored for it, which would
+	 * otherwise win forever.
+	 */
+	const pinnedMobileTable = $derived(mobileLayout.isMobile && mobileViewMode === 'table');
 	const effectiveViewMode = $derived<ViewMode>(
-		availableModes.includes(viewMode) ? viewMode : 'table'
+		pinnedMobileTable ? 'table' : availableModes.includes(viewMode) ? viewMode : 'table'
 	);
 
 	function toggleViewMode() {
@@ -844,7 +862,7 @@
 				{#if bulkActions}
 					{@render bulkActions(selectedItems, clearSelection)}
 				{/if}
-				<button class="bulk-clear" onclick={clearSelection}>Clear</button>
+				<Button variant="ghost" size="sm" onclick={clearSelection}>Clear</Button>
 			{:else}
 			<div class="search-container">
 				<Icon icon="ri:search-line" width="16" />
@@ -895,9 +913,7 @@
 							{#snippet children()}
 								<div class="add-popover" role="menu">
 									{#each availableFilters as def (def.id)}
-										<button type="button" class="add-row" onclick={() => pickAddFilter(def)}>
-											{def.label}
-										</button>
+										<MenuItem label={def.label} onclick={() => pickAddFilter(def)} />
 									{/each}
 								</div>
 							{/snippet}
@@ -927,44 +943,40 @@
 						{/snippet}
 						{#snippet children({ close }: { close: () => void })}
 							<div class="menu-popover" role="menu">
-								<button
-									type="button"
-									class="menu-opt"
-									class:on={!activeGroupCol}
+								<MenuItem
+									role="menuitemradio"
+									label="No grouping"
+									checked={!activeGroupCol}
 									onclick={() => {
 										setGroupKey('');
 										close();
 									}}
-								>
-									<Icon icon="ri:check-line" width="14" />
-									<span>No grouping</span>
-								</button>
+								/>
 								{#each groupableCols as col (String(col.key))}
-									<button
-										type="button"
-										class="menu-opt"
-										class:on={groupKey === String(col.key)}
+									<MenuItem
+										role="menuitemradio"
+										label={col.label}
+										checked={groupKey === String(col.key)}
 										onclick={() => {
 											setGroupKey(String(col.key));
 											close();
 										}}
-									>
-										<Icon icon="ri:check-line" width="14" />
-										<span>{col.label}</span>
-									</button>
+									/>
 								{/each}
 							</div>
 						{/snippet}
 					</Popover>
 				{/if}
-				<button
-					class="ctrl-btn"
-					onclick={toggleViewMode}
-					aria-label={`Switch view — showing ${VIEW_META[effectiveViewMode].label}`}
-					title={VIEW_META[effectiveViewMode].label}
-				>
-					<Icon icon={VIEW_META[effectiveViewMode].icon} width="16" />
-				</button>
+				{#if !pinnedMobileTable}
+					<button
+						class="ctrl-btn"
+						onclick={toggleViewMode}
+						aria-label={`Switch view — showing ${VIEW_META[effectiveViewMode].label}`}
+						title={VIEW_META[effectiveViewMode].label}
+					>
+						<Icon icon={VIEW_META[effectiveViewMode].icon} width="16" />
+					</button>
+				{/if}
 				{#if toolbarActions}
 					{@render toolbarActions()}
 				{/if}
@@ -1004,9 +1016,9 @@
 			<Icon icon="ri:error-warning-line" width="24" />
 			<span>{effectiveError}</span>
 			{#if serverMode}
-				<button class="retry-btn" onclick={retryServer}>Retry</button>
+				<Button variant="secondary" size="sm" onclick={retryServer}>Retry</Button>
 			{:else if onRetry}
-				<button class="retry-btn" onclick={onRetry}>Retry</button>
+				<Button variant="secondary" size="sm" onclick={onRetry}>Retry</Button>
 			{/if}
 		</div>
 	{:else if displayedItems.length === 0 && !isNarrowed}
@@ -1019,7 +1031,9 @@
 			<Icon icon="ri:search-line" width="32" />
 			{#if searchQuery.trim()}
 				<p>No results for "{searchQuery}"</p>
-				<button class="clear-search-btn" onclick={() => (searchQuery = '')}>Clear search</button>
+				<Button variant="secondary" size="sm" onclick={() => (searchQuery = '')}>
+					Clear search
+				</Button>
 			{:else}
 				<p>No results match the active filters</p>
 			{/if}
@@ -1333,14 +1347,14 @@
 
 	{#if totalPages > 1 && !effectiveLoading && !effectiveError && displayedItems.length > 0}
 		<div class="pagination">
-			<button
-				class="page-btn"
+			<Button
+				variant="secondary"
+				size="sm"
 				disabled={currentPage <= 1 || (serverMode && serverLoading)}
 				onclick={() => currentPage--}
-				type="button"
 			>
 				Previous
-			</button>
+			</Button>
 			{#if serverMode}
 				<!-- An honest range: the server knows the true total, so say it. -->
 				<span class="page-info">
@@ -1352,14 +1366,14 @@
 			{:else}
 				<span class="page-info">{currentPage} / {totalPages}</span>
 			{/if}
-			<button
-				class="page-btn"
+			<Button
+				variant="secondary"
+				size="sm"
 				disabled={currentPage >= totalPages || (serverMode && serverLoading)}
 				onclick={() => currentPage++}
-				type="button"
 			>
 				Next
-			</button>
+			</Button>
 		</div>
 	{/if}
 </div>
@@ -1471,22 +1485,6 @@
 
 	/* Recovery actions, not calls to action — an outline in the primary colour
 	   gave "Clear search" the same weight as a submit button. */
-	.clear-search-btn {
-		margin-top: 0.5rem;
-		padding: 0.375rem 0.75rem;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		cursor: pointer;
-	}
-
-	.clear-search-btn:hover {
-		background: var(--color-background-hover);
-		color: var(--color-foreground);
-	}
-
 	/* Toolbar control buttons (density, view, filter) — share visual weight */
 	.ctrl-btn {
 		position: relative;
@@ -1539,27 +1537,6 @@
 		border-radius: 8px;
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 	}
-	.menu-opt {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.375rem 0.5rem;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-		text-align: left;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-	.menu-opt:hover { background: var(--color-background-hover); }
-	/* The checkmark holds its column whether or not it's shown, so the labels
-	   line up instead of shifting by 14px between states. */
-	.menu-opt :global(svg) { opacity: 0; flex-shrink: 0; color: var(--color-foreground-muted); }
-	.menu-opt.on :global(svg) { opacity: 1; }
-	.menu-opt:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
-
 	/* Filter add: button + popover wrapper */
 	.filter-add {
 		position: relative;
@@ -1598,22 +1575,6 @@
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 	}
 
-	.add-row {
-		padding: 0.375rem 0.5rem;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-		text-align: left;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-
-	.add-row:hover {
-		background: var(--color-background-hover);
-	}
-
 	/* States */
 	.loading-state,
 	.error-state,
@@ -1634,21 +1595,6 @@
 	@keyframes spin {
 		from { transform: rotate(0deg); }
 		to { transform: rotate(360deg); }
-	}
-
-	.retry-btn {
-		padding: 0.375rem 0.75rem;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		cursor: pointer;
-	}
-
-	.retry-btn:hover {
-		background: var(--color-background-hover);
-		color: var(--color-foreground);
 	}
 
 	.empty-state :global(svg) {
@@ -1948,18 +1894,6 @@
 
 	.bulk-count { font-size: 0.75rem; color: var(--color-foreground); white-space: nowrap; }
 	.bulk-sp { flex: 1; }
-	.bulk-clear {
-		border: none;
-		background: none;
-		padding: 0;
-		font: inherit;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		text-decoration: underline;
-	}
-	.bulk-clear:hover { color: var(--color-foreground); }
-
 	/* ============================================
 	   SKELETON
 	   ============================================ */
@@ -2200,27 +2134,6 @@
 		justify-content: center;
 		gap: 1rem;
 		padding: 0.75rem 0;
-	}
-
-	.page-btn {
-		padding: 0.25rem 0.625rem;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		background: none;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		cursor: pointer;
-		transition: all 0.1s ease;
-	}
-
-	.page-btn:hover:not(:disabled) {
-		color: var(--color-foreground);
-		border-color: var(--color-border-strong);
-	}
-
-	.page-btn:disabled {
-		opacity: 0.35;
-		cursor: default;
 	}
 
 	.page-info {

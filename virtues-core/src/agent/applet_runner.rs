@@ -58,6 +58,27 @@ pub async fn run_agent_loop(
     // Extract optional chat_id and model from config
     let chat_id = action.config.get("chat_id").and_then(|v| v.as_str()).map(|s| s.to_string());
     let model_override = action.config.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+    // An applet may ask for a SLOT instead of a model id. The slot is the
+    // supported lever: a model id in a manifest is a literal that goes stale
+    // the moment the catalog moves, which is why the registry owns selection.
+    //
+    // Without this an agent applet gets the background (Lite) model, which is
+    // right for the summarizing and bookkeeping most of them do and wrong for
+    // any applet whose OUTPUT is prose a person reads. The wiki editor is the
+    // second kind: its articles are held to the same bar as the day's.
+    let model_slot = action
+        .config
+        .get("model_slot")
+        .and_then(|v| v.as_str())
+        .and_then(|s| match s.to_ascii_lowercase().as_str() {
+            "chat" => Some(virtues_registry::models::ModelSlot::Chat),
+            "lite" => Some(virtues_registry::models::ModelSlot::Lite),
+            "coding" => Some(virtues_registry::models::ModelSlot::Coding),
+            other => {
+                tracing::warn!(applet_id = %action.id, slot = other, "unknown model_slot; using the background model");
+                None
+            }
+        });
 
     // Build system prompt (with memory if present)
     let system_prompt =
@@ -103,6 +124,19 @@ pub async fn run_agent_loop(
     let tools = crate::tools::get_tools_for_applet();
     let model = if let Some(m) = &model_override {
         m.clone()
+    } else if let Some(slot) = model_slot {
+        // The person's pin for that slot when they have one, else the
+        // registry's — the same door chat resolves through.
+        match slot {
+            virtues_registry::models::ModelSlot::Chat => {
+                crate::api::assistant_profile::get_chat_model(pool).await
+            }
+            virtues_registry::models::ModelSlot::Coding => {
+                crate::api::assistant_profile::get_coding_model(pool).await
+            }
+            _ => crate::api::assistant_profile::get_background_model(pool).await,
+        }
+        .unwrap_or_else(|_| crate::api::model_catalog::model_for_slot(slot))
     } else {
         crate::api::assistant_profile::get_background_model(pool).await
             .unwrap_or_else(|_| crate::api::model_catalog::model_for_slot(
@@ -129,7 +163,6 @@ pub async fn run_agent_loop(
         llm_messages,
         tools,
         tool_context,
-        None,
         None,
     );
 
@@ -222,7 +255,7 @@ pub async fn run_agent_loop(
                         reasoning: None,
                         intent: None,
                         subject: None,
-                        thought_signature: None,
+                        reasoning_details: None,
                         parts: None,
                     };
                     let _ = append_message(pool, cid.clone(), error_msg).await;
@@ -247,7 +280,7 @@ pub async fn run_agent_loop(
                 reasoning: None,
                 intent: None,
                 subject: None,
-                thought_signature: None,
+                reasoning_details: None,
                 parts: None,
             };
             let _ = append_message(pool, cid.clone(), msg).await;
@@ -291,11 +324,11 @@ async fn load_chat_messages(pool: &PgPool, chat_id: &str) -> Result<Vec<ChatMess
         Option<String>,
         Option<serde_json::Value>,
         Option<String>,
-        Option<String>,
+        Option<serde_json::Value>,
         Timestamp,
     )>(
         r#"
-        SELECT id, role, content, model, provider, agent_id, reasoning, tool_calls, subject, thought_signature, created_at
+        SELECT id, role, content, model, provider, agent_id, reasoning, tool_calls, subject, reasoning_details, created_at
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -307,7 +340,7 @@ async fn load_chat_messages(pool: &PgPool, chat_id: &str) -> Result<Vec<ChatMess
 
     let messages = rows
         .into_iter()
-        .map(|(id, role, content, model, provider, agent_id, reasoning, tool_calls_raw, subject, thought_signature, timestamp)| {
+        .map(|(id, role, content, model, provider, agent_id, reasoning, tool_calls_raw, subject, reasoning_details, timestamp)| {
             let tool_calls = tool_calls_raw
                 .and_then(|tc| serde_json::from_value(tc).ok());
 
@@ -323,7 +356,7 @@ async fn load_chat_messages(pool: &PgPool, chat_id: &str) -> Result<Vec<ChatMess
                 reasoning,
                 intent: None,
                 subject,
-                thought_signature,
+                reasoning_details,
                 parts: None,
             }
         })

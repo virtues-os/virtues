@@ -6,8 +6,10 @@
   questions at the one moment the box had nothing to show for them: nothing
   kicks when a source connects, entities resolve on a 15-minute tick, and the
   first narrated day lands the following morning. Everything except the letter
-  moved into the app as the getting-started page (HomeView's first dress —
-  see GettingStarted.svelte and agents/plan/getting-started-plan.md), and
+  moved into the app: first as a getting-started page dressed on Home, then
+  from 2026-09-13 as one seeded chat room (see
+  apps/web/src/lib/components/chat/getting-started/, whose four steps are
+  derived from the record rather than stored), and
   "onboarding" left the vocabulary with it: what remains is a letter, so the
   route says so. /onboarding and /setup redirect here for old links and
   OTA-skewed bundles.
@@ -15,10 +17,12 @@
   What stays is the one thing that must be read before the app and cannot
   retire: the letter. It sets the covenant; the button at its end is the door.
 
-  THE ACCOUNT GATE MOVED TOO. It was a toll booth on the reveal (the one
-  onboarding surface that called the models); now it stands where the models
-  are actually called — the getting-started page renders AccountGate while
-  the account is unsatisfied.
+  THE ACCOUNT GATE IS GONE, not moved. It was a toll booth on the reveal (the
+  one onboarding surface that called the models), then a component waiting for
+  a getting-started PAGE that never shipped — the page became the room. Asking
+  for an account is `connect_ai`, the room's first step, spoken as a turn with
+  its buttons under the thread; `AccountGate.svelte` was deleted unreferenced
+  on 2026-09-16.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
@@ -95,10 +99,23 @@
 				// never let a failed write hold someone out of their own app.
 			}
 		}
-		// Home, by name: getting started is Home's page until the record is
-		// set up. "/" is the chat tab in the window shell's registry, so the
-		// letter used to hand people to an empty chat.
-		void goto("/home");
+		// After the letter, getting started: the room, not Home, while any of
+		// its four steps is open. The route guard already lands a box with no
+		// model there; this covers the box that has one (BYO, or a dev checkout
+		// with the setup skip) and would otherwise skip straight to Home with
+		// the room only reachable from the sidebar card. A failed read falls
+		// back to Home: never let a blip hold someone in the letter.
+		let next = "/home";
+		try {
+			const res = await fetch("/api/getting-started");
+			if (res.ok) {
+				const gs = (await res.json()) as { graduated?: boolean };
+				if (gs.graduated === false) next = "/chat/chat_getting_started";
+			}
+		} catch {
+			/* Home */
+		}
+		void goto(next);
 	}
 </script>
 

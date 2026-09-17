@@ -14,7 +14,10 @@
  * no-op anyway, but skipping avoids the round-trip entirely).
  */
 
+import { ensureSyntaxTree } from '@codemirror/language';
 import { type ChangeSpec, EditorState, type Extension, type Text } from '@codemirror/state';
+
+import { type CodeRange, collectCodeRanges, inCode } from './code-context';
 
 // Ordered item: leading indent, digits, `.` or `)`, then at least one space.
 const ORDERED_RE = /^(\s*)(\d+)([.)])(\s)/;
@@ -31,7 +34,7 @@ interface Change {
  * Scan the document and return the changes needed to make every ordered-list
  * run sequential. Positions are in `doc` coordinates.
  */
-function computeRenumbering(doc: Text): Change[] {
+function computeRenumbering(doc: Text, code: CodeRange[] = []): Change[] {
 	const changes: Change[] = [];
 	// indent width → next expected ordinal for that level
 	const counters = new Map<number, number>();
@@ -40,6 +43,10 @@ function computeRenumbering(doc: Text): Change[] {
 	for (let i = 1; i <= doc.lines; i++) {
 		const line = doc.line(i);
 		const text = line.text;
+
+		// A `1.` inside a code fence is code. It neither gets renumbered nor
+		// touches the counters of any list around the fence.
+		if (code.length > 0 && inCode(code, line.from, line.to + 1)) continue;
 
 		if (text.trim() === '') {
 			// A single blank line can sit inside a loose list; two breaks it.
@@ -99,7 +106,12 @@ export const listRenumber: Extension = EditorState.transactionFilter.of((tr) => 
 	// Only local text editing — never remote Yjs sync or programmatic dispatch.
 	if (!tr.isUserEvent('input') && !tr.isUserEvent('delete')) return tr;
 
-	const changes = computeRenumbering(tr.newDoc);
+	// The tree for the new state, parsed far enough to know where the code
+	// regions are. A short budget: this runs on every keystroke, and a doc
+	// too large to parse in it simply gets the old behavior for that edit.
+	const tree = ensureSyntaxTree(tr.state, tr.newDoc.length, 20);
+	const code = tree ? collectCodeRanges(tr.state, 0, tr.newDoc.length) : [];
+	const changes = computeRenumbering(tr.newDoc, code);
 	if (changes.length === 0) return tr;
 
 	// Appended-spec change positions are in tr.newDoc coordinates; CodeMirror

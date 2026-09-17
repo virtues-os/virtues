@@ -7,7 +7,7 @@
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { getKeepMenuItems } from "$lib/utils/contextMenuItems";
 	import { confirmAction } from "$lib/stores/dialog.svelte";
-	import { Page } from "$lib";
+	import { Button, Page } from "$lib";
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
@@ -133,9 +133,13 @@
 	maxWidth="wide"
 >
 	{#snippet actions()}
-		<button class="new-btn" onclick={createNewPage} disabled={creating}>
-			<Icon icon="ri:add-line" width="16" /> New page
-		</button>
+		<Button
+			variant="secondary"
+			size="sm"
+			icon="ri:add-line"
+			loading={creating}
+			onclick={createNewPage}>New page</Button
+		>
 	{/snippet}
 
 	<UniversalDataGrid
@@ -213,14 +217,6 @@
 </Page>
 
 <style>
-	.new-btn {
-		display: inline-flex; align-items: center; gap: 5px;
-		padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 8px;
-		background: var(--color-surface-elevated); color: var(--color-foreground);
-		font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
-	}
-	.new-btn:hover { background: var(--color-surface); }
-	.new-btn:disabled { opacity: 0.5; cursor: default; }
 
 	.col-title {
 		font-weight: 500;

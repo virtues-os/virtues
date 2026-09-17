@@ -4,6 +4,7 @@
 	import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
 	import Modal from '$lib/components/Modal.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 
 	// Active persona state (from assistant profile)
@@ -226,26 +227,32 @@
 	{#snippet footer()}
 		<div class="flex items-center justify-between w-full">
 			{#if editingPersona}
-				<button
-					class="modal-btn border border-error text-error hover:bg-error hover:text-surface"
+				<!-- The label is conditional, so the variant is too: hiding a system
+				     persona is reversible and not destructive, and a filled red on
+				     "Hide" would say something untrue. -->
+				<Button
+					variant={editingPersona.is_system ? 'secondary' : 'danger'}
+					size="sm"
 					onclick={handleDelete}
 				>
 					{editingPersona.is_system ? 'Hide' : 'Delete'}
-				</button>
+				</Button>
 			{:else}
 				<div></div>
 			{/if}
 			<div class="flex items-center gap-2">
-				<button class="modal-btn modal-btn-secondary" onclick={closeModal}>
+				<Button variant="secondary" size="sm" onclick={closeModal}>
 					Cancel
-				</button>
-				<button
-					class="modal-btn modal-btn-primary"
+				</Button>
+				<Button
+					variant="primary"
+					size="sm"
 					onclick={handleSave}
-					disabled={!canSave || saving}
+					disabled={!canSave}
+					loading={saving}
 				>
-					{saving ? 'Saving...' : 'Save'}
-				</button>
+					Save
+				</Button>
 			</div>
 		</div>
 	{/snippet}

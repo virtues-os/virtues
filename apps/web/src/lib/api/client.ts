@@ -7,6 +7,8 @@
 
 import { sanitizeUrl } from '$lib/utils/urlUtils';
 
+import { noteRequestId } from '$lib/log';
+
 const API_BASE = '/api';
 
 // ============================================================================
@@ -23,11 +25,23 @@ const API_BASE = '/api';
 export class ApiError extends Error {
 	readonly status: number;
 	readonly body: unknown;
-	constructor(status: number, message: string, body?: unknown) {
+	/**
+	 * The box's `x-request-id` for the request that failed.
+	 *
+	 * This is the join. The box stamps every request with an id, puts it on a
+	 * span so all of its own log lines inherit it, and returns it in this
+	 * header. Carrying it on the error means a client report about a failure
+	 * and the server-side lines that explain it end up on the same key —
+	 * without it, the two halves of an incident can only be matched by
+	 * guessing from timestamps.
+	 */
+	readonly requestId?: string;
+	constructor(status: number, message: string, body?: unknown, requestId?: string) {
 		super(message);
 		this.name = 'ApiError';
 		this.status = status;
 		this.body = body;
+		this.requestId = requestId;
 	}
 }
 
@@ -56,6 +70,11 @@ export async function request<T>(
 	}
 
 	const res = await fetch(url, init);
+	// Remember it whether or not this request failed: an error thrown LATER,
+	// or an uncaught exception with no request of its own, still wants the
+	// most recent one as a hint. See `noteRequestId`.
+	const requestId = res.headers.get('x-request-id') ?? undefined;
+	if (requestId) noteRequestId(requestId);
 
 	if (!res.ok) {
 		let body: unknown;
@@ -75,7 +94,7 @@ export async function request<T>(
 		} catch {
 			/* keep statusText fallback */
 		}
-		throw new ApiError(res.status, message, body);
+		throw new ApiError(res.status, message, body, requestId);
 	}
 
 	if (res.status === 204) return undefined as T;
@@ -154,6 +173,11 @@ export interface Applet {
 	 *  headline. Null only for a row whose manifest omits it. */
 	description: string | null;
 	agent: string | null;
+	/** The prompt we last SHIPPED, which is a different question from the one
+	 *  the applet is running. They differ once the person has written their
+	 *  own — and knowing that is what lets this page offer a diff and a way
+	 *  back to the default, rather than silently keeping either. */
+	agent_shipped: string | null;
 	schedule: string | null;
 	enabled: boolean;
 	config: Record<string, unknown>;
@@ -189,6 +213,11 @@ export interface Applet {
 	pulse: AppletRun['status'][];
 	/** The last successful run's summary — what the applet last produced. */
 	last_success_summary: string | null;
+	/** LLM spend charged to this applet over the last 7 days, in micros-USD.
+	 *  0 for everything deterministic, which is most of them. `null` means the
+	 *  box could not read it — NOT that it was free; render those differently
+	 *  from a real zero or the column quietly reassures. */
+	spend_week_micros: number | null;
 	created_at: string;
 	updated_at: string;
 	last_run: AppletLastRun | null;
@@ -339,28 +368,6 @@ export interface Census {
 export async function getCensus(): Promise<Census> {
 	const res = await fetch(`${API_BASE}/census`);
 	if (!res.ok) throw new Error(`Failed to read the census: ${res.statusText}`);
-	return res.json();
-}
-
-export interface NarrativeDraft {
-	document: string;
-	/** Proposed only. Nothing binds the assistant until it is confirmed. */
-	proposed_rules: string[];
-}
-
-/** Draft the document from the answers. Spends money; POST, never on load. */
-export async function draftNarrative(): Promise<NarrativeDraft> {
-	const res = await fetch(`${API_BASE}/narrative/draft`, { method: 'POST' });
-	if (!res.ok) {
-		let detail = res.statusText;
-		try {
-			const b = await res.json();
-			if (b?.error) detail = b.error;
-		} catch {
-			/* status text is all we have */
-		}
-		throw new Error(detail);
-	}
 	return res.json();
 }
 
@@ -746,6 +753,8 @@ export interface AppletSourceListing {
 	dir: string;
 	/** Which root the folder resolved in — `shipped` came with the box. */
 	origin_root: 'shipped' | 'state';
+	/** `<origin>@<version>` the folder was copied from, when its manifest records it. */
+	forked_from: string | null;
 	files: AppletSourceFile[];
 	truncated: boolean;
 }
@@ -1203,6 +1212,8 @@ export async function getPairingStatus(sourceId: string): Promise<PairingStatus>
 
 // Profile
 export interface Profile {
+	/** First and last, as the person gave it. */
+	full_name?: string | null;
 	preferred_name?: string | null;
 	/** `"YYYY-MM-DD"` — serde's NaiveDate wire form, same as an HTML date input. */
 	birth_date?: string | null;
@@ -2249,16 +2260,23 @@ export interface GettingStartedStep {
 	via?: string;
 	/** Server-authored copy for the step's current state — render verbatim. */
 	detail?: string;
-	/** Started but not done (the interview has replies, no document yet). */
+	/** Started but not done (the interview has begun, no document yet). */
 	underway?: boolean;
+	/** The person moved past this step themselves (skip/continue). */
+	acknowledged?: boolean;
+	/** Integrations in place — on the step that counts them. */
+	connected?: number;
+	/** What is actually feeding the record, named. */
+	sources?: string[];
 }
 
 export interface GettingStartedState {
 	ai_connected: boolean;
-	locked: boolean;
 	steps: GettingStartedStep[];
 	first_day: string | null;
 	graduated: boolean;
+	/** The interview has begun inside the room, at this instant (ISO). */
+	interview_started_at: string | null;
 }
 
 export async function getGettingStarted(): Promise<GettingStartedState> {
@@ -2278,6 +2296,13 @@ export async function skipGettingStartedStep(
 		body: JSON.stringify({ step, skipped })
 	});
 	if (!res.ok) throw new Error(`Failed to skip step: ${res.statusText}`);
+	return res.json();
+}
+
+/** Begin the interview inside the getting-started room. Answers with the new state. */
+export async function startGettingStartedInterview(): Promise<GettingStartedState> {
+	const res = await fetch(`${API_BASE}/getting-started/interview`, { method: 'POST' });
+	if (!res.ok) throw new Error(`Failed to start the interview: ${res.statusText}`);
 	return res.json();
 }
 
