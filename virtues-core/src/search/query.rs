@@ -60,6 +60,31 @@ const CANDIDATE_POOL: i64 = 200;
 ///
 /// Must exceed the LIMIT it serves. At exactly `CANDIDATE_POOL` the index still
 /// prunes below the target, so this carries a margin.
+///
+/// NEVER HOIST THE QUERY VECTOR INTO A CTE. This whole knob — and the index it
+/// tunes — was dead for weeks, and the way it died is a trap any rewrite of the
+/// SQL below will walk back into. The vector used to live in `WITH prm AS
+/// (SELECT $1::halfvec AS qv)`, read by both `dense` and `sc`. Postgres inlines
+/// a CTE only when it is referenced ONCE; at two references `prm` materializes,
+/// so `prm.qv` is a *column of another node* rather than a parameter — and
+/// pgvector can only drive an HNSW scan when the `<=>` operand is constant with
+/// respect to the scan. The planner silently fell back to a parallel seq scan
+/// over every vector plus a full sort, on every search, for every phrasing.
+///
+/// Nothing surfaces it: the results are correct (an exact scan is the same
+/// ranking, only slower), no error is raised, and `ef_search` quietly stops
+/// mattering because no index scan consumes it. Measured on a real box, 226k
+/// vectors, the shipped query against its own logged SQL:
+///
+/// ```text
+/// prm CTE, referenced twice   dense arm 260 ms (Parallel Seq Scan)   whole query 488 ms
+/// $1::halfvec at both sites   dense arm 6.3 ms (Index Scan, hnsw)    whole query 114 ms
+/// ```
+///
+/// Repeating `$1::halfvec` is not duplication to be tidied away; it is the only
+/// spelling that keeps the index reachable. The cost of the mistake grows with
+/// the corpus — it is O(N) per search — so it reads as "search got slower as I
+/// added data", which is exactly what a vector index is supposed to prevent.
 const HNSW_EF_SEARCH: i64 = CANDIDATE_POOL + CANDIDATE_POOL / 4;
 
 /// Notebook-scoped retrieval (lean v1): additive bonus, in z-score space, for a
@@ -103,7 +128,7 @@ pub struct SearchFilters {
 }
 
 /// A search request as callers state it, before scope resolution. What
-/// `search`/`search_multi` take instead of nine positional arguments; the
+/// `search_multi` takes instead of nine positional arguments; the
 /// resolved, bind-ready form is [`SearchFilters`] (built by `prepare_filters`).
 /// `Default` = search everything, top 10.
 #[derive(Debug, Clone, Default)]
@@ -199,6 +224,46 @@ pub(crate) fn normalize_scores(candidates: &mut [SearchResult]) {
     for c in candidates.iter_mut() {
         c.score = if span > 0.0 { (c.score - lo) / span } else { 1.0 };
     }
+}
+
+/// Reorder a reranked pool so that candidates the reranker actually scored come
+/// first, in its order, and the ones it could not read follow in the fused order
+/// they arrived in. `was_scored[i]` refers to `candidates[i]` on entry.
+///
+/// See `rerank_candidates` for why this exists: the two groups carry scores in
+/// different units, so the only valid comparisons are within a group.
+pub(crate) fn order_scored_first(candidates: &mut Vec<SearchResult>, was_scored: &[bool]) {
+    // `sort_by` is stable, so the unscored tail holds its arrival order; sorting
+    // it by its own (stale, but mutually consistent) score is a no-op that keeps
+    // the comparator total.
+    let mut tagged: Vec<(bool, SearchResult)> = was_scored
+        .iter()
+        .copied()
+        .zip(candidates.drain(..))
+        .collect();
+    tagged.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.score.total_cmp(&a.1.score)));
+
+    // Restate the tail's scores below the scored floor so the numbers agree with
+    // the order. `semantic_search` returns rank and not score, so the magnitudes
+    // are never read today — but a `score` that contradicts the position it sits
+    // in is a trap for the next caller, and `normalize_scores` runs on these
+    // values immediately after. One average gap per step keeps the tail from
+    // stretching the span and squashing the real scores into it.
+    let floor = tagged
+        .iter()
+        .take_while(|(scored, _)| *scored)
+        .map(|(_, c)| c.score)
+        .fold(f64::INFINITY, f64::min);
+    if floor.is_finite() {
+        let scored_count = tagged.iter().filter(|(scored, _)| *scored).count().max(1);
+        let top = tagged[0].1.score;
+        let step = ((top - floor) / scored_count as f64).max(f64::EPSILON);
+        for (k, (_, c)) in tagged.iter_mut().filter(|(scored, _)| !*scored).enumerate() {
+            c.score = floor - step * (k + 1) as f64;
+        }
+    }
+
+    candidates.extend(tagged.into_iter().map(|(_, c)| c));
 }
 
 /// Reciprocal Rank Fusion constant. A document's fused weight is
@@ -306,8 +371,7 @@ impl SemanticSearchEngine {
     /// Resolve a request's scope into ready-to-bind `SearchFilters`, or `None`
     /// for the honest-zero case: a grounded (Exclusive) chat over an empty or
     /// fully unindexed notebook scope returns no results — never silently
-    /// falls open to the whole graph. One implementation shared by `search`
-    /// and `search_multi`, which previously each carried their own copy.
+    /// falls open to the whole graph.
     async fn prepare_filters(&self, opts: &SearchOptions) -> Result<Option<SearchFilters>> {
         // Notebook scoping: resolve the active notebook's members into a set of
         // record_ids (page/day/source/chat + document chunks for /drive/file_
@@ -413,8 +477,8 @@ impl SemanticSearchEngine {
     /// pure-vector query, which degenerates cleanly to dense-only: the lexical
     /// arm matches nothing and `bz` normalizes to 0). Scope resolution is the
     /// caller's job (see `SearchFilters`); this method does no notebook I/O and
-    /// does not enforce Exclusive honest-zero — `search()` does that before
-    /// calling in.
+    /// does not enforce Exclusive honest-zero — `prepare_filters` does that
+    /// before calling in.
     pub(crate) async fn recall_and_fuse(
         &self,
         query_vector: &Vector,
@@ -514,13 +578,15 @@ impl SemanticSearchEngine {
         // a query-adaptive weight, deduped to the best chunk per record.
         // Numeric constants (N, avgdl, k1, b, weights) are Rust-computed and
         // inlined — injection-safe (all f64/i64).
+        //
+        // `$1::halfvec` IS REPEATED RATHER THAN HOISTED INTO A CTE, and must stay
+        // that way — see `HNSW_EF_SEARCH`.
         let sql = format!(
-            "WITH prm AS (SELECT $1::halfvec AS qv), \
-             dense AS ( \
+            "WITH dense AS ( \
                SELECT se.id \
-               FROM search_vectors vs JOIN search_embeddings se ON se.id = vs.embedding_id, prm \
+               FROM search_vectors vs JOIN search_embeddings se ON se.id = vs.embedding_id \
                WHERE 1=1{f} \
-               ORDER BY vs.embedding <=> prm.qv, se.id LIMIT {pool} \
+               ORDER BY vs.embedding <=> $1::halfvec, se.id LIMIT {pool} \
              ), lex AS ( \
                SELECT dt.chunk_id AS id, \
                       sum( ln(({n}::float8 - df.df + 0.5)/(df.df + 0.5) + 1) \
@@ -534,9 +600,9 @@ impl SemanticSearchEngine {
                GROUP BY dt.chunk_id, se.bm25_len ORDER BY bs DESC LIMIT {pool} \
              ), u AS (SELECT id FROM dense UNION SELECT id FROM lex), \
              sc AS ( \
-               SELECT u.id, -(vs.embedding <=> prm.qv) AS ds, COALESCE(l.bs, 0) AS bs \
+               SELECT u.id, -(vs.embedding <=> $1::halfvec) AS ds, COALESCE(l.bs, 0) AS bs \
                FROM u JOIN search_vectors vs ON vs.embedding_id = u.id \
-                      LEFT JOIN lex l ON l.id = u.id, prm \
+                      LEFT JOIN lex l ON l.id = u.id \
              ), z AS ( \
                SELECT id, \
                  (ds - avg(ds) OVER())/(COALESCE(stddev_samp(ds) OVER(),0) + 1e-9) AS dz, \
@@ -789,6 +855,25 @@ impl SemanticSearchEngine {
     /// candidate's `score` to the raw rerank score (cross-encoder logit or
     /// ColBERT MaxSim); the caller min-max normalizes — both are monotonic, so
     /// order is preserved either way.
+    ///
+    /// # A candidate the reranker never saw must not be sorted against one it did
+    ///
+    /// Only candidates with text go to the reranker, and the scores that come
+    /// back replace their fused scores. Everything else kept its OLD number and
+    /// was then sorted into the same list — three different units in one
+    /// comparison: ColBERT MaxSim (≈30 for a good match on the box), a fused
+    /// z-score (a few σ around zero), or an RRF weight (≈0.02) when the search
+    /// fanned out over several phrasings. An unscored candidate would therefore
+    /// leap to the top of a MaxSim list or sink below a z-scored one purely on
+    /// which arithmetic produced its number — and it is invisible, because the
+    /// result is a plausible ordering, never an error.
+    ///
+    /// The honest ordering is: everything the reranker could read, in its order;
+    /// then everything it could not, in the fused order it arrived in. Absent
+    /// evidence is not evidence of irrelevance, but it cannot outrank evidence
+    /// either. Title is included in the text fallback so that "could not read it"
+    /// means a record with no text at all, rather than one that merely lacks a
+    /// stored chunk.
     async fn rerank_candidates(
         &self,
         query: &str,
@@ -803,8 +888,9 @@ impl SemanticSearchEngine {
                 .content
                 .clone()
                 .or_else(|| c.preview.clone())
+                .or_else(|| c.title.clone())
                 .unwrap_or_default();
-            if !text.is_empty() {
+            if !text.trim().is_empty() {
                 rerank_indices.push(i);
                 rerank_docs.push(truncate_for_rerank(&text));
             }
@@ -814,14 +900,15 @@ impl SemanticSearchEngine {
         }
 
         let scores = reranker.rerank_async(query, &rerank_docs).await?;
+
+        let mut was_scored = vec![false; candidates.len()];
         for score in &scores {
-            candidates[rerank_indices[score.index]].score = score.score as f64;
+            let i = rerank_indices[score.index];
+            candidates[i].score = score.score as f64;
+            was_scored[i] = true;
         }
-        candidates.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+
+        order_scored_first(candidates, &was_scored);
         Ok(true)
     }
 }
@@ -841,6 +928,59 @@ mod tests {
             timestamp: None,
             content: Some(format!("{ontology}/{record_id}")),
         }
+    }
+
+    fn hit(record_id: &str, score: f64) -> SearchResult {
+        let mut r = sr("m", record_id);
+        r.score = score;
+        r
+    }
+
+    /// The bug this guards: a candidate the reranker never saw kept its fused
+    /// score and was then sorted against MaxSim scores. An RRF weight (~0.02)
+    /// sinks below every MaxSim score; a z-score can be anything. Either way the
+    /// position is decided by which arithmetic produced the number, not by
+    /// relevance — and it looks like a normal result list.
+    #[test]
+    fn a_candidate_the_reranker_never_saw_cannot_outrank_one_it_scored() {
+        // As `rerank_candidates` leaves it: B and D carry MaxSim scores, A and C
+        // still carry fused z-scores — and A's z-score is numerically the largest
+        // number in the pool, which is exactly how it used to win.
+        let mut pool = vec![
+            hit("A_unscored_high_z", 41.0),
+            hit("B_maxsim_top", 30.0),
+            hit("C_unscored_low_z", -1.0),
+            hit("D_maxsim_low", 12.0),
+        ];
+        order_scored_first(&mut pool, &[false, true, false, true]);
+
+        let ids: Vec<&str> = pool.iter().map(|c| c.record_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["B_maxsim_top", "D_maxsim_low", "A_unscored_high_z", "C_unscored_low_z"],
+            "scored candidates first in rerank order, then the unscored in arrival order"
+        );
+
+        // Scores must agree with the order, or the next caller — and
+        // `normalize_scores`, which runs immediately after — reads a contradiction.
+        for pair in pool.windows(2) {
+            assert!(
+                pair[0].score > pair[1].score,
+                "{} ({}) should out-score {} ({})",
+                pair[0].record_id, pair[0].score, pair[1].record_id, pair[1].score
+            );
+        }
+    }
+
+    /// Nothing scored: there is no floor to place a tail under, and the fused
+    /// order is the best information available. It must survive untouched.
+    #[test]
+    fn an_all_unscored_pool_keeps_its_fused_order() {
+        let mut pool = vec![hit("A", 3.0), hit("B", 2.0), hit("C", 1.0)];
+        order_scored_first(&mut pool, &[false, false, false]);
+        let ids: Vec<&str> = pool.iter().map(|c| c.record_id.as_str()).collect();
+        assert_eq!(ids, ["A", "B", "C"]);
+        assert_eq!(pool[0].score, 3.0, "untouched, not restated against a floor");
     }
 
     #[test]

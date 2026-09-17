@@ -1,8 +1,10 @@
 /**
  * Subscription Store
  *
- * Polls /api/subscription to track subscription status and trial countdown.
- * Used by the app layout to show trial toasts and handle expired subscriptions.
+ * Polls /api/subscription for the box's billing standing: linked (has an
+ * account key) and subscribed (a subscription stands behind it) — two facts
+ * since 0017, not one. There is no trial and never was; the countdown fields
+ * this store once carried were vestigial from a plan that did not ship.
  *
  * Pauses polling when the browser tab is hidden.
  */
@@ -14,8 +16,6 @@ const POLL_INTERVAL = 60_000; // 60 seconds
 class SubscriptionStore {
 	/** `none` | `linked` | `active` | `unknown`. */
 	status = $state<string>('unknown');
-	trialExpiresAt = $state<string | null>(null);
-	daysRemaining = $state<number | null>(null);
 	isActive = $state(false);
 	/** Does the box hold an api_key. Says nothing about payment since 0017. */
 	linked = $state(false);
@@ -67,22 +67,23 @@ class SubscriptionStore {
 		}
 	}
 
-	/** Fetch subscription status (also callable externally to force refresh) */
-	async check() {
+	/**
+	 * Fetch subscription status (also callable externally to force refresh).
+	 * `fresh` makes the box re-ask atlas instead of serving its cache — for
+	 * the minutes after a checkout is opened, when the answer is about to
+	 * change.
+	 */
+	async check(fresh = false) {
 		try {
 			const data = await getSubscription<{
 				status?: string;
-				trial_expires_at?: string | null;
-				days_remaining?: number | null;
 				is_active?: boolean;
 				linked?: boolean;
 				subscribed?: boolean;
 				entitlement_known?: boolean;
-			}>();
+			}>(fresh);
 
 			this.status = data.status ?? 'unknown';
-			this.trialExpiresAt = data.trial_expires_at ?? null;
-			this.daysRemaining = data.days_remaining ?? null;
 			this.isActive = data.is_active ?? false;
 			this.linked = data.linked ?? false;
 			this.subscribed = data.subscribed ?? data.is_active ?? false;

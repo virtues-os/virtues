@@ -154,6 +154,12 @@
 		padding: 0 8px 8px;
 	}
 
+	/* Not `<Button>`, and the measurement is the reason: these are suggestion
+	   chips, not the pill family. At `size="sm"` the three of them measure
+	   123 + 109 + 104px against the popover's 304px of usable width, so the row
+	   wraps and the action strip goes 32px → 68px inside a floating surface that
+	   is meant to stay under the cursor. Converting needs a chip size the
+	   primitive does not have yet. */
 	.ai-prompt-action {
 		padding: 5px 9px;
 		font-size: 12px;

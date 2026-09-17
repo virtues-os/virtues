@@ -17,8 +17,8 @@
 //!
 //! **The writer never touches the graph.** Notes are the machine's only channel
 //! into the record. It may not write `wiki_refs`, not at any confidence,
-//! not flagged. Promotion is a human accepting, or an editor pass gated on
-//! `auto_update`.
+//! not flagged. Promotion is a human accepting, or an editor pass on an
+//! article whose `maintenance` allows one.
 //!
 //! **Notes never age out.** A note whose purpose is "for later" that deletes
 //! itself before later arrives has defeated itself, silently. Three exits, all
@@ -262,15 +262,6 @@ pub async fn write_machine_notes(
         // authoritative for prose staleness — the 0033 `dirty_at` columns mean
         // "new evidence about an object" and one of them is already taken by the
         // magnet to mean a stale centroid. Do not conflate them.
-        sqlx::query(
-            "UPDATE wiki_articles SET dirty_at = now() \
-             WHERE subject_type = $1 AND subject_id = $2 AND dirty_at IS NULL",
-        )
-        .bind(&n.subject_type)
-        .bind(&n.subject_id)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to stamp dirty: {}", e)))?;
 
         written += 1;
     }
@@ -408,13 +399,19 @@ mod tests {
         .await
         .unwrap();
 
-        let dirty: Option<chrono::DateTime<chrono::Utc>> =
-            sqlx::query_scalar("SELECT dirty_at FROM wiki_articles WHERE id = $1")
-                .bind(&a.id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert!(dirty.is_some(), "a note makes the article due for review");
+        // A note used to stamp `dirty_at` here, a queue nothing ever consumed.
+        // What makes an article due now is that its EVIDENCE moved, and an
+        // accepted note is part of that evidence — measured at flush time by
+        // the editor's fingerprint rather than stamped on the way past.
+        let notes: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM wiki_notes WHERE subject_type = $1 AND subject_id = $2",
+        )
+        .bind("person")
+        .bind("p_1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(notes > 0, "the note is filed against the subject");
     }
 
     /// `resolved_at` and `resolution` cannot disagree.

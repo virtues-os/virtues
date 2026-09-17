@@ -14,7 +14,7 @@
  * - Entity metadata registry (lazy-loaded cache)
  */
 
-import { type ViewEntity } from '$lib/api/client';
+import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 import {
 	type Tab,
 	type TabType,
@@ -180,7 +180,6 @@ class WindowShellStore {
 	// With a single space there's nothing to swipe to, so this never changes.
 	swipeProgress = $state(0);
 
-	smartSectionCache = $state<Map<string, ViewEntity[]>>(new Map());
 	viewCacheVersion = $state<number>(0); // Incremented when cache is invalidated
 	registry = $state<Map<string, EntityMetadata>>(new Map());
 
@@ -363,24 +362,11 @@ class WindowShellStore {
 	 * @param namespace - Optional namespace (e.g., 'chat', 'page'). When omitted,
 	 *                    clears the entire smart section cache.
 	 */
-	invalidateViewCache(namespace?: string): void {
-		if (!namespace) {
-			this.smartSectionCache = new Map();
-			this.viewCacheVersion++;
-			return;
-		}
-
-		// System sections re-fetch on version bump.
+	invalidateViewCache(_namespace?: string): void {
+		// The smart-section cache this used to clear is gone with the Library
+		// shelf that read it; views re-fetch on the version bump alone. The
+		// parameter stays so callers that name a namespace still typecheck.
 		this.viewCacheVersion++;
-	}
-
-	/**
-	 * Update the smart section cache (called by SystemSection component)
-	 */
-	updateSmartSectionCache(sectionId: string, entities: ViewEntity[]): void {
-		const newCache = new Map(this.smartSectionCache);
-		newCache.set(sectionId, entities);
-		this.smartSectionCache = newCache;
 	}
 
 	// ============================================================================
@@ -1200,6 +1186,22 @@ class WindowShellStore {
 		const other: 'left' | 'right' = this.activePaneId === 'right' ? 'left' : 'right';
 		if (!this.isSplit) this.enableSplit();
 		return this.openTabFromRoute(route, { paneId: other, forceNew: true, label });
+	}
+
+	/**
+	 * Open a route the app produced on the user's behalf — a page the assistant
+	 * just created or edited, the interview's narrative document, the "Open"
+	 * button on a result card. This is NOT the explicit "open beside" gesture
+	 * (right-click → Open beside, ⌘-click a Ref), so it must NEVER create a
+	 * split. When the user is already in split view it opens beside (keeping the
+	 * pane they were in visible); otherwise it opens a NEW tab in the active pane,
+	 * leaving the current tab (e.g. the chat) where it is.
+	 */
+	openRouteInSplitOrActive(route: string, label?: string): string {
+		if (this.isSplit) {
+			return this.openRouteBeside(route, label);
+		}
+		return this.openTabFromRoute(route, { forceNew: true, label });
 	}
 
 	// Backwards compatibility aliases

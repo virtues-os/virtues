@@ -39,9 +39,12 @@ pub struct IdentityStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubscriptionStatus {
-    /// Linked to a subscription: a device `api_key` is present (box↔atlas↔
-    /// virtues-api). In the linked model this is the only signal — the same key
-    /// authenticates the proxy, and the wallet is credited server-side.
+    /// Linked to a Virtues ACCOUNT: a device `api_key` is present. Identity,
+    /// not billing — since 0017 (2026-08-31) a free account links exactly like
+    /// a paying one, and whether a subscription stands behind the key is a
+    /// separate question the box asks atlas (`api::subscription`). Do not read
+    /// this as "AI works"; a linked free box holds a valid key and an empty
+    /// wallet.
     pub linked: bool,
 }
 
@@ -213,9 +216,9 @@ pub struct ReadinessGates {
     /// in the relay model via the self-signed bootstrap cert; `identity.tls_cert`
     /// carries the finer "ACME cert issued" signal.
     pub identity: bool,
-    /// Linked to a Virtues subscription: a device `api_key` is present. This is
-    /// "claimed" — ownership is the billing relationship, and the same key makes
-    /// AI ready immediately (the wallet is funded server-side at link).
+    /// Linked to a Virtues account: a device `api_key` is present. Ownership
+    /// and reach, not payment — the key is minted at sign-in regardless of
+    /// subscription (0017), and the wallet is funded only when one is bought.
     pub linked: bool,
     /// At least one device has paired.
     pub paired: bool,
@@ -386,11 +389,16 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // Claimed = at least one device has paired (the pair token was consumed
     // by an owner's browser or phone). Ownership-by-proximity, see
     // agents/build/onboarding.md "trust on first boot".
+    //
+    // Every gate below is `?`, not `.unwrap_or(0|false)`. These are counts and
+    // EXISTS checks: an empty table already answers 0 / false, so the only way
+    // they fail is a broken query or a dead pool — and then "no devices, no
+    // sync, nothing named" is not a state, it is a lie that walks the owner
+    // back to the start of setup.
     let claimed: i64 =
         sqlx::query_scalar("SELECT count(*) FROM app_device WHERE revoked_at IS NULL")
             .fetch_one(pool)
-            .await
-            .unwrap_or(0);
+            .await?;
 
     // First source = an active user-connected credential (OAuth, api-key
     // import) — not a device's, not the BYO-key pseudo-source, and not the
@@ -439,8 +447,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
          WHERE kind = 'mobile_app' AND revoked_at IS NULL",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    .await?;
 
     // Chat history imported = the one-time chat_import applet has at least one
     // successful run. Server-backed (not a client-local flag) so skipping it is
@@ -451,16 +458,14 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
          WHERE applet_id = 'applet_chat_import' AND status = 'success')",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
 
     // First sync = any action run has ever succeeded (data actually landed).
     let first_sync: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM app_applet_runs WHERE status = 'success'",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    .await?;
 
     // Narrative-identity reveal: ready once the "In your own words" article
     // exists (written up from the interview — the machine never writes it
@@ -472,8 +477,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
          WHERE subject_type = 'narrative_identity')",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
 
     // Tier 2: a living (cloud/OAuth) source that has actually synced — i.e. a
     // non-device, non-BYO credential with at least one successful run. Stronger
@@ -499,8 +503,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
          WHERE named_at IS NOT NULL AND revoked_at IS NULL)",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
 
     // Tier 0/1: a paired device finished its initial backfill. The FDA gate for
     // the Mac (daemon running + Full Disk Access) is enforced client-side in the
@@ -511,16 +514,14 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
          WHERE init_sync_completed_at IS NOT NULL AND revoked_at IS NULL)",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
     let device_sync_started: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_device \
          WHERE init_sync_started_at IS NOT NULL AND init_sync_completed_at IS NULL \
            AND revoked_at IS NULL)",
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    .await?;
 
     // Dev convenience: `make dev` sets VIRTUES_DEV_SKIP_SETUP=1 so the required
     // setup wizard is pre-satisfied and the browser lands straight in the app
@@ -668,11 +669,16 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     let onboarding_status = onboarding_status(pool).await;
 
+    let (source_chat, since) = crate::api::getting_started::interview_source(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("interview source: {e}"))?;
     let interview_started: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM app_chat_messages \
-         WHERE chat_id = $1 AND role = 'user')",
+         WHERE chat_id = $1 AND role = 'user' \
+           AND ($2::timestamptz IS NULL OR created_at >= $2))",
     )
-    .bind(crate::api::narrative_draft::INTERVIEW_CHAT_ID)
+    .bind(source_chat)
+    .bind(since)
     .fetch_one(pool)
     .await?;
 

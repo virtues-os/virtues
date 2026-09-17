@@ -256,7 +256,8 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
             -- requests PER APPLET — around fifty on a page — for two small
             -- facts that the database can hand over in the same pass.
             p.pulse,
-            s.summary AS last_success_summary
+            s.summary AS last_success_summary,
+            w.cost_micros AS spend_week_micros
            FROM app_applets t
            LEFT JOIN LATERAL (
                SELECT array_agg(status ORDER BY started_at DESC) AS pulse
@@ -270,6 +271,23 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                   AND result_summary IS NOT NULL AND btrim(result_summary) <> ''
                 ORDER BY started_at DESC LIMIT 1
            ) s ON TRUE
+           -- What this applet has actually spent on AI in the last week.
+           -- Deterministic applets (every sync, every indexer) sum to zero,
+           -- which is the point: the number only appears where something is
+           -- burning money, so an AI-authored applet that runs hourly on a big
+           -- model is visible as such before the bill is.
+           --
+           -- Joined through the run, the same path `spend_micros_last_day`
+           -- takes for the cap. The `::bigint` cast is load-bearing —
+           -- SUM(bigint) is NUMERIC in Postgres and sqlx will not decode that
+           -- as i64.
+           LEFT JOIN LATERAL (
+               SELECT COALESCE(SUM(c.cost_micros), 0)::bigint AS cost_micros
+                 FROM app_ai_calls c
+                 JOIN app_applet_runs ar ON ar.id = c.applet_run_id
+                WHERE ar.applet_id = t.id
+                  AND c.created_at > now() - interval '7 days'
+           ) w ON TRUE
            LEFT JOIN app_applet_runs r ON r.id = (
                SELECT id FROM app_applet_runs
                WHERE applet_id = t.id
@@ -335,6 +353,21 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         .unwrap_or_default();
                     let last_success_summary: Option<String> =
                         r.try_get("last_success_summary").unwrap_or(None);
+                    // The SQL COALESCEs to 0, so a real "spent nothing" arrives
+                    // as 0 and NULL can only mean the decode failed. Those must
+                    // not collapse into each other: this is a money figure, and
+                    // a silently-zero money column reads as good news. So it
+                    // stays Option — null travels to the client as "unknown" —
+                    // and a failure says so once per list rather than never.
+                    let spend_week_micros: Option<i64> =
+                        match r.try_get::<Option<i64>, _>("spend_week_micros") {
+                            Ok(v) => v,
+                            Err(e) => {
+                                tracing::warn!(applet_id = %id, error = %e,
+                                    "could not decode applet weekly spend");
+                                None
+                            }
+                        };
                     let last_run_status: Option<String> =
                         r.try_get("last_run_status").unwrap_or(None);
                     let last_run = last_run_status.map(|s| {
@@ -375,6 +408,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "has_face": has_face,
                         "pulse": pulse,
                         "last_success_summary": last_success_summary,
+                        "spend_week_micros": spend_week_micros,
                         "created_at": created,
                         "updated_at": updated,
                         "last_run": last_run,
@@ -1092,74 +1126,6 @@ pub async fn device_applet_ids_handler(
     }
 }
 
-/// GET /api/devices/actions/:id/runs — a paired device reads the run history of
-/// one of ITS OWN actions, so the app can show real server-side outcome
-/// (success/failure/timing/error) per stream rather than just "did the POST
-/// return 2xx."
-///
-/// Authenticated by the proven iroh key. The action's `device_id` must match the
-/// caller's device or it's 403 — one device can't read another's run history.
-/// Device-scoped sibling of the session-authed `list_applet_runs_handler`.
-pub async fn device_applet_runs_handler(
-    State(state): State<AppState>,
-    Path(applet_id): Path<String>,
-    axum::extract::Query(q): axum::extract::Query<RunsQuery>,
-    user: crate::middleware::auth::AuthUser,
-) -> Response {
-    // Ownership: the action must belong to this device. EXISTS returns a
-    // non-null bool, so a missing action and a foreign action both → false.
-    let owned: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM app_applets WHERE id = $1 AND device_id = $2)",
-    )
-    .bind(&applet_id)
-    .bind(&user.device_id)
-    .fetch_one(state.db.pool())
-    .await
-    .unwrap_or(false);
-
-    if !owned {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "Applet not found for this device" })),
-        )
-            .into_response();
-    }
-
-    let limit = q.limit.unwrap_or(10).clamp(1, 50);
-    match crate::scheduler::applets::query_runs(
-        state.db.pool(),
-        Some(&applet_id),
-        q.status.as_deref(),
-        limit,
-    )
-    .await
-    {
-        Ok(runs) => (StatusCode::OK, Json(runs)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-/// Health check endpoint for devices to validate their authentication.
-///
-/// Lightweight, side-effect-free: a device confirms it can still reach + auth to
-/// the box before syncing. It lives behind the `AuthUser` route_layer, so simply
-/// reaching this handler means the proven iroh key (or loopback / dev) already
-/// authenticated — no bearer needed. Returns the resolved device identity.
-pub async fn device_health_check_handler(user: crate::middleware::auth::AuthUser) -> Response {
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "status": "active",
-            "device_id": user.device_id,
-        })),
-    )
-        .into_response()
-}
-
 // =============================================================================
 // Profile API
 // =============================================================================
@@ -1303,25 +1269,21 @@ pub async fn stream_days_handler(
 // Places API Handlers (Google Places proxy)
 // =============================================================================
 
+/// Resolve an autocomplete prediction to coordinates (the phone's "mute a
+/// place I have never been" door creates the place from this).
+pub async fn places_details_handler(
+    State(state): State<AppState>,
+    Query(request): Query<crate::api::places::PlaceDetailsRequest>,
+) -> Response {
+    api_response(crate::api::get_place_details(state.db.pool(), request).await)
+}
+
 /// Get autocomplete predictions for an address query
 pub async fn places_autocomplete_handler(
     State(state): State<AppState>,
     Query(request): Query<crate::api::AutocompleteRequest>,
 ) -> Response {
     match crate::api::autocomplete(state.db.pool(), request).await {
-        Ok(response) => {
-            (StatusCode::OK, Json(response)).into_response()
-        }
-        Err(e) => error_response(e),
-    }
-}
-
-/// Get details for a specific place by ID
-pub async fn places_details_handler(
-    State(state): State<AppState>,
-    Query(request): Query<crate::api::PlaceDetailsRequest>,
-) -> Response {
-    match crate::api::get_place_details(state.db.pool(), request).await {
         Ok(response) => {
             (StatusCode::OK, Json(response)).into_response()
         }
@@ -1338,8 +1300,14 @@ pub async fn places_details_handler(
 /// Derived from the credential vault: reports whether an api_key has
 /// been claimed on this box. Gating itself is by bearer expiry, not this
 /// endpoint — see `crate::api::subscription`.
-pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Response {
-    match crate::api::subscription::get_subscription_status(&pool).await {
+pub async fn get_subscription_handler(
+    State(pool): State<sqlx::PgPool>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    // `?fresh=1` bypasses the entitlement cache — the UI polls with it while
+    // a checkout the owner just opened is in flight.
+    let fresh = q.get("fresh").is_some_and(|v| v == "1" || v == "true");
+    match crate::api::subscription::get_subscription_status(&pool, fresh).await {
         Ok(data) => (StatusCode::OK, Json(data)).into_response(),
         Err(e) => {
             // NOT a fallback to `active`. It was one, and that turned a blipped
@@ -1355,9 +1323,7 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
                     "linked": false,
                     "subscribed": false,
                     "entitlement_known": false,
-                    "is_active": false,
-                    "trial_expires_at": null,
-                    "days_remaining": null
+                    "is_active": false
                 })),
             )
                 .into_response()
@@ -1441,6 +1407,48 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
     }
 }
 
+/// POST /api/billing/subscribe — a Stripe Checkout URL for the account this
+/// box is linked to. The door for a linked FREE account (0017): the connect
+/// flow would start a new device link and mint a second account, and the
+/// portal has nothing to open. Same `{url}` / `{error, code}` contract as the
+/// portal, for the same reason.
+pub async fn subscribe_billing_handler(State(pool): State<sqlx::PgPool>) -> Response {
+    fn refuse(code: &str, message: &str) -> Response {
+        (StatusCode::OK, Json(serde_json::json!({ "error": message, "code": code }))).into_response()
+    }
+    const TRY_AGAIN: &str = "Couldn't open checkout. Try again.";
+
+    let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return refuse("not_linked", "Connect your Virtues account first."),
+        Err(e) => {
+            tracing::warn!("billing subscribe [vault_unreadable]: {e}");
+            return refuse("vault_unreadable", TRY_AGAIN);
+        }
+    };
+    let atlas_url = crate::virtues_api::atlas_url();
+    let http = crate::http_client::virtues_api_client();
+    match crate::virtues_api::renew::fetch_checkout_session(&http, &atlas_url, &api_key).await {
+        Ok(crate::virtues_api::renew::CheckoutSession::Url(url)) => {
+            // Whatever we cached is about to be stale; the UI polls fresh.
+            crate::api::subscription::invalidate();
+            (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response()
+        }
+        Ok(crate::virtues_api::renew::CheckoutSession::AlreadySubscribed) => {
+            crate::api::subscription::invalidate();
+            refuse("already_subscribed", "This account already has an active subscription.")
+        }
+        Ok(crate::virtues_api::renew::CheckoutSession::Failed { code, status }) => {
+            tracing::warn!("billing subscribe [{code}]: atlas answered {status}");
+            refuse(&code, TRY_AGAIN)
+        }
+        Err(e) => {
+            tracing::warn!("billing subscribe [atlas_unreachable]: {e}");
+            refuse("atlas_unreachable", TRY_AGAIN)
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub struct ClaimRequest {
     /// Stripe Checkout `session_id` from the post-purchase success URL.
@@ -1514,7 +1522,7 @@ pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response
     if !crate::virtues_api::renew::has_api_key(&pool).await.unwrap_or(false) {
         return (
             StatusCode::OK,
-            Json(serde_json::json!({ "error": "Connect your subscription to see your balance." })),
+            Json(serde_json::json!({ "error": "Connect your Virtues account to see your balance." })),
         )
             .into_response();
     }
@@ -1548,12 +1556,42 @@ pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
         .unwrap_or(now);
 
     let pool = state.db.pool();
-    let by_feature = crate::api::ai_calls::spend_by_feature(pool, month_start)
-        .await
-        .unwrap_or_default();
-    let by_model = crate::api::ai_calls::spend_by_model(pool, month_start)
-        .await
-        .unwrap_or_default();
+    // Errors surface. `.unwrap_or_default()` here rendered a broken query as
+    // an empty month — a wallet with no spend is a real state, and this made
+    // a failure indistinguishable from it (CLAUDE.md, "Do not swallow").
+    let by_feature = match crate::api::ai_calls::spend_by_feature(pool, month_start).await {
+        Ok(v) => v,
+        Err(e) => return error_response(e.into()),
+    };
+    let by_model = match crate::api::ai_calls::spend_by_model(pool, month_start).await {
+        Ok(v) => v,
+        Err(e) => return error_response(e.into()),
+    };
+    // The Billing chart: the last 14 UTC days, today included. Days with no
+    // calls are absent from the rows; the client fills the run.
+    let since = (now - chrono::Duration::days(13)).date_naive().and_hms_opt(0, 0, 0)
+        .map(|dt| dt.and_utc())
+        .unwrap_or(now);
+    let by_day = match crate::api::ai_calls::spend_by_day(pool, since).await {
+        Ok(v) => v,
+        Err(e) => return error_response(e.into()),
+    };
+    // Last month, to the same point: the fair comparison on the 4th. None
+    // when the calendar cannot supply it (the 31st of a month after a 30-day
+    // one) — the client then shows no delta rather than a wrong one.
+    let prev_start = month_start
+        .date_naive()
+        .checked_sub_months(chrono::Months::new(1))
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|dt| dt.and_utc());
+    let prev_same_point = prev_start.and_then(|ps| ps.checked_add_signed(now - month_start));
+    let last_month_to_date_micros = match (prev_start, prev_same_point) {
+        (Some(a), Some(b)) => match crate::api::ai_calls::wallet_spend_between(pool, a, b).await {
+            Ok(v) => Some(v),
+            Err(e) => return error_response(e.into()),
+        },
+        _ => None,
+    };
 
     (
         StatusCode::OK,
@@ -1561,6 +1599,8 @@ pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
             "month_start": month_start,
             "by_feature": by_feature,
             "by_model": by_model,
+            "by_day": by_day,
+            "last_month_to_date_micros": last_month_to_date_micros,
         })),
     )
         .into_response()
@@ -1702,23 +1742,20 @@ pub async fn list_places_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::list_places(state.db.pool()).await)
 }
 
+/// Create a place by hand — the phone's "Mute here" and its Google-places door.
+pub async fn create_place_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CreatePlaceRequest>,
+) -> Response {
+    api_response(crate::api::create_place(state.db.pool(), request).await)
+}
+
 /// Get a specific place by ID
 pub async fn get_place_handler(
     State(state): State<AppState>,
     Path(place_id): Path<String>,
 ) -> Response {
     api_response(crate::api::get_place(state.db.pool(), place_id).await)
-}
-
-/// Create a new place
-pub async fn create_place_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::CreatePlaceRequest>,
-) -> Response {
-    match crate::api::create_place(state.db.pool(), request).await {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
-        Err(e) => error_response(e),
-    }
 }
 
 /// Update an existing place
@@ -1754,19 +1791,6 @@ pub async fn create_person_handler(
     match crate::api::entities::create_person(state.db.pool(), &b.name).await {
         Ok(id) => api_response(Ok::<_, crate::error::Error>(
             serde_json::json!({ "id": id, "route": format!("/person/{id}") }),
-        )),
-        Err(e) => error_response(e),
-    }
-}
-
-/// Create an organization by hand.
-pub async fn create_org_handler(
-    State(state): State<AppState>,
-    Json(b): Json<CreateEntityBody>,
-) -> Response {
-    match crate::api::entities::create_organization(state.db.pool(), &b.name).await {
-        Ok(id) => api_response(Ok::<_, crate::error::Error>(
-            serde_json::json!({ "id": id, "route": format!("/org/{id}") }),
         )),
         Err(e) => error_response(e),
     }
@@ -2149,29 +2173,170 @@ pub async fn write_article_handler(
     )
 }
 
-/// Turn maintenance on or off for one article.
-pub async fn set_article_auto_update_handler(
+/// The owner's own page: their name, their document, and the apparatus.
+///
+/// Also the one place that ensures they have a row among the people of their
+/// own wiki — nothing else ever created one.
+pub async fn wiki_me_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::me::get_me(state.db.pool()).await)
+}
+
+/// The stories: subjects the person named because they mattered.
+pub async fn wiki_list_stories_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::stories::list_stories(state.db.pool()).await)
+}
+
+pub async fn wiki_get_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::stories::get_story(state.db.pool(), &id).await)
+}
+
+/// Start a story. Only the person may: the editor's constitution forbids it
+/// from creating a subject, because naming one is a claim about what mattered.
+pub async fn wiki_create_story_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let title = body.get("title").and_then(|v| v.as_str()).unwrap_or("");
+    api_response(crate::api::stories::create_story(state.db.pool(), title).await)
+}
+
+pub async fn wiki_update_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(fields): Json<crate::api::stories::StoryFields>,
+) -> Response {
+    api_response(crate::api::stories::update_story(state.db.pool(), &id, &fields).await)
+}
+
+pub async fn wiki_delete_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::stories::delete_story(state.db.pool(), &id).await {
+        Ok(()) => success_message("Removed"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Give a story a page. Seeded with THEIR words, not a machine draft — a story
+/// has nothing beneath it to draft from, and the editor fills it by searching.
+pub async fn wiki_start_story_article_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::stories::start_article(state.db.pool(), &id).await)
+}
+
+/// Edit a chapter. There has never been a way to change one.
+pub async fn wiki_update_chapter_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(edit): Json<crate::api::narrative_draft::ChapterEdit>,
+) -> Response {
+    api_response(crate::api::narrative_draft::update_chapter(state.db.pool(), &id, &edit).await)
+}
+
+/// Unname a chapter, leaving the years it covered as an unnamed stretch.
+pub async fn wiki_delete_chapter_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::narrative_draft::delete_chapter(state.db.pool(), &id).await)
+}
+
+/// Every year of the life, newest first. Derived — opening the index writes
+/// nothing.
+pub async fn wiki_list_years_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::years::list_years(state.db.pool()).await)
+}
+
+/// One year's page. Creates its row on the way, which is the lazy half of the
+/// partition: every year is there to read, and none is written until asked for.
+pub async fn wiki_get_year_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+) -> Response {
+    api_response(crate::api::years::get_year(state.db.pool(), year).await)
+}
+
+/// Set what only the person can say about a year.
+pub async fn wiki_update_year_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let title = body.get("title").and_then(|v| v.as_str());
+    let summary = body.get("summary").and_then(|v| v.as_str());
+    match crate::api::years::update_year(state.db.pool(), year, title, summary).await {
+        Ok(()) => success_message("Saved"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Write a year's first article.
+pub async fn wiki_write_year_article_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+) -> Response {
+    api_response(crate::api::years::write_year_article(state.db.pool(), year).await)
+}
+
+/// Put a named version of an article back.
+///
+/// Rule 4 of the wiki's paradigm — every edit is a revision you can read AND
+/// revert — has been half true since the history feed shipped: the diff was
+/// readable and there was no way to undo it.
+pub async fn revert_article_handler(
     State(state): State<AppState>,
     Path((subject_type, subject_id)): Path<(String, String)>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    let on = body.get("auto_update").and_then(|v| v.as_bool()).unwrap_or(false);
-    match crate::api::wiki_articles::set_auto_update(
+    let Some(version) = body.get("version_number").and_then(|v| v.as_i64()) else {
+        return error_response(Error::InvalidInput(
+            "version_number is required".to_string(),
+        ));
+    };
+    match crate::api::wiki_editor::revert_article(
         state.db.pool(),
+        &state.yjs_state,
         &subject_type,
         &subject_id,
-        on,
+        version,
     )
     .await
     {
-        Ok(()) => success_message(if on {
-            "This article will be kept up to date"
-        } else {
-            "This article will no longer be updated automatically"
+        Ok(change) => success_message(&format!("Reverted to v{version} — {change}")),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Set how an article is maintained: always, auto, or never.
+pub async fn set_article_maintenance_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mode = body.get("maintenance").and_then(|v| v.as_str()).unwrap_or("");
+    match crate::api::wiki_articles::set_maintenance(
+        state.db.pool(),
+        &subject_type,
+        &subject_id,
+        mode,
+    )
+    .await
+    {
+        Ok(()) => success_message(match mode {
+            "always" => "The record will revisit this whenever anything changes",
+            "never" => "The record will leave this article alone",
+            _ => "The record will keep this up to date",
         }),
         Err(e) => error_response(e),
     }
 }
+
 
 /// Reclassify a person as an organization.
 ///
@@ -2189,28 +2354,9 @@ pub async fn reclassify_person_handler(
     }
 }
 
-/// Set a place as the user's home
-pub async fn set_place_as_home_handler(
-    State(state): State<AppState>,
-    Path(place_id): Path<String>,
-) -> Response {
-    match crate::api::set_home_place_entity(state.db.pool(), place_id).await {
-        Ok(_) => success_message("Home place updated"),
-        Err(e) => error_response(e),
-    }
-}
-
 // ============================================================================
 // Wiki API Handlers
 // ============================================================================
-
-/// Resolve an entity ID to its type
-pub async fn wiki_resolve_id_handler(
-    State(_state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::resolve_id(&id))
-}
 
 // --- Person ---
 
@@ -2305,21 +2451,6 @@ pub async fn wiki_get_narrative_identity_handler(State(state): State<AppState>) 
 
 
 
-// --- Story ---
-
-/// Get a story by ID
-pub async fn wiki_get_story_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_story(state.db.pool(), id).await)
-}
-
-/// List all stories
-pub async fn wiki_list_stories_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_stories(state.db.pool()).await)
-}
-
 // --- Chapter ---
 
 
@@ -2349,22 +2480,6 @@ pub async fn wiki_get_day_handler(
 }
 
 
-/// Update a day by date
-pub async fn wiki_update_day_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-    Json(request): Json<crate::api::UpdateWikiDayRequest>,
-) -> Response {
-    match date.parse::<chrono::NaiveDate>() {
-        Ok(parsed_date) => {
-            api_response(crate::api::update_day(state.db.pool(), parsed_date, request).await)
-        }
-        Err(_) => error_response(Error::InvalidInput(format!(
-            "Invalid date format: {}",
-            date
-        ))),
-    }
-}
 
 /// List days in a date range
 pub async fn wiki_list_days_handler(
@@ -2554,7 +2669,7 @@ pub async fn day_heart_rate_handler(
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => api_response(
-            crate::api::wiki::get_day_heart_rate(state.db.pool(), parsed_date, query.tz.as_deref())
+            crate::api::wiki_streams::get_day_heart_rate(state.db.pool(), parsed_date, query.tz.as_deref())
                 .await,
         ),
         Err(_) => error_response(Error::InvalidInput(format!(
@@ -2857,8 +2972,23 @@ pub async fn chat_handler(
         axum::extract::State(state.db.pool().clone()),
         axum::extract::State(state.yjs_state.clone()),
         axum::extract::State(state.chat_cancel_state.clone()),
+        axum::extract::State(state.live_turns.clone()),
         user,
         Json(request),
+    )
+    .await
+}
+
+/// GET /api/chat/:id/stream - Rejoin the turn still running for a chat (VIR-323)
+pub async fn live_turn_stream_handler(
+    State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
+    axum::extract::Path(chat_id): axum::extract::Path<String>,
+) -> Response {
+    crate::api::chat::live_turn_stream_handler(
+        axum::extract::State(state.live_turns.clone()),
+        user,
+        axum::extract::Path(chat_id),
     )
     .await
 }
@@ -3183,32 +3313,12 @@ pub async fn list_annotations_handler(
     api_response(crate::api::list_annotations(state.db.pool(), &q.file_id).await)
 }
 
-/// GET /api/notebooks/:id/annotations — every highlight across the notebook's
-/// library documents, enriched with filenames (researcher-plan D2.5).
-pub async fn list_notebook_annotations_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::list_notebook_annotations(state.db.pool(), &id).await)
-}
-
 /// GET /api/annotations/export?file_id=… — a file's highlights as markdown.
 pub async fn export_file_annotations_handler(
     State(state): State<AppState>,
     Query(q): Query<ListAnnotationsQuery>,
 ) -> Response {
     match crate::api::export_file_annotations_md(state.db.pool(), &q.file_id).await {
-        Ok(md) => markdown_response(md),
-        Err(e) => error_response(e),
-    }
-}
-
-/// GET /api/notebooks/:id/annotations/export — notebook highlights as markdown.
-pub async fn export_notebook_annotations_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    match crate::api::export_notebook_annotations_md(state.db.pool(), &id).await {
         Ok(md) => markdown_response(md),
         Err(e) => error_response(e),
     }
@@ -3582,70 +3692,6 @@ pub async fn get_media_handler(
     Path(file_id): Path<String>,
 ) -> Response {
     api_response(crate::api::get_media(state.db.pool(), &file_id).await)
-}
-
-// =============================================================================
-// Internal API Handlers (virtues-api Integration)
-// =============================================================================
-
-/// POST /internal/hydrate - Hydrate user profile from virtues-api
-///
-/// This endpoint is called by virtues-api on the first request to a newly
-/// provisioned container. It seeds the profile with data from Atlas
-/// provisioning and marks the server as ready.
-pub async fn hydrate_profile_handler(
-    State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
-    Json(request): Json<crate::api::HydrateRequest>,
-) -> Response {
-    // Validate virtues-api secret
-    let expected_secret = std::env::var("VIRTUES_API_INTERNAL_SECRET").unwrap_or_default();
-    let provided_secret = headers
-        .get("X-Virtues-Api-Secret")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    // In production, require the secret; in dev, allow any request.
-    // Keyed off ENVIRONMENT (what the installer actually sets) — RUST_ENV was never
-    // set, which silently disabled this auth check in production.
-    let is_production = std::env::var("ENVIRONMENT")
-        .map(|v| v == "production")
-        .unwrap_or(false);
-
-    if is_production && (expected_secret.is_empty() || provided_secret != expected_secret) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": "Invalid or missing X-Virtues-Api-Secret header"
-            })),
-        )
-            .into_response();
-    }
-
-    api_response(crate::api::hydrate_profile(state.db.pool(), request).await)
-}
-
-/// GET /internal/server-status - Get current server status
-pub async fn get_server_status_handler(State(state): State<AppState>) -> Response {
-    match crate::api::get_server_status(state.db.pool()).await {
-        Ok(status) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "status": status.as_str(),
-                "is_ready": status == crate::api::ServerStatus::Ready
-            })),
-        )
-            .into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-/// POST /internal/mark-ready - Mark server as ready (dev/admin use)
-pub async fn mark_server_ready_handler(State(state): State<AppState>) -> Response {
-    match crate::api::mark_server_ready(state.db.pool()).await {
-        Ok(_) => success_message("Server marked as ready"),
-        Err(e) => error_response(e),
-    }
 }
 
 // ============================================================================

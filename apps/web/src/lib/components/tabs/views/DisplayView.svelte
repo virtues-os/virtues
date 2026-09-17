@@ -24,7 +24,7 @@
 -->
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
-	import { Page, LoadingState, ErrorState } from "$lib";
+	import { Button, Page, LoadingState, ErrorState } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import {
 		getDisplaySettings,
@@ -262,17 +262,13 @@
 				<header class="sec-head">
 					<h2 class="settings-label">The screen right now</h2>
 					{#if data.unit_state !== "not installed"}
-						<button
-							class="ghost-btn"
-							onclick={restart}
-							disabled={restarting}
+						<Button
+							variant="secondary"
+							size="sm"
+							icon="ri:restart-line"
+							loading={restarting}
+							onclick={restart}>Restart the screen</Button
 						>
-							<Icon
-								icon={restarting ? "ri:loader-4-line" : "ri:restart-line"}
-								width="14"
-							/>
-							<span>{restarting ? "Restarting…" : "Restart the screen"}</span>
-						</button>
 					{/if}
 				</header>
 
@@ -420,9 +416,12 @@
 						/>
 					</label>
 					{#if hoursSet}
-						<button class="ghost-btn" onclick={clearHours} disabled={savingHours}>
-							Never sleeps
-						</button>
+						<Button
+							variant="secondary"
+							size="sm"
+							disabled={savingHours}
+							onclick={clearHours}>Never sleeps</Button
+						>
 					{/if}
 				</div>
 				<p class="sec-hint">
@@ -485,26 +484,6 @@
 		background: var(--color-surface-elevated);
 	}
 
-	.ghost-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		padding: 4px 8px;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: none;
-		cursor: pointer;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
-	.ghost-btn:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
-		color: var(--color-foreground);
-	}
-	.ghost-btn:disabled {
-		opacity: 0.55;
-		cursor: default;
-	}
 
 	/* ── the miniature ── */
 	/* 585:329 is the panel's canvas; at full width on a wide page the mirror

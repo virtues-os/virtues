@@ -15,6 +15,21 @@
                         <rect key="frame" x="0.0" y="0.0" width="414" height="896"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <viewLayoutGuide key="safeArea" id="vDu-zF-Fre"/>
+                        <!-- systemBackgroundColor follows the PHONE's light/dark setting,
+                             while a Virtues theme is its own choice, so a phone in dark
+                             mode holds black here and then slams to white when the document
+                             paints. Making this static white was tried on 2026-09-14 and
+                             MADE IT WORSE, measured at 60fps: the window underneath is
+                             still the system's colour (Tauri's background_color is a
+                             documented no op on iOS, both layers), so a white launch screen
+                             cross fades over 300ms down to a black window and then slams
+                             back to white. One transition became two plus a fade.
+
+                             Both surfaces have to agree, and the only lever that moves both
+                             is UIUserInterfaceStyle in Info.plist, which forces the whole
+                             app light or dark including native chrome the web layer does
+                             not own. That is a product decision about whether a Virtues
+                             theme follows the system, not a launch screen fix. -->
                         <color key="backgroundColor" systemColor="systemBackgroundColor"/>
                     </view>
                 </viewController>

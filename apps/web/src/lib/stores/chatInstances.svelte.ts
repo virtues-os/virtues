@@ -76,8 +76,10 @@ function syncMessageInPlace(target: any, src: any): void {
         }
 
         if (sp.type === 'text' || sp.type === 'reasoning') {
-            // Hot path: only the growing text changes — mutate just that string.
+            // Hot path: only the growing text changes — mutate just that string
+            // (and the part's state once, when it settles).
             if (tp.text !== sp.text) tp.text = sp.text;
+            if (tp.state !== sp.state) tp.state = sp.state;
         } else {
             // Tool/other parts update rarely. Skip the JSON compare when this
             // source part hasn't changed shape since we last synced it.
@@ -97,7 +99,6 @@ interface ChatInstanceEntry {
     refCount: number; // Number of tabs/views referencing this instance
     createdAt: number;
     cleanupTimeout?: ReturnType<typeof setTimeout>;
-    lastThoughtSignature?: string;
 }
 
 /** Live status of one Deep Research subagent, from transient `data-subagent` events. */
@@ -134,6 +135,13 @@ interface CreateChatConfig {
 
 class ChatInstanceStore {
     private instances = $state(new Map<string, ChatInstanceEntry>());
+
+    /** The narrative interview's document page, once `write_it_up` has run
+     *  in THIS session. Set from the transient data part (deterministic)
+     *  rather than read off the tool part (mutated into the messages array
+     *  where no effect sees it), so ChatView can retire the composer the
+     *  moment the interview closes rather than on the next reload. */
+    narrativeDocumentPageId = $state<string | null>(null);
     // Live Deep Research subagent state, keyed by conversationId. Ephemeral — rebuilt each turn
     // from transient `data-subagent` events.
     private subagents = $state(new Map<string, SubagentStatus[]>());
@@ -188,23 +196,36 @@ class ChatInstanceStore {
             id: conversationId,
             transport: new DefaultChatTransport({
                 api: '/api/chat',
-                prepareSendMessagesRequest: ({ messages }) => {
+                prepareSendMessagesRequest: ({ messages, trigger }) => {
                     const notebookId = getNotebookId();
                     const activePage = getActivePageContext?.();
                     const persona = getPersona?.() || 'default';
                     const agentMode = getAgentMode?.() || 'chat';
                     const chatMode = getChatMode?.() || 'open';
                     const temporary = getTemporary?.() || false;
-                    const entry = this.instances.get(conversationId);
-                    const thoughtSignature = entry?.lastThoughtSignature;
                     // Omitted unless the person picked one — see getModel above.
                     const model = getModel();
+
+                    // The box owns the history and rebuilds it from its own
+                    // store, reading only the last user turn off the wire; it
+                    // was sent the whole transcript every turn regardless. Now
+                    // only the last message goes, and on regenerate none: the
+                    // trigger tells the box to drop its last answer and reply
+                    // to the last user turn again. A ghost chat is the one
+                    // exception, by design: the box holds nothing for it, so
+                    // the wire is its whole transcript, every turn.
+                    const wireMessages = temporary
+                        ? messages
+                        : trigger === 'regenerate-message'
+                            ? []
+                            : messages.slice(-1);
 
                     return {
                         body: {
                             chatId: conversationId,
                             agentId: 'auto',
-                            messages,
+                            messages: wireMessages,
+                            trigger,
                             persona,
                             agentMode,
                             // Retrieval scope for notebook chats: 'open' (whole
@@ -219,8 +240,6 @@ class ChatInstanceStore {
                             ...(notebookId && { notebookId }),
                             // Include active page context if a page is bound
                             ...(activePage && { activePage }),
-                            // Include thought signature if available
-                            ...(thoughtSignature && { thoughtSignature }),
                             ...(model && { model })
                         }
                     };
@@ -228,15 +247,8 @@ class ChatInstanceStore {
             }),
             messages: [],
             onData: (dataPart) => {
-                // Handle thought signature events (transient - only for state tracking)
-                if (dataPart.type === 'data-thought-signature') {
-                    const entry = this.instances.get(conversationId);
-                    if (entry) {
-                        entry.lastThoughtSignature = (dataPart.data as { signature: string }).signature;
-                    }
-                }
                 // Handle Deep Research subagent events (transient - drives the live panel)
-                else if (dataPart.type === 'data-subagent') {
+                if (dataPart.type === 'data-subagent') {
                     this.applySubagent(conversationId, dataPart.data as SubagentStatus);
                 }
                 // The interview's write_it_up finished: open the "In your own
@@ -246,7 +258,8 @@ class ChatInstanceStore {
                 else if (dataPart.type === 'data-narrative-document') {
                     const pageId = (dataPart.data as { pageId?: string })?.pageId;
                     if (pageId) {
-                        windowShellStore.openRouteBeside(`/page/${pageId}`);
+                        this.narrativeDocumentPageId = pageId;
+                        windowShellStore.openRouteInSplitOrActive(`/page/${pageId}`, 'In your own words');
                     }
                 }
                 // Handle checkpoint events from auto-compaction (non-transient - persists in messages)
@@ -283,10 +296,12 @@ class ChatInstanceStore {
             onError: (error) => {
                 console.error(`[ChatInstances] Error in chat ${conversationId}:`, error);
 
-                // A lapsed subscription / unrecognized key surfaces as these
-                // codes from virtues-api (402/401) — refresh subscription state.
-                if (/wallet_expired|subscription_inactive|unknown_key/.test(error.message ?? '')) {
-                    subscriptionStore.check();
+                // Any wallet-side refusal (402/401) means the standing shown
+                // in Settings may be stale — re-ask the box, fresh. wallet_empty
+                // is on the list because for a never-subscribed account it is
+                // the first signal that there is no subscription at all.
+                if (/wallet_empty|insufficient_budget|topup_disabled|wallet_expired|subscription_inactive|unknown_key|invalid_api_key/.test(error.message ?? '')) {
+                    subscriptionStore.check(true);
                 }
             }
         });
@@ -300,6 +315,19 @@ class ChatInstanceStore {
         // on its own and earlier paragraphs / tool cards / thinking block stay put.
         const internalState = (chat as any).state;
         const originalReplace = internalState.replaceMessage.bind(internalState);
+        // The FIRST write of a new assistant message is `pushMessage(live)`,
+        // not replaceMessage — and if the live object goes in, Svelte proxies
+        // it in place: the SDK's later `parts.push(toolPart)` lands in the
+        // proxy's own target behind its cached length, and the sync below
+        // then finds the slot already occupied (`'1' in target`) and never
+        // bumps the length either. Result: a tool part that streamed in was
+        // invisible until a reload, in every room (found 2026-09-13 on the
+        // getting-started introductions card; create_page and the permission
+        // cards were equally blind). Push a decoupled clone, as replace does.
+        const originalPush = internalState.pushMessage.bind(internalState);
+        internalState.pushMessage = (message: any) => {
+            originalPush(snapshotMessage(message));
+        };
         internalState.replaceMessage = (index: number, message: any) => {
             const existing = internalState.messages[index];
             if (
@@ -357,6 +385,11 @@ class ChatInstanceStore {
             entry.cleanupTimeout = setTimeout(() => {
                 // Double check refCount didn't go back up
                 if (entry.refCount <= 0) {
+                    // Let go of the wire. The box keeps the turn running on
+                    // its own (VIR-323); a view that comes back rejoins it
+                    // through `resumeStream`, so an orphan reader here would
+                    // only hold a socket nobody reads.
+                    void entry.chat.stop();
                     this.instances.delete(conversationId);
                     this.subagents.delete(conversationId);
                 }

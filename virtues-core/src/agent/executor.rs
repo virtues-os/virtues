@@ -166,12 +166,17 @@ async fn execute_single(
     // `dispatch_subagents` fans out several nested agent loops in parallel and routinely runs for
     // minutes — far past the default per-tool timeout. Give it a long dedicated ceiling so it isn't
     // killed mid-research (the workers have their own step + per-call limits as the real bounds).
-    // `write_it_up` chains three model calls (document, capsule, chapters) over a full interview
+    // `write_it_up` chains two model calls (document, chapters) over a full interview
     // transcript — ~40s+ observed for the document alone, so the 30s default would kill every run.
+    // `generate_image` is one image-model call: ~18s per attempt measured on the box 2026-09-14,
+    // and the gateway client may resend an empty completion up to three times, so 30s cut it off
+    // after the first billed attempt — every image was paid for and none reached the chat.
     let tool_timeout = if tool_call.name == "dispatch_subagents" {
         Duration::from_secs(600)
     } else if tool_call.name == "write_it_up" {
         Duration::from_secs(240)
+    } else if tool_call.name == "generate_image" {
+        Duration::from_secs(120)
     } else {
         config.tool_timeout
     };
@@ -200,12 +205,13 @@ async fn execute_single(
             Err(ToolExecutionError::from(e))
         }
         Err(_) => {
+            // Report the ceiling this tool actually ran under, not the default.
             tracing::warn!(
                 tool_call_id = %tool_call.id,
-                timeout = ?config.tool_timeout,
+                timeout = ?tool_timeout,
                 "Tool execution timed out"
             );
-            Err(ToolExecutionError::Timeout(config.tool_timeout))
+            Err(ToolExecutionError::Timeout(tool_timeout))
         }
     };
 
@@ -283,7 +289,7 @@ pub fn build_attachment_message(attachments: &[(String, crate::tools::ToolAttach
 pub fn build_assistant_tool_message(
     content: &str,
     tool_calls: &[ToolCall],
-    thought_signature: Option<&str>,
+    reasoning_details: &[Value],
 ) -> Value {
     let mut msg = serde_json::json!({
         "role": "assistant",
@@ -300,8 +306,12 @@ pub fn build_assistant_tool_message(
         }).collect::<Vec<_>>()
     });
 
-    if let Some(sig) = thought_signature {
-        msg["thought_signature"] = serde_json::json!(sig);
+    // The gateway asks for its own reasoning blocks back, verbatim, on the
+    // message that produced them, so the model can resume the thought that
+    // led to these tool calls. Only when there were any: an empty array is
+    // a claim of "no reasoning" some providers reject.
+    if !reasoning_details.is_empty() {
+        msg["reasoning_details"] = Value::Array(reasoning_details.to_vec());
     }
 
     msg

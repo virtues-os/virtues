@@ -201,8 +201,18 @@ pub async fn oauth_callback_handler(
     };
 
     // 2. POST the exchange token to the proxy; receive normalized
-    //    {secrets, metadata, expires_in, scopes}.
-    let resp = match proxy_exchange(&claims.source_id, &exchange_token).await {
+    //    {secrets, metadata, expires_in, scopes}. The box identifies itself
+    //    with its Virtues key when it has one — an unlinked box is a normal
+    //    caller here (connecting a source needs no account), so absence is
+    //    fine; a vault that cannot be read is logged, not treated as absence.
+    let api_key = match virtues_helpers::auth::read_box_api_key(pool).await {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read box api_key for proxy exchange");
+            None
+        }
+    };
+    let resp = match proxy_exchange(&claims.source_id, &exchange_token, api_key.as_deref()).await {
         Ok(r) => r,
         Err(e) => return auth_error_response(e),
     };

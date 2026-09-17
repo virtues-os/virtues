@@ -29,13 +29,16 @@ pub fn init_tracing() {
         let _ = dotenv::from_path("../.env");
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    // Auto, like every other binary: JSON into the pipe the runner reads,
+    // text when a person runs an applet by hand at a terminal.
+    //
+    // This was briefly forced to Text, to stop the runner wrapping our JSON
+    // inside more JSON. That fixed the reading and broke the filtering — an
+    // applet's `kind` became prose inside the runner's message, and applet
+    // events turned into the one class of event the box could not query. The
+    // runner now UNWRAPS a structured line instead of quoting it (see
+    // `emit_subprocess_stderr`), so structure here is what it wants.
+    virtues::observe::init("info");
 }
 
 /// A reqwest client with a generous default timeout for action HTTP calls

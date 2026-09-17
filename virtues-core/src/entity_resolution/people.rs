@@ -40,12 +40,16 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
     // 2. Resolve from email senders
     total_resolved += resolve_email_senders(db, window).await?;
 
-    // 3. Resolve from message senders. Deliberately NOT window-bounded — see below.
-    total_resolved += resolve_message_senders(db).await?;
+    // 3 & 4. The two message passes. Deliberately NOT window-bounded — see
+    //    `resolve_message_senders` — which is also why they need the gate below.
+    if message_work_is_possible(db).await? {
+        // 3. Message senders.
+        total_resolved += resolve_message_senders(db).await?;
 
-    // 4. Resolve the *recipient* of the messages you sent. Same anti-join shape as
-    //    (3), same reason it takes no window.
-    total_resolved += resolve_message_recipients(db).await?;
+        // 4. The *recipient* of the messages you sent. Same anti-join shape as
+        //    (3), same reason it takes no window.
+        total_resolved += resolve_message_recipients(db).await?;
+    }
 
     tracing::info!(
         people_resolved = total_resolved,
@@ -53,6 +57,108 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
     );
 
     Ok(total_resolved)
+}
+
+/// What the two message passes read, reduced to four numbers.
+///
+/// Not a cursor and not a window — a fingerprint of the *inputs*, so the gate
+/// below keeps every property the passes were designed for while skipping the
+/// work when nothing they read has moved.
+///
+/// - message count: a message arriving or being deleted is new work.
+/// - people count and the newest `wiki_people.updated_at`: a contact added, or
+///   an existing contact gaining a phone number (the contacts upsert stamps
+///   `updated_at = now()`), makes old messages resolvable. A count alone would
+///   miss the edit, which is the case the sender pass's own doc comment
+///   promises: "on the day you save that contact it becomes work again".
+/// - message-ref count: if refs are deleted, they must be rebuilt. The same doc
+///   comment promises that too, and a watermark over our own writes would not
+///   notice a deletion; a count does.
+#[derive(Debug, Clone, PartialEq)]
+struct MessageWorkFingerprint {
+    messages: i64,
+    people: i64,
+    people_touched_at: Option<chrono::DateTime<chrono::Utc>>,
+    message_refs: i64,
+}
+
+/// The last fingerprint that came back with nothing to do. Process-local on
+/// purpose: a restart simply costs one full reconciliation, which is the
+/// behavior we had all the time, and it needs no table, no migration and no
+/// state that can disagree with the database.
+static LAST_IDLE_FINGERPRINT: std::sync::Mutex<Option<MessageWorkFingerprint>> =
+    std::sync::Mutex::new(None);
+
+/// Should the message passes run at all?
+///
+/// They are full reconciliations — "which resolvable message has no ref yet?" —
+/// and that is the right *semantics*: no cursor to rewind, no window for a
+/// twenty-year backfill to fall outside of, self-healing if refs are deleted.
+/// What it is not is the right *frequency*. Every fifteen minutes the sender
+/// query re-derived all ~96k already-resolved messages and anti-joined each one
+/// away to return zero rows, at 1.0s measured on a real box; the recipient pass
+/// does the same over threads. 623 of one week's 743 slow-statement warnings
+/// were these two, and the cost grows with the number of messages already DONE,
+/// which is exactly backwards.
+///
+/// So: keep the reconciliation, gate the tick. Four counts (~75ms) decide
+/// whether anything the passes read has changed since the last pass that found
+/// nothing. If not, there is provably nothing to do — every way work can appear
+/// moves one of them.
+///
+/// `normalize_pending_handles` runs FIRST and reports what it wrote, because a
+/// newly normalized handle is new work that changes none of the four (it
+/// rewrites `from_handle` in place). When it did anything, the gate is skipped
+/// rather than consulted.
+async fn message_work_is_possible(db: &Database) -> Result<bool> {
+    let normalized = normalize_pending_handles(db).await?;
+
+    let row = sqlx::query!(
+        r#"
+        SELECT (SELECT count(*) FROM data_communication_message)     AS "messages!",
+               (SELECT count(*) FROM wiki_people)                    AS "people!",
+               (SELECT max(updated_at) FROM wiki_people)             AS people_touched_at,
+               (SELECT count(*) FROM wiki_refs
+                 WHERE source_table = 'data_communication_message')  AS "message_refs!"
+        "#
+    )
+    .fetch_one(db.pool())
+    .await?;
+
+    let now = MessageWorkFingerprint {
+        messages: row.messages,
+        people: row.people,
+        people_touched_at: row.people_touched_at,
+        message_refs: row.message_refs,
+    };
+
+    let mut last = LAST_IDLE_FINGERPRINT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !work_is_possible(last.as_ref(), &now, normalized) {
+        tracing::debug!("message resolution: inputs unchanged, skipping the reconciliation");
+        return Ok(false);
+    }
+    // Recorded BEFORE the passes run. If they write refs, the count moves and the
+    // next tick reconciles once more, finds nothing, and records the settled
+    // fingerprint — one extra pass after real work, never a missed one.
+    *last = Some(now);
+    Ok(true)
+}
+
+/// The decision itself, with no database and no global in it.
+///
+/// Split out because the rule that matters — *skip only when we have seen this
+/// exact state before and normalization wrote nothing* — is the part that must
+/// never quietly drift to "skip". A gate that wrongly opens costs a second; a
+/// gate that wrongly closes means a message never gets a name, and nothing
+/// reports it.
+fn work_is_possible(
+    last: Option<&MessageWorkFingerprint>,
+    now: &MessageWorkFingerprint,
+    normalized: u64,
+) -> bool {
+    normalized > 0 || last != Some(now)
 }
 
 /// How many rows a single pass of the message resolver claims at a time. Both loops
@@ -111,8 +217,9 @@ const MESSAGE_BATCH: i64 = 5_000;
 /// hundreds of ghosts called "+18005550199". They stay unresolved until a contact
 /// turns up — the honest state.
 async fn resolve_message_senders(db: &Database) -> Result<usize> {
-    normalize_pending_handles(db).await?;
-
+    // `normalize_pending_handles` used to run here. It now runs in
+    // `message_work_is_possible`, which must see its result to decide — and
+    // running it twice would be a wasted pass over the pending index.
     let mut resolved = 0usize;
     loop {
         // One handle must mean one person. If two contacts claim the same number the
@@ -338,7 +445,12 @@ async fn resolve_message_recipients(db: &Database) -> Result<usize> {
 /// shared with the transform and with contact ingest. A second copy of the E.164 rules
 /// written in SQL would drift, and the two halves of a join silently disagreeing about
 /// what a phone number *is* was the original bug.
-async fn normalize_pending_handles(db: &Database) -> Result<()> {
+///
+/// Returns how many rows it filled in. `message_work_is_possible` needs that
+/// number: a freshly normalized handle is new work for the sender pass, and it
+/// changes none of the counts that gate reads.
+async fn normalize_pending_handles(db: &Database) -> Result<u64> {
+    let mut normalized = 0u64;
     loop {
         let rows = sqlx::query!(
             r#"
@@ -353,7 +465,7 @@ async fn normalize_pending_handles(db: &Database) -> Result<()> {
         .await?;
 
         if rows.is_empty() {
-            return Ok(());
+            return Ok(normalized);
         }
         let batch = rows.len();
 
@@ -391,11 +503,12 @@ async fn normalize_pending_handles(db: &Database) -> Result<()> {
                 batch,
                 "from_handle backfill selected rows but updated none — aborting drain"
             );
-            return Ok(());
+            return Ok(normalized);
         }
 
+        normalized += updated;
         if (batch as i64) < MESSAGE_BATCH {
-            return Ok(());
+            return Ok(normalized);
         }
     }
 }
@@ -860,6 +973,55 @@ fn extract_name_from_email(email: &str) -> String {
     } else {
         // Just return the local part as-is
         local_part.to_string()
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    fn fp(messages: i64, people: i64, refs: i64) -> MessageWorkFingerprint {
+        MessageWorkFingerprint {
+            messages,
+            people,
+            people_touched_at: None,
+            message_refs: refs,
+        }
+    }
+
+    /// Every way work can appear must open the gate. The failure this guards is
+    /// silent and permanent in the wrong direction: a message that never gets a
+    /// name, with nothing logged, because a fingerprint field stopped moving.
+    #[test]
+    fn every_way_work_appears_opens_the_gate() {
+        let seen = fp(100, 10, 90);
+
+        assert!(!work_is_possible(Some(&seen), &seen, 0), "identical state: skip");
+        assert!(work_is_possible(None, &seen, 0), "nothing seen yet: run");
+        assert!(work_is_possible(Some(&seen), &fp(101, 10, 90), 0), "a message arrived");
+        assert!(work_is_possible(Some(&seen), &fp(99, 10, 90), 0), "a message was deleted");
+        assert!(work_is_possible(Some(&seen), &fp(100, 11, 90), 0), "a contact was added");
+        assert!(
+            work_is_possible(Some(&seen), &fp(100, 10, 89), 0),
+            "a ref was deleted — the passes must rebuild it"
+        );
+
+        // A contact gaining a phone number changes no count, only the stamp. This
+        // is the case the sender pass's doc comment promises out loud.
+        let edited = MessageWorkFingerprint {
+            people_touched_at: Some(chrono::Utc::now()),
+            ..seen.clone()
+        };
+        assert!(
+            work_is_possible(Some(&seen), &edited, 0),
+            "an existing contact was edited"
+        );
+
+        // And a freshly normalized handle is work that moves nothing at all.
+        assert!(
+            work_is_possible(Some(&seen), &seen, 1),
+            "normalization rewrote from_handle in place"
+        );
     }
 }
 

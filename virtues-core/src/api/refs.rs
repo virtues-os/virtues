@@ -109,8 +109,9 @@ pub async fn resolve_refs(pool: &PgPool, urls: &[String]) -> HashMap<String, Res
 
         // A day or year IS its id — `/day/2026-08-01` needs no lookup, and
         // hitting the database to learn that a date is called its own date
-        // would be silly.
-        if kind == "day" || kind == "year" {
+        // would be silly. Which kinds those are is `id_is_title` on the
+        // registry.
+        if crate::api::subjects::by_id(id).is_some_and(|s| s.id_is_title) {
             out.insert(
                 url.clone(),
                 ResolvedRef {

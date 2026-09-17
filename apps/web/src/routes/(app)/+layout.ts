@@ -98,11 +98,19 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 				// appliance, setup_complete also requires the linked account, and
 				// the airlock's account step is skippable: gating the shell on it
 				// bounced "Enter Virtues" straight back to the letter forever,
-				// with AccountGate (the remedy) stranded behind the wall it was
-				// meant to open. The account is Home's getting-started business.
+				// with the remedy stranded behind the wall it was meant to open.
+				// Connecting AI is the getting-started room's first step now.
 				// `active` covers both finished and dismissed, which is the whole
 				// reason it replaced a separate skipped flag.
-				if (setup.onboarding_complete === false && setup.onboarding_status !== 'active') {
+				// A status of `onboarding` opens the letter on its own, whatever
+				// the record already holds — it is what `skip-onboarding
+				// {skipped:false}` sets, and the only way to see the letter
+				// again on a box that has a source. The letter's exit turns it
+				// `active`, so this cannot trap anyone.
+				if (
+					setup.onboarding_status === 'onboarding' ||
+					(setup.onboarding_complete === false && setup.onboarding_status !== 'active')
+				) {
 					throw redirect(303, '/founders-letter');
 				}
 			}

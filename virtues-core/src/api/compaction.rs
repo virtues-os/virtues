@@ -14,7 +14,6 @@ use crate::api::chats::ChatMessage;
 use crate::api::token_estimation::{estimate_session_context, ContextStatus};
 use crate::types::Timestamp;
 use crate::error::Result;
-use crate::virtues_api::client::BearerClient;
 
 // ============================================================================
 // Constants
@@ -27,7 +26,6 @@ use crate::virtues_api::client::BearerClient;
 const DEFAULT_KEEP_RECENT_EXCHANGES: usize = 4;
 
 /// Maximum tokens for summary generation
-const SUMMARY_MAX_TOKENS: u32 = 1000;
 
 /// Temperature for summary generation (lower = more deterministic)
 const SUMMARY_TEMPERATURE: f32 = 0.3;
@@ -129,11 +127,15 @@ RULES:
 - This summary will be injected as prior context for a new conversation instance"#;
 
 /// Generate a summary of messages using the LLM (device bearer → virtues-api).
+///
+/// Through the shared background helper on the Lite slot, thinking off and
+/// no cap. A 1000-token cap sat here for a summary the prompt itself bounds
+/// in words; on a Lite pin that thinks (the default glm-4.7-flash lists a
+/// toggle) it was spent thinking.
 async fn generate_summary(
     pool: &PgPool,
     messages: &[ChatMessage],
     existing_summary: Option<&str>,
-    model: &str,
 ) -> Result<String> {
     // Build the content to summarize
     let mut content = String::new();
@@ -164,36 +166,17 @@ async fn generate_summary(
         }
     }
 
-    // Generate summary via the device bearer (auto-renews monthly).
-    let body = serde_json::json!({
-        "model": model,
-        "messages": [
-            { "role": "system", "content": SUMMARY_SYSTEM_PROMPT },
-            { "role": "user", "content": content },
-        ],
-        "max_tokens": SUMMARY_MAX_TOKENS,
-        "temperature": SUMMARY_TEMPERATURE,
-    });
-
-    // System purpose — chat compaction is automated background work.
-    let response = BearerClient::from_env(pool.clone())
-        .with_purpose(crate::virtues_api::client::Purpose::System)
-        .with_feature("compaction")
-        .post_json("/v1/ai/chat/completions", &body)
-        .await
-        .map_err(|e| crate::Error::Other(format!("Summary generation failed: {}", e)))?;
-
-    if !response.is_success() {
-        return Err(crate::Error::Other(format!(
-            "Summary generation failed ({}): {}",
-            response.status, response.body
-        )));
-    }
-
-    response.body["choices"][0]["message"]["content"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| crate::Error::Other("Summary response missing content".to_string()))
+    crate::virtues_api::completion::system_completion(
+        pool,
+        virtues_registry::models::ModelSlot::Lite,
+        "compaction",
+        SUMMARY_SYSTEM_PROMPT,
+        &content,
+        crate::virtues_api::request::Thinking::Off,
+        SUMMARY_TEMPERATURE,
+    )
+    .await
+    .map_err(|e| crate::Error::Other(format!("Summary generation failed: {e}")))
 }
 
 // ============================================================================
@@ -242,7 +225,7 @@ pub async fn compact_chat(
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, thought_signature
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -267,7 +250,7 @@ pub async fn compact_chat(
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
-            let thought_signature: Option<String> = row.get("thought_signature");
+            let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
 
             let tool_calls = tool_calls_raw
                 .and_then(|tc| serde_json::from_value(tc).ok());
@@ -286,7 +269,7 @@ pub async fn compact_chat(
                 tool_calls,
                 intent,
                 subject,
-                thought_signature,
+                reasoning_details,
                 parts: None,
             }
         })
@@ -337,17 +320,14 @@ pub async fn compact_chat(
         });
     };
 
-    // Get background model from assistant profile
-    let background_model = crate::api::assistant_profile::get_background_model(pool).await?;
-
-    // Generate new summary with timeout to prevent hanging
+    // Generate new summary with timeout to prevent hanging. The model is the
+    // Lite slot through the owner's background pin, resolved by the helper.
     let new_summary = timeout(
         Duration::from_secs(60),
         generate_summary(
             pool,
             messages_to_summarize,
             conversation_summary.as_deref(),
-            &background_model,
         ),
     )
     .await
@@ -416,7 +396,7 @@ pub async fn compact_chat(
         tool_calls: None,
         intent: None,
         subject: None,
-        thought_signature: None,
+        reasoning_details: None,
         parts: Some(vec![checkpoint_part]),
     };
 
@@ -513,6 +493,18 @@ pub fn build_context_for_llm(
             for part in msg_parts {
                 match part {
                     UIPart::Text { text } => {
+                        // An empty text block is a hard 400 from Anthropic
+                        // ("text content blocks must be non-empty") and a
+                        // no-op everywhere else. The composer used to send one
+                        // beside every attachment-only message (the AI SDK
+                        // appends a text part for text `""`), and since user
+                        // parts persist verbatim, that one turn poisoned every
+                        // later Claude turn in the chat while Grok kept
+                        // working. Dropping it here heals chats already
+                        // carrying one.
+                        if text.trim().is_empty() {
+                            continue;
+                        }
                         parts.push(serde_json::json!({
                             "type": "text",
                             "text": text
@@ -614,6 +606,13 @@ pub fn build_context_for_llm(
 
         // If no parts (legacy), use content
         let content = if parts.is_empty() {
+            // Nothing survived and there is no legacy content either: this
+            // message would go out as `"content": ""`, which is the same
+            // rejection in string form. Leaving it out is the only honest
+            // rendering of a message with nothing in it.
+            if msg.content.trim().is_empty() {
+                continue;
+            }
             serde_json::Value::String(msg.content.clone())
         } else {
             serde_json::Value::Array(parts)
@@ -681,7 +680,7 @@ pub async fn needs_compaction(
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, thought_signature
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -706,7 +705,7 @@ pub async fn needs_compaction(
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
-            let thought_signature: Option<String> = row.get("thought_signature");
+            let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
 
             let tool_calls = tool_calls_raw
                 .and_then(|tc| serde_json::from_value(tc).ok());
@@ -725,7 +724,7 @@ pub async fn needs_compaction(
                 tool_calls,
                 intent,
                 subject,
-                thought_signature,
+                reasoning_details,
                 parts: None,
             }
         })
@@ -768,7 +767,7 @@ mod tests {
                 reasoning: None,
                 intent: None,
                 subject: None,
-                thought_signature: None,
+                reasoning_details: None,
                 parts: None,
             },
             ChatMessage {
@@ -783,7 +782,7 @@ mod tests {
                 reasoning: None,
                 intent: None,
                 subject: None,
-                thought_signature: None,
+                reasoning_details: None,
                 parts: None,
             },
         ];
@@ -794,6 +793,64 @@ mod tests {
         assert_eq!(context[0]["role"], "system");
         assert_eq!(context[1]["role"], "user");
         assert_eq!(context[2]["role"], "assistant");
+    }
+
+    /// An attachment-only send arrives as `[file, text ""]`. The file block
+    /// must survive and the empty text block must not; a message that is
+    /// empty through and through must not be sent at all.
+    #[test]
+    fn test_build_context_drops_empty_text_blocks() {
+        let base = ChatMessage {
+            id: None,
+            role: "user".to_string(),
+            content: String::new(),
+            timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: None,
+        };
+        let messages = vec![
+            ChatMessage {
+                parts: Some(vec![
+                    UIPart::File {
+                        media_type: "image/png".to_string(),
+                        url: "data:image/png;base64,AAAA".to_string(),
+                        filename: Some("shot.png".to_string()),
+                    },
+                    UIPart::Text { text: String::new() },
+                ]),
+                ..base.clone()
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: "I see it.".to_string(),
+                ..base.clone()
+            },
+            // Empty in every representation: parts that all drop, no content.
+            ChatMessage {
+                parts: Some(vec![UIPart::Text { text: "   ".to_string() }]),
+                ..base.clone()
+            },
+            ChatMessage {
+                content: "and then?".to_string(),
+                ..base
+            },
+        ];
+
+        let context = build_context_for_llm(&messages, None, 0, None);
+
+        assert_eq!(context.len(), 3, "the all-empty message is omitted");
+        let first = context[0]["content"].as_array().expect("parts array");
+        assert_eq!(first.len(), 1, "only the file block survives");
+        assert_eq!(first[0]["type"], "image_url");
+        assert_eq!(context[1]["role"], "assistant");
+        assert_eq!(context[2]["content"], "and then?");
     }
 
     #[test]
@@ -811,7 +868,7 @@ mod tests {
                 reasoning: None,
                 intent: None,
                 subject: None,
-                thought_signature: None,
+                reasoning_details: None,
                 parts: None,
             },
             ChatMessage {
@@ -826,7 +883,7 @@ mod tests {
                 reasoning: None,
                 intent: None,
                 subject: None,
-                thought_signature: None,
+                reasoning_details: None,
                 parts: None,
             },
             ChatMessage {
@@ -841,7 +898,7 @@ mod tests {
                 reasoning: None,
                 intent: None,
                 subject: None,
-                thought_signature: None,
+                reasoning_details: None,
                 parts: None,
             },
         ];

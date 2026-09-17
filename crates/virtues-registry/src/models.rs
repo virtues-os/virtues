@@ -253,7 +253,14 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
         // on the high-volume slot, which is what put it here originally and is
         // still the reason it belongs here.
         ModelSlot::Lite => "zai/glm-4.7-flash",
-        ModelSlot::Image => "google/gemini-3-pro-image",
+        // Nano Banana 2 (the 3.1 generation), replacing gemini-3-pro-image on
+        // 2026-09-15. Newer, and a quarter the price on the gateway's catalog
+        // ($0.0005/$0.003 per 1k against $0.002/$0.012). Compared head to head
+        // on the same painterly prompt: 3.1-flash lays paint on thickly —
+        // palette-knife ridges, saturated — where 3-pro is subtler and more
+        // atmospheric but holds a "leave this area quiet" instruction better.
+        // The thick-paint character is what we want for the plates.
+        ModelSlot::Image => "google/gemini-3.1-flash-image",
         // The audio-native model that won a controlled 5-clip bench. Stays out
         // of the Gemini-3 parallel-tool-call problem entirely: transcription
         // uses no tools. Every audio-in model besides Gemini rejects audio on
@@ -292,6 +299,38 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
 /// 404s is an outage, not a cosmetic problem. virtues-api checks it on every
 /// hourly refresh; CI checks it against the live gateway. Nothing else needs
 /// checking, because nothing else is ours.
+/// What the catalog says about a model's thinking. Derived by virtues-api
+/// from the gateway's `tags` and `reasoning_options`, served to boxes on the
+/// picker, and read by the box's completion helper to turn a thinking mode
+/// into a request.
+///
+/// This is the SHAPE of a fact, never a fact: every value is fetched, none is
+/// written here (see the module docs and the guard test below). It lives in
+/// this crate because it is the one crate both the box and the proxy already
+/// compile against, and a picker entry has to deserialize on the box exactly
+/// as it serialized on the proxy.
+///
+/// Every field is the gateway's claim about the model, not a measurement.
+/// `can_disable` in particular comes from a `toggle` entry that the catalog
+/// lists for Claude Fable 5, a model the gateway's own docs say cannot turn
+/// thinking off. So it decides whether to *try* `enabled: false`, never
+/// whether an output ceiling is safe.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ReasoningFacts {
+    /// The model reasons at all: tagged `reasoning`, or lists any control.
+    pub thinks: bool,
+    /// A `toggle` control is listed, so `reasoning.enabled: false` may work.
+    pub can_disable: bool,
+    /// Allowed `effort` values, in the gateway's order. Empty: no lever.
+    #[serde(default)]
+    pub effort_values: Vec<String>,
+    /// The `provider_options` that ask this model to RETURN its thinking
+    /// text, computed by the proxy per provider family. Empty object when
+    /// the family has no such switch.
+    #[serde(default)]
+    pub display_options: serde_json::Value,
+}
+
 pub fn required_model_ids() -> Vec<String> {
     let mut ids: Vec<String> = Vec::new();
     for slot in ModelSlot::all() {

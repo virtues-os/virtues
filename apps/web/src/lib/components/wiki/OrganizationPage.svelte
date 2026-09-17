@@ -6,7 +6,8 @@
 -->
 
 <script lang="ts">
-	import type { OrganizationPage as OrganizationPageType } from "$lib/wiki/types";
+	import { subjectHref } from "$lib/wiki/links";
+	import type { WikiOrganizationApi } from "$lib/wiki/api";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
 	import SubjectBacklinks from "./SubjectBacklinks.svelte";
 	import NotesRail from "./NotesRail.svelte";
@@ -16,7 +17,8 @@
 	import { updateOrganization } from "$lib/wiki/api";
 
 	interface Props {
-		page: OrganizationPageType;
+		/** The wire shape. See PersonPage for why the converter is gone. */
+		page: WikiOrganizationApi;
 	}
 
 	let { page }: Props = $props();
@@ -28,22 +30,39 @@
 		});
 	}
 
-	function formatOrgType(type: string): string {
+	/**
+	 * The badge over an organization's name, from its stored type.
+	 *
+	 * One map where there were two: the converter folded `company` into
+	 * `employer` and `university` into `school`, and this function then turned
+	 * those into words. A type with no entry keeps its own word instead of
+	 * flattening to "Organization".
+	 */
+	function orgLabel(type: string | null): string {
 		const labels: Record<string, string> = {
 			employer: "Employer",
+			company: "Employer",
 			school: "School",
+			university: "School",
 			community: "Community",
+			church: "Community",
+			club: "Community",
 			institution: "Institution",
-			other: "Organization",
+			government: "Institution",
+			hospital: "Institution",
 		};
-		return labels[type] || type;
+		if (!type) return "Organization";
+		const key = type.toLowerCase();
+		return labels[key] ?? type.charAt(0).toUpperCase() + type.slice(1);
 	}
 
-	function formatPeriod(period: { start: Date; end?: Date }): string {
-		const start = formatDate(period.start);
-		const end = period.end ? formatDate(period.end) : "Present";
+	/** "March 2019 — Present", from the two wire dates. */
+	const period = $derived.by(() => {
+		if (!page.started_at) return null;
+		const start = formatDate(new Date(page.started_at));
+		const end = page.ended_at ? formatDate(new Date(page.ended_at)) : "Present";
 		return `${start} — ${end}`;
-	}
+	});
 
 	async function saveAliases(next: string[]) {
 		const saved = await updateOrganization(page.id, { aliases: next });
@@ -57,20 +76,21 @@
 		<div class="page-content">
 			<!-- Header -->
 			<header class="page-header">
-				{#if page.cover}
+				<!-- `cover_image` has a PUT that accepts it and no client that
+				     sends one, so this has never drawn. Kept as the one place
+				     an org cover would go if anything ever wrote one. -->
+				{#if page.cover_image}
 					<div class="org-logo">
-						<img src={page.cover} alt={page.title} />
+						<img src={page.cover_image} alt={page.name} />
 					</div>
 				{/if}
-				<h1 class="page-title">{page.title}</h1>
-				{#if page.subtitle}
-					<p class="page-subtitle">{page.subtitle}</p>
-				{/if}
+				<h1 class="page-title">{page.name}</h1>
+				<!-- A subtitle was read here and never set. -->
 				<div class="page-meta">
-					<span class="meta-item org-badge">{formatOrgType(page.orgType)}</span>
-					{#if page.role}
+					<span class="meta-item org-badge">{orgLabel(page.organization_type)}</span>
+					{#if page.role_title}
 						<span class="meta-sep">·</span>
-						<span class="meta-item">{page.role}</span>
+						<span class="meta-item">{page.role_title}</span>
 					{/if}
 				</div>
 			</header>
@@ -82,7 +102,7 @@
 			<div class="org-aliases">
 				<AliasEditor
 					aliases={page.aliases ?? []}
-					canonicalName={page.title}
+					canonicalName={page.name}
 					onSave={saveAliases}
 				/>
 			</div>
@@ -93,11 +113,13 @@
 			<section class="section" id="article">
 				<EntityArticleSection
 					article={page.article}
-					articleUpdatedAt={page.articleUpdatedAt}
-					name={page.title}
+					articleUpdatedAt={page.article_updated_at
+						? new Date(page.article_updated_at)
+						: null}
+					name={page.name}
 									subjectType="organization"
 					subjectId={page.id}
-					autoUpdate={page.articleAutoUpdate}
+					maintained={page.article_maintained}
 					onChanged={() => location.reload()}
 				/>
 			</section>
@@ -121,91 +143,26 @@
 			{/if}
 
 			<!-- Your Role -->
-			{#if page.role || page.period}
+			{#if page.role_title || period}
 				<section class="section" id="your-role">
 					<h2 class="section-title">Your Role</h2>
 					<dl class="info-list">
-						{#if page.role}
+						{#if page.role_title}
 							<div class="info-item">
 								<dt>Position</dt>
-								<dd>{page.role}</dd>
+								<dd>{page.role_title}</dd>
 							</div>
 						{/if}
-						{#if page.period}
+						{#if period}
 							<div class="info-item">
 								<dt>Period</dt>
-								<dd>{formatPeriod(page.period)}</dd>
+								<dd>{period}</dd>
 							</div>
 						{/if}
 					</dl>
 				</section>
 			{/if}
 
-			<!-- Key Contacts -->
-			{#if page.keyContacts && page.keyContacts.length > 0}
-				<section class="section" id="key-contacts">
-					<h2 class="section-title">Key Contacts</h2>
-					<ul class="footer-list">
-						{#each page.keyContacts as person}
-							<li>
-								<a href="/wiki/{person.pageId}" class="footer-link">
-									<span class="link-text">{person.displayName}</span>
-									{#if person.preview}
-										<span class="link-preview">{person.preview}</span>
-									{/if}
-								</a>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
-
-			<!-- Locations -->
-			{#if page.locations && page.locations.length > 0}
-				<section class="section" id="locations">
-					<h2 class="section-title">Locations</h2>
-					<ul class="footer-list">
-						{#each page.locations as place}
-							<li>
-								<a href="/wiki/{place.pageId}" class="footer-link">
-									<span class="link-text">{place.displayName}</span>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
-
-			<!-- Narrative Context -->
-			{#if page.narrativeContext && page.narrativeContext.length > 0}
-				<section class="section" id="narrative-context">
-					<h2 class="section-title">Narrative Context</h2>
-					<ul class="footer-list">
-						{#each page.narrativeContext as context}
-							<li>
-								<a href="/wiki/{context.pageId}" class="footer-link">
-									<span class="link-text">{context.displayName}</span>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
-
-			<!-- Citations -->
-			{#if page.citations && page.citations.length > 0}
-				<section class="section" id="data-sources">
-					<h2 class="section-title">Data Sources</h2>
-					<ul class="footer-list">
-						{#each page.citations as citation}
-							<li class="citation-item">
-								<span class="citation-index">[{citation.index}]</span>
-								<span class="citation-label">{citation.label}</span>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
 		</div>
 	</article>
 </div>
@@ -354,64 +311,6 @@
 	}
 
 	/* Footer sections */
-	.footer-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-
-	.footer-link {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		padding: 0.375rem 0;
-		color: var(--color-primary);
-		text-decoration: none;
-	}
-
-	.link-text {
-		display: inline;
-		position: relative;
-		background-image: linear-gradient(
-			to top,
-			color-mix(in srgb, var(--color-primary) 15%, transparent),
-			color-mix(in srgb, var(--color-primary) 15%, transparent)
-		);
-		background-repeat: no-repeat;
-		background-size: 100% 0%;
-		background-position: 0 100%;
-		transition: background-size 0.2s ease;
-	}
-
-	.footer-link:hover .link-text {
-		background-size: 100% 100%;
-	}
-
-	.link-preview {
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-	}
-
-	.citation-item {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		padding: 0.375rem 0;
-	}
-
-	.citation-index {
-		font-size: 0.8125rem;
-		font-weight: 400;
-		color: var(--color-primary);
-		flex-shrink: 0;
-	}
-
-	.citation-label {
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-		flex: 1;
-	}
-
 	/* Responsive */
 	@media (max-width: 900px) {
 		.page-layout {

@@ -160,10 +160,9 @@ Chat falls back to the Virtues wallet on the next call.
 
 ### The sudo gate
 
-Five actions require proof of physical access, listed in `GATED_ACTIONS`
-(`virtues-core/src/api/sudo.rs`): `export_data`, `change_byo_key`, `wipe_box`,
-`revoke_last_device`, `import_applet_package`. Requests carry a 5-minute TTL and
-are single-use.
+Two actions require proof of physical access, listed in `GATED_ACTIONS`
+(`virtues-core/src/api/sudo.rs`): `change_byo_key` and `import_applet_package`.
+Requests carry a 5-minute TTL and are single-use.
 
 ```bash
 sudo -u virtues virtues sudo          # list open requests, prompt for each

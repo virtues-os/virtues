@@ -59,6 +59,19 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
+      # The page grammar's countable limits (agents/build/design-grammar.md §9),
+      # as a ratchet against a frozen baseline: 419 hex literals accumulated in
+      # a document whose §6 says "Nothing else." Fails only on an INCREASE; the
+      # script says why it is not a wall.
+      #
+      # First in this job, before pnpm install, because it needs neither node
+      # nor pnpm — only awk and find. It reads apps/web/src, so it belongs to
+      # the web job rather than beside the other shell ratchets in `rust`:
+      # there it sat behind cargo build, clippy and a Postgres service, which
+      # is a paid runner spent to report a CSS nit.
+      - name: No new design grammar violations
+        run: tools/design-lint.sh
+
       - name: Install web dependencies
         working-directory: apps/web
         run: pnpm install --frozen-lockfile
@@ -145,6 +158,10 @@ jobs:
       - name: No new swallowed query errors
         run: tools/check-swallowed-queries.sh
 
+      # The same ratchet shape over the page grammar. Every limit in
+      # agents/build/design-grammar.md §9 is a NUMBER — shadows, mono kickers,
+      # sub-11px type, off-grid spacing — and nothing counted them, so Getting
+      # Started was redesigned eight times on taste alone while 60 shadows and
       # The box parses the Improv pair packet in Rust; the iPhone builds it in
       # Swift. Nothing compiles the two together, so they drifted for four days
       # and BLE pairing failed at parse_rpc every time.
@@ -281,18 +298,9 @@ jobs:
         run: |
           git fetch --no-tags origin ${{ github.base_ref }}
           base=$(git merge-base FETCH_HEAD HEAD)
-          # TEMPORARY allowlist: the wave that INTRODUCED this check also
-          # carries 9f9538f3, which restores four migrations to the bytes
-          # fielded boxes actually applied — a modification relative to
-          # staging's (bad) copy, and the one edit that is the fix rather
-          # than the disease. DELETE these four lines once that wave merges.
           drift=$(git diff --name-status --no-renames "$base" HEAD -- \
                     virtues-core/migrations services/virtues-atlas/migrations \
-                  | grep -E '^\s*[MD]\s' | grep -E '\.sql$' \
-                  | grep -v -e '0005_display_hours\.sql' \
-                            -e '0001_customers\.sql' \
-                            -e '0015_box_keys\.sql' \
-                            -e '0016_granted_links\.sql' || true)
+                  | grep -E '^\s*[MD]\s' | grep -E '\.sql$' || true)
           if [ -n "$drift" ]; then
             echo "✖ applied migration files modified or deleted:"
             echo "$drift"

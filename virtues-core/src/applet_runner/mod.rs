@@ -38,6 +38,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tracing::Instrument;
 
 pub mod limits;
 
@@ -359,6 +360,29 @@ async fn prepare_run(
 /// against the run row rather than propagated, so this function always returns
 /// an `AppletRunResult` and is safe to detach.
 async fn execute_prepared(
+    deps: RunnerDeps,
+    action: Applet,
+    run_id: String,
+    trigger: String,
+    payload: Option<serde_json::Value>,
+) -> AppletRunResult {
+    // Everything below — the subprocess's own stderr, the agent phase, the AI
+    // calls it bills, the failure that lands on the run row — happens inside
+    // this span, so `run_id` is on every line of it.
+    //
+    // `.instrument()` on the future, NOT `.entered()` in the body: the guard
+    // `entered()` returns is not `Send`, and holding one across an `await`
+    // makes the whole future non-`Send` — which this one may not be, because
+    // `run_applet_detached` hands it to `tokio::spawn`. Instrumenting the
+    // future instead attaches the span to it, so it follows the work into the
+    // spawned task, which is the behavior we actually want here.
+    let span = crate::observe::run_span(&run_id, &action.id);
+    execute_prepared_inner(deps, action, run_id, trigger, payload)
+        .instrument(span)
+        .await
+}
+
+async fn execute_prepared_inner(
     deps: RunnerDeps,
     action: Applet,
     run_id: String,
@@ -756,6 +780,20 @@ const JAILED_MEMORY_MAX: &str = "1G";
 
 /// Build the spawn command, jailing it when the code did not ship with the box.
 ///
+/// **What the jail is, and is not.** It limits blast radius: no route to root
+/// through the box user's passwordless sudo, a read-only filesystem outside
+/// the applet's own paths, memory and time ceilings. It is NOT an authority
+/// boundary. An applet reaches Postgres with the box's own pool role and can
+/// dial the API on loopback, which `middleware/auth.rs` treats as the owner —
+/// so a running applet can do what the owner can do. That is the position,
+/// not an oversight: the trust decision is made ONCE, at import, behind the
+/// sudo gate (`api/sudo.rs`), and a chat-authored applet is the owner's own
+/// instruction. Separating applets from the owner would take a second uid, a
+/// scoped database login, and Postgres over a unix socket, rolled out to
+/// fielded boxes that do not auto-update — machinery this appliance has
+/// chosen not to carry. If that position ever changes, this paragraph is the
+/// first thing to delete.
+///
 /// The routing, not a ban, is the policy: a package may run native code, it
 /// just does not get to run it as a user with passwordless sudo. `systemd-run`
 /// is the same mechanism `code_interpreter` already uses (api/code.rs), which
@@ -1058,6 +1096,13 @@ async fn run_subprocess(
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if !output.status.success() {
+        // Emit before returning. The error string goes to the run row, which
+        // holds one field: on a crash that printed a backtrace, the row shows
+        // a wall of text and the journal shows nothing. This is the case the
+        // line-by-line emit exists for.
+        if !stderr.trim().is_empty() {
+            emit_subprocess_stderr(&action.id, &stderr);
+        }
         return Err(Error::Other(if stderr.is_empty() {
             format!("subprocess exited with status {}", output.status)
         } else {
@@ -1086,7 +1131,7 @@ async fn run_subprocess(
     // fold a short tail into the run summary so it shows in the Telemetry tab.
     let mut summary = applet_output.result;
     if !stderr.trim().is_empty() {
-        tracing::warn!(applet_id = %action.id, "action stderr (exit 0): {}", stderr.trim());
+        emit_subprocess_stderr(&action.id, &stderr);
         let tail: String = stderr.trim().chars().rev().take(500).collect::<Vec<_>>()
             .into_iter().rev().collect();
         summary = format!("{summary}\n[stderr] {tail}");
@@ -1096,6 +1141,155 @@ async fn run_subprocess(
         summary,
         records: applet_output.records,
     })
+}
+
+/// Re-emit a subprocess's stderr into the box's own log, one line per line,
+/// inside whatever run span is current — and, when the line is one of our own
+/// structured records, as fields rather than as a sentence about fields.
+///
+/// # Why this parses instead of quoting
+///
+/// An applet is a subprocess, so anything it logs reaches the journal only by
+/// passing through here. When this simply quoted the line, an applet's
+/// `kind="collector.permission.granted"` arrived as TEXT inside the runner's
+/// `message`, where `.kind` is null and no filter can find it. Applet events
+/// were the one class of event this whole vocabulary could not query — which
+/// is the thing it exists for. Verified on a real box on 2026-09-16: the
+/// permission-change line was correct, readable, and unfindable.
+///
+/// There was a false choice underneath it. Applets emitted JSON, the runner
+/// wrapped it in more JSON, and a reader had to parse `.message` twice; the
+/// first fix made applets emit text, which fixed the reading and broke the
+/// filtering. The answer is neither — applets emit structure and the runner
+/// UNWRAPS it, so the fields become the box's own.
+///
+/// `kind` and the applet's level are hoisted, because those are what a reader
+/// filters on. Everything else the applet attached is kept in `detail` as
+/// compact JSON: the tracing macros need field names known at compile time,
+/// so an applet's own vocabulary cannot become real fields here without a
+/// registry nobody wants to maintain.
+///
+/// A line that is NOT one of our records — a panic, a backtrace, a C library
+/// writing to stderr — is emitted verbatim at `warn`. It is still the most
+/// important thing an applet ever prints.
+///
+/// Bounded: a runaway applet can print megabytes, and journald will rate-limit
+/// the unit and drop *other* lines to make room. 200 lines is well past any
+/// real diagnostic and far short of a flood.
+fn emit_subprocess_stderr(applet_id: &str, stderr: &str) {
+    const MAX_LINES: usize = 200;
+    let source = format!("applet:{applet_id}");
+    let mut lines = stderr.lines().filter(|l| !l.trim().is_empty());
+    let mut shown = 0usize;
+    for line in lines.by_ref().take(MAX_LINES) {
+        match parse_applet_line(line) {
+            Some(rec) => emit_applet_record(applet_id, &source, rec),
+            // Not ours to interpret: a panic, a backtrace, a C library. Keep it
+            // exactly as written.
+            None => tracing::warn!(
+                applet_id = %applet_id,
+                source = %source,
+                "applet stderr: {line}"
+            ),
+        }
+        shown += 1;
+    }
+    let dropped = lines.count();
+    if dropped > 0 {
+        tracing::warn!(
+            applet_id = %applet_id,
+            source = %source,
+            shown,
+            dropped,
+            "applet stderr truncated — the rest is in the run summary tail"
+        );
+    }
+}
+
+/// One of our structured records, taken apart.
+struct AppletRecord {
+    level: String,
+    message: String,
+    kind: String,
+    /// Whatever else the applet attached, as compact JSON. Empty when there
+    /// was nothing but the standard fields.
+    detail: String,
+}
+
+/// Recognize a line as one of our own log records. Returns `None` for anything
+/// else, which is the common and important case (panics).
+fn parse_applet_line(line: &str) -> Option<AppletRecord> {
+    let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    let obj = v.as_object()?;
+    // `level` + `message` is the shape our JSON formatter writes. Requiring
+    // both keeps us from mangling an applet that happens to print a JSON
+    // payload of its own.
+    let level = obj.get("level")?.as_str()?.to_string();
+    let message = obj.get("message")?.as_str().unwrap_or_default().to_string();
+    let kind = obj
+        .get("kind")
+        .and_then(|k| k.as_str())
+        .unwrap_or("applet.log")
+        .to_string();
+
+    // Everything the applet added beyond the standard envelope. `target` is
+    // dropped: it names a module inside the subprocess, and the run span
+    // already says which applet this is.
+    let rest: serde_json::Map<String, serde_json::Value> = obj
+        .iter()
+        .filter(|(k, _)| {
+            !matches!(
+                k.as_str(),
+                "level" | "message" | "kind" | "timestamp" | "target" | "span" | "spans"
+            )
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let detail = if rest.is_empty() {
+        String::new()
+    } else {
+        serde_json::Value::Object(rest).to_string()
+    };
+
+    Some(AppletRecord {
+        level,
+        message,
+        kind,
+        detail,
+    })
+}
+
+/// Emit a parsed applet record as the box's own, at the applet's own level.
+///
+/// The level is the applet's, not a blanket `warn`. Re-labelling an applet's
+/// INFO as a box WARN inflates every routine line into something that looks
+/// like a problem, and it was doing exactly that for every applet on the box.
+///
+/// `source` is what keeps this honest in the other direction: these lines came
+/// from a subprocess, and `cli/report_crash.rs` excludes them from the crash
+/// beacon by that field. An applet's ERROR is a real error and belongs in the
+/// journal at ERROR — but it is also the likeliest place for a filename or a
+/// fragment of the user's own content to appear, and it is rarely why the
+/// daemon died.
+fn emit_applet_record(applet_id: &str, source: &str, rec: AppletRecord) {
+    match rec.level.as_str() {
+        "ERROR" => tracing::error!(
+            applet_id = %applet_id, source = %source, kind = %rec.kind,
+            detail = %rec.detail, "{}", rec.message
+        ),
+        "WARN" => tracing::warn!(
+            applet_id = %applet_id, source = %source, kind = %rec.kind,
+            detail = %rec.detail, "{}", rec.message
+        ),
+        "DEBUG" | "TRACE" => tracing::debug!(
+            applet_id = %applet_id, source = %source, kind = %rec.kind,
+            detail = %rec.detail, "{}", rec.message
+        ),
+        _ => tracing::info!(
+            applet_id = %applet_id, source = %source, kind = %rec.kind,
+            detail = %rec.detail, "{}", rec.message
+        ),
+    }
 }
 
 /// Default deployed location for action binaries, matching the installer's
@@ -1275,5 +1469,49 @@ mod tests {
             !ENV_PASSTHROUGH.contains(&"VIRTUES_ENCRYPTION_KEY"),
             "VIRTUES_ENCRYPTION_KEY must stay provenance-gated in apply_env"
         );
+    }
+}
+
+#[cfg(test)]
+mod applet_stderr_tests {
+    use super::*;
+
+    #[test]
+    fn a_structured_line_gives_up_its_kind() {
+        // The real line from dragon, 2026-09-16, that was correct and
+        // unfindable: `kind` was prose inside the runner's message.
+        let line = r#"{"timestamp":"2026-09-16T14:45:03.894880Z","level":"INFO","message":"the Mac collector regained a permission","kind":"collector.permission.granted","source":"device:dev_a70","grant":"full_disk_access","target":"mac_ingest"}"#;
+        let rec = parse_applet_line(line).expect("one of ours");
+        assert_eq!(rec.kind, "collector.permission.granted");
+        assert_eq!(rec.level, "INFO");
+        assert_eq!(rec.message, "the Mac collector regained a permission");
+        // The applet's own fields survive, minus the envelope.
+        assert!(rec.detail.contains("full_disk_access"));
+        assert!(!rec.detail.contains("timestamp"), "envelope leaked: {}", rec.detail);
+        assert!(!rec.detail.contains("mac_ingest"), "target leaked: {}", rec.detail);
+    }
+
+    #[test]
+    fn a_line_without_kind_still_parses() {
+        let line = r#"{"level":"WARN","message":"slow","target":"x"}"#;
+        let rec = parse_applet_line(line).expect("one of ours");
+        assert_eq!(rec.kind, "applet.log");
+        assert_eq!(rec.detail, "", "nothing but the envelope means no detail");
+    }
+
+    #[test]
+    fn a_panic_is_never_mangled() {
+        // The most important thing an applet prints, and not JSON.
+        assert!(parse_applet_line("thread 'main' panicked at src/main.rs:4:1:").is_none());
+        assert!(parse_applet_line("   3: core::panicking::panic_fmt").is_none());
+    }
+
+    #[test]
+    fn an_applets_own_json_payload_is_not_mistaken_for_a_log_record() {
+        // An applet echoing data must not have it re-emitted as if we wrote
+        // it. Requiring BOTH level and message is what prevents that.
+        assert!(parse_applet_line(r#"{"records":[{"name":"someone"}]}"#).is_none());
+        assert!(parse_applet_line(r#"{"level":"INFO"}"#).is_none());
+        assert!(parse_applet_line(r#"[1,2,3]"#).is_none());
     }
 }

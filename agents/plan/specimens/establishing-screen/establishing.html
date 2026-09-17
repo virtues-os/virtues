@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Virtues — the establishing screen</title>
+    <!--
+      SPECIMEN, not a patch. Three beats in the airlock's own register, to see
+      whether the first one earns its place:
+
+        1. the establishing screen — one line, one control, light arriving
+        2. Bluetooth, explained BEFORE the OS sheet fires
+        3. the entry fork that exists today, unchanged, so the seam is visible
+
+      Type-only by construction. The plate is a LAYER behind the type, not the
+      design: press P to drop a stand-in horizon in and out. If the plate never
+      loads — and in connect.html, served from the binary, that has to be a
+      survivable state — what remains is beat 1 exactly as it draws now.
+
+      Register transcribed from apps/web/src-tauri/ui/connect.html: one paper,
+      four steps of graphite, hairlines as the only structure, serif headings,
+      one blue spent on focus and the live pip. Nothing new is invented here
+      except the light.
+    -->
+    <style>
+      /* ── the app's own faces ──
+         Transcribed from apps/web/src/app.css + themes.css. JJannon has one cut
+         — no italic, never bold — so 300 and 400 both point at the same file,
+         exactly as the app declares them.
+
+         PRODUCTION NOTE. connect.html today sets `ui-serif` on purpose, with a
+         comment saying JJannon lives in the SPA bundle, which does not exist
+         when the airlock draws. That is true and is the thing to fix rather
+         than work around: the woff2 has to be embedded in the BINARY next to
+         connect.html and served through the `virtues://` handler. First launch
+         is precisely where the brand face should appear, and 81 KB is a
+         rounding error against the plate. `font-display: swap` keeps the screen
+         drawing in the fallback if it ever fails to load. */
+      @font-face {
+        font-family: 'JJannon';
+        src: url('../../../../apps/web/static/fonts/JJannon-Display-Regular.woff2') format('woff2');
+        font-weight: 400; font-style: normal; font-display: swap;
+      }
+      /* The same file with its vertical metrics normalized — for the serif in
+         chrome rather than in prose. JJannon declares ascent/descent =
+         0.740/0.260, exactly one em with no leading, so a centred line box
+         leaves the letters ~0.098em high. The lockup beside the ∴ is precisely
+         the case the app wrote this for: a serif sharing a row with something
+         that is not text. */
+      @font-face {
+        font-family: 'JJannon UI';
+        src: url('../../../../apps/web/static/fonts/JJannon-Display-Regular.woff2') format('woff2');
+        font-weight: 400; font-style: normal; font-display: swap;
+        ascent-override: 93.6%; descent-override: 26%; line-gap-override: 0%;
+      }
+      @font-face {
+        font-family: 'Avenir';
+        src: url('../../../../apps/web/static/fonts/Avenir-Regular.woff2') format('woff2');
+        font-weight: 400; font-style: normal; font-display: swap;
+      }
+      @font-face {
+        font-family: 'Avenir';
+        src: url('../../../../apps/web/static/fonts/Avenir-Medium.woff2') format('woff2');
+        font-weight: 500; font-style: normal; font-display: swap;
+      }
+      :root {
+        color-scheme: light;
+        --paper: #FFFFFF;
+        --ink: #17171A; --ink-muted: #3F3F46; --ink-subtle: #71717A; --ink-faint: #A1A1AA;
+        --line: #E7E7E9; --line-subtle: #F1F1F3; --line-strong: #D4D4D8;
+        --blue: #0A84FF; --blue-subtle: #EAF3FF;
+        --serif: 'JJannon', ui-serif, "New York", Georgia, serif;
+        /* Chrome only — see the metric override above. */
+        --serif-ui: 'JJannon UI', ui-serif, Georgia, serif;
+        --sans: 'Avenir', -apple-system, system-ui, "Segoe UI", sans-serif;
+        --ease: cubic-bezier(0.22, 1, 0.36, 1);
+        font-family: var(--sans);
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body { margin: 0; background: var(--paper); color: var(--ink); overflow: hidden; }
+
+      /* ── the light ──
+         Not weather. A dawn: it ARRIVES over the time someone actually sits
+         here (~50s), from below the horizon, and then stops. Nothing loops,
+         because a loop is a screensaver and this is a moment. */
+      #light { position: fixed; inset: -12%; z-index: 0; pointer-events: none;
+               opacity: 0; transform: translateY(9%);
+               background:
+                 radial-gradient(74% 42% at 50% 99%,
+                   rgba(255, 196, 118, .40) 0%,
+                   rgba(255, 214, 158, .18) 46%,
+                   rgba(255, 255, 255, 0) 78%),
+                 radial-gradient(128% 70% at 50% 98%,
+                   rgba(255, 221, 180, .34) 0%,
+                   rgba(255, 236, 212, .14) 38%,
+                   rgba(255, 255, 255, 0) 72%),
+                 linear-gradient(to bottom,
+                   rgba(216, 226, 236, .60) 0%,
+                   rgba(255, 255, 255, 0) 48%);
+               transition: opacity 1.6s var(--ease);
+               animation: dawn 54s cubic-bezier(.25, 0, .35, 1) forwards; }
+      /* Most of the light arrives in the first six seconds, and then keeps
+         coming for as long as anyone sits here. Someone who clicks Begin at
+         eight seconds must have SEEN a dawn, not missed one. */
+      @keyframes dawn {
+        from { opacity: 0; transform: translateY(9%); }
+        11%  { opacity: .50; }
+        to   { opacity: .80; transform: translateY(0); }
+      }
+
+      /* Paper tooth. Static, 3.5%: at this weight it is not visible as noise,
+         only as the absence of the plastic flatness of a white div. */
+      #grain { position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: .035;
+               mix-blend-mode: multiply;
+               background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+      /* ── the stock ──
+         Two noise fields, not one. Fine grain gives tooth; a broad, slow
+         mottle gives the cloudiness real paper shows when light crosses it —
+         a single high-frequency layer reads as screen noise, never as stock.
+         Both desaturated: feTurbulence emits COLOR noise, and at these
+         opacities an undesaturated field lays a faint magenta over the page. */
+      #mottle { position: fixed; inset: -6%; z-index: 0; pointer-events: none;
+                opacity: .07; mix-blend-mode: multiply;
+                filter: grayscale(1) contrast(190%) brightness(1.08);
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.0038' numOctaves='5'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E"); }
+      /* Laid lines: the frequency is deliberately anisotropic, so the fibre
+         runs one way like paper pulled off a screen. */
+      #fibers { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+                opacity: .03; mix-blend-mode: multiply; filter: grayscale(1) contrast(160%);
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.014 1.1' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"); }
+
+      /* ── the gobo ──
+         Not a picture of a tree: the SHADOW one throws. A window's light lands
+         on the page, and foliage outside interrupts it. Multiply is what makes
+         this possible on white paper — you cannot brightenwhite paper, so the lit
+         area is a warm tint and the leaves are a cooler, darker one.
+         Everything here is drawn; there is no asset to fail to load. */
+      #gobo { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+              mix-blend-mode: multiply; opacity: 0;
+              transition: opacity 3.2s var(--ease); }
+      #gobo.in { opacity: 1; }
+      /* The window goes with the dawn. Beat 1 is the only screen that gets
+         weather; the working screens keep a trace of it so the hand-off is not
+         a cut to a different product. */
+      #gobo.receded { opacity: .34; }
+      #gobo svg { width: 100%; height: 100%; display: block; }
+      /* A real plate. Overscaled so the wind never walks an edge into view, and
+         soft-masked at the border so the photograph does not end in a straight
+         line across someone's screen. */
+      #gobo img { position: absolute; left: -6%; top: -6%; width: 112%; height: 112%;
+                  object-fit: cover; display: block;
+                  will-change: transform;
+                  -webkit-mask-image: radial-gradient(125% 115% at 42% 40%,
+                    #000 0%, #000 52%, rgba(0,0,0,.55) 78%, rgba(0,0,0,0) 100%);
+                  mask-image: radial-gradient(125% 115% at 42% 40%,
+                    #000 0%, #000 52%, rgba(0,0,0,.55) 78%, rgba(0,0,0,0) 100%); }
+      /* The building does not sway. Splitting the plate in two is not a styling
+         choice — it is the only way the motion can be physically true, and a
+         moving window frame is the single most obvious tell that something on a
+         screen was animated by someone who did not look out of one. */
+      #gobo .win  { opacity: .26; }
+      #gobo .leaf { opacity: .27; }
+
+      /* The plate slot. Hidden until P. */
+      #plate { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+               opacity: 0; transition: opacity 1.4s var(--ease); }
+      #plate.on { opacity: .62; }
+      #plate svg { width: 100%; height: 100%; display: block; }
+
+      /* ── chrome ── */
+      #chrome { position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+                display: flex; align-items: center; justify-content: space-between;
+                padding: max(20px, env(safe-area-inset-top)) 24px 14px; }
+      .brand { display: inline-flex; align-items: center; gap: 8px;
+               font-family: var(--serif-ui); font-size: 16px; letter-spacing: .01em; }
+      .brand .mk { font-family: var(--sans); font-size: 24px; line-height: 1;
+                   transform: translateY(-0.1em); }
+      /* Sound is offered, never imposed — and it is offered BEFORE it plays,
+         so the first note is never a surprise in a quiet room. */
+      #sound { appearance: none; background: none; border: 0; padding: 6px; margin: -6px;
+               color: var(--ink-faint); cursor: pointer; line-height: 0;
+               transition: color .15s var(--ease); }
+      #sound:hover { color: var(--ink); }
+
+      #stage { position: relative; z-index: 2; height: 100%; }
+
+      /* ── beat 1 ── */
+      .open { height: 100%; display: flex; flex-direction: column;
+              align-items: center; justify-content: center; padding: 0 22px;
+              text-align: center; }
+      .promise { font-family: var(--serif); font-weight: 400;
+                 font-size: clamp(29px, 5vw, 50px); line-height: 1.16;
+                 letter-spacing: -.017em; color: var(--ink);
+                 margin: 0 0 clamp(34px, 6vh, 56px); max-width: 23ch;
+                 text-wrap: balance; }
+      .act { margin-top: clamp(34px, 6vh, 56px); }
+      .cue { margin: 15px 0 0; font-size: 12px; color: var(--ink-faint);
+             letter-spacing: .02em; }
+
+      /* ── beats 2 & 3: the column the airlock already uses ── */
+      .col { max-width: 430px; margin: 0 auto;
+             padding: max(120px, calc(env(safe-area-inset-top) + 92px)) 22px 32px; }
+      h1 { font-family: var(--serif); font-size: 28px; font-weight: 400;
+           letter-spacing: -.01em; line-height: 1.18; margin: 0 0 10px; }
+      p.sub { margin: 0 0 28px; color: var(--ink-subtle); font-size: 14px; line-height: 1.55; }
+      .kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
+                color: var(--ink-faint); margin: 0 0 12px; }
+      .hint { margin-top: 22px; font-size: 12px; color: var(--ink-subtle); line-height: 1.55; }
+      .hint b { color: var(--ink-muted); font-weight: 500; }
+
+      button { font-family: var(--sans); cursor: pointer; }
+      button.primary { appearance: none; border: 0; border-radius: 10px; background: var(--ink);
+               color: #fff; font-size: 15px; font-weight: 500; padding: 14px; width: 100%;
+               transition: background .15s var(--ease), transform .12s var(--ease); }
+      button.primary:hover { background: #2A2A2F; }
+      button.primary:active { background: #000; transform: scale(.992); }
+      /* The one control on beat 1 is not a form submit at the bottom of a
+         column; it is the single thing on the screen. It gets width. */
+      button.primary.begin { width: auto; min-width: 196px; padding: 15px 40px;
+               border-radius: 11px; font-size: 15.5px; }
+      .choice { display: block; width: 100%; text-align: left; background: var(--paper);
+                border: 1px solid var(--line); border-radius: 12px; padding: 15px 16px;
+                margin-bottom: 10px; color: var(--ink);
+                transition: border-color .15s var(--ease), box-shadow .2s var(--ease); }
+      .choice:hover { border-color: var(--line-strong); box-shadow: 0 1px 4px rgba(23,23,26,.06); }
+      .choice b { display: block; font-family: var(--serif); font-size: 17px;
+                  font-weight: 400; margin-bottom: 3px; }
+      .choice span { display: block; font-size: 13px; line-height: 1.45; color: var(--ink-subtle); }
+
+      /* Screens replace #stage's children wholesale, so the entrance plays by
+         itself — the airlock's own `rise`, faintly staggered. */
+      @media (prefers-reduced-motion: no-preference) {
+        .col > * { animation: rise .55s var(--ease) both; }
+        .col > *:nth-child(2) { animation-delay: .05s; }
+        .col > *:nth-child(3) { animation-delay: .1s; }
+        .col > *:nth-child(4) { animation-delay: .15s; }
+        .col > *:nth-child(n+5) { animation-delay: .2s; }
+        .promise { animation: rise 1.6s var(--ease) both; }
+        .act { animation: rise 1.5s var(--ease) .6s both; }
+      }
+      @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+      /* Vestibular comfort: the light is PRESENT rather than arriving, the
+         horizon is drawn rather than drawing, and nothing rises. */
+      @media (prefers-reduced-motion: reduce) {
+        #light { animation: none; opacity: 1; transform: none; }
+      }
+
+      #stage.leaving { opacity: 0; transition: opacity .32s var(--ease); }
+
+      /* The dawn belongs to beat 1. Dimming it for the working screens has to
+         KILL the animation, not set a lower opacity underneath it: a filled
+         `forwards` animation outranks an inline style for the property it
+         animates, so `light.style.opacity = '.34'` was a no-op that looked
+         like a taste decision. (The airlock has this exact scar in its own
+         `rise` keyframes — see the `from`-only comment there.) */
+      #light.receded { animation: none; opacity: .24; }
+    </style>
+  </head>
+  <body>
+    <div id="light"></div>
+    <div id="gobo"></div>
+    <div id="plate"></div>
+    <div id="mottle"></div>
+    <div id="fibers"></div>
+    <div id="grain"></div>
+
+    <header id="chrome">
+      <span class="brand"><span class="mk">∴</span>Virtues</span>
+      <button id="sound" aria-label="Sound"></button>
+    </header>
+
+    <main id="stage"></main>
+    <audio id="score" src="score.mp3" loop preload="auto"></audio>
+
+    <script>
+      // A phone has no Space bar, and the cue that teaches a keyboard shortcut
+      // to someone holding a phone is the first thing they learn about how
+      // carefully this was made.
+      const TOUCH = matchMedia('(hover: none)').matches;
+      const stage = document.getElementById('stage');
+      const light = document.getElementById('light');
+      const score = document.getElementById('score');
+      const soundBtn = document.getElementById('sound');
+
+      // ── sound ───────────────────────────────────────────────────────────
+      //
+      // WKWebView will not start audio without a user gesture, which is not a
+      // limitation to work around — it is the reason beat 1 has a button at
+      // all. `Begin` is the gesture, so the score starts WITH the flow rather
+      // than over whatever the owner was already listening to.
+      // Behind the screen, not on it. `volume` is linear amplitude while hearing
+      // is roughly logarithmic, so 0.20 is about -4 dB against the old 0.30 —
+      // audibly a step back rather than a different piece of music. The 2.2s
+      // rise matters more than the number: a score that FADES UP is scoring the
+      // room, one that starts at level is playing you a track.
+      const VOL = 0.20;
+      let wanted = localStorage.getItem('sound') !== 'off';
+
+      const SPEAKER = (on) => on
+        ? `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+             <path d="M4 9.5h3.2L12 5.6v12.8L7.2 14.5H4z"/>
+             <path d="M15.4 9.2a4 4 0 0 1 0 5.6"/><path d="M18 6.6a7.6 7.6 0 0 1 0 10.8"/>
+           </svg>`
+        : `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+             <path d="M4 9.5h3.2L12 5.6v12.8L7.2 14.5H4z"/>
+             <path d="M16.5 10l4 4M20.5 10l-4 4"/>
+           </svg>`;
+
+      function paintSound() {
+        soundBtn.innerHTML = SPEAKER(wanted);
+        soundBtn.setAttribute('aria-label', wanted ? 'Turn sound off' : 'Turn sound on');
+      }
+      paintSound();
+
+      soundBtn.addEventListener('click', () => {
+        wanted = !wanted;
+        localStorage.setItem('sound', wanted ? 'on' : 'off');
+        paintSound();
+        if (!wanted) fade(score.volume, 0, 600, () => score.pause());
+        else if (started) { score.play().catch(() => {}); fade(0, VOL, 1200); }
+      });
+
+      let started = false;
+      let fading = null;
+      /**
+       * Ramp the volume on the WALL CLOCK, not on animation frames.
+       *
+       * requestAnimationFrame does not run in a backgrounded tab, so a fade
+       * started while the window was not frontmost left `volume` at 0 — the
+       * score playing, correctly, inaudibly, forever, with no error anywhere.
+       * That is the silent-failure shape this repo already has a rule about:
+       * a fade that cannot complete must still arrive at its target.
+       */
+      function fade(from, to, ms, done) {
+        clearInterval(fading);
+        const t0 = Date.now();
+        score.volume = from;
+        fading = setInterval(() => {
+          const k = Math.min(1, (Date.now() - t0) / ms);
+          score.volume = Math.max(0, Math.min(1, from + (to - from) * k));
+          if (k >= 1) { clearInterval(fading); fading = null; done && done(); }
+        }, 40);
+      }
+      function startScore() {
+        started = true;
+        if (!wanted) return;
+        score.volume = 0;
+        // A 2.2s rise: the first note should feel like it was already playing
+        // somewhere and you walked into the room.
+        score.play()
+          .then(() => fade(0, VOL, 2200))
+          .catch((e) => {
+            // A refused autoplay is indistinguishable from a quiet room. Say
+            // so where the control is, rather than leaving someone to wonder
+            // whether the score exists.
+            soundBtn.title = 'Sound was blocked by the browser: ' + e.name;
+            soundBtn.style.color = 'var(--red, #C4322B)';
+          });
+      }
+
+      // ── the plate, as a layer ───────────────────────────────────────────
+      //
+      // A stand-in, drawn rather than sourced: luminist composition (a wide
+      // still horizon, light as the subject, almost nothing in it) in the
+      // engraving's technique (ink, line, paper). Press P. The point of the
+      // specimen is that beat 1 must READ with this absent.
+      (function drawPlate() {
+        const H = 520, W = 1200, HT = 800;
+        let s = `<svg viewBox="0 0 ${W} ${HT}" preserveAspectRatio="xMidYMid slice"
+                      xmlns="http://www.w3.org/2000/svg">`;
+        // Sky: engraved hatching, thinning and fading upward.
+        for (let y = H - 6, gap = 3; y > 90; gap *= 1.085, y -= gap) {
+          const k = (y - 90) / (H - 90);            // 1 at horizon → 0 at top
+          s += `<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}"
+                  stroke="#17171A" stroke-width=".7" opacity="${(0.028 + 0.10 * k * k).toFixed(3)}"/>`;
+        }
+        // The sun, just clear of the water: a disc and one ring, no rays. Set
+        // OFF-CENTRE on purpose — centred, it sits directly behind the one
+        // control on the screen, and a button wearing a halo is a joke the
+        // screen is not making.
+        const SUN = 862;
+        s += `<circle cx="${SUN}" cy="${H - 58}" r="46" fill="#17171A" opacity=".055"/>
+              <circle cx="${SUN}" cy="${H - 58}" r="46" fill="none" stroke="#17171A"
+                      stroke-width=".9" opacity=".16"/>`;
+        // A headland, far off — scale, and the only thing here made by nobody.
+        s += `<path d="M0 ${H} L92 ${H - 15} L186 ${H - 6} L268 ${H - 11} L352 ${H}"
+                 fill="#17171A" opacity=".13"/>`;
+        // The horizon itself, the darkest line on the plate.
+        s += `<line x1="0" y1="${H}" x2="${W}" y2="${H}" stroke="#17171A"
+                stroke-width="1.1" opacity=".30"/>`;
+        // Water: broken hatching, opening up as it comes toward you, with the
+        // sun's column of shimmer left unruled.
+        for (let y = H + 7, gap = 3.4; y < HT; gap *= 1.075, y += gap) {
+          const k = 1 - (y - H) / (HT - H);
+          // Broken hatching, and the breaks must not LINE UP: an unshifted
+          // dash pattern repeated down the page stops being water and becomes
+          // a perspective grid — which is the one thing this is not.
+          const dash = `${(9 + 50 * (1 - k)).toFixed(0)} ${(11 + 34 * (1 - k)).toFixed(0)}`;
+          s += `<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}"
+                  stroke="#17171A" stroke-width=".7" stroke-dasharray="${dash}"
+                  stroke-dashoffset="${(Math.random() * 90).toFixed(0)}"
+                  opacity="${(0.05 + 0.13 * k).toFixed(3)}"/>`;
+          // The sun's column, unruled around the edges and struck through the
+          // middle: the only vertical event on the plate.
+          if (y < H + 230) {
+            const w = 26 + (H + 230 - y) * 0.16;
+            s += `<line x1="${(SUN - w).toFixed(0)}" y1="${y.toFixed(1)}"
+                    x2="${(SUN + w).toFixed(0)}" y2="${y.toFixed(1)}"
+                    stroke="#17171A" stroke-width="1" opacity="${(0.11 * k).toFixed(3)}"/>`;
+          }
+        }
+        document.getElementById('plate').innerHTML = s + '</svg>';
+      })();
+
+      // ── the gobo, and the wind in it ────────────────────────────────────
+      //
+      // A window's light lands on the page and foliage outside interrupts it.
+      // Drawn, not loaded: the airlock has to come up when nothing else does,
+      // so the one atmospheric element on the screen cannot be an asset that
+      // might 404.
+      //
+      // WIND IS NOT A SINE. A sine is a metronome and reads as machinery
+      // within about fifteen seconds. Real wind is gusts: a fast rise, a long
+      // decay, quiet gaps of uneven length — and a canopy that does not move
+      // as one piece, because heavy masses lag and small leaves arrive first
+      // and flutter after. All three are modelled below; the whole visible
+      // range is a handful of pixels, so what you notice is the CHARACTER of
+      // the motion rather than the motion.
+      const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      /**
+       * Build the gobo in REAL PIXELS, and rebuild it when the window changes.
+       *
+       * The first version drew into a fixed 1200-unit viewBox and let
+       * `preserveAspectRatio="slice"` stretch it to fit. On a 2000px window
+       * that scales every leaf up by 1.7x, and a leaf shadow the size of a
+       * dinner plate is not a leaf shadow — it is a smear. Anything whose
+       * subject is TEXTURE has to be authored at the size it will be seen.
+       */
+      /**
+       * The plate, and the wind on it.
+       *
+       * Three procedural passes — ellipses, then denser ellipses, then
+       * thresholded turbulence — got the GRAMMAR of dapple (lacy, directional,
+       * multi-scale) and never got its botany. A photographed leaf shadow has
+       * the thing none of them do: real leaves, at real distances, with real
+       * penumbra. So the plate is an image, and the code's job is only to move
+       * it convincingly.
+       *
+       * `?g=NN` picks one, `?g=none` removes it — the screen has to be judged
+       * WITHOUT it too, because in the airlock this is an asset that can fail
+       * to load and the type must stand on its own when it does.
+       */
+      const Q = new URLSearchParams(location.search);
+      // ONE PLATE, ONE SUN. Two photographed shadows stacked always read as two
+      // light sources — different angle, different penumbra, different wall —
+      // and no opacity setting fixes a contradiction. The window layer stays in
+      // the code (pass `?w=03`) for the day the frame and the foliage are cut
+      // out of the SAME exposure, which is the only way to have both.
+      const WINDOW_PLATE = Q.get('w') || 'none';  // static: the architecture
+      const LEAF_PLATE   = Q.get('l') || '06';    // animated: the tree
+      const ONE_PLATE    = Q.get('g');           // both-in-one, for comparison
+
+      function buildGobo() {
+        const host = document.getElementById('gobo');
+        const show = () => host.classList.add('in');
+        const plate = (file, cls) => {
+          if (!file || file === 'none') return null;
+          const img = new Image();
+          img.className = cls;
+          img.alt = '';
+          img.addEventListener('load', show);
+          img.addEventListener('error', () => img.remove());
+          img.src = 'plates/' + file + '.jpg';
+          host.appendChild(img);
+          return img;
+        };
+        host.innerHTML = '';
+        if (ONE_PLATE) {
+          // The old behaviour, kept only so the two can be compared directly.
+          const img = plate(ONE_PLATE === 'none' ? null : ONE_PLATE, 'leaf');
+          setTimeout(show, 400);
+          return img ? [{ amp: 1, tau: 0.5, ph: 1.1, w: 0, el: img }] : [];
+        }
+        plate(WINDOW_PLATE, 'win');              // never animated
+        const leaves = plate(LEAF_PLATE, 'leaf');
+        setTimeout(show, 400);
+        return leaves ? [{ amp: 1, tau: 0.55, ph: 1.1, w: 0, el: leaves }] : [];
+      }
+
+      let foliage = buildGobo();
+      // A resize changes the pixel size of every leaf, so the pattern is rebuilt
+      // rather than scaled. Debounced: a drag across the desk fires this a
+      // hundred times.
+      let rebuild;
+      addEventListener('resize', () => {
+        clearTimeout(rebuild);
+        rebuild = setTimeout(() => { foliage = buildGobo(); }, 260);
+      });
+
+      // ── the wind, corrected against how wind actually behaves ───────────
+      //
+      // The first model was wrong in one specific way: it rested at almost
+      // nothing and then spiked to nine times that, so the page sat dead still
+      // and then lurched. Real wind does the opposite. It always blows, and a
+      // gust is a MODEST multiple of the mean — the gust factor (peak ÷ mean)
+      // sits around 1.3–1.7 outside severe weather. So the mean is 1.0 here and
+      // a gust adds 0.3–0.75 on top, never starting from zero.
+      //
+      // Timing is taken from the same place: a gust is a brief increase lasting
+      // under twenty seconds, followed by a lull, and the world's met agencies
+      // standardised on a three-second averaging window for the peak — which is
+      // why the rise is ~2s rather than the 0.4s I had. Slow in, slower out.
+      const wind = {
+        t: 0, gust: 0, target: 0, until: 0, next: 3 + Math.random() * 7,
+        step(dt) {
+          this.t += dt;
+          this.next -= dt;
+          if (this.next <= 0) {
+            this.target = 0.3 + Math.random() * 0.45;          // gust factor
+            this.until = this.t + 4 + Math.random() * 11;      // under 20s
+            this.next = (this.until - this.t) + 7 + Math.random() * 15;  // lull
+          }
+          if (this.t > this.until) this.target = 0;
+          const tau = this.target > this.gust ? 1.9 : 6.0;     // rise, then decay
+          this.gust += (this.target - this.gust) * (1 - Math.exp(-dt / tau));
+          // The mean is not constant either; it breathes on two long periods so
+          // the quiet stretches never become perfectly quiet.
+          const breath = 1 + 0.2 * Math.sin(this.t * 0.061 + 1.3)
+                           + 0.11 * Math.sin(this.t * 0.017);
+          return breath + this.gust;
+        },
+      };
+
+      (function blow() {
+        if (REDUCED) {
+          // Not frozen at zero — posed mid-breath, so the page still looks like
+          // a place with weather rather than a diagram of one.
+          foliage.forEach((c) => (c.el.style.transform = 'translate3d(4px,0,0)'));
+          return;
+        }
+        let last = performance.now();
+        (function frame(now) {
+          const dt = Math.min(0.05, (now - last) / 1000);
+          last = now;
+          const w = wind.step(dt);
+          for (const c of foliage) {
+            // Each mass chases the wind at its own rate — this is the lag.
+            c.w += (w - c.w) * (1 - Math.exp(-dt / c.tau));
+            // Foliage is rigged as a hierarchy — the trunk sways slowest and
+            // widest, branches move faster and less, leaves flutter fastest and
+            // least — and each level must be slower than the one below it.
+            //
+            // A PHOTOGRAPH gets only the first two. Leaf flutter is
+            // high-frequency motion of individual leaves, and applying it to a
+            // whole image is not flutter, it is camera shake — the plate has to
+            // carry that detail itself, which is exactly what makes a real
+            // plate worth its bytes.
+            const sway   = c.w * 6.5 * c.amp;                                  // trunk
+            const branch = Math.sin(wind.t * 0.38 * 6.28 + c.ph)
+                           * 1.5 * (0.35 + c.w * 0.5) * c.amp;                 // branches
+            const dx = sway + branch;
+            // Leaves ride UP as they are pushed, never straight sideways.
+            const dy = -Math.abs(dx) * 0.14 + branch * 0.35;
+            const rot = dx * 0.018;
+            const sc = 1 + c.w * 0.0022;
+            c.el.style.transform =
+              'translate3d(' + dx.toFixed(2) + 'px,' + dy.toFixed(2) + 'px,0) ' +
+              'rotate(' + rot.toFixed(3) + 'deg) scale(' + sc.toFixed(4) + ')';
+          }
+          requestAnimationFrame(frame);
+        })(last);
+      })();
+
+      addEventListener('keydown', (e) => {
+        if (e.key === 'p' || e.key === 'P') document.getElementById('plate').classList.toggle('on');
+      });
+
+      // ── beats ───────────────────────────────────────────────────────────
+      function go(render) {
+        stage.classList.add('leaving');
+        setTimeout(() => { render(); stage.classList.remove('leaving'); }, 320);
+      }
+
+      /** Beat 1. One line of promise, one control, and the light. */
+      function open() {
+        stage.innerHTML = `
+          <div class="open">
+            <h1 class="promise">The most intimate record of your life, finally yours.</h1>
+            <div class="act">
+              <button class="primary begin" id="begin">Begin</button>
+              <p class="cue">${TOUCH ? 'Tap to begin' : 'Click, or press Space'}</p>
+            </div>
+          </div>`;
+        const begin = () => {
+          startScore();
+          removeEventListener('keydown', onKey);
+          // The light recedes for the working screens — it belongs to the
+          // moment, not to the wizard.
+          light.classList.add('receded');
+          document.getElementById('gobo').classList.add('receded');
+          go(bluetooth);
+        };
+        const onKey = (e) => { if (e.code === 'Space' || e.key === 'Enter') { e.preventDefault(); begin(); } };
+        document.getElementById('begin').addEventListener('click', begin);
+        addEventListener('keydown', onKey);
+      }
+
+      /**
+       * Beat 2. The permission the whole flow rests on, explained in our own
+       * words BEFORE macOS asks in its. Today this screen does not exist: the
+       * system sheet is the first mention of Bluetooth anywhere.
+       */
+      function bluetooth() {
+        stage.innerHTML = `
+          <div class="col">
+            <p class="kicker">Setting up</p>
+            <h1>Your server is found over Bluetooth</h1>
+            <p class="sub">It has no network yet, so this is the only way to reach it —
+              and it is a short-range one. You have to be standing near your server,
+              which is the point: the four words on its screen are what let this
+              computer speak to it, and they are readable from nowhere else.</p>
+            <button class="primary" id="ok">Look for my server</button>
+            <p class="hint">macOS will ask next. Virtues uses Bluetooth
+              <b>during setup only</b> — after that, your server is reached over
+              your own network.</p>
+          </div>`;
+        document.getElementById('ok').addEventListener('click', () => go(entry));
+      }
+
+      /** Beat 3. What exists today, unchanged, so the seam is visible. */
+      function entry() {
+        stage.innerHTML = `
+          <div class="col">
+            <h1>Connect this Computer</h1>
+            <p class="sub">Where is your server in its life?</p>
+            <button class="choice"><b>Set up a new server</b>
+              <span>Just unboxed — nothing has connected to it yet</span></button>
+            <button class="choice"><b>Connect to an existing server</b>
+              <span>Already running — add this computer to it</span></button>
+          </div>`;
+      }
+
+      open();
+    </script>
+  </body>
+</html>

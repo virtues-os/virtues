@@ -283,7 +283,8 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 	VIRTUES_ATLAS_URL=$(VIRTUES_ATLAS_URL) \
 	VIRTUES_HTTPS_PORT=0 \
 	VIRTUES_WEB_PORT=$(DEV_WEB_PORT) \
-	VIRTUES_MODELS_DIR=$(VIRTUES_MODELS_DIR) \
+	VIRTUES_MODELS_DIR="$(VIRTUES_MODELS_DIR)" \
+	STATIC_DIR="$(CURDIR)/apps/web/build" \
 	$(DEV_CORE_RUN)
 
 seed: db ## Load demo data (people/places/orgs/events) into the dev DB. Idempotent — safe to re-run.

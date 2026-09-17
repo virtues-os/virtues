@@ -18,6 +18,35 @@ pub struct SetQuietHoursRequest {
   pub end: i32,
 }
 
+/// The weekly mute schedule. `default_muted` is what happens outside every
+/// window; a window inverts it. `false` + 22:00→07:00 is quiet hours; `true` +
+/// 09:00→17:00 on weekdays is record-at-work-only. Windows are `[start, end]`
+/// in minutes since local midnight, `start > end` wraps midnight. Days are
+/// `mon`..`sun`. Carried as an opaque JSON document: the phone owns the shape
+/// and evaluates it; Rust only relays it.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SetScheduleRequest {
+  pub schedule: serde_json::Value,
+}
+
+/// The muted places, copied from the box's `wiki_places` rows with
+/// `is_audio_muted`. The phone caches them so the gate runs offline; this is
+/// a copy, never the authority. Each entry: `{id, name, lat, lon, radius_m}`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SetPlacesRequest {
+  pub places: Vec<MutedPlace>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MutedPlace {
+  pub id: String,
+  pub name: String,
+  pub lat: f64,
+  pub lon: f64,
+  pub radius_m: f64,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioStatus {
@@ -37,4 +66,23 @@ pub struct AudioStatus {
   pub quiet_start: Option<i32>,
   #[serde(default)]
   pub quiet_end: Option<i32>,
+  /// Capture is paused for a reason the user did not choose — "carplay" while
+  /// a car audio route is present (the session is released so the car keeps
+  /// its audio). Absent when recording, off, or paused by the user.
+  #[serde(default)]
+  pub paused_reason: Option<String>,
+  /// The weekly schedule document (see `SetScheduleRequest`). Absent on a
+  /// native build that predates it — the Svelte editor keys on presence.
+  /// The first cut of this field was lost to a patch that matched an older
+  /// tail of this struct and silently changed nothing; the Swift side sent
+  /// it all along and this layer dropped it.
+  #[serde(default)]
+  pub schedule: Option<serde_json::Value>,
+  /// The cached muted places. Same absence rule as `schedule`.
+  #[serde(default)]
+  pub places: Option<Vec<MutedPlace>>,
+  /// Why chunk writing is paused right now: "schedule" or "place". Absent
+  /// when recording normally.
+  #[serde(default)]
+  pub muted_by: Option<String>,
 }

@@ -47,21 +47,16 @@
 		type WeatherNow,
 	} from "$lib/wiki/api";
 	import { getStreamHealth, type StreamHealth } from "$lib/api/client";
-	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import { IconButton, TextAction } from "$lib";
 	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import GettingStarted from "$lib/components/home/GettingStarted.svelte";
 	import DayDeck from "$lib/components/home/DayDeck.svelte";
 
-	// Which page this is — written by GettingStarted, read here. While any
-	// getting-started section remains ("focus"), those sections ARE the page:
-	// no subtitle, no day stepper, no deck of silent tracks sharing the
-	// screen with them. Home's own furniture exists only at "settled", when
-	// getting started has retired entirely.
-	let gsPhase = $state<"loading" | "focus" | "settled">("loading");
+	// Getting started left this page on 2026-09-13: it is a chat room now
+	// (chat/getting-started), and Home is only ever Home.
 	import DayGround from "$lib/components/home/DayGround.svelte";
 	import DayNovelty from "$lib/components/home/DayNovelty.svelte";
 	import PlaceAsk from "$lib/components/home/PlaceAsk.svelte";
@@ -105,7 +100,6 @@
 	}
 
 	// ---- state ----
-	let yDay = $state<WikiDayApi | null>(null);
 	let today = $state<WikiDayApi | null>(null);
 	let streams = $state<TodayStreamsView | null>(null);
 	let heart = $state<DayHeartRateSample[]>([]);
@@ -176,7 +170,6 @@
 	onMount(() => {
 		tick();
 		refresh();
-		getDayByDate(yesterdayDate).then((d) => (yDay = d)).catch(() => {});
 		getWeatherNow().then((w) => (weather = w)).catch(() => {});
 		// Arm state changes on the scale of connecting a source, not of a day.
 		getStreamHealth()
@@ -209,22 +202,14 @@
 		windowShellStore.openTabFromRoute(route, label ? { label } : undefined);
 	}
 
-	// ---- lead: yesterday in one line (epigraph, else its first sentence) ----
-	const leadLine = $derived.by(() => {
-		const e = yDay?.epigraph?.trim();
-		if (e) return e.replace(/^["“]|["”]$/g, "");
-		const prose = yDay?.article?.trim();
-		const first = prose?.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim();
-		return first || null;
-	});
-
 	// ---- the page's subtitle: the day, the weather, the time ----
+	/** Under the dateline: the weather, then the clock. */
 	const subtitle = $derived.by(() => {
 		const wx =
 			weather && weather.temperature_c != null
 				? `${Math.round((weather.temperature_c * 9) / 5 + 32)}° ${weather.condition}`.trim()
 				: null;
-		return [dateline, wx, clock].filter(Boolean).join(" · ");
+		return [wx, clock].filter(Boolean).join(" · ");
 	});
 
 	// ---- recents: notebooks, pages and chats blended by recency ----
@@ -329,46 +314,18 @@
 	}
 </script>
 
-<Page
-	title={gsPhase === "focus" ? "Getting started" : "Home"}
-	description={gsPhase === "settled" ? subtitle : undefined}
-	maxWidth="wide"
->
-	{#snippet actions()}
-		{#if gsPhase === "settled"}
-			<!-- The two adjacent days, as a stepper: they are neighbours on one axis,
-			     which a pair of loose links did not say. -->
-			<div class="days" role="group" aria-label="Go to a day">
-				<button type="button" onclick={() => open(`/day/day_${yesterdayDate}`, "Yesterday")}>
-					<Icon icon="ri:arrow-left-s-line" width="15" />
-					Yesterday
-				</button>
-				<button type="button" class="now" onclick={() => open(`/day/day_${todayDate}`, "Today")}>
-					Today
-					<Icon icon="ri:arrow-right-s-line" width="15" />
-				</button>
-			</div>
-		{/if}
-	{/snippet}
-
-	<div class="body">
-		<!-- First run: the getting-started page, whole and alone, each section
-		     retiring as it is answered or as its promise lands. Renders nothing
-		     on a settled box — see GettingStarted.svelte and
-		     agents/plan/getting-started-plan.md. -->
-		<div class="rv"><GettingStarted bind:phase={gsPhase} /></div>
-
-		{#if gsPhase === "settled"}
-		<!-- The box speaks — today's rhythm against the trailing twelve weeks —
-		     then, if it wrote one, quotes itself. -->
-		<div class="rv">
-			<DayNovelty {dayStartMs} {nowMs} {tz} />
-			{#if leadLine}
-				<p class="lead">{leadLine}</p>
-			{/if}
+<div class="host">
+<div class="spread">
+	<section class="work">
+		<div class="head">
+			<h1 class="title">{dateline}</h1>
+			{#if subtitle}<p class="sub">{subtitle}</p>{/if}
 		</div>
 
-		<section class="today rv" style="animation-delay:.06s">
+		<!-- The box speaks — today's rhythm against the trailing twelve weeks. -->
+		<DayNovelty {dayStartMs} {nowMs} {tz} />
+
+		<section class="today">
 			<div class="tbody" class:solo={points.length <= 1}>
 				<DayDeck
 					{dayStartMs}
@@ -385,7 +342,6 @@
 				/>
 				{#if points.length > 1}
 					<aside class="ground">
-						<span class="glabel mono">map</span>
 						<div class="gcanvas"><DayGround {points} scrubMs={scrubMs ?? pinnedMs} {nowMs} /></div>
 					</aside>
 				{/if}
@@ -396,9 +352,12 @@
 					<div class="mhead">
 						<span class="mono mt">{keptTime(new Date(pinnedMs).toISOString())}</span>
 						<span class="mlabel">± 15 minutes</span>
-						<button class="mclose" type="button" onclick={() => (pinnedMs = null)} aria-label="Close this moment">
-							<Icon icon="ri:close-line" width="15" />
-						</button>
+						<IconButton
+							icon="ri:close-line"
+							label="Close this moment"
+							size="sm"
+							onclick={() => (pinnedMs = null)}
+						/>
 					</div>
 					{#if momentLoading && !moment}
 						<p class="mnone">Looking…</p>
@@ -407,9 +366,9 @@
 							{#each moment.records as r (r.id + r.at)}
 								<li>
 									<span class="mono rt">{recTime(r.at)}</span>
-									<span class="rk mono">{recKind(r)}</span>
+									<span class="rk">{recKind(r)}</span>
 									<span class="rb">
-										{r.label ?? "—"}{#if r.preview}<span class="rp"> {r.preview}</span>{/if}
+										{r.label ?? "—"}{#if r.preview}<span class="rp">{r.preview}</span>{/if}
 									</span>
 								</li>
 							{/each}
@@ -423,8 +382,8 @@
 		</section>
 
 		{#if recentItems.length}
-			<section class="recents rv" style="animation-delay:.12s">
-				<h2 class="kicker">recents</h2>
+			<section class="recents">
+				<h2 class="kicker">Recent</h2>
 				{#each recentItems as it (it.route)}
 					<div class="line">
 						<!-- The kicker's space has to come from CSS: leading whitespace
@@ -432,16 +391,16 @@
 						<button class="t" type="button" onclick={() => open(it.route, it.title)}>
 							{it.title}{#if it.kind !== "notebook"}<span class="s">— {it.kind}</span>{/if}
 						</button>
-						<span class="d mono">{it.note ?? ago(new Date(it.ts).toISOString())}</span>
+						<span class="d">{it.note ?? ago(new Date(it.ts).toISOString())}</span>
 					</div>
 				{/each}
 			</section>
 		{/if}
 
 		<!-- The box asks. -->
-		<div class="rv" style="animation-delay:.16s"><PlaceAsk /></div>
+		<PlaceAsk />
 
-		<section class="keep rv" style="animation-delay:.2s">
+		<section class="keep">
 			<!-- The card is the writing surface: the question is the only prompt,
 			     so clicking anywhere that isn't already a control puts the cursor
 			     where you'd expect it. -->
@@ -471,9 +430,9 @@
 				{#if keepText.trim() || keeping}
 					<div class="krow">
 						<span class="khint">Shift + Enter for a new line</span>
-						<button class="ksave" type="button" onclick={keep} disabled={keeping}>
-							{keeping ? "Saving…" : "Save"}
-						</button>
+						<TextAction loading={keeping} loadingLabel="Saving…" onclick={keep}>
+							Save
+						</TextAction>
 					</div>
 				{/if}
 
@@ -485,57 +444,82 @@
 							<li><span class="kt mono">{keptTime(n.created_at)}</span><span class="kb">{n.body}</span></li>
 						{/each}
 					</ul>
-					<button class="link sm kfoot" type="button" onclick={() => open(`/day/day_${todayDate}`, "Today")}>
-						In the margin of today's page <span class="arw">→</span>
-					</button>
+					<p class="kfoot">
+						<TextAction onclick={() => open(`/day/day_${todayDate}`, "Today")}>
+							In the margin of today's page →
+						</TextAction>
+					</p>
 				{/if}
 			</div>
 		</section>
-		{/if}
-	</div>
-</Page>
+	</section>
+
+	<!-- The two adjacent pages. They lived on the frontispiece — the framed
+	     painting in the margin — until 2026-09-08, when Home shed the painting
+	     and kept only the doors. The painting was the one framed object Home
+	     and the setup page shared, which was the only thing justifying it;
+	     setup became a chat room on 2026-09-13 and the component, its line bank
+	     and its plates are gone from the tree. The doors were always the half
+	     that did work. -->
+	<nav class="pages" aria-label="Adjacent pages">
+		<TextAction onclick={() => open(`/day/day_${yesterdayDate}`, "Yesterday")}>Yesterday's page →</TextAction>
+		<TextAction onclick={() => open(`/day/day_${todayDate}`, "Today")}>Today's page →</TextAction>
+	</nav>
+</div>
+</div>
 
 <style>
 	.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
-	.rv { opacity: 0; transform: translateY(7px); animation: rv 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) forwards; }
-	@keyframes rv { to { opacity: 1; transform: none; } }
-	@media (prefers-reduced-motion: reduce) { .rv { animation: none; opacity: 1; transform: none; } }
+	/* The host: the pane's full height and its own scroll. It used to be a
+	   shared shell — getting started and Home lived inside it together, and
+	   getting started was display:none once Home took over rather than
+	   unmounted. That was not tidiness: a component that computes its own
+	   phase and gets re-created on a phase change chases itself, and this pair
+	   managed twelve instances a second when a parent switched props on that
+	   phase. Getting started left this page on 2026-09-13 and is a chat room
+	   now, so nothing here is hidden-but-mounted any more and there is no
+	   component on Home the rule still applies to. The rule outlives the
+	   example: phase is a thing a component reports, not a thing a parent
+	   remounts it to change. */
+	.host { height: 100%; overflow-y: auto; }
 
-	.kicker { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--color-foreground-subtle); margin: 0 0 18px; font-weight: 400; }
-	.link { font-family: var(--font-sans); font-size: 13.5px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; }
-	.link:hover { text-decoration: underline; text-underline-offset: 3px; }
-	.link .arw { opacity: 0.7; }
-	.link.sm { font-size: 12.5px; font-weight: 400; }
-
-	/* Day stepper — sits in the page heading's action slot, so it lines up with
-	   the "New X" button every other room puts there. */
-	.days { display: inline-flex; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; background: var(--color-surface-elevated); }
-	.days button {
-		display: inline-flex; align-items: center; gap: 3px;
-		padding: 7px 12px; background: none; border: 0;
-		font-family: var(--font-sans); font-size: 13px; font-weight: 500;
-		color: var(--color-foreground-muted); cursor: pointer; white-space: nowrap;
+	/* One column; `spread` is a class name that outlived its idea. The plan was
+	   a literal spread — the work on the left, a painting set in the margin on
+	   the right — and its whole justification was that Home and the setup page
+	   shared it. Home shed the painting on 2026-09-08 and setup became a chat
+	   room on 2026-09-13, so there was no "shared" left, and a single page
+	   carrying a framed painting for itself is a decoration rather than a
+	   grammar. What ships is the work alone in the page's measure. The reasoning
+	   is kept under "Struck" in agents/build/design-grammar.md; do not rebuild
+	   it without answering that. */
+	.spread {
+		max-width: 920px;
+		min-height: calc(100dvh - var(--chrome-row-h, 40px) - 2 * var(--pane-inset, 12px) - 2px);
 	}
-	.days button + button { border-left: 1px solid var(--color-border); }
-	.days button:hover { background: var(--hover-bg); color: var(--color-foreground); }
-	.days button.now { color: var(--color-foreground); }
+	.work { padding: 56px 56px 48px 64px; min-width: 0; }
+	.pages { display: flex; gap: 24px; padding: 0 56px 48px 64px; }
+	@media (max-width: 640px) { .pages { padding: 0 24px 32px; } }
+	.work > * { animation: arrive 0.5s ease both; }
+	.work > :nth-child(2) { animation-delay: 60ms; }
+	.work > :nth-child(3) { animation-delay: 120ms; }
+	@media (max-width: 640px) { .work { padding: 32px 24px; } }
+	@keyframes arrive { from { opacity: 0; transform: translateY(6px); } }
+	@media (prefers-reduced-motion: reduce) { .work > * { animation: none; } }
 
-	/* Yesterday's own sentence. Quieter than the page's h1 on purpose — it is a
-	   line the box wrote, not the name of the room. */
-	.lead {
-		font-family: var(--font-serif); font-size: 19px; line-height: 1.45;
-		color: var(--color-foreground-muted); margin: 0 0 26px; max-width: 58ch;
-	}
+	/* the dateline is the title; the weather and the clock under it */
+	.title { font-family: var(--font-serif); font-weight: 400; font-size: 36px; line-height: 1.1; margin: 0; color: var(--color-foreground); }
+	.sub { font-family: var(--font-sans); font-size: 15px; line-height: 1.5; color: var(--color-foreground-muted); margin: 10px 0 0; }
+	.head { margin-bottom: 40px; }
+
+	.kicker { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); margin: 0 0 12px; font-weight: 400; }
 
 	/* the deck */
-	.today { padding-bottom: clamp(44px, 7vh, 84px); }
+	.today { padding-bottom: 48px; }
 	/* No fixes today means no map — the deck takes the whole width
 	   rather than leaving a column of air where it would have been. */
-	.tbody { display: grid; grid-template-columns: minmax(0, 1fr) 170px; gap: clamp(20px, 3vw, 34px); align-items: center; }
+	.tbody { display: grid; grid-template-columns: minmax(0, 1fr) 170px; gap: 24px; align-items: center; }
 	.tbody.solo { grid-template-columns: minmax(0, 1fr); }
-	.ground { display: flex; flex-direction: column; gap: 7px; }
-	.glabel { font-size: 9.5px; letter-spacing: 0.04em; color: var(--color-foreground-subtle); }
 	.gcanvas { height: 170px; }
 	@media (max-width: 780px) {
 		.tbody { grid-template-columns: 1fr; }
@@ -543,52 +527,39 @@
 	}
 
 	/* the rows behind a point — aligned to the plot, not the lane-name gutter. */
-	.moment { margin-top: 22px; margin-left: 62px; max-width: 720px; }
-	.mhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+	.moment { margin-top: 24px; margin-left: 62px; max-width: 720px; }
+	.mhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
 	.mhead .mt { font-size: 12px; color: var(--color-foreground); }
-	.mlabel { font-family: var(--font-sans); font-size: 11.5px; color: var(--color-foreground-subtle); }
-	.mclose { margin-left: auto; display: flex; align-items: center; background: none; border: 0; padding: 3px; border-radius: 5px; color: var(--color-foreground-subtle); cursor: pointer; }
-	.mclose:hover { background: var(--hover-bg); color: var(--color-foreground); }
+	.mlabel { margin-right: auto; font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); }
 	.mlist { list-style: none; margin: 0; padding: 0; }
-	.mlist li { display: flex; gap: 12px; align-items: baseline; padding: 4px 0; font-size: 13px; line-height: 1.45; }
-	.mlist .rt { font-size: 10.5px; color: var(--color-foreground-subtle); flex: none; width: 38px; }
-	.mlist .rk { font-size: 10px; color: var(--color-foreground-subtle); flex: none; width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.mlist .rb { font-family: var(--font-sans); color: var(--color-foreground); min-width: 0; }
-	.mlist .rp { color: var(--color-foreground-muted); }
-	.mnone { font-family: var(--font-sans); font-size: 12.5px; color: var(--color-foreground-subtle); margin: 0; }
+	.mlist li { display: flex; gap: 12px; align-items: baseline; padding: 4px 0; font-family: var(--font-sans); font-size: 14px; line-height: 1.45; }
+	.mlist .rt { font-size: 12px; color: var(--color-foreground-subtle); flex: none; width: 40px; }
+	.mlist .rk { font-size: 13px; color: var(--color-foreground-subtle); flex: none; width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.mlist .rb { color: var(--color-foreground); min-width: 0; }
+	/* The gap has to come from CSS: leading whitespace inside the span is
+	   trimmed by the compiler, which rendered "Deposit$0.38". */
+	.mlist .rp { color: var(--color-foreground-muted); margin-left: 0.4em; }
+	.mnone { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); margin: 0; }
 	@media (max-width: 640px) { .moment { margin-left: 0; } }
 
-	/* recents — the work you had in your hands last, newest first */
-	.recents { max-width: 640px; }
-	.line { display: flex; align-items: baseline; gap: 14px; padding: 8px 0; }
-	.line .t { font-family: var(--font-serif); font-size: 16.5px; color: var(--color-foreground); min-width: 0; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; }
+	/* recent — the work you had in your hands last, newest first */
+	.recents { max-width: 40em; }
+	.line { display: flex; align-items: baseline; gap: 16px; padding: 8px 0; }
+	.line .t { font-family: var(--font-serif); font-size: 18px; color: var(--color-foreground); min-width: 0; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; }
 	.line .t .s { margin-left: 0.34em; color: var(--color-foreground-subtle); }
 	.line .t:hover { color: var(--color-primary); }
-	.line .d { margin-left: auto; font-size: 11px; color: var(--color-foreground-subtle); white-space: nowrap; flex: none; }
-
-	/* Home is what the bottom bar points at first, and every control on it sat
-	   under Apple's 44pt floor — the day stepper 34px tall, these recents 25px.
-	   Both grow by padding, so the type and the rhythm are unchanged and only
-	   the hit area moves; the row's own padding moves into the button so the
-	   spacing doesn't double. Keyed to touch as well as to width, because an
-	   iPad in a wide layout has the same fingers.
-
-	   Placed here, below the rules it overrides: these selectors match the base
-	   ones exactly, so at equal specificity it is source order that decides,
-	   and a media query does not change that. */
+	.line .d { margin-left: auto; font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); white-space: nowrap; flex: none; }
+	/* Apple's 44pt floor on touch: the row's padding moves into the button. */
 	@media (max-width: 768px), (pointer: coarse) {
-		/* 13, not 12: the label measures 19.6px, so 12 lands at 43.6 — under the
-		   floor by the kind of fraction that only a measurement catches. */
-		.days button { padding: 13px 14px; }
 		.line { padding: 0; }
 		.line .t { padding: 10px 0; }
 	}
 
 	/* the keep */
-	.keep { margin-top: clamp(48px, 8vh, 92px); max-width: 640px; }
+	.keep { margin-top: 48px; max-width: 40em; }
 	.card {
-		background: var(--color-surface-elevated); border: 1px solid var(--color-border);
-		border-radius: 14px; padding: clamp(18px, 3vw, 24px);
+		background: var(--color-surface); border: 1px solid var(--color-border);
+		border-radius: 12px; padding: 24px;
 		transition: border-color 0.2s;
 		/* The card is the field. Its border is the only affordance the question
 		   needs, so no placeholder has to explain itself. */
@@ -603,20 +574,12 @@
 		color: var(--color-foreground); background: none; border: 0; padding: 0;
 	}
 	.card textarea:focus { outline: none; }
-	.krow { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
-	.khint { font-family: var(--font-mono); font-size: 10px; color: var(--color-foreground-subtle); }
-	.ksave {
-		margin-left: auto; flex: none; cursor: pointer;
-		font-family: var(--font-sans); font-size: 12.5px; font-weight: 500;
-		background: none; border: 0; padding: 0;
-		color: var(--color-primary);
-	}
-	.ksave:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
-	.ksave:disabled { color: var(--color-foreground-disabled); cursor: default; }
-	.kerr { font-family: var(--font-sans); font-size: 12.5px; color: var(--color-error); margin: 12px 0 0; }
+	.krow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+	.khint { font-family: var(--font-sans); font-size: 12px; color: var(--color-foreground-subtle); }
+	.kerr { font-family: var(--font-sans); font-size: 13px; color: var(--color-error); margin: 12px 0 0; }
 	.kept { list-style: none; margin: 20px 0 0; padding: 0; }
-	.kept li { display: flex; gap: 14px; align-items: baseline; padding: 6px 0; }
-	.kept .kt { font-size: 10.5px; color: var(--color-foreground-subtle); flex: none; width: 62px; }
-	.kept .kb { font-family: var(--font-serif); font-size: 15.5px; line-height: 1.45; color: var(--color-foreground); }
-	.kfoot { margin-top: 10px; }
+	.kept li { display: flex; gap: 16px; align-items: baseline; padding: 6px 0; }
+	.kept .kt { font-size: 12px; color: var(--color-foreground-subtle); flex: none; width: 64px; }
+	.kept .kb { font-family: var(--font-serif); font-size: 16px; line-height: 1.45; color: var(--color-foreground); }
+	.kfoot { margin: 12px 0 0; }
 </style>

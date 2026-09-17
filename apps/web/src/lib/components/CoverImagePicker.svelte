@@ -6,6 +6,8 @@
 	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from './Icon.svelte';
+	import Button from './Button.svelte';
+	import MenuItem from './MenuItem.svelte';
 	import { backendUrl } from '$lib/config/backend';
 	import {
 		listDriveFiles,
@@ -369,12 +371,13 @@
 					{:else}
 						<div class="topic-suggestions">
 							{#each UNSPLASH_TOPICS as topic}
-								<button
-									class="topic-chip"
+								<Button
+									variant="secondary"
+									size="sm"
 									onclick={() => selectTopic(topic)}
 								>
 									{topic}
-								</button>
+								</Button>
 							{/each}
 						</div>
 					{/if}
@@ -385,10 +388,12 @@
 		<!-- Footer with remove option -->
 	{#if value}
 		<div class="picker-footer">
-			<button class="remove-btn" onclick={handleRemove}>
-				<Icon icon="ri:delete-bin-line" width="14" />
-				Remove cover
-			</button>
+			<MenuItem
+				icon="ri:delete-bin-line"
+				label="Remove cover"
+				destructive
+				onclick={handleRemove}
+			/>
 		</div>
 	{/if}
 </div>
@@ -581,23 +586,6 @@
 		padding: 16px 0;
 	}
 
-	.topic-chip {
-		padding: 6px 12px;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 16px;
-		cursor: pointer;
-		transition: all 150ms;
-	}
-
-	.topic-chip:hover {
-		color: var(--color-foreground);
-		border-color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-	}
-
 	.photo-grid {
 		display: grid;
 		grid-template-columns: repeat(2, 1fr);
@@ -651,25 +639,6 @@
 	.picker-footer {
 		padding: 8px 12px;
 		border-top: 1px solid var(--color-border);
-	}
-
-	.remove-btn {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		width: 100%;
-		padding: 8px 12px;
-		font-size: 13px;
-		color: var(--color-error);
-		background: none;
-		border: none;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: background 100ms;
-	}
-
-	.remove-btn:hover {
-		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 	}
 
 	/* Spinner */

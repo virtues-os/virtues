@@ -151,7 +151,7 @@ pub async fn charge(
     .await
     .map_err(|e| ChargeError::Db(e.into()))?;
 
-    if let Some((balance,)) = row {
+    if row.is_some() {
         // Journal the debit (negative) in the same transaction.
         sqlx::query(
             "INSERT INTO ledger (account_id, micros, kind, real_micros) \
@@ -165,11 +165,7 @@ pub async fn charge(
         .map_err(|e| ChargeError::Db(e.into()))?;
 
         tx.commit().await.map_err(|e| ChargeError::Db(e.into()))?;
-        return Ok(ChargeOk {
-            balance_micros: balance,
-            billed_micros: billed,
-            real_micros: real_cost_micros,
-        });
+        return Ok(ChargeOk { billed_micros: billed });
     }
 
     // Gate failed — nothing was written; classify why.
@@ -460,8 +456,12 @@ pub async fn usage_summary(
 
     // Month-to-date spend (sum of charges since the 1st, UTC).
     let month_start = month_start_utc(Utc::now());
+    // `::bigint`: SUM over int8 is NUMERIC in Postgres and sqlx will not
+    // decode it as i64, so this read failed on every account with a charge
+    // this month and /v1/usage answered `internal` — the test module below
+    // already knew this about SUM and cast; the handler did not.
     let (mtd,): (Option<i64>,) = sqlx::query_as(
-        "SELECT -SUM(micros) FROM ledger \
+        "SELECT (-SUM(micros))::bigint FROM ledger \
          WHERE account_id = $1 AND kind = 'charge' AND ts >= $2",
     )
     .bind(account_id)
@@ -504,14 +504,13 @@ pub struct LedgerEntry {
     pub real_micros: Option<i64>,
 }
 
-/// Outcome of a successful charge.
+/// Outcome of a successful charge. The real upstream cost and the resulting
+/// balance are persisted on the ledger row and the account respectively;
+/// callers only need what the user was billed.
 #[derive(Debug, Clone, Copy)]
 pub struct ChargeOk {
-    pub balance_micros: i64,
     /// What the user was charged (post-markup).
     pub billed_micros: i64,
-    /// What the upstream really cost us (for margin analytics).
-    pub real_micros: i64,
 }
 
 #[derive(Debug)]
@@ -594,6 +593,33 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(acct.balance_micros, sum.unwrap(), "balance must equal ledger sum");
+    }
+
+    /// `/v1/usage` decodes for an account that has spent this month. The
+    /// month-to-date figure is a SUM over int8, which is NUMERIC — without
+    /// the cast this read failed on exactly the accounts with something to
+    /// show, and the Billing page's wallet panel said "Couldn't load".
+    #[sqlx::test]
+    async fn usage_summary_decodes_month_to_date(pool: PgPool) {
+        let fresh = usage_summary(&pool, "acct-u", 10).await.unwrap();
+        assert_eq!(fresh.month_to_date_micros, 0, "no account, no spend");
+
+        credit(&pool, "acct-u", 10_000_000, CreditMode::Set, None)
+            .await
+            .unwrap();
+        let empty = usage_summary(&pool, "acct-u", 10).await.unwrap();
+        assert_eq!(empty.month_to_date_micros, 0, "funded but unspent");
+
+        charge(&pool, "acct-u", 1_000_000).await.expect("charge");
+        charge(&pool, "acct-u", 2_000_000).await.expect("charge");
+        let spent = usage_summary(&pool, "acct-u", 10).await.unwrap();
+        let acct = get_by_account_id(&pool, "acct-u").await.unwrap().unwrap();
+        assert!(spent.month_to_date_micros > 0);
+        assert_eq!(
+            spent.month_to_date_micros,
+            10_000_000 - acct.balance_micros,
+            "month-to-date is what the charges took off the credit"
+        );
     }
 
     /// Rotating the device key (recovery) preserves the balance: the same

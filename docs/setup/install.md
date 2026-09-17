@@ -11,14 +11,16 @@ curl -sSL https://virtues.com/sh | sudo sh
 ```
 
 That fetches a small shell script, which downloads the installer for your
-architecture, verifies its checksum, and hands over. Ten minutes later you
-have a working server.
+architecture, verifies its checksum, and hands it off to the installer. Ten
+minutes later you have a working server.
 
-Two pages are worth reading first, and in this order:
-[What to run it on](/docs/setup/requirements), because memory and disk decide
-whether this is pleasant, and [Setting up inference](/docs/inference), because
-on your own hardware the search models are yours to run and the installer
-asks for their URLs before it does anything else.
+Before installing, read these two pages first:
+
+1. [What to run it on](/docs/setup/requirements) for details on minimum
+specs and supported OS.
+2. [Setting up inference](/docs/inference) to configure your embedding and
+rerank models. The installer asks for their URLs before it does anything 
+else.
 
 ## Read it before you run it
 
@@ -48,10 +50,10 @@ code is about to run as root.
 - **Outbound network** to `github.com` (releases) and `apt.postgresql.org`
   (PostgreSQL). The installer probes both before touching anything.
 
-Before it installs anything it also measures the disk your record will live
+Before it installs anything, it also measures the disk your record will live
 on and tells you, with numbers, which tier you're on — an NVMe drive and a
-microSD card produce very different servers, and the difference is worth
-knowing in advance rather than discovering later.
+microSD card produce very different servers, and that difference is worth
+knowing up front.
 [What to run it on](/docs/setup/requirements) has the full picture.
 
 It checks whether ports `5432`, `8000`, `18181`, and `18182` are already
@@ -63,10 +65,11 @@ is fine.
 
 The installer asks how you want to run the two models that make your record
 searchable before it touches a package, a service, or a disk — so that a
-broken endpoint costs you a prompt rather than a half-finished install. On
-our own hardware there is no question to ask. On yours, you either point it
-at endpoints you already run, or take the bundled CPU-only trial, which is
-deliberately labeled as slow and not a deployment.
+broken endpoint costs you a prompt rather than a half-finished install. On Virtues
+hardware this is pre-configured.
+
+On yours, you either point it at endpoints you already run, or take the bundled 
+CPU-only trial, which is deliberately labeled as slow and not a deployment.
 
 If you choose your own endpoints, have them running before you start.
 [Setting up inference](/docs/inference) gives the commands, the models, and
@@ -95,13 +98,18 @@ how a server moves between releases and how to roll one back.
 
 ## After it finishes
 
-The server comes up on port `8000`, and the machine is a Virtues server from
-that moment — but it holds nothing yet. The next step is pairing a device,
-which is what gives you a way in and starts the flow of your own data. Those
-pages land as the setup flow settles; until then the installer's own output
-is the guide, and `virtues --help` lists everything the CLI can do.
+The server comes up on port `8000`, and the machine is now a Virtues server,
+though note it holds nothing yet. 
 
-`virtues doctor` is the first thing to run if anything looks wrong. It
-reports how inference resolved, whether both endpoints are actually serving,
-and whether this server can be reached from away — each finding with the command
-that diagnoses it. [The CLI](/docs/operate/cli) covers the rest.
+The next step is pairing a device (which starts the flow of your own data). 
+Those pages will land here in Docs soon. Until then, the installer's own 
+output is the guide.
+
+## Troubleshooting
+
+If anything looks wrong during CLI install, `virtues doctor` is the first 
+thing to run. It reports how inference resolved, whether both endpoints are 
+actually serving, and whether this server can be reached from away — each 
+finding with the command that diagnoses it. [The CLI](/docs/operate/cli) 
+covers the rest. Also note that `virtues --help` lists everything the CLI 
+can do.

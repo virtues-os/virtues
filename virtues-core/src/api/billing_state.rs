@@ -57,24 +57,41 @@ pub struct AutoTopupRequest {
     pub enabled: bool,
 }
 
+/// A query failure is a 500 with the failing read named — never a default.
+fn db_error(what: &str, e: sqlx::Error) -> axum::response::Response {
+    tracing::error!(error = %e, "{what}: query failed");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({ "error": format!("{what}: query failed") })),
+    )
+        .into_response()
+}
+
 pub async fn state_handler(
     State(pool): State<PgPool>,
     _user: AuthUser,
 ) -> impl IntoResponse {
-    let row: Option<(bool, i32, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+    // `?`-shaped, not `.ok()` + a default: the default this used to fall back
+    // on was `enabled = true`, so a dead pool reported auto-top-up ON — the
+    // one answer a billing page must never invent.
+    let row: Option<(bool, i32, Option<chrono::DateTime<chrono::Utc>>)> = match sqlx::query_as(
         "SELECT auto_topup_enabled, auto_topup_failures_24h, auto_topup_disabled_at \
          FROM app_user_profile \
          WHERE id = '00000000-0000-0000-0000-000000000001'",
     )
     .fetch_optional(&pool)
     .await
-    .ok()
-    .flatten();
-    let (enabled, failures, disabled_at) = row.unwrap_or((true, 0, None));
+    {
+        Ok(row) => row,
+        Err(e) => return db_error("billing state", e),
+    };
+    let Some((enabled, failures, disabled_at)) = row else {
+        return db_error("billing state", sqlx::Error::RowNotFound);
+    };
 
     // BYO status — same metadata fields the settings endpoint returns,
     // but inline so the UI doesn't need a second round-trip.
-    let byo_row: Option<(serde_json::Value,)> = sqlx::query_as(
+    let byo_row: Option<(serde_json::Value,)> = match sqlx::query_as(
         "SELECT metadata FROM credentials \
          WHERE source_id = $1 AND status = 'active' \
          LIMIT 1",
@@ -82,8 +99,10 @@ pub async fn state_handler(
     .bind(crate::api::settings_byo::BYO_SOURCE_ID)
     .fetch_optional(&pool)
     .await
-    .ok()
-    .flatten();
+    {
+        Ok(row) => row,
+        Err(e) => return db_error("BYO state", e),
+    };
     let byo = match byo_row {
         Some((meta,)) => ByoState {
             configured: true,

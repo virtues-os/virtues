@@ -1,10 +1,14 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { listApplets, adminReconcile, type Applet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { describeSchedule, relativeTime } from '$lib/applets/palette';
+	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import AppletCard from './AppletCard.svelte';
 	import GitImportModal from './GitImportModal.svelte';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
@@ -248,6 +252,20 @@
 			getValue: (a) => (a.archived_at ? 'finished' : a.enabled ? 'on' : 'off'),
 			badgeColors: { on: 'badge-success', off: 'badge-muted', finished: 'badge-info' }
 		},
+		// Cost is not a per-row fact for most of this table — every sync, every
+		// indexer, every ingest is deterministic and spends nothing, so the
+		// column reads "—" on the large majority of rows by design. It earns
+		// its width on the few that do spend: an AI-authored applet on an
+		// hourly schedule is the one thing here that can quietly run up a bill,
+		// and this is where you would find out. `null` is unknown, not free
+		// (see `spend_week_micros`), so both render "—" rather than "$0.00"
+		// claiming something the box could not confirm.
+		{
+			key: 'spend_week_micros',
+			label: 'Cost / week',
+			getValue: (a) =>
+				a.spend_week_micros ? formatMicrosPrecise(a.spend_week_micros) : '—'
+		},
 		{
 			key: 'last_run',
 			label: 'Last result',
@@ -358,57 +376,51 @@
 			     lives behind the overflow now: reachable, not offered. -->
 			<Popover bind:open={moreMenuOpen} placement="bottom-end" offset={4}>
 				{#snippet trigger({ toggle })}
-					<button type="button" class="icon-btn" onclick={toggle} aria-label="More">
-						<Icon icon="ri:more-2-fill" width="16" />
-					</button>
+					<IconButton
+						icon="ri:more-2-fill"
+						label="More"
+						size="md"
+						variant="secondary"
+						expanded={moreMenuOpen}
+						haspopup="menu"
+						onclick={toggle}
+					/>
 				{/snippet}
 				{#snippet children()}
 					<div class="new-menu" role="menu">
-						<button
-							type="button"
-							class="new-menu-item"
-							role="menuitem"
-							disabled={reconciling}
+						<MenuItem
+							icon="ri:refresh-line"
+							label="Re-read from disk"
+							description="Pick up applet folders that changed outside the app"
+							loading={reconciling}
 							onclick={() => {
 								moreMenuOpen = false;
 								void reconcile();
 							}}
-						>
-							<Icon icon="ri:refresh-line" width="16" />
-							<div class="new-menu-text">
-								<div class="new-menu-title">
-									{reconciling ? 'Re-reading…' : 'Re-read from disk'}
-								</div>
-								<div class="new-menu-desc">
-									Pick up applet folders that changed outside the app
-								</div>
-							</div>
-						</button>
+						/>
 					</div>
 				{/snippet}
 			</Popover>
 			<Popover bind:open={newMenuOpen} placement="bottom-end" offset={4}>
 				{#snippet trigger({ toggle })}
-					<button type="button" class="new-btn" onclick={toggle}>
-						<Icon icon="ri:add-line" width="14" /> New
-					</button>
+					<Button variant="primary" size="sm" icon="ri:add-line" onclick={toggle}>
+						New
+					</Button>
 				{/snippet}
 				{#snippet children()}
 					<div class="new-menu" role="menu">
-						<button type="button" class="new-menu-item" role="menuitem" onclick={startChatFlow}>
-							<Icon icon="ri:chat-smile-2-line" width="16" />
-							<div class="new-menu-text">
-								<div class="new-menu-title">From chat</div>
-								<div class="new-menu-desc">Describe it in plain language</div>
-							</div>
-						</button>
-						<button type="button" class="new-menu-item" role="menuitem" onclick={startGitImportFlow}>
-							<Icon icon="ri:git-repository-line" width="16" />
-							<div class="new-menu-text">
-								<div class="new-menu-title">From Git</div>
-								<div class="new-menu-desc">Import applets from a repo</div>
-							</div>
-						</button>
+						<MenuItem
+							icon="ri:chat-smile-2-line"
+							label="From chat"
+							description="Describe it in plain language"
+							onclick={startChatFlow}
+						/>
+						<MenuItem
+							icon="ri:git-repository-line"
+							label="From Git"
+							description="Import applets from a repo"
+							onclick={startGitImportFlow}
+						/>
 					</div>
 				{/snippet}
 			</Popover>
@@ -489,14 +501,19 @@
 		gap: 1rem;
 		flex-wrap: wrap;
 	}
-	/* Matches PageHeading's level-1 title (text-3xl / font-serif / medium) and
-	   its description, so a hand-rolled header still reads as a page title. */
+	/* Matches PageHeading's level-1 title and its description, so a hand-rolled
+	   header still reads as a page title. That component dropped its own 500
+	   for the same reason this one does — JJannon ships one cut, so the weight
+	   resolved back to the regular and returned silently — and took the size up
+	   to the scale's 36 (agents/build/design-grammar.md §4) to carry the rank
+	   that the weight never did. Both numbers follow it, or the two page titles
+	   stop matching. */
 	.section-header h2 {
 		margin: 0;
 		font-family: var(--font-serif, ui-serif, Georgia, serif);
-		font-size: 1.875rem;
-		line-height: 2.25rem;
-		font-weight: 500;
+		font-size: 36px;
+		line-height: 1.15;
+		font-weight: 400;
 	}
 	.subtitle {
 		margin: 0.5rem 0 0;
@@ -508,42 +525,6 @@
 		align-items: center;
 		gap: 0.75rem;
 	}
-	.icon-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 6px;
-		background: var(--color-surface, #fff);
-		color: var(--color-foreground-subtle, #6b7280);
-		cursor: pointer;
-	}
-	.icon-btn:hover {
-		background: var(--color-surface-elevated, #f3f4f6);
-		color: var(--color-foreground, #111827);
-	}
-	.new-menu-item:disabled {
-		opacity: 0.6;
-		cursor: default;
-	}
-	.new-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		padding: 0.375rem 0.625rem;
-		font-size: 0.8125rem;
-		border: 1px solid var(--color-foreground, #111827);
-		border-radius: 6px;
-		background: var(--color-foreground, #111827);
-		color: var(--color-surface, #fff);
-		cursor: pointer;
-	}
-	.new-btn:hover {
-		opacity: 0.88;
-	}
-
 	.new-menu {
 		display: flex;
 		flex-direction: column;
@@ -553,41 +534,6 @@
 		border-radius: 8px;
 		background: var(--color-surface, #fff);
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
-	}
-	.new-menu-item {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.625rem;
-		padding: 0.5rem 0.625rem;
-		border: none;
-		border-radius: 6px;
-		background: transparent;
-		text-align: left;
-		cursor: pointer;
-		color: var(--color-foreground, inherit);
-		font: inherit;
-	}
-	.new-menu-item:hover {
-		background: var(--color-surface-elevated, #f3f4f6);
-	}
-	.new-menu-item :global(svg) {
-		margin-top: 0.125rem;
-		color: var(--color-foreground-subtle, #6b7280);
-		flex-shrink: 0;
-	}
-	.new-menu-text {
-		display: flex;
-		flex-direction: column;
-		gap: 0.0625rem;
-		min-width: 0;
-	}
-	.new-menu-title {
-		font-size: 0.8125rem;
-		font-weight: 500;
-	}
-	.new-menu-desc {
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle, #9ca3af);
 	}
 	.reconcile-msg {
 		font-size: 0.75rem;

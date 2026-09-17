@@ -7,6 +7,8 @@
 
 import { sanitizeUrl } from '$lib/utils/urlUtils';
 
+import { noteRequestId } from '$lib/log';
+
 const API_BASE = '/api';
 
 // ============================================================================
@@ -23,11 +25,23 @@ const API_BASE = '/api';
 export class ApiError extends Error {
 	readonly status: number;
 	readonly body: unknown;
-	constructor(status: number, message: string, body?: unknown) {
+	/**
+	 * The box's `x-request-id` for the request that failed.
+	 *
+	 * This is the join. The box stamps every request with an id, puts it on a
+	 * span so all of its own log lines inherit it, and returns it in this
+	 * header. Carrying it on the error means a client report about a failure
+	 * and the server-side lines that explain it end up on the same key —
+	 * without it, the two halves of an incident can only be matched by
+	 * guessing from timestamps.
+	 */
+	readonly requestId?: string;
+	constructor(status: number, message: string, body?: unknown, requestId?: string) {
 		super(message);
 		this.name = 'ApiError';
 		this.status = status;
 		this.body = body;
+		this.requestId = requestId;
 	}
 }
 
@@ -56,6 +70,11 @@ export async function request<T>(
 	}
 
 	const res = await fetch(url, init);
+	// Remember it whether or not this request failed: an error thrown LATER,
+	// or an uncaught exception with no request of its own, still wants the
+	// most recent one as a hint. See `noteRequestId`.
+	const requestId = res.headers.get('x-request-id') ?? undefined;
+	if (requestId) noteRequestId(requestId);
 
 	if (!res.ok) {
 		let body: unknown;
@@ -75,7 +94,7 @@ export async function request<T>(
 		} catch {
 			/* keep statusText fallback */
 		}
-		throw new ApiError(res.status, message, body);
+		throw new ApiError(res.status, message, body, requestId);
 	}
 
 	if (res.status === 204) return undefined as T;
@@ -154,6 +173,11 @@ export interface Applet {
 	 *  headline. Null only for a row whose manifest omits it. */
 	description: string | null;
 	agent: string | null;
+	/** The prompt we last SHIPPED, which is a different question from the one
+	 *  the applet is running. They differ once the person has written their
+	 *  own — and knowing that is what lets this page offer a diff and a way
+	 *  back to the default, rather than silently keeping either. */
+	agent_shipped: string | null;
 	schedule: string | null;
 	enabled: boolean;
 	config: Record<string, unknown>;
@@ -189,6 +213,11 @@ export interface Applet {
 	pulse: AppletRun['status'][];
 	/** The last successful run's summary — what the applet last produced. */
 	last_success_summary: string | null;
+	/** LLM spend charged to this applet over the last 7 days, in micros-USD.
+	 *  0 for everything deterministic, which is most of them. `null` means the
+	 *  box could not read it — NOT that it was free; render those differently
+	 *  from a real zero or the column quietly reassures. */
+	spend_week_micros: number | null;
 	created_at: string;
 	updated_at: string;
 	last_run: AppletLastRun | null;
@@ -339,28 +368,6 @@ export interface Census {
 export async function getCensus(): Promise<Census> {
 	const res = await fetch(`${API_BASE}/census`);
 	if (!res.ok) throw new Error(`Failed to read the census: ${res.statusText}`);
-	return res.json();
-}
-
-export interface NarrativeDraft {
-	document: string;
-	/** Proposed only. Nothing binds the assistant until it is confirmed. */
-	proposed_rules: string[];
-}
-
-/** Draft the document from the answers. Spends money; POST, never on load. */
-export async function draftNarrative(): Promise<NarrativeDraft> {
-	const res = await fetch(`${API_BASE}/narrative/draft`, { method: 'POST' });
-	if (!res.ok) {
-		let detail = res.statusText;
-		try {
-			const b = await res.json();
-			if (b?.error) detail = b.error;
-		} catch {
-			/* status text is all we have */
-		}
-		throw new Error(detail);
-	}
 	return res.json();
 }
 
@@ -621,27 +628,6 @@ export async function importActionsFromGit(body: {
 	return res.json();
 }
 
-export interface CreateAppletRequest {
-	name: string;
-	agent?: string;
-	schedule?: string;
-	triggers?: AppletTrigger[];
-	config?: Record<string, unknown>;
-}
-
-export async function createApplet(body: CreateAppletRequest): Promise<Applet> {
-	const res = await fetch(`${API_BASE}/applets`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `Failed to create applet: ${res.statusText}`);
-	}
-	return res.json();
-}
-
 export interface PatchAppletBody {
 	name?: string;
 	agent?: string | null;
@@ -767,6 +753,8 @@ export interface AppletSourceListing {
 	dir: string;
 	/** Which root the folder resolved in — `shipped` came with the box. */
 	origin_root: 'shipped' | 'state';
+	/** `<origin>@<version>` the folder was copied from, when its manifest records it. */
+	forked_from: string | null;
 	files: AppletSourceFile[];
 	truncated: boolean;
 }
@@ -796,21 +784,6 @@ export async function getAppletSourceFile(
 	);
 }
 
-export async function listAppletRuns(
-	id: string,
-	opts?: { limit?: number; status?: string }
-): Promise<AppletRun[]> {
-	const params = new URLSearchParams();
-	if (opts?.limit != null) params.set('limit', String(opts.limit));
-	if (opts?.status) params.set('status', opts.status);
-	const qs = params.toString();
-	const res = await fetch(
-		`${API_BASE}/applets/${encodeURIComponent(id)}/runs${qs ? `?${qs}` : ''}`
-	);
-	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
-	return res.json();
-}
-
 export async function listRuns(opts?: {
 	limit?: number;
 	status?: string;
@@ -823,15 +796,6 @@ export async function listRuns(opts?: {
 	const qs = params.toString();
 	const res = await fetch(`${API_BASE}/runs${qs ? `?${qs}` : ''}`);
 	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
-	return res.json();
-}
-
-/** Get a single action run by ID (used for polling sync job status) */
-export async function getJobStatus(
-	jobId: string
-): Promise<{ id: string; status: string; records_processed: number; error: string | null }> {
-	const res = await fetch(`${API_BASE}/applets/runs/${jobId}`);
-	if (!res.ok) throw new Error(`Failed to get run status: ${res.statusText}`);
 	return res.json();
 }
 
@@ -1075,16 +1039,6 @@ export async function pairStatus(id: string): Promise<PairStatusResponse> {
 	return res.json();
 }
 
-/**
- * DELETE /api/devices/:id — auth'd. Revoke a device (soft-delete + credential
- * teardown).
- */
-export async function deleteDevice(id: string): Promise<void> {
-	await fetch(`${API_BASE}/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {
-		/* benign — device may already be revoked */
-	});
-}
-
 export interface ChatImportResponse {
 	status: string;
 	summary: string;
@@ -1255,22 +1209,11 @@ export async function getPairingStatus(sourceId: string): Promise<PairingStatus>
 	return { status: 'pending' };
 }
 
-/**
- * List all pending device pairings (not yet completed)
- * @returns Array of pending pairings with codes and expiration times
- */
-export async function listPendingPairings(): Promise<{ pairings: PendingPairing[] }> {
-	const res = await fetch(`${API_BASE}/devices/pending-pairings`);
-
-	if (!res.ok) {
-		throw new Error(`Failed to list pending pairings: ${res.statusText}`);
-	}
-
-	return res.json();
-}
 
 // Profile
 export interface Profile {
+	/** First and last, as the person gave it. */
+	full_name?: string | null;
 	preferred_name?: string | null;
 	/** `"YYYY-MM-DD"` — serde's NaiveDate wire form, same as an HTML date input. */
 	birth_date?: string | null;
@@ -1367,36 +1310,9 @@ export async function listAnnotations(fileId: string): Promise<Annotation[]> {
 }
 
 /** A highlight enriched with its file's name, for the notebook Highlights tab. */
-export interface NotebookAnnotation {
-	id: string;
-	file_id: string;
-	filename: string;
-	page_num: number | null;
-	quote_text: string;
-	color: string;
-	note_md: string;
-	created_at: string;
-	updated_at: string;
-}
-
-export async function listNotebookAnnotations(notebookId: string): Promise<NotebookAnnotation[]> {
-	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/annotations`);
-	if (!res.ok) throw new Error(`Failed to list notebook annotations: ${res.statusText}`);
-	return res.json();
-}
-
 /** A file's highlights as markdown (blockquote + citation ref each). */
 export async function exportFileAnnotations(fileId: string): Promise<string> {
 	const res = await fetch(`${API_BASE}/annotations/export?file_id=${encodeURIComponent(fileId)}`);
-	if (!res.ok) throw new Error(`Failed to export annotations: ${res.statusText}`);
-	return res.text();
-}
-
-/** Every highlight across a notebook's documents, grouped by file. */
-export async function exportNotebookAnnotations(notebookId: string): Promise<string> {
-	const res = await fetch(
-		`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/annotations/export`
-	);
 	if (!res.ok) throw new Error(`Failed to export annotations: ${res.statusText}`);
 	return res.text();
 }
@@ -1780,18 +1696,6 @@ export async function uploadMedia(
 	});
 }
 
-/**
- * Get media file metadata by ID
- */
-export async function getMedia(fileId: string): Promise<MediaFile> {
-	const res = await fetch(`${API_BASE}/media/${fileId}`);
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to get media: ${res.statusText}`);
-	}
-	return res.json();
-}
-
 // =============================================================================
 // Chats - Chat Management
 // =============================================================================
@@ -1800,35 +1704,6 @@ export interface ChatMessage {
 	role: 'user' | 'assistant' | 'system';
 	content: string;
 	timestamp: string;
-}
-
-export interface CreateChatResponse {
-	id: string;
-	title: string;
-	message_count: number;
-	created_at: string;
-}
-
-/**
- * Create a new chat with initial messages
- * Used for intro chats and pre-populated conversations
- */
-export async function createChat(
-	title: string,
-	messages: ChatMessage[]
-): Promise<CreateChatResponse> {
-	const res = await fetch(`${API_BASE}/chats`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title, messages })
-	});
-
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to create chat: ${res.statusText}`);
-	}
-
-	return res.json();
 }
 
 /**
@@ -2029,27 +1904,6 @@ export interface ViewEntity {
 // Developer SQL API
 // =============================================================================
 
-export interface SqlResult {
-	columns: string[];
-	rows: Record<string, unknown>[];
-	row_count: number;
-}
-
-/**
- * Execute a read-only SQL query via the developer endpoint
- */
-export async function executeSql(sql: string): Promise<SqlResult> {
-	const res = await fetch(`${API_BASE}/developer/sql`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ query: sql })
-	});
-	if (!res.ok) {
-		const error = await res.text();
-		throw new Error(`SQL execution failed: ${error}`);
-	}
-	return res.json();
-}
 
 // =============================================================================
 // Notebook Items API — the URL-native members of a Notebook
@@ -2336,73 +2190,6 @@ export async function getPageBacklinks(pageId: string): Promise<Backlink[]> {
 }
 
 // ============================================================================
-// Ontologies API
-// ============================================================================
-
-export interface OntologyColumnInfo {
-	name: string;
-	data_type: string;
-	is_nullable: boolean;
-}
-
-export interface OntologyDataResponse {
-	table_name: string;
-	display_name: string;
-	domain: string;
-	columns: OntologyColumnInfo[];
-	key_columns: string[];
-	timestamp_column: string;
-	rows: Record<string, unknown>[];
-	total_count: number;
-	limit: number;
-	offset: number;
-}
-
-export interface OntologyOverview {
-	name: string;
-	domain: string;
-	record_count: number;
-	sample_record: Record<string, unknown> | null;
-}
-
-export async function listAvailableOntologies(): Promise<string[]> {
-	const res = await fetch(`${API_BASE}/ontologies/available`);
-	if (!res.ok) throw new Error(`Failed to list ontologies: ${res.statusText}`);
-	return res.json();
-}
-
-export async function getOntologiesOverview(): Promise<OntologyOverview[]> {
-	const res = await fetch(`${API_BASE}/ontologies/overview`);
-	if (!res.ok) throw new Error(`Failed to get ontologies overview: ${res.statusText}`);
-	return res.json();
-}
-
-export async function queryOntologyData(
-	tableName: string,
-	params?: {
-		limit?: number;
-		offset?: number;
-		sort?: string;
-		dir?: string;
-		date?: string;
-		search?: string;
-	},
-): Promise<OntologyDataResponse> {
-	const searchParams = new URLSearchParams();
-	if (params?.limit != null) searchParams.set('limit', String(params.limit));
-	if (params?.offset != null) searchParams.set('offset', String(params.offset));
-	if (params?.sort) searchParams.set('sort', params.sort);
-	if (params?.dir) searchParams.set('dir', params.dir);
-	if (params?.date) searchParams.set('date', params.date);
-	if (params?.search) searchParams.set('search', params.search);
-
-	const qs = searchParams.toString();
-	const res = await fetch(`${API_BASE}/ontologies/${tableName}/data${qs ? `?${qs}` : ''}`);
-	if (!res.ok) throw new Error(`Failed to query ontology data: ${res.statusText}`);
-	return res.json();
-}
-
-// ============================================================================
 // Setup state API
 // ============================================================================
 
@@ -2459,6 +2246,64 @@ export async function skipOnboarding(skipped = true): Promise<void> {
 		body: JSON.stringify({ skipped }),
 	});
 	if (!res.ok) throw new Error(`Failed to record onboarding choice: ${res.statusText}`);
+}
+
+// ---- Getting started: one room, one derived truth (api/getting_started.rs) ----
+
+export type GettingStartedStepId = 'connect_ai' | 'introductions' | 'connect_world' | 'interview';
+
+export interface GettingStartedStep {
+	id: GettingStartedStepId;
+	title: string;
+	status: 'done' | 'open' | 'skipped';
+	/** How a done step got done, where it matters ("subscription" | "byo"). */
+	via?: string;
+	/** Server-authored copy for the step's current state — render verbatim. */
+	detail?: string;
+	/** Started but not done (the interview has begun, no document yet). */
+	underway?: boolean;
+	/** The person moved past this step themselves (skip/continue). */
+	acknowledged?: boolean;
+	/** Integrations in place — on the step that counts them. */
+	connected?: number;
+	/** What is actually feeding the record, named. */
+	sources?: string[];
+}
+
+export interface GettingStartedState {
+	ai_connected: boolean;
+	steps: GettingStartedStep[];
+	first_day: string | null;
+	graduated: boolean;
+	/** The interview has begun inside the room, at this instant (ISO). */
+	interview_started_at: string | null;
+}
+
+export async function getGettingStarted(): Promise<GettingStartedState> {
+	const res = await fetch(`${API_BASE}/getting-started`);
+	if (!res.ok) throw new Error(`Failed to get getting-started state: ${res.statusText}`);
+	return res.json();
+}
+
+/** Skip (or un-skip) one step. Answers with the new state. */
+export async function skipGettingStartedStep(
+	step: GettingStartedStepId,
+	skipped = true
+): Promise<GettingStartedState> {
+	const res = await fetch(`${API_BASE}/getting-started/skip`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ step, skipped })
+	});
+	if (!res.ok) throw new Error(`Failed to skip step: ${res.statusText}`);
+	return res.json();
+}
+
+/** Begin the interview inside the getting-started room. Answers with the new state. */
+export async function startGettingStartedInterview(): Promise<GettingStartedState> {
+	const res = await fetch(`${API_BASE}/getting-started/interview`, { method: 'POST' });
+	if (!res.ok) throw new Error(`Failed to start the interview: ${res.statusText}`);
+	return res.json();
 }
 
 export async function getSetupState(): Promise<SetupState> {
@@ -2530,6 +2375,10 @@ export function startBillingLink<T = unknown>(): Promise<T> {
 export function openBillingPortal<T = unknown>(): Promise<T> {
 	return apiSend<T>('POST', '/billing/portal');
 }
+/** A Stripe Checkout URL for the account this box is linked to. */
+export function subscribeBilling<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/billing/subscribe');
+}
 export function getBillingState<T = unknown>(): Promise<T> {
 	return apiGet<T>('/billing/state');
 }
@@ -2547,29 +2396,6 @@ export function setByoKey<T = unknown>(body: Record<string, unknown>): Promise<T
 }
 export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
 	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
-}
-
-// ── MCP ──────────────────────────────────────────────────────────────────────
-export function listMcpServers<T = unknown>(): Promise<T> {
-	return apiGet<T>('/mcp/servers');
-}
-export function getMcpServer<T = unknown>(id: string): Promise<T> {
-	return apiGet<T>(`/mcp/servers/${encodeURIComponent(id)}`);
-}
-export function createMcpServer<T = unknown>(body: Record<string, unknown>): Promise<T> {
-	return apiSend<T>('POST', '/mcp/servers', body);
-}
-export function deleteMcpServer<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('DELETE', `/mcp/servers/${encodeURIComponent(id)}`);
-}
-export function connectMcpServer<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/mcp/servers/${encodeURIComponent(id)}/connect`);
-}
-export function disconnectMcpServer<T = unknown>(id: string): Promise<T> {
-	return apiSend<T>('POST', `/mcp/servers/${encodeURIComponent(id)}/disconnect`);
-}
-export function toggleMcpTool<T = unknown>(toolId: string): Promise<T> {
-	return apiSend<T>('PATCH', `/mcp/tools/${encodeURIComponent(toolId)}/toggle`);
 }
 
 // ── Personas ─────────────────────────────────────────────────────────────────
@@ -2665,11 +2491,6 @@ export function getSudoStatus<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/sudo/status/${encodeURIComponent(id)}`);
 }
 
-// ── Mentions queue ───────────────────────────────────────────────────────────
-export function resolveMention<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {
-	return apiSend<T>('POST', `/mentions/${encodeURIComponent(path)}`, body);
-}
-
 // ── Data lake ────────────────────────────────────────────────────────────────
 export function getLakeSummary<T = unknown>(): Promise<T> {
 	return apiGet<T>('/lake/summary');
@@ -2681,9 +2502,6 @@ export function getLakeStreams<T = unknown>(): Promise<T> {
 // ── System / telemetry / usage ───────────────────────────────────────────────
 export function getSystemTelemetry<T = unknown>(): Promise<T> {
 	return apiGet<T>('/system/telemetry');
-}
-export function getSystemHistory<T = unknown>(): Promise<T> {
-	return apiGet<T>('/system/history');
 }
 /** One row of the box-local AI-call log. Metadata only — never content. */
 export interface AiCallRow {
@@ -2721,8 +2539,8 @@ export function getAiCallsPage(opts: {
 export function getUsageSummary<T = unknown>(): Promise<T> {
 	return apiGet<T>('/usage/summary');
 }
-export function getSubscription<T = unknown>(): Promise<T> {
-	return apiGet<T>('/subscription');
+export function getSubscription<T = unknown>(fresh = false): Promise<T> {
+	return apiGet<T>('/subscription', fresh ? { fresh: 1 } : undefined);
 }
 
 // ── Narrative identity (wiki) ────────────────────────────────────────────────
@@ -2735,9 +2553,6 @@ export function getNarrativeIdentity<T = unknown>(): Promise<T> {
 // ── Devices / pairing (extras beyond pairMint/pairDeny/pairStatus) ────────────
 export function listDevices<T = unknown>(): Promise<T> {
 	return apiGet<T>('/devices');
-}
-export function pairConsume<T = unknown>(body?: Record<string, unknown>): Promise<T> {
-	return apiSend<T>('POST', '/pair/consume', body);
 }
 
 // ── Misc singletons ──────────────────────────────────────────────────────────
@@ -2752,7 +2567,4 @@ export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Prom
 }
 export function getServerInfo<T = unknown>(): Promise<T> {
 	return apiGet<T>('/app/server-info');
-}
-export function aiComplete<T = unknown>(req: Record<string, unknown>): Promise<T> {
-	return apiSend<T>('POST', '/ai/complete', req);
 }

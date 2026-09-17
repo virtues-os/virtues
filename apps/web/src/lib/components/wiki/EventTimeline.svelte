@@ -9,6 +9,7 @@
 
 <script lang="ts">
 	import type { DayEvent } from "$lib/wiki/types";
+	import { subjectHref } from "$lib/wiki/links";
 	import {
 		getEventDisplayLabel,
 		getEventDisplayLocation,
@@ -108,6 +109,32 @@
 	function isMostNovel(event: DayEvent): boolean {
 		return event.id === mostNovelId();
 	}
+
+	/**
+	 * Who and where an event involved, as links.
+	 *
+	 * `wiki_events.entities` has held these ids since segmentation started
+	 * writing them — on a real day, most events have some — and nothing has
+	 * ever drawn them. They sit HERE rather than in a list at the foot of the
+	 * day page: "who was at the standup" is part of what the event was, while
+	 * a roster of everyone who appeared in a day is a cast list, and the wiki
+	 * is not organized around people.
+	 *
+	 * Order follows `entities`, which is the order segmentation found them.
+	 * An id with no name resolved no longer exists and is skipped rather than
+	 * printed raw.
+	 */
+	function cast(event: DayEvent): Array<{ id: string; name: string; href: string | null }> {
+		// The place already named on the meta line above is not repeated here.
+		// "Design standup · 45m · Office" followed by "… · Office · …" reads as
+		// two different facts and is one.
+		const shown = getEventDisplayLocation(event)?.trim().toLowerCase();
+		return event.entities
+			.map((id) => ({ id, name: event.entityNames[id], href: subjectHref(id) }))
+			.filter((e): e is { id: string; name: string; href: string | null } =>
+				Boolean(e.name) && e.name.trim().toLowerCase() !== shown
+			);
+	}
 </script>
 
 <div class="marginalia-timeline">
@@ -167,6 +194,16 @@
 							<span class="novelty-badge">Most Novel</span>
 						{/if}
 					</div>
+
+					{@const people = cast(event)}
+					{#if people.length > 0}
+						<p class="event-cast">
+							{#each people as e, i}{#if i > 0}<span class="cast-sep">·</span>{/if}{#if e.href}<a
+										href={e.href}
+										class="cast-link">{e.name}</a
+									>{:else}<span class="cast-plain">{e.name}</span>{/if}{/each}
+						</p>
+					{/if}
 
 					<div class="accordion-body" class:open={isExpanded && !!event.eventSummary}>
 						<div class="accordion-inner">
@@ -404,4 +441,30 @@
 			padding-right: 0.375rem;
 		}
 	}
+
+	/* Who and where, under the event that involved them. Quiet — this is
+	   provenance on the line above, not a section of its own. */
+	.event-cast {
+		margin: 0.15rem 0 0;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--color-foreground-subtle);
+	}
+
+	.cast-sep {
+		margin: 0 0.35rem;
+		opacity: 0.5;
+	}
+
+	.cast-link {
+		color: inherit;
+		text-decoration: underline;
+		text-decoration-style: dotted;
+		text-underline-offset: 2px;
+	}
+
+	.cast-link:hover {
+		color: var(--color-foreground);
+	}
+
 </style>

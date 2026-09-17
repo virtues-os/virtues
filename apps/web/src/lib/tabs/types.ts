@@ -29,8 +29,6 @@ export type TabType =
 	| 'applets' // Applets list: /applets
 	| 'applet' // Applet detail: /applet/applet_{id}
 	| 'applet-view' // Applet full-page face: /applet/applet_{id}/view
-	| 'developers' // Developers tools (SQL/Terminal/Lake): /developers
-	| 'ontology' // Ontology data: /ontologies, /ontologies/{name}
 	| 'record' // Single raw record viewer: /record/{ontology}/{id}
 	// Storage namespaces
 	| 'storage' // Drive | Streams | App Media | Trash: /storage, /storage/{tab}, /storage/drive/{path}
@@ -38,10 +36,7 @@ export type TabType =
 	| 'asset' // Single file viewer (open density): /drive/file_{id}
 	| 'trash' // LEGACY alias of /storage/trash: /trash
 	// System namespace
-	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal}
-	// Easter eggs
-	| 'conway'
-	| 'dog-jump';
+	| 'virtues'; // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal}
 
 /**
  * Tab interface - flat structure with optional type-specific properties.

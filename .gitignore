@@ -161,8 +161,28 @@ tmp/*
 /virtues-core/core/
 /virtues-core/.sqlx
 
-# Local Claude Code project state (runtime locks, local settings)
-.claude/
+# Local Claude Code project state (runtime locks, local settings).
+#
+# `.claude/*` rather than `.claude/`, because git cannot re-include a file whose
+# PARENT directory is excluded — with the directory itself ignored, the negation
+# below would silently do nothing. Excluding the contents instead leaves the
+# directory visible so `rules/` can be un-ignored.
+.claude/*
+
+# Path-scoped rules are shared project law, not local state: several agents work
+# in this one checkout, and a rule only one of them can see is worse than no
+# rule. These are committed on purpose.
+!.claude/rules/
+
+# Hooks are the enforcement half of the same law: the Never table and the
+# migration procedure are prose in CLAUDE.md and a gate here. Shared, for the
+# same reason the rules are — a guard only one agent has is not a guard.
+# `settings.local.json` stays ignored; that one is genuinely per-machine.
+!.claude/settings.json
+
+# Skills are on-demand reference material — shared for the same reason the
+# rules and hooks are.
+!.claude/skills/
 
 # Agent scratch. `.worktrees/` has already been swept into a commit as an
 # embedded git repo once — worktrees are not the workflow here (see the
@@ -185,3 +205,17 @@ tmp/*
 /masters/
 *.img
 *.img.zst
+
+# A 32-byte secret some local tooling drops at the repo root. It was untracked
+# but NOT ignored — the one file in the tree that was both a secret and a single
+# `git add -A` away from a public repo, which is a mistake this checkout has
+# already made with other stray files.
+.webui_secret_key
+
+# The generated three-year demo seed. `tools/gen-demo-seed.py` is the source and
+# is deterministic — same script, same SQL — so the ~5 MB it emits is a build
+# artifact rather than a fact about the project. Committing it would put a fresh
+# 5 MB in the permanent history of a public repo on every regeneration, against
+# a 30 KB generator and a 412 KB largest-committed seed. Rebuild with
+# `python3 tools/gen-demo-seed.py` (stdlib only), then `seeds/demo3y/run.sh`.
+virtues-core/seeds/demo3y/

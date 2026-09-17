@@ -35,13 +35,12 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::bearer_auth::BearerAuth;
 use crate::entitlement::{self, Account};
-use crate::providers::{calculate_cost, get_provider_config};
+use crate::providers::{calculate_cost, get_provider_config, merge_provider_options, upstream_body};
 use crate::AppState;
 
 /// Pre-flight budget gate. AI cost is only known after the response, so we
@@ -65,33 +64,24 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/v1/ai/models", get(list_models))
 }
 
-#[derive(Debug, Deserialize)]
-struct ChatRequest {
-    model: String,
-    messages: Vec<Value>,
-    #[serde(default)]
-    max_tokens: Option<u32>,
-    #[serde(default)]
-    temperature: Option<f32>,
-    #[serde(default)]
-    stream: Option<bool>,
-    #[serde(default)]
-    tools: Option<Vec<Value>>,
-    #[serde(default)]
-    tool_choice: Option<Value>,
-    /// Optional reasoning budget hint ("low" | "medium" | "high") forwarded to
-    /// the gateway. Lets callers (e.g. transcription) trim thinking-token cost.
-    #[serde(default)]
-    reasoning_effort: Option<String>,
-}
-
+/// The body is opaque JSON. The proxy reads `model` and `stream`, rewrites
+/// the handful of keys it owns (`providers::upstream_body`), and forwards
+/// the rest untouched, so it serves every released box at once and a field
+/// it has never heard of still reaches the gateway. It never logs the body:
+/// a value could be prompt text.
 async fn chat_completions(
     State(state): State<Arc<AppState>>,
     BearerAuth(ent): BearerAuth,
     headers: HeaderMap,
-    Json(request): Json<ChatRequest>,
+    Json(request): Json<Value>,
 ) -> Response {
     let pool = &state.db;
+
+    let model = match request.get("model").and_then(Value::as_str) {
+        Some(m) if !m.is_empty() => m.to_string(),
+        _ => return err(StatusCode::BAD_REQUEST, "invalid_request", "`model` is required"),
+    };
+    let stream = request.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
     // Pre-flight budget gate (empty wallet / daily cap). The actual charge
     // happens after the response, since AI cost is only known then.
@@ -104,23 +94,15 @@ async fn chat_completions(
     // Streaming: hand off to streaming.rs with a charge callback that
     // applies the resolved cost via entitlement::charge() once the
     // upstream stream emits [DONE].
-    if request.stream == Some(true) {
-        let streaming_req = crate::routes::streaming::StreamingRequest {
-            model: request.model.clone(),
-            messages: request.messages.clone(),
-            max_tokens: request.max_tokens,
-            temperature: request.temperature,
-            tools: request.tools.clone(),
-            tool_choice: request.tool_choice.clone(),
-            reasoning_effort: request.reasoning_effort.clone(),
-        };
+    if stream {
         let pool_clone = pool.clone();
         let account_id = ent.account_id.clone();
         let result = crate::routes::streaming::create_streaming_response(
-            &state.http_client,
+            &state.stream_client,
             &state.config,
             &state.catalog,
-            streaming_req,
+            &model,
+            request,
             move |cost_micros| async move {
                 if let Err(e) =
                     entitlement::settle(&pool_clone, &account_id, cost_micros).await
@@ -137,32 +119,8 @@ async fn chat_completions(
         };
     }
 
-    let provider = get_provider_config(&request.model, &state.config);
-    let model = request.model.clone();
-
-    let mut body = json!({
-        "model": provider.model_name,
-        "messages": request.messages,
-        "max_tokens": request.max_tokens.unwrap_or(4096),
-        "temperature": request.temperature.unwrap_or(0.7),
-    });
-    if let Some(ref effort) = request.reasoning_effort {
-        body["reasoning_effort"] = json!(effort);
-    }
-    if let Some(ref tools) = request.tools {
-        if !tools.is_empty() {
-            body["tools"] = json!(tools);
-            if let Some(ref choice) = request.tool_choice {
-                body["tool_choice"] = choice.clone();
-            }
-        }
-    }
-    // Pin the call to zero-retention endpoints wherever the model has any.
-    // See Catalog::enforce_zdr — this is per-request and derived from the
-    // model, never a global switch someone can leave flipped.
-    if state.catalog.enforce_zdr(&model) {
-        body["providerOptions"] = json!({ "gateway": { "zeroDataRetention": true } });
-    }
+    let provider = get_provider_config(&model, &state.config);
+    let body = upstream_body(request, &provider.model_name, false, state.catalog.enforce_zdr(&model));
 
     let upstream = state
         .http_client
@@ -225,15 +183,13 @@ async fn completions(
     let _ = &headers;
 
     // Same zero-retention enforcement as the chat paths. This route forwards
-    // the caller's body verbatim, so the option is merged in rather than set
-    // on a body we built.
+    // the caller's body verbatim, so the option is merged into whatever
+    // providerOptions the caller sent rather than written over them.
     let mut request = request;
-    if state.catalog.enforce_zdr(&model) {
-        if let Some(obj) = request.as_object_mut() {
-            obj.insert(
-                "providerOptions".to_string(),
-                json!({ "gateway": { "zeroDataRetention": true } }),
-            );
+    if let Some(obj) = request.as_object_mut() {
+        let callers = obj.remove("providerOptions");
+        if let Some(merged) = merge_provider_options(callers, state.catalog.enforce_zdr(&model)) {
+            obj.insert("providerOptions".to_string(), merged);
         }
     }
 

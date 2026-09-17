@@ -45,55 +45,85 @@ pub async fn background_model_for_slot(pool: &PgPool, slot: ModelSlot) -> Result
 ///
 /// `feature` tags the spend into `app_ai_calls` so Usage can attribute it.
 ///
-/// An empty completion is an error, not an empty string: the client has
-/// already resent genuinely empty answers (reasoning models that spend the
-/// whole budget thinking — see `EMPTY_COMPLETION_ATTEMPTS`), so an empty body
-/// reaching here means the model has stopped answering, and every current
-/// caller treats that as failure anyway.
+/// `thinking` is what the job wants from the model's reasoning, and the ONLY
+/// lever a caller has. There is no `max_tokens`: on a model that thinks, the
+/// thinking is counted inside that cap, and a cap sized for the answer
+/// returned nothing. Measured on the box 2026-09-04..08, the Chat slot's
+/// model segmenting a day under a 4000 cap spent exactly 4000 tokens
+/// reasoning and returned no content on 237 of 276 calls, every one billed.
+/// The interview drafter failed the same way four days later. The window is
+/// the model's own; the prompt bounds the output.
+///
+/// The thinking mode becomes a request through `request::reasoning_for`,
+/// from what the catalog says about the model and whether the call goes to
+/// the owner's own endpoint. A model without the lever ignores the hint.
+///
+/// A completion the model did not finish (`finish_reason: length`) is an
+/// error naming that, distinct from an empty one: "ran out of room" and
+/// "said nothing" used to be the same message.
 pub async fn system_completion(
     pool: &PgPool,
     slot: ModelSlot,
     feature: &'static str,
     system_prompt: &str,
     user_prompt: &str,
-    max_tokens: u32,
+    thinking: super::request::Thinking,
     temperature: f32,
 ) -> Result<String> {
     let model = background_model_for_slot(pool, slot).await?;
+    let byo = crate::api::settings_byo::byo_is_active(pool).await;
+    let facts = crate::api::model_catalog::reasoning_facts(&model);
+    let (reasoning, reasoning_effort) = super::request::reasoning_for(thinking, facts.as_ref(), byo);
 
     let client = BearerClient::from_env(pool.clone())
         .with_purpose(Purpose::System)
         .with_feature(feature);
 
+    // An empty system prompt is no system message at all (a title asks in
+    // one user turn), not an empty block some providers reject.
+    let mut messages = Vec::with_capacity(2);
+    if !system_prompt.trim().is_empty() {
+        messages.push(json!({"role": "system", "content": system_prompt}));
+    }
+    messages.push(json!({"role": "user", "content": user_prompt}));
+    let request = super::request::ChatCompletionRequest {
+        model: model.clone(),
+        messages,
+        temperature: Some(temperature),
+        reasoning,
+        reasoning_effort,
+        ..Default::default()
+    };
+    let body = serde_json::to_value(&request)
+        .map_err(|e| Error::Other(format!("encode completion request: {e}")))?;
+
     let response = client
-        .post_json(
-            "/v1/ai/chat/completions",
-            &json!({
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "max_tokens": max_tokens,
-                "temperature": temperature
-            }),
-        )
+        .post_json("/v1/ai/chat/completions", &body)
         .await
         .map_err(|e| Error::Network(format!("virtues-api request failed: {e}")))?;
 
     if !response.is_success() {
         return Err(Error::ExternalApi(match response.status {
-            402 => format!("Usage limit reached ({feature})"),
+            402 => crate::virtues_api::client::payment_required_message(&response.body, feature),
             429 => "Rate limited. Please try again later.".to_string(),
             _ => format!("virtues-api error {}: {}", response.status, response.body),
         }));
     }
 
-    let content = response.body["choices"][0]["message"]["content"]
+    let choice = &response.body["choices"][0];
+    let content = choice["message"]["content"]
         .as_str()
         .unwrap_or("")
         .trim()
         .to_string();
+
+    if choice["finish_reason"].as_str() == Some("length") {
+        return Err(Error::ExternalApi(format!(
+            "{feature}: {model} ran out of room before it finished (finish_reason=length, \
+             {} chars arrived)",
+            content.chars().count()
+        )));
+    }
 
     if content.is_empty() {
         return Err(Error::ExternalApi(format!(

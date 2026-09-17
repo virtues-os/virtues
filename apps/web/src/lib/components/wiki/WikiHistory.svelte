@@ -14,13 +14,23 @@
 	 * the default posture is a feed you can skim and ignore.
 	 */
 	import { onMount } from 'svelte';
-	import { listHistory, getArticleHistory, type HistoryEntry, type ArticleRevision } from '$lib/wiki/api';
+	import TextAction from '$lib/components/TextAction.svelte';
+	import {
+		listHistory,
+		getArticleHistory,
+		revertArticle,
+		type HistoryEntry,
+		type ArticleRevision
+	} from '$lib/wiki/api';
 
 	let entries = $state<HistoryEntry[]>([]);
 	let loading = $state(true);
 	/** subject key → its revisions, fetched only when someone opens one. */
 	let opened = $state<Record<string, ArticleRevision[]>>({});
 	let openKey = $state<string | null>(null);
+	/** The entry being reverted, and the outcome once it is done. */
+	let reverting = $state<string | null>(null);
+	let reverted = $state<Record<string, string>>({});
 
 	const key = (e: HistoryEntry) => `${e.subject_type}/${e.subject_id}/${e.version_number}`;
 
@@ -41,6 +51,28 @@
 		openKey = k;
 		if (!opened[k]) {
 			opened[k] = await getArticleHistory(e.subject_type, e.subject_id);
+		}
+	}
+
+	/**
+	 * Put an article back. The docstring above promised this from the day the
+	 * room shipped and there was no way to do it.
+	 *
+	 * Reverting adds a version rather than rewinding one, so this is not a
+	 * destructive act and does not ask twice. The feed reloads because the
+	 * revert is itself an edit and belongs in it.
+	 */
+	async function revert(e: HistoryEntry) {
+		const k = key(e);
+		reverting = k;
+		try {
+			await revertArticle(e.subject_type, e.subject_id, e.version_number);
+			reverted[k] = 'Put back.';
+			entries = await listHistory(50);
+		} catch {
+			reverted[k] = 'That could not be put back.';
+		} finally {
+			reverting = null;
 		}
 	}
 
@@ -83,6 +115,19 @@
 					{:else}
 						<p class="quiet small">No textual change recorded for this edit.</p>
 					{/if}
+					<p class="actions">
+						{#if reverted[key(e)]}
+							<span class="quiet small">{reverted[key(e)]}</span>
+						{:else}
+							<TextAction
+								loading={reverting === key(e)}
+								loadingLabel="Putting back…"
+								onclick={() => revert(e)}
+							>
+								Put this version back
+							</TextAction>
+						{/if}
+					</p>
 				{/if}
 			</li>
 		{/each}
@@ -91,6 +136,10 @@
 
 <style>
 	@reference "../../../app.css";
+
+	.actions {
+		margin: 0.5rem 0 0;
+	}
 
 	.feed {
 		list-style: none;

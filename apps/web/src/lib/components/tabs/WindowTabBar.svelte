@@ -11,7 +11,6 @@
 		type ZoneId,
 	} from "$lib/stores/dndManager.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
-	import { sidebarState } from "$lib/stores/sidebarState.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
@@ -450,16 +449,9 @@
 		});
 	}
 
-	// Show sidebar toggle on left pane (or non-split mode). Hidden on mobile —
-	// the sidebar is replaced by the bottom-tab bar, so there's nothing to toggle.
-	const showSidebarToggle = $derived(
-		!mobileLayout.isMobile && (!paneId || paneId === "left"),
-	);
-
-	// Icon changes based on sidebar state
-	const sidebarIcon = $derived(
-		sidebarState.collapsed ? "ri:layout-right-line" : "ri:side-bar-line",
-	);
+	// The sidebar's collapse control lives on the sidebar (its panel header),
+	// and the rail's ∴ mark reopens it when collapsed — so the pane toolbar does
+	// not carry a control for a region it is not.
 
 	// Get icon for tab type
 	function getDefaultIcon(type: string): string {
@@ -498,16 +490,7 @@
 	aria-label="Tab bar"
 	tabindex="0"
 >
-	{#if showSidebarToggle}
-		<button
-			class="sidebar-toggle"
-			onclick={() => sidebarState.toggle()}
-			aria-label="Toggle sidebar"
-			title="Toggle sidebar (⌘S)"
-		>
-			<Icon icon={sidebarIcon} />
-		</button>
-	{/if}
+
 
 	<div class="nav-cluster">
 		<button
@@ -721,10 +704,15 @@
 		border-top-right-radius: var(--card-radius, 6px);
 	}
 
-	/* The focused pane's strip lifts a touch, so "which pane am I in" is legible
-	   from the chrome and not only from the tab. */
+	/* The focused pane's strip stays the page colour. It used to lift to
+	   --color-surface-elevated so "which pane am I in" read from the chrome —
+	   but on the warm themes (Oxford's elevated is #F4F3F0) that painted the
+	   pane's top a grey that did not match the page below it. Focus is already
+	   carried by the active tab's pill (--tab-active-bg-focused vs
+	   --tab-active-bg), so the strip does not need to muddy the surface to say
+	   it. The top of the pane now matches the page, on every theme. */
 	.tab-bar.active-pane {
-		background: var(--color-surface-elevated);
+		background: var(--color-surface);
 	}
 
 	.tabs-scroll {

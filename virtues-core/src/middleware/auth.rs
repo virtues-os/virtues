@@ -67,11 +67,17 @@ pub struct AuthUser {
 #[derive(Debug, Serialize)]
 pub struct AuthError {
     pub error: String,
+    /// 401 for a credential that does not authenticate; 503 when the device
+    /// table could not be read at all. The second used to fall through to the
+    /// first, so a dead pool told every paired device it was a stranger.
+    #[serde(skip)]
+    status: StatusCode,
 }
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
-        (StatusCode::UNAUTHORIZED, Json(self)).into_response()
+        let status = self.status;
+        (status, Json(self)).into_response()
     }
 }
 
@@ -96,7 +102,11 @@ where
         //    isn't a known device falls through to the paths below.
         if let Some(peer) = parts.extensions.get::<virtues_iroh::ProvenPeer>() {
             let node_id = peer.0.to_string();
-            if let Some(user) = validate_iroh_peer(&pool, &node_id).await {
+            let user = match validate_iroh_peer(&pool, &node_id).await {
+                Ok(user) => user,
+                Err(e) => return Err(unavailable(e)),
+            };
+            if let Some(user) = user {
                 // Best-effort: refresh the device's reported build identity from
                 // the X-Virtues-Client header (update-manifold Phase 1). Never
                 // affects auth — a missing/malformed header is simply skipped.
@@ -181,7 +191,13 @@ pub fn is_dev() -> bool {
 /// bearer/credential row involved. The caller has already established (via the
 /// QUIC handshake + `serve()`'s allowlist gate) that the peer holds this key, so
 /// a live device row owning it is sufficient to authenticate. Touches last-seen.
-pub(crate) async fn validate_iroh_peer(pool: &PgPool, node_id: &str) -> Option<AuthUser> {
+///
+/// `Ok(None)` is "no live device holds this key"; `Err` is "could not look",
+/// and the caller must not read the second as the first.
+pub(crate) async fn validate_iroh_peer(
+    pool: &PgPool,
+    node_id: &str,
+) -> Result<Option<AuthUser>, sqlx::Error> {
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT u.id, d.id, d.label \
          FROM app_device d \
@@ -190,21 +206,21 @@ pub(crate) async fn validate_iroh_peer(pool: &PgPool, node_id: &str) -> Option<A
     )
     .bind(node_id)
     .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-    let (user_id, device_id, device_label) = row?;
+    .await?;
+    let Some((user_id, device_id, device_label)) = row else {
+        return Ok(None);
+    };
 
     let _ = sqlx::query("UPDATE app_device SET last_seen_at = now() WHERE id = $1")
         .bind(&device_id)
         .execute(pool)
         .await;
 
-    Some(AuthUser {
+    Ok(Some(AuthUser {
         id: user_id,
         device_id,
         device_label,
-    })
+    }))
 }
 
 /// The build identity a client reports via
@@ -301,6 +317,17 @@ pub async fn ensure_console_device(pool: &PgPool) -> crate::Result<()> {
 fn unauthorized() -> AuthError {
     AuthError {
         error: "Unauthorized".to_string(),
+        status: StatusCode::UNAUTHORIZED,
+    }
+}
+
+/// The device lookup itself failed. Not a 401: the credential was never
+/// examined, so the honest status is "try again", and the log carries why.
+fn unavailable(e: sqlx::Error) -> AuthError {
+    tracing::error!(error = %e, "device lookup failed during authentication");
+    AuthError {
+        error: "Authentication store unavailable".to_string(),
+        status: StatusCode::SERVICE_UNAVAILABLE,
     }
 }
 

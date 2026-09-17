@@ -6,13 +6,23 @@
 //! update server for every paired client — no CDN, no cloud, over whatever
 //! transport already reaches the box.
 //!
-//! **Why the box is the only source.** A client that can only ever run a bundle
-//! the box handed it cannot get ahead of the box. That kills a whole class of
-//! bug by construction: on 2026-08-05 a TestFlight build shipped UI calling
-//! `/api/wiki/day/{date}/heart-rate?tz=…` against a box with no `tz` handler,
-//! and the box silently ignored the unknown parameter — wrong midnight, no
-//! error, unfindable from the UI. The bundle carrying that call can only ship
-//! from a box that also has the handler.
+//! **Why the box is the only source.** Because it is the only source certain to
+//! have the API the UI calls. On 2026-08-05 a TestFlight build shipped UI
+//! calling `/api/wiki/day/{date}/heart-rate?tz=…` against a box with no `tz`
+//! handler, and the box silently ignored the unknown parameter — wrong
+//! midnight, no error, unfindable from the UI. A bundle carrying that call can
+//! only be served by a box that also has the handler.
+//!
+//! **This no longer kills that class by construction**, and the comment here
+//! claimed it did until 2026-09-14. The claim rested on a client never being
+//! able to get ahead of its box, which stopped being true when the client
+//! learned to refuse a downgrade: a phone updates on Apple's cadence and a box
+//! when its owner runs `virtues upgrade`, so a shell carrying UI newer than the
+//! box's is ordinary, and it now keeps that UI instead of taking the box's
+//! older one. See the "Forward only" section in
+//! `apps/web/src-tauri/src/web_bundle.rs` for the trade and what would close
+//! the class properly (a bundle declaring a minimum BOX, mirroring
+//! `minShellVersion`). Nothing on this side enforces it today.
 //!
 //! **What is NOT here.** Applying a bundle — unpack, atomic flip, rollback —
 //! is the client's job, and the `minShellVersion` in the manifest is what stops
@@ -35,10 +45,19 @@ use crate::server::webhook::AppState;
 /// `apps/web/scripts/write-bundle-manifest.mjs`.
 const MANIFEST_NAME: &str = ".virtues-bundle.json";
 
-/// Resolve the directory the box serves the web UI from. Mirrors the same
-/// `STATIC_DIR` default as `server/mod.rs` — the two must agree, or the box
-/// would hand out a manifest describing a build it is not serving.
-fn static_dir() -> PathBuf {
+/// Resolve the directory the box serves the web UI from.
+///
+/// THE one definition. It used to be two — this and an identical literal in
+/// `server/mod.rs` — under a comment saying "the two must agree, or the box
+/// would hand out a manifest describing a build it is not serving". That is
+/// the right requirement and a convention is the wrong way to hold it: the
+/// consequence of a drift is a client told the box serves a build it does not.
+/// `server/mod.rs` calls this now, so agreement is structural.
+///
+/// The default is relative to the process's working directory, which is what
+/// makes `make dev` work from a checkout. A box sets `STATIC_DIR` outright
+/// (`/usr/local/share/virtues/web`; see `cli/upgrade.rs`).
+pub fn static_dir() -> PathBuf {
     PathBuf::from(
         std::env::var("STATIC_DIR").unwrap_or_else(|_| "../../apps/web/build".to_string()),
     )
@@ -151,6 +170,10 @@ pub async fn tarball_handler(State(_state): State<AppState>) -> impl IntoRespons
 
 /// Tar + gzip `dir`, with paths relative to it so a client unpacks into its own
 /// bundle directory without a leading component to strip.
+///
+/// The `.gz` siblings the web build writes beside each asset (for the box's
+/// own precompressed serving) are skipped: a phone unpacks and serves the
+/// originals from disk, so shipping both would double every OTA for nothing.
 fn build_tarball(dir: &Path) -> anyhow::Result<Vec<u8>> {
     use flate2::{write::GzEncoder, Compression};
 
@@ -159,9 +182,36 @@ fn build_tarball(dir: &Path) -> anyhow::Result<Vec<u8>> {
     // Text assets compress well and the archive is transient; favor speed of
     // the walk over squeezing the last few percent.
     builder.follow_symlinks(false);
-    builder.append_dir_all(".", dir)?;
+    append_tree(&mut builder, dir, Path::new(""))?;
     let encoder = builder.into_inner()?;
     Ok(encoder.finish()?)
+}
+
+fn append_tree<W: std::io::Write>(
+    builder: &mut tar::Builder<W>,
+    root: &Path,
+    rel: &Path,
+) -> anyhow::Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(root.join(rel))?.collect::<Result<_, _>>()?;
+    // Deterministic order, so two tarballs of one build are byte-identical.
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let name = entry.file_name();
+        let rel_path = rel.join(&name);
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            builder.append_dir(&rel_path, entry.path())?;
+            append_tree(builder, root, &rel_path)?;
+        } else if rel_path.extension().is_some_and(|ext| ext == "gz") {
+            continue;
+        } else {
+            builder.append_path_with_name(entry.path(), &rel_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -218,6 +268,8 @@ mod tests {
         fs::write(src.join("index.html"), "<html>box</html>").unwrap();
         fs::create_dir_all(src.join("_app")).unwrap();
         fs::write(src.join("_app/chunk.js"), "console.log(1)").unwrap();
+        // The box's precompressed sibling — served by the box, never shipped.
+        fs::write(src.join("_app/chunk.js.gz"), "not really gzip").unwrap();
         fs::write(src.join(MANIFEST_NAME), r#"{"contentHash":"deadbeef"}"#).unwrap();
 
         let gz = build_tarball(&src).expect("tarball");
@@ -228,6 +280,10 @@ mod tests {
 
         assert_eq!(fs::read_to_string(dest.join("index.html")).unwrap(), "<html>box</html>");
         assert_eq!(fs::read_to_string(dest.join("_app/chunk.js")).unwrap(), "console.log(1)");
+        assert!(
+            !dest.join("_app/chunk.js.gz").exists(),
+            "precompressed siblings must not ride in the OTA tarball"
+        );
         // The manifest must ride inside, so an unpacked bundle carries its own
         // identity and a client never has to remember what it downloaded.
         assert!(dest.join(MANIFEST_NAME).is_file(), "manifest travels in the archive");

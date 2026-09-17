@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { Page } from "$lib";
+	import { Button, IconButton, Page } from "$lib";
 	import type { DriveFile } from "$lib/api/client";
 	import {
 		listDriveTrash,
@@ -322,13 +322,13 @@
 				{trashFiles.length === 1 ? "item" : "items"}
 			</span>
 			{#if trashFiles.length > 0}
-				<button
-					class="flex items-center gap-2 px-3 py-1.5 text-sm text-error hover:bg-error/10 rounded-lg transition-colors"
+				<Button
+					variant="danger"
+					size="sm"
+					icon="ri:delete-bin-line"
 					onclick={() => (showEmptyTrashModal = true)}
+					>Empty Trash</Button
 				>
-					<Icon icon="ri:delete-bin-line" />
-					Empty Trash
-				</button>
 			{/if}
 		</div>
 
@@ -392,28 +392,25 @@
 				</td>
 				<td class="px-3 py-2.5 text-right">
 					<div class="flex items-center justify-end gap-1">
-						<button
-							class="p-1 text-foreground-subtle hover:text-success transition-colors"
+						<IconButton
+							icon="ri:arrow-go-back-line"
+							label="Restore {file.filename}"
+							size="sm"
 							onclick={(e) => {
 								e.stopPropagation();
 								fileToRestore = file;
 							}}
-							aria-label="Restore {file.filename}"
-							title="Restore"
-						>
-							<Icon icon="ri:arrow-go-back-line" />
-						</button>
-						<button
-							class="p-1 text-foreground-subtle hover:text-error transition-colors"
+						/>
+						<IconButton
+							icon="ri:delete-bin-7-line"
+							label="Delete {file.filename} forever"
+							size="sm"
+							variant="danger"
 							onclick={(e) => {
 								e.stopPropagation();
 								fileToPurge = file;
 							}}
-							aria-label="Delete forever {file.filename}"
-							title="Delete forever"
-						>
-							<Icon icon="ri:delete-bin-7-line" />
-						</button>
+						/>
 					</div>
 				</td>
 			{/snippet}
@@ -432,28 +429,25 @@
 						{file.days_remaining === 1 ? "day" : "days"} left
 					</span>
 					<div class="flex items-center gap-1">
-						<button
-							class="p-1 text-foreground-subtle hover:text-success transition-colors"
+						<IconButton
+							icon="ri:arrow-go-back-line"
+							label="Restore {file.filename}"
+							size="sm"
 							onclick={(e) => {
 								e.stopPropagation();
 								fileToRestore = file;
 							}}
-							aria-label="Restore {file.filename}"
-							title="Restore"
-						>
-							<Icon icon="ri:arrow-go-back-line" />
-						</button>
-						<button
-							class="p-1 text-foreground-subtle hover:text-error transition-colors"
+						/>
+						<IconButton
+							icon="ri:delete-bin-7-line"
+							label="Delete {file.filename} forever"
+							size="sm"
+							variant="danger"
 							onclick={(e) => {
 								e.stopPropagation();
 								fileToPurge = file;
 							}}
-							aria-label="Delete forever {file.filename}"
-							title="Delete forever"
-						>
-							<Icon icon="ri:delete-bin-7-line" />
-						</button>
+						/>
 					</div>
 				</div>
 			{/snippet}
@@ -487,19 +481,14 @@
 		{/if}
 	</p>
 	{#snippet footer()}
-		<button
-			class="modal-btn modal-btn-secondary"
-			onclick={() => (fileToRestore = null)}
+		<Button
+			variant="secondary"
+			size="sm"
+			onclick={() => (fileToRestore = null)}>Cancel</Button
 		>
-			Cancel
-		</button>
-		<button
-			class="modal-btn bg-success text-surface hover:bg-success/90 disabled:opacity-50"
-			onclick={handleRestore}
-			disabled={restoring}
+		<Button size="sm" loading={restoring} onclick={handleRestore}
+			>Restore</Button
 		>
-			{restoring ? "Restoring..." : "Restore"}
-		</button>
 	{/snippet}
 </Modal>
 
@@ -518,19 +507,14 @@
 	</p>
 	<p class="text-error font-medium mt-2">This action cannot be undone.</p>
 	{#snippet footer()}
-		<button
-			class="modal-btn modal-btn-secondary"
-			onclick={() => (fileToPurge = null)}
+		<Button
+			variant="secondary"
+			size="sm"
+			onclick={() => (fileToPurge = null)}>Cancel</Button
 		>
-			Cancel
-		</button>
-		<button
-			class="modal-btn bg-error text-white hover:bg-error disabled:opacity-50"
-			onclick={handlePurge}
-			disabled={purging}
+		<Button variant="danger" size="sm" loading={purging} onclick={handlePurge}
+			>Delete Forever</Button
 		>
-			{purging ? "Deleting..." : "Delete Forever"}
-		</button>
 	{/snippet}
 </Modal>
 
@@ -548,19 +532,17 @@
 	</p>
 	<p class="text-error font-medium mt-2">This action cannot be undone.</p>
 	{#snippet footer()}
-		<button
-			class="modal-btn modal-btn-secondary"
-			onclick={() => (showEmptyTrashModal = false)}
+		<Button
+			variant="secondary"
+			size="sm"
+			onclick={() => (showEmptyTrashModal = false)}>Cancel</Button
 		>
-			Cancel
-		</button>
-		<button
-			class="modal-btn bg-error text-white hover:bg-error disabled:opacity-50"
-			onclick={handleEmptyTrash}
-			disabled={emptyingTrash}
+		<Button
+			variant="danger"
+			size="sm"
+			loading={emptyingTrash}
+			onclick={handleEmptyTrash}>Empty Trash</Button
 		>
-			{emptyingTrash ? "Emptying..." : "Empty Trash"}
-		</button>
 	{/snippet}
 </Modal>
 

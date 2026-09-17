@@ -25,6 +25,7 @@
 -->
 <script lang="ts">
 	import Icon from '@iconify/svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { reopenOnboarding } from '$lib/api/client';
 
 	let armed = $state(false);
@@ -70,18 +71,18 @@
 				box up again from the app, using the words it shows on its screen.
 			</p>
 			<div class="row">
-				<button class="danger" onclick={go} disabled={busy}>
-					{busy ? 'Unpairing…' : 'Unpair everything'}
-				</button>
-				<button class="quiet" onclick={() => (armed = false)} disabled={busy}>
+				<Button variant="danger" size="sm" loading={busy} onclick={go}>
+					Unpair everything
+				</Button>
+				<Button variant="ghost" size="sm" disabled={busy} onclick={() => (armed = false)}>
 					Cancel
-				</button>
+				</Button>
 			</div>
 		</div>
 	{:else}
-		<button class="quiet outline" onclick={() => (armed = true)}>
+		<Button variant="secondary" size="sm" class="self-start" onclick={() => (armed = true)}>
 			Put this box back into setup
-		</button>
+		</Button>
 	{/if}
 </section>
 
@@ -138,45 +139,9 @@
 		gap: 8px;
 	}
 
-	button {
-		font: inherit;
-		font-size: 13px;
-		padding: 6px 12px;
-		border-radius: 6px;
-		cursor: pointer;
-		border: 1px solid transparent;
-	}
-
-	button:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-
-	.outline {
-		align-self: flex-start;
-	}
-
-	.quiet {
-		background: none;
-		border-color: var(--color-border);
-		color: var(--color-foreground-muted);
-	}
-
-	.quiet:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
-		color: var(--color-foreground);
-	}
-
-	/* The only red on this screen, spent on the only irreversible thing. */
-	.danger {
-		background: color-mix(in srgb, #e5484d 16%, transparent);
-		border-color: color-mix(in srgb, #e5484d 45%, transparent);
-		color: #ff9ea1;
-	}
-
-	.danger:hover:not(:disabled) {
-		background: color-mix(in srgb, #e5484d 26%, transparent);
-	}
+	/* The red on this screen is spent on the only irreversible thing, and it
+	   comes from `Button`'s `danger` — the hand-rolled tint here predated the
+	   primitive having one. */
 
 	.err {
 		display: flex;

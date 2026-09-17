@@ -6,29 +6,34 @@
 		getPlaceById,
 		getOrganizationById,
 		getDayByDate,
+		type WikiPersonApi,
+		type WikiPlaceApi,
+		type WikiOrganizationApi,
+		type WikiDayApi,
 	} from "$lib/wiki/api";
 	import {
-		apiToPersonPage,
-		apiToPlacePage,
-		apiToOrganizationPage,
-		apiToDayPage,
-	} from "$lib/wiki/converters";
-	import {
-		WikiPage,
 		YearPage,
 		DayPage,
 		PersonPage,
 		PlacePage,
 		OrganizationPage,
 	} from "$lib/components/wiki";
-	import {
-		isDayPage,
-		isPersonPage,
-		isPlacePage,
-		isOrganizationPage,
-		isYearPage,
-	} from "$lib/wiki/types";
-	import type { WikiPage as WikiPageType } from "$lib/wiki/types";
+
+	/**
+	 * What this view is holding, discriminated by the route that loaded it.
+	 *
+	 * There used to be a `WikiPage` union of five converted page types, with
+	 * `isDayPage`-style guards over a `type` field the converters stamped on.
+	 * The guards were the only reason that field existed. `kind` is set right
+	 * here, beside the fetch that decides it, and the wire shapes go through
+	 * untouched — which is what the year page has done since it was written,
+	 * and it reads better than the four that did not.
+	 */
+	type Loaded =
+		| { kind: "day"; page: WikiDayApi }
+		| { kind: "person"; page: WikiPersonApi }
+		| { kind: "place"; page: WikiPlaceApi }
+		| { kind: "organization"; page: WikiOrganizationApi };
 
 	interface Props {
 		/** The entity ID to display (e.g., person_abc123, day_2026-01-25) */
@@ -43,7 +48,9 @@
 
 	let loading = $state(true);
 	let error = $state<string | null>(null);
-	let wikiPage = $state<WikiPageType | undefined>(undefined);
+	let wikiPage = $state<Loaded | undefined>(undefined);
+	/** Set when the route is a year; rendered on its own. */
+	let yearNumber = $state<number | null>(null);
 
 	// Parse a date string (YYYY-MM-DD) as local date to avoid timezone issues
 	function parseDateString(dateStr: string): Date {
@@ -92,7 +99,7 @@
 					// identifier is the date: 2026-01-25
 					const day = await getDayByDate(identifier);
 					if (day) {
-						wikiPage = apiToDayPage(day);
+						wikiPage = { kind: "day", page: day };
 						// Update label with formatted date
 						const date = parseDateString(identifier);
 						const formatted = date.toLocaleDateString("en-US", {
@@ -108,15 +115,24 @@
 				}
 
 				case "year": {
-					// TODO: Implement year API
-					error = `Year pages not yet implemented`;
+					// A year does not go through the WikiPage union: it is its own
+					// shape (days with ledes, a chapter dateline, and the state the
+					// box decided), and squeezing it into the entity type would
+					// lose exactly the parts that make it a year.
+					const y = Number(entityId.replace(/^year_/, ""));
+					if (Number.isFinite(y)) {
+						yearNumber = y;
+						updateLabel(String(y));
+					} else {
+						error = `Not a year: ${entityId}`;
+					}
 					break;
 				}
 
 				case "person": {
 					const person = await getPersonById(entityId);
 					if (person) {
-						wikiPage = apiToPersonPage(person);
+						wikiPage = { kind: "person", page: person };
 						updateLabel(person.name);
 					} else {
 						error = `Person "${entityId}" not found`;
@@ -127,7 +143,7 @@
 				case "place": {
 					const place = await getPlaceById(entityId);
 					if (place) {
-						wikiPage = apiToPlacePage(place);
+						wikiPage = { kind: "place", page: place };
 						updateLabel(place.name);
 					} else {
 						error = `Place "${entityId}" not found`;
@@ -138,7 +154,7 @@
 				case "org": {
 					const org = await getOrganizationById(entityId);
 					if (org) {
-						wikiPage = apiToOrganizationPage(org);
+						wikiPage = { kind: "organization", page: org };
 						updateLabel(org.name);
 					} else {
 						error = `Organization "${entityId}" not found`;
@@ -200,19 +216,17 @@
 			<h1>Page not found</h1>
 			<p>{error}</p>
 		</div>
+	{:else if yearNumber !== null}
+		<YearPage year={yearNumber} />
 	{:else if wikiPage}
-		{#if isDayPage(wikiPage)}
-			<DayPage page={wikiPage} />
-		{:else if isPersonPage(wikiPage)}
-			<PersonPage page={wikiPage} />
-		{:else if isPlacePage(wikiPage)}
-			<PlacePage page={wikiPage} />
-		{:else if isOrganizationPage(wikiPage)}
-			<OrganizationPage page={wikiPage} />
-		{:else if isYearPage(wikiPage)}
-			<YearPage page={wikiPage} />
-		{:else}
-			<WikiPage page={wikiPage} />
+		{#if wikiPage.kind === "day"}
+			<DayPage page={wikiPage.page} />
+		{:else if wikiPage.kind === "person"}
+			<PersonPage page={wikiPage.page} />
+		{:else if wikiPage.kind === "place"}
+			<PlacePage page={wikiPage.page} />
+		{:else if wikiPage.kind === "organization"}
+			<OrganizationPage page={wikiPage.page} />
 		{/if}
 	{:else}
 		<div class="error">

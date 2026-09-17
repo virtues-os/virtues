@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import UniversalPicker from "./UniversalPicker.svelte";
+	import TextAction from "./TextAction.svelte";
 	import {
 		getRecommendedModels,
 		getAssistantProfile,
@@ -297,15 +298,15 @@
 				follows whatever model we currently recommend, and moves when we move
 				it. Pick a model to pin it — we won't change it.
 			</p>
-			<button
-				class="text-xs text-foreground-muted hover:text-foreground underline underline-offset-2"
+			<TextAction
+				quiet
 				onclick={() =>
 					windowShellStore.navigate("/virtues/models", {
 						label: "Settings",
 					})}
 			>
 				Browse all {models.length} models in the catalog →
-			</button>
+			</TextAction>
 		</div>
 	{/if}
 </div>

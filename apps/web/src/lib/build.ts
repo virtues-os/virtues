@@ -107,9 +107,33 @@ export function installClientHeader(): void {
 // kiosk has its own recovery (`restart_display`), and the bundled mobile SPA
 // serves its chunks locally (a box upgrade cannot strand it), so this guards
 // exactly the surfaces that had none.
+//
+// WHAT THIS CAN AND CANNOT SEE. `X-Virtues-Box-Build` is stamped from the
+// BINARY's compiled-in commit, once, into a OnceLock — so it moves when the box
+// process is replaced and at no other time. `virtues upgrade --only web`
+// refreshes the served build with no binary swap and no restart
+// (`cli/upgrade.rs`), which flips exactly the web/ slot this guard exists to
+// notice, and moves nothing this guard reads. That blind spot is covered
+// elsewhere, by the sidebar chip polling SvelteKit's own `/_app/version.json`;
+// this stays as the fast path for the common case, a box that restarted.
 
 let boxBuild: string | null = null;
 let reloadArmed = false;
+const boxMovedListeners = new Set<() => void>();
+
+/**
+ * Run `cb` when the box's build changes under this page; returns an unsubscribe.
+ *
+ * The reload below only ever happens once the page is hidden, which is right —
+ * nobody should have a page reloaded out from under them mid-sentence — but it
+ * leaves a page that STAYS visible with no signal at all until something else
+ * notices. This is that something else: the sidebar chip re-checks on the spot
+ * instead of waiting out its ten-minute poll.
+ */
+export function onBoxBuildChanged(cb: () => void): () => void {
+	boxMovedListeners.add(cb);
+	return () => boxMovedListeners.delete(cb);
+}
 
 function noteBoxBuild(r: Response): void {
 	if (window.location.protocol === 'virtues:') return; // bundled SPA — chunks are local
@@ -119,13 +143,27 @@ function noteBoxBuild(r: Response): void {
 		boxBuild = b;
 		return;
 	}
-	if (b === boxBuild || reloadArmed) return;
+	if (b === boxBuild) return;
+	boxBuild = b;
+	for (const cb of boxMovedListeners) {
+		// One listener throwing must not cost the others their notification,
+		// nor take down the fetch whose response this is riding.
+		try {
+			cb();
+		} catch {
+			/* a subscriber's problem, not this page's */
+		}
+	}
+	if (reloadArmed) return;
 	reloadArmed = true;
 	if (document.hidden) {
 		window.location.reload();
 	} else {
-		document.addEventListener('visibilitychange', () => {
-			if (document.hidden) window.location.reload();
-		});
+		const onHide = () => {
+			if (!document.hidden) return; // becoming visible is not the moment
+			document.removeEventListener('visibilitychange', onHide);
+			window.location.reload();
+		};
+		document.addEventListener('visibilitychange', onHide);
 	}
 }

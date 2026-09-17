@@ -13,7 +13,7 @@
 //! Streams responses through virtues-api for budget enforcement and usage tracking.
 
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response, Sse},
     Json,
@@ -21,13 +21,16 @@ use axum::{
 use chrono::Utc;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
+use tracing::Instrument;
 use sqlx::PgPool;
 use std::convert::Infallible;
 use std::pin::Pin;
+
+use crate::api::live_turn::{self, LiveTurns};
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 
-use crate::agent::{AgentConfig, AgentEvent, AgentLoop};
+use crate::agent::{AgentConfig, AgentEvent, AgentLoop, FinishReason, StepReason};
 use crate::api::chat_usage::{record_chat_usage, UsageData};
 use crate::api::chats::{append_message, ChatMessage, ToolCall};
 use crate::api::compaction::{build_context_for_llm, compact_chat, CompactionOptions};
@@ -134,9 +137,16 @@ pub struct ChatRequest {
     /// Optional active page context for AI page editing
     #[serde(rename = "activePage")]
     pub active_page: Option<ActivePageContext>,
-    /// Optional Gemini thought signature for subsequent tool calls
-    #[serde(rename = "thoughtSignature")]
-    pub thought_signature: Option<String>,
+    /// Why the client sent this request: `submit-message` (the default, and
+    /// what a client older than the field means) or `regenerate-message`
+    /// (SDK 7's spelling; the docs' `regenerate-assistant-message` is also
+    /// read). On regenerate the client has removed
+    /// its last assistant message and sends no new user turn, so the box
+    /// removes its own copy of that message and answers the last user turn
+    /// again. Before this the box kept the old answer in history, and the
+    /// model "regenerated" with its previous reply in front of it.
+    #[serde(default)]
+    pub trigger: Option<String>,
     /// User's timezone (IANA format, e.g., "America/Los_Angeles")
     #[serde(default)]
     pub timezone: Option<String>,
@@ -151,6 +161,112 @@ pub struct ChatRequest {
     /// Ignored without a notebook_id.
     #[serde(rename = "chatMode", default = "default_chat_mode")]
     pub chat_mode: String,
+    /// A temporary ("ghost") chat: nothing about it is written to the box.
+    /// No chat row, no messages, no usage row. Its history arrives on the
+    /// request every turn, because the box holds none.
+    ///
+    /// The client has sent this flag since ghost mode shipped and promised
+    /// "never persisted" in its UI, while the box, which had no field to
+    /// read, created the row and stored every message anyway. The only
+    /// thing that still records a ghost turn is `app_ai_calls`: cost and
+    /// token counts, no content, no chat id.
+    #[serde(default)]
+    pub temporary: bool,
+}
+
+/// A ghost chat's history, as the client sent it. The box stores nothing for
+/// a temporary chat, so the wire is the only transcript. Text parts become
+/// content; tool parts ride along in `parts` for the converter downstream.
+fn ghost_history(messages: &[UIMessage]) -> Vec<ChatMessage> {
+    messages
+        .iter()
+        .filter(|m| m.role == "user" || m.role == "assistant")
+        .map(|m| {
+            let content = m.content.clone().unwrap_or_else(|| {
+                m.parts
+                    .as_ref()
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter_map(|p| match p {
+                                UIPart::Text { text } => Some(text.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_default()
+            });
+            ChatMessage {
+                id: m.id.clone(),
+                role: m.role.clone(),
+                content,
+                timestamp: Timestamp::now(),
+                model: None,
+                provider: None,
+                agent_id: None,
+                parts: m.parts.clone(),
+                tool_calls: None,
+                reasoning: None,
+                intent: None,
+                subject: None,
+                reasoning_details: None,
+            }
+        })
+        .filter(|m| !m.content.is_empty() || m.parts.is_some())
+        .collect()
+}
+
+/// Materialize a turn's ordered `parts` from the pieces the stream collected.
+///
+/// Text runs keep their order relative to the tool calls that ran between them,
+/// which is the whole point: the LAST text run is the reply, and everything
+/// before it is the model narrating its way there.
+///
+/// A tool id in `turn_slots` with no matching entry in `tool_calls` is skipped
+/// rather than written as an empty invocation — that only happens if the stream
+/// ended between a tool starting and being recorded, and a part with no name or
+/// input tells a reader nothing except that something is missing.
+fn build_turn_parts(
+    turn_slots: &[TurnSlot],
+    text_segments: &[String],
+    tool_calls: &[crate::api::chats::ToolCall],
+) -> Vec<UIPart> {
+    let mut parts = Vec::with_capacity(turn_slots.len());
+    for slot in turn_slots {
+        match slot {
+            TurnSlot::Text(i) => {
+                let Some(text) = text_segments.get(*i) else { continue };
+                // A run that produced nothing is not a paragraph of silence.
+                if text.trim().is_empty() {
+                    continue;
+                }
+                parts.push(UIPart::Text { text: text.clone() });
+            }
+            TurnSlot::Tool(id) => {
+                let Some(tc) = tool_calls
+                    .iter()
+                    .find(|tc| tc.tool_call_id.as_deref() == Some(id.as_str()))
+                else {
+                    continue;
+                };
+                parts.push(UIPart::ToolInvocation {
+                    tool_call_id: id.clone(),
+                    tool_name: tc.tool_name.clone(),
+                    input: tc.arguments.clone(),
+                    // The turn is over by the time this runs, so anything that
+                    // returned has its output and anything that did not, did not.
+                    state: if tc.result.is_some() {
+                        "output-available".to_string()
+                    } else {
+                        "input-available".to_string()
+                    },
+                    output: tc.result.clone(),
+                });
+            }
+        }
+    }
+    parts
 }
 
 fn default_chat_mode() -> String {
@@ -179,6 +295,19 @@ pub struct UIMessage {
     // Legacy format support
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+}
+
+/// Where one piece of a turn sat in time.
+///
+/// The row already stores the turn's text (`content`) and its tool calls
+/// (`tool_calls`), but nothing recorded the ORDER they interleaved in — so a
+/// reload could show what was said and what was called, never which was said
+/// before which call. `parts` is built from this at save time.
+enum TurnSlot {
+    /// An index into the turn's text segments.
+    Text(usize),
+    /// A tool call id, resolved against `all_tool_calls` for its input/output.
+    Tool(String),
 }
 
 /// UI Part types
@@ -314,16 +443,41 @@ pub enum StreamEvent {
         output: serde_json::Value,
     },
 
+    // Tool failure (AI SDK: tool-output-error). The UI's `output-error`
+    // branches waited on this for months while failures rode inside
+    // tool-output-available.
+    #[serde(rename = "tool-output-error")]
+    ToolOutputError {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "errorText")]
+        error_text: String,
+    },
+
     // Error handling
     Error {
         #[serde(rename = "errorText")]
         error_text: String,
     },
 
-    // Custom event to sync thought signature to client
-    #[serde(rename = "thought-signature")]
-    ThoughtSignature {
-        signature: String,
+    // Message and step framing. `start` opens the message; each agent-loop
+    // step is bracketed by start-step / finish-step (the SDK needs the
+    // boundary to keep a tool call and the text after it apart); `finish`
+    // says how the turn ended, and is the only place the client learns a
+    // reply was cut short. `abort` is the person's own stop.
+    Start {
+        #[serde(rename = "messageId")]
+        message_id: String,
+    },
+    StartStep,
+    FinishStep,
+    Finish {
+        #[serde(rename = "finishReason")]
+        finish_reason: String,
+    },
+    Abort {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
 
     // The interview's write_it_up finished: tell the client which page to open
@@ -392,12 +546,6 @@ struct CheckpointData {
     messages_summarized: i32,
     summary: String,
     timestamp: String,
-}
-
-/// Thought signature data payload for AI SDK v6 data event
-#[derive(Debug, Serialize)]
-struct ThoughtSignatureData {
-    signature: String,
 }
 
 /// Narrative-document-ready payload for AI SDK v6 data event
@@ -508,19 +656,6 @@ fn serialize_event(event: &StreamEvent) -> String {
             };
             serde_json::to_string(&wrapper).unwrap_or_else(|e| {
                 tracing::error!("Failed to serialize checkpoint event: {}", e);
-                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
-            })
-        }
-        // Wrap thought signature events in AI SDK v6 data event format
-        StreamEvent::ThoughtSignature { signature } => {
-            let wrapper = DataEvent {
-                event_type: "data-thought-signature".to_string(),
-                id: None,
-                data: ThoughtSignatureData { signature: signature.clone() },
-                transient: true, // Ephemeral - only needed during streaming session
-            };
-            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
-                tracing::error!("Failed to serialize thought-signature event: {}", e);
                 r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
             })
         }
@@ -726,7 +861,28 @@ async fn build_system_prompt(
     // persona, no data context, no narrative-identity injection (the document
     // this conversation exists to create). Its prompt stands alone.
     if agent_mode == "interview" {
-        return crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name);
+        // The person's reply count is the one fact about progress the box can
+        // vouch for; the prompt reads it as a floor on what can be covered.
+        let their_replies = crate::api::narrative_draft::their_reply_count(pool)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "interview reply count unavailable; prompt says 0");
+                0
+            });
+        return crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name, their_replies);
+    }
+
+    // Getting started: its own prompt plus the derived state, regenerated per
+    // turn so the model never holds a step done that the rows say is open.
+    if agent_mode == crate::api::getting_started::AGENT_MODE {
+        let block = match crate::api::getting_started::compute(pool).await {
+            Ok(s) => s.render_prompt_block(),
+            Err(e) => {
+                tracing::warn!(error = %e, "getting-started state unavailable for the prompt");
+                "<getting_started>\n(state unavailable this turn; say so if asked, never guess)\n</getting_started>".to_string()
+            }
+        };
+        return crate::agent::prompt::build_getting_started_prompt(&assistant_name, &user_name, &block);
     }
 
     build_system_prompt_blocks(
@@ -1030,6 +1186,38 @@ pub async fn chat_handler(
     State(pool): State<PgPool>,
     State(yjs_state): State<YjsState>,
     State(cancel_state): State<ChatCancellationState>,
+    State(live_turns): State<LiveTurns>,
+    user: AuthUser,
+    Json(request): Json<ChatRequest>,
+) -> Response {
+    // One turn, one key. Nothing persists a turn id — a turn is a request, not
+    // a row — so two turns in the same chat are otherwise indistinguishable in
+    // the log, which is exactly what you are reading the log to tell apart.
+    // The span nests inside the request span, so a line carries both this and
+    // the `request_id` the client was handed back.
+    //
+    // `.instrument()` on the future, not `.entered()` in the body: this is an
+    // async handler, and the guard `entered()` returns is not `Send`, so
+    // holding one across an await makes the handler future non-`Send` — which
+    // axum rejects, confusingly, as "not a Handler".
+    let span = crate::observe::turn_span(&request.chat_id, &crate::observe::new_turn_id());
+    chat_handler_inner(
+        State(pool),
+        State(yjs_state),
+        State(cancel_state),
+        State(live_turns),
+        user,
+        Json(request),
+    )
+    .instrument(span)
+    .await
+}
+
+async fn chat_handler_inner(
+    State(pool): State<PgPool>,
+    State(yjs_state): State<YjsState>,
+    State(cancel_state): State<ChatCancellationState>,
+    State(live_turns): State<LiveTurns>,
     _user: AuthUser,
     Json(mut request): Json<ChatRequest>,
 ) -> Response {
@@ -1039,6 +1227,34 @@ pub async fn chat_handler(
     // opt the interview into tools by sending a different agentMode.
     if request.chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID {
         request.agent_mode = "interview".to_string();
+    }
+    // Getting started is the same kind of room: its mode is the chat id's —
+    // and, once the interview has begun inside it, the interviewer's.
+    if request.chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
+        request.agent_mode = match crate::api::getting_started::compute(&pool).await {
+            Ok(s) => s.agent_mode().to_string(),
+            Err(e) => {
+                tracing::warn!(error = %e, "getting-started state unavailable; setup mode");
+                crate::api::getting_started::AGENT_MODE.to_string()
+            }
+        };
+    }
+
+    // No model, no turn — said in one sentence here, not as whatever the
+    // gateway call fails with. Any room: the composer is inert while locked,
+    // but no client can be trusted to be.
+    if !crate::api::getting_started::ai_connected(&pool).await {
+        return (
+            StatusCode::CONFLICT,
+            Json(ChatError {
+                error: "AI is not connected".to_string(),
+                details: Some(
+                    "This server has nothing to answer with yet. Connect a Virtues subscription or your own AI endpoint in Getting started."
+                        .to_string(),
+                ),
+            }),
+        )
+            .into_response();
     }
 
     // Which model answers. One door — the box decides, from the mode and the
@@ -1125,25 +1341,29 @@ pub async fn chat_handler(
         }
     };
 
+    // A ghost chat has no row. Everything below that reads or writes
+    // app_chats / app_chat_messages / app_chat_usage branches on this.
+    let temporary = request.temporary;
+
     // Use ON CONFLICT DO NOTHING to handle concurrent requests for same chat
     // Returns rows_affected = 1 if inserted, 0 if already exists
-    let insert_result =
-        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0) ON CONFLICT (id) DO NOTHING")
+    let chat_was_created = if temporary {
+        false
+    } else {
+        match sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0) ON CONFLICT (id) DO NOTHING")
             .bind(&chat_id_str)
             .bind(&title)
             .execute(&pool)
-            .await;
-
-    let chat_was_created = match insert_result {
-        Ok(result) => result.rows_affected() > 0,
-        Err(e) => {
-            tracing::error!("Failed to create chat: {}", e);
-            false
+            .await
+        {
+            Ok(result) => result.rows_affected() > 0,
+            Err(e) => {
+                tracing::error!("Failed to create chat: {}", e);
+                false
+            }
         }
     };
 
-    // Bind the chat to its Notebook on first creation (stores notebook_id + folds
-    // the chat into the Notebook's membership).
     if chat_was_created {
         if let Err(e) =
             crate::api::notebooks::set_chat_notebook(&pool, &chat_id_str, request.notebook_id.as_deref()).await
@@ -1152,8 +1372,32 @@ pub async fn chat_handler(
         }
     }
 
-    // Save the last user message to the chat
-    if let Some(last_user_msg) = request.messages.iter().rev().find(|m| m.role == "user") {
+    // Regenerate: the client has dropped its last assistant message and is
+    // asking for the last user turn to be answered again. Drop the box's copy
+    // too, or the model answers with its previous reply in front of it.
+    let regenerating = matches!(
+        request.trigger.as_deref(),
+        Some("regenerate-message") | Some("regenerate-assistant-message")
+    );
+    if regenerating && !temporary {
+        if let Err(e) = sqlx::query(
+            "DELETE FROM app_chat_messages \
+             WHERE chat_id = $1 AND role = 'assistant' \
+               AND sequence_num > COALESCE((SELECT MAX(sequence_num) FROM app_chat_messages \
+                                            WHERE chat_id = $1 AND role = 'user'), 0)",
+        )
+        .bind(&chat_id_str)
+        .execute(&pool)
+        .await
+        {
+            tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not drop the previous answer");
+        }
+    }
+
+    // Save the last user message to the chat. Not on regenerate: there is no
+    // new user turn, and a client that still sends the full history would
+    // otherwise re-append the last one.
+    if let Some(last_user_msg) = request.messages.iter().rev().filter(|_| !regenerating).find(|m| m.role == "user") {
         // Normal flow: save the last user message from the request
         let user_content = last_user_msg.content.clone().unwrap_or_else(|| {
             last_user_msg
@@ -1184,120 +1428,133 @@ pub async fn chat_handler(
             reasoning: None,
             intent: None,
             subject: None,
-            thought_signature: None,
+            reasoning_details: None,
         };
 
-        if let Err(e) = append_message(&pool, request.chat_id.clone(), user_message).await {
+        if temporary {
+            // Ghost: the message lives in the client's tab and nowhere else.
+        } else if let Err(e) = append_message(&pool, request.chat_id.clone(), user_message).await {
             tracing::error!("Failed to save user message: {}", e);
         }
     }
 
-    // Check if compaction is needed before sending to LLM
-    let compaction_status =
-        crate::api::chat_usage::check_compaction_needed(&pool, request.chat_id.clone(), &model)
-            .await;
-
-    // Pass compaction_needed flag to stream - compaction will run inside stream
-    // and emit a checkpoint event for real-time UI updates
-    let compaction_needed = matches!(compaction_status, Ok(ContextStatus::Critical));
-
-    // Load chat from DB and build context with compaction summary
-    let chat_row = match sqlx::query(
-        r#"SELECT conversation_summary, summary_up_to_index
-           FROM app_chats WHERE id = $1"#,
-    )
-    .bind(&chat_id_str)
-    .fetch_one(&pool)
-    .await
-    {
-        Ok(row) => row,
-        Err(e) => {
-            tracing::error!("Failed to load chat: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ChatError {
-                    error: "Failed to load chat".to_string(),
-                    details: Some(e.to_string()),
-                }),
-            )
-                .into_response();
-        }
+    // Check if compaction is needed before sending to LLM. A ghost chat has
+    // no usage row to read and no summary to write, so it never compacts.
+    let compaction_needed = if temporary {
+        false
+    } else {
+        let compaction_status =
+            crate::api::chat_usage::check_compaction_needed(&pool, request.chat_id.clone(), &model)
+                .await;
+        // Pass compaction_needed flag to stream - compaction will run inside stream
+        // and emit a checkpoint event for real-time UI updates
+        matches!(compaction_status, Ok(ContextStatus::Critical))
     };
 
     use sqlx::Row;
-    let conversation_summary: Option<String> = chat_row.get("conversation_summary");
-    let summary_up_to_index: i64 = chat_row.get("summary_up_to_index");
 
-    // Load messages from normalized table
-    let message_rows = match sqlx::query(
-        r#"
-        SELECT
-            id, role, content, created_at, model, provider, agent_id,
-            reasoning, tool_calls, intent, subject, thought_signature, parts
-        FROM app_chat_messages
-        WHERE chat_id = $1
-        ORDER BY sequence_num ASC
-        "#,
-    )
-    .bind(&chat_id_str)
-    .fetch_all(&pool)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(e) => {
-            tracing::error!("Failed to load messages for chat {}: {}", chat_id_str, e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ChatError {
-                    error: "Failed to load messages".to_string(),
-                    details: Some(e.to_string()),
-                }),
-            )
-                .into_response();
+    // Load chat from DB and build context with compaction summary
+    let (conversation_summary, summary_up_to_index): (Option<String>, i64) = if temporary {
+        (None, 0)
+    } else {
+        match sqlx::query(
+            r#"SELECT conversation_summary, summary_up_to_index
+               FROM app_chats WHERE id = $1"#,
+        )
+        .bind(&chat_id_str)
+        .fetch_one(&pool)
+        .await
+        {
+            Ok(row) => (row.get("conversation_summary"), row.get("summary_up_to_index")),
+            Err(e) => {
+                tracing::error!("Failed to load chat: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ChatError {
+                        error: "Failed to load chat".to_string(),
+                        details: Some(e.to_string()),
+                    }),
+                )
+                    .into_response();
+            }
         }
     };
 
-    // Convert rows to ChatMessage
-    let messages: Vec<ChatMessage> = message_rows
-        .into_iter()
-        .map(|msg| {
-            let id: String = msg.get("id");
-            let role: String = msg.get("role");
-            let content: String = msg.get("content");
-            let created_at: Timestamp = msg.get("created_at");
-            let model: Option<String> = msg.get("model");
-            let provider: Option<String> = msg.get("provider");
-            let agent_id: Option<String> = msg.get("agent_id");
-            let reasoning: Option<String> = msg.get("reasoning");
-            // Columns are jsonb; read as serde_json::Value, not String
-            let tool_calls_raw: Option<serde_json::Value> = msg.get("tool_calls");
-            let intent_raw: Option<serde_json::Value> = msg.get("intent");
-            let subject: Option<String> = msg.get("subject");
-            let thought_signature: Option<String> = msg.get("thought_signature");
-            let parts_raw: Option<serde_json::Value> = msg.get("parts");
-
-            // Parse JSON fields
-            let tool_calls = tool_calls_raw.and_then(|t| serde_json::from_value(t).ok());
-            let intent = intent_raw.and_then(|i| serde_json::from_value(i).ok());
-            let parts = parts_raw.and_then(|p| serde_json::from_value(p).ok());
-
-            ChatMessage {
-                id: Some(id),
-                role,
-                content,
-                timestamp: created_at,
-                model,
-                provider,
-                agent_id,
-                parts,
-                reasoning,
-                tool_calls,
-                intent,
-                subject,
-                thought_signature,
+    // The transcript: the box's rows, or for a ghost chat the client's copy.
+    let messages: Vec<ChatMessage> = if temporary {
+        ghost_history(&request.messages)
+    } else {
+        // Load messages from normalized table
+        let message_rows = match sqlx::query(
+            r#"
+            SELECT
+                id, role, content, created_at, model, provider, agent_id,
+                reasoning, tool_calls, intent, subject, reasoning_details, parts
+            FROM app_chat_messages
+            WHERE chat_id = $1
+            ORDER BY sequence_num ASC
+            "#,
+        )
+        .bind(&chat_id_str)
+        .fetch_all(&pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::error!("Failed to load messages for chat {}: {}", chat_id_str, e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ChatError {
+                        error: "Failed to load messages".to_string(),
+                        details: Some(e.to_string()),
+                    }),
+                )
+                    .into_response();
             }
-        })
-        .collect();
+        };
+
+        // Convert rows to ChatMessage
+        message_rows
+            .into_iter()
+            .map(|msg| {
+                let id: String = msg.get("id");
+                let role: String = msg.get("role");
+                let content: String = msg.get("content");
+                let created_at: Timestamp = msg.get("created_at");
+                let model: Option<String> = msg.get("model");
+                let provider: Option<String> = msg.get("provider");
+                let agent_id: Option<String> = msg.get("agent_id");
+                let reasoning: Option<String> = msg.get("reasoning");
+                // Columns are jsonb; read as serde_json::Value, not String
+                let tool_calls_raw: Option<serde_json::Value> = msg.get("tool_calls");
+                let intent_raw: Option<serde_json::Value> = msg.get("intent");
+                let subject: Option<String> = msg.get("subject");
+                let reasoning_details: Option<serde_json::Value> = msg.get("reasoning_details");
+                let parts_raw: Option<serde_json::Value> = msg.get("parts");
+
+                // Parse JSON fields
+                let tool_calls = tool_calls_raw.and_then(|t| serde_json::from_value(t).ok());
+                let intent = intent_raw.and_then(|i| serde_json::from_value(i).ok());
+                let parts = parts_raw.and_then(|p| serde_json::from_value(p).ok());
+
+                ChatMessage {
+                    id: Some(id),
+                    role,
+                    content,
+                    timestamp: created_at,
+                    model,
+                    provider,
+                    agent_id,
+                    parts,
+                    reasoning,
+                    tool_calls,
+                    intent,
+                    subject,
+                    reasoning_details,
+                }
+            })
+            .collect()
+    };
 
     // Resolve the chat's room from the persisted row (single source of truth) so
     // the active-notebook context always matches the binding, even if a stale client
@@ -1310,7 +1567,11 @@ pub async fn chat_handler(
     // query failure. A swallow here is not cosmetic: None reads as "not in a
     // notebook", so a broken query silently unscopes a scoped chat — retrieval
     // stops being hard-filtered and the answer contract below is dropped.
-    let effective_notebook_id: Option<String> = match sqlx::query_scalar::<_, Option<String>>(
+    // A ghost chat has no row to read it from; the request is the binding.
+    let effective_notebook_id: Option<String> = if temporary {
+        request.notebook_id.clone()
+    } else {
+        match sqlx::query_scalar::<_, Option<String>>(
         r#"SELECT notebook_id FROM app_chats WHERE id = $1"#,
     )
     .bind(&chat_id_str)
@@ -1329,6 +1590,7 @@ pub async fn chat_handler(
                 }),
             )
                 .into_response();
+        }
         }
     };
 
@@ -1355,34 +1617,75 @@ pub async fn chat_handler(
         Some(&system_prompt),
     );
 
-    let stream = {
-        create_agent_stream(
-            pool,
-            yjs_state,
-            cancel_state,
-            request,
-            model,
-            api_messages,
-            msg_id,
-            compaction_needed,
-        )
-    };
+    // The turn is driven by its own task and outlives this request: a tab
+    // switched or a phone locked used to drop the response, the loop with
+    // it, and the assistant row was never written (VIR-323). This response
+    // is one watcher on the turn; `GET /api/chat/{id}/stream` is another.
+    let turn = live_turns.start(&chat_id_str);
+    let agent_stream = create_agent_stream(
+        pool,
+        yjs_state,
+        cancel_state.clone(),
+        request,
+        model,
+        api_messages,
+        msg_id,
+        compaction_needed,
+    );
+    {
+        let turn = turn.clone();
+        let live_turns = live_turns.clone();
+        let chat_id = chat_id_str.clone();
+        tokio::spawn(async move {
+            let mut agent_stream = agent_stream;
+            while let Some(data) = agent_stream.next().await {
+                turn.push(data);
+                // Nobody watching for the cap: stop spending on a reply no
+                // one will read. The loop sees the token at its next step
+                // and the row is saved as a stop, like the button.
+                if turn.unattended_past(live_turn::UNATTENDED_CAP) {
+                    tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
+                    cancel_state.cancel(&chat_id);
+                }
+            }
+            // After the stream's own tail (row written, usage recorded), so
+            // a watcher that sees the end can reload and find the row.
+            live_turns.finish(&chat_id, &turn);
+        });
+    }
 
-    // AI SDK v6 requires this header for UI Message Stream Protocol
+    ui_stream_response(live_turn::watch(turn))
+}
+
+/// GET /api/chat/{id}/stream — the turn still running for this chat, from
+/// its first event: everything said so far, then the rest as it happens.
+/// `204 No Content` when nothing is running, which is what the AI SDK's
+/// `resumeStream` expects for "nothing to resume".
+pub async fn live_turn_stream_handler(
+    State(live_turns): State<LiveTurns>,
+    _user: AuthUser,
+    Path(chat_id): Path<String>,
+) -> Response {
+    match live_turns.get(&chat_id) {
+        Some(turn) => ui_stream_response(live_turn::watch(turn)),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
+/// An SSE response in the AI SDK's UI Message Stream protocol (the header
+/// is what the SDK keys on).
+fn ui_stream_response<S>(stream: S) -> Response
+where
+    S: Stream<Item = Result<SseEvent, Infallible>> + Send + 'static,
+{
     let mut response = Sse::new(stream)
         .keep_alive(axum::response::sse::KeepAlive::new())
         .into_response();
-
     response.headers_mut().insert(
         axum::http::header::HeaderName::from_static("x-vercel-ai-ui-message-stream"),
         axum::http::HeaderValue::from_static("v1"),
     );
-
-    // We can't easily send the signature in headers for a streaming response
-    // because it's discovered DURING the stream.
-    // However, the frontend can extract it from the stream itself if we emit a special event.
-
-    response.into_response()
+    response
 }
 
 /// Create the SSE stream using the AgentLoop for tool execution
@@ -1398,8 +1701,11 @@ fn create_agent_stream(
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
     compaction_needed: bool,
-) -> Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> {
+) -> Pin<Box<dyn Stream<Item = String> + Send>> {
     let chat_id = request.chat_id.clone();
+    // Copied out for the stream block below, which reads `request` for a
+    // few fields and must not persist a ghost turn either.
+    let temporary = request.temporary;
     let agent_id = request.agent_id.clone();
 
     Box::pin(async_stream::stream! {
@@ -1420,7 +1726,7 @@ fn create_agent_stream(
                 Ok(_) => {
                     // Fetch the checkpoint message that was just created
                     if let Some(checkpoint_event) = get_latest_checkpoint(&pool, &chat_id).await {
-                        yield Ok(SseEvent::default().data(serialize_event(&checkpoint_event)));
+                        yield (serialize_event(&checkpoint_event));
                     }
                 }
                 Err(e) => {
@@ -1480,19 +1786,55 @@ fn create_agent_stream(
 
         let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
 
-        // Send text-start event
-        let start_event = StreamEvent::TextStart { id: msg_id.clone() };
-        yield Ok(SseEvent::default().data(serialize_event(&start_event)));
+        // The message opens, then its first step. Text and reasoning parts
+        // open lazily inside a step and close with it: the SDK forgets its
+        // open parts at every finish-step, so a part that spans steps is a
+        // delta with no home. (The turn used to stream as one text part
+        // for its whole length, which is why it could never emit steps.)
+        yield (serialize_event(&StreamEvent::Start { message_id: msg_id.clone() }));
+        yield (serialize_event(&StreamEvent::StartStep));
 
         // Track accumulated content
         let mut full_content = String::new();
         let mut reasoning_content = String::new();
         let mut in_reasoning = false;
-        // The whole turn streams as ONE text part (single TextStart/TextEnd), so
-        // text emitted across agent steps would otherwise concatenate with no
-        // separator ("…exact text.The earlier edit…"). When text resumes after a
-        // tool call, insert a paragraph break so each narration reads on its own.
+        let mut text_open = false;
+        // The row stores the turn's text as one string, so text that resumes
+        // after a tool call gets a paragraph break IN THE ROW ("…exact
+        // text.The earlier edit…" otherwise). On the wire each step's text is
+        // its own part and needs none.
         let mut needs_text_break = false;
+        // ONE PART PER TEXT RUN, and a distinct id for each.
+        //
+        // The comment above has always said "on the wire each step's text is
+        // its own part" — and the events were right, but every one of them
+        // carried `msg_id`. The AI SDK keys a part by its id, so a second
+        // `text-start` with the id it just closed REOPENS the first part and
+        // appends to it. Every run of text in a turn merged into one block,
+        // which is why the line the model writes before reaching for a tool
+        // ("Checking what he sent in August") is indistinguishable, on the
+        // client, from the answer it writes at the end.
+        //
+        // They are not the same thing. The first is scaffolding — it says what
+        // is about to happen and is worth reading WHILE it happens; the second
+        // is the reply. Giving each run its own id is what lets the view put
+        // the scaffolding in the thinking block and leave the answer in the
+        // transcript.
+        let mut text_seq = 0usize;
+        let mut text_part_id = msg_id.clone();
+        let mut text_segments: Vec<String> = Vec::new();
+        // The turn in order, so the stored `parts` can interleave text with the
+        // tool calls it ran between — a reload then sees what the stream saw.
+        let mut turn_slots: Vec<TurnSlot> = Vec::new();
+        // Set by any error event mid-turn: the reply on screen is partial,
+        // and the row must say so or a reload shows the stub as the answer.
+        let mut interrupted = false;
+        // How the last LLM step ended, and how the loop ended: together they
+        // are the `finish` event's reason and the row's subject.
+        let mut last_step_reason: Option<StepReason> = None;
+        let mut loop_finish: Option<FinishReason> = None;
+        // The gateway's reasoning blocks across the turn's steps, for the row.
+        let mut reasoning_details: Vec<serde_json::Value> = Vec::new();
 
         // Token usage tracking
         let mut total_input_tokens: u32 = 0;
@@ -1511,13 +1853,6 @@ fn create_agent_stream(
             api_messages.clone(),
             tools,
             context,
-            request.thought_signature.clone().or_else(|| {
-                // Fallback: look for signature in the last assistant message of the history
-                api_messages.iter().rev()
-                    .filter_map(|m| m.get("thought_signature").and_then(|s| s.as_str()))
-                    .next()
-                    .map(|s| s.to_string())
-            }),
             Some(cancel_token.clone()),
         );
 
@@ -1534,7 +1869,7 @@ fn create_agent_stream(
                     status: update.status.as_str().to_string(),
                     tokens: update.tokens,
                 };
-                yield Ok(SseEvent::default().data(serialize_event(&ev)));
+                yield (serialize_event(&ev));
             }
             maybe_event = agent_stream.next() => {
               let event = match maybe_event {
@@ -1547,45 +1882,53 @@ fn create_agent_stream(
                     if in_reasoning {
                         in_reasoning = false;
                         let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
-                        yield Ok(SseEvent::default().data(serialize_event(&event)));
+                        yield (serialize_event(&event));
                     }
-                    // Text resuming after a tool call: break the paragraph so it
-                    // doesn't butt against the previous segment's final sentence.
-                    let delta = if needs_text_break
-                        && !full_content.is_empty()
-                        && !full_content.ends_with('\n')
-                    {
-                        format!("\n\n{}", content)
-                    } else {
-                        content
-                    };
+                    if !text_open {
+                        text_open = true;
+                        text_seq += 1;
+                        text_part_id = format!("{msg_id}:t{text_seq}");
+                        turn_slots.push(TurnSlot::Text(text_segments.len()));
+                        text_segments.push(String::new());
+                        yield (serialize_event(&StreamEvent::TextStart { id: text_part_id.clone() }));
+                    }
+                    // Text resuming after a tool call: break the paragraph in
+                    // the stored string so it doesn't butt against the previous
+                    // segment's final sentence.
+                    if needs_text_break && !full_content.is_empty() && !full_content.ends_with('\n') {
+                        full_content.push_str("\n\n");
+                    }
                     needs_text_break = false;
-                    full_content.push_str(&delta);
+                    full_content.push_str(&content);
+                    if let Some(seg) = text_segments.last_mut() {
+                        seg.push_str(&content);
+                    }
                     let event = StreamEvent::TextDelta {
-                        id: msg_id.clone(),
-                        delta,
+                        id: text_part_id.clone(),
+                        delta: content,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 AgentEvent::ReasoningDelta { content } => {
                     if !in_reasoning {
                         in_reasoning = true;
                         let event = StreamEvent::ReasoningStart { id: msg_id.clone() };
-                        yield Ok(SseEvent::default().data(serialize_event(&event)));
+                        yield (serialize_event(&event));
                     }
                     reasoning_content.push_str(&content);
                     let event = StreamEvent::ReasoningDelta {
                         id: msg_id.clone(),
                         delta: content,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 AgentEvent::ToolCallStart { id, name, args } => {
                     // Any text that resumes after this tool call starts a new
                     // paragraph (see needs_text_break).
                     needs_text_break = true;
+                    turn_slots.push(TurnSlot::Tool(id.clone()));
                     // Track tool call for persistence
                     all_tool_calls.push(ToolCall {
                         tool_name: name.clone(),
@@ -1599,7 +1942,7 @@ fn create_agent_stream(
                         tool_call_id: id,
                         tool_name: name,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 AgentEvent::ToolCallArgsPartial { id, args_delta } => {
@@ -1608,7 +1951,7 @@ fn create_agent_stream(
                         tool_call_id: id,
                         input_text_delta: args_delta,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
                 AgentEvent::ToolCallArgsComplete { id, args } => {
@@ -1623,10 +1966,25 @@ fn create_agent_stream(
                         tool_name,
                         input: args,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                 }
 
-                AgentEvent::ToolCallResult { id, result, success: _, error: _ } => {
+                AgentEvent::ToolCallResult { id, result, success: false, error } => {
+                    // A failed tool is a tool error on the wire, not an output
+                    // with an error inside it. The model still sees the
+                    // failure text (executor::to_llm_content); the row keeps
+                    // it as the result so a reload shows the same.
+                    let error_text = error
+                        .or_else(|| result.get("error").and_then(|e| e.as_str()).map(str::to_string))
+                        .unwrap_or_else(|| "the tool reported a failure".to_string());
+                    if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
+                        tc.result = Some(serde_json::json!({ "error": error_text }));
+                    }
+                    let event = StreamEvent::ToolOutputError { tool_call_id: id, error_text };
+                    yield (serialize_event(&event));
+                }
+
+                AgentEvent::ToolCallResult { id, result, success: true, error: _ } => {
                     // Update the tracked tool call with the result
                     if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
                         tc.result = Some(result.clone());
@@ -1652,10 +2010,10 @@ fn create_agent_stream(
                         tool_call_id: id,
                         output: result,
                     };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
                     if let Some(page_id) = narrative_page {
                         let event = StreamEvent::NarrativeDocumentReady { page_id };
-                        yield Ok(SseEvent::default().data(serialize_event(&event)));
+                        yield (serialize_event(&event));
                     }
                 }
 
@@ -1670,21 +2028,41 @@ fn create_agent_stream(
                     }
                 }
 
-                AgentEvent::ThoughtSignature { signature } => {
-                    let event = StreamEvent::ThoughtSignature { signature };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                AgentEvent::ReasoningDetails { details } => {
+                    reasoning_details.extend(details);
                 }
 
                 AgentEvent::Error { message, code: _, recoverable: _ } => {
+                    interrupted = true;
                     let event = StreamEvent::Error { error_text: message };
-                    yield Ok(SseEvent::default().data(serialize_event(&event)));
+                    yield (serialize_event(&event));
+                }
+
+                // A step ended. Close it on the wire; when the model asked for
+                // tools, the next LLM call is a new step and opens one.
+                AgentEvent::StepComplete { reason, .. } => {
+                    last_step_reason = Some(reason);
+                    if in_reasoning {
+                        in_reasoning = false;
+                        yield (serialize_event(&StreamEvent::ReasoningEnd { id: msg_id.clone() }));
+                    }
+                    if text_open {
+                        text_open = false;
+                        yield (serialize_event(&StreamEvent::TextEnd { id: text_part_id.clone() }));
+                    }
+                    yield (serialize_event(&StreamEvent::FinishStep));
+                    if reason == StepReason::ToolCalls {
+                        yield (serialize_event(&StreamEvent::StartStep));
+                    }
+                }
+
+                AgentEvent::Done { finish_reason, .. } => {
+                    loop_finish = Some(finish_reason);
                 }
 
                 // Events we don't need to forward to client
                 AgentEvent::LoopStarted { .. } |
-                AgentEvent::StepComplete { .. } |
-                AgentEvent::MessageId { .. } |
-                AgentEvent::Done { .. } => {}
+                AgentEvent::MessageId { .. } => {}
               }
             }
           }
@@ -1700,28 +2078,48 @@ fn create_agent_stream(
                 status: update.status.as_str().to_string(),
                 tokens: update.tokens,
             };
-            yield Ok(SseEvent::default().data(serialize_event(&ev)));
+            yield (serialize_event(&ev));
         }
 
         // End reasoning if we were in it
         if in_reasoning {
             let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
-            yield Ok(SseEvent::default().data(serialize_event(&event)));
+            yield (serialize_event(&event));
         }
 
-        // Send text-end event
-        let end_event = StreamEvent::TextEnd { id: msg_id.clone() };
-        yield Ok(SseEvent::default().data(serialize_event(&end_event)));
+        // Close a text part a step left open (an error or a stop mid-step).
+        if text_open {
+            yield (serialize_event(&StreamEvent::TextEnd { id: text_part_id.clone() }));
+        }
+
+        // How it ended, in the SDK's words. A person's stop is an abort, not
+        // a finish. Otherwise the loop's verdict wins over the last step's,
+        // and the last step's over "stop".
+        let was_cancelled = cancel_token.is_cancelled();
+        let cut_short = last_step_reason == Some(StepReason::MaxTokens);
+        if was_cancelled || loop_finish == Some(FinishReason::Cancelled) {
+            yield (serialize_event(&StreamEvent::Abort { reason: Some("stopped".to_string()) }));
+        } else {
+            let finish_reason = match (loop_finish, last_step_reason) {
+                (Some(FinishReason::Error), _) => "error",
+                (Some(FinishReason::MaxSteps), _) | (Some(FinishReason::AwaitingUser), _) => "other",
+                (_, Some(StepReason::MaxTokens)) => "length",
+                (_, Some(StepReason::ContentFilter)) => "content-filter",
+                (_, Some(StepReason::ToolCalls)) => "tool-calls",
+                _ if interrupted => "error",
+                _ => "stop",
+            };
+            yield (serialize_event(&StreamEvent::Finish { finish_reason: finish_reason.to_string() }));
+        }
 
         // Send [DONE] marker
-        yield Ok(SseEvent::default().data("[DONE]"));
+        yield ("[DONE]".to_string());
 
         // Save assistant message to chat
         if !full_content.is_empty() {
             let provider = model.split('/').next().unwrap_or("unknown").to_string();
-            // Mark the message as user-stopped so the UI can show a "Stopped"
-            // notice on reload (the partial content is kept either way).
-            let was_cancelled = cancel_token.is_cancelled();
+            // The row says how the turn ended so a reload shows the same
+            // notice: the person's stop, the output cap, or an interruption.
             let assistant_message = ChatMessage {
                 id: None,
                 role: "assistant".to_string(),
@@ -1733,13 +2131,76 @@ fn create_agent_stream(
                 tool_calls: if all_tool_calls.is_empty() { None } else { Some(all_tool_calls.clone()) },
                 reasoning: if reasoning_content.is_empty() { None } else { Some(reasoning_content.clone()) },
                 intent: None,
-                subject: if was_cancelled { Some("cancelled".to_string()) } else { None },
-                thought_signature: None,
-                parts: None,
+                // "interrupted": the stream or the model stopped before the
+                // reply was finished (VIR-334). The UI reads both on reload
+                // and shows a notice under the stub; a person's stop wins.
+                subject: if was_cancelled {
+                    Some("cancelled".to_string())
+                } else if cut_short {
+                    Some("length".to_string())
+                } else if interrupted {
+                    Some("interrupted".to_string())
+                } else {
+                    None
+                },
+                reasoning_details: if reasoning_details.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::Value::Array(reasoning_details.clone()))
+                },
+                // THE TURN IN ORDER — the column was written as `None` by every
+                // caller and was null in every row on every box, while the
+                // client rebuilt an approximation from `content` + `tool_calls`
+                // that could only ever produce ONE text part. That is what made
+                // a reopened chat unable to tell the model's "checking his
+                // messages now" from its actual answer: the distinction was
+                // never on disk to begin with.
+                //
+                // `content` still holds the whole turn joined, because that is
+                // what the model is shown as its own history and what every
+                // older row has. This is additive: a row without `parts` falls
+                // back to the legacy reconstruction exactly as before.
+                parts: {
+                    let parts = build_turn_parts(&turn_slots, &text_segments, &all_tool_calls);
+                    if parts.is_empty() { None } else { Some(parts) }
+                },
             };
 
-            if let Err(e) = append_message(&pool, chat_id.clone(), assistant_message).await {
+            if temporary {
+                // Ghost: nothing written. The client keeps the turn in its tab.
+            } else if let Err(e) = append_message(&pool, chat_id.clone(), assistant_message).await {
                 tracing::error!("Failed to save assistant message: {}", e);
+            } else if chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
+                /* THE ROOM SPEAKS AFTER THE TURN, NOT THIRTY SECONDS LATER.
+                 *
+                 * `narrate` used to run only from the GET and the two POST
+                 * handlers, and no TOOL called it — so a step settled by
+                 * `record_introductions` or `write_it_up` left the room
+                 * silent until the client's 30-second poll. Because narrate
+                 * only ever appends, the line then landed at the BOTTOM of
+                 * the transcript rather than where it belonged in the walk.
+                 *
+                 * Measured on the dev box: introductions were recorded at
+                 * message 4 and "Introductions are made." arrived at message
+                 * 28 — under the person's "whats next?", together with the
+                 * other three settled lines and the graduated line, as a
+                 * backlog. Worse, the MODEL had already answered the question
+                 * at 27 in its own words, so the authored ending landed
+                 * underneath a thinner version of itself.
+                 *
+                 * Here is the right instant: the assistant's turn is on disk,
+                 * so the coda appends directly beneath the sentence that
+                 * earned it. Best-effort — a room that cannot speak must
+                 * never fail a turn that already succeeded.
+                 */
+                match crate::api::getting_started::compute(&pool).await {
+                    Ok(state) => {
+                        if let Err(e) = crate::api::getting_started::narrate(&pool, &state).await {
+                            tracing::warn!(error = %e, "the room could not speak after a turn");
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "getting-started state after a turn"),
+                }
             }
 
             // Record token usage. `cost_micros` is the gateway's authoritative
@@ -1754,7 +2215,10 @@ fn create_agent_stream(
                 cost_micros: Some(total_cost_micros),
             };
 
-            if let Err(e) = record_chat_usage(&pool, chat_id.clone(), &model, usage_data).await {
+            if temporary {
+                // Ghost: app_chat_usage keys on a chat row that does not exist.
+                // app_ai_calls below still records cost and counts, no content.
+            } else if let Err(e) = record_chat_usage(&pool, chat_id.clone(), &model, usage_data).await {
                 tracing::warn!(
                     chat_id = %chat_id,
                     error = %e,
@@ -1849,6 +2313,94 @@ pub async fn cancel_chat_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tool(id: &str, name: &str, result: Option<serde_json::Value>) -> crate::api::chats::ToolCall {
+        crate::api::chats::ToolCall {
+            tool_name: name.to_string(),
+            tool_call_id: Some(id.to_string()),
+            arguments: serde_json::json!({}),
+            result,
+            timestamp: "2026-09-16T00:00:00Z".to_string(),
+        }
+    }
+
+    fn kinds(parts: &[UIPart]) -> Vec<String> {
+        parts
+            .iter()
+            .map(|p| match p {
+                UIPart::Text { text } => format!("text:{}", text.trim()),
+                UIPart::ToolInvocation { tool_name, state, .. } => {
+                    format!("tool:{tool_name}:{state}")
+                }
+                _ => "other".to_string(),
+            })
+            .collect()
+    }
+
+    /// The order is the whole point. Without it a reload can say what was said
+    /// and what was called, but never which was said BEFORE which call — and
+    /// that distinction is what separates the model narrating its way to an
+    /// answer from the answer itself.
+    #[test]
+    fn a_turn_keeps_the_order_its_text_and_tools_happened_in() {
+        let slots = vec![
+            TurnSlot::Text(0),
+            TurnSlot::Tool("c1".into()),
+            TurnSlot::Text(1),
+            TurnSlot::Tool("c2".into()),
+            TurnSlot::Text(2),
+        ];
+        let segments = vec![
+            "Checking his messages.".to_string(),
+            "Nothing in August. Looking at September.".to_string(),
+            "He sent it on the 3rd.".to_string(),
+        ];
+        let calls = vec![
+            tool("c1", "sql_query", Some(serde_json::json!({"rows": []}))),
+            tool("c2", "semantic_search", Some(serde_json::json!({"rows": []}))),
+        ];
+
+        assert_eq!(
+            kinds(&build_turn_parts(&slots, &segments, &calls)),
+            [
+                "text:Checking his messages.",
+                "tool:sql_query:output-available",
+                "text:Nothing in August. Looking at September.",
+                "tool:semantic_search:output-available",
+                "text:He sent it on the 3rd.",
+            ]
+        );
+    }
+
+    /// A turn that ends on a tool call has no reply yet. The view reads "text
+    /// with a tool after it" as narration, so an empty trailing run must not be
+    /// written — it would present itself as an answer of nothing.
+    #[test]
+    fn empty_runs_and_unrecorded_tools_are_left_out() {
+        let slots = vec![
+            TurnSlot::Text(0),
+            TurnSlot::Tool("c1".into()),
+            TurnSlot::Text(1),
+            // Started, never recorded: the stream ended in between.
+            TurnSlot::Tool("c_ghost".into()),
+        ];
+        let segments = vec!["Looking it up.".to_string(), "   \n ".to_string()];
+        let calls = vec![tool("c1", "sql_query", None)];
+
+        assert_eq!(
+            kinds(&build_turn_parts(&slots, &segments, &calls)),
+            ["text:Looking it up.", "tool:sql_query:input-available"],
+            "a tool that never returned still shows, as awaiting output"
+        );
+    }
+
+    /// The overwhelmingly common turn: a question, an answer, no tools. It must
+    /// come out as one text part, or every plain reply would look like narration.
+    #[test]
+    fn a_turn_with_no_tools_is_all_reply() {
+        let parts = build_turn_parts(&[TurnSlot::Text(0)], &["Yes.".to_string()], &[]);
+        assert_eq!(kinds(&parts), ["text:Yes."]);
+    }
 
     /// The rules block is the one place where a silent failure means the box
     /// raises a subject someone asked it never to raise. These tests exist
@@ -2114,3 +2666,134 @@ mod live_prompt_audit {
     }
 }
 
+
+#[cfg(test)]
+mod ghost_tests {
+    use super::*;
+
+    fn ui(role: &str, text: Option<&str>, parts: Option<Vec<UIPart>>) -> UIMessage {
+        UIMessage { id: None, role: role.into(), parts, content: text.map(str::to_string) }
+    }
+
+    /// A ghost chat's transcript is exactly what the client sent: user and
+    /// assistant turns, text drawn from parts when there is no content, and
+    /// nothing else (no system rows, no empty rows).
+    #[test]
+    fn ghost_history_is_the_wire_and_only_the_wire() {
+        let history = ghost_history(&[
+            ui("system", Some("ignored"), None),
+            ui("user", None, Some(vec![UIPart::Text { text: "hello".into() }, UIPart::Text { text: "there".into() }])),
+            ui("assistant", Some("hi"), None),
+            ui("user", None, None),
+        ]);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[0].content, "hello\nthere");
+        assert_eq!(history[1].content, "hi");
+    }
+}
+
+/// The UI-message stream, as the box emits it, recorded for the frontend.
+///
+/// Two fixtures under `apps/web/src/lib/ai/fixtures/` are the exact JSON
+/// lines a browser receives for a canonical turn (two steps, a tool result,
+/// a tool error, reasoning, a data part, `finish`) and for a stopped turn
+/// (`abort`). A vitest there feeds them through the AI SDK's own transport
+/// and parser. This test fails when the fixture no longer matches what
+/// `serialize_event` produces, so a changed event shape cannot ship unseen;
+/// regenerate with `UPDATE_FIXTURES=1 cargo test -p virtues --lib ui_stream_fixture`
+/// and run `pnpm test:unit` in apps/web to see whether the SDK still parses it.
+#[cfg(test)]
+mod ui_stream_fixture {
+    use super::*;
+
+    fn canonical_turn() -> Vec<StreamEvent> {
+        let id = "msg_fixture".to_string();
+        // Each run of text carries its OWN id (`{msg}:t{n}`) — see the stream
+        // loop. The step boundary is what actually ends a part, so the ids were
+        // cosmetic until the view began telling the runs apart; they are here so
+        // the fixture is what the box sends, not a simplification of it.
+        let t1 = format!("{id}:t1");
+        let t2 = format!("{id}:t2");
+        vec![
+            StreamEvent::Start { message_id: id.clone() },
+            StreamEvent::StartStep,
+            StreamEvent::TextStart { id: t1.clone() },
+            StreamEvent::ReasoningStart { id: id.clone() },
+            StreamEvent::ReasoningDelta { id: id.clone(), delta: "weighing the ask".into() },
+            StreamEvent::ReasoningEnd { id: id.clone() },
+            StreamEvent::TextDelta { id: t1.clone(), delta: "Hello".into() },
+            StreamEvent::ToolInputStart { tool_call_id: "call_1".into(), tool_name: "web_search".into() },
+            StreamEvent::ToolInputDelta { tool_call_id: "call_1".into(), input_text_delta: "{\"query\":\"x\"}".into() },
+            StreamEvent::ToolInputAvailable {
+                tool_call_id: "call_1".into(),
+                tool_name: "web_search".into(),
+                input: serde_json::json!({"query": "x"}),
+            },
+            StreamEvent::ToolOutputAvailable {
+                tool_call_id: "call_1".into(),
+                output: serde_json::json!({"results": []}),
+            },
+            StreamEvent::TextEnd { id: t1.clone() },
+            StreamEvent::FinishStep,
+            StreamEvent::StartStep,
+            StreamEvent::TextStart { id: t2.clone() },
+            StreamEvent::TextDelta { id: t2.clone(), delta: " world".into() },
+            StreamEvent::ToolInputStart { tool_call_id: "call_2".into(), tool_name: "create_page".into() },
+            StreamEvent::ToolInputAvailable {
+                tool_call_id: "call_2".into(),
+                tool_name: "create_page".into(),
+                input: serde_json::json!({"title": "t"}),
+            },
+            StreamEvent::ToolOutputError {
+                tool_call_id: "call_2".into(),
+                error_text: "the page could not be written".into(),
+            },
+            StreamEvent::NarrativeDocumentReady { page_id: "page_fixture".into() },
+            StreamEvent::TextEnd { id: t2.clone() },
+            StreamEvent::FinishStep,
+            StreamEvent::Finish { finish_reason: "stop".into() },
+        ]
+    }
+
+    fn stopped_turn() -> Vec<StreamEvent> {
+        let id = "msg_fixture".to_string();
+        let t1 = format!("{id}:t1");
+        vec![
+            StreamEvent::Start { message_id: id.clone() },
+            StreamEvent::StartStep,
+            StreamEvent::TextStart { id: t1.clone() },
+            StreamEvent::TextDelta { id: t1.clone(), delta: "Partial".into() },
+            StreamEvent::TextEnd { id: t1.clone() },
+            StreamEvent::Abort { reason: Some("stopped".into()) },
+        ]
+    }
+
+    fn check(name: &str, events: Vec<StreamEvent>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../apps/web/src/lib/ai/fixtures")
+            .join(name);
+        let want: String = events.iter().map(|e| serialize_event(e) + "\n").collect();
+        if std::env::var("UPDATE_FIXTURES").is_ok() {
+            std::fs::write(&path, &want).expect("write fixture");
+            return;
+        }
+        let have = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e} (run with UPDATE_FIXTURES=1 to write it)", path.display()));
+        assert_eq!(
+            have, want,
+            "{} is stale: the box's event shapes changed. Regenerate with UPDATE_FIXTURES=1 and run the vitest.",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn the_canonical_turn_fixture_is_current() {
+        check("box-ui-stream.jsonl", canonical_turn());
+    }
+
+    #[test]
+    fn the_stopped_turn_fixture_is_current() {
+        check("box-ui-stream-abort.jsonl", stopped_turn());
+    }
+}

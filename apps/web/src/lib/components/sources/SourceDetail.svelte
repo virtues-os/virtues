@@ -15,6 +15,8 @@
 <script lang="ts">
 	import { Page } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import { sourcesStore, type Connection } from '$lib/stores/sources.svelte';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -75,7 +77,7 @@
 >
 	{#snippet actions()}
 		{#if source}
-			<button type="button" class="primary" onclick={() => void connect()}>{connectLabel}</button>
+			<Button variant="primary" size="sm" onclick={() => void connect()}>{connectLabel}</Button>
 		{/if}
 	{/snippet}
 
@@ -86,7 +88,7 @@
 	{#if source?.repo}
 		<p class="repo">
 			<Icon icon="ri:code-line" width="14" />
-			<button type="button" class="link" onclick={readCode}>Read the code</button>
+			<TextAction inline onclick={readCode}>Read the code</TextAction>
 			{#if source.repo_ref}<code>{source.repo_ref}</code>{/if}
 			<span class="aside">— provenance, not how it updates</span>
 		</p>
@@ -152,20 +154,6 @@
 		font-size: 0.8125rem;
 	}
 
-	.primary {
-		padding: 0.375rem 0.75rem;
-		border-radius: 6px;
-		border: 1px solid var(--color-border, #d1d5db);
-		background: var(--color-background, #fff);
-		color: var(--color-foreground, #111827);
-		font-size: 0.8125rem;
-		font-weight: 500;
-		cursor: pointer;
-	}
-	.primary:hover {
-		background: var(--color-muted, #f3f4f6);
-	}
-
 	.repo {
 		display: flex;
 		align-items: center;
@@ -180,18 +168,6 @@
 	.aside {
 		color: var(--color-foreground-subtle, #9ca3af);
 	}
-	.link {
-		border: none;
-		background: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
-	}
-	.link:hover {
-		text-decoration: underline;
-	}
-
 	.connections {
 		list-style: none;
 		margin: 0;

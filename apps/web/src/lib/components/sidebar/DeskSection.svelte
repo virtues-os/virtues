@@ -32,9 +32,15 @@
 
 	interface Props {
 		collapsed?: boolean;
+		/**
+		 * Render the spines alone — no zone header, no accordion. The panel's
+		 * own head names the room, so a ZoneHeader would be the room's name
+		 * written twice, one row apart.
+		 */
+		headless?: boolean;
 	}
 
-	let { collapsed = false }: Props = $props();
+	let { collapsed = false, headless = false }: Props = $props();
 
 	// Loaded once by the app layout; read the shared state, don't re-fetch.
 	const pins = $derived(pinsStore.pins);
@@ -128,6 +134,7 @@
 
 {#if !collapsed}
 	<div class="desk">
+		{#if !headless}
 		<ZoneHeader id="desk" label="Desk">
 			<button
 				class="sidebar-item-action"
@@ -145,14 +152,22 @@
 				</svg>
 			</button>
 		</ZoneHeader>
+		{/if}
 
 		<!-- Folds on the shared grid-rows accordion (0fr → 1fr), the same one
 		     the collections use, so a zone closing looks like every other
 		     thing that closes in this panel. -->
-		<div class="sidebar-expandable" class:expanded={!zoneCollapsed}>
+		<div class="sidebar-expandable" class:expanded={headless || !zoneCollapsed}>
 			<div class="sidebar-expandable-inner">
 				{#if pinsStore.loaded && pins.length === 0}
-					<div class="desk-empty">Nothing pinned yet</div>
+					<div class="desk-empty">
+						{#if headless}
+							Nothing here yet. Pin a day, a person, a page — anything
+							the app can name — and it stays on your desk.
+						{:else}
+							Nothing pinned yet
+						{/if}
+					</div>
 				{:else}
 					{#each pins as pin (pin.id)}
 						<div
@@ -192,6 +207,14 @@
 				     list stayed visible with the Desk shut, which is exactly one
 				     row: the first pin appeared to survive the fold. A spacer is
 				     inside the thing being folded, so it folds. -->
+				{#if headless}
+					<!-- The ZoneHeader's `+` went with the header, so the door is a
+					     row — and it is the empty state's only way out, which is why
+					     it renders whether or not there are pins. -->
+					<button type="button" class="desk-add" onclick={openPicker}>
+						Add to desk
+					</button>
+				{/if}
 				<div class="desk-tail" aria-hidden="true"></div>
 			</div>
 		</div>
@@ -216,6 +239,26 @@
 	.desk {
 		display: flex;
 		flex-direction: column;
+	}
+
+	.desk-add {
+		display: flex;
+		align-items: center;
+		width: 100%;
+		height: var(--sidebar-interactive-height);
+		padding: 0 var(--sidebar-padding-left-base);
+		border: none;
+		border-radius: var(--sidebar-interactive-radius);
+		background: none;
+		cursor: pointer;
+		text-align: left;
+		font-size: var(--sidebar-interactive-font-size);
+		color: var(--color-foreground-muted);
+	}
+
+	.desk-add:hover {
+		background: var(--sidebar-hover-bg);
+		color: var(--color-foreground);
 	}
 
 	/* The seam between Desk and Library, as a row of air the fold can carry

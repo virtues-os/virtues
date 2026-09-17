@@ -1,6 +1,13 @@
 //! Box-local per-call AI cost log (`app_ai_calls`).
 //!
-//! Virtues collects no central telemetry. The cloud wallet (virtues-api ledger)
+//! Nothing in here is reported anywhere. (This line used to open "Virtues
+//! collects no central telemetry", which was a claim about the whole product
+//! made from inside one module, and it was not true: a crash beacon posts an
+//! exit status and a journal tail to atlas by default — see `cli/diag.rs`.
+//! That is the only egress, it carries none of this table, and a module
+//! header is the wrong place to characterize the product anyway.)
+//!
+//! The cloud wallet (virtues-api ledger)
 //! is the authoritative money truth, but it has no per-call breakdown the user
 //! can see on their own box. This module records one row per paid AI call with
 //! the AUTHORITATIVE `usage.cost` the gateway returns — never re-estimated — so
@@ -96,11 +103,40 @@ pub async fn record_ai_call(pool: &PgPool, call: &AiCall) -> Result<(), sqlx::Er
     .bind(&call.applet_run_id)
     .execute(pool)
     .await?;
+
+    // The same call, on the log side. The row is the ledger a person reads
+    // back in the Usage tab; this line is what lets the *other* half of a
+    // question be answered — a chat turn that spent oddly, or an applet run
+    // that burned its budget, is now one filter away from the lines that
+    // produced it, because the enclosing span already carries `run_id` or
+    // `chat_id`/`turn_id`.
+    //
+    // At `debug`: a busy box makes many of these, and the row is already the
+    // durable record. This is here to be turned on while chasing something.
+    tracing::debug!(
+        kind = "ai.call",
+        feature = %call.feature,
+        model = %call.model,
+        prompt_tokens = call.prompt_tokens,
+        completion_tokens = call.completion_tokens,
+        reasoning_tokens = call.reasoning_tokens,
+        cost_micros = call.cost_micros,
+        route = call.route.as_str(),
+        "ai call recorded"
+    );
     Ok(())
 }
 
 /// Spend grouped by feature since `month_start` (a SQL timestamp boundary),
 /// highest cost first. Drives the Usage tab breakdown.
+///
+/// Every `SUM` here (and in the readers below) is cast `::bigint`. Postgres
+/// widens `SUM(bigint)` to `NUMERIC`, and sqlx refuses to decode `NUMERIC` as
+/// `i64` — so without the cast the query parses, runs, and then fails at the
+/// first row, which is what put "mismatched types … INT8 is not compatible
+/// with SQL type NUMERIC" on the Billing page. `COUNT(*)` is already bigint.
+/// An empty table does not dodge it: the aggregate's type is fixed at plan
+/// time, so `COALESCE(SUM(…), 0)` over zero rows is still `NUMERIC`.
 pub async fn spend_by_feature(
     pool: &PgPool,
     since: chrono::DateTime<chrono::Utc>,
@@ -109,11 +145,11 @@ pub async fn spend_by_feature(
         r#"
         SELECT COALESCE(feature, 'other') AS label,
                COUNT(*)                    AS calls,
-               COALESCE(SUM(prompt_tokens), 0)     AS prompt_tokens,
-               COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+               COALESCE(SUM(prompt_tokens), 0)::bigint     AS prompt_tokens,
+               COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens,
                -- Wallet rows only. Summing BYO cost would report someone
                -- else's bill as Virtues spend, at a value we invented.
-               COALESCE(SUM(cost_micros) FILTER (WHERE route = 'wallet'), 0) AS cost_micros,
+               COALESCE(SUM(cost_micros) FILTER (WHERE route = 'wallet'), 0)::bigint AS cost_micros,
                COUNT(*) FILTER (WHERE route = 'byo')                         AS byo_calls
         FROM app_ai_calls
         WHERE created_at >= $1
@@ -126,6 +162,55 @@ pub async fn spend_by_feature(
     .await
 }
 
+/// One day of wallet spend, for the Billing chart. Days with no calls are
+/// absent — the caller fills the run so the chart has a bar slot per day.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct DaySpend {
+    pub day: chrono::NaiveDate,
+    pub calls: i64,
+    pub cost_micros: i64,
+}
+
+/// Wallet spend per UTC day since `since`. BYO calls count toward `calls`
+/// and never toward `cost_micros`, for the reason `AiSpendBucket` gives.
+pub async fn spend_by_day(
+    pool: &PgPool,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<DaySpend>, sqlx::Error> {
+    sqlx::query_as::<_, DaySpend>(
+        r#"
+        SELECT (created_at AT TIME ZONE 'UTC')::date AS day,
+               COUNT(*) AS calls,
+               COALESCE(SUM(cost_micros) FILTER (WHERE route = 'wallet'), 0)::bigint AS cost_micros
+        FROM app_ai_calls
+        WHERE created_at >= $1
+        GROUP BY 1
+        ORDER BY 1
+        "#,
+    )
+    .bind(since)
+    .fetch_all(pool)
+    .await
+}
+
+/// Wallet spend in a half-open window — used for "this month against last
+/// month by the same date", which is the only comparison that is fair on
+/// the 4th.
+pub async fn wallet_spend_between(
+    pool: &PgPool,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(cost_micros) FILTER (WHERE route = 'wallet'), 0)::bigint
+           FROM app_ai_calls WHERE created_at >= $1 AND created_at < $2",
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_one(pool)
+    .await
+}
+
 /// Spend grouped by model since `since`, highest cost first.
 pub async fn spend_by_model(
     pool: &PgPool,
@@ -135,11 +220,11 @@ pub async fn spend_by_model(
         r#"
         SELECT COALESCE(model, 'unknown') AS label,
                COUNT(*)                    AS calls,
-               COALESCE(SUM(prompt_tokens), 0)     AS prompt_tokens,
-               COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+               COALESCE(SUM(prompt_tokens), 0)::bigint     AS prompt_tokens,
+               COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens,
                -- Wallet rows only. Summing BYO cost would report someone
                -- else's bill as Virtues spend, at a value we invented.
-               COALESCE(SUM(cost_micros) FILTER (WHERE route = 'wallet'), 0) AS cost_micros,
+               COALESCE(SUM(cost_micros) FILTER (WHERE route = 'wallet'), 0)::bigint AS cost_micros,
                COUNT(*) FILTER (WHERE route = 'byo')                         AS byo_calls
         FROM app_ai_calls
         WHERE created_at >= $1
@@ -250,4 +335,81 @@ pub async fn list_calls(pool: &PgPool, q: AiCallsQuery) -> Result<AiCallPage, sq
         items,
         total: total.0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every reader decodes on an empty table and on a populated one.
+    ///
+    /// This is the test that would have caught the Billing page error:
+    /// `SUM(bigint)` is `NUMERIC` in Postgres, sqlx will not decode that as
+    /// `i64`, and the failure only shows at row-decode time — `cargo check`
+    /// is blind to it because `sqlx::query_as` is untyped. The empty case is
+    /// included on purpose: the aggregate's type is fixed at plan time, so a
+    /// box with no calls yet fails in exactly the same way.
+    #[sqlx::test]
+    async fn spend_readers_decode_sums_as_i64(pool: PgPool) {
+        let since = chrono::Utc::now() - chrono::Duration::days(30);
+
+        assert!(spend_by_feature(&pool, since).await.unwrap().is_empty());
+        assert!(spend_by_model(&pool, since).await.unwrap().is_empty());
+        assert!(spend_by_day(&pool, since).await.unwrap().is_empty());
+        assert_eq!(
+            wallet_spend_between(&pool, since, chrono::Utc::now()).await.unwrap(),
+            0
+        );
+
+        record_ai_call(
+            &pool,
+            &AiCall {
+                feature: "chat".into(),
+                model: "m1".into(),
+                prompt_tokens: 1_000,
+                completion_tokens: 200,
+                reasoning_tokens: 0,
+                cost_micros: 5_000,
+                route: Route::Wallet,
+                applet_run_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        record_ai_call(
+            &pool,
+            &AiCall {
+                feature: "chat".into(),
+                model: "m1".into(),
+                prompt_tokens: 3_000,
+                completion_tokens: 400,
+                reasoning_tokens: 0,
+                // A BYO row: its tokens count, its price does not.
+                cost_micros: 0,
+                route: Route::Byo,
+                applet_run_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let by_feature = spend_by_feature(&pool, since).await.unwrap();
+        assert_eq!(by_feature.len(), 1);
+        let b = &by_feature[0];
+        assert_eq!((b.label.as_str(), b.calls, b.byo_calls), ("chat", 2, 1));
+        assert_eq!((b.prompt_tokens, b.completion_tokens), (4_000, 600));
+        assert_eq!(b.cost_micros, 5_000);
+
+        let by_model = spend_by_model(&pool, since).await.unwrap();
+        assert_eq!(by_model.len(), 1);
+        assert_eq!(by_model[0].label, "m1");
+        assert_eq!(by_model[0].prompt_tokens, 4_000);
+
+        let by_day = spend_by_day(&pool, since).await.unwrap();
+        assert_eq!(by_day.len(), 1);
+        assert_eq!((by_day[0].calls, by_day[0].cost_micros), (2, 5_000));
+
+        let to = chrono::Utc::now() + chrono::Duration::minutes(1);
+        assert_eq!(wallet_spend_between(&pool, since, to).await.unwrap(), 5_000);
+    }
 }

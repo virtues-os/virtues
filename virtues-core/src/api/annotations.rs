@@ -73,44 +73,6 @@ pub async fn list_annotations(pool: &PgPool, file_id: &str) -> Result<Vec<Annota
     .map_err(|e| Error::Database(format!("Failed to list annotations: {e}")))
 }
 
-/// A highlight enriched with its file's name, for the notebook-wide Highlights
-/// view (D2.5). Annotations live on files; a notebook gathers them by joining
-/// its `library` items (url = `/drive/{file_id}`) back to `app_marginalia`.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
-pub struct NotebookAnnotation {
-    pub id: String,
-    pub file_id: String,
-    pub filename: String,
-    pub page_num: Option<i32>,
-    pub quote_text: String,
-    pub color: String,
-    pub note_md: String,
-    pub created_at: Timestamp,
-    pub updated_at: Timestamp,
-}
-
-/// Every highlight across a notebook's library documents, grouped by file
-/// (reading order within each file), newest file activity first.
-pub async fn list_notebook_annotations(
-    pool: &PgPool,
-    notebook_id: &str,
-) -> Result<Vec<NotebookAnnotation>> {
-    sqlx::query_as::<_, NotebookAnnotation>(
-        "SELECT a.id, a.file_id, f.filename, a.page_num, a.quote_text, \
-                a.color, a.note_md, a.created_at, a.updated_at \
-         FROM app_marginalia a \
-         JOIN app_notebook_items ni \
-           ON ni.url = '/drive/' || a.file_id AND ni.role = 'library' \
-         JOIN app_drive_files f ON f.id = a.file_id \
-         WHERE ni.notebook_id = $1 \
-         ORDER BY a.file_id, COALESCE(a.page_num, 0), a.created_at",
-    )
-    .bind(notebook_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list notebook annotations: {e}")))
-}
-
 /// Render a file's highlights as markdown (researcher-plan D4.3).
 ///
 /// Each highlight becomes a blockquote plus a citation ref that lands back on
@@ -138,51 +100,8 @@ pub async fn export_file_annotations_md(pool: &PgPool, file_id: &str) -> Result<
     Ok(out)
 }
 
-/// Render every highlight across a notebook's library documents, grouped by
-/// file in reading order.
-pub async fn export_notebook_annotations_md(pool: &PgPool, notebook_id: &str) -> Result<String> {
-    let notebook: Option<String> =
-        sqlx::query_scalar("SELECT name FROM app_notebooks WHERE id = $1")
-            .bind(notebook_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| Error::Database(format!("export: notebook lookup: {e}")))?;
-    let title = notebook.unwrap_or_else(|| notebook_id.to_string());
-    let annos = list_notebook_annotations(pool, notebook_id).await?;
-
-    let mut out = format!("# Highlights — {title}\n");
-    if annos.is_empty() {
-        out.push_str("\n_No highlights yet._\n");
-        return Ok(out);
-    }
-    let mut current = String::new();
-    for a in &annos {
-        if a.file_id != current {
-            out.push_str(&format!("\n## {}\n", a.filename));
-            current = a.file_id.clone();
-        }
-        let anno = Annotation {
-            id: a.id.clone(),
-            file_id: a.file_id.clone(),
-            page_num: a.page_num,
-            quote_text: a.quote_text.clone(),
-            quote_prefix: String::new(),
-            quote_suffix: String::new(),
-            rects: serde_json::json!([]),
-            color: a.color.clone(),
-            note_md: a.note_md.clone(),
-            created_at: a.created_at.clone(),
-            updated_at: a.updated_at.clone(),
-        };
-        out.push('\n');
-        out.push_str(&render_annotation_md(&a.filename, &a.file_id, &anno));
-        out.push('\n');
-    }
-    Ok(out)
-}
-
-/// One highlight → blockquote + citation ref (shared by both exporters and
-/// mirrored by the client-side "send to page" formatting).
+/// One highlight → blockquote + citation ref (mirrored by the client-side
+/// "send to page" formatting).
 fn render_annotation_md(name: &str, file_id: &str, a: &Annotation) -> String {
     let label = match a.page_num {
         Some(p) => format!("{name}, p. {p}"),

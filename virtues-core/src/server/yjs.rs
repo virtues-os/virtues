@@ -292,32 +292,29 @@ fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<(Vec<u8>, bool)> {
 
 /// A doc update arriving over the WebSocket is, by definition, a human edit —
 /// the machine's writes go through `YjsState` methods server-side and never
-/// traverse a client connection. If the page is a KEPT article
-/// (`auto_update = true`), that edit claims it: the article becomes yours,
-/// and the record stops rewriting it. New evidence arrives as notes instead.
+/// traverse a client connection. (Opening a page to read sends an empty diff,
+/// which is why the caller checks that the doc actually changed first.)
 ///
-/// This is the whole authorship model: an article has exactly one pen at a
-/// time, so "whose sentence is this" never needs to be answered.
-async fn claim_article_on_user_edit(pool: &PgPool, page_id: &str) {
-    let claimed = sqlx::query_as::<_, (String, String)>(
-        "UPDATE wiki_articles SET auto_update = false \
-         WHERE page_id = $1 AND auto_update = true \
-         RETURNING subject_type, subject_id",
+/// This used to CLAIM the article: `auto_update` flipped to false and the
+/// record stopped editing it ever again, on the reasoning that an article has
+/// exactly one pen so "whose sentence is this" never needs answering. That is
+/// the one-pen rule, and it is overruled — almost nobody wants to maintain
+/// their own record, and touching one sentence is not a decision to take over
+/// a page. Losing the record's maintenance was the price of a typo fix.
+///
+/// So the same signal now records WHEN rather than deciding WHO: the editor
+/// skips an article somebody was in recently, and "whose sentence is this" is
+/// answered properly, by diffing the live text against what the editor itself
+/// last wrote (`api::wiki_editor::provenance`).
+async fn note_human_edit(pool: &PgPool, page_id: &str) {
+    if let Err(e) = sqlx::query(
+        "UPDATE wiki_articles SET last_human_edit_at = now() WHERE page_id = $1",
     )
     .bind(page_id)
-    .fetch_optional(pool)
-    .await;
-    match claimed {
-        Ok(Some((subject_type, subject_id))) => {
-            tracing::info!(
-                page_id,
-                subject_type,
-                subject_id,
-                "article claimed by user edit — the record stops updating it"
-            );
-        }
-        Ok(None) => {}
-        Err(e) => tracing::warn!(page_id, error = %e, "article claim check failed"),
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(page_id, error = %e, "could not record a human edit on the article");
     }
 }
 
@@ -653,6 +650,152 @@ impl YjsState {
         Ok(new_content)
     }
 
+    /// The page's current markdown, straight from the authoritative doc.
+    ///
+    /// The editor reads this to build its prompt and hands the same string
+    /// back as `expected_old`, which is what makes the staleness guard in
+    /// `apply_text_diff` meaningful.
+    pub async fn read_text(&self, page_id: &str) -> Result<String, String> {
+        let page_doc = self
+            .doc_cache
+            .get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| format!("Failed to get page document: {e}"))?;
+        let doc = page_doc.read().await;
+        let txn = doc.doc.transact();
+        Ok(txn
+            .get_text("content")
+            .map(|t| t.get_string(&txn))
+            .unwrap_or_default())
+    }
+
+    /// The doc's full state, for a version snapshot.
+    ///
+    /// `app_page_versions.yjs_snapshot` is a self-contained update rather than
+    /// a yrs Snapshot, which is what lets a version be decoded on its own
+    /// without `skip_gc`.
+    pub async fn encoded_state(&self, page_id: &str) -> Result<Vec<u8>, String> {
+        let page_doc = self
+            .doc_cache
+            .get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| format!("Failed to get page document: {e}"))?;
+        let doc = page_doc.read().await;
+        let txn = doc.doc.transact();
+        Ok(txn.encode_state_as_update_v1(&StateVector::default()))
+    }
+
+    /// Replace a page's prose by applying only what actually changed.
+    ///
+    /// The editor returns a whole article — a batch job has no turn in which
+    /// to retry a failed find/replace, and asking a model for exact anchor
+    /// strings in a two-thousand-token document is the known way to lose an
+    /// edit. So the model writes the document and the SERVER works out the
+    /// edit, which is the opposite of `apply_text_edit` and deliberately so.
+    ///
+    /// Why not simply replace the text: in a CRDT a full replace is delete-all
+    /// plus insert-all, which discards any concurrent human edit by
+    /// construction and makes every revision diff at 100%, so History shows
+    /// "everything changed" every time — the same as showing nothing.
+    ///
+    /// `expected_old` is the text the caller read before it started. If the
+    /// document has moved since (somebody typed while the model was thinking),
+    /// the edit is refused rather than applied to text it was not written
+    /// against. The next run picks it up.
+    ///
+    /// Offsets are BYTES: yrs 0.18 is `OffsetKind::Bytes`, and ops are applied
+    /// last-first so earlier offsets stay valid as the text shifts underneath.
+    pub async fn apply_text_diff(
+        &self,
+        page_id: &str,
+        expected_old: &str,
+        new_text: &str,
+    ) -> Result<String, String> {
+        use similar::{ChangeTag, TextDiff};
+
+        let page_doc = self
+            .doc_cache
+            .get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| format!("Failed to get page document: {e}"))?;
+
+        let (new_content, update_bytes) = {
+            let mut doc = page_doc.write().await;
+            {
+                let mut txn = doc.doc.transact_mut();
+                let text = txn.get_or_insert_text("content");
+                let current = text.get_string(&txn);
+                if current != expected_old {
+                    return Err("the page changed while the edit was being written".to_string());
+                }
+
+                // (byte offset into `expected_old`, bytes to delete, insertion)
+                let mut ops: Vec<(u32, u32, String)> = Vec::new();
+                let mut at = 0usize;
+                for change in TextDiff::from_words(expected_old, new_text).iter_all_changes() {
+                    let v = change.value();
+                    match change.tag() {
+                        ChangeTag::Equal => at += v.len(),
+                        ChangeTag::Delete => {
+                            ops.push((at as u32, v.len() as u32, String::new()));
+                            at += v.len();
+                        }
+                        ChangeTag::Insert => {
+                            // A delete immediately followed by an insert at the
+                            // same offset is one replacement. Merging them
+                            // matters: applied separately in reverse, the
+                            // insert would land first and shift the range the
+                            // delete was measured against.
+                            match ops.last_mut() {
+                                Some((start, del, ins))
+                                    if *start as usize == at && *del > 0 && ins.is_empty() =>
+                                {
+                                    *ins = v.to_string()
+                                }
+                                _ => ops.push((at as u32, 0, v.to_string())),
+                            }
+                        }
+                    }
+                }
+
+                for (start, del, ins) in ops.into_iter().rev() {
+                    if del > 0 {
+                        text.remove_range(&mut txn, start, del);
+                    }
+                    if !ins.is_empty() {
+                        text.insert(&mut txn, start, &ins);
+                    }
+                }
+                // txn commits on drop
+            }
+
+            doc.last_update = Instant::now();
+            let txn = doc.doc.transact();
+            let new_content = txn
+                .get_text("content")
+                .map(|t| t.get_string(&txn))
+                .unwrap_or_default();
+            let update_bytes = txn.encode_state_as_update_v1(&StateVector::default());
+            let _ = doc.broadcast_tx.send(encode_sync_update(&update_bytes));
+            (new_content, update_bytes)
+        };
+
+        // Persisted NOW rather than queued, and that is load-bearing rather
+        // than cautious. `get_or_create` treats `yjs_state IS NULL` as "this
+        // page was rewritten outside the CRDT" and reseeds the doc from
+        // `content` — correct when the nightly narrator writes through the
+        // pool, and fatal here: a page whose CRDT state has never been saved
+        // (every article, until its first edit) would have this edit thrown
+        // away by the very next reader inside the two-second debounce window.
+        // The debounce is right for a person typing and wrong for a machine
+        // edit the caller is about to record elsewhere.
+        save_and_materialize(&self.pool, page_id, &update_bytes)
+            .await
+            .map_err(|e| format!("Failed to persist the edit: {e}"))?;
+
+        Ok(new_content)
+    }
+
     /// Append a markdown block to the end of a page, through Yjs.
     ///
     /// This is the safe way to send content into a page that may be OPEN in an
@@ -825,13 +968,14 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                         let mut doc = page_doc.write().await;
                                         if let Some((full_state, changed)) = apply_yjs_update(&mut doc, update_bytes) {
                                             drop(doc);
-                                            // Every changing update, not once per cached doc: the
-                                            // WHERE auto_update=true makes it a no-op after the
-                                            // first flip, and re-enabling the toggle mid-session
-                                            // must re-arm the claim — a memo held that flag
-                                            // hostage until cache eviction.
+                                            // Every changing update, not once per cached doc.
+                                            // The stamp is "when were they last in here", which
+                                            // the editor reads to stay out of a page somebody is
+                                            // working in — so a memo that fired once per cached
+                                            // doc would report a session's first keystroke as its
+                                            // last, and let the editor in while they typed.
                                             if changed {
-                                                claim_article_on_user_edit(&state.pool, &page_id).await;
+                                                note_human_edit(&state.pool, &page_id).await;
                                             }
                                             state.save_queue.queue_save(page_id.clone(), full_state).await;
                                         }
@@ -849,13 +993,14 @@ async fn handle_yjs_connection(mut socket: WebSocket, page_id: String, state: Yj
                                         let mut doc = page_doc.write().await;
                                         if let Some((full_state, changed)) = apply_yjs_update(&mut doc, update_bytes) {
                                             drop(doc);
-                                            // Every changing update, not once per cached doc: the
-                                            // WHERE auto_update=true makes it a no-op after the
-                                            // first flip, and re-enabling the toggle mid-session
-                                            // must re-arm the claim — a memo held that flag
-                                            // hostage until cache eviction.
+                                            // Every changing update, not once per cached doc.
+                                            // The stamp is "when were they last in here", which
+                                            // the editor reads to stay out of a page somebody is
+                                            // working in — so a memo that fired once per cached
+                                            // doc would report a session's first keystroke as its
+                                            // last, and let the editor in while they typed.
                                             if changed {
-                                                claim_article_on_user_edit(&state.pool, &page_id).await;
+                                                note_human_edit(&state.pool, &page_id).await;
                                             }
                                             state.save_queue.queue_save(page_id.clone(), full_state).await;
                                         }

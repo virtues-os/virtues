@@ -64,6 +64,11 @@ pub struct Applet {
     /// in the user's terms. Reconcile's to own, like `name`.
     pub description: Option<String>,
     pub agent: Option<String>,
+    /// The prompt we last SHIPPED for this applet, which is a different
+    /// question from the one it is running. They differ when the person has
+    /// written their own — the only way a page can offer them a diff instead
+    /// of a surprise, or offer a way back to the default at all.
+    pub agent_shipped: Option<String>,
     pub schedule: Option<String>,
     pub enabled: bool,
     pub config: serde_json::Value,
@@ -1004,6 +1009,7 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         name: row.try_get("name")?,
         description: row.try_get("description").ok().flatten(),
         agent: row.try_get("agent")?,
+        agent_shipped: row.try_get("agent_shipped").ok().flatten(),
         schedule: row.try_get("schedule")?,
         enabled: row.try_get::<bool, _>("enabled")?,
         config,

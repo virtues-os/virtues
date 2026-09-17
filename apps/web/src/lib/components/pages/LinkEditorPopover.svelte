@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Button from "$lib/components/Button.svelte";
 	import { linkEditor } from "$lib/stores/linkEditor.svelte";
 
 	let labelInput = $state<HTMLInputElement | null>(null);
@@ -52,8 +53,8 @@
 	</label>
 
 	<div class="actions">
-		<button class="btn" onclick={() => linkEditor.hide()}>Cancel</button>
-		<button class="btn btn-primary" onclick={() => linkEditor.save()}>Save</button>
+		<Button variant="secondary" size="sm" onclick={() => linkEditor.hide()}>Cancel</Button>
+		<Button variant="primary" size="sm" onclick={() => linkEditor.save()}>Save</Button>
 	</div>
 </div>
 
@@ -102,31 +103,5 @@
 		justify-content: flex-end;
 		gap: 6px;
 		margin-top: 2px;
-	}
-
-	.btn {
-		padding: 5px 12px;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: transparent;
-		color: var(--color-foreground);
-		font-size: 12px;
-		font-weight: 500;
-		cursor: pointer;
-	}
-
-	.btn:hover {
-		background: var(--hover-bg);
-	}
-
-	.btn-primary {
-		background: var(--color-primary);
-		border-color: var(--color-primary);
-		color: white;
-	}
-
-	.btn-primary:hover {
-		opacity: 0.9;
-		background: var(--color-primary);
 	}
 </style>

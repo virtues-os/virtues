@@ -117,7 +117,17 @@ pub async fn ensure_fresh(db: &PgPool, credential_id: &str) -> Result<RefreshOut
         Err(_) => return Ok(RefreshOutcome::NoRefreshable),
     };
 
-    match proxy_refresh(&row.source_id, &refresh_token).await {
+    // Identify this box to the proxy (see proxy_refresh). Unlinked is fine;
+    // an unreadable vault is not, and is logged rather than passed off as
+    // "no key".
+    let api_key = match super::vault::read_box_api_key(db).await {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!(credential_id, error = %e, "could not read box api_key for proxy refresh");
+            None
+        }
+    };
+    match proxy_refresh(&row.source_id, &refresh_token, api_key.as_deref()).await {
         Ok(resp) => {
             update_credential_secrets(db, credential_id, &resp.secrets, resp.expires_in).await?;
             tracing::info!(

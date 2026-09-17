@@ -428,8 +428,6 @@ pub(crate) enum EnrollError {
     MissingPeer,
     InvalidKind,
     UnknownSource,
-    /// The EndpointId is already an active device (unique-index violation).
-    Conflict,
     Internal,
 }
 
@@ -444,9 +442,6 @@ impl EnrollError {
             }
             EnrollError::UnknownSource => {
                 (StatusCode::BAD_REQUEST, Json(json!({"error": "unknown_source"}))).into_response()
-            }
-            EnrollError::Conflict => {
-                (StatusCode::CONFLICT, Json(json!({"error": "peer_already_enrolled"}))).into_response()
             }
             EnrollError::Internal => {
                 (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response()

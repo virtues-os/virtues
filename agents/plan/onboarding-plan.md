@@ -1,6 +1,6 @@
 # Onboarding — the build plan
 
-> How we get from what exists today to [the paradigm](onboarding-paradigm.md).
+> How we get from what exists today to [the paradigm](../record/onboarding-paradigm.md).
 > The paradigm says *what and why*, and is meant to be stable. This says *in what
 > order*, and is meant to be crossed off.
 > [linking-plan.md](linking-plan.md) is the deep dive on step 2.
