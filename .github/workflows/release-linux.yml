@@ -55,8 +55,48 @@ env:
   QAIRT_VERSION: 2.42.0.251225
 
 jobs:
+  # The draft exists BEFORE any arch uploads into it.
+  #
+  # Both matrix legs used to create it themselves, concurrently, with the same
+  # tag — so each made a draft and the loser deleted its own and adopted the
+  # winner's mid-flight:
+  #
+  #   ↪️ Using release 390984748 instead of duplicate draft 390988159
+  #   🧹 Removing duplicate draft release 390988159...
+  #   ⬆️ Uploading virtues-v0.1.7-staging.79-aarch64-linux.tar.gz...
+  #   ##[error] Error saving asset
+  #
+  # aarch64 was uploading into a release the other leg was still reconciling,
+  # and the largest asset lost the coin flip. The release stayed a draft (the
+  # `publish` job below is gated on `needs: [build]`, which is what kept a
+  # half-built release off the channel) — but it cost a re-run, and the board
+  # it was cut for is aarch64.
+  #
+  # One creator, then N uploaders, is the shape that has no coin flip in it.
+  prepare:
+    name: Create the draft release
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve version tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the draft (no assets yet)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          draft: true
+
   build:
     name: Build ${{ matrix.arch }}
+    needs: [prepare]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -400,6 +440,12 @@ jobs:
             echo "::warning::virtues-client (preview daemon) did not build for ${{ matrix.arch }}; releasing box + installer without it"
           fi
 
+      # `draft: true` on EVERY upload, including this one. The other two steps
+      # in this job already said it and this one did not, so whichever leg won
+      # the create race also decided whether the release was born published or
+      # draft — a coin flip over whether a half-uploaded release is visible on
+      # the channel. With `prepare` above there is nothing left to create here,
+      # and this flag now only guarantees no step can publish early.
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -410,6 +456,7 @@ jobs:
             dist/${{ steps.tarball.outputs.installer_name }}
             dist/${{ steps.tarball.outputs.installer_name }}.sha256
           fail_on_unmatched_files: true
+          draft: true
           # Don't auto-publish: lets the release page collect both arches
           # before going live. The release shows up as draft after the
           # first job and ships once you manually publish (or call it as
