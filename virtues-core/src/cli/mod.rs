@@ -488,7 +488,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                         .fetch_optional(pool)
                         .await?;
                 if let Some(day_id) = day_id {
-                    let events = crate::api::wiki::get_day_events(pool, day_id).await?;
+                    let events = crate::api::wiki_events::get_day_events(pool, day_id).await?;
                     println!();
                     println!("Event timeline ({}):", events.len());
                     for ev in &events {
@@ -583,7 +583,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 }
             }
             // Show events that were created
-            let events = crate::api::wiki::get_day_events(pool, day.id.clone()).await?;
+            let events = crate::api::wiki_events::get_day_events(pool, day.id.clone()).await?;
             println!();
             println!("Events ({}):", events.len());
             for ev in &events {
