@@ -116,6 +116,11 @@
 		// Developer flattened — Console layer removed
 		'/virtues/developer': '/virtues/developer/sql',
 		'/virtues/developer/console': '/virtues/developer/sql',
+		// The pre-Settings developer doors (/virtues/sql, and the /developers/*
+		// group that used to self-heal them). One room now.
+		'/virtues/sql': '/virtues/developer/sql',
+		'/virtues/terminal': '/virtues/developer/terminal',
+		'/virtues/lake': '/virtues/developer/lake',
 		// The auth-activity log is gone. Its old doors land on Devices, which is
 		// where the thing it reported on — what is paired, and what you can
 		// revoke — actually lives.
@@ -141,7 +146,14 @@
 			return;
 		}
 		const next = LEGACY_ROUTES[tab.route];
-		if (next) windowShellStore.updateTab(tab.id, { route: next });
+		// Never write a route that is already there. This effect READS
+		// `tab.route` and WRITES it, so it is only safe while every write
+		// changes the value — the same shape that took the whole window's
+		// reactivity down when a chat titled "New Chat" made ChatView's label
+		// effect rewrite its own value forever. A legacy mapping that ever
+		// resolved to its own key would do it again; this makes that
+		// impossible rather than relying on the table staying acyclic.
+		if (next && next !== tab.route) windowShellStore.updateTab(tab.id, { route: next });
 	});
 
 	type Section =
@@ -172,16 +184,24 @@
 	);
 	const sub = $derived(raw.split('/')[1] ?? '');
 
-
+	// There is no in-page section nav. The rail's Settings panel carries the
+	// rows (SETTINGS_MODE in `lib/sidebar/modes.ts`) and this room renders
+	// whatever the route names — the same move the wiki and sources made, and
+	// the last of the three duplicated navs to go.
+	//
+	// Settings had the worst case of it: a primary strip of eight AND a second
+	// row nested under Developer, beside a sidebar panel listing the same
+	// words. Two stacked rows of underline tabs is the smell `modes.ts` names
+	// as a nav outgrowing its container — and the container was never the
+	// problem, the second copy was.
+	//
+	// `/virtues/developer/*` still RENDERS here (the consoles are Settings'
+	// components and the route never moved) while belonging to the Developer
+	// room, which `roomForRoute` resolves on the longest match. Nothing in
+	// this file has to know that any more: with no strip, there is no
+	// highlight that could have claimed a SQL console was a preference.
 </script>
 
-<!--
-	No SubNav. The sidebar carries this nav now (lib/sidebar/modes.ts) — keeping
-	the horizontal row too would mean two navigations for one set of sections,
-	side by side, disagreeing about which is in charge. Removing it is also what
-	retires the second underline row Developer used to add, which was the
-	original complaint.
--->
 <div class="settings-view">
 	<main class="content">
 		{#if section === 'you'}

@@ -1,13 +1,20 @@
 <!--
-	NarrativeIdentitySection.svelte
+	The owner's own page.
 
-	The wiki's standing answer to "who is this person?" — the "In your own
-	words" DOCUMENT, presented in the wiki's own register (mast h1 like the
-	overview). Read-only by design: the document is edited on its page — the
-	editor, history, marginalia — never through a side textarea. The textarea
-	this replaced wrote to the retired abridged copy, which the assistant read
-	while the person edited something else entirely. The chapters live in
-	their own room (/wiki/chapters): structure, not part of this prose.
+	Titled with their NAME, because a person's page is. It used to be headed
+	"Narrative identity", which is the name of the artifact rather than the
+	name of the subject — and it left the owner as the only human in their own
+	wiki without a page, while 573 other people had one.
+
+	The body is the "In your own words" document: first person, theirs, and the
+	only article here the editor may never touch. Read-only in this room by
+	design — it is edited on its page, with the editor, history and marginalia,
+	never through a side textarea.
+
+	Around it is APPARATUS, drawn live from the record: their chapters, the
+	years, the birth date the year partition starts from. None of it is
+	injected into any prompt. What the assistant carries is the prose, byte for
+	byte, and nothing else.
 -->
 
 <script lang="ts">
@@ -15,32 +22,34 @@
 	import Markdown from '$lib/components/Markdown.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { getNarrativeIdentity } from '$lib/wiki/api';
+	import { getMe, type MeApi } from '$lib/wiki/api';
 
 	let loading = $state(true);
-	let content = $state('');
-	let pageId = $state('');
-	let updatedAt = $state<string | null>(null);
+	let me = $state<MeApi | null>(null);
+
+	const content = $derived(me?.article ?? '');
+	const pageId = $derived(me?.page_id ?? '');
+	const updatedAt = $derived(me?.article ? me.article_updated_at : null);
 
 	onMount(async () => {
 		try {
-			const identity = await getNarrativeIdentity();
-			if (identity) {
-				content = identity.content;
-				pageId = identity.page_id;
-				updatedAt = identity.content ? identity.updated_at : null;
-			}
+			me = await getMe();
 		} finally {
 			loading = false;
 		}
 	});
+
+	function spanOf(c: { started_at: string; ended_at: string | null }): string {
+		const y = (d: string | null) => (d ? d.slice(0, 4) : 'now');
+		return `${y(c.started_at)} – ${y(c.ended_at)}`;
+	}
 
 	function editDocument() {
 		if (pageId) windowShellStore.openRouteBeside(`/page/${pageId}`);
 	}
 
 	function openInterview() {
-		windowShellStore.openRouteBeside('/chat/chat_narrative_interview');
+		windowShellStore.openRouteBeside('/chat/chat_getting_started');
 	}
 
 	const updatedLabel = $derived(
@@ -56,10 +65,10 @@
 
 <div class="identity">
 	<header class="mast">
-		<h1>Narrative identity</h1>
+		<h1>{me?.name ?? 'You'}</h1>
 		<p class="standfirst">
-			The standing answer to who this is a record of — told in the interview,
-			never inferred, and yours to correct.
+			Your own page. Everything else here is written from the record; this is
+			written by you, in your own words, and the record never edits it.
 		</p>
 	</header>
 
@@ -83,15 +92,115 @@
 			<p class="empty-lead">Nothing written yet.</p>
 			<p class="empty-body">
 				Your document is written from the interview — a conversation, not a
-				form. When you say "write it up" there, it lands here and on its own
-				page, in your words.
+				form. When you close it there, it lands here and on its own page,
+				in your words and in the first person.
 			</p>
 			<button class="btn primary" onclick={openInterview}>Open the interview</button>
 		</div>
 	{/if}
+
+	{#if !loading && me}
+		<!-- The apparatus: record, not prose. It is here so the page says
+		     something true even before the document exists. -->
+		<section class="apparatus">
+			{#if me.chapters.length}
+				<h2>Your chapters</h2>
+				<ol class="chapters">
+					{#each me.chapters as c (c.id)}
+						<li>
+							<span class="ch-title">{c.title ?? 'An unnamed stretch'}</span>
+							<span class="ch-span">{spanOf(c)}</span>
+						</li>
+					{/each}
+				</ol>
+			{/if}
+
+			{#if me.years.length}
+				<h2>Your years</h2>
+				<p class="years">
+					{#each me.years as y, i (y)}<a href="/year/year_{y}">{y}</a>{#if i < me.years.length - 1}<span
+								class="sep">·</span
+							>{/if}{/each}
+				</p>
+			{/if}
+
+			<p class="facts">
+				{#if me.birth_date}
+					Born {new Date(me.birth_date + 'T12:00:00').toLocaleDateString('en-US', {
+						month: 'long',
+						day: 'numeric',
+						year: 'numeric'
+					})}.
+				{:else}
+					<!-- Not a settings field: the year partition starts at the birth
+					     date, so a life with none begins at its first record. -->
+					No birth date yet — your years begin where the record does.
+				{/if}
+			</p>
+		</section>
+	{/if}
 </div>
 
 <style>
+	.apparatus {
+		margin-top: 2.5rem;
+		border-top: 1px solid var(--color-border);
+		padding-top: 1.25rem;
+	}
+
+	.apparatus h2 {
+		font-family: var(--font-serif);
+		font-size: 1rem;
+		font-weight: 400;
+		margin: 1rem 0 0.5rem;
+	}
+
+	.chapters {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+
+	.chapters li {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.3rem 0;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.ch-title {
+		font-family: var(--font-serif);
+	}
+
+	.ch-span {
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+
+	.years a {
+		color: var(--color-foreground);
+		text-decoration: none;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.years a:hover {
+		text-decoration: underline;
+	}
+
+	.sep {
+		color: var(--color-foreground-subtle);
+		margin: 0 0.4rem;
+	}
+
+	.facts {
+		margin-top: 0.75rem;
+		font-size: 0.875rem;
+		color: var(--color-foreground-subtle);
+	}
+
 	.identity {
 		display: flex;
 		flex-direction: column;
@@ -102,10 +211,13 @@
 		margin-bottom: 2rem;
 	}
 
+	/* 400: JJannon has one cut, so the 500 this carried resolved back to the
+	   regular and said nothing (agents/build/typography.md). Size and full ink
+	   already outrank the standfirst — same as the wiki overview's mast. */
 	.mast h1 {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 2rem;
-		font-weight: 500;
+		font-weight: 400;
 		letter-spacing: -0.01em;
 		color: var(--color-foreground);
 		margin: 0 0 0.625rem;

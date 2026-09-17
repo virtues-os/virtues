@@ -37,10 +37,14 @@ every artifact reports it uniformly.
 
 The box is the reference — already correct. The work is the five stragglers.
 
+Locations are given as file + symbol, never file + line. Every line number this
+table carried had rotted by 2026-09-16 — `/health` had moved 780 lines — and a
+pointer that is confidently wrong is worse than one you have to grep for.
+
 | Artifact | Where | State today | Do |
 |----------|-------|-------------|----|
-| **Box** `virtues` | `virtues-core/build.rs`, `/health` (`server/mod.rs:945`) | ✅ bakes SHA/describe/time | add `channel` as a first-class baked const |
-| **SPA** | `apps/web/vite.config.ts:13`, `app.d.ts:5` | `__BUILD_COMMIT__` only (sha), falls back `'dev'` | extend to `__BUILD__ = {version, sha, channel}`; surface in Settings |
+| **Box** `virtues` | `virtues-core/build.rs`, `/health` (`server/mod.rs`, `async fn health`) | ✅ bakes SHA/describe/time | add `channel` as a first-class baked const |
+| **SPA** | `apps/web/vite.config.ts` (`define`), `app.d.ts` | `__BUILD_COMMIT__` only (sha), falls back `'dev'` | extend to `__BUILD__ = {version, sha, channel}`; surface in Settings |
 | **Desktop client** (Rust) | `apps/desktop/Cargo.toml` | Cargo version only, no SHA | add a `build.rs` mirroring core |
 | **Mac collector** (Swift) | `apps/mac-source/Sources/Version.swift`; CI `release-mac.yml` | `gitCommit = "unknown"` (never set) | stamp `gitCommit`/`buildDate` in CI at build |
 | **Cloud** virtues-api / atlas | `services/*/src/routes/health.rs` | `/health` has `version` only | bake sha/channel, add to `/health` |

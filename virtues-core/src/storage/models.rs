@@ -70,7 +70,7 @@ pub struct UserProfile {
     pub home_timezone: Option<String>,
     /// Getting-started sections the owner dismissed from Home (section ids).
     /// Dismissed means gone, not collapsed — the features stay reachable where
-    /// they permanently live. See agents/plan/getting-started-plan.md.
+    /// they permanently live. See agents/record/getting-started.md.
     pub getting_started_dismissed: Vec<String>,
     // Audit
     pub created_at: Timestamp,
@@ -242,7 +242,10 @@ impl StreamKeyParser {
         ))
     }
 
-    /// Static helper used by stream-encryption key derivation.
+    /// Static helper. Its doc used to say "used by stream-encryption key
+    /// derivation" — there is no stream encryption, and this has no callers;
+    /// the comment was the last trace of a feature that was specified in
+    /// `.env.example` and never built.
     pub fn parse_date_from_key(key: &str) -> crate::error::Result<NaiveDate> {
         Self::new(key).date().ok_or_else(|| {
             crate::error::Error::Other(format!("Failed to parse date from storage key: {}", key))

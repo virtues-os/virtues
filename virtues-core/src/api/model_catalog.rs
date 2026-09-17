@@ -82,6 +82,12 @@ pub struct CatalogModel {
     /// Same tri-state for "providers do not train on request data".
     #[serde(default)]
     pub no_training: Option<String>,
+    /// Whether and how the model thinks, per the gateway's catalog. `None`
+    /// is unknown (the compiled floor, or a proxy older than the field) and
+    /// the completion helper treats unknown as "thinks, cannot be told not
+    /// to", which is the reading that cannot lose an answer.
+    #[serde(default)]
+    pub reasoning: Option<virtues_registry::ReasoningFacts>,
 }
 
 /// Which model fills each slot, per the cloud. Ids only — the models
@@ -182,9 +188,24 @@ pub fn models() -> Vec<CatalogModel> {
                 recommended: true,
                 zdr: None,
                 no_training: None,
+                reasoning: None,
             }
         })
         .collect()
+}
+
+/// Whether and how a model thinks, per the catalog. `None` is unknown: the
+/// compiled floor, or a proxy older than the field. The completion helper
+/// reads unknown as "thinks, and cannot be told not to".
+pub fn reasoning_facts(model_id: &str) -> Option<virtues_registry::ReasoningFacts> {
+    cache()
+        .read()
+        .ok()?
+        .models
+        .iter()
+        .find(|m| m.model_id == model_id)?
+        .reasoning
+        .clone()
 }
 
 /// Whether we have never seen a catalog — the picker is the compiled floor.

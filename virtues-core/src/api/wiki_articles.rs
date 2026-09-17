@@ -28,23 +28,10 @@ use crate::api::pages;
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PAGE_PREFIX, WIKI_ARTICLE_PREFIX};
 
-/// The subjects that can carry an article.
-///
-/// Mirrors the `subject_type` CHECK in migration 0081. `'organization'`, not
-/// `'org'`: the entity-ref table and every live query use the long form, and
-/// the sweep joins articles to refs — the short form would make that join
-/// silently return zero organization rows. The frontend route stays `/org`.
-pub const SUBJECT_TYPES: [&str; 7] = [
-    "person",
-    "place",
-    "organization",
-    "day",
-    "story",
-    "narrative_identity",
-    // Chapters of a life (migration 0015): each era the interview captures
-    // gets a page seeded with the person's own words about it.
-    "chapter",
-];
+// The list of subjects that may carry an article is
+// [`crate::api::subjects::SUBJECTS`], and `is_subject` is how to ask. It used
+// to be a second array here, which is how `year` came to pass every route,
+// fold and brief and then fail at this function's own allowlist.
 
 /// A subject's article, if it has one.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -53,8 +40,9 @@ pub struct Article {
     pub subject_type: String,
     pub subject_id: String,
     pub page_id: String,
-    pub auto_update: bool,
-    pub source_ref_count: i32,
+    /// always | auto | never. Replaced `auto_update`, whose second, hidden
+    /// meaning was "the person edited this once".
+    pub maintenance: String,
 }
 
 /// Look up a subject's article. `None` is the ordinary case, not an error:
@@ -66,7 +54,7 @@ pub async fn get_article(
 ) -> Result<Option<Article>> {
     let row = sqlx::query!(
         r#"
-        SELECT id, subject_type, subject_id, page_id, auto_update, source_ref_count
+        SELECT id, subject_type, subject_id, page_id, maintenance
         FROM wiki_articles
         WHERE subject_type = $1 AND subject_id = $2
         "#,
@@ -82,8 +70,7 @@ pub async fn get_article(
         subject_type: r.subject_type,
         subject_id: r.subject_id,
         page_id: r.page_id,
-        auto_update: r.auto_update,
-        source_ref_count: r.source_ref_count,
+        maintenance: r.maintenance,
     }))
 }
 
@@ -93,7 +80,8 @@ pub async fn get_article(
 pub struct ArticleProse {
     pub content: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub auto_update: bool,
+    /// Whether the record keeps this article up to date.
+    pub maintained: bool,
 }
 
 /// Read a subject's article prose.
@@ -101,9 +89,10 @@ pub struct ArticleProse {
 /// Reads `app_pages.content`, which the Yjs layer materialises on every save,
 /// so this is the same text search indexes and the same text the editor shows.
 ///
-/// Callers should fall back to the legacy per-entity `article` column while it
-/// still exists: drops trail their phase by a release, so for now a box can
-/// hold prose in either place — old articles in the column, new ones here.
+/// The only place article prose lives. The per-entity `article` columns this
+/// used to fall back to were dropped in migration 0025, so a fallback written
+/// against them today would not compile — and one written defensively would be
+/// dead code pretending a second source of truth still exists.
 pub async fn get_article_prose(
     pool: &PgPool,
     subject_type: &str,
@@ -111,7 +100,7 @@ pub async fn get_article_prose(
 ) -> Result<Option<ArticleProse>> {
     let row = sqlx::query!(
         r#"
-        SELECT p.content, p.updated_at, a.auto_update
+        SELECT p.content, p.updated_at, (a.maintenance <> 'never') AS "maintained!"
         FROM wiki_articles a
         JOIN app_pages p ON p.id = a.page_id
         WHERE a.subject_type = $1 AND a.subject_id = $2
@@ -126,7 +115,7 @@ pub async fn get_article_prose(
     Ok(row.filter(|r| !r.content.trim().is_empty()).map(|r| ArticleProse {
         content: r.content,
         updated_at: r.updated_at,
-        auto_update: r.auto_update,
+        maintained: r.maintained,
     }))
 }
 
@@ -150,7 +139,7 @@ pub async fn create_article(
     title: &str,
     content: &str,
 ) -> Result<Article> {
-    if !SUBJECT_TYPES.contains(&subject_type) {
+    if !crate::api::subjects::is_subject(subject_type) {
         return Err(Error::InvalidInput(format!(
             "Unknown subject type: {subject_type}"
         )));
@@ -187,7 +176,7 @@ pub async fn create_article(
         r#"
         INSERT INTO wiki_articles (id, subject_type, subject_id, page_id, last_written_at)
         VALUES ($1, $2, $3, $4, now())
-        RETURNING id, subject_type, subject_id, page_id, auto_update, source_ref_count
+        RETURNING id, subject_type, subject_id, page_id, maintenance
         "#,
         &article_id,
         subject_type,
@@ -207,8 +196,7 @@ pub async fn create_article(
         subject_type: row.subject_type,
         subject_id: row.subject_id,
         page_id: row.page_id,
-        auto_update: row.auto_update,
-        source_ref_count: row.source_ref_count,
+        maintenance: row.maintenance,
     })
 }
 
@@ -247,6 +235,41 @@ pub struct SubjectBacklink {
     pub is_article: bool,
 }
 
+/// How an article is maintained, in the vocabulary the column actually has.
+///
+/// The UI shipped with a two-state toggle (`set_auto_update`, now retired)
+/// that could only say auto or never. The column carries a third — `always`,
+/// for an article someone wants revisited whenever anything moves — and a
+/// two-state control must not silently flatten it.
+pub async fn set_maintenance(
+    pool: &PgPool,
+    subject_type: &str,
+    subject_id: &str,
+    mode: &str,
+) -> Result<()> {
+    if !matches!(mode, "always" | "auto" | "never") {
+        return Err(Error::InvalidInput(format!(
+            "maintenance is always, auto or never — not {mode:?}"
+        )));
+    }
+    let n = sqlx::query!(
+        "UPDATE wiki_articles SET maintenance = $3 WHERE subject_type = $1 AND subject_id = $2",
+        subject_type,
+        subject_id,
+        mode
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to set maintenance: {}", e)))?
+    .rows_affected();
+    if n == 0 {
+        return Err(Error::NotFound(format!(
+            "No article for {subject_type} {subject_id}"
+        )));
+    }
+    Ok(())
+}
+
 /// "Mentioned in N articles" — every page whose prose links to this subject.
 ///
 /// **The edge points at a SUBJECT, not at an article**, and that is the whole
@@ -272,19 +295,15 @@ pub async fn get_subject_backlinks(
     subject_type: &str,
     subject_id: &str,
 ) -> Result<Vec<SubjectBacklink>> {
-    // The route prefix the frontend actually uses. `organization` is the schema
-    // word; `/org` is the route — the one place that mapping happens.
-    let prefix = match subject_type {
-        "person" => "person",
-        "place" => "place",
-        "organization" => "org",
-        "day" => "day",
-        "story" => "story",
-        other => {
-            return Err(Error::InvalidInput(format!(
-                "No route for subject type {other}"
-            )))
-        }
+    let subject = crate::api::subjects::by_kind(subject_type).ok_or_else(|| {
+        Error::InvalidInput(format!("Not a subject type: {subject_type}"))
+    })?;
+    // A subject with no route has no links pointing at it, because there is no
+    // href anything could have written. Searching for `/chapter/{id})` anyway
+    // returned an empty list that read as "nothing links here" rather than
+    // "this cannot be linked", which are different answers.
+    let Some(prefix) = subject.route else {
+        return Ok(Vec::new());
     };
 
     // Trailing `)` pins the match to a real markdown link and to the exact id,
@@ -446,9 +465,9 @@ pub struct HistoryEntry {
 
 /// Every recent edit to any article, newest first — the room's front page.
 ///
-/// This is the review surface that makes `auto_update` safe to turn on: the
-/// switch is the consent, and this is where you see what that consent produced.
-/// Without it the machine edits prose in a room nobody visits.
+/// This is the review surface that makes maintenance safe to turn on: the
+/// switch is the consent, and this is where you see what that consent
+/// produced. Without it the machine edits prose in a room nobody visits.
 ///
 /// Authorship carries the same off-by-one as `get_article_history` and is
 /// resolved the same way — `created_by` names the author of the edit this row
@@ -520,35 +539,6 @@ fn diff_lines(before: &str, after: &str) -> Vec<DiffLine> {
     out
 }
 
-/// Turn maintenance on or off for one article.
-///
-/// `false` means the AI never touches it — not a pending-approval queue,
-/// nothing held for review. The sweep skips it, and it changes only when a
-/// person regenerates it or flips this back. The switch IS the consent.
-pub async fn set_auto_update(
-    pool: &PgPool,
-    subject_type: &str,
-    subject_id: &str,
-    on: bool,
-) -> Result<()> {
-    let n = sqlx::query!(
-        "UPDATE wiki_articles SET auto_update = $3 WHERE subject_type = $1 AND subject_id = $2",
-        subject_type,
-        subject_id,
-        on
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to set auto_update: {}", e)))?
-    .rows_affected();
-
-    if n == 0 {
-        return Err(Error::NotFound(format!(
-            "No article for {subject_type}/{subject_id}"
-        )));
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
@@ -573,7 +563,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(kind, "article");
-        assert!(!a.auto_update, "maintenance is opt-in, never on by default");
+        assert_eq!(a.maintenance, "auto", "an article is maintained unless the owner says otherwise");
 
         // (The old `date must stay NULL` assertion is gone with the column —
         // reflections were retired 2026-08-03, the column dropped 2026-08-28;

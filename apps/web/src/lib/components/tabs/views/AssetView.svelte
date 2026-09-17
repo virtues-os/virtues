@@ -4,6 +4,7 @@
 	// Entities keep their own WikiDetailView — "open" is the one density allowed
 	// to differ by target type.
 	import Icon from "$lib/components/Icon.svelte";
+	import { Button } from "$lib";
 	import CsvPane from "$lib/components/asset/CsvPane.svelte";
 	import PdfPane from "$lib/components/asset/PdfPane.svelte";
 	import TextPane from "$lib/components/asset/TextPane.svelte";
@@ -111,9 +112,9 @@
 			<span class="asset-meta">{formatBytes(file.size_bytes)}</span>
 		{/if}
 		<div class="asset-spacer"></div>
-		<button class="asset-btn" onclick={download} title="Download">
-			<Icon icon="ri:download-line" width="14" /> Download
-		</button>
+		<Button variant="secondary" size="sm" icon="ri:download-line" onclick={download}
+			>Download</Button
+		>
 	</header>
 
 	<div
@@ -161,9 +162,12 @@
 					width="44"
 				/>
 				<span>{file?.filename}</span>
-				<button class="asset-btn" onclick={download}>
-					<Icon icon="ri:download-line" width="14" /> Download
-				</button>
+				<Button
+					variant="secondary"
+					size="sm"
+					icon="ri:download-line"
+					onclick={download}>Download</Button
+				>
 			</div>
 		{/if}
 	</div>
@@ -200,23 +204,6 @@
 	.asset-spacer {
 		flex: 1;
 	}
-	.asset-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		padding: 4px 10px;
-		font-size: 0.75rem;
-		border-radius: 6px;
-		border: 1px solid var(--color-border);
-		background: transparent;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-	}
-	.asset-btn:hover {
-		background: var(--ref-pill-bg);
-		color: var(--color-primary);
-	}
-
 	.asset-body {
 		flex: 1;
 		min-height: 0;

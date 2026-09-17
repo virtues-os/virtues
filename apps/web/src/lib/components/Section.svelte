@@ -2,11 +2,11 @@
 	import type { Snippet } from "svelte";
 
 	/**
-	 * One labelled band of a settings page.
+	 * One labeled band of a settings page.
 	 *
 	 * Settings had two heading systems: sixteen files used a bare `<h2>`, and
 	 * the device pages used a small uppercase label. Which one you met depended
-	 * on which page you had landed on, so neighbouring sections of the same
+	 * on which page you had landed on, so neighboring sections of the same
 	 * product disagreed about what a section even looks like.
 	 *
 	 * The heading treatment is `.settings-label` in app.css — one definition,

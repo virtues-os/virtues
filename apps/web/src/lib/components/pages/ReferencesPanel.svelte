@@ -8,6 +8,7 @@
 	 * the side, only present when summoned.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
+	import IconButton from "$lib/components/IconButton.svelte";
 	import { type Backlink } from "$lib/api/client";
 
 	interface Props {
@@ -28,9 +29,7 @@
 				<span class="references-count">{backlinks.length}</span>
 			{/if}
 		</span>
-		<button class="references-close" onclick={onClose} title="Close references">
-			<Icon icon="ri:close-line" width="16" />
-		</button>
+		<IconButton icon="ri:close-line" label="Close references" size="sm" onclick={onClose} />
 	</header>
 
 	<div class="references-body">
@@ -118,27 +117,6 @@
 		color: var(--color-foreground-muted);
 		font-size: 0.6875rem;
 		font-weight: 500;
-	}
-
-	.references-close {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 26px;
-		height: 26px;
-		border: none;
-		background: transparent;
-		color: var(--color-foreground-muted);
-		border-radius: 6px;
-		cursor: pointer;
-		transition:
-			color 0.15s ease,
-			background-color 0.15s ease;
-	}
-
-	.references-close:hover {
-		color: var(--color-foreground);
-		background: var(--hover-bg);
 	}
 
 	.references-body {

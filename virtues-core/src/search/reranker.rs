@@ -1,10 +1,24 @@
-//! Cross-encoder reranker — llama-server-backed (enabled in v0.1.1).
+//! Reranker client — one HTTP contract, several models behind it.
 //!
-//! Mirrors `embedder.rs`: a dedicated `llama-server --rerank` sidecar
-//! (`http://127.0.0.1:18182` by default, `VIRTUES_RERANK_URL` to override)
-//! hosts a gte-reranker-modernbert-base GGUF and speaks the Jina/Cohere-style
-//! `/v1/rerank` JSON that llama.cpp has shipped since late 2024. The
-//! installer runs it as `virtues-rerank.service`.
+//! Mirrors `embedder.rs`, including its stance: this file speaks
+//! `/v1/rerank` (the Jina/Cohere-shaped JSON llama.cpp has shipped since late
+//! 2024) to whatever is listening on `http://127.0.0.1:18182`
+//! (`VIRTUES_RERANK_URL` to override), and does not care which model answers.
+//!
+//! **Dragon (NPU)**, and so the box this is measured on: `virtues-qnnd` serves
+//! the contract from the Hexagon NPU, backed by
+//! **answerai-colbert-small-v1@256** — late-interaction ColBERT MaxSim, whose
+//! scores are a similarity sum, not a classifier logit, and sit an order of
+//! magnitude above one (≈30 for a good match). The 256 is the token window,
+//! which is what `MAX_RERANK_CHARS` in `query.rs` is sized against.
+//!
+//! **Sidecar (DIY/dev)**: a dedicated `llama-server --rerank` running the
+//! installer's current GGUF, gte-reranker-modernbert-base — a true
+//! cross-encoder, scores are raw classifier logits. Run as
+//! `virtues-rerank.service`. A default, not a commitment.
+//!
+//! Neither number means anything on its own, and the two do not share a scale —
+//! which is exactly why `query.rs` uses them ONLY as an ordering (see below).
 //!
 //! Why a second sidecar instead of Ollama (v0.1.0's embedding host):
 //! Ollama has no rerank endpoint — its API surface stops at generate/chat/
@@ -13,12 +27,12 @@
 //! encoder but never the head, returning plausible-looking vectors that
 //! rank as noise. llama-server runs the head and returns real scores.
 //!
-//! Scores are the classifier's raw logits (unbounded). `query.rs` uses them
-//! ONLY as an ordering — it sorts, then min-max normalizes to [0,1] (both
-//! monotonic, so any strictly increasing score scale works; that is what lets
-//! Dragon's ColBERT MaxSim serve the same contract). If the sidecar is down,
-//! `get_reranker()` errors and the search pipeline falls back to the fused
-//! hybrid ranking (fallback lives in `query.rs`).
+//! Scores are unbounded and model-specific. `query.rs` uses them ONLY as an
+//! ordering — it sorts, then min-max normalizes to [0,1] (both monotonic, so
+//! any strictly increasing score scale works; that is what lets one client
+//! serve a MaxSim sum and a classifier logit without knowing which it got).
+//! If the endpoint is down, `get_reranker()` errors and the search pipeline
+//! falls back to the fused hybrid ranking (fallback lives in `query.rs`).
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -27,9 +41,10 @@ use tokio::sync::OnceCell;
 
 const DEFAULT_URL: &str = "http://127.0.0.1:18182";
 
-/// Score from the cross-encoder reranker. `index` refers to the position
-/// in the `documents` slice passed to `rerank_async`; `score` is the raw
-/// classifier logit.
+/// Score from the reranker. `index` refers to the position in the `documents`
+/// slice passed to `rerank_async`; `score` is whatever the endpoint's model
+/// calls relevance — a ColBERT MaxSim sum on the NPU path, a classifier logit
+/// on the cross-encoder one. Comparable within one response, never across.
 #[derive(Debug, Clone)]
 pub struct RerankScore {
     pub index: usize,
@@ -57,12 +72,12 @@ struct RerankRow {
     relevance_score: f32,
 }
 
-/// HTTP-backed reranker speaking the `/v1/rerank` contract. The sidecar owns
+/// HTTP-backed reranker speaking the `/v1/rerank` contract. The endpoint owns
 /// the model, GPU/NPU, threading; one POST scores every (query, document) pair
-/// in the batch. On Dragon the endpoint is `virtues-qnnd` (ColBERT MaxSim);
-/// everywhere else, llama-server's cross-encoder. One inference path — this
-/// was previously wrapped in a dispatch layer left over from a native QNN
-/// client that no longer exists.
+/// in the batch. On Dragon that endpoint is `virtues-qnnd`
+/// (answerai-colbert-small-v1@256, MaxSim); everywhere else, llama-server's
+/// cross-encoder. One inference path — this was previously wrapped in a
+/// dispatch layer left over from a native QNN client that no longer exists.
 pub struct LocalReranker {
     client: reqwest::Client,
     base_url: String,

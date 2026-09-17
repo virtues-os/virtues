@@ -1,7 +1,24 @@
-# SPA delivery — plan (not started)
+# SPA delivery — plan (OTA shipped; offline not built)
 
-Status: **ready to schedule** (2026-08-05). Supersedes `mobile-spa-ota-plan.md`
-(parked 2026-07-13), which scoped this to mobile only.
+Status: **half built** (last checked 2026-09-16). Supersedes
+`mobile-spa-ota-plan.md` (parked 2026-07-13), which scoped this to mobile only.
+
+This said "not started / ready to schedule" for six weeks after the OTA half
+shipped, while five source files cited it as the live contract. Read the
+sequencing checklist at the bottom for what is actually built; read the code
+before trusting any paragraph here.
+
+Two things in the body are known to be overtaken by the code:
+
+- **The airlock is `connect.html`, not `pair.html`.** Renamed after this was
+  written; the references have been corrected in place.
+- **"The box as sole source makes version skew impossible" is dead.** That was
+  premise #2 below and the invariant the whole design rested on. It was retired
+  on 2026-09-14 when the client learned to refuse a downgrade — a shell now runs
+  whichever of {baked, box-served} is newer, so UI *can* outrun its box again.
+  The trade, and the `minShellVersion` mirror that would close the class
+  properly, are written up where they are enforced:
+  `apps/web/src-tauri/src/web_bundle.rs`.
 
 How the web UI reaches every client — phone, Mac, and whatever comes next — and
 what remains true when the box cannot be reached.
@@ -17,7 +34,7 @@ are about correctness.
 provider, loads from IndexedDB first, and explicitly permits editing when the
 connection fails. The CRDT layer — the genuinely hard part — is done and paid
 for. But on the Mac, an unreachable box sends the window to
-`pair.html#unreachable` (`src-tauri/src/main.rs`) and the SPA never loads at
+`connect.html#unreachable` (`src-tauri/src/main.rs`) and the SPA never loads at
 all, so none of that offline capability can be reached. A person on a plane has
 a working editor and no way into it.
 
@@ -74,7 +91,7 @@ connect — one artifact, one version, no fan-out to coordinate.
 
 **Reachability stops being a dead end.** An unreachable box currently means "no
 UI." It should mean "load the SPA, serve what is cached, queue writes."
-`pair.html` goes back to meaning only *unpaired*, which is what its name says.
+`connect.html` goes back to meaning only *unpaired*, which is what its name says.
 
 ## What is actually offline, and what is not
 
@@ -154,7 +171,7 @@ Carried from the parked plan, unchanged — they were right.
    the box's `virtues.bak` swap).
 
 **Rule 1 is already owed, today, with no OTA anywhere.** `mac-plan.md` §3 names
-it the *undeclared coupling*: the Mac bundles only `pair.html` and shells to the
+it the *undeclared coupling*: the Mac bundles only `connect.html` and shells to the
 box, so **the box already serves the JavaScript that calls the app's Tauri
 commands**. `bridge.ts` ships with the box and `invoke()`s a surface compiled
 into a separately-versioned binary — no negotiation, no feature detection, no
@@ -213,7 +230,7 @@ These are two separable projects and this plan originally conflated them:
 
 **Offline fallback — small.** Bundle the real SPA build into the desktop app
 (`frontendDist` today points at `ui/`, a four-file connect shell) and load it
-when the box does not answer, instead of `pair.html#unreachable`. No resolver,
+when the box does not answer, instead of `connect.html#unreachable`. No resolver,
 no tarball endpoints, no version manifest, no atomic flip. Yjs and IndexedDB
 already do the hard part, so this is the whole plane case: bundle, plus a launch
 branch that already exists in another form.
@@ -246,15 +263,26 @@ cannot be debugged without it.
 
 Then the rest, as one chunk:
 
-- [ ] Box: web-bundle version + tarball endpoints over the existing `ServeDir`
-- [ ] Shell: custom-protocol resolver with active-dir override + baked fallback
-- [ ] Shell: download / verify checksum / unpack / flip / rollback state machine
-- [ ] Shell: API-version export + `minShellVersion` gate
-- [ ] SPA build: emit version + `minShellVersion` manifest in `apps/web`
-- [ ] Boot-ok beacon + rollback timer
+- [x] Box: web-bundle version + tarball endpoints over the existing `ServeDir`
+      — `virtues-core/src/api/web_bundle.rs`
+- [x] Shell: custom-protocol resolver with active-dir override + baked fallback
+      — the `virtues://` handler in `apps/web/src-tauri/src/lib.rs` (mobile only)
+- [x] Shell: download / unpack / flip / rollback state machine
+      — `apps/web/src-tauri/src/web_bundle.rs`. Note: identity is the manifest's
+      `contentHash`, computed over the tree; there is no separate checksum step.
+- [x] Shell: API-version export + `minShellVersion` gate — `COMMAND_SURFACE_VERSION`
+- [x] SPA build: emit version + `minShellVersion` manifest in `apps/web`
+      — `scripts/write-bundle-manifest.mjs`, against `bundle-contract.json`
+- [x] Boot-ok beacon + rollback — `reportBootOk` → `bundle_boot_ok` →
+      `mark_boot_ok`. Not a timer: a bundle stays pending until a launch that
+      rendered from it says so, and a pending bundle found at the next startup
+      is the evidence it failed.
 - [ ] Mac: drop `WebviewUrl::External`, adopt the resolver, keep the self-updater
-      (`tauri_plugin_updater`) for native
+      (`tauri_plugin_updater`) for native — **not built.** The desktop still
+      points the webview straight at the `:7117` loopback, so it renders the
+      box's live SPA and carries no overlay store at all.
 - [ ] Offline copy pass: what each Postgres-backed surface says with no box
+      — **not built**, and blocked on the origin problem above.
 - [ ] (later) Android parity
 
 ## Not the most urgent iOS work

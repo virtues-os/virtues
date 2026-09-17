@@ -16,7 +16,7 @@
 	 * wrong name, and anything more elaborate would make that moment heavier
 	 * than the correction deserves.
 	 */
-	import Icon from '$lib/components/Icon.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
 
 	interface Props {
 		aliases: string[];
@@ -102,15 +102,13 @@
 	{#each local as alias (alias)}
 		<span class="chip">
 			{alias}
-			<button
-				type="button"
-				class="chip-x"
-				aria-label="Remove alias {alias}"
+			<IconButton
+				icon="ri:close-line"
+				label="Remove alias {alias}"
+				size="xs"
 				disabled={saving}
 				onclick={() => remove(alias)}
-			>
-				<Icon icon="ri:close-line" width="12" />
-			</button>
+			/>
 		</span>
 	{/each}
 
@@ -154,22 +152,6 @@
 		font-size: 12px;
 		color: var(--color-foreground);
 		white-space: nowrap;
-	}
-
-	.chip-x {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 16px;
-		height: 16px;
-		border-radius: 999px;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-	}
-
-	.chip-x:hover:not(:disabled) {
-		color: var(--color-foreground);
-		background: var(--color-surface-hover);
 	}
 
 	/* Borderless until focused: a row of empty boxes reads as a form to fill

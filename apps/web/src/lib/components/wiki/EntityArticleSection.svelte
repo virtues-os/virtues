@@ -4,8 +4,8 @@
 	The wikipedia-style article at the top of an entity page, rendered in the
 	same linked-prose register as the day narration (Markdown, quiet refs).
 
-	Articles are OPT-IN (migration 0081). Nothing is written until someone asks,
-	and nothing is maintained until they say so — two decisions, two switches.
+	Articles are OPT-IN. Nothing is written until someone asks, and nothing is
+	maintained until they say so — two decisions, two switches.
 	So the empty state is an OFFER, not a warning: the record below is the
 	product, and prose is an addition to it. An earlier version promised "one
 	will be written once the record holds enough", which is now simply untrue —
@@ -14,19 +14,23 @@
 
 <script lang="ts">
 	import Markdown from '$lib/components/Markdown.svelte';
-	import { writeArticle, setArticleAutoUpdate, getArticle } from '$lib/wiki/api';
+	import TextAction from '$lib/components/TextAction.svelte';
+	import { writeArticle, setArticleMaintenance, getArticle } from '$lib/wiki/api';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	interface Props {
-		article?: string;
-		articleUpdatedAt?: Date;
+		// `| null` because these come straight off the wire now, where an
+		// absent column is null rather than undefined. Coercing at each of the
+		// three call sites was three chances to forget.
+		article?: string | null;
+		articleUpdatedAt?: Date | null;
 		/** The entity's name, for the offer line. */
 		name: string;
 		/** Subject coordinates, so this can write and maintain its own article. */
 		subjectType?: 'person' | 'place' | 'organization';
 		subjectId?: string;
 		/** Is the record keeping this article up to date? */
-		autoUpdate?: boolean;
+		maintained?: boolean;
 		/** Re-fetch the entity after a write. */
 		onChanged?: () => void;
 	}
@@ -37,15 +41,15 @@
 		name,
 		subjectType,
 		subjectId,
-		autoUpdate = false,
+		maintained: maintainedProp = false,
 		onChanged
 	}: Props = $props();
 
 	let writing = $state(false);
 	let failed = $state<string | null>(null);
-	let maintained = $state(autoUpdate);
+	let maintained = $state(maintainedProp);
 	$effect(() => {
-		maintained = autoUpdate;
+		maintained = maintainedProp;
 	});
 
 	const canWrite = $derived(Boolean(subjectType && subjectId));
@@ -64,21 +68,28 @@
 		}
 	}
 
+	// `auto`, not `always`, when switching back on: `always` exists for an
+	// article the person wants revisited on every pass, and a two-state control
+	// has no way to say which of the two "on" means. The queue treats them
+	// identically today, so the only thing lost by choosing `auto` is a
+	// distinction this button was never able to make.
 	async function toggleMaintenance() {
 		if (!subjectType || !subjectId) return;
 		const next = !maintained;
 		maintained = next;
 		try {
-			await setArticleAutoUpdate(subjectType, subjectId, next);
+			await setArticleMaintenance(subjectType, subjectId, next ? 'auto' : 'never');
 		} catch (e) {
 			maintained = !next;
 			failed = e instanceof Error ? e.message : 'Could not change that';
 		}
 	}
 
-	// An article IS a page — Edit opens the page editor. One pen at a time:
-	// the first real edit claims the article (the server flips auto_update
-	// off), so the affordance says so before you commit to it.
+	// An article IS a page — Edit opens the page editor. Editing does NOT take
+	// the record's pen away: both keep writing the one document, and what
+	// protects the person's words is that the server refuses any machine edit
+	// that would lose them. The one-pen rule this comment used to describe was
+	// overruled — see agents/record/article-resolution.md.
 	async function openInEditor() {
 		if (!subjectType || !subjectId) return;
 		try {
@@ -106,8 +117,9 @@
 			<Markdown content={article} refVariant="quiet" />
 		</div>
 		<p class="colophon">
-			<!-- "Not kept" covers both never-kept and claimed-by-you: either way
-			     the record's pen is down and its channel is the Notes rail. -->
+			<!-- "Not kept" means the person switched maintenance off. It no
+			     longer means "you edited it once": editing an article does not
+			     take the record's pen away, so this line must not imply it. -->
 			{maintained
 				? 'Written and kept by the record'
 				: 'Written from the record — not kept updated; new evidence arrives as notes'}{revisedLabel
@@ -115,33 +127,30 @@
 				: ''}
 			{#if canWrite}
 				<span class="colophon-sep">·</span>
-				<button
-					type="button"
-					class="linkish"
-					title={maintained
-						? 'The record rewrites this article as new evidence arrives. Turning this off makes it yours.'
-						: 'Let the record keep this updated — it may rewrite the article, including your edits.'}
+				<TextAction
+					inline
 					onclick={toggleMaintenance}
+					title={maintained
+						? 'The record revises this article as new evidence arrives, leaving anything you wrote untouched. Turning it off stops that.'
+						: 'Let the record keep this updated. It edits around your own sentences rather than over them.'}
 				>
 					{maintained ? 'Keeping this updated' : 'Keep this updated'}
-				</button>
+				</TextAction>
 				<span class="colophon-sep">·</span>
-				<button
-					type="button"
-					class="linkish"
-					title={maintained
-						? 'Editing makes this article yours — AI updates turn off. Prefer a note for marginalia or raw data.'
-						: 'Open in the editor.'}
+				<TextAction
+					inline
 					onclick={openInEditor}
-				>
-					Edit
-				</button>
+					title={maintained
+						? 'Edit freely. Your sentences stay yours, and the record edits around them.'
+						: 'Open in the editor.'}
+				>Edit</TextAction>
 			{/if}
 		</p>
 		{#if maintained && canWrite}
 			<p class="regime-hint">
-				Making edits turns off AI updates as new data comes in — add a note instead to
-				attach marginalia.
+				Anything you write here stays as you wrote it — the record edits around your
+				sentences, and every change it makes is listed in History, where you can put any
+				version back.
 			</p>
 		{/if}
 	</div>
@@ -149,9 +158,9 @@
 	<p class="stub">
 		{#if canWrite}
 			No article yet.
-			<button type="button" class="linkish" disabled={writing} onclick={write}>
-				{writing ? 'Writing…' : `Write the article`}
-			</button>
+			<TextAction inline loading={writing} loadingLabel="Writing…" onclick={write}>
+				Write the article
+			</TextAction>
 		{:else}
 			No article yet about {name}.
 		{/if}
@@ -168,26 +177,6 @@
 		font-size: 1.0313rem;
 		line-height: 1.65;
 		color: var(--color-foreground);
-	}
-
-	/* A verb in running text, not a button that competes with the prose. The
-	   offer should read as a sentence the page is saying, since most entities
-	   will never have an article and a row of grey buttons on 573 pages is a
-	   chore list. */
-	.linkish {
-		background: none;
-		border: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-accent, currentColor);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-		cursor: pointer;
-	}
-
-	.linkish:disabled {
-		opacity: 0.6;
-		cursor: default;
 	}
 
 	.colophon-sep {

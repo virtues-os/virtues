@@ -120,6 +120,33 @@ impl StripeClient {
         user_code: &str,
         allow_promotion_codes: bool,
     ) -> Result<CreatedCheckoutSession> {
+        self.create_checkout_session_for(
+            price_id,
+            success_url,
+            cancel_url,
+            user_code,
+            allow_promotion_codes,
+            None,
+        )
+        .await
+    }
+
+    /// [`create_checkout_session`] with the payer's email pre-filled. Used by
+    /// the api_key-authed checkout door (a linked free account buying a
+    /// subscription): `account_checkout_done` attaches the subscription to
+    /// the account by the email Stripe reports, so pre-filling it is what
+    /// keeps "free me" and "paying me" the same account. Stripe still lets
+    /// the person change it; if they do, the subscription lands on a second
+    /// account — the same outcome as any mistyped email at checkout.
+    pub async fn create_checkout_session_for(
+        &self,
+        price_id: &str,
+        success_url: &str,
+        cancel_url: &str,
+        user_code: &str,
+        allow_promotion_codes: bool,
+        customer_email: Option<&str>,
+    ) -> Result<CreatedCheckoutSession> {
         let mut params: Vec<(&str, &str)> = vec![
             ("mode", "subscription"),
             ("line_items[0][price]", price_id),
@@ -138,6 +165,9 @@ impl StripeClient {
         // (link.rs) reads `state.allow_promotion_codes` — stays false in prod.
         if allow_promotion_codes {
             params.push(("allow_promotion_codes", "true"));
+        }
+        if let Some(email) = customer_email {
+            params.push(("customer_email", email));
         }
         let resp = self
             .http

@@ -3,8 +3,10 @@
 
 	The wiki's temporal spine: a year of activity as a calendar, then the
 	recent record as a month-grouped chronicle. Each day is one line — date,
-	epigraph if the night's narration has run, an honest "unwritten" stub if
-	it hasn't. Reads like an annal, not a feed.
+	then the first sentence of the article's lede if the night's narration has
+	run, an honest "unwritten" stub if it hasn't. Reads like an annal, not a
+	feed. (The narrator no longer writes an epigraph — that line drifted into
+	ungrounded poetry — so the lede, which traces to the events, is the caption.)
 -->
 
 <script lang="ts">
@@ -13,6 +15,7 @@
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import { listDayActivity, listDays, type DayActivityApi } from '$lib/wiki/api';
 	import { toActivityLevels } from '$lib/wiki/activity';
+	import { ledeSentence } from '$lib/wiki/lede';
 
 	interface Props {
 		onOpenDay: (slug: string) => void;
@@ -23,7 +26,7 @@
 	interface DayRow {
 		slug: string;
 		dayLabel: string; // "Mon 28"
-		epigraph: string | null;
+		lede: string | null;
 		narrated: boolean;
 		eventCount: number;
 	}
@@ -86,7 +89,7 @@
 						weekday: 'short',
 						day: 'numeric',
 					}),
-					epigraph: day.epigraph,
+					lede: ledeSentence(day.article),
 					narrated,
 					eventCount: countByDate.get(day.date)?.event_count ?? 0,
 				});
@@ -130,10 +133,8 @@
 						<li>
 							<button class="day" onclick={() => onOpenDay(day.slug)}>
 								<span class="day-date">{day.dayLabel}</span>
-								{#if day.epigraph}
-									<span class="day-epigraph">{day.epigraph}</span>
-								{:else if day.narrated}
-									<span class="day-epigraph">Narrated, without an epigraph</span>
+								{#if day.lede}
+									<span class="day-lede">{day.lede}</span>
 								{:else}
 									<span class="day-stub">Unwritten</span>
 								{/if}
@@ -179,10 +180,16 @@
 		margin-bottom: 0.25rem;
 	}
 
+	/* The 500 here was the only thing separating a month from the days under it,
+	   and it never rendered: JJannon ships one cut, so the request resolved back
+	   to the regular silently (agents/build/typography.md). At 18px the heading
+	   sat 3px above a 15px serif lede — barely a rank at all. Taken up to the
+	   scale's section-title size instead, which is where the markdown tokens
+	   already put an h2 (and --md-h2-weight is 400 for this same reason). */
 	.month-head h2 {
 		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.125rem;
-		font-weight: 500;
+		font-size: var(--md-h2-size);
+		font-weight: 400;
 		color: var(--color-foreground);
 		margin: 0;
 	}
@@ -230,7 +237,7 @@
 		transition: color 0.12s ease;
 	}
 
-	.day-epigraph {
+	.day-lede {
 		flex: 1;
 		min-width: 0;
 		font-family: var(--font-serif, Georgia, serif);

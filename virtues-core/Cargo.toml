@@ -24,10 +24,6 @@ name = "virtues"
 path = "src/main.rs"
 
 [[bin]]
-name = "virtues-mcp-server"
-path = "src/bin/mcp-server.rs"
-
-[[bin]]
 name = "virtues-prod-seed"
 path = "src/bin/prod_seed.rs"
 
@@ -38,12 +34,6 @@ path = "src/bin/prod_seed.rs"
 # never enable in release builds.
 dev-transport = ["virtues-helpers/dev-transport"]
 
-# Accelerator features are no-ops — the llama-server sidecars own GPU/CPU
-# selection now (decided by which binary CI built for the arch). Kept as
-# named features so existing `--features cuda` build invocations (e.g. the
-# Jetson appliance image script) don't break. Remove once consumers update.
-cuda = []
-tensorrt = ["cuda"]
 
 [dependencies]
 # Shared registry
@@ -77,7 +67,9 @@ async-trait = "0.1"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "migrate", "chrono", "json", "macros", "uuid", "rust_decimal"] }
 
 # Vector search (pgvector extension — Rust bindings round-trip vector(N) via sqlx)
-pgvector = { version = "0.4", features = ["sqlx", "halfvec"] }
+# 0.4.2 moved to sqlx 0.9 — a second sqlx in the graph and every Vector
+# column stops satisfying `sqlx::Type<Postgres>`. Lift the bound with sqlx.
+pgvector = { version = "0.4, <0.4.2", features = ["sqlx", "halfvec"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -193,7 +185,6 @@ sysinfo = "0.33"
 time = "0.3"
 
 # MCP Server
-rmcp = { version = "0.8.5", features = ["server", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.0"
 
 # Geospatial/clustering

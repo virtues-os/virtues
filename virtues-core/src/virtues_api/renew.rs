@@ -271,6 +271,51 @@ pub async fn fetch_entitlement(
     })
 }
 
+/// What atlas said when this linked box asked to buy a subscription.
+pub enum CheckoutSession {
+    Url(String),
+    /// Nothing to sell — a subscription already stands behind the key.
+    AlreadySubscribed,
+    /// atlas refused for its own reason; `code` is its (`stripe_error`,
+    /// `invalid_api_key`, `stripe_not_configured`, `internal`).
+    Failed { code: String, status: u16 },
+}
+
+/// `POST {atlas}/billing/checkout/sessions` — a Stripe Checkout URL for the
+/// account this key belongs to, email pre-filled. The door a linked FREE
+/// account uses to subscribe; the device-link flow would mint a second
+/// account instead.
+pub async fn fetch_checkout_session(
+    http: &reqwest::Client,
+    atlas_url: &str,
+    api_key: &str,
+) -> Result<CheckoutSession> {
+    let resp = http
+        .post(format!(
+            "{}/billing/checkout/sessions",
+            atlas_url.trim_end_matches('/')
+        ))
+        .json(&serde_json::json!({ "api_key": api_key }))
+        .send()
+        .await
+        .context("POST /billing/checkout/sessions")?;
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.unwrap_or_else(|_| serde_json::json!({}));
+    if status.is_success() {
+        if body["entitled"].as_bool() == Some(true) {
+            return Ok(CheckoutSession::AlreadySubscribed);
+        }
+        return body["url"]
+            .as_str()
+            .map(|u| CheckoutSession::Url(u.to_string()))
+            .ok_or_else(|| anyhow!("checkout response missing url"));
+    }
+    Ok(CheckoutSession::Failed {
+        code: body["error"]["code"].as_str().unwrap_or("unknown").to_string(),
+        status: status.as_u16(),
+    })
+}
+
 async fn find_credential_id(db: &PgPool) -> Result<Option<String>> {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT id FROM credentials WHERE source_id = $1 LIMIT 1")

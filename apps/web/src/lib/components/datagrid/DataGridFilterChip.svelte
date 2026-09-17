@@ -4,12 +4,14 @@
 	One pill for an active filter. Click body to open dropdown to change the
 	value. Click × to clear. Dropdown content varies by filter kind:
 	  - enum:  single-select list of options
-	  - multi: checkbox list
+	  - multi: several options at once, each row ticked
 	  - async: lazy-loaded options + optional search input
 -->
 
 <script lang="ts" generics="T">
 	import Icon from '$lib/components/Icon.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import type { FilterDef, FilterOption, FilterValue } from './types';
 	import { describeFilter, isFilterActive } from './types';
@@ -119,14 +121,14 @@
 					triggerToggle();
 					if (!open) void ensureAsyncLoaded();
 				}}
-				aria-haspopup="listbox"
+				aria-haspopup="menu"
 				aria-expanded={open}
 			>
 				<span class="chip-label">{labelText}</span>
 			</button>
 		{/snippet}
 		{#snippet children()}
-			<div class="popover" role="listbox">
+			<div class="popover" role="menu">
 				{#if def.kind === 'async' && def.searchable}
 					<div class="popover-search">
 						<Icon icon="ri:search-line" width="14" />
@@ -144,62 +146,45 @@
 					<div class="popover-state">No options</div>
 				{:else if def.kind === 'enum'}
 					{#each def.options as opt}
-						<button
-							type="button"
-							class="popover-row"
-							class:selected={value === opt.value}
+						{#snippet dot()}
+							<span class="dot {badgeFor(opt)}"></span>
+						{/snippet}
+						<MenuItem
+							role="menuitemradio"
+							label={opt.label}
+							checked={value === opt.value}
+							leading={opt.badgeColor ? dot : undefined}
 							onclick={() => pickEnum(opt)}
-						>
-							{#if opt.badgeColor}
-								<span class="dot {badgeFor(opt)}"></span>
-							{/if}
-							<span>{opt.label}</span>
-							{#if value === opt.value}
-								<Icon icon="ri:check-line" width="14" />
-							{/if}
-						</button>
+						/>
 					{/each}
 				{:else if def.kind === 'multi'}
 					{#each def.options as opt}
-						<button
-							type="button"
-							class="popover-row"
-							class:selected={isMultiChecked(opt)}
+						{#snippet dot()}
+							<span class="dot {badgeFor(opt)}"></span>
+						{/snippet}
+						<MenuItem
+							role="menuitemcheckbox"
+							label={opt.label}
+							checked={isMultiChecked(opt)}
+							leading={opt.badgeColor ? dot : undefined}
 							onclick={() => toggleMulti(opt)}
-						>
-							<span class="checkbox" class:checked={isMultiChecked(opt)}>
-								{#if isMultiChecked(opt)}
-									<Icon icon="ri:check-line" width="12" />
-								{/if}
-							</span>
-							{#if opt.badgeColor}
-								<span class="dot {badgeFor(opt)}"></span>
-							{/if}
-							<span>{opt.label}</span>
-						</button>
+						/>
 					{/each}
 				{:else if def.kind === 'async'}
 					{#each visibleAsyncOptions as opt}
-						<button
-							type="button"
-							class="popover-row"
-							class:selected={value === opt.value}
+						<MenuItem
+							role="menuitemradio"
+							label={opt.label}
+							checked={value === opt.value}
 							onclick={() => pickEnum(opt)}
-						>
-							<span>{opt.label}</span>
-							{#if value === opt.value}
-								<Icon icon="ri:check-line" width="14" />
-							{/if}
-						</button>
+						/>
 					{/each}
 				{/if}
 			</div>
 		{/snippet}
 	</Popover>
 	{#if active && removable}
-		<button type="button" class="chip-clear" onclick={onClear} aria-label="Remove filter">
-			<Icon icon="ri:close-line" width="12" />
-		</button>
+		<IconButton icon="ri:close-line" label="Remove filter" size="xs" onclick={onClear} />
 	{/if}
 </span>
 
@@ -247,28 +232,7 @@
 		text-overflow: ellipsis;
 	}
 
-	.chip-clear {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 18px;
-		height: 18px;
-		padding: 0;
-		font: inherit;
-		background: transparent;
-		border: none;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		border-radius: 4px;
-	}
-
-	.chip-clear:hover {
-		color: var(--color-foreground);
-		background: var(--color-background-hover);
-	}
-
-	.chip-body:focus-visible,
-	.chip-clear:focus-visible {
+	.chip-body:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
@@ -315,59 +279,10 @@
 		outline: none;
 	}
 
-	.popover-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.375rem 0.5rem;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-		text-align: left;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-
-	.popover-row > :global(svg:last-child) {
-		margin-left: auto;
-		color: var(--color-primary);
-	}
-
-	.popover-row:hover {
-		background: var(--color-background-hover);
-	}
-
-	.popover-row.selected {
-		color: var(--color-primary);
-	}
-
 	.popover-state {
 		padding: 0.5rem;
 		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle);
-	}
-
-	/* Same control as the grid's row checkbox — size, radius, border weight and
-	   monochrome fill. They sit within 200px of each other and were two
-	   different checkboxes: one blue, one not. */
-	.checkbox {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 14px;
-		height: 14px;
-		border: 1.5px solid var(--color-border-strong, var(--color-border));
-		border-radius: 4px;
-		background: var(--color-surface);
-		flex-shrink: 0;
-	}
-
-	.checkbox.checked {
-		background: var(--color-foreground);
-		border-color: var(--color-foreground);
-		color: var(--color-background);
 	}
 
 	.dot {

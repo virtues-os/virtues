@@ -104,6 +104,24 @@ Not everything with a page is on the clock.
   story that cannot point at the events it recruited is a caption, not a
   claim.
 
+**"Entity" is one of the three shapes, never a synonym for "subject."** This
+matters more than it sounds, because the two words meet in the schema and mean
+different things there:
+
+| column | what it holds | why |
+|---|---|---|
+| `wiki_articles.subject_type` | all eight subjects | anything with a page |
+| `wiki_refs.entity_type` | person, place, organization | a record can only POINT AT an entity |
+
+A record cannot reference a year. A year is a partition we impose; it is not
+something an email mentions. So the two lists are different on purpose, and
+aligning them — which looks like obvious tidying — would be wrong.
+
+The registry in
+[`virtues-core/src/api/subjects.rs`](../../virtues-core/src/api/subjects.rs) is
+this section in code: one row per subject, and everything that varies by kind
+hangs off it.
+
 ## Provenance
 
 Every span of text or drawing carries exactly one provenance.

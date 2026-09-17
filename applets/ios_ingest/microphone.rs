@@ -196,6 +196,17 @@ async fn ingest_one(db: &PgPool, record: &Value) -> Result<bool> {
 
     let average_db_level = record.get("average_db_level").and_then(|v| v.as_f64());
 
+    // A muted marker: the phone was inside a muted place or a muted schedule
+    // window and kept nothing on purpose. It arrives on the silent path
+    // (`is_silent`, no bytes, no level) with `muted_by` naming the reason —
+    // "schedule" or "place", never the place itself. Carried into metadata so
+    // the day dossier can tell a chosen silence from a dead collector, which
+    // otherwise look identical: no rows.
+    let mut metadata = serde_json::Map::new();
+    if let Some(reason) = record.get("muted_by").and_then(|v| v.as_str()) {
+        metadata.insert("muted_by".into(), Value::String(reason.to_string()));
+    }
+
     let id = row_id(MICROPHONE_STREAM_TABLE, &stream_id);
 
     let result = sqlx::query(
@@ -224,7 +235,7 @@ async fn ingest_one(db: &PgPool, record: &Value) -> Result<bool> {
     .bind(average_db_level)
     .bind("stream_ios_microphone")
     .bind("ios")
-    .bind(serde_json::json!({}))
+    .bind(Value::Object(metadata))
     .execute(db)
     .await
     .with_context(|| format!("failed to insert data_audio_recording for {stream_id}"))?;

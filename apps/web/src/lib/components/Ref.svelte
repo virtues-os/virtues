@@ -12,7 +12,7 @@
 		mimeType?: string;
 		// "link" (default): accent name + leading type icon + `@` — for chat answers,
 		// previews. "quiet": bare name with a dotted underline, inheriting the prose
-		// colour — for entities woven into flowing text (the day biography). See
+		// color — for entities woven into flowing text (the day biography). See
 		// ref-badge.css (.ref-link--quiet) and the link-when-reading refs doctrine.
 		variant?: "link" | "quiet";
 	}>();

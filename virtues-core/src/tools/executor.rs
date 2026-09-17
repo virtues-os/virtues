@@ -307,21 +307,39 @@ impl ToolExecutor {
             "propose_narrative_identity_edit" => {
                 self.execute_propose_narrative_identity(arguments).await
             }
-            // The narrative interview's finisher (interview mode's only tool):
-            // document + capsule + chapters from the transcript. The frontend
-            // watches this tool's output for document_page_id and opens the
-            // page beside the chat.
+            // The narrative interview's close (interview mode's only tool):
+            // document + chapters from the transcript. The frontend watches
+            // this tool's output for document_page_id, opens the page beside
+            // the chat, and retires the composer — the interview is over.
             "write_it_up" => {
-                match crate::api::narrative_draft::finalize_interview(&self._pool).await {
+                // The claim the interviewer makes about where the interview
+                // stands; the finisher's close gate holds it to that claim
+                // and refuses a premature close with the sentence to act on.
+                let req: crate::api::narrative_draft::CloseRequest =
+                    serde_json::from_value(arguments).map_err(|e| {
+                        ToolError::InvalidParameters(format!("write_it_up arguments: {e}"))
+                    })?;
+                match crate::api::narrative_draft::finalize_interview(&self._pool, &req).await {
                     Ok(outcome) => Ok(ToolResult::success(
                         serde_json::to_value(outcome).unwrap_or_default(),
                     )),
+                    // A refused close is not a failure of the tool: the
+                    // interview simply goes on. Its message tells the
+                    // interviewer what to say next.
+                    Err(crate::error::Error::InvalidInput(why)) => {
+                        Err(ToolError::InvalidParameters(why))
+                    }
                     Err(e) => Err(ToolError::ExecutionFailed(format!(
                         "write it up failed: {e}"
                     ))),
                 }
             }
             "update_memory" => self.execute_update_memory(arguments).await,
+            // Getting started's tools: markers, never writes (the client's
+            // cards write). `skip_step` is the one exception and it lands in
+            // the same stored list the door uses.
+            "skip_step" => self.execute_skip_step(arguments).await,
+            "record_introductions" => self.execute_record_introductions(arguments).await,
             "set_user_name" => self.execute_set_user_name(arguments).await,
             "set_assistant_name" => self.execute_set_assistant_name(arguments).await,
             "web_search" => self.web_search.execute(arguments).await,
@@ -342,6 +360,50 @@ impl ToolExecutor {
             "create_page" => self.page_editor.create_page(arguments).await,
             "get_page_content" => self.page_editor.get_page_content(arguments, context).await,
             "edit_page" => self.page_editor.edit_page(arguments, context).await,
+            // The wiki editor's write door. Deliberately NOT edit_page: the
+            // agent hands back a whole article and the server works out the
+            // edit, so history keeps a small diff and the owner's own
+            // sentences are protected by a check the agent cannot skip.
+            "revise_article" => {
+                let yjs = self.yjs_state.as_ref().ok_or_else(|| {
+                    ToolError::ExecutionFailed(
+                        "revise_article needs the live document layer; it runs in an \
+                         applet's agent phase, not in a subprocess"
+                            .to_string(),
+                    )
+                })?;
+                let arg = |k: &str| -> Result<String, ToolError> {
+                    arguments
+                        .get(k)
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                        .ok_or_else(|| {
+                            ToolError::ExecutionFailed(format!("revise_article needs {k}"))
+                        })
+                };
+                let (st, sid, article, summary) = (
+                    arg("subject_type")?,
+                    arg("subject_id")?,
+                    arg("article")?,
+                    arg("summary")?,
+                );
+                match crate::api::wiki_editor::revise_article(
+                    &self._pool, yjs, &st, &sid, &article, &summary,
+                )
+                .await
+                {
+                    Ok(change) => Ok(ToolResult::success(serde_json::json!({
+                        "applied": true,
+                        "change": change,
+                    }))),
+                    // A refusal is not an error to raise at the person: it is a
+                    // sentence for the agent to act on in this same turn.
+                    Err(e) => Ok(ToolResult::success(serde_json::json!({
+                        "applied": false,
+                        "refused": e.to_string(),
+                    }))),
+                }
+            }
             // Applet setup
             "setup_applet" => super::applet_setup::execute(&self._pool, arguments, context).await,
             // Applet memory (persistent scratchpad for actions across runs)
@@ -807,6 +869,183 @@ impl ToolExecutor {
         })))
     }
 
+    /// Open one step's card. A done step has no card to open, and the
+
+    /// Skip a step on the person's ask. `connect_ai` is the door's alone.
+    async fn execute_skip_step(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+        let step = arguments
+            .get("step")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::InvalidParameters("step is required".into()))?
+            .to_string();
+        let skipped = arguments.get("skipped").and_then(|v| v.as_bool()).unwrap_or(true);
+        if step == "connect_ai" {
+            return Err(ToolError::InvalidParameters(
+                "connect_ai cannot be skipped from the conversation; the door in the corner is the person's own exit".into(),
+            ));
+        }
+        crate::api::getting_started::set_skipped(&self._pool, &step, skipped)
+            .await
+            .map_err(|e| match e {
+                crate::error::Error::InvalidInput(why) => ToolError::InvalidParameters(why),
+                e => ToolError::ExecutionFailed(format!("skip step: {e}")),
+            })?;
+        let state = crate::api::getting_started::compute(&self._pool)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("getting-started state: {e}")))?;
+        Ok(ToolResult::success(serde_json::json!({
+            "step": step,
+            "skipped": skipped,
+            "graduated": state.graduated,
+            "state": state.render_prompt_block(),
+        })))
+    }
+
+    /// Write the introductions down. Validates the shapes it can (a date, a
+    /// time zone name), writes the profile, and returns what it wrote as a
+    /// receipt for the card. There is no confirm button: in a room whose
+    /// whole premise is one composer, a button asking "is this right?" makes
+    /// the person stop and wonder whether to type or to click. A correction
+    /// is a reply, and this tool called a second time.
+    async fn execute_record_introductions(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+        let field = |k: &str| {
+            arguments
+                .get(k)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        /* Take the date AS WRITTEN. Demanding YYYY-MM-DD from a model sitting
+         * behind a conversation cost a real birth date: someone typed
+         * "June 6 1997" and the model, facing a tool that rejects the WHOLE
+         * call on a bad format, quietly dropped the field instead — so the
+         * write looked clean, the step closed on four of five, and the one
+         * value the lifeline is drawn against was never recorded. A format
+         * requirement belongs on this side of the wire, not on the model's.
+         */
+        let birth_date = field("birth_date").and_then(|d| Self::parse_birth_date(&d));
+        let home_timezone = field("home_timezone");
+        if let Some(tz) = &home_timezone {
+            if tz.parse::<chrono_tz::Tz>().is_err() {
+                return Err(ToolError::InvalidParameters(format!(
+                    "home_timezone must be an IANA name (e.g. America/Chicago), got {tz}"
+                )));
+            }
+        }
+        let full_name = field("full_name");
+        let preferred_name = field("preferred_name");
+        let assistant_name = field("assistant_name");
+        let home_place = field("home_place");
+        let fields = serde_json::json!({
+            "full_name": full_name,
+            "preferred_name": preferred_name,
+            "assistant_name": assistant_name,
+            "home_place": home_place,
+            "home_timezone": home_timezone,
+            "birth_date": birth_date,
+        });
+        if fields.as_object().is_some_and(|o| o.values().all(|v| v.is_null())) {
+            return Err(ToolError::InvalidParameters(
+                "nothing to record; ask for at least one of the five".into(),
+            ));
+        }
+
+        // COALESCE per column, so calling this again to fix one thing cannot
+        // blank the four the person did not repeat.
+        sqlx::query(
+            "UPDATE app_user_profile SET \
+               full_name = COALESCE($1, full_name), \
+               preferred_name = COALESCE($2, preferred_name), \
+               birth_date = COALESCE($3::date, birth_date), \
+               home_timezone = COALESCE($4, home_timezone), \
+               updated_at = now() \
+             WHERE id = '00000000-0000-0000-0000-000000000001'",
+        )
+        .bind(&full_name)
+        .bind(&preferred_name)
+        .bind(&birth_date)
+        .bind(&home_timezone)
+        .execute(self._pool.as_ref())
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("record introductions: {e}")))?;
+
+        if let Some(name) = &assistant_name {
+            sqlx::query(
+                "UPDATE app_assistant_profile SET assistant_name = $1, updated_at = now() \
+                 WHERE id = '00000000-0000-0000-0000-000000000001'",
+            )
+            .bind(name)
+            .execute(self._pool.as_ref())
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("record assistant name: {e}")))?;
+        }
+
+        /* What is STILL MISSING, named, so a partial write cannot look like a
+         * complete one. Two of five landed once and nobody noticed, because
+         * the tool answered the same way either way. */
+        let missing: Vec<&str> = [
+            ("their full name", full_name.is_none()),
+            ("what to call them", preferred_name.is_none()),
+            ("their birth date", birth_date.is_none()),
+            ("the city they live in", home_timezone.is_none()),
+        ]
+        .into_iter()
+        .filter_map(|(label, absent)| absent.then_some(label))
+        .collect();
+
+        let message = if missing.is_empty() {
+            "Written down and shown under your turn. Say nothing further about it; if they correct anything, call this again with only what changed.".to_string()
+        } else {
+            format!(
+                "Written down and shown under your turn, but STILL MISSING: {}. Ask for what is missing in one short question — this step is not finished without it, and the birth date in particular is what their whole record is laid out against.",
+                missing.join(", ")
+            )
+        };
+
+        Ok(ToolResult::success(serde_json::json!({
+            "card": "introductions",
+            "fields": fields,
+            "missing": missing,
+            "message": message
+        })))
+    }
+
+    
+
+    /// A birth date the way a person writes one. ISO first (what a careful
+    /// model sends), then the ordinary spellings; a two-digit year is refused
+    /// rather than guessed, because 1997 and 2097 are both readings of "97".
+    fn parse_birth_date(raw: &str) -> Option<chrono::NaiveDate> {
+        let cleaned = raw.trim().replace(',', " ");
+        let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+        const FORMATS: &[&str] = &[
+            "%Y-%m-%d", "%Y/%m/%d", "%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y",
+            "%m/%d/%Y", "%d-%m-%Y",
+        ];
+        let parsed = FORMATS
+            .iter()
+            .find_map(|f| chrono::NaiveDate::parse_from_str(&cleaned, f).ok())
+            // "6th June 1997" and friends: drop the ordinal suffix and retry.
+            .or_else(|| {
+                let no_ordinal = regex::Regex::new(r"(?i)(\d{1,2})(st|nd|rd|th)\b")
+                    .ok()?
+                    .replace_all(&cleaned, "$1")
+                    .to_string();
+                FORMATS
+                    .iter()
+                    .find_map(|f| chrono::NaiveDate::parse_from_str(&no_ordinal, f).ok())
+            })?;
+        /* A living person's birth year. `%Y` reads "97" as the year 97 without
+         * complaint, so "6/6/97" parsed clean and would have drawn a lifeline
+         * two thousand years long. Refused rather than guessed: 1997 and 2097
+         * are both readings, a missing date gets asked for again, and a wrong
+         * one silently mis-draws everything. */
+        let year = chrono::Datelike::year(&parsed);
+        let this_year = chrono::Datelike::year(&chrono::Utc::now().date_naive());
+        (1900..=this_year).contains(&year).then_some(parsed)
+    }
+
     /// Set the user's preferred name
     async fn execute_set_user_name(
         &self,
@@ -1192,5 +1431,45 @@ mod memory_contract {
         crate::api::assistant_memories::retire_memory(&pool, id).await.unwrap();
         let prompt = crate::api::chat::build_system_prompt_for_audit(&pool).await;
         assert!(!prompt.contains("My words now."), "retired memory still rendered");
+    }
+}
+
+#[cfg(test)]
+mod birth_date_tests {
+    use super::ToolExecutor;
+    use chrono::NaiveDate;
+
+    /// A date arrives the way a person types it. Demanding ISO from the model
+    /// lost one: "June 6 1997" was dropped rather than risk a rejected call.
+    #[test]
+    fn a_birth_date_is_read_the_way_people_write_one() {
+        let june6 = NaiveDate::from_ymd_opt(1997, 6, 6).unwrap();
+        for written in [
+            "1997-06-06",
+            "June 6 1997",
+            "June 6, 1997",
+            "6 June 1997",
+            "6th June 1997",
+            "Jun 6 1997",
+            "06/06/1997",
+            "1997/06/06",
+            "  June 6   1997 ",
+        ] {
+            assert_eq!(
+                ToolExecutor::parse_birth_date(written),
+                Some(june6),
+                "could not read {written:?}"
+            );
+        }
+    }
+
+    /// Refused rather than guessed: "97" is 1997 or 2097 and nothing in the
+    /// string says which. A missing date is asked for again; a wrong one is
+    /// not, and it silently mis-draws the whole lifeline.
+    #[test]
+    fn an_ambiguous_year_is_refused() {
+        for written in ["6/6/97", "June 6 97", "sometime in the nineties", ""] {
+            assert_eq!(ToolExecutor::parse_birth_date(written), None, "accepted {written:?}");
+        }
     }
 }

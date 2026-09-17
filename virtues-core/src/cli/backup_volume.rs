@@ -660,11 +660,21 @@ pub async fn run_cli(
             }
             Ok(Some(r)) => {
                 any = true;
+                let file_name = |p: &std::path::Path| {
+                    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+                };
+                // Name the archives: an operator checking the drive by hand
+                // should be able to match this line to the files on it.
                 super::ui::ok(&format!(
-                    "{}: {} new lake file(s), {:.1} MB{}",
+                    "{}: wrote {}; {} new lake file(s), {:.1} MB{}{}",
                     volume.name,
+                    file_name(&r.full),
                     r.new_files,
                     r.new_bytes as f64 / (1024.0 * 1024.0),
+                    match &r.increment {
+                        Some(inc) => format!(" in {}", file_name(inc)),
+                        None => String::new(),
+                    },
                     if r.pruned > 0 {
                         format!(", pruned {} old full archive(s)", r.pruned)
                     } else {

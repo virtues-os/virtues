@@ -80,19 +80,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("sudo")
                 | Some("warm-models")
         );
-        let default_filter = if interactive { "warn" } else { "info" };
-        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
+        // The format (text on a terminal, JSON under systemd) and the field
+        // vocabulary live in `observe`; the noise floor is this binary's own
+        // judgment, so it stays here.
+        virtues::observe::init(if interactive { "warn" } else { "info" });
 
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .with_writer(std::io::stderr)
-            .init();
-
-        // No metrics exporter. Virtues collects no central telemetry — all
-        // observability is box-local (see api/system_telemetry.rs + the
-        // app_ai_calls / app_system_samples tables). The old OpenTelemetry
-        // OTLP exporter was removed: it was egress and dropped-on-restart.
+        // No metrics exporter, and no continuous telemetry egress: the
+        // running box reports nothing anywhere. All of it is box-local (see
+        // api/system_telemetry.rs + the app_ai_calls / app_system_samples
+        // tables). The old OpenTelemetry OTLP exporter was removed: it was
+        // egress and dropped-on-restart.
+        //
+        // The ONE exception, and this comment used to deny it outright: when
+        // the daemon dies abnormally, systemd's `ExecStopPost` runs
+        // `virtues report-crash`, which posts the exit status and a 50-line
+        // journal tail to atlas. It is on by default and `VIRTUES_DIAG=off`
+        // disables it (cli/diag.rs, documented in docs/operate/recovery.md,
+        // reported by `virtues doctor` and `virtues status --json`). A crash
+        // is recorded in this box's own journal either way.
     }
 
     // Inject the rich version (semver + codename + date + sha) into clap's

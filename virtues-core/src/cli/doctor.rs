@@ -1,7 +1,7 @@
 //! `virtues doctor` — the box examined.
 //!
-//! Three ledgers (Inference, Reach, Appliance) and one verdict. The last is
-//! printed only on hardware we shipped. The editorial rules:
+//! Four ledgers (Inference, Reach, Appliance, Diagnostics) and one verdict.
+//! Appliance is printed only on hardware we shipped. The editorial rules:
 //!
 //! 1. **Say each fact once.** The old report printed the global IPv6 three
 //!    times (class line, headline, network line); here every fact has one row.
@@ -30,7 +30,44 @@ pub async fn run() -> i32 {
     probe_inference(&mut issues).await;
     print_reach(&mut issues).await;
     print_appliance(&mut issues);
+    print_diagnostics();
     issues.verdict()
+}
+
+/// The Diagnostics ledger — the one thing a running box sends anywhere.
+///
+/// Never an issue: default-on crash reporting is a choice we made, not a
+/// fault to remedy. It is here because it was disclosed nowhere a person
+/// would look. `main.rs` claimed the box collected no telemetry at all, the
+/// installer says nothing, and the only honest readout was a field in
+/// `virtues status --json` that you had to already suspect to go find. If we
+/// are going to post a journal tail off the box by default, the tool people
+/// are told to run when they are worried has to say so.
+///
+/// Unlike Appliance, this prints on every box, DIY included — the beacon
+/// does not care what hardware it is running on.
+fn print_diagnostics() {
+    ui::subsection("Diagnostics");
+    if super::diag::enabled() {
+        let host = super::diag::atlas_url()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/')
+            .split('/')
+            .next()
+            .unwrap_or("the cloud")
+            .to_string();
+        ui::kv(
+            "crash report",
+            &format!("on — exit status and 50 journal lines to {host}"),
+        );
+        ui::kv("turn off", "VIRTUES_DIAG=off in /var/lib/virtues/virtues.env");
+    } else {
+        ui::kv("crash report", "off — VIRTUES_DIAG opts out of cloud diagnostics");
+    }
+    // True in both branches, and the point of saying it: opting out costs
+    // you nothing locally.
+    ui::kv("local record", "always — journalctl -u virtues -g box.crashed");
 }
 
 /// The Appliance ledger — the physical box, as opposed to the software on it.

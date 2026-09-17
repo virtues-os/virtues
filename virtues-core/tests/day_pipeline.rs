@@ -397,6 +397,42 @@ fn segmenting_is_not_narrating() {
     );
 }
 
+/// The attempt is counted BEFORE the chain runs.
+///
+/// `record_narration_attempt` is the catch-up queue's memory. Counted after the
+/// chain, a run that times out, is killed, or panics mid-way leaves no trace, and
+/// the queue offers the same day back next hour as if nothing had happened —
+/// which is the hourly-forever retry the budget exists to stop. The call must
+/// come before the first step of the chain (audio sessionization).
+#[test]
+fn attempt_is_recorded_before_the_chain_runs() {
+    let src = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("repo root")
+            .join("applets/day_summary_eod/main.rs"),
+    )
+    .expect("read day_summary_eod/main.rs");
+
+    let pos = |needle: &str| {
+        src.lines()
+            .position(|l| l.contains(needle) && !l.trim_start().starts_with("//"))
+            .unwrap_or_else(|| panic!("no call to `{needle}` in day_summary_eod"))
+    };
+
+    assert!(
+        pos("record_narration_attempt(") < pos("sessionize_day("),
+        "the attempt must be counted before the chain starts, or a run that dies \
+         mid-chain is never counted and the day is retried every hour"
+    );
+    assert!(
+        !src.contains("wiki_events e"),
+        "the queue must not live in the applet and must not key on the event \
+         count — a day whose cut failed has zero events and would be invisible; \
+         use day_summary::next_catchup_day"
+    );
+}
+
 /// Narration reads the EVENTS. So the events have to exist first.
 #[test]
 fn narration_comes_after_the_day_is_cut() {

@@ -11,7 +11,7 @@
 	import { onDestroy } from "svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import Icon from "$lib/components/Icon.svelte";
-	import { Button } from "$lib";
+	import { Button, TextAction } from "$lib";
 	import * as api from "$lib/api/client";
 	import { openPairDoor, closePairDoor, createPairHandoff } from "$lib/tauri/bridge";
 	import type { HandoffOutcome } from "$lib/tauri/bridge";
@@ -330,9 +330,9 @@
 	<!-- A code is meaningless without the app to type it into, so it leads. -->
 	<p class="text-sm text-foreground-muted mb-4">
 		<span class="step-n">1</span> Install Virtues on your {device} —
-		<button type="button" class="dl" onclick={() => void openExternal(DOWNLOADS_URL)}>
+		<TextAction inline onclick={() => void openExternal(DOWNLOADS_URL)}>
 			virtues.com/downloads
-		</button>
+		</TextAction>
 	</p>
 {/snippet}
 
@@ -422,9 +422,15 @@
 						     beside it read as a third simultaneous instruction. With no
 						     QR, typing IS the flow, so the door shows itself. -->
 						{#if handoffQr && !showManual}
-							<button type="button" class="door-toggle mb-5" onclick={() => (showManual = true)}>
-								Can't scan? Type an address instead
-							</button>
+							<!-- The spacing sits on a wrapper, not on the action: the
+							     primitive declares `margin: 0` from a scoped rule, which
+							     outranks a forwarded Tailwind `mb-*` and would silently
+							     eat it. -->
+							<div class="mb-5">
+								<TextAction quiet onclick={() => (showManual = true)}>
+									Can't scan? Type an address instead
+								</TextAction>
+							</div>
 						{:else}
 							<div class="door mb-5">
 								<div class="door-row">
@@ -580,23 +586,6 @@
 		text-align: left;
 	}
 
-	/* The folded door: one quiet line where the address block will unfold.
-	   Underlined like a link, muted like a footnote — it must not compete
-	   with the QR above it. */
-	.door-toggle {
-		border: none;
-		background: none;
-		padding: 0;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-		cursor: pointer;
-	}
-	.door-toggle:hover {
-		color: var(--color-foreground);
-	}
-
 	/* Same frame as .door, deliberately: this is an explanation of what is
 	   missing, sitting directly above the fallback it makes you use. Warning
 	   color on the title only — the body is instruction, not alarm. */
@@ -665,18 +654,6 @@
 		font-weight: 600;
 		color: var(--color-foreground, #111827);
 	}
-	.dl {
-		border: none;
-		background: none;
-		padding: 0;
-		font: inherit;
-		color: var(--color-primary);
-		cursor: pointer;
-	}
-	.dl:hover {
-		text-decoration: underline;
-	}
-
 	@reference "../../../app.css";
 
 	/* Scan-target frame: white QR plate with four hairline corner brackets.

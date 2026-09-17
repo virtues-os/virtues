@@ -2,13 +2,20 @@
 	WikiView.svelte
 
 	The wiki room: the wikipedia of one life. Sections are route-driven and
-	deep-linkable, navigated from the SIDEBAR — the room swaps the rail for its
-	own rows the way Settings and Developer do.
+	deep-linkable, navigated from the SIDEBAR — the rail's Wiki panel carries
+	the rows, and this room renders whatever the route names.
 
-	There used to be a SubNav strip across the top carrying the same eight
-	links. Once the sidebar grew them it was the same list twice on one screen,
-	and the top copy cost a band of vertical space on every wiki page to say
-	what the rail already said.
+	There is deliberately no in-page nav. The room had an eleven-item SubNav
+	strip across the top at the same time the sidebar panel listed the same
+	eleven words, one column to the left: the same list twice in one viewport.
+	The sidebar won because eleven items is a column's shape, not a strip's —
+	a horizontal run of eleven either wraps or scrolls, which is the same smell
+	that broke Settings' nav when it grew a second row of underline tabs.
+
+	`section` below is derived from `tab.route` and always was, so nothing here
+	depended on the strip: SubNav only ever WROTE the route, and the sidebar's
+	rows write it the same way (through `windowShellStore.navigate`, which also
+	pushes history, so Back still walks the sections).
 
 	  /wiki           Overview — the front page: standfirst, activity, on
 	                  this day, the latest entry, and the index.
@@ -26,11 +33,13 @@
 
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
+	import { TextAction } from '$lib';
 	import { WIKI_SECTION_RE } from '$lib/tabs/registry';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import {
 		ActivityHeatmap,
 		ChaptersSection,
+		StoriesSection,
 		DaysChronicle,
 		NarrativeIdentitySection,
 	} from '$lib/components/wiki';
@@ -40,20 +49,24 @@
 	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import { Button } from '$lib';
 	import { getLocalDateSlug, formatLongDate } from '$lib/utils/dateUtils';
+	import { lede } from '$lib/wiki/lede';
 	import {
 		listPeople,
 		listPlaces,
 		listOrganizations,
 		listDays,
 		listDayActivity,
+		listYears,
+		getChapters,
+		type ChapterApi,
+		type YearSummaryApi,
 		listOnThisDay,
-		listStories,
 		getNarrativeIdentity,
 		getLifeline,
 		listHistory,
 		countOpenNotes,
-		type WikiStoryApi,
 		type WikiPersonListItem,
 		type WikiPlaceListItem,
 		type WikiOrganizationListItem,
@@ -70,6 +83,11 @@
 	import { reclassifyPersonAsOrg, createPerson, deleteEntity } from '$lib/wiki/api';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// The section list lives in ONE place now: WIKI_MODE in `lib/sidebar/modes.ts`,
+	// which the rail's Wiki panel renders. People/Places/Orgs stay their own rows
+	// there even though the content folds them into one Entities index — the
+	// legacy segment presets the index's type filter (see LEGACY_TYPE below).
 
 	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity' | 'chapters' | 'history' | 'lifeline';
 
@@ -109,59 +127,25 @@
 				: (routeSegment as Section)
 	);
 
-	// --- Stories ---
-	//
-	// Hand-authored articles; nothing writes one yet, so an empty list is the
-	// expected state rather than a failure and the copy says so plainly.
-
-	let stories = $state<WikiStoryApi[]>([]);
-	let storiesLoaded = $state(false);
-
-	async function loadStories() {
-		if (storiesLoaded) return;
-		stories = await listStories();
-		storiesLoaded = true;
-	}
-
-	$effect(() => {
-		if (section === 'stories') void loadStories();
-	});
-
 	// --- Years ---
 	//
 	// Derived, not stored: there is no years endpoint, so the index is grouped
 	// from day activity. Only years with recorded days appear — an empty year
 	// is not a year of your life you'd want listed.
 
-	interface YearRow {
-		year: number;
-		recorded: number;
-		narrated: number;
-	}
+	// Years come from the box now. They used to be derived here from a ten-year
+	// window of day activity, with a comment explaining that no years endpoint
+	// existed — so a year before the record simply was not a year, and every
+	// row linked to the days index regardless of which year you clicked.
+	/** Their chapters, for the front page. */
+	let overviewChapters = $state<ChapterApi[]>([]);
 
-	let years = $state<YearRow[]>([]);
+	let years = $state<YearSummaryApi[]>([]);
 	let yearsLoaded = $state(false);
 
 	async function loadYears() {
 		if (yearsLoaded) return;
-		// Wide enough to cover the record; the endpoint returns only real days.
-		const end = new Date();
-		const start = new Date(end.getFullYear() - 10, 0, 1);
-		const activity = await listDayActivity(
-			getLocalDateSlug(start),
-			getLocalDateSlug(end)
-		);
-
-		const byYear = new Map<number, YearRow>();
-		for (const d of activity) {
-			if (!d.event_count) continue;
-			const y = Number(d.date.slice(0, 4));
-			const row = byYear.get(y) ?? { year: y, recorded: 0, narrated: 0 };
-			row.recorded += 1;
-			if (d.narrated) row.narrated += 1;
-			byYear.set(y, row);
-		}
-		years = [...byYear.values()].sort((a, b) => b.year - a.year);
+		years = await listYears();
 		yearsLoaded = true;
 	}
 
@@ -420,7 +404,7 @@
 		stubs: 0,
 	});
 	let onThisDay = $state<OnThisDayApi[]>([]);
-	let latestEntry = $state<{ slug: string; label: string; epigraph: string | null } | null>(null);
+	let latestEntry = $state<{ slug: string; label: string; lede: string | null } | null>(null);
 	let standfirst = $state<string | null>(null);
 
 	// The lifeline strip: the whole record flattened to one row (§17.1), plus
@@ -449,7 +433,7 @@
 			const recentStart = new Date();
 			recentStart.setDate(recentStart.getDate() - 45);
 
-			const [activity, otd, recent, identity, lifeline, edits, openNotes] =
+			const [activity, otd, recent, identity, lifeline, edits, openNotes, chapters] =
 				await Promise.all([
 					listDayActivity(getLocalDateSlug(startDate), getLocalDateSlug(endDate)),
 					listOnThisDay(),
@@ -459,7 +443,10 @@
 					getLifeline(560),
 					listHistory(6),
 					countOpenNotes(),
+					getChapters(),
 				]);
+
+			overviewChapters = chapters ?? [];
 
 			if (lifeline && lifeline.lanes.length) {
 				const n = lifeline.lanes[0]?.density.length ?? 0;
@@ -523,7 +510,10 @@
 						day: 'numeric',
 						year: 'numeric',
 					}),
-					epigraph: featured.epigraph,
+					// The day's own opening paragraph, which is its short form
+					// everywhere. `epigraph` was a column the narrate prompt
+					// forbids, so this card showed nothing on every box.
+					lede: lede(featured.article),
 				};
 			}
 
@@ -591,9 +581,9 @@
 					</p>
 					<p class="today-line">
 						Today's entry is
-						<button onclick={() => openDay(todaySlug)} class="today-link">
+						<TextAction inline onclick={() => openDay(todaySlug)}>
 							{todayFormatted}
-						</button>
+						</TextAction>
 					</p>
 				</header>
 
@@ -623,38 +613,35 @@
 					</button>
 				{/if}
 
-				<section class="sec">
-					<div class="sec-main">
-						<h2>Activity</h2>
-						{#if loadingActivity}
-							<p class="quiet">Loading activity…</p>
-						{:else}
-							<ActivityHeatmap
-								{activityData}
-								onDayClick={(_d, slug) => openDay(slug)}
-							/>
-						{/if}
-					</div>
-					<aside class="sec-aside">
-						{#if !loadingActivity}
-							<dl class="stat-stack">
-								<div>
-									<dt>Days recorded</dt>
-									<dd>{activityStats.recorded}</dd>
-								</div>
-								<div>
-									<dt>Narrated</dt>
-									<dd>{activityStats.narrated}</dd>
-								</div>
-								<div>
-									<dt>Awaiting narration</dt>
-									<dd>{activityStats.stubs}</dd>
-								</div>
-							</dl>
-							<p class="aside-note">The last six months, day by day.</p>
-						{/if}
-					</aside>
-				</section>
+				<!-- Their own partition of their life, directly under the wire that
+				     draws it. The front page led with a heatmap of how much data
+				     arrived, which is a fact about the collector rather than about
+				     the life; the chapters are the first thing here the person
+				     actually wrote. -->
+				{#if overviewChapters.length}
+					<section class="sec">
+						<div class="sec-main">
+							<h2>Chapters</h2>
+							<ol class="chapter-list">
+								{#each overviewChapters as c (c.id)}
+									<li>
+										<span class="ch-name">{c.title ?? 'An unnamed stretch'}</span>
+										<span class="ch-span">
+											{c.started_at.slice(0, 4)} – {c.ended_at ? c.ended_at.slice(0, 4) : 'now'}
+										</span>
+									</li>
+								{/each}
+							</ol>
+						</div>
+						<aside class="sec-aside">
+							<p class="aside-note">
+								Named by you, never inferred. Every day the record holds falls inside
+								exactly one.
+							</p>
+							<a class="aside-link" href="/wiki/chapters">All chapters →</a>
+						</aside>
+					</section>
+				{/if}
 
 				<section class="sec">
 					<div class="sec-main">
@@ -669,8 +656,8 @@
 									<li>
 										<button class="otd-row" onclick={() => openDay(entry.date)}>
 											<span class="otd-year">{yearOf(entry.date)}</span>
-											{#if entry.epigraph}
-												<span class="otd-epigraph">{entry.epigraph}</span>
+											{#if entry.lede}
+												<span class="otd-epigraph">{entry.lede}</span>
 											{:else if entry.narrated}
 												<span class="otd-epigraph">A narrated day</span>
 											{:else}
@@ -696,9 +683,9 @@
 							<h2>The latest entry</h2>
 							<button class="featured" onclick={() => openDay(latestEntry!.slug)}>
 								<span class="featured-date">{latestEntry.label}</span>
-								{#if latestEntry.epigraph}
+								{#if latestEntry.lede}
 									<blockquote class="featured-epigraph">
-										{latestEntry.epigraph}
+										{latestEntry.lede}
 									</blockquote>
 								{/if}
 								<span class="featured-open">Read the entry →</span>
@@ -739,9 +726,9 @@
 									</li>
 								{/each}
 							</ul>
-							<button class="wc-all" onclick={() => goTo('/wiki/history')}>
-								All history →
-							</button>
+							<p class="wc-all">
+								<TextAction onclick={() => goTo('/wiki/history')}>All history →</TextAction>
+							</p>
 						{/if}
 					</div>
 					<aside class="sec-aside">
@@ -770,27 +757,6 @@
 					</aside>
 				</section>
 			</div>
-		{:else if section === 'stories'}
-			<!-- Stories exist in the schema but the author path hasn't shipped —
-			     until it does, a room with no write path teaches a construct the
-			     product can't yet keep. Ships later (ruled 2026-09-01); until
-			     then, list what stands and say nothing about a promise. -->
-			<div class="measure">
-				{#if !storiesLoaded}
-					<p class="quiet">Loading…</p>
-				{:else if stories.length === 0}
-					<p class="quiet">Nothing here yet.</p>
-				{:else}
-					<ul class="stories">
-						{#each stories as story (story.id)}
-							<li>
-								<a href="/wiki/story/{story.id}">{story.title}</a>
-								{#if story.subtitle}<span class="quiet"> — {story.subtitle}</span>{/if}
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
 		{:else if section === 'lifeline'}
 			<!-- Full bleed, and not by preference. Every other section here is
 			     prose and belongs in a 42rem measure; a lifeline is a viewport
@@ -809,14 +775,19 @@
 				{#if !yearsLoaded}
 					<p class="quiet">Loading…</p>
 				{:else if years.length === 0}
-					<p class="quiet">No recorded days yet, so there are no years to show.</p>
+					<p class="quiet">No years yet.</p>
 				{:else}
 					<ul class="years">
 						{#each years as y (y.year)}
 							<li>
-								<a href="/wiki/days">{y.year}</a>
+								<a href="/year/{y.id}">{y.title ?? y.year}</a>
 								<span class="quiet">
-									{y.recorded} day{y.recorded === 1 ? '' : 's'} · {y.narrated} narrated
+									{#if y.days_recorded === 0}
+										nothing recorded{#if y.chapters.length} · {y.chapters[0]}{/if}
+									{:else}
+										{y.days_recorded} day{y.days_recorded === 1 ? '' : 's'} · {y.days_narrated}
+										narrated{#if y.has_article} · written up{/if}
+									{/if}
 								</span>
 							</li>
 						{/each}
@@ -825,6 +796,42 @@
 			</div>
 		{:else if section === 'days'}
 			<div class="days-wrap">
+				<!-- The heatmap moved here from the front page. How much data
+				     arrived is a fact about the collector rather than about the
+				     life, and on the days index its counts are the subject. -->
+				<section class="sec">
+					<div class="sec-main">
+						<h2>Activity</h2>
+						{#if loadingActivity}
+							<p class="quiet">Loading activity…</p>
+						{:else}
+							<ActivityHeatmap
+								{activityData}
+								onDayClick={(_d, slug) => openDay(slug)}
+							/>
+						{/if}
+					</div>
+					<aside class="sec-aside">
+						{#if !loadingActivity}
+							<dl class="stat-stack">
+								<div>
+									<dt>Days recorded</dt>
+									<dd>{activityStats.recorded}</dd>
+								</div>
+								<div>
+									<dt>Narrated</dt>
+									<dd>{activityStats.narrated}</dd>
+								</div>
+								<div>
+									<dt>Awaiting narration</dt>
+									<dd>{activityStats.stubs}</dd>
+								</div>
+							</dl>
+							<p class="aside-note">The last six months, day by day.</p>
+						{/if}
+					</aside>
+				</section>
+
 				<DaysChronicle onOpenDay={openDay} />
 			</div>
 		{:else if section === 'entities'}
@@ -849,10 +856,12 @@
 							<!-- People arrived only by resolution before this: from a
 							     contact sync or an email sender. The people who matter
 							     most are often the ones you never email. -->
-							<button type="button" class="add-entity" onclick={addPerson}>
-								<Icon icon="ri:user-add-line" width="14" />
-								<span>New person</span>
-							</button>
+							<Button
+								variant="ghost"
+								size="sm"
+								icon="ri:user-add-line"
+								onclick={addPerson}>New person</Button
+							>
 						{/snippet}
 						{#snippet tableRow(entity: UnifiedEntity)}
 							<td class="col-name">
@@ -894,11 +903,40 @@
 			<div class="identity-wrap">
 				<ChaptersSection />
 			</div>
+		{:else if section === 'stories'}
+			<div class="identity-wrap">
+				<StoriesSection />
+			</div>
 		{/if}
 	</main>
 </div>
 
 <style>
+	.chapter-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+
+	.chapter-list li {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.3rem 0;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.ch-name {
+		font-family: var(--font-serif);
+	}
+
+	.ch-span {
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+
 	.wiki-view {
 		display: flex;
 		flex-direction: column;
@@ -950,21 +988,7 @@
 		margin: 0 auto;
 	}
 
-	.add-entity {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3125rem;
-		padding: 0.25rem 0.5rem;
-		border-radius: 4px;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-	}
 
-	.add-entity:hover {
-		color: var(--color-foreground);
-		background: var(--color-surface-hover);
-	}
 
 	/* ===== Overview: essay column + marginalia rail ===== */
 
@@ -979,10 +1003,16 @@
 		margin-bottom: 2.5rem;
 	}
 
+	/* 400 is the only weight this face has. A 500 request on JJannon resolves
+	   back to the regular inside the family and returns silently, so the mast
+	   never once rendered the way the declaration read (agents/build/typography.md).
+	   The rank it was reaching for is already here: 32px in full foreground
+	   above a 17px muted standfirst. Stated rather than omitted so the next
+	   reader doesn't re-add it. */
 	.mast h1 {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 2rem;
-		font-weight: 500;
+		font-weight: 400;
 		letter-spacing: -0.01em;
 		color: var(--color-foreground);
 		margin: 0 0 0.625rem;
@@ -1048,20 +1078,6 @@
 
 	.strip:hover .strip-caption {
 		color: var(--color-primary);
-	}
-
-	.today-link {
-		color: var(--color-primary);
-		background: none;
-		border: none;
-		padding: 0;
-		font: inherit;
-		font-weight: 500;
-		cursor: pointer;
-	}
-
-	.today-link:hover {
-		text-decoration: underline;
 	}
 
 	/* Each section is one grid row: the essay column and its margin. */
@@ -1130,7 +1146,7 @@
 		margin: 0;
 	}
 
-	/* Stories and Years: plain indexes, set to the reading measure. */
+	/* Years: a plain index, set to the reading measure. */
 	.measure {
 		max-width: 42rem;
 		padding: 1.5rem 0;
@@ -1148,14 +1164,12 @@
 		padding: 1rem 0;
 	}
 
-	.stories,
 	.years {
 		list-style: none;
 		margin: 0;
 		padding: 0;
 	}
 
-	.stories li,
 	.years li {
 		display: flex;
 		justify-content: space-between;
@@ -1165,13 +1179,11 @@
 		border-bottom: 1px solid var(--color-border-subtle);
 	}
 
-	.stories a,
 	.years a {
 		color: var(--color-foreground);
 		text-decoration: none;
 	}
 
-	.stories a:hover,
 	.years a:hover {
 		text-decoration: underline;
 	}
@@ -1305,13 +1317,7 @@
 	}
 
 	.wc-all {
-		margin-top: 0.625rem;
-		background: none;
-		border: none;
-		padding: 0;
-		font-size: 0.8125rem;
-		color: var(--color-primary);
-		cursor: pointer;
+		margin: 0.625rem 0 0;
 	}
 
 	/* Where it's thin */
@@ -1414,10 +1420,11 @@
 	   base rules it restates (same selectors, same specificity — a media query
 	   adds none).
 
-	   `.today-link` is deliberately not here: it is a link inside a sentence,
-	   and a 44pt box around it would reach into the lines above and below and
-	   swallow their taps. Inline prose links are the honest exception to the
-	   floor; a list row is not. */
+	   Today's-entry link is deliberately not here: it is a link inside a
+	   sentence, and a 44pt box around it would reach into the lines above and
+	   below and swallow their taps. Inline prose links are the honest exception
+	   to the floor; a list row is not. `TextAction inline` now carries that
+	   exemption itself, which is why the link takes no rule here at all. */
 	@media (max-width: 768px), (pointer: coarse) {
 		.wc-row {
 			padding: 0.75rem 0;

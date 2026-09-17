@@ -5,41 +5,38 @@
  * - Entity namespaces: /{namespace} (list) or /{namespace}/{namespace}_{id} (detail)
  * - Storage: /drive, /drive/{path}
  * - System: /virtues/{page}
- * - Easter eggs: /life, /jump
  */
 
-import type { Component } from 'svelte';
+import { eager, type ViewLoader } from './lazy';
 import type { TabType, ParsedRoute } from './types';
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 
-// Import all view components
-import HomeView from '$lib/components/tabs/views/HomeView.svelte';
-import ChatView from '$lib/components/tabs/views/ChatView.svelte';
-import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
-import WikiView from '$lib/components/tabs/views/WikiView.svelte';
-import WikiDetailView from '$lib/components/tabs/views/WikiDetailView.svelte';
-import WikiListView from '$lib/components/tabs/views/WikiListView.svelte';
-import SourcesView from '$lib/components/sources/SourcesView.svelte';
-import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
-import AppletsView from '$lib/components/tabs/views/AppletsView.svelte';
-import AppletDetailView from '$lib/components/tabs/views/AppletDetailView.svelte';
-import AppletView from '$lib/components/tabs/views/AppletView.svelte';
-import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
-import SettingsView from '$lib/components/tabs/views/SettingsView.svelte';
-import StorageView from '$lib/components/tabs/views/StorageView.svelte';
-import AssetView from '$lib/components/tabs/views/AssetView.svelte';
-import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
-import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
-import PagesView from '$lib/components/tabs/views/PagesView.svelte';
-import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
-import BookmarksView from '$lib/components/tabs/views/BookmarksView.svelte';
-import BookmarkDetailView from '$lib/components/tabs/views/BookmarkDetailView.svelte';
-import NotebooksListView from '$lib/components/tabs/views/NotebooksListView.svelte';
-import NotebookDetailView from '$lib/components/tabs/views/NotebookDetailView.svelte';
-import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
-import OntologyIndexView from '$lib/components/tabs/views/OntologyIndexView.svelte';
-import OntologyDetailView from '$lib/components/tabs/views/OntologyDetailView.svelte';
-import DataView from '$lib/components/tabs/views/DataView.svelte';
+// Views are loaders (see ./lazy.ts): each chunk arrives the first time a
+// tab of that kind opens. Chat and home stay eager — a session opens on them.
+import HomeViewEager from '$lib/components/tabs/views/HomeView.svelte';
+const HomeView: ViewLoader = eager(HomeViewEager);
+import ChatViewEager from '$lib/components/tabs/views/ChatView.svelte';
+const ChatView: ViewLoader = eager(ChatViewEager);
+const HistoryView: ViewLoader = () => import('$lib/components/tabs/views/HistoryView.svelte');
+const WikiView: ViewLoader = () => import('$lib/components/tabs/views/WikiView.svelte');
+const WikiDetailView: ViewLoader = () => import('$lib/components/tabs/views/WikiDetailView.svelte');
+const WikiListView: ViewLoader = () => import('$lib/components/tabs/views/WikiListView.svelte');
+const SourcesView: ViewLoader = () => import('$lib/components/sources/SourcesView.svelte');
+const CredentialDetailView: ViewLoader = () => import('$lib/components/tabs/views/CredentialDetailView.svelte');
+const AppletsView: ViewLoader = () => import('$lib/components/tabs/views/AppletsView.svelte');
+const AppletDetailView: ViewLoader = () => import('$lib/components/tabs/views/AppletDetailView.svelte');
+const AppletView: ViewLoader = () => import('$lib/components/tabs/views/AppletView.svelte');
+const SettingsView: ViewLoader = () => import('$lib/components/tabs/views/SettingsView.svelte');
+const StorageView: ViewLoader = () => import('$lib/components/tabs/views/StorageView.svelte');
+const AssetView: ViewLoader = () => import('$lib/components/tabs/views/AssetView.svelte');
+const PagesView: ViewLoader = () => import('$lib/components/tabs/views/PagesView.svelte');
+const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/PageDetailView.svelte');
+const BookmarksView: ViewLoader = () => import('$lib/components/tabs/views/BookmarksView.svelte');
+const BookmarkDetailView: ViewLoader = () => import('$lib/components/tabs/views/BookmarkDetailView.svelte');
+const NotebooksListView: ViewLoader = () => import('$lib/components/tabs/views/NotebooksListView.svelte');
+const NotebookDetailView: ViewLoader = () => import('$lib/components/tabs/views/NotebookDetailView.svelte');
+const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
+const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
 
 export interface TabDefinition {
 	// Route matching
@@ -56,11 +53,11 @@ export interface TabDefinition {
 
 	// Component reference
 	// biome-ignore lint/suspicious/noExplicitAny: Component props vary by tab type
-	component: Component<any>;
+	component: ViewLoader;
 
 	// Optional: detail component for entity namespaces
 	// biome-ignore lint/suspicious/noExplicitAny: Component props vary by tab type
-	detailComponent?: Component<any>;
+	detailComponent?: ViewLoader;
 }
 
 // Complete tab registry with namespace-based URL patterns
@@ -75,7 +72,7 @@ export interface TabDefinition {
  * section.
  */
 export const WIKI_SECTION_RE =
-	/^\/wiki\/(days|years|stories|entities|identity|chapters|lifeline|history|people|places|orgs|unlinked)$/;
+	/^\/wiki\/(days|years|entities|identity|chapters|stories|lifeline|history|people|places|orgs|unlinked)$/;
 
 /**
  * Sections of the Sources room. Same one-list rule as the wiki above, and here
@@ -630,60 +627,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		detailComponent: AppletDetailView,
 	},
 
-	// ========================================================================
-	// DEVELOPERS: /developers
-	// Tab group containing SQL, Terminal, and Lake sub-views (selected via #hash).
-	// ========================================================================
-	developers: {
-		match: (path) =>
-			path === '/developers' || /^\/developers\/(sql|terminal|lake)$/.test(path),
-		parse: () => ({
-			type: 'developers',
-			label: 'Developers',
-			icon: 'ri:code-s-slash-line',
-		}),
-		serialize: () => 'developers',
-		deserialize: () => '/developers',
-		icon: 'ri:code-s-slash-line',
-		defaultLabel: 'Developers',
-		component: DevelopersView,
-	},
-
-	// ========================================================================
-	// ONTOLOGY NAMESPACE: /ontologies, /ontologies/{name}
-	// ========================================================================
-	ontology: {
-		match: (path) => path === '/ontologies' || /^\/ontologies\/[a-z_]+$/.test(path),
-		parse: (path) => {
-			if (path === '/ontologies') {
-				return {
-					type: 'ontology',
-					label: 'Ontologies',
-					icon: 'ri:table-line',
-				};
-			}
-			const match = path.match(/^\/ontologies\/([a-z_]+)$/);
-			const name = match?.[1] || '';
-			const displayName = name
-				.replace(/_/g, ' ')
-				.replace(/\b\w/g, (c) => c.toUpperCase());
-			return {
-				type: 'ontology',
-				label: displayName,
-				icon: 'ri:table-line',
-				entityId: name,
-			};
-		},
-		serialize: (id) => (id ? `ontology_${id}` : 'ontologies'),
-		deserialize: (serialized) => {
-			if (serialized.startsWith('ontology_')) return `/ontologies/${serialized.slice(9)}`;
-			return '/ontologies';
-		},
-		icon: 'ri:table-line',
-		defaultLabel: 'Ontologies',
-		component: OntologyIndexView,
-		detailComponent: OntologyDetailView,
-	},
 	record: {
 		// /record/<ontology>/<id> — a single raw life-graph record. The ontology
 		// is a lowercase_underscore name; the id is everything after it.
@@ -868,44 +811,12 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Settings',
 		component: SettingsView,
 	},
-
-	// ========================================================================
-	// EASTER EGGS
-	// ========================================================================
-	conway: {
-		match: (path) => path === '/life',
-		parse: () => ({
-			type: 'conway',
-			label: 'Zen Garden',
-			icon: 'ri:seedling-line',
-		}),
-		serialize: () => 'conway',
-		deserialize: () => '/life',
-		icon: 'ri:seedling-line',
-		defaultLabel: 'Zen Garden',
-		component: ConwayView,
-	},
-
-	'dog-jump': {
-		match: (path) => path === '/jump',
-		parse: () => ({
-			type: 'dog-jump',
-			label: 'Dog Jump',
-			icon: 'ri:mickey-line',
-		}),
-		serialize: () => 'dog-jump',
-		deserialize: () => '/jump',
-		icon: 'ri:mickey-line',
-		defaultLabel: 'Dog Jump',
-		component: DogJumpView,
-	},
 };
 
 /**
  * Get the appropriate component for a tab type and whether it's a detail view.
  */
-// biome-ignore lint/suspicious/noExplicitAny: Component props vary by tab type
-export function getComponent(type: TabType, hasEntityId: boolean): Component<any> {
+export function getComponent(type: TabType, hasEntityId: boolean): ViewLoader {
 	const def = tabRegistry[type];
 	if (hasEntityId && def.detailComponent) {
 		return def.detailComponent;
@@ -918,8 +829,7 @@ export function getComponent(type: TabType, hasEntityId: boolean): Component<any
  * it dispatches to the right section from the route and self-heals legacy
  * flat paths on mount.
  */
-// biome-ignore lint/suspicious/noExplicitAny: Component props vary by page
-export function getVirtuesComponent(_page: string): Component<any> {
+export function getVirtuesComponent(_page: string): ViewLoader {
 	return SettingsView;
 }
 
@@ -942,8 +852,6 @@ export function parseRoute(route: string): ParsedRoute {
 		'applets', // Applets list page (must come before singular 'applet')
 		'applet-view', // Applet full-page face (must come before 'applet')
 		'applet', // Applet detail page
-		'developers', // Developers tab group (SQL/Terminal/Lake)
-		'ontology', // Ontology data browsing
 		'record', // /record/<ontology>/<id> — single raw record
 		'virtues', // Has /virtues/* pattern
 		'storage', // /storage — Drive surface (unified bytes view)
@@ -968,9 +876,6 @@ export function parseRoute(route: string): ParsedRoute {
 		'day',
 		'year',
 		'narrative-identity',
-		// Easter eggs last
-		'conway',
-		'dog-jump',
 	];
 
 	for (const type of orderedTypes) {

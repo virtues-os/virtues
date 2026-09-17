@@ -7,8 +7,7 @@
  * citations recur in prose and must disappear into the text.
  *
  * - Ref.svelte (.ref-link)                    — rendered output: chat answers, previews
- * - ChatInput.svelte (.ref-pill)              — composer contenteditable (editable)
- * - CodeMirror (.cm-entity-link, theme.css)   — page editor (editable, own layout)
+ * - CodeMirror (.cm-entity-link, theme.css)   — page editor AND chat composer (editable)
  *
  * Both share the accent color token, so the two treatments read as one family.
  */

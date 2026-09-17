@@ -136,12 +136,30 @@ async fn main() -> Result<()> {
 }
 
 /// Store the collector's self-reported permissions on its device row, beside
-/// the build identity that already lives in `device_info`.
+/// the build identity that already lives in `device_info`, and say so in the
+/// log when they CHANGE.
+///
+/// The row is the current state, which is the right thing for the UI to read
+/// and the wrong thing to learn from: it cannot tell you when a grant was
+/// lost, and the existing warning fires on every single ingest for as long as
+/// a permission is missing — so a permission that has been off for a month and
+/// one that broke five minutes ago produce identical, equally ignorable
+/// output. The moment of the change is the only part worth an alarm, and it
+/// was the one part nothing recorded.
+///
+/// So: read what we had, write what we got, and log only the difference.
 async fn record_device_permissions(
     pool: &sqlx::PgPool,
     device_id: &str,
     health: &Value,
 ) -> anyhow::Result<()> {
+    let previous: Option<(Option<Value>,)> =
+        sqlx::query_as("SELECT device_info -> 'permissions' FROM app_device WHERE id = $1")
+            .bind(device_id)
+            .fetch_optional(pool)
+            .await?;
+    let previous = previous.and_then(|(p,)| p);
+
     sqlx::query(
         "UPDATE app_device
             SET device_info = jsonb_set(
@@ -152,6 +170,41 @@ async fn record_device_permissions(
     .bind(health)
     .execute(pool)
     .await?;
+
+    // Only ever compare against something we actually stored. A device seen
+    // for the first time has no previous state, and announcing "full disk
+    // access granted" for a collector that has always had it would be a
+    // fabricated event — the class of thing that teaches people to distrust
+    // an alarm.
+    if let Some(prev) = previous {
+        // The WIRE keys, which are snake_case — not the Swift property names
+        // (`fullDiskAccess`), which are camelCase. `collectorHealthPayload()`
+        // in Uploader.swift builds the dictionary by hand, so the two differ,
+        // and a mismatch here would silently compare None to None forever:
+        // no panic, no error, just an alarm that never fires.
+        for grant in ["full_disk_access", "accessibility"] {
+            let was = prev.get(grant).and_then(Value::as_bool);
+            let now = health.get(grant).and_then(Value::as_bool);
+            match (was, now) {
+                (Some(true), Some(false)) => tracing::warn!(
+                    kind = "collector.permission.lost",
+                    source = %format!("device:{device_id}"),
+                    grant,
+                    "the Mac collector lost a permission — the streams behind it \
+                     will now look merely idle"
+                ),
+                (Some(false), Some(true)) => tracing::info!(
+                    kind = "collector.permission.granted",
+                    source = %format!("device:{device_id}"),
+                    grant,
+                    "the Mac collector regained a permission"
+                ),
+                // Unchanged, or a collector too old to report this grant at
+                // all. Absence is not a denial, and must not read as one.
+                _ => {}
+            }
+        }
+    }
     Ok(())
 }
 

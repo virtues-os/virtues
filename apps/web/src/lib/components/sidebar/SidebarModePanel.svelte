@@ -12,7 +12,6 @@
 	 * Sections open into one reused tab rather than a new one each time. A few
 	 * minutes in Settings would otherwise leave a row of tabs to clean up.
 	 */
-	import Icon from '$lib/components/Icon.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import type { SidebarMode } from '$lib/sidebar/modes';
 
@@ -64,7 +63,10 @@
 				class:active={activeHref === row.href}
 				onclick={() => open(row.href, row.label)}
 			>
-				<Icon icon={row.icon} width="16" />
+				<!-- No glyph. The rail carries the picture-language now, and
+				     design.md is explicit: "the words should carry a contents
+				     page." Eleven Remix icons down the Record panel was icon soup
+				     in a second icon family. -->
 				<span>{row.label}</span>
 			</button>
 		{/each}
@@ -76,7 +78,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
-		padding: 0 6px;
+		/* No inset of its own — the panel body already insets. */
+		padding: 0;
 	}
 
 	.mode-row {
@@ -85,7 +88,7 @@
 		gap: var(--sidebar-interactive-gap);
 		width: 100%;
 		height: var(--sidebar-interactive-height);
-		padding: 0 var(--sidebar-padding-left-base);
+		padding: 0 12px;
 		border: none;
 		border-radius: var(--sidebar-interactive-radius);
 		background: none;

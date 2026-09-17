@@ -22,7 +22,6 @@ use std::sync::Arc;
 pub use self::webhook::AppState;
 use self::yjs::yjs_websocket_handler;
 use crate::error::Result;
-use crate::mcp::{http::add_mcp_routes, VirtuesMcpServer};
 use crate::middleware::auth::AuthUser;
 use crate::Virtues;
 
@@ -251,6 +250,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     // Initialize chat cancellation state for stopping in-progress requests
     let chat_cancel_state = crate::api::chat::ChatCancellationState::new();
+    // Turns outlive their requests; this is where a client finds one to rejoin.
+    let live_turns = crate::api::live_turn::LiveTurns::new();
 
     // Create drive config with shared storage backend
     let drive_config = crate::api::DriveConfig::new(client.storage.clone());
@@ -262,6 +263,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tool_executor,
         yjs_state: yjs_state.clone(),
         chat_cancel_state,
+        live_turns,
     };
 
     // ============================================================
@@ -314,6 +316,20 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/setup/skip-onboarding",
             post(crate::api::box_status::skip_onboarding_handler),
+        )
+        // Getting started, derived: the four steps, the lock, the first day.
+        // Authenticated, unlike /api/setup/state — it reads the profile.
+        .route(
+            "/api/getting-started",
+            get(crate::api::getting_started::state_handler),
+        )
+        .route(
+            "/api/getting-started/skip",
+            post(crate::api::getting_started::skip_handler),
+        )
+        .route(
+            "/api/getting-started/interview",
+            post(crate::api::getting_started::start_interview_handler),
         )
         // What the attached 7" display renders. Registered here because the
         // kiosk draws before any device is paired, but UNLIKE its neighbours
@@ -389,13 +405,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(crate::api::pair::consume_handler),
         )
         .route("/auth/session", get(api::auth_session_handler))
-        // Internal API (virtues-api integration — has its own header-based auth)
-        .route("/internal/hydrate", post(api::hydrate_profile_handler))
-        .route(
-            "/internal/server-status",
-            get(api::get_server_status_handler),
-        )
-        .route("/internal/mark-ready", post(api::mark_server_ready_handler))
         // Applet faces — the CORS-permissive, token-gated leaves only. The
         // mint route is AUTHENTICATED (in protected_routes): the token is the
         // sole gate on the data door, so obtaining one must require owner auth.
@@ -434,14 +443,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/devices/applet-ids",
             get(api::device_applet_ids_handler),
-        )
-        // Device-scoped run history for one of the caller's own applets, so the
-        // app can show real server-side outcome per stream. Device-token bearer
-        // auth + credential-ownership check (see handler). Distinct from the
-        // session-authed /api/applets/:id/runs.
-        .route(
-            "/api/devices/applets/:id/runs",
-            get(api::device_applet_runs_handler),
         );
 
     // ============================================================
@@ -478,6 +479,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/sudo/status/:id",    get(crate::api::sudo::status_handler))
         // ─── Audit log ────────────────────────────────────────────────
         .route("/api/audit/auth",         get(crate::api::audit::list_handler))
+        // ─── Client reports ───────────────────────────────────────────
+        // The one door a paired device reports its OWN failures through; they
+        // become lines in this box's journal. Body limit is small on purpose:
+        // this takes diagnostics, and anything larger is a client shipping a
+        // document. See `api/events.rs`.
+        .route(
+            "/api/events",
+            post(crate::api::events::report_handler)
+                .layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         // ─── Billing settings (BYO key) ───────────────────────────────
         // BYO routes inference around virtues-api entirely: box calls
         // upstream directly. Save/delete are sudo-gated (change_byo_key);
@@ -522,8 +533,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/box/status",
             get(crate::api::box_status::box_status_handler),
         )
-        // Device-health endpoint (used by mobile/admin UIs).
-        .route("/api/devices/health", get(api::device_health_check_handler))
         // Actions API
         .route(
             "/api/applets",
@@ -648,8 +657,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_article_handler).post(api::write_article_handler),
         )
         .route(
-            "/api/wiki/articles/:subject_type/:subject_id/auto-update",
-            axum::routing::put(api::set_article_auto_update_handler),
+            "/api/wiki/articles/:subject_type/:subject_id/maintenance",
+            axum::routing::put(api::set_article_maintenance_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/revert",
+            axum::routing::post(api::revert_article_handler),
         )
         .route(
             "/api/entities/people",
@@ -660,10 +673,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             axum::routing::delete(api::delete_person_handler),
         )
         .route(
-            "/api/entities/orgs",
-            axum::routing::post(api::create_org_handler),
-        )
-        .route(
             "/api/entities/orgs/:id",
             axum::routing::delete(api::delete_org_handler),
         )
@@ -671,16 +680,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/entities/people/:id/reclassify-as-org",
             axum::routing::post(api::reclassify_person_handler),
         )
-        .route(
-            "/api/entities/places/:id/set-home",
-            post(api::set_place_as_home_handler),
-        )
         // Places API (Google Places proxy)
         .route(
             "/api/places/autocomplete",
             get(api::places_autocomplete_handler),
         )
-        .route("/api/places/details", get(api::places_details_handler))
+        .route(
+            "/api/places/details",
+            get(api::places_details_handler),
+        )
         // Assistant Profile API
         .route(
             "/api/assistant-profile",
@@ -719,6 +727,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::create_billing_portal_handler),
         )
         .route("/api/billing/claim", post(api::claim_billing_handler))
+        .route("/api/billing/subscribe", post(api::subscribe_billing_handler))
         // Wallet balance + recent ledger (proxied from virtues-api /v1/usage).
         .route("/api/billing/usage", get(api::billing_usage_handler))
         // Box-local AI spend breakdown (app_ai_calls) for the Usage tab.
@@ -749,18 +758,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/annotations/:id",
             patch(api::update_annotation_handler).delete(api::delete_annotation_handler),
         )
-        .route(
-            "/api/notebooks/:id/annotations",
-            get(api::list_notebook_annotations_handler),
-        )
         // Bulk annotation export as markdown (D4.3)
         .route(
             "/api/annotations/export",
             get(api::export_file_annotations_handler),
-        )
-        .route(
-            "/api/notebooks/:id/annotations/export",
-            get(api::export_notebook_annotations_handler),
         )
         // Drive API (user file storage)
         .route(
@@ -806,8 +807,26 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Media API (content-addressed storage for page-embedded media)
         .route("/api/media/upload", post(api::upload_media_handler))
         .route("/api/media/:id", get(api::get_media_handler))
-        // Wiki API
-        .route("/api/wiki/resolve/:id", get(api::wiki_resolve_id_handler))
+        // ── Wiki API ────────────────────────────────────────────────────
+        //
+        // TWO ADDRESSING SHAPES, and both are right. Don't unify them.
+        //
+        //   generic   /api/wiki/articles/:subject_type/:subject_id
+        //             /api/wiki/notes/:subject_type/:subject_id
+        //             /api/wiki/subjects/:subject_type/:subject_id/backlinks
+        //   per-kind  /api/wiki/person/:id, /place/:id, /organization/:id
+        //
+        // The test is whether the PAYLOAD varies by kind. An article is the
+        // same row whatever it is about, so its route takes the subject as a
+        // parameter and one handler serves every rung. An entity's own fields
+        // are not: a person has a relationship, a place has coordinates, an
+        // organization has a type. A generic entity route would return a union
+        // the client has to discriminate anyway — the per-kind route has
+        // already done that, in the one place it costs nothing.
+        //
+        // What was genuinely wrong here was duplicate SPELLINGS of one route,
+        // not the shape: organizations had four routes for two handlers.
+        //
         // Wiki - Person
         // Mention review queue (entity resolution HITL)
         .route("/api/wiki/people", get(api::wiki_list_people_handler))
@@ -821,21 +840,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/place/:id",
             get(api::wiki_get_place_handler).put(api::wiki_update_place_handler),
         )
-        // Wiki - Organization (table `wiki_orgs`; both URL forms supported)
+        // Wiki - Organization. The table is `wiki_orgs` and the id prefix is
+        // `org_`, but the ROUTE spells it out, matching `subject_type =
+        // 'organization'` everywhere else. `/orgs` and `/org/:id` also existed,
+        // pointed at these same handlers, and no client has ever called either.
         .route(
             "/api/wiki/organizations",
             get(api::wiki_list_organizations_handler),
         )
         .route(
-            "/api/wiki/orgs",
-            get(api::wiki_list_organizations_handler),
-        )
-        .route(
             "/api/wiki/organization/:id",
-            get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
-        )
-        .route(
-            "/api/wiki/org/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
         // Wiki - Thing: retired. Things are gone entirely as of the wiki_things
@@ -851,8 +865,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Wiki - Telos
         // Wiki - Act
-        .route("/api/wiki/stories", get(api::wiki_list_stories_handler))
-        .route("/api/wiki/story/:id", get(api::wiki_get_story_handler))
         // Wiki - Chapter (the life's partition, written by the interview)
         .route(
             "/api/wiki/chapters",
@@ -870,9 +882,35 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/entity/:id/records/facets",
             get(api::wiki_entity_record_facets_handler),
         )
+        .route("/api/wiki/day/:date", get(api::wiki_get_day_handler))
         .route(
-            "/api/wiki/day/:date",
-            get(api::wiki_get_day_handler).put(api::wiki_update_day_handler),
+            "/api/wiki/stories",
+            get(api::wiki_list_stories_handler).post(api::wiki_create_story_handler),
+        )
+        .route(
+            "/api/wiki/story/:id",
+            get(api::wiki_get_story_handler)
+                .put(api::wiki_update_story_handler)
+                .delete(api::wiki_delete_story_handler),
+        )
+        .route(
+            "/api/wiki/story/:id/article",
+            axum::routing::post(api::wiki_start_story_article_handler),
+        )
+        .route(
+            "/api/wiki/chapter/:id",
+            axum::routing::put(api::wiki_update_chapter_handler)
+                .delete(api::wiki_delete_chapter_handler),
+        )
+        .route("/api/wiki/me", get(api::wiki_me_handler))
+        .route("/api/wiki/years", get(api::wiki_list_years_handler))
+        .route(
+            "/api/wiki/year/:year",
+            get(api::wiki_get_year_handler).put(api::wiki_update_year_handler),
+        )
+        .route(
+            "/api/wiki/year/:year/article",
+            axum::routing::post(api::wiki_write_year_article_handler),
         )
         // Wiki - Temporal Events
         .route(
@@ -1092,6 +1130,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Chat API (streaming)
         .route("/api/chat", post(api::chat_handler))
         .route("/api/chat/cancel", post(api::cancel_chat_handler))
+        .route("/api/chat/:id/stream", get(api::live_turn_stream_handler))
         .route("/api/ai/complete", post(api::ai_complete_handler))
         // Chat Edit Permissions API
         .route(
@@ -1145,31 +1184,38 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/*__unmatched", axum::routing::any(api_not_found_handler))
         .route("/auth/*__unmatched", axum::routing::any(api_not_found_handler));
 
-    // Add MCP routes to the same server
-    let mcp_server = VirtuesMcpServer::new(client.database.pool().clone());
-    let app = add_mcp_routes(app, mcp_server);
-
-    tracing::info!("MCP endpoint enabled at /mcp");
-
     // Add static file serving for SPA frontend
     // This serves the SvelteKit static build and falls back to 200.html for SPA routing
-    let static_dir =
-        std::env::var("STATIC_DIR").unwrap_or_else(|_| "../../apps/web/build".to_string());
-    let static_path = std::path::Path::new(&static_dir);
+    //
+    // The directory comes from `api::web_bundle` rather than being read again
+    // here: `/api/web-bundle/version` describes whatever this serves, and two
+    // copies of the same `STATIC_DIR` default were one edit away from making
+    // that a lie.
+    let static_path = crate::api::web_bundle::static_dir();
 
-    let app = if static_path.exists() && static_path.is_dir() {
+    let app = if static_path.is_dir() {
         use tower_http::services::{ServeDir, ServeFile};
 
         let fallback_file = static_path.join("200.html");
+        // `precompressed_gzip`: the build writes a `.gz` beside every
+        // compressible asset (apps/web/scripts/precompress.mjs), and ServeDir
+        // hands that sibling to a client that accepts gzip and the original to
+        // one that does not. The box never compresses at runtime; the Mac,
+        // which fetches the SPA from the box on every cold start, moves ~0.8 MB
+        // instead of ~2.6 MB. A build without siblings serves exactly as before.
         let serve_dir = if fallback_file.exists() {
-            ServeDir::new(&static_dir).fallback(ServeFile::new(fallback_file))
+            ServeDir::new(&static_path)
+                .precompressed_gzip()
+                .fallback(ServeFile::new(fallback_file))
         } else {
             // Try index.html as fallback if 200.html doesn't exist
             let index_file = static_path.join("index.html");
-            ServeDir::new(&static_dir).fallback(ServeFile::new(index_file))
+            ServeDir::new(&static_path)
+                .precompressed_gzip()
+                .fallback(ServeFile::new(index_file))
         };
 
-        tracing::info!("Static file serving enabled from: {}", static_dir);
+        tracing::info!("Static file serving enabled from: {}", static_path.display());
         // HTML DOCUMENTS ARE NEVER CACHED. `ServeDir` sends `last-modified` and
         // no `cache-control`, which licenses a browser to cache heuristically —
         // and on 2026-08-10 that made the appliance's panel keep rendering a
@@ -1179,16 +1225,19 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // one, and the only symptom is a screen that quietly lies about its own
         // version.
         //
-        // Scoped to documents on purpose: `/_app/immutable/*` is content-hashed
-        // and *should* be cached hard. It is the shell that must always be
-        // re-fetched, because it is the thing that names the rest.
+        // The other half of that rule: `/_app/immutable/*` is content-hashed
+        // and IS cached hard. Until 2026-09-14 nothing set that header either,
+        // so every hashed chunk was heuristically cached and re-fetched — a
+        // cold Mac start pulled the whole SPA from the box each time. The
+        // shell is the only thing that must be re-fetched, because it is the
+        // thing that names the rest.
         app.fallback_service(tower::ServiceBuilder::new()
-            .layer(axum::middleware::from_fn(no_store_for_documents))
+            .layer(axum::middleware::from_fn(static_cache_policy))
             .service(serve_dir))
     } else {
         tracing::info!(
             "No static directory found at: {} - static serving disabled",
-            static_dir
+            static_path.display()
         );
         app
     };
@@ -1225,8 +1274,25 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let app = app.layer(
         tower_http::cors::CorsLayer::new()
             .allow_origin(tower_http::cors::AllowOrigin::predicate(
-                |origin: &axum::http::HeaderValue, _req| {
-                    origin.to_str().is_ok_and(origin_is_ours)
+                |origin: &axum::http::HeaderValue, req| {
+                    origin.to_str().is_ok_and(|o| {
+                        // A face lives in `<iframe sandbox="allow-scripts">`,
+                        // whose opaque origin serializes as the literal
+                        // "null". This layer answers the CORS preflight before
+                        // faces.rs's own `*` header can, so without this arm
+                        // the sandboxed face's fetch to its bridge is refused
+                        // and the panel silently renders no data. Scoped to
+                        // the face routes only: a face carries no ambient
+                        // authority (face token + face_reader role), and
+                        // everything else keeps rejecting "null".
+                        face_origin_allowed(
+                            o,
+                            req.uri.path(),
+                            req.headers
+                                .get(axum::http::header::HOST)
+                                .and_then(|h| h.to_str().ok()),
+                        )
+                    })
                 },
             ))
             .allow_credentials(false)
@@ -1242,6 +1308,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Outermost, so every response — API, static, fallback — carries the build
     // stamp the SPA's staleness watcher compares.
     let app = app.layer(axum::middleware::from_fn(stamp_box_build));
+
+    // Outside even that: the request span has to be open before any other
+    // layer logs, or the first lines of a request are the ones without a key.
+    let app = app.layer(axum::middleware::from_fn(request_id));
 
     // iroh reach: the box is an iroh Endpoint that serves this same axum app
     // (LAN-direct → hole-punch → our relay), reachable by EndpointId with no
@@ -1272,8 +1342,38 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     }
 
     // Run the server with graceful shutdown — Ctrl+C / SIGTERM.
+    //
+    // SIGTERM is the one that matters and it was missing. `ctrl_c()` is SIGINT
+    // only; systemd sends SIGTERM, whose default action kills the process
+    // outright. So `systemctl restart virtues` — which every self-update runs
+    // — skipped the whole shutdown path below, including the Yjs flush that
+    // exists specifically because restarts were dropping the owner's last
+    // seconds of typing. The comment on this line claimed SIGTERM for months
+    // while the code handled only the signal a daemon never receives.
     let shutdown_signal = async move {
-        let _ = tokio::signal::ctrl_c().await;
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            match signal(SignalKind::terminate()) {
+                Ok(mut term) => {
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => {}
+                        _ = term.recv() => {}
+                    }
+                }
+                // Registering the handler failed — fall back rather than
+                // refusing to start. A box that cannot shut down cleanly is
+                // still better than a box that will not run.
+                Err(e) => {
+                    tracing::warn!(error = %e, "could not listen for SIGTERM; Ctrl+C only");
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
         tracing::info!("shutdown signal received");
     };
 
@@ -1348,13 +1448,19 @@ fn validate_environment() -> Result<()> {
 /// heuristically, and the appliance's kiosk did — pinning the panel to a
 /// three-day-old UI across an upgrade, a service restart, and a power cycle.
 ///
-/// Keyed on the response's own content type rather than the request path, so it
-/// covers the SPA fallback (`200.html`, served for arbitrary routes) without
-/// having to enumerate which paths are documents.
-async fn no_store_for_documents(
+/// Documents are keyed on the response's own content type rather than the
+/// request path, so the rule covers the SPA fallback (`200.html`, served for
+/// arbitrary routes) without having to enumerate which paths are documents.
+///
+/// Hashed assets are keyed on the request path, because that is what makes
+/// them safe to cache for a year: a byte of change is a new name, and the
+/// (never cached) shell is what names them. Fonts are not hashed, so they get
+/// a week and revalidate on `last-modified` after that.
+async fn static_cache_policy(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    let path = req.uri().path().to_owned();
     let mut res = next.run(req).await;
     let is_document = res
         .headers()
@@ -1370,8 +1476,197 @@ async fn no_store_for_documents(
         // caches honour the weaker half.
         res.headers_mut().remove(axum::http::header::LAST_MODIFIED);
         res.headers_mut().remove(axum::http::header::ETAG);
+    } else if res.status().is_success() {
+        if let Some(policy) = static_cache_control(&path) {
+            res.headers_mut().insert(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static(policy),
+            );
+        }
     }
     res
+}
+
+/// The `cache-control` a successful non-document static response gets, by path.
+fn static_cache_control(path: &str) -> Option<&'static str> {
+    if path.starts_with("/_app/immutable/") {
+        Some("public, max-age=31536000, immutable")
+    } else if path.starts_with("/fonts/") {
+        Some("public, max-age=604800")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod request_id_tests {
+    use super::*;
+    use axum::{routing::get, Router};
+    use tower::Service;
+
+    async fn probe(inbound: Option<&str>) -> String {
+        let mut app = Router::new()
+            .route("/x", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(request_id));
+        let mut req = axum::http::Request::builder().uri("/x");
+        if let Some(v) = inbound {
+            req = req.header("x-request-id", v);
+        }
+        let res = app
+            .call(req.body(axum::body::Body::empty()).unwrap())
+            .await
+            .unwrap();
+        res.headers()
+            .get("x-request-id")
+            .expect("every response carries one")
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn mints_one_when_the_client_sends_none() {
+        let a = probe(None).await;
+        let b = probe(None).await;
+        assert!(a.starts_with('r'), "unexpected shape: {a}");
+        assert_ne!(a, b, "two requests must not share an id");
+    }
+
+    #[tokio::test]
+    async fn honors_a_client_supplied_id() {
+        assert_eq!(probe(Some("abc-123_XYZ")).await, "abc-123_XYZ");
+    }
+
+    /// The header goes back out in a response and into a log line, so a
+    /// caller-controlled value is bounded and filtered rather than trusted.
+    ///
+    /// Not tested here: CR/LF injection, the classic attack on a value that
+    /// reaches a log line. `http` refuses to construct such a header at all —
+    /// this test could not even build the request — so it never reaches this
+    /// middleware. The filter still earns its place on quoting and spacing,
+    /// which are perfectly legal in a header value and ugly in a log field.
+    #[tokio::test]
+    async fn strips_junk_and_bounds_length() {
+        assert_eq!(probe(Some(r#""quoted; id" 42"#)).await, "quotedid42");
+        let long = "a".repeat(500);
+        assert_eq!(probe(Some(&long)).await.len(), 64);
+        // Nothing usable left → mint instead of returning an empty header.
+        assert!(probe(Some("!!!")).await.starts_with('r'));
+    }
+}
+
+#[cfg(test)]
+mod static_cache_policy_tests {
+    use super::*;
+    use axum::{routing::get, Router};
+    // `tower::Service` alone: the crate does not enable tower's `util`
+    // feature, and a Router is always ready, so `call` needs no `oneshot`.
+    use tower::Service;
+
+    async fn probe(path: &str, content_type: &'static str) -> axum::http::HeaderMap {
+        let mut app = Router::new()
+            .route(
+                path,
+                get(move || async move {
+                    (
+                        [
+                            (axum::http::header::CONTENT_TYPE, content_type),
+                            (axum::http::header::LAST_MODIFIED, "Mon, 01 Jan 2024 00:00:00 GMT"),
+                        ],
+                        "x",
+                    )
+                }),
+            )
+            .layer(axum::middleware::from_fn(static_cache_policy));
+        let res = app
+            .call(
+                axum::http::Request::builder()
+                    .uri(path)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        res.headers().clone()
+    }
+
+    fn cache(h: &axum::http::HeaderMap) -> Option<&str> {
+        h.get(axum::http::header::CACHE_CONTROL).and_then(|v| v.to_str().ok())
+    }
+
+    #[tokio::test]
+    async fn documents_are_never_cached_wherever_they_live() {
+        let h = probe("/anything/at/all", "text/html; charset=utf-8").await;
+        assert_eq!(cache(&h), Some("no-store"));
+        assert!(h.get(axum::http::header::LAST_MODIFIED).is_none());
+    }
+
+    #[tokio::test]
+    async fn hashed_chunks_are_immutable_for_a_year() {
+        let h = probe("/_app/immutable/chunks/Cd0FKR9-.js", "text/javascript").await;
+        assert_eq!(cache(&h), Some("public, max-age=31536000, immutable"));
+        // The validator stays: harmless beside `immutable`, useful to a proxy.
+        assert!(h.get(axum::http::header::LAST_MODIFIED).is_some());
+    }
+
+    #[tokio::test]
+    async fn fonts_get_a_week_and_revalidate() {
+        let h = probe("/fonts/JJannon-Display-Regular.woff2", "font/woff2").await;
+        assert_eq!(cache(&h), Some("public, max-age=604800"));
+    }
+
+    #[tokio::test]
+    async fn other_static_files_keep_the_default() {
+        let h = probe("/favicon.png", "image/png").await;
+        assert_eq!(cache(&h), None);
+    }
+
+    /// The real serving stack: ServeDir with a `.gz` sibling on disk hands the
+    /// sibling to a client that accepts gzip, the original to one that does
+    /// not, and the immutable header rides on both.
+    #[tokio::test]
+    async fn precompressed_sibling_is_served_by_negotiation() {
+        use tower_http::services::ServeDir;
+        let dir = std::env::temp_dir().join(format!("virtues-static-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("_app/immutable/chunks")).unwrap();
+        let raw = b"console.log('raw')";
+        std::fs::write(dir.join("_app/immutable/chunks/a.js"), raw).unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        std::io::Write::write_all(&mut gz, raw).unwrap();
+        let gz = gz.finish().unwrap();
+        std::fs::write(dir.join("_app/immutable/chunks/a.js.gz"), &gz).unwrap();
+
+        let mut app = Router::new().fallback_service(
+            tower::ServiceBuilder::new()
+                .layer(axum::middleware::from_fn(static_cache_policy))
+                .service(ServeDir::new(&dir).precompressed_gzip()),
+        );
+
+        let req = |accept: Option<&'static str>| {
+            let mut b = axum::http::Request::builder().uri("/_app/immutable/chunks/a.js");
+            if let Some(a) = accept {
+                b = b.header(axum::http::header::ACCEPT_ENCODING, a);
+            }
+            b.body(axum::body::Body::empty()).unwrap()
+        };
+
+        let res = app.call(req(Some("gzip, br"))).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            res.headers().get(axum::http::header::CONTENT_ENCODING).map(|v| v.to_str().unwrap()),
+            Some("gzip")
+        );
+        assert_eq!(cache(res.headers()), Some("public, max-age=31536000, immutable"));
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], &gz[..], "the sibling's bytes, untouched");
+
+        let res = app.call(req(None)).await.unwrap();
+        assert!(res.headers().get(axum::http::header::CONTENT_ENCODING).is_none());
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(&body[..], raw);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
 
 /// Stamp every response with the running build identity, so an open page can
@@ -1385,6 +1680,53 @@ async fn no_store_for_documents(
 /// webview kept a page whose chunks were gone. The SPA watches this header
 /// across its own requests and soft-reloads from the background when it moves
 /// (see `$lib/build.ts`).
+/// Give every request an id, put it on a span so all downstream lines inherit
+/// it, and hand it back on the response.
+///
+/// The header is the half that makes this usable from outside: a client that
+/// saw a failure can quote `x-request-id`, and that string alone finds every
+/// line the box logged while serving it. Without it the id would be a fact the
+/// box knows and nobody can ask for.
+///
+/// An inbound `x-request-id` is honored rather than replaced — a client (or a
+/// future proxy) that already minted one is trying to correlate across a hop,
+/// and overwriting it would break exactly the case the header exists for. It
+/// is bounded and sanitized first: this value goes into a log line and back
+/// out in a header, and unbounded caller-controlled text in either is how you
+/// get log injection.
+async fn request_id(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use tracing::Instrument;
+
+    let inbound = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            s.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .take(64)
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty());
+    let id = inbound.unwrap_or_else(crate::observe::new_request_id);
+
+    let method = req.method().as_str().to_owned();
+    // The path, never the query string: query strings carry search terms and
+    // ids, and this lands in a log line.
+    let path = req.uri().path().to_owned();
+
+    let span = crate::observe::request_span(&id, &method, &path);
+    let mut res = next.run(req).instrument(span).await;
+
+    if let Ok(value) = axum::http::HeaderValue::from_str(&id) {
+        res.headers_mut().insert("x-request-id", value);
+    }
+    res
+}
+
 async fn stamp_box_build(
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -1461,6 +1803,19 @@ async fn server_info() -> impl IntoResponse {
     }))
 }
 
+/// The routes a sandboxed (opaque-origin) applet face is allowed to reach:
+/// its own static files and the query bridge. See the CORS predicate.
+fn is_face_path(path: &str) -> bool {
+    path.starts_with("/api/face/") || path.starts_with("/face/")
+}
+
+/// The CORS predicate, named so it can be tested: our own origins anywhere,
+/// and the opaque origin `null` only on the face routes. `request_host` is the
+/// request's `Host` header — a loopback origin must be that authority.
+fn face_origin_allowed(origin: &str, path: &str, request_host: Option<&str>) -> bool {
+    origin_is_ours(origin, request_host) || (origin == "null" && is_face_path(path))
+}
+
 /// Is this `Origin` one of ours?
 ///
 /// The allowlist behind the CORS layer. Kept as a named function with tests
@@ -1470,7 +1825,7 @@ async fn server_info() -> impl IntoResponse {
 /// Allowed: the app's `tauri://` origin, loopback on any port (the desktop
 /// proxy on 7117, the box's own UI, `pnpm dev` on 5173), and the box's `.virtues`
 /// name. A page served from a remote host has none of these origins.
-fn origin_is_ours(origin: &str) -> bool {
+pub(crate) fn origin_is_ours(origin: &str, request_host: Option<&str>) -> bool {
     // The app's own origin: `tauri://localhost` on macOS/iOS,
     // `https://tauri.localhost` on Windows — and `virtues://` on the phone,
     // which registers its OWN scheme so an OTA bundle can answer requests
@@ -1513,14 +1868,21 @@ fn origin_is_ours(origin: &str) -> bool {
 
     // Exact matches only. `localhost.evil.example` must NOT pass, which is why
     // this is not a `contains` or a suffix test.
-    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
-        || host == "virtues"
-        || host.ends_with(".virtues")
+    if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
+        // Loopback on ANY port used to pass. That was a hole, not a
+        // convenience: the desktop app splices 127.0.0.1:7117 to the box as
+        // the owner, so a page served by any other local process — a dev
+        // server, a notebook, another app's UI — could call it and read the
+        // reply. The app's own pages are always served by the authority they
+        // dial, so a loopback origin must equal the request's Host, exactly.
+        return request_host == Some(rest);
+    }
+    host == "virtues" || host.ends_with(".virtues")
 }
 
 #[cfg(test)]
 mod cors_tests {
-    use super::origin_is_ours;
+    use super::{face_origin_allowed, origin_is_ours};
 
     /// A remote page must not be allowed to read the box's responses.
     ///
@@ -1547,7 +1909,7 @@ mod cors_tests {
             "file://",
             "data:text/html,x",
         ] {
-            assert!(!origin_is_ours(o), "must refuse {o}");
+            assert!(!origin_is_ours(o, Some("127.0.0.1:7117")), "must refuse {o}");
         }
     }
 
@@ -1555,21 +1917,67 @@ mod cors_tests {
     /// breaks and someone reverts the whole fix.
     #[test]
     fn our_own_origins_are_allowed() {
-        for o in [
-            "tauri://localhost",
+        for (o, host) in [
+            ("tauri://localhost", None),
             // The iOS app's own scheme. Absent from this list until
             // 2026-08-28, which is exactly how the phone lost every data
             // request for ten days without a single test going red.
-            "virtues://localhost",
-            "https://tauri.localhost",
-            "http://localhost:5173",
-            "http://127.0.0.1:7117",
-            "http://[::1]:8000",
-            "http://localhost",
-            "http://box.virtues:8000",
-            "http://virtues:8000",
+            ("virtues://localhost", None),
+            ("https://tauri.localhost", None),
+            // Loopback: the page is served by the authority it dials.
+            ("http://localhost:5173", Some("localhost:5173")),
+            ("http://127.0.0.1:7117", Some("127.0.0.1:7117")),
+            ("http://[::1]:8000", Some("[::1]:8000")),
+            ("http://localhost", Some("localhost")),
+            ("http://box.virtues:8000", None),
+            ("http://virtues:8000", None),
         ] {
-            assert!(origin_is_ours(o), "must allow {o}");
+            assert!(origin_is_ours(o, host), "must allow {o} for host {host:?}");
+        }
+    }
+
+    /// Loopback on a DIFFERENT port is another process's page, not ours.
+    /// The desktop splice on 7117 is the owner; a dev server on 8888 is not.
+    #[test]
+    fn a_loopback_origin_on_another_port_is_refused() {
+        for (o, host) in [
+            ("http://localhost:8888", Some("127.0.0.1:7117")),
+            ("http://127.0.0.1:8888", Some("127.0.0.1:7117")),
+            ("http://127.0.0.1:7117", Some("127.0.0.1:8000")),
+            ("http://127.0.0.1:7117", None),
+        ] {
+            assert!(!origin_is_ours(o, host), "must refuse {o} for host {host:?}");
+        }
+    }
+
+    /// The face is hung in `<iframe sandbox="allow-scripts">`, so its origin
+    /// is the literal "null". It must clear CORS on its own routes: the panel
+    /// drew background stars and nothing else from cohort launch to
+    /// 2026-09-03 because it didn't, and no test went red.
+    #[test]
+    fn the_sandboxed_face_reaches_its_own_routes() {
+        for p in [
+            "/face/applet_dot_cloud/",
+            "/face/applet_dot_cloud/virtues.js",
+            "/api/face/query",
+        ] {
+            assert!(face_origin_allowed("null", p, None), "must allow null on {p}");
+        }
+    }
+
+    /// ...and nowhere else. A sandboxed or file:// page still cannot read
+    /// the box. Near-misses included: only the exact prefixes are face routes.
+    #[test]
+    fn null_is_refused_everywhere_else() {
+        for p in [
+            "/api/status",
+            "/api/applets/applet_dot_cloud/face-token",
+            "/display",
+            "/api/faces/x",
+            "/faces/x",
+            "/face",
+        ] {
+            assert!(!face_origin_allowed("null", p, None), "must refuse null on {p}");
         }
     }
 }

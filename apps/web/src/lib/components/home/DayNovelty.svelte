@@ -189,20 +189,20 @@
 {/if}
 
 <style>
-	.nov { margin: 0 0 26px; padding-top: 14px; border-top: 1px solid var(--color-border); max-width: 58ch; }
+	.nov { margin: 0 0 24px; max-width: 40em; }
 	.mono { font-family: var(--font-mono); }
 
 	.strip { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 	.track { flex: 1; min-width: 0; }
 	.track svg { display: block; overflow: visible; }
-	.end { font-size: 9.5px; letter-spacing: 0.04em; color: var(--color-foreground-subtle); flex: none; }
+	.end { font-size: 12px; color: var(--color-foreground-subtle); flex: none; }
 
 	.rail { stroke: var(--color-foreground); stroke-opacity: 0.14; stroke-width: 1; }
 	.tick { stroke: var(--color-foreground); stroke-opacity: 0.26; stroke-width: 1; }
 	.me { fill: var(--color-primary); }
 
 	figcaption {
-		font-family: var(--font-sans); font-size: 15px; line-height: 1.5;
+		font-family: var(--font-serif); font-size: 18px; line-height: 1.45;
 		font-variant-numeric: tabular-nums;
 		color: var(--color-foreground); margin: 0;
 	}

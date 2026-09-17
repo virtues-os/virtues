@@ -99,6 +99,12 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
     "create_page",
     "get_page_content",
     "edit_page",
+    // The wiki editor's write door. `edit_page` is also here, and an agent
+    // handed both will reach for the familiar one — which is how the first
+    // real run revised an article through the generic editor and skipped every
+    // check this tool exists to enforce. The brief says which to use; the
+    // allowlist is what makes it available at all.
+    "revise_article",
     "code_interpreter",
     "list_applets",
     "get_applet",
@@ -208,6 +214,9 @@ pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
         // chapters. Still no search, no data, no pages: it must not read the
         // record mid-confession or claim capabilities.
         "interview" => Some(&["write_it_up"] as &[&str]),
+        // Getting started: the room is about the box, not the record. Open a
+        // card, skip a step, play introductions back. No search, no data.
+        crate::api::getting_started::AGENT_MODE => Some(crate::api::getting_started::TOOLS),
         _ => None,
     };
     match allowlist {

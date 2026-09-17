@@ -2,12 +2,14 @@
 	import type { Tab } from '$lib/tabs/types';
 	import type { NotebookDetail, NotebookGraph } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
+	import { Button, IconButton, TextAction } from '$lib';
 	import { notebookStore } from '$lib/stores/notebook.svelte';
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import RefPicker from '$lib/components/RefPicker.svelte';
 	import IconPicker from '$lib/components/IconPicker.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { Popover } from '$lib/floating';
@@ -667,32 +669,35 @@
 					<div class="head-actions">
 						<Popover bind:open={overflowOpen} placement="bottom-end">
 							{#snippet trigger({ toggle }: { toggle: () => void })}
-								<button class="icon-btn" title="More" onclick={toggle}>
-									<Icon icon="ri:more-line" width="16" />
-								</button>
+								<IconButton
+									icon="ri:more-line"
+									label="More notebook actions"
+									expanded={overflowOpen}
+									haspopup="menu"
+									onclick={toggle}
+								/>
 							{/snippet}
 							{#snippet children({ close }: { close: () => void })}
 								<div class="menu">
 									{#if !showMemo}
-										<button
-											class="menu-item"
+										<MenuItem
+											icon="ri:sticky-note-line"
+											label="Add a status note"
 											onclick={() => {
 												close();
 												memoOpen = true;
 											}}
-										>
-											<Icon icon="ri:sticky-note-line" width="15" /> Add a status note
-										</button>
+										/>
 									{/if}
-									<button
-										class="menu-item danger"
+									<MenuItem
+										icon="ri:delete-bin-line"
+										label="Delete notebook"
+										destructive
 										onclick={() => {
 											close();
 											doDelete();
 										}}
-									>
-										<Icon icon="ri:delete-bin-line" width="15" /> Delete notebook
-									</button>
+									/>
 								</div>
 							{/snippet}
 						</Popover>
@@ -707,14 +712,22 @@
 
 			<form class="ask" onsubmit={submitAsk}>
 				<input class="ask-input" bind:value={askDraft} placeholder="Ask this notebook…" />
-				<button
-					class="ask-send"
-					type="submit"
-					disabled={!askDraft.trim()}
-					title="Ask — grounded in this notebook"
-				>
-					<Icon icon="ri:arrow-right-line" width="15" />
-				</button>
+				<!-- The send stays INVISIBLE until there is something to send, which
+				     is what the rule this replaced said with `opacity: 0`. A
+				     primitive cannot carry that, and neither alternative was
+				     acceptable: `{#if}` shrinks the flex:1 input by ~30px on the
+				     first keystroke, and reaching into `.v-iconbtn` with :global
+				     sets a precedent. So the slot holds the box and does the
+				     hiding, and the button inside it is an ordinary disabled one. -->
+				<span class="ask-send" class:idle={!askDraft.trim()}>
+					<IconButton
+						icon="ri:arrow-right-line"
+						label="Ask — grounded in this notebook"
+						size="sm"
+						type="submit"
+						disabled={!askDraft.trim()}
+					/>
+				</span>
 			</form>
 
 			<section class="grid-section">
@@ -737,31 +750,30 @@
 						onItemContextMenu={rowMenu}
 					>
 						{#snippet bulkActions(rows: MemberRow[], clear: () => void)}
-							<button class="bulk-btn danger" onclick={() => removeMembers(rows, clear)}>
-								Remove
-							</button>
+							<Button
+								variant="danger"
+								size="sm"
+								onclick={() => removeMembers(rows, clear)}>Remove</Button
+							>
 						{/snippet}
 
 						{#snippet rowActions(row: MemberRow)}
-							<button
-								class="row-act"
-								title="Actions"
-								aria-label={`Actions for ${row.name}`}
+							<IconButton
+								icon="ri:more-line"
+								label={`Actions for ${row.name}`}
+								size="sm"
+								haspopup="menu"
 								onclick={(e) => rowMenu(row, e)}
-							>
-								<Icon icon="ri:more-line" width="15" />
-							</button>
+							/>
 						{/snippet}
 
 						{#snippet toolbarActions()}
-							<button
-								class="ctrl-add"
+							<IconButton
+								icon="ri:add-line"
+								label="Add a page, person, place, file, or link"
+								variant="secondary"
 								onclick={openPicker}
-								title="Add a page, person, place, file, or link"
-								aria-label="Add to notebook"
-							>
-								<Icon icon="ri:add-line" width="16" />
-							</button>
+							/>
 						{/snippet}
 
 						{#snippet tableRow(row: MemberRow)}
@@ -773,15 +785,15 @@
 							{#if anyStatus}
 								<td class="c-dim hide-mobile">
 									{#if row.status === 'Failed'}
-										<button
-											class="retry"
+										<TextAction
+											inline
 											onclick={(e) => {
 												e.stopPropagation();
 												retryExtraction(row.url);
 											}}
 										>
 											Failed — retry
-										</button>
+										</TextAction>
 									{:else}
 										{row.status}
 									{/if}
@@ -848,14 +860,6 @@
 		background: var(--color-surface-elevated); color: var(--color-foreground); cursor: pointer;
 	}
 	.head-actions { display: flex; gap: 2px; flex-shrink: 0; }
-	.icon-btn {
-		display: grid; place-items: center; width: 30px; height: 30px;
-		border: none; border-radius: 8px; background: transparent;
-		color: var(--color-foreground-subtle); cursor: pointer;
-	}
-	.icon-btn:hover { background: var(--hover-bg); color: var(--color-foreground); }
-	.icon-btn.danger:hover { color: var(--color-error, #dc2626); }
-
 	.title-input, .desc-input {
 		display: block; width: 100%; resize: none; overflow: hidden;
 		border: none; background: transparent; outline: none;
@@ -900,13 +904,6 @@
 
 	/* Overflow menu */
 	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }
-	.menu-item {
-		display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
-		padding: 7px 9px; border: none; border-radius: 7px; background: transparent;
-		font: inherit; font-size: 0.85rem; color: var(--color-foreground); cursor: pointer;
-	}
-	.menu-item:hover { background: var(--color-surface-elevated); }
-	.menu-item.danger { color: var(--color-error, #dc2626); }
 
 	/* Ask bar — a line, not a slab.
 	   It was the largest, highest-contrast object on the page and the least
@@ -926,33 +923,17 @@
 		font: inherit; font-size: 0.875rem; color: var(--color-foreground);
 	}
 	.ask-input::placeholder { color: var(--color-foreground-subtle); }
-	/* The send affordance only exists once there's something to send — an
-	   always-on filled button was the loudest pixel on the page for a control
-	   that does nothing 99% of the time. Return works regardless. */
-	.ask-send {
-		display: grid; place-items: center; width: 24px; height: 24px; flex-shrink: 0;
-		border: none; border-radius: 6px; cursor: pointer;
-		background: transparent; color: var(--color-foreground-muted);
-		opacity: 0; transition: opacity 120ms, background-color 120ms;
-	}
-	.ask-send:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
-	.ask-send:not(:disabled) { opacity: 1; }
-	.ask-send:disabled { cursor: default; pointer-events: none; }
 
-	/* The add control sits in the grid's own toolbar, so the page no longer
-	   carries a section header whose only job was to host it. */
-	.ctrl-add {
-		display: grid; place-items: center; width: 30px; height: 30px;
-		border: 1px solid var(--color-border); border-radius: 8px;
-		background: var(--color-background-hover);
-		color: var(--color-foreground-muted); cursor: pointer;
-		transition: background-color 0.12s ease, color 0.12s ease;
+	/* Holds its box so the input never reflows; `visibility` rather than
+	   `display` for the same reason, and it also takes the control out of the
+	   tab order while there is nothing to send. */
+	.ask-send { display: inline-flex; transition: opacity 120ms ease; }
+	.ask-send.idle { opacity: 0; visibility: hidden; }
+
+	@media (prefers-reduced-motion: reduce) {
+		.ask-send { transition: none; }
 	}
-	.ctrl-add:hover {
-		background: color-mix(in srgb, var(--color-foreground) 8%, var(--color-surface-elevated));
-		color: var(--color-foreground);
-	}
-	.ctrl-add:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+
 	.add-row {
 		display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
 		padding: 1rem 0.6rem; border: 1px dashed var(--color-border); border-radius: 8px;
@@ -972,24 +953,6 @@
 		white-space: nowrap; font-weight: 450;
 	}
 
-	.bulk-btn {
-		border: 1px solid var(--color-border); border-radius: 6px;
-		background: var(--color-background-hover); padding: 3px 10px;
-		font: inherit; font-size: 0.75rem; color: var(--color-foreground-muted); cursor: pointer;
-	}
-	.bulk-btn:hover { color: var(--color-foreground); }
-	.bulk-btn.danger { color: var(--color-error, #dc2626); }
-	.row-act {
-		display: grid; place-items: center; width: 24px; height: 24px;
-		border: none; border-radius: 6px; background: transparent;
-		color: var(--color-foreground-subtle); cursor: pointer;
-	}
-	.row-act:hover { background: var(--color-surface-elevated); color: var(--color-foreground); }
-
-	.retry {
-		border: none; background: none; padding: 0; font: inherit; font-size: inherit;
-		color: var(--color-error, #dc2626); cursor: pointer; text-decoration: underline;
-	}
 	@media (max-width: 768px) {
 		.hide-mobile { display: none; }
 	}

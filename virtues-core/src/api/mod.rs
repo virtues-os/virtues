@@ -7,6 +7,7 @@ pub mod ai_calls;
 pub mod ai_complete;
 pub mod assistant_profile;
 pub mod audit;
+pub mod events;
 pub mod backup_status;
 pub use backup_status::get_backup_status;
 pub mod auth;
@@ -47,11 +48,13 @@ pub mod bookmarks;
 pub mod pages;
 pub mod personas;
 pub mod updates;
+pub mod live_turn;
 pub mod pins;
 pub mod search_local;
 pub mod places;
 pub mod profile;
 pub mod census;
+pub mod getting_started;
 pub mod identity;
 pub mod setup_phrase;
 pub mod network;
@@ -69,9 +72,17 @@ pub mod terminal;
 pub mod token_estimation;
 pub mod unsplash;
 pub mod wiki;
+pub mod me;
+pub mod stories;
+pub mod years;
 pub mod lifeline;
 pub mod link_session;
+pub mod subjects;
 pub mod wiki_articles;
+pub mod wiki_days;
+pub mod wiki_events;
+pub mod wiki_streams;
+pub mod wiki_editor;
 pub mod wiki_notes;
 
 // Re-export all functions for convenience
@@ -144,10 +155,7 @@ pub use chats::{
     DeleteChatResponse, GenerateTitleRequest, GenerateTitleResponse, IntentMetadata,
     MessageResponse, TimeRange, TitleMessage, ToolCall, UpdateChatRequest, UpdateChatResponse,
 };
-pub use internal::{
-    ensure_server_status, get_server_status, hydrate_profile, mark_server_ready, HydrateRequest,
-    HydrateResponse, ServerStatus,
-};
+pub use internal::ensure_server_status;
 pub use pages::{
     create_page,
     create_page_share,
@@ -197,10 +205,9 @@ pub use pins::{
     UpdatePinRequest,
 };
 pub use annotations::{
-    create_annotation, delete_annotation, export_file_annotations_md,
-    export_notebook_annotations_md, get_annotation, list_annotations,
-    list_notebook_annotations, update_annotation,
-    Annotation, CreateAnnotationRequest, UpdateAnnotationRequest,
+    create_annotation, delete_annotation, export_file_annotations_md, get_annotation,
+    list_annotations, update_annotation, Annotation, CreateAnnotationRequest,
+    UpdateAnnotationRequest,
 };
 pub use notebooks::{
     add_notebook_item, create_notebook, delete_notebook, get_notebook, list_notebooks,
@@ -228,61 +235,42 @@ pub use token_estimation::{
 };
 pub use home::{get_calendar_upcoming, get_current_weather, get_unnamed_places};
 pub use wiki::{
-    create_temporal_event,
-    delete_auto_events_for_day,
-    delete_temporal_event,
-    get_story,
+    get_entity_record_facets,
+    get_entity_records_page,
     get_narrative_identity,
-    NarrativeIdentity,
-    get_day_chats,
-    get_day_events,
-    get_day_sources,
-    get_day_streams,
-    get_timeline_day,
-    get_today_streams,
-    get_events_by_date,
-    get_or_create_day,
     get_organization,
     get_person,
     get_wiki_place,
-    day_activity,
-    DayActivity,
-    on_this_day,
-    OnThisDayEntry,
-    get_entity_records_page,
-    get_entity_record_facets,
-    EntityRecord,
-    EntityRecordsPage,
-    EntityRecordFacet,
-    list_stories,
-    list_days,
     list_organizations,
     list_people,
     list_wiki_places,
-    resolve_id,
-    update_day,
     update_organization,
     update_person,
-    update_temporal_event,
     update_wiki_place,
-    CreateTemporalEventRequest,
-    DaySource,
-    DayStream,
-    DayStreamsResponse,
-    IdResolution,
-    StreamRecord,
-    TemporalEvent,
-    UpdateTemporalEventRequest,
-    UpdateWikiDayRequest,
+    EntityRecord,
+    EntityRecordFacet,
+    EntityRecordsPage,
+    NarrativeIdentity,
     UpdateWikiOrganizationRequest,
     UpdateWikiPersonRequest,
     UpdateWikiPlaceRequest,
-    WikiStory,
-    WikiDay,
     WikiOrganization,
     WikiOrganizationListItem,
     WikiPerson,
     WikiPersonListItem,
     WikiPlace,
     WikiPlaceListItem,
+};
+pub use wiki_days::{
+    day_activity, get_or_create_day, get_timeline_day, list_days, on_this_day, DayActivity,
+    OnThisDayEntry, WikiDay,
+};
+pub use wiki_events::{
+    create_temporal_event, delete_auto_events_for_day, delete_temporal_event, get_day_events,
+    get_events_by_date, update_temporal_event, CreateTemporalEventRequest, TemporalEvent,
+    UpdateTemporalEventRequest,
+};
+pub use wiki_streams::{
+    get_day_chats, get_day_sources, get_day_streams, get_today_streams, DaySource, DayStream,
+    DayStreamsResponse, StreamRecord,
 };

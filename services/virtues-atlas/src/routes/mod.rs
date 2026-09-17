@@ -5,6 +5,7 @@ use crate::stripe_api::StripeClient;
 use crate::virtues_api_client::VirtuesApiClient;
 
 mod account;
+mod billing_checkout;
 mod billing_portal;
 mod entitlement;
 mod claim;
@@ -126,6 +127,7 @@ pub fn router() -> Router<AppState> {
         .merge(preorder::router())
         .merge(credits::router())
         .merge(relay::router())
+        .merge(billing_checkout::router())
         .merge(billing_portal::router())
         .merge(entitlement::router())
         .merge(settings::router())

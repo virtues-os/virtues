@@ -16,6 +16,13 @@
 		name: string;
 		size?: number;
 		/**
+		 * Stroke weight. The set is drawn at 1.1 for the 16px sidebar rows;
+		 * at rail scale, icon-only, a 1.1 line washes out, so the rail asks
+		 * for ~1.5. Kept a prop rather than baked so the two registers share
+		 * one glyph table.
+		 */
+		stroke?: number;
+		/**
 		 * Skip the sidebar's dress (`.sidebar-icon`: muted color, half
 		 * opacity, sidebar sizing). The glyphs also serve rooms that are not
 		 * the sidebar — the phone drawer — and there the host styles them.
@@ -23,7 +30,7 @@
 		bare?: boolean;
 	}
 
-	let { name, size = 16, bare = false }: Props = $props();
+	let { name, size = 16, bare = false, stroke = 1.1 }: Props = $props();
 
 	const GLYPHS: Record<string, string> = {
 		chats:
@@ -56,6 +63,12 @@
 		sources:
 			'<ellipse cx="8" cy="6" rx="3.4" ry="1.2"/><path d="M4.6 6v4.3c0 1.2 1.5 2.2 3.4 2.2s3.4-1 3.4-2.2V6"/><path d="M8 2.3v1.7"/>',
 		developer: '<path d="M3 5l3.2 3L3 11"/><path d="M9 11.5h4"/>',
+		// The room you land in. A drawn object like the rest — a roof and a
+		// door, not the outline-house-in-a-circle every icon set ships. It is
+		// the one glyph whose room is a PLACE rather than a kind of thing,
+		// which is why it gets the most literal drawing in the set.
+		home:
+			'<path d="M2.8 7.4 8 3.1l5.2 4.3"/><path d="M4.2 8.5v4.4h7.6V8.5"/><path d="M6.7 12.9V9.8h2.6v3.1"/>',
 		settings:
 			'<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8v2.7"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
 	};
@@ -70,7 +83,7 @@
 	viewBox="0 0 16 16"
 	fill="none"
 	stroke="currentColor"
-	stroke-width="1.1"
+	stroke-width={stroke}
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	aria-hidden="true"

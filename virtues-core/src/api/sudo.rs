@@ -1,7 +1,6 @@
 //! Sudo — the "prove physical access to the box" gate for high-sensitivity
-//! actions (export-all, BYO-key swap, wipe, revoke-last-device,
-//! import-applet-package). `GATED_ACTIONS` below is the list; keep this
-//! sentence in step with it.
+//! actions (BYO-key swap, import-applet-package). `GATED_ACTIONS` below is the
+//! list; keep this sentence in step with it.
 //!
 //! Flow (v1, CLI-confirm):
 //!
@@ -43,10 +42,10 @@ const REQUEST_TTL_MIN: i64 = 5;
 /// Gated actions. Adding a new one requires explicit listing here — keeps the
 /// surface auditable.
 const GATED_ACTIONS: &[&str] = &[
-    "export_data",
+    // `export_data`, `wipe_box`, `revoke_last_device` were listed here for a
+    // year with no caller anywhere in the app. A gate with no door is not a
+    // gate; add an action back when the surface that needs it exists.
     "change_byo_key",
-    "wipe_box",
-    "revoke_last_device",
     // Installing a third party's package runs their code on this box. It was
     // the only route in the app that did that, and it was gated by nothing
     // while changing an API key was gated by this — an asymmetry worth

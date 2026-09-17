@@ -171,8 +171,8 @@ async fn continue_event(
 
     let topics = args.get("topics");
 
-    // Build the SET clause with `$N` placeholders (Postgres). `start_time`/
-    // `end_time` are TIMESTAMPTZ and `topics` is JSONB, so the placeholders we
+    // Build the SET clause with `$N` placeholders (Postgres). `started_at`/
+    // `ended_at` are TIMESTAMPTZ and `topics` is JSONB, so the placeholders we
     // bind string values to are cast; `WHERE id` takes the final placeholder.
     let mut sets: Vec<String> = Vec::new();
     let mut binds: Vec<String> = Vec::new();
@@ -182,7 +182,13 @@ async fn continue_event(
         idx
     };
 
-    sets.push(format!("end_time = ${}::timestamptz", next()));
+    // `ended_at`, not `end_time`. The TOOL ARGUMENT is still `end_time` and
+    // stays that way — the column was renamed on 2026-08-17/18 and the SET
+    // clauses here were missed because they are built with `format!`, so no
+    // grep for a column name next to a SQL keyword ever matched them. The
+    // constraint is still called `wiki_events_end_time_not_null`, which is the
+    // fossil that made the old name look current.
+    sets.push(format!("ended_at = ${}::timestamptz", next()));
     binds.push(end_time.to_string());
     sets.push("agent_action = 'CONTINUE'".to_string());
 
@@ -260,8 +266,13 @@ async fn revise_event(
         .ok_or_else(|| ToolError::InvalidParameters("event_id is required for REVISE".into()))?;
 
     // Check the event isn't user-edited (protected)
+    // Select the boolean column directly. This used to wrap it in
+    // `CASE WHEN … THEN 1 ELSE 0 END`, which yields INT4 — and sqlx type-checks
+    // on decode, so REVISE failed here with a type-mismatch before it ever
+    // reached the guard below. The column is already `boolean`; the CASE was
+    // doing nothing but breaking the decode.
     let is_user_edited: Option<bool> = sqlx::query_scalar(
-        "SELECT CASE WHEN is_user_edited = TRUE THEN 1 ELSE 0 END FROM wiki_events WHERE id = $1",
+        "SELECT is_user_edited FROM wiki_events WHERE id = $1",
     )
     .bind(event_id)
     .fetch_optional(pool)
@@ -298,11 +309,11 @@ async fn revise_event(
         sets.push("embedding = NULL".to_string());
     }
     if let Some(v) = start_time {
-        sets.push(format!("start_time = ${}::timestamptz", next()));
+        sets.push(format!("started_at = ${}::timestamptz", next()));
         binds.push(v.to_string());
     }
     if let Some(v) = end_time {
-        sets.push(format!("end_time = ${}::timestamptz", next()));
+        sets.push(format!("ended_at = ${}::timestamptz", next()));
         binds.push(v.to_string());
     }
     if let Some(v) = auto_label {

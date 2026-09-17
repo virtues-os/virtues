@@ -17,6 +17,10 @@ path = "src/lib.rs"
 # fans it to the right ontology table; see ios_ingest/main.rs.
 
 [[bin]]
+name = "wiki_editor"
+path = "wiki_editor/main.rs"
+
+[[bin]]
 name = "daily_readings"
 path = "daily_readings/main.rs"
 
@@ -35,10 +39,6 @@ path = "transcription_resolution/main.rs"
 [[bin]]
 name = "day_summary_eod"
 path = "day_summary_eod/main.rs"
-
-[[bin]]
-name = "entity_article"
-path = "entity_article/main.rs"
 
 [[bin]]
 name = "embedding_index"
