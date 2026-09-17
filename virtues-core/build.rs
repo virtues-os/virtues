@@ -37,9 +37,15 @@ fn main() {
                 .filter(|s| !s.is_empty())
         })
         .unwrap_or_default();
-    println!("cargo:rustc-env=GIT_DESCRIBE={}", describe);
+    println!("cargo:rustc-env=GIT_DESCRIBE={}", semver_safe(&describe));
 
     // Get build timestamp in ISO 8601 format
     let built_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     println!("cargo:rustc-env=BUILD_TIME={}", built_at);
 }
+
+// The reshaper lives in src/ so it is reachable from BOTH here and the library.
+// `cargo` does not run `#[cfg(test)]` inside a build script — a test module in
+// this file compiles, never executes, and reads like coverage that does not
+// exist. Declared as a module by lib.rs, the same tests actually run.
+include!("src/version_shape.rs");
