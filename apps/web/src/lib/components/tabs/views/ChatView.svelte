@@ -1294,8 +1294,16 @@
 			}
 		}}
 		ondrop={(e) => {
-			e.preventDefault();
 			attachments.dragActive = false;
+			// The composer is a CodeMirror editor INSIDE this root, and it
+			// handles drops on itself (calling preventDefault + onAttach).
+			// Returning true from a CodeMirror dom event handler does not stop
+			// DOM propagation, so that drop still bubbles here — and until
+			// 2026-09-17 this added the same files a second time. Cleared
+			// dragActive first, because the sticky part of the overlay is not
+			// optional: no dragleave fires on the element that took the drop.
+			if (e.defaultPrevented) return;
+			e.preventDefault();
 			if (e.dataTransfer?.files?.length) attachments.add(Array.from(e.dataTransfer.files));
 		}}
 	>
