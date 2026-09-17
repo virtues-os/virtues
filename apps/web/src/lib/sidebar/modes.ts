@@ -84,9 +84,22 @@ export const SETTINGS_MODE: SidebarMode = {
 		// other screens — which is a subject someone comes to deliberately, not a
 		// reading they glance at while checking temperatures.
 		{ id: 'display', label: 'Display', icon: 'ri:tv-2-line', href: '/virtues/display' },
+		// SQL, Terminal and Lake are NOT here. They lived in this list for a
+		// while, on the argument that they already sit under `/virtues/*` —
+		// true of the route, and beside the point for the nav: they are tools,
+		// not preferences, and putting them here forced Settings' in-page nav to
+		// grow a second row of tabs to hold their sub-sections. They have their
+		// own rail door again (DEVELOPER_MODE below, `developer` in rooms.ts).
 	],
 };
 
+/**
+ * Developer. A rail door of its own, beside Sources and Settings at the foot.
+ *
+ * This constant sat unreferenced for a while, after the three rows were folded
+ * into Settings — it is live again rather than rewritten, because the fold
+ * changed nothing about what belongs in here.
+ */
 export const DEVELOPER_MODE: SidebarMode = {
 	id: 'developer',
 	title: 'Developer',

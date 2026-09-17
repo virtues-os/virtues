@@ -312,23 +312,6 @@
 		color: var(--color-error);
 	}
 
-	/* Scrollbar styling */
-	.code-view::-webkit-scrollbar,
-	.output-view::-webkit-scrollbar {
-		width: 4px;
-	}
-
-	.code-view::-webkit-scrollbar-track,
-	.output-view::-webkit-scrollbar-track {
-		background: transparent;
-	}
-
-	.code-view::-webkit-scrollbar-thumb,
-	.output-view::-webkit-scrollbar-thumb {
-		background-color: var(--color-border);
-		border-radius: 2px;
-	}
-
 	/* Reduced motion */
 	@media (prefers-reduced-motion: reduce) {
 		.status-icon.spinning {

@@ -561,24 +561,11 @@
         overflow-y: auto !important;
     }
 
-    /* Custom scrollbar for terminal */
-    .terminal-container :global(.xterm-viewport::-webkit-scrollbar) {
-        width: 8px;
-    }
-
-    .terminal-container :global(.xterm-viewport::-webkit-scrollbar-track) {
-        background: transparent;
-    }
-
-    .terminal-container :global(.xterm-viewport::-webkit-scrollbar-thumb) {
-        background: var(--color-border);
-        border-radius: 4px;
-    }
-
-    .terminal-container
-        :global(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
-        background: var(--color-border-strong);
-    }
+    /* No scrollbar rules here. xterm builds its own viewport element, so this
+       used to reach in with `::-webkit-scrollbar` — which is exactly what
+       forced the classic 8px gutter inside the terminal. app.css dresses it
+       instead, via the universal selector — which is what reaches an element
+       this component never writes. */
 
     @keyframes spin {
         from {

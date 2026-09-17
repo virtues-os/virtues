@@ -259,7 +259,7 @@ class ChatInstanceStore {
                     const pageId = (dataPart.data as { pageId?: string })?.pageId;
                     if (pageId) {
                         this.narrativeDocumentPageId = pageId;
-                        windowShellStore.openRouteBeside(`/page/${pageId}`, 'In your own words');
+                        windowShellStore.openRouteInSplitOrActive(`/page/${pageId}`, 'In your own words');
                     }
                 }
                 // Handle checkpoint events from auto-compaction (non-transient - persists in messages)

@@ -11,8 +11,12 @@
 
 - **Headings are titles, not sentences** — no trailing periods.
 - **Artifacts, not features.** Name what a person would point at (the record,
-  the page, the wiki, the portrait), never the modules we would (applets,
-  pipelines, models).
+  the page, the wiki, the portrait), never the modules we would (pipelines,
+  models, slots). **"Applets" is the exception, and it is settled**: it is the
+  shipping, user-facing name for the thing — it is what the room is called in
+  the sidebar and what `/applets` serves. It was renamed to "Routines" on
+  2026-09-16 on the strength of this rule and renamed straight back the same
+  day. Do not "fix" it again.
 - **Categories, not names**, when naming an adversary — a category cannot be
   argued with; a name invites an argument about the name.
 - **"Cannot", not "will not"** wherever it is true — incapability by
@@ -41,10 +45,15 @@ This is the deeper reading and should inform naming, marketing, and any future
 ## The bank
 
 Lines written for the founder's letter thesis slot, kept for other surfaces.
-The letter runs: *∴ You must protect your life's data to protect your soul.*
+The letter ran *∴ You must protect your life's data to protect your soul.* until
+2026-09-08, when the thesis slot was cut: the ledger moved into the margin and
+the close became Herbert's Dune line, so the letter no longer has a summit of
+its own. The thesis and the old close join the bank.
 
 | Line | Crux | Likely surface |
 |---|---|---|
+| ∴ You must protect your life's data to protect your soul. | the thesis, as the letter ran it 2026-08-21 → 09-08 | manifesto, film script |
+| Technology has exploited you long enough. This is what it was always supposed to do: make us more human, and more virtuous. | the letter's close 2026-08-24 → 09-08 | about page, film script |
 | ∴ No one is free whose inner life is someone else's asset. | freedom / political | website, manifesto |
 | ∴ What does it profit a man to gain the whole internet and lose his own story? | scriptural echo (Mark 8:36) | film script, essay |
 | ∴ Keeping your own record is the first virtue of the digital age. | the name's argument | website hero, "why the name" |

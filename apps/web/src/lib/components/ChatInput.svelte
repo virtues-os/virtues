@@ -371,20 +371,6 @@
 		overflow: visible;
 	}
 
-	.chat-input::-webkit-scrollbar {
-		width: 6px;
-	}
-	.chat-input::-webkit-scrollbar-track {
-		background: transparent;
-	}
-	.chat-input::-webkit-scrollbar-thumb {
-		background: var(--color-border-subtle);
-		border-radius: 3px;
-	}
-	.chat-input::-webkit-scrollbar-thumb:hover {
-		background: var(--color-border-strong);
-	}
-
 	/* Round icon buttons that sit inside the pill */
 	.pill-btn {
 		flex-shrink: 0;

@@ -78,6 +78,8 @@ export function openCreatedPage(pageId: string, title: string) {
 	// which races with the server's Y.Text initialization.
 	editAllowListStore.addPage(pageId, title);
 
-	// Open the page BESIDE the chat (Category A) — never navigate the chat in place.
-	windowShellStore.openRouteBeside(`/page/${pageId}`);
+	// Open the page the model just created without ever CREATING a split: beside
+	// the chat when the user is already in split view, otherwise a new tab in the
+	// active pane. Never navigate the chat in place, and never auto-split.
+	windowShellStore.openRouteInSplitOrActive(`/page/${pageId}`);
 }

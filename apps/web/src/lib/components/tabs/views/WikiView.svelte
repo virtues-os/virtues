@@ -2,13 +2,20 @@
 	WikiView.svelte
 
 	The wiki room: the wikipedia of one life. Sections are route-driven and
-	deep-linkable, navigated from the SIDEBAR — the room swaps the rail for its
-	own rows the way Settings and Developer do.
+	deep-linkable, navigated from the SIDEBAR — the rail's Wiki panel carries
+	the rows, and this room renders whatever the route names.
 
-	There used to be a SubNav strip across the top carrying the same eight
-	links. Once the sidebar grew them it was the same list twice on one screen,
-	and the top copy cost a band of vertical space on every wiki page to say
-	what the rail already said.
+	There is deliberately no in-page nav. The room had an eleven-item SubNav
+	strip across the top at the same time the sidebar panel listed the same
+	eleven words, one column to the left: the same list twice in one viewport.
+	The sidebar won because eleven items is a column's shape, not a strip's —
+	a horizontal run of eleven either wraps or scrolls, which is the same smell
+	that broke Settings' nav when it grew a second row of underline tabs.
+
+	`section` below is derived from `tab.route` and always was, so nothing here
+	depended on the strip: SubNav only ever WROTE the route, and the sidebar's
+	rows write it the same way (through `windowShellStore.navigate`, which also
+	pushes history, so Back still walks the sections).
 
 	  /wiki           Overview — the front page: standfirst, activity, on
 	                  this day, the latest entry, and the index.
@@ -76,6 +83,11 @@
 	import { reclassifyPersonAsOrg, createPerson, deleteEntity } from '$lib/wiki/api';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// The section list lives in ONE place now: WIKI_MODE in `lib/sidebar/modes.ts`,
+	// which the rail's Wiki panel renders. People/Places/Orgs stay their own rows
+	// there even though the content folds them into one Entities index — the
+	// legacy segment presets the index's type filter (see LEGACY_TYPE below).
 
 	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity' | 'chapters' | 'history' | 'lifeline';
 

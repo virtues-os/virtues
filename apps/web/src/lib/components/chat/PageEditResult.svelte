@@ -44,8 +44,10 @@
 		if (pageId && onOpenPage) {
 			onOpenPage(pageId);
 		} else if (pageId) {
-			// Fallback to direct store call if handler is missing
-			windowShellStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
+			// Fallback to direct store call if handler is missing. Never force a
+			// split: open beside only when already in split view, else a new tab
+			// in the active pane.
+			windowShellStore.openRouteInSplitOrActive(`/page/${pageId}`);
 		}
 	}
 </script>

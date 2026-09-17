@@ -73,6 +73,20 @@
 	// Track initialization state
 	let initialized = $state(false);
 
+	// The sidebar panel and the main pane merge into one white card, divided by
+	// a single line, whenever the panel is open: the pane drops its left margin,
+	// left border and left rounding so it abuts the panel's right border (the
+	// divider). Only a COLLAPSED sidebar leaves the pane a free-floating card.
+	//
+	// Split used to break the merge, and that was the whole complaint: entering
+	// split re-opened a 12px channel between the panel and the pane, re-rounded
+	// the panel's right corners, and added a second channel between the panes —
+	// three new edges for one new pane. The desk's rule is that separation goes
+	// whitespace → lightness → elevation and stops at the first that reads, and
+	// inside one continuous card a LINE already reads. So split now draws a
+	// second divider rather than carving the card into three.
+	const sidebarMerged = $derived(!mobileLayout.isMobile && !sidebarState.collapsed);
+
 	// Full-screen focus mode: hide all app chrome (sidebar, tab bars, frame)
 	// by toggling a body class that app.css keys off. Driven by the same
 	// pageDisplay.focusMode that the editor's dim/typewriter mode uses.
@@ -336,18 +350,22 @@
 	{/if}
 
 	<!-- Main Content -->
+	<!-- One card, always. `main` paints the surface and clips the corners; the
+	     panes inside it are transparent and separated by the resize handle's
+	     own 1px line. It used to go transparent in split so the two pane cards
+	     could float on the desk — there are no pane cards now. -->
 	<main
-		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden
-			transition-[border-color,background-color] duration-150"
-		class:m-3={!mobileLayout.isMobile}
+		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-surface"
+		class:m-3={!mobileLayout.isMobile && !sidebarMerged}
+		class:my-3={sidebarMerged}
+		class:mr-3={sidebarMerged}
+		class:pane-card={!mobileLayout.isMobile && !sidebarMerged}
+		class:pane-card-right={sidebarMerged}
 		class:border={!mobileLayout.isMobile}
-		class:rounded-lg={!mobileLayout.isMobile}
+		class:border-l-0={sidebarMerged}
 		class:is-mobile={mobileLayout.isMobile}
-		class:bg-surface={!windowShellStore.isSplit}
-		class:bg-transparent={windowShellStore.isSplit}
-		class:border-border={!windowShellStore.isSplit && !mobileLayout.isMobile}
-		class:border-transparent={windowShellStore.isSplit}
-		style="background-image: {windowShellStore.isSplit ? 'none' : 'var(--background-image)'}; background-blend-mode: multiply;"
+		class:border-border={!mobileLayout.isMobile}
+		style="background-image: var(--background-image); background-blend-mode: multiply;"
 	>
 		{#if initialized}
 			{#if mobileLayout.isMobile}
@@ -452,6 +470,30 @@
 		view-transition-name: main-content;
 	}
 
+	/* The merge/unmerge has to travel at the SAME SPEED as the sidebar, or the
+	   seam tears open.
+	
+	   `sidebarMerged` is a boolean, so every class it drives used to change on
+	   the frame the toggle was pressed while the aside spent the next 300ms
+	   animating to its new width. Collapsing therefore gave the pane its 12px
+	   desk margin instantly — a channel opened at a seam that was still shut,
+	   and the pane jumped 12px RIGHT before sliding left. That jolt, not the
+	   easing alone, is what read as rubber-banding, and it showed desk ground
+	   under the moving edge because for those frames there genuinely was some.
+	
+	   Animating the margin (and the border and corners that arrive with it) on
+	   the sidebar's own clock makes the gap GROW as the panel leaves, so the
+	   two edges never disagree about where the seam is. Keep this duration and
+	   easing identical to UnifiedSidebar's width transition. */
+	main:not(.is-mobile) {
+		transition:
+			margin-left 300ms var(--ease-premium),
+			border-left-width 300ms var(--ease-premium),
+			border-radius 300ms var(--ease-premium),
+			border-color 150ms var(--ease-premium),
+			background-color 150ms var(--ease-premium);
+	}
+
 	/* Mobile shell: edge-to-edge (viewport-fit=cover), so the shell itself pads
 	   for the status bar / Dynamic Island, and reserves the bottom-tab bar's
 	   height so scrollable content ends above it (the bar is position:fixed).
@@ -494,6 +536,14 @@
 	   normal flow (height comes from the insets, overriding h-screen's 100vh), so
 	   the document has nothing to scroll; only the view's own inner scroller
 	   moves. Bars stay put. overflow-x:hidden also kills sideways rubber-banding. */
+	/* The shell's cards all share --card-radius. `pane-card-right` is the merged
+	   case: the pane rounds only where it meets the desk, and stays square where
+	   it abuts the sidebar panel's divider. */
+	.pane-card { border-radius: var(--card-radius); }
+	.pane-card-right {
+		border-radius: 0 var(--card-radius) var(--card-radius) 0;
+	}
+
 	.app-shell.mobile-shell {
 		position: fixed;
 		inset: 0;

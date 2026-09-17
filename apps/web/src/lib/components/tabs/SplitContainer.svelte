@@ -24,7 +24,12 @@
 	const rightZoneId: ZoneId = { type: "split-overlay", paneId: "right" };
 
 	const MIN_WIDTH = 25; // minimum 25% (1/4) for each pane
-	const GUTTER_PX = 10; // gap between cards in split mode
+	// The seam between panes is a LINE, not a channel. This was 12px of desk
+	// ground with a floating card either side, which meant entering split
+	// carved the one merged card into three and re-introduced every edge the
+	// merge had removed. 1px is the divider's own width; the handle widens its
+	// HIT area without widening the mark (see .resize-handle::after).
+	const GUTTER_PX = 1;
 
 	// Derived state for split mode
 	const isSplitEnabled = $derived(windowShellStore.isSplit);
@@ -200,9 +205,7 @@
 		role="separator"
 		aria-orientation="vertical"
 		tabindex={isSplitEnabled ? 0 : -1}
-	>
-		<div class="handle-grip"></div>
-	</div>
+	></div>
 
 	<!-- Right Pane Shell: tab bar + background + click zone (no content rendered here) -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
@@ -284,7 +287,6 @@
 <style>
 	.split-container {
 		--tab-bar-h: 41px; /* 6px padding + 28px tabs-scroll + 6px padding + 1px border */
-		--card-radius: 4px;
 		display: flex;
 		flex: 1;
 		min-height: 0;
@@ -312,25 +314,17 @@
 		transition: none;
 	}
 
-	/* Inset panes so borders aren't clipped by container overflow:hidden */
-	.split-enabled {
-		padding: 1px;
-	}
+	/* Panes paint NOTHING. `main` is the card — it carries the surface, the
+	   border and the rounded corners, and clips to them — so a pane that
+	   painted its own background and border was a card inside a card, and the
+	   only thing that made it legible as one was the 12px channel this change
+	   removes.
 
-	/* Card styling in split mode */
-	.split-enabled .pane-shell {
-		background: var(--color-surface);
-		background-image: var(--background-image);
-		background-blend-mode: multiply;
-		border: 1px solid var(--color-border);
-		border-radius: var(--card-radius);
-		overflow: hidden;
-	}
-
-	/* Active pane: darker border */
-	.split-enabled .pane-shell.active {
-		border-color: color-mix(in srgb, var(--color-foreground) 20%, var(--color-border));
-	}
+	   The active pane is not marked here either. It has never needed to be:
+	   WindowTabBar already says it, in the one place a person is looking when
+	   they care, by giving the focused pane's active tab --tab-active-bg-focused
+	   against the other's --tab-active-bg. A border saying it a second time is
+	   a second voice for one fact. */
 
 	/* Right pane collapsed styles */
 	.pane-shell.collapsed {
@@ -355,11 +349,6 @@
 		--tab-bar-h: 0px;
 	}
 
-	/* In split mode, tab-bar-h is offset by container padding */
-	.split-enabled .tab-slot {
-		top: calc(var(--tab-bar-h, 41px) + 1px);
-	}
-
 	.split-container.dragging .tab-slot {
 		transition: none;
 	}
@@ -374,24 +363,8 @@
 		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2));
 	}
 
-	/* Card content inset: tab-slot is a sibling of pane-shell (not a child),
-	   so we must inset by the card border width + container padding to avoid
-	   content overlapping the border. Container padding = 1px, border = 1px. */
-	.split-enabled .tab-slot.in-left {
-		left: 2px; /* 1px container padding + 1px border */
-		width: calc(var(--left-width) - (var(--gutter-width, 0px) / 2) - 4px);
-		bottom: 2px;
-		border-radius: 0 0 var(--card-radius) var(--card-radius);
-		overflow: hidden;
-	}
-
-	.split-enabled .tab-slot.in-right {
-		right: 2px;
-		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2) - 4px);
-		bottom: 2px;
-		border-radius: 0 0 var(--card-radius) var(--card-radius);
-		overflow: hidden;
-	}
+	/* No per-pane inset or rounding any more: the slots run to the edges of the
+	   one card, and `main`'s own overflow:hidden clips them to its corners. */
 
 	.resize-handle {
 		width: 0;
@@ -410,31 +383,59 @@
 		pointer-events: none;
 	}
 
-	/* Gutter: full gap width between cards */
+	/* The divider itself — the same 1px line that divides the sidebar panel
+	   from the pane, drawn once more between the panes. */
 	.resize-handle.visible {
-		width: var(--gutter-width, 10px);
+		width: var(--gutter-width, 1px);
+		background: var(--color-border);
 		opacity: 1;
 		pointer-events: auto;
 	}
 
-	/* Hover: subtle fill hint in gutter */
-	.resize-handle.visible:hover,
-	.resize-handle.dragging {
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+	/* An 8px grab target over a 1px mark, matching the sidebar's seam. Without
+	   this the handle would be a 1px hit area — findable only by accident. */
+	.resize-handle.visible::after {
+		content: "";
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: -4px;
+		right: -4px;
 	}
 
-	.handle-grip {
-		width: 3px;
-		height: 32px;
-		background: var(--color-foreground-muted);
-		border-radius: 2px;
+	/* Takes the accent and doubles in weight on approach — the same gesture the
+	   sidebar seam makes, because they are the same object in two places and a
+	   user who learns one has learned both. No grip: a grip would be a third
+	   object on a seam whose whole job is to be a line. */
+	.resize-handle.visible::before {
+		content: "";
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		right: 0;
+		width: 0;
+		background: var(--color-primary);
 		opacity: 0;
-		transition: opacity 150ms ease;
+		transition:
+			width 120ms var(--ease-premium),
+			opacity 120ms var(--ease-premium);
 	}
 
-	.resize-handle.visible:hover .handle-grip,
-	.resize-handle.dragging .handle-grip {
-		opacity: 0.5;
+	.resize-handle.visible:hover::before,
+	.resize-handle.visible:focus-visible::before,
+	.resize-handle.dragging::before {
+		width: 2px;
+		opacity: 1;
+	}
+
+	.resize-handle.dragging::before {
+		transition: none;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.resize-handle.visible::before {
+			transition: none;
+		}
 	}
 
 	/* Drag to Split Overlays - Always in DOM but hidden until drag starts */

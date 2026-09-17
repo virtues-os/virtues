@@ -295,6 +295,15 @@
 	--active-bg: color-mix(in srgb, var(--color-foreground) 12%, transparent);
 	--press-bg: color-mix(in srgb, var(--color-foreground) 16%, transparent);
 
+	/* The scrollbar's thumb, on the same ramp and for the same reason: defined
+	   against the TEXT colour, so it reads in all sixteen themes instead of
+	   landing on whichever surface token looked close. 22% is a shade above
+	   --active-bg (12%) — a scrollbar has to be findable against content, not
+	   just against a ground. The track is always transparent; a painted track
+	   is a chrome object standing on the page permanently, and design.md's
+	   rule is that nothing on the desk may out-shout the page. */
+	--scrollbar-thumb: color-mix(in srgb, var(--color-foreground) 22%, transparent);
+
 	--sidebar-hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 	--sidebar-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
 	--sidebar-item-gap: 4px;
@@ -319,6 +328,10 @@
 	/* 8pt grid throughout. Off-grid values (13px, 26px, 30px, 34px, 12.5px) are
 	   one of the reliable tells of machine-generated UI, and every one of those
 	   was in here a commit ago. */
+	/* One radius for every card in the shell — the pane, the split panes and the
+	   sidebar panel. They used to disagree (8px mono, 4px split, 6px fallback),
+	   which read as the sidebar being rounded differently from the pages. */
+	--card-radius: 6px;
 	--chrome-row-h: 40px;
 	--chrome-tab-h: 32px;
 
