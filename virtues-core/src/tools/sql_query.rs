@@ -662,6 +662,11 @@ impl SqlQueryTool {
             .bind(table)
             .fetch_all(self.pool.as_ref())
             .await
+            // absent-ok: this is `explain_failure` — it runs only after a query
+            // has ALREADY failed, and it returns a String, not a Result. If the
+            // catalog lookup fails too, the honest outcome is the best
+            // explanation we can still build, not a failure inside the
+            // failure-explainer.
             .unwrap_or_default();
             if cols.is_empty() {
                 continue;

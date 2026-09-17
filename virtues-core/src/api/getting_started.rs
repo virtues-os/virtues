@@ -900,6 +900,7 @@ mod tests {
         sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
             .execute(&pool)
             .await
+            // absent-ok: the migrations may already seed the one profile row.
             .ok();
 
         // As a sign-in leaves it: a name from the account, nothing else.
@@ -930,6 +931,7 @@ mod tests {
         sqlx::query("INSERT INTO app_user_profile DEFAULT VALUES")
             .execute(&pool)
             .await
+            // absent-ok: the migrations may already seed the one profile row.
             .ok();
 
         // Nothing connected, nothing said: open.

@@ -110,16 +110,14 @@ pub async fn get_me(pool: &PgPool) -> Result<MePage> {
         .map(|i| i.content.clone())
         .filter(|c| !c.trim().is_empty());
 
-    let chapters = crate::api::narrative_draft::list_chapters(pool)
-        .await
-        .unwrap_or_default();
+    let chapters = crate::api::narrative_draft::list_chapters(pool).await?;
 
     let years: Vec<i32> = sqlx::query_scalar(
         "SELECT DISTINCT EXTRACT(YEAR FROM date)::int AS y FROM wiki_days ORDER BY y DESC",
     )
     .fetch_all(pool)
     .await
-    .unwrap_or_default();
+    .map_err(|e| Error::Database(format!("Failed to read the years on record: {e}")))?;
 
     Ok(MePage {
         person_id,

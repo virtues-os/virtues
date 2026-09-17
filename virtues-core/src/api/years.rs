@@ -78,6 +78,11 @@ pub async fn life_span(pool: &PgPool) -> Result<(i32, i32)> {
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to read the life's span: {e}")))?;
+    // absent-ok: the query's own error is handled above. LEAST over three
+    // NULLable mins is NULL until the person has a birth date, a chapter or a
+    // day — the state this function's doc comment calls "the date arrives
+    // later" — and the current year is the right span for a life with nothing
+    // recorded yet.
     Ok((earliest.map(|d| d.year()).unwrap_or(now), now))
 }
 
@@ -132,6 +137,9 @@ async fn read_summary(pool: &PgPool, year: i32) -> Result<YearSummary> {
             .fetch_optional(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to read the year: {e}")))?;
+    // None means no row for this year has been written yet, which is every
+    // year before it is first narrated.
+    // absent-ok: `fetch_optional`'s own error is handled above.
     let (title, summary) = row.unwrap_or((None, None));
 
     let (recorded, narrated): (i64, i64) = sqlx::query_as(
@@ -334,7 +342,7 @@ pub async fn write_year_article(pool: &PgPool, year: i32) -> Result<String> {
         p.push('\n');
     }
 
-    let system = crate::api::wiki_editor::system_prompt("year", &load_rules(pool).await)?;
+    let system = crate::api::wiki_editor::system_prompt("year", &load_rules(pool).await?)?;
     // The Chat slot, as the day's narration uses: this is prose a person reads
     // on their own wiki, not a background summary.
     let article = crate::virtues_api::completion::system_completion(
@@ -361,11 +369,17 @@ pub async fn write_year_article(pool: &PgPool, year: i32) -> Result<String> {
 }
 
 /// The person's standing rules, which ride in every editor prompt.
-async fn load_rules(pool: &PgPool) -> Vec<String> {
+///
+/// Returns a Result rather than swallowing: these rules are the person's own
+/// instructions to the editor, and an empty vec is indistinguishable from
+/// "they have no rules" — so a broken query would quietly write the year's
+/// article WITHOUT the standing rules and nothing would ever say so. That is
+/// the failure class `.claude/rules/query-errors.md` exists for.
+async fn load_rules(pool: &PgPool) -> Result<Vec<String>> {
     sqlx::query_scalar::<_, String>("SELECT rule FROM wiki_rules WHERE active")
         .fetch_all(pool)
         .await
-        .unwrap_or_default()
+        .map_err(|e| Error::Database(format!("Failed to read the standing rules: {e}")))
 }
 
 #[cfg(test)]
