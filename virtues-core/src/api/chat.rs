@@ -599,15 +599,21 @@ async fn get_latest_checkpoint(pool: &PgPool, chat_id: &str) -> Option<StreamEve
     .bind(chat_id)
     .fetch_optional(pool)
     .await
+    .map_err(|e| tracing::error!(chat_id, error = %e, "checkpoint lookup failed"))
     .ok()??;
 
+    // `parts` is jsonb and `created_at` is timestamptz. Reading either as a
+    // String is not a wrong value, it is a PANIC inside the turn's task —
+    // `Row::get` unwraps the decode — so auto-compaction killed the reply it
+    // had just made room for, every time it succeeded.
     let id: String = row.get("id");
-    let parts_json: Option<String> = row.get("parts");
-    let created_at: String = row.get("created_at");
+    let parts_json: Option<serde_json::Value> = row.get("parts");
+    let created_at: Timestamp = row.get("created_at");
+    let created_at = created_at.to_rfc3339();
 
     // Parse parts JSON to extract checkpoint data
     let parts: Vec<UIPart> = parts_json
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .and_then(|json| serde_json::from_value(json).ok())
         .unwrap_or_default();
 
     // Find checkpoint part
@@ -1532,10 +1538,22 @@ async fn chat_handler_inner(
                 let reasoning_details: Option<serde_json::Value> = msg.get("reasoning_details");
                 let parts_raw: Option<serde_json::Value> = msg.get("parts");
 
-                // Parse JSON fields
-                let tool_calls = tool_calls_raw.and_then(|t| serde_json::from_value(t).ok());
+                // Parse JSON fields. A shape these no longer understand is a
+                // turn that silently loses its tool calls or its order and
+                // falls back to flat text — the kind of thing that reads as
+                // "this message had no tools" rather than as a bug, so it says
+                // so out loud.
+                let tool_calls = tool_calls_raw.and_then(|t| {
+                    serde_json::from_value(t)
+                        .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                        .ok()
+                });
                 let intent = intent_raw.and_then(|i| serde_json::from_value(i).ok());
-                let parts = parts_raw.and_then(|p| serde_json::from_value(p).ok());
+                let parts = parts_raw.and_then(|p| {
+                    serde_json::from_value(p)
+                        .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "parts did not parse"))
+                        .ok()
+                });
 
                 ChatMessage {
                     id: Some(id),
@@ -2123,8 +2141,14 @@ fn create_agent_stream(
         // Send [DONE] marker
         yield ("[DONE]".to_string());
 
-        // Save assistant message to chat
-        if !full_content.is_empty() {
+        // Save assistant message to chat.
+        //
+        // Text is not the only thing a turn produces. One that called tools and
+        // was stopped — or hit the step ceiling — before it wrote a word left
+        // NOTHING on disk, so a reload erased calls the person had watched run,
+        // and the "cancelled"/"interrupted" notice below had no row to hang on.
+        // A turn that produced neither text nor a call is still not a turn.
+        if !full_content.is_empty() || !all_tool_calls.is_empty() {
             let provider = model.split('/').next().unwrap_or("unknown").to_string();
             // The row says how the turn ended so a reload shows the same
             // notice: the person's stop, the output cap, or an interruption.
@@ -2674,6 +2698,68 @@ mod live_prompt_audit {
     }
 }
 
+
+#[cfg(test)]
+mod checkpoint_tests {
+    use super::*;
+    use sqlx::PgPool;
+
+    /// `parts` is jsonb and `created_at` is timestamptz. Reading either as a
+    /// String panics rather than returning a wrong value, and this runs inside
+    /// the turn's own task — so auto-compaction killed the reply it had just
+    /// made room for. A pure test cannot catch it; only a real column can.
+    #[sqlx::test]
+    async fn a_checkpoint_row_decodes_into_its_event(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0)")
+            .bind("chat_cp")
+            .bind("compacted")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let parts = serde_json::json!([{
+            "type": "checkpoint",
+            "version": 3,
+            "messages_summarized": 12,
+            "summary": "<context>the earlier conversation</context>",
+            "timestamp": "",
+        }]);
+        sqlx::query(
+            "INSERT INTO app_chat_messages (id, chat_id, role, content, sequence_num, parts)
+             VALUES ($1, $2, 'checkpoint', 'Checkpoint v3', 1, $3)",
+        )
+        .bind("msg_cp")
+        .bind("chat_cp")
+        .bind(&parts)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let event = get_latest_checkpoint(&pool, "chat_cp")
+            .await
+            .expect("the checkpoint comes back as an event");
+        match event {
+            StreamEvent::Checkpoint { id, version, messages_summarized, timestamp, .. } => {
+                assert_eq!(id, "msg_cp");
+                assert_eq!(version, 3);
+                assert_eq!(messages_summarized, 12);
+                // Empty in the part, so the row's own created_at stands in.
+                assert!(!timestamp.is_empty(), "falls back to created_at");
+            }
+            other => panic!("expected a checkpoint event, got {other:?}"),
+        }
+    }
+
+    #[sqlx::test]
+    async fn a_chat_with_no_checkpoint_has_none(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0)")
+            .bind("chat_plain")
+            .bind("plain")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(get_latest_checkpoint(&pool, "chat_plain").await.is_none());
+    }
+}
 
 #[cfg(test)]
 mod ghost_tests {

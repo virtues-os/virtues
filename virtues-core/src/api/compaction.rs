@@ -438,12 +438,12 @@ pub fn build_context_for_llm(
     let mut context = Vec::new();
 
     // Find the latest checkpoint message and its index
-    let (checkpoint_summary, checkpoint_index) = find_latest_checkpoint(messages);
+    let (checkpoint_summary, checkpoint_split_index) = find_latest_checkpoint(messages);
 
     // Determine which summary to use (checkpoint takes precedence over legacy)
     let effective_summary = checkpoint_summary.as_deref().or(summary);
     let effective_start_index = if checkpoint_summary.is_some() {
-        checkpoint_index + 1 // Start after the checkpoint message
+        checkpoint_split_index
     } else {
         summary_up_to_index
     };
@@ -474,11 +474,13 @@ pub fn build_context_for_llm(
     }
 
     // 2. Recent messages (after checkpoint or summary_up_to_index)
-    let recent_messages = if effective_start_index < messages.len() {
-        &messages[effective_start_index..]
-    } else {
-        messages
-    };
+    //
+    // An index past the end means the summary covers everything, so what
+    // follows it is nothing. This used to fall back to the WHOLE history, which
+    // sent the summary AND every message it replaced — the context grew at the
+    // one moment it had to shrink, since compaction only runs at 85% of the
+    // window.
+    let recent_messages = &messages[effective_start_index.min(messages.len())..];
 
     for msg in recent_messages {
         // Skip checkpoint messages - they're metadata, not conversation
@@ -662,19 +664,27 @@ pub fn build_context_for_llm(
     context
 }
 
-/// Find the latest checkpoint message and extract its summary
+/// Find the latest checkpoint message and extract its summary.
 ///
-/// Returns (Option<summary_text>, checkpoint_index)
-/// If no checkpoint found, returns (None, 0)
+/// Returns `(Option<summary_text>, first_message_the_summary_does_not_cover)`.
+/// If no checkpoint is found, returns `(None, 0)`.
+///
+/// That index is the checkpoint's own `messages_summarized`, NOT the position
+/// the checkpoint row sits at. `compact_chat` APPENDS its checkpoint after the
+/// messages it deliberately left out of the summary, so "start after the
+/// checkpoint" started after the verbatim window too — the most recent
+/// exchanges were in neither the summary nor the context, and the model simply
+/// lost them. `messages_summarized` is the split point, and it is the same
+/// number the legacy `summary_up_to_index` path uses, so the two agree.
 fn find_latest_checkpoint(messages: &[ChatMessage]) -> (Option<String>, usize) {
     // Search from the end to find the most recent checkpoint
-    for (idx, msg) in messages.iter().enumerate().rev() {
+    for msg in messages.iter().rev() {
         if msg.role == "checkpoint" {
             // Extract summary from checkpoint part
             if let Some(parts) = &msg.parts {
                 for part in parts {
-                    if let UIPart::Checkpoint { summary, .. } = part {
-                        return (Some(summary.clone()), idx);
+                    if let UIPart::Checkpoint { summary, messages_summarized, .. } = part {
+                        return (Some(summary.clone()), (*messages_summarized).max(0) as usize);
                     }
                 }
             }
@@ -992,6 +1002,85 @@ mod tests {
         assert!(context[0]["content"].is_null(), "no text, but not dropped");
         assert_eq!(context[0]["tool_calls"].as_array().unwrap().len(), 1);
         assert_eq!(context[1]["content"], "nothing found");
+    }
+
+    /// Compaction summarizes everything up to a split point and keeps the
+    /// exchanges after it verbatim — but it APPENDS its checkpoint at the end,
+    /// after those. Starting "after the checkpoint" therefore started after the
+    /// verbatim window, and an index past the end fell back to the whole
+    /// history.
+    #[test]
+    fn test_checkpoint_keeps_the_window_it_promised_to_keep() {
+        fn m(role: &str, body: &str) -> ChatMessage {
+            ChatMessage {
+                id: None,
+                role: role.to_string(),
+                content: body.to_string(),
+                timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+                model: None, provider: None, agent_id: None, tool_calls: None,
+                reasoning: None, intent: None, subject: None,
+                reasoning_details: None, parts: None,
+            }
+        }
+        // 20 messages; compaction summarized m0..m11 and kept m12..m19.
+        let mut msgs: Vec<ChatMessage> = (0..20)
+            .map(|i| m(if i % 2 == 0 { "user" } else { "assistant" }, &format!("m{i}")))
+            .collect();
+        let mut checkpoint = m("checkpoint", "Checkpoint v1");
+        checkpoint.parts = Some(vec![UIPart::Checkpoint {
+            version: 1,
+            messages_summarized: 12,
+            summary: "SUMMARY-OF-m0-TO-m11".to_string(),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+        }]);
+        msgs.push(checkpoint);
+
+        let context = build_context_for_llm(&msgs, None, 12, Some("SYS"));
+
+        assert_eq!(context[0]["role"], "system");
+        assert!(context[0]["content"].as_str().unwrap().contains("SUMMARY-OF-m0-TO-m11"));
+        let bodies: Vec<&str> = context[1..]
+            .iter()
+            .map(|m| m["content"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            bodies,
+            ["m12", "m13", "m14", "m15", "m16", "m17", "m18", "m19"],
+            "the verbatim window, and nothing the summary already covers"
+        );
+    }
+
+    /// The checkpoint is the last message and nothing has been said since.
+    #[test]
+    fn test_a_summary_that_covers_everything_leaves_nothing_behind() {
+        let base = ChatMessage {
+            id: None,
+            role: "user".to_string(),
+            content: String::new(),
+            timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+            model: None, provider: None, agent_id: None, tool_calls: None,
+            reasoning: None, intent: None, subject: None,
+            reasoning_details: None, parts: None,
+        };
+        let msgs = vec![
+            ChatMessage { content: "m0".to_string(), ..base.clone() },
+            ChatMessage {
+                role: "checkpoint".to_string(),
+                content: "Checkpoint v1".to_string(),
+                parts: Some(vec![UIPart::Checkpoint {
+                    version: 1,
+                    messages_summarized: 1,
+                    summary: "ALL-OF-IT".to_string(),
+                    timestamp: String::new(),
+                }]),
+                ..base
+            },
+        ];
+
+        let context = build_context_for_llm(&msgs, None, 1, Some("SYS"));
+
+        assert_eq!(context.len(), 1, "the system message and nothing else");
+        assert!(context[0]["content"].as_str().unwrap().contains("ALL-OF-IT"));
     }
 
     #[test]
