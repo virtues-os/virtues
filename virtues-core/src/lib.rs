@@ -10,6 +10,7 @@ pub mod api;
 pub mod cli;
 pub mod client;
 pub mod codename;
+mod version_shape;
 pub mod credentials;
 pub mod crypto;
 pub mod data_disk;

@@ -96,8 +96,13 @@ pub fn channel() -> &'static str {
         "staging"
     } else if d.starts_with("edge") {
         "edge"
-    } else if d.contains('-') {
-        // e.g. `v0.2.0-4-gabc123` or `v0.2.0-dirty` — a build between/after tags.
+    } else if d.contains('-') || d.contains('+') {
+        // A build between/after tags. Both separators, because build.rs now
+        // reshapes `git describe`'s own suffix into semver build metadata:
+        // `v0.2.0-4-gabc123` is baked as `v0.2.0+4.gabc123` and `v0.2.0-dirty`
+        // as `v0.2.0+dirty`, so a `-`-only test would have started calling
+        // every local build STABLE — the exact word that decides which
+        // channel a box believes it is on.
         "dev"
     } else {
         "stable"
