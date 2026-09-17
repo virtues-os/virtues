@@ -209,6 +209,42 @@
    zero bytes, drawn on frame one. If a serif fallback ever has to come back,
    it comes back as woff2. */
 
+/* ===================================
+   SCROLLBARS — one rule, inherited
+   =================================== */
+
+/* There was no global scrollbar style at all. Ten components hand-rolled their
+   own at SIX different widths (3px, 4px, 6px, 8px, `thin`, hidden) and every
+   room that hadn't got round to it — Home, Wiki, Pages, Settings, Sources,
+   Drive, every list view — showed the raw platform bar: a 15px opaque slab
+   that steals 15px of content width, so a page that grows past one screen
+   shifts its centred column and stops lining up with its neighbours.
+   The merged card made it louder still, landing that slab against a 1px
+   divider.
+
+   STANDARD PROPERTIES ONLY, and that is the load-bearing part: unlike
+   `::-webkit-scrollbar`, they do not force classic layout-stealing scrollbars
+   on anyone whose platform draws overlay ones. Eight of the ten components
+   were reaching for `::-webkit-scrollbar` to make the gutter less ugly, which
+   was also what opted them INTO the gutter.
+
+   THE TWO PROPERTIES DO NOT BEHAVE THE SAME WAY, and writing both on `:root`
+   silently half-worked: `scrollbar-color` inherits, `scrollbar-width` does
+   NOT. Every scroller in the app took the colour and kept `width: auto`, so
+   the 15px platform gutter survived a rule that looked like it had replaced
+   it. Hence the universal selector — it is what makes the width reach the
+   elements that actually scroll.
+
+   `:where()` keeps the specificity at zero, so a component that genuinely
+   needs its own answer (the hidden ones below) still wins without `!important`.
+
+   Hiding is a different intent and stays local (`scrollbar-width: none` in the
+   tab strip and the wiki articles). */
+:where(*) {
+	scrollbar-width: thin;
+	scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
 /* Themed root background. On the mobile shell the page paints edge-to-edge
    (viewport-fit=cover), so this is what shows behind translucent chrome, in
    the safe-area zones during transitions, and before the app shell mounts —

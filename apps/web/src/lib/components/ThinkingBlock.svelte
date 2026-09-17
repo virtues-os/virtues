@@ -724,20 +724,6 @@
 		line-height: 1.6;
 	}
 
-	/* Scrollbar */
-	.block-content::-webkit-scrollbar {
-		width: 3px;
-	}
-
-	.block-content::-webkit-scrollbar-track {
-		background: transparent;
-	}
-
-	.block-content::-webkit-scrollbar-thumb {
-		background-color: var(--color-border);
-		border-radius: 3px;
-	}
-
 	/* Think tool content */
 	.think-item {
 		list-style: none;

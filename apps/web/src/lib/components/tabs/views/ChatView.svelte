@@ -934,6 +934,17 @@
 	$effect(() => {
 		if (!chatTitle || !tab) return;
 		if (!PLACEHOLDER_LABELS.has(tab.label)) return;
+		// Never write a label that is already there. This effect READS
+		// `tab.label` and WRITES it, so it is only safe while every write
+		// changes the value — and the guard above assumed a saved title is
+		// never itself a placeholder. A chat actually titled "New Chat" breaks
+		// that assumption: the write lands, `updatePane` hands back a fresh
+		// `panes` array, the effect re-runs on the same placeholder and writes
+		// again. The result is `effect_update_depth_exceeded`, which takes the
+		// whole window's reactivity down, and it reads as a sidebar bug because
+		// WindowTabBar's DnD effect rebuilds on every `panes` change and lands
+		// on top of the stack trace.
+		if (tab.label === chatTitle) return;
 		windowShellStore.updateTab(tab.id, { label: chatTitle });
 	});
 
@@ -1625,8 +1636,9 @@
 														title={output.title}
 														pageId={output.page_id}
 														onOpenPage={(id) => {
-													// Open the created page beside the chat (Category A).
-													windowShellStore.openRouteBeside(`/page/${id}`);
+													// Open the created page WITHOUT creating a split: beside the
+													// chat only when already in split view, else a new tab here.
+													windowShellStore.openRouteInSplitOrActive(`/page/${id}`);
 												}}
 														/>
 												{/if}
@@ -1648,8 +1660,9 @@
 														replace={output.edit.replace || ''}
 														isFullReplace={!output.edit.find}
 														onViewPage={editPageId ? () => {
-															// View the edited page beside the chat (Category A).
-															windowShellStore.openRouteBeside(`/page/${editPageId}`);
+															// View the edited page WITHOUT creating a split: beside the
+															// chat only when already in split view, else a new tab here.
+															windowShellStore.openRouteInSplitOrActive(`/page/${editPageId}`);
 														} : undefined}
 													/>
 												{/if}
@@ -2406,10 +2419,10 @@
 		z-index: 1;
 		/* Keep scroll position stable as streamed content grows above the fold */
 		overflow-anchor: auto;
-		/* Use standard scrollbar styling — preserves overlay scrollbar behavior on macOS
-		   (unlike ::-webkit-scrollbar which forces classic scrollbars that steal layout space) */
-		scrollbar-width: thin;
-		scrollbar-color: var(--color-border) transparent;
+		/* Scrollbar: inherited from the :root rule in app.css. This was the one
+		   place in the app that got it right — standard properties, so overlay
+		   behaviour survived — and the comment explaining why is now that
+		   rule's comment. */
 	}
 
 	.chat-layout.visible {

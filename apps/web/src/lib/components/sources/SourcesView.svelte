@@ -18,9 +18,16 @@
 	so the router and this file cannot disagree about whether `/sources/catalog`
 	is a section or a credential id.
 
-	No SubNav: the sidebar mode carries this nav (lib/sidebar/modes.ts), and a
-	horizontal strip saying the same thing would be two navigations for one set
-	of sections.
+	The section nav lives in the SIDEBAR — the rail's Sources panel carries
+	Overview / Catalog / Activity (SOURCES_MODE in `lib/sidebar/modes.ts`), and
+	this room renders whatever the route names. There is deliberately no strip
+	at the top: the same three words one column to the left is the same list
+	twice in one viewport, which is the reason the wiki lost its strip too.
+
+	`section` below was always derived from the route, so nothing here depended
+	on the strip — SubNav only ever WROTE the route, and the panel's rows write
+	it the same way (through `windowShellStore.navigate`, which also pushes
+	history, so Back walks the sections).
 -->
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
@@ -50,6 +57,7 @@
 	// installed still needs a page, precisely so its leftover connections can be
 	// found and removed.
 	const seg = $derived(tab.route.replace(/^\/sources\/?/, '').split('/')[0]);
+
 	const section = $derived.by(() => {
 		if (seg === '') return 'overview';
 		if ((SOURCES_SECTIONS as readonly string[]).includes(seg)) return seg;
@@ -75,17 +83,19 @@
 </script>
 
 <div class="sources-room">
-	{#if section === 'catalog'}
-		<SourcesCatalog />
-	{:else if section === 'activity'}
-		<SourcesActivity />
-	{:else if section === 'connection'}
-		<CredentialDetailView {tab} />
-	{:else if section === 'source'}
-		<SourceDetail sourceId={seg} />
-	{:else}
-		<SourcesOverview />
-	{/if}
+	<div class="sources-scroll">
+		{#if section === 'catalog'}
+			<SourcesCatalog />
+		{:else if section === 'activity'}
+			<SourcesActivity />
+		{:else if section === 'connection'}
+			<CredentialDetailView {tab} />
+		{:else if section === 'source'}
+			<SourceDetail sourceId={seg} />
+		{:else}
+			<SourcesOverview />
+		{/if}
+	</div>
 </div>
 
 <DevicePairModal
@@ -110,6 +120,14 @@
 <style>
 	.sources-room {
 		height: 100%;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+	}
+
+	.sources-scroll {
+		flex: 1;
+		min-height: 0;
 		overflow-y: auto;
 	}
 </style>

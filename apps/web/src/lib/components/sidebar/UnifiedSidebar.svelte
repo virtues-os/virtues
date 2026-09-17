@@ -4,19 +4,19 @@
 	import { cubicIn, cubicOut } from "svelte/easing";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
-	import { sidebarState } from "$lib/stores/sidebarState.svelte";
+	import {
+		sidebarState,
+		SIDEBAR_COLLAPSE_AT,
+		SIDEBAR_MIN_WIDTH,
+		SIDEBAR_MAX_WIDTH,
+	} from "$lib/stores/sidebarState.svelte";
 	import { search } from "$lib/stores/search.svelte";
-	import WorkspaceHeader from "./WorkspaceHeader.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
-	import SystemSection from "./SystemSection.svelte";
-	import DeskSection from "./DeskSection.svelte";
 	import GettingStartedCard from "./GettingStartedCard.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
-	import ZoneHeader from "./ZoneHeader.svelte";
-	import { sidebarZones } from "$lib/stores/sidebarZones.svelte";
-	import { SECTION_GROUPS } from "$lib/sidebar/sections";
-	import SidebarModePanel from "./SidebarModePanel.svelte";
-	import { sidebarMode } from "$lib/stores/sidebarMode.svelte";
+	import SidebarRail from "./SidebarRail.svelte";
+	import SidebarPanel from "./SidebarPanel.svelte";
+	import { sidebarRoom } from "$lib/stores/sidebarRoom.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { onSummon, setSummonShortcut, storedSummonChord } from "$lib/tauri/bridge";
 
@@ -121,10 +121,6 @@
 		};
 	});
 
-	function handleSearch() {
-		search.show();
-	}
-
 	function toggleSearch() {
 		search.toggle();
 	}
@@ -166,89 +162,132 @@
 		sidebarState.toggle();
 	}
 
-	// The panel swaps as one object, not as a cascade of rows.
-	//
-	// It used to waterfall: every row animated in on its own 30ms delay, so
-	// entering Settings played eleven little arrivals. That reads as a flourish
-	// the second time and as latency by the tenth — the panel appeared to take
-	// 300ms to assemble when the work was instant. A crossfade with 16px of
-	// travel says the same thing (these are different contents) in under
-	// 200ms, and says it about the panel rather than about each row.
-	//
-	// Sequential, not concurrent — this is the part that decides whether it
-	// feels good. Svelte runs `in:` and `out:` at the same time by default, so
-	// for the whole overlap you are looking at two half-transparent copies of
-	// a list sliding through each other. That reads as smeared, not as a
-	// swap; no amount of tuning the distance fixes it, because the problem is
-	// that both panels are visible at once.
-	//
-	// So the old panel leaves first (110ms, short travel — it is going away,
-	// it doesn't need to be watched), and the new one waits for it to finish
-	// before arriving (210ms over 18px). The grid cell holds the height
-	// throughout, so nothing collapses in the gap.
-	const swapKey = $derived(sidebarMode.activeId ?? "root");
+	// The panel swaps as one object, not as a cascade of rows. Sequential, not
+	// concurrent: Svelte runs `in:` and `out:` together by default, which shows
+	// two half-transparent copies of a list sliding through each other and reads
+	// as smeared. So the old panel leaves first (110ms, short travel), and the
+	// new one waits for it before arriving (210ms over 18px). The grid cell holds
+	// the height throughout, so nothing collapses in the gap.
+	const swapKey = $derived(sidebarRoom.selectedId);
 
-	// Tailwind utility class strings
+	// The rail is the desk-ground strip; the panel is a card floating on it, so
+	// the aside itself carries no inset — the rail flushes left on the ground,
+	// the panel supplies its own card margins.
+	// NOT a springy curve. The aside used to open on cubic-bezier(0.34, 1.56,
+	// 0.64, 1) — the 1.56 is an overshoot — and an overshoot is incompatible
+	// with a merged seam: the aside momentarily grew WIDER than rail + gap +
+	// panel, so for a few frames a strip of desk ground opened between the
+	// panel's right edge and the pane it is supposed to be joined to, and the
+	// whole card appeared to rubber-band. A seam can only stay shut if the
+	// thing carrying it decelerates into its final width and stops there.
 	const sidebarClass = $derived.by(() =>
 		[
-			"sidebar-container relative h-full bg-transparent",
-			"transition-[width] duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
-			isCollapsed ? "sidebar-collapsed" : "w-[220px] overflow-hidden",
+			"sidebar-container relative flex h-full bg-transparent",
+			resizing ? "" : "transition-[width] duration-300 ease-[var(--ease-premium)]",
+			"overflow-hidden",
 		].join(" "),
 	);
 
-	const sidebarInnerClass = $derived.by(() =>
+	// Merged with the pane whenever the panel is open — split included. Then
+	// panel + pane(s) read as one white card split by lines: the panel rounds
+	// only its left corners and its RIGHT border is the first divider; the pane
+	// (in +layout) rounds only right and drops its left border and left margin
+	// so the two abut with no desk gap. In split, the pane resizer draws the
+	// second divider inside that same card.
+	const merged = $derived(!isCollapsed);
+
+	// ── Resizing the seam ─────────────────────────────────────
+	// The rail is fixed; only the panel resizes, so the whole aside is
+	// rail + gap + panelWidth.
+	const RAIL_W = 72;
+	const PANEL_GAP = 12;
+
+	const panelWidth = $derived(sidebarState.width);
+	const asideWidth = $derived(isCollapsed ? RAIL_W : RAIL_W + PANEL_GAP + panelWidth);
+
+	let resizing = $state(false);
+	let dragStartX = 0;
+	let dragStartWidth = 0;
+	// The UNCLAMPED width the pointer is asking for. The stored width is clamped
+	// to [MIN, MAX], so it can't tell us the user has dragged well past the
+	// floor — which is exactly the gesture that should close the sidebar.
+	let dragIntent = 0;
+
+	function onResizeStart(e: PointerEvent) {
+		resizing = true;
+		dragStartX = e.clientX;
+		dragStartWidth = sidebarState.width;
+		dragIntent = dragStartWidth;
+		try {
+			(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		} catch {
+			// Synthetic or already-captured pointers: the drag still works off
+			// the move handler, it just won't survive leaving the element.
+		}
+		e.preventDefault();
+	}
+
+	function onResizeMove(e: PointerEvent) {
+		if (!resizing) return;
+		dragIntent = dragStartWidth + (e.clientX - dragStartX);
+		// The setter clamps, so the panel stops at the floor while the pointer
+		// keeps going — the drag feels like it hit a wall rather than jittering.
+		sidebarState.width = dragIntent;
+	}
+
+	function onResizeEnd(e: PointerEvent) {
+		if (!resizing) return;
+		resizing = false;
+		try {
+			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+		} catch {
+			// Capture can already be gone if the pointer left the window.
+		}
+		// Decided on release, not mid-drag: collapsing while the pointer is still
+		// down would yank the handle out from under it and drop the capture.
+		if (dragIntent < SIDEBAR_COLLAPSE_AT) {
+			sidebarState.width = dragStartWidth;
+			sidebarState.collapsed = true;
+		}
+	}
+
+	// design.md: any drag affordance needs a keyboard path, because HTML5 drag
+	// events don't fire on touch at all.
+	function onResizeKey(e: KeyboardEvent) {
+		const step = e.shiftKey ? 32 : 16;
+		if (e.key === "ArrowLeft") {
+			e.preventDefault();
+			sidebarState.width = sidebarState.width - step;
+		} else if (e.key === "ArrowRight") {
+			e.preventDefault();
+			sidebarState.width = sidebarState.width + step;
+		} else if (e.key === "Home") {
+			e.preventDefault();
+			sidebarState.resetWidth();
+		}
+	}
+
+	const panelColumnClass = $derived.by(() =>
 		[
-			"flex h-full min-w-[220px] w-[220px] flex-col",
+			"flex flex-col",
+			"my-3 ml-3 overflow-hidden border border-border bg-surface",
+			merged ? "panel-card-left" : "panel-card",
 			isCollapsed ? "pointer-events-none" : "",
 		].join(" "),
 	);
 </script>
 
-<aside class={sidebarClass}>
-	<!-- Book Spine: When collapsed, show expand button on hover -->
-	{#if isCollapsed}
-		<button
-			class="sidebar-expand-button group absolute top-0 left-0 w-[14px] z-30 flex h-full cursor-pointer items-center justify-center border-none bg-transparent"
-			onclick={toggleCollapse}
-			aria-label="Expand sidebar"
-		>
-			<svg
-				class="sidebar-expand-icon h-3.5 w-3.5 -translate-x-[3px] opacity-0 transition-all duration-200 ease-premium group-active:scale-95"
-				style="color: var(--color-foreground-subtle)"
-				viewBox="0 0 24 24"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-				stroke-linecap="round"
-				stroke-linejoin="round"
-			>
-				<!-- Double chevron right >> -->
-				<polyline points="6 17 11 12 6 7" />
-				<polyline points="13 17 18 12 13 7" />
-			</svg>
-		</button>
-	{/if}
+<aside class={sidebarClass} style="width: {asideWidth}px">
+	<SidebarRail />
 
-	<div class={sidebarInnerClass}>
-		<WorkspaceHeader
-			collapsed={isCollapsed}
-			onSearch={handleSearch}
-		/>
-
-		<nav
-			class="workspace-nav"
-			class:collapsed={isCollapsed}
-		>
+	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px">
+		<nav class="workspace-nav">
 			{#if !storeReady}
 				<div class="loading-state">
 					<Icon icon="ri:loader-4-line" width="16" class="spinner" />
 					<span>Loading...</span>
 				</div>
 			{:else}
-				<!-- One swap, not eleven. The two panels are stacked in a single
-				     grid cell so the outgoing one can leave while the incoming
-				     one arrives, with no reflow between them. -->
 				<div class="nav-swap">
 					{#key swapKey}
 						<div
@@ -256,52 +295,7 @@
 							in:fly={{ x: 18, duration: 210, delay: 110, easing: cubicOut, opacity: 0 }}
 							out:fly={{ x: -10, duration: 110, easing: cubicIn, opacity: 0 }}
 						>
-							{#if sidebarMode.active && !isCollapsed}
-								<SidebarModePanel mode={sidebarMode.active} />
-							{:else}
-								<!-- The Desk: what the user has taken off the shelf.
-								     Serif spines with bookcloth dots — the type
-								     distinction encodes ownership, which is what keeps
-								     pins from reading as a tinted nav row (the failure
-								     that retired them the first time). -->
-								<DeskSection collapsed={isCollapsed} />
-
-								<!-- The Library: every fixed room the app has, in
-								     one shelf. Stable forever, so muscle memory
-								     can live in it. Still a loop over groups —
-								     there is one today, and the Workbench that
-								     used to be the second one may not be the last
-								     shelf anyone proposes. -->
-								{#each SECTION_GROUPS as group, i (group.id)}
-									<div class="nav-group">
-										{#if group.label && !isCollapsed}
-											<ZoneHeader id={group.id} label={group.label} />
-										{/if}
-										<div
-											class="sidebar-expandable"
-											class:expanded={!sidebarZones.isCollapsed(group.id)}
-										>
-											<div class="sidebar-expandable-inner">
-												{#each group.items as section (section.id)}
-													<SystemSection
-														{section}
-														collapsed={isCollapsed}
-														accentColor={null}
-													/>
-												{/each}
-												<!-- The seam to the next zone, inside the fold
-												     that owns it — the Desk's trick, for the
-												     same reason: a spacer OUTSIDE the clipping
-												     box survives the fold and leaves a hole
-												     belonging to nothing. -->
-												{#if i < SECTION_GROUPS.length - 1}
-													<div class="zone-tail" aria-hidden="true"></div>
-												{/if}
-											</div>
-										</div>
-									</div>
-								{/each}
-							{/if}
+							<SidebarPanel room={sidebarRoom.selected} />
 						</div>
 					{/key}
 				</div>
@@ -309,14 +303,33 @@
 		</nav>
 
 		{#if !isCollapsed && gettingStarted.loaded && !gettingStarted.unsupported && !gettingStarted.graduated}
-			<!-- The progress card: the one mention of getting started
-			     outside its room, from step 1 to graduation. -->
 			<GettingStartedCard />
 		{/if}
-		<SidebarFooter
-			collapsed={isCollapsed}
-		/>
+		<SidebarFooter collapsed={isCollapsed} />
 	</div>
+
+	{#if !isCollapsed}
+		<!-- The seam is the handle. It sits over the panel's right border — the
+		     same line that divides the panel from the pane — so the thing you
+		     grab is the thing you see. -->
+		<div
+			class="sidebar-resizer"
+			class:dragging={resizing}
+			role="separator"
+			aria-orientation="vertical"
+			aria-label="Resize the sidebar"
+			aria-valuenow={panelWidth}
+			aria-valuemin={SIDEBAR_MIN_WIDTH}
+			aria-valuemax={SIDEBAR_MAX_WIDTH}
+			tabindex="0"
+			onpointerdown={onResizeStart}
+			onpointermove={onResizeMove}
+			onpointerup={onResizeEnd}
+			onpointercancel={onResizeEnd}
+			onkeydown={onResizeKey}
+			ondblclick={() => sidebarState.resetWidth()}
+		></div>
+	{/if}
 </aside>
 
 
@@ -324,94 +337,107 @@
 	@reference "../../../app.css";
 	@reference "$lib/styles/sidebar.css";
 
-	/* Collapsed sidebar behavior */
-	.sidebar-collapsed {
-		width: 0;
-		overflow: visible; /* Allow hover zone to extend beyond 0-width */
-		/* Transition handled by Tailwind classes on parent */
+	/* Same --card-radius as the pane, so the sidebar is never rounded
+	   differently from the pages beside it. Merged, it rounds only on the desk
+	   side and stays square at the divider. */
+	:global(.panel-card) { border-radius: var(--card-radius); }
+	:global(.panel-card-left) {
+		border-radius: var(--card-radius) 0 0 var(--card-radius);
 	}
 
-	/* Hover zone. Deliberately narrow: the pane toolbar's own sidebar-toggle
-	   sits immediately to the right, so a wide zone gets swiped through on the
-	   way to that button and the peek fires when nobody asked for it. 14px is
-	   the window edge and nothing else. */
-	.sidebar-collapsed::before {
+	/* A wider hit area than the 1px line it straddles — 8px is the smallest
+	   comfortable grab target, and it is invisible until you are on it. */
+	/* The hit area. Always transparent — it is a target, never a mark.
+	
+	   Inset by 12px top and bottom to sit inside the panel card (`my-3`). It
+	   used to run top:0 to bottom:0 of the full-height aside, so its hover
+	   fill spilled 12px ABOVE the card's rounded top corner and 12px below it:
+	   a grey band standing on the desk ground, next to the card rather than on
+	   it. A seam cannot start above the thing it divides. */
+	.sidebar-resizer {
+		position: absolute;
+		top: 12px;
+		bottom: 12px;
+		right: 0;
+		width: 8px;
+		z-index: 20;
+		cursor: col-resize;
+		touch-action: none;
+		background: transparent;
+	}
+
+	/* The MARK: a 1px line, exactly over the panel's right border, that
+	   thickens to 2px and takes the theme's accent on approach.
+	
+	   Filling the 8px target was the wrong read — it made the invisible hit
+	   area visible, which is a band of chrome appearing out of nothing where
+	   the user expected a line to respond. Lighting the line instead says the
+	   same thing about the same object: this edge is the thing you can move.
+	   Colour is doing work here, not decorating — it marks the one draggable
+	   edge in the shell — which is what design.md asks of any colour it
+	   allows. Grown from the right edge so the line never moves; only its
+	   weight does. */
+	.sidebar-resizer::after {
 		content: "";
 		position: absolute;
 		top: 0;
-		left: 0;
-		width: 14px;
-		height: 100%;
-		z-index: 20;
-		pointer-events: auto;
-		cursor: pointer;
+		bottom: 0;
+		right: 0;
+		width: 0;
+		background: var(--color-primary);
+		transition:
+			width 120ms var(--ease-premium),
+			opacity 120ms var(--ease-premium);
+		opacity: 0;
 	}
 
-	/* The peek reveals the icon; it must NOT change width. The collapsed aside
-	   is a flex child, so any width here shoves the whole pane sideways — which
-	   is exactly the shift that made the toolbar's toggle button crawl away
-	   from the cursor as you reached for it. The expand button is absolutely
-	   positioned, so opacity alone is enough to show it. */
-	.sidebar-collapsed:hover .sidebar-expand-icon {
+	.sidebar-resizer:hover::after,
+	.sidebar-resizer:focus-visible::after {
+		width: 2px;
 		opacity: 1;
-		transition-delay: 120ms; /* intent delay — a pass-through shouldn't flash */
+	}
+
+	/* Held: full weight, no fade — the line is the thing being dragged. */
+	.sidebar-resizer.dragging::after {
+		width: 2px;
+		opacity: 1;
+		transition: none;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.sidebar-collapsed:hover .sidebar-expand-icon {
-			transition-delay: 0ms;
+		.sidebar-resizer::after {
+			transition: none;
 		}
 	}
 
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	/* The gap above the first zone is the same one row of air that sits
-	   between zones, so Search → Desk and Desk → Library read as one
-	   interval rather than two arbitrary ones. */
 	.workspace-nav {
 		flex: 1;
 		min-height: 0;
-		overflow-y: auto;
-		overflow-x: hidden;
-		padding: var(--sidebar-interactive-height) 0 12px 8px;
-	}
-
-	.workspace-nav.collapsed {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
+		overflow: hidden;
+		/* SidebarPanel owns its own head row and body padding, so the column does
+		   not add a second inset on top of it — two nested paddings are how the
+		   "one left edge" rule quietly breaks. */
+		padding: 0;
 	}
 
 	/* Both layers share one grid cell, so the leaving panel doesn't push the
-	   arriving one around while they overlap. Cheaper and steadier than
-	   absolute positioning: the cell keeps the taller layer's height, so the
-	   scroll container never jumps mid-swap. */
+	   arriving one around while they overlap. */
 	.nav-swap {
 		display: grid;
+		height: 100%;
+		min-height: 0;
 	}
 
 	.nav-layer {
 		grid-area: 1 / 1;
 		min-width: 0;
+		min-height: 0;
+		overflow: hidden;
 	}
 
-	/* Group header — the "contents-page" treatment: serif smallcaps,
-	/* No margin here. The row of air between the zones is owned by the Desk's
-	   own collapsible region, so it folds away with the pins — otherwise
-	   closing the Desk left a 28px hole between two adjacent subtitles, and
-	   the space read as belonging to nothing. */
-
-	/* Same token as every other interval in the column, so Desk → Workbench
-	   and Workbench → Library read as one repeated beat. */
-	.zone-tail {
-		height: var(--sidebar-interactive-height);
+	@keyframes spin {
+		from { transform: rotate(0deg); }
+		to { transform: rotate(360deg); }
 	}
 
 	.loading-state {
@@ -423,8 +449,5 @@
 		font-size: 13px;
 	}
 
-	.spinner {
-		animation: spin 1s linear infinite;
-	}
-
+	.spinner { animation: spin 1s linear infinite; }
 </style>
