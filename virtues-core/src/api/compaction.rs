@@ -487,6 +487,16 @@ pub fn build_context_for_llm(
         }
 
         let mut parts = Vec::new();
+        // A turn's tool calls do NOT live in its content. In the chat-completions
+        // shape every provider here speaks, they are a sibling `tool_calls` field
+        // on the assistant message, and each result is its own `role: "tool"`
+        // message that must follow it immediately. Putting them in `content` —
+        // which this did until a turn first arrived with `parts` populated —
+        // is a flat 400 (`param: "messages.N.content"`), and it poisons the chat
+        // rather than the turn: the bad message is persisted, so every later turn
+        // replays it and fails too.
+        let mut tool_calls = Vec::new();
+        let mut tool_results = Vec::new();
 
         // Handle parts if present
         if let Some(msg_parts) = &msg.parts {
@@ -510,31 +520,42 @@ pub fn build_context_for_llm(
                             "text": text
                         }));
                     }
-                    UIPart::Reasoning { text } => {
-                        // Some providers support reasoning as a part
-                        parts.push(serde_json::json!({
-                            "type": "reasoning",
-                            "reasoning": text
-                        }));
+                    UIPart::Reasoning { .. } => {
+                        // `reasoning` is not a content block type either, and a
+                        // replayed one is the same 400 the tool blocks below
+                        // used to be. What a provider can actually take back is
+                        // carried by the `reasoning_details` column, not here.
                     }
                     UIPart::ToolInvocation { tool_call_id, tool_name, input, output, .. } |
                     UIPart::ToolWebSearch { tool_call_id, tool_name, input, output, .. } => {
-                        // For tool invocations in history, we send them as tool calls + results
-                        // This matches the OpenAI/Anthropic format for tool history
-                        parts.push(serde_json::json!({
-                            "type": "tool_call",
+                        // `function.arguments` is a JSON *string*, not an object.
+                        // Anything that is not an argument map — a turn saved
+                        // before the completed args were written back left
+                        // `null` here — goes out as `{}` so the call still
+                        // pairs with its result; that heals chats already
+                        // carrying one.
+                        let arguments = match input {
+                            serde_json::Value::Object(_) => input.to_string(),
+                            _ => "{}".to_string(),
+                        };
+                        tool_calls.push(serde_json::json!({
                             "id": tool_call_id,
-                            "name": tool_name,
-                            "arguments": input
+                            "type": "function",
+                            "function": { "name": tool_name, "arguments": arguments }
                         }));
-
-                        if let Some(res) = output {
-                            parts.push(serde_json::json!({
-                                "type": "tool_result",
-                                "tool_call_id": tool_call_id,
-                                "content": res
-                            }));
-                        }
+                        // Every tool call must be answered or the request is
+                        // rejected for the gap, so a call this turn never got
+                        // an output for is answered with what is true about it.
+                        let content = match output {
+                            Some(serde_json::Value::String(s)) => s.clone(),
+                            Some(res) => res.to_string(),
+                            None => "the tool did not finish".to_string(),
+                        };
+                        tool_results.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": content
+                        }));
                     }
                     UIPart::File { media_type, url, filename } => {
                         // Convert attachments to OpenAI-compatible content blocks
@@ -609,19 +630,33 @@ pub fn build_context_for_llm(
             // Nothing survived and there is no legacy content either: this
             // message would go out as `"content": ""`, which is the same
             // rejection in string form. Leaving it out is the only honest
-            // rendering of a message with nothing in it.
+            // rendering of a message with nothing in it — unless it is
+            // carrying tool calls, which is a turn that said nothing and
+            // called something, and those take `content: null`.
             if msg.content.trim().is_empty() {
-                continue;
+                if tool_calls.is_empty() {
+                    continue;
+                }
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(msg.content.clone())
             }
-            serde_json::Value::String(msg.content.clone())
         } else {
             serde_json::Value::Array(parts)
         };
 
-        context.push(serde_json::json!({
+        let mut message = serde_json::json!({
             "role": msg.role,
             "content": content
-        }));
+        });
+        if !tool_calls.is_empty() {
+            message["tool_calls"] = serde_json::Value::Array(tool_calls);
+        }
+        context.push(message);
+        // Results answer the message that asked for them, so they follow it
+        // directly — a provider that finds anything else in between rejects
+        // the whole request.
+        context.extend(tool_results);
     }
 
     context
@@ -851,6 +886,112 @@ mod tests {
         assert_eq!(first[0]["type"], "image_url");
         assert_eq!(context[1]["role"], "assistant");
         assert_eq!(context[2]["content"], "and then?");
+    }
+
+    /// A tool-calling turn replayed as history. Every field here was a 400
+    /// at `messages.N.content` when the turn's `parts` first arrived
+    /// populated and the calls went out as content blocks.
+    #[test]
+    fn test_build_context_renders_tool_calls_beside_the_message() {
+        let base = ChatMessage {
+            id: None,
+            role: "assistant".to_string(),
+            content: String::new(),
+            timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: None,
+        };
+        let messages = vec![ChatMessage {
+            content: "Pulling a bit of context.".to_string(),
+            parts: Some(vec![
+                UIPart::Text { text: "Pulling a bit of context.".to_string() },
+                UIPart::ToolInvocation {
+                    tool_call_id: "call-0".to_string(),
+                    tool_name: "semantic_search".to_string(),
+                    input: serde_json::json!({ "queries": ["shared projects"] }),
+                    state: "output-available".to_string(),
+                    output: Some(serde_json::json!({ "count": 15 })),
+                },
+                // A turn saved before the completed args were written back.
+                UIPart::ToolInvocation {
+                    tool_call_id: "call-1".to_string(),
+                    tool_name: "get_page_content".to_string(),
+                    input: serde_json::Value::Null,
+                    state: "input-available".to_string(),
+                    output: None,
+                },
+                UIPart::Text { text: "Here they are.".to_string() },
+            ]),
+            ..base
+        }];
+
+        let context = build_context_for_llm(&messages, None, 0, None);
+
+        assert_eq!(context.len(), 3, "the turn, then one result per call");
+        let turn = &context[0];
+        assert_eq!(turn["role"], "assistant");
+
+        let content = turn["content"].as_array().expect("parts array");
+        assert_eq!(content.len(), 2, "only the text survives in content");
+        assert!(content.iter().all(|p| p["type"] == "text"));
+
+        let calls = turn["tool_calls"].as_array().expect("tool_calls beside it");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["type"], "function");
+        assert_eq!(calls[0]["function"]["name"], "semantic_search");
+        // A JSON string, not an object — and never `null`.
+        assert_eq!(
+            calls[0]["function"]["arguments"],
+            r#"{"queries":["shared projects"]}"#
+        );
+        assert_eq!(calls[1]["function"]["arguments"], "{}");
+
+        assert_eq!(context[1]["role"], "tool");
+        assert_eq!(context[1]["tool_call_id"], "call-0");
+        assert!(context[1]["content"].is_string());
+        // The unanswered call is still answered, or the request is rejected
+        // for the gap.
+        assert_eq!(context[2]["tool_call_id"], "call-1");
+    }
+
+    /// A turn that said nothing and only called something keeps its calls.
+    #[test]
+    fn test_build_context_keeps_a_silent_tool_turn() {
+        let messages = vec![ChatMessage {
+            id: None,
+            role: "assistant".to_string(),
+            content: String::new(),
+            timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: Some(vec![UIPart::ToolInvocation {
+                tool_call_id: "call-0".to_string(),
+                tool_name: "semantic_search".to_string(),
+                input: serde_json::json!({}),
+                state: "output-available".to_string(),
+                output: Some(serde_json::Value::String("nothing found".to_string())),
+            }]),
+        }];
+
+        let context = build_context_for_llm(&messages, None, 0, None);
+
+        assert_eq!(context.len(), 2);
+        assert!(context[0]["content"].is_null(), "no text, but not dropped");
+        assert_eq!(context[0]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(context[1]["content"], "nothing found");
     }
 
     #[test]

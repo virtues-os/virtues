@@ -1956,10 +1956,18 @@ fn create_agent_stream(
 
                 AgentEvent::ToolCallArgsComplete { id, args } => {
                     // AI SDK v6: tool-input-available event (args parsing complete)
-                    // Find the tool name from tracked tool calls
-                    let tool_name = all_tool_calls.iter()
+                    // This is where the arguments become known: ToolCallStart
+                    // fires as soon as the tool has a name, and the args are
+                    // still streaming in then, so the tracked call is holding
+                    // `Null`. Writing them back here is what puts them in the
+                    // persisted row — without it a reload showed a call with
+                    // no input, and the replayed turn carried none either.
+                    let tool_name = all_tool_calls.iter_mut()
                         .find(|tc| tc.tool_call_id.as_deref() == Some(&id))
-                        .map(|tc| tc.tool_name.clone())
+                        .map(|tc| {
+                            tc.arguments = args.clone();
+                            tc.tool_name.clone()
+                        })
                         .unwrap_or_default();
                     let event = StreamEvent::ToolInputAvailable {
                         tool_call_id: id,
