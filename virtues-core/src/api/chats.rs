@@ -720,6 +720,15 @@ pub async fn update_messages(
             .as_ref()
             .map(serde_json::to_value)
             .transpose()?;
+        // `parts` is the turn's order — what was said before which call. This
+        // insert was written before the column existed and never grew it, so
+        // every message in the chat came back flattened. The other two insert
+        // sites carry it; a column that only two of three writers know about
+        // is how a rewrite silently becomes a loss.
+        let parts_json: Option<serde_json::Value> = msg.parts
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
 
         let sequence_num = (idx + 1) as i32;
 
@@ -727,9 +736,9 @@ pub async fn update_messages(
             r#"
             INSERT INTO app_chat_messages (
                 id, chat_id, role, content, model, provider, agent_id,
-                reasoning, tool_calls, intent, subject, reasoning_details, sequence_num, created_at
+                reasoning, tool_calls, intent, subject, reasoning_details, sequence_num, created_at, parts
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             "#,
         )
         .bind(&msg_id)
@@ -746,6 +755,7 @@ pub async fn update_messages(
         .bind(&msg.reasoning_details)
         .bind(sequence_num)
         .bind(&msg.timestamp)
+        .bind(&parts_json)
         .execute(pool)
         .await?;
     }
