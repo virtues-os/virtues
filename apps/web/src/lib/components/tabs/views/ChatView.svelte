@@ -1886,7 +1886,7 @@
 						{#if attachments.dragActive}
 							<div class="drop-hint">
 								<Icon icon="ri:download-2-line" width="15" />
-								<span>Drop to attach &middot; images, PDFs, or audio</span>
+								<span>Drop to attach &middot; images, PDFs, audio, or text</span>
 							</div>
 						{/if}
 						{#if attachments.count > 0}

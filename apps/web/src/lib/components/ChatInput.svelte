@@ -253,7 +253,7 @@
 				onclick={pickFiles}
 				class="pill-btn attach-button"
 				aria-label="Attach files"
-				title="Attach images, PDFs, or audio"
+				title="Attach images, PDFs, audio, or text"
 			>
 				<Icon icon="ri:add-line" width="18" />
 			</button>
