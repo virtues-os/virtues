@@ -1,5 +1,8 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import MenuItem from "$lib/components/MenuItem.svelte";
+	import Button from "$lib/components/Button.svelte";
+	import IconButton from "$lib/components/IconButton.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import CoverImagePicker from "$lib/components/CoverImagePicker.svelte";
 	import DisplaySettingsPopover from "$lib/components/pages/DisplaySettingsPopover.svelte";
@@ -98,16 +101,11 @@
 		</Popover>
 		<Popover bind:open={showCoverPicker} placement="bottom-start">
 			{#snippet trigger({ toggle })}
-				<button
+				<IconButton
+					icon={coverUrl ? "ri:image-edit-line" : "ri:image-line"}
+					label={coverUrl ? "Change cover" : "Add cover"}
 					onclick={toggle}
-					class="toolbar-action"
-					title={coverUrl ? "Change cover" : "Add cover"}
-				>
-					<Icon
-						icon={coverUrl ? "ri:image-edit-line" : "ri:image-line"}
-						width="15"
-					/>
-				</button>
+				/>
 			{/snippet}
 			{#snippet children({ close })}
 				<CoverImagePicker value={coverUrl} onSelect={onCoverSelect} {close} />
@@ -134,14 +132,12 @@
 				<DisplaySettingsPopover />
 			{/snippet}
 		</Popover>
-		<button
+		<IconButton
+			icon="ri:check-double-line"
+			label={pageDisplay.spellcheck ? "Spell check on" : "Spell check off"}
+			pressed={pageDisplay.spellcheck}
 			onclick={() => pageDisplay.toggleSpellcheck()}
-			class="toolbar-action"
-			class:active={pageDisplay.spellcheck}
-			title={pageDisplay.spellcheck ? "Spell check on" : "Spell check off"}
-		>
-			<Icon icon="ri:check-double-line" width="15" />
-		</button>
+		/>
 	</div>
 
 	<div class="toolbar-gap"></div>
@@ -149,86 +145,78 @@
 	<!-- Actions -->
 	<div class="toolbar-group">
 		{#if onToggleReferences}
-			<button
+			<IconButton
+				icon="ri:links-line"
+				label="References"
+				pressed={referencesActive}
 				onclick={onToggleReferences}
-				class="toolbar-action"
-				class:active={referencesActive}
-				title="References"
-			>
-				<Icon icon="ri:links-line" width="15" />
-			</button>
+			/>
 		{/if}
 		<Popover bind:open={showVersionHistory} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<button onclick={toggle} class="toolbar-action" title="Version history">
-					<Icon icon="ri:history-line" width="15" />
-				</button>
+				<IconButton icon="ri:history-line" label="Version history" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
 				<VersionHistoryPanel {close} {pageId} {yjsDoc} />
 			{/snippet}
 		</Popover>
 		{#if onShare}
-			<button
+			<!-- No `pressed`. Sharing is not a toggle this button flips: clicking it
+			     copies the link and raises a toast, so `aria-pressed="false"` would
+			     tell a screen reader "off" about a thing that has no on. The state
+			     IS carried — by the icon, which becomes a link once one exists, and
+			     by the label, which changes with it. -->
+			<IconButton
+				icon={isShared ? "ri:link" : "ri:share-line"}
+				label={isShared ? "Manage share link" : "Share page"}
 				onclick={onShare}
-				class="toolbar-action"
-				class:active={isShared}
-				title={isShared ? "Manage share link" : "Share page"}
-			>
-				<Icon icon={isShared ? "ri:link" : "ri:share-line"} width="15" />
-			</button>
+			/>
 		{/if}
 		<Popover bind:open={showOverflow} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<button onclick={toggle} class="toolbar-action" title="More">
-					<Icon icon="ri:more-2-fill" width="15" />
-				</button>
+				<IconButton icon="ri:more-2-fill" label="More" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
 				<div class="overflow-menu">
-					<button
-						class="overflow-item"
+					<MenuItem
+						icon={copied ? "ri:check-line" : "ri:file-copy-line"}
+						label={copied ? "Copied!" : "Copy as Markdown"}
 						onclick={() => {
 							onCopyMarkdown();
 							close();
 						}}
-					>
-						<Icon
-							icon={copied ? "ri:check-line" : "ri:file-copy-line"}
-							width="15"
-						/>
-						<span>{copied ? "Copied!" : "Copy as Markdown"}</span>
-					</button>
+					/>
 					<div class="overflow-divider"></div>
 					{#if showDeleteConfirm}
 						<div class="delete-confirm">
 							<p class="delete-confirm-text">Delete this page?</p>
 							<div class="delete-confirm-actions">
-								<button
-									class="delete-confirm-btn delete-confirm-cancel"
+								<Button
+									variant="secondary"
+									size="sm"
 									onclick={() => (showDeleteConfirm = false)}
 								>
 									Cancel
-								</button>
-								<button
-									class="delete-confirm-btn delete-confirm-delete"
+								</Button>
+								<Button
+									variant="danger"
+									size="sm"
 									onclick={() => {
 										onDelete();
 										close();
 									}}
 								>
 									Delete
-								</button>
+								</Button>
 							</div>
 						</div>
 					{:else}
-						<button
-							class="overflow-item overflow-item-danger"
+						<MenuItem
+							icon="ri:delete-bin-line"
+							label="Delete page"
+							destructive
 							onclick={() => (showDeleteConfirm = true)}
-						>
-							<Icon icon="ri:delete-bin-line" width="15" />
-							<span>Delete page</span>
-						</button>
+						/>
 					{/if}
 				</div>
 			{/snippet}
@@ -289,10 +277,19 @@
 		color: var(--color-primary);
 	}
 
+	/* The "Aa" that opens display settings. The serif is load-bearing here and
+	   stays: the glyphs ARE the control's icon, previewing letterforms the way
+	   its siblings preview their verbs. What goes is `font-weight: 600` —
+	   JJannon ships one cut, so the weight resolved back to the regular and
+	   returned silently, and this label had been drawn at 400 all along while
+	   the stylesheet claimed otherwise. Sized to 16px so it reads at the
+	   optical weight the 600 was asking for and matches the 15px icons beside
+	   it; `--font-serif-ui` because it sits in a fixed 28px chrome row, which
+	   is exactly the case those corrected vertical metrics exist for. */
 	.toolbar-action-text {
-		font-size: 13px;
-		font-weight: 600;
-		font-family: var(--font-serif, Georgia, serif);
+		font-size: 16px;
+		font-weight: 400;
+		font-family: var(--font-serif-ui, Georgia, serif);
 	}
 
 	.toolbar-emoji {
@@ -306,35 +303,6 @@
 		flex-direction: column;
 		padding: 4px;
 		min-width: 190px;
-	}
-
-	.overflow-item {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 7px 10px;
-		border: none;
-		background: none;
-		color: var(--color-foreground);
-		font-size: 13px;
-		text-align: left;
-		border-radius: 6px;
-		cursor: pointer;
-		transition:
-			color 0.12s ease,
-			background-color 0.12s ease;
-	}
-
-	.overflow-item:hover {
-		background: var(--hover-bg);
-	}
-
-	.overflow-item-danger {
-		color: var(--color-foreground-muted);
-	}
-
-	.overflow-item-danger:hover {
-		color: var(--color-error);
 	}
 
 	.overflow-divider {
@@ -360,32 +328,4 @@
 		justify-content: flex-end;
 	}
 
-	.delete-confirm-btn {
-		padding: 6px 12px;
-		font-size: 12px;
-		font-weight: 500;
-		border: none;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: all 0.15s ease;
-	}
-
-	.delete-confirm-cancel {
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground-muted);
-	}
-
-	.delete-confirm-cancel:hover {
-		background: var(--color-border);
-		color: var(--color-foreground);
-	}
-
-	.delete-confirm-delete {
-		background: var(--color-error);
-		color: white;
-	}
-
-	.delete-confirm-delete:hover {
-		filter: brightness(1.1);
-	}
 </style>

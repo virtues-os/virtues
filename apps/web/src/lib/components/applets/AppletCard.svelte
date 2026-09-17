@@ -266,9 +266,14 @@
 		overflow: hidden;
 		mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
 	}
+	/* The italic that used to be here was marking "this excerpt is prose, not
+	   output" — but JJannon has no italic cut, so every browser synthesized a
+	   mechanical slant of the roman (agents/build/typography.md). The
+	   distinction was never the slope's to make: the rule beneath sets machine
+	   output in 11px muted mono, so serif against mono, 13 against 11, and full
+	   ink against muted already say it three times over. */
 	.excerpt.agent {
 		font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
-		font-style: italic;
 		font-size: 0.8125rem;
 		color: var(--color-foreground, #1f2937);
 	}
@@ -276,11 +281,15 @@
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 0.6875rem;
 	}
-	/* Not mono — the placeholder is prose about the applet, not its output. */
+	/* Not mono — the placeholder is prose about the applet, not its output.
+	   It was italic at 50% opacity to say "this is an absence, not content";
+	   the italic was a synthesized slant, since JJannon ships no italic cut
+	   (agents/build/typography.md), and the opacity was an arbitrary fade over
+	   an already-muted ink. Absence is said in ink here, with the token that
+	   says it everywhere else on this surface. */
 	.excerpt.placeholder {
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 0.75rem;
-		font-style: italic;
-		opacity: 0.5;
+		color: var(--color-foreground-subtle);
 	}
 </style>

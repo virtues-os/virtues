@@ -12,9 +12,16 @@
 //!    installer built, NOT `/etc/virtues/env`, which it has never written —
 //!    or the process env, whichever is set. Disables every cloud beacon. The
 //!    `enabled()` helper returns false; callers exit cleanly without
-//!    sending anything. Default is on for v1; the install step prints a
-//!    one-line notice so users see what's happening before they ever
-//!    open the docs.
+//!    sending anything. Default is on for v1.
+//!
+//!    This used to add "the install step prints a one-line notice so users
+//!    see what's happening before they ever open the docs." It does not —
+//!    the installer has no `VIRTUES_DIAG` handling at all, as the
+//!    paragraph above already says of the beacon. The three places that DO
+//!    disclose it are `virtues doctor`, `virtues status --json`
+//!    (`diag_enabled`), and docs/operate/recovery.md. An install-time
+//!    notice would still be better; until one exists, do not describe it
+//!    as though it does.
 //!
 //! 2. **POST to atlas.** A `send(path, payload)` helper with a tight
 //!    timeout and best-effort semantics — diagnostic posts never error.

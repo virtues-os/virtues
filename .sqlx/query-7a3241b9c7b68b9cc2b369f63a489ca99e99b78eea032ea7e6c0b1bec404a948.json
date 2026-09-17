@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT (SELECT count(*) FROM data_communication_message)     AS \"messages!\",\n               (SELECT count(*) FROM wiki_people)                    AS \"people!\",\n               (SELECT max(updated_at) FROM wiki_people)             AS people_touched_at,\n               (SELECT count(*) FROM wiki_refs\n                 WHERE source_table = 'data_communication_message')  AS \"message_refs!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "messages!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "people!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "people_touched_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "message_refs!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "7a3241b9c7b68b9cc2b369f63a489ca99e99b78eea032ea7e6c0b1bec404a948"
+}

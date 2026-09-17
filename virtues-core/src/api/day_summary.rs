@@ -11,10 +11,11 @@ use virtues_registry::models::ModelSlot;
 
 use crate::error::Result;
 
-use super::wiki::{
-    create_temporal_event, delete_auto_events_for_day, get_day_sources, get_or_create_day,
-    update_day, CreateTemporalEventRequest, DaySource, UpdateWikiDayRequest, WikiDay,
+use super::wiki_days::{get_or_create_day, WikiDay};
+use super::wiki_events::{
+    create_temporal_event, delete_auto_events_for_day, CreateTemporalEventRequest,
 };
+use super::wiki_streams::{get_day_sources, DaySource};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -175,27 +176,6 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
 /// model runs.
 const MIN_ACTIVATION_SOURCES: usize = 3;
 
-/// How many SPANS a day needs before it has a shape of its own.
-///
-/// A `wiki_event` is a span, and the doctrine wants 8–16 of them in a day. You
-/// cannot cut that out of one thing — and one thing is what most of history holds.
-/// Measured on the real box, the distribution is not a gradient, it is a cliff:
-///
-/// ```text
-///   13–373 spans   7 days    ← transcripts + visits: the week the collectors ran
-///        2 spans   6 days    ← a couple of calendar entries
-///        1 span   84 days    ← one calendar entry, sometimes an all-day one
-/// ```
-///
-/// An all-day calendar event is 24 hours long and bounds nothing. A day with one
-/// meeting in it is a day the model would have to invent 15 waking hours of.
-///
-/// Three separates the days that happened from the days we merely have a receipt
-/// for. It is deliberately strict: the cost of skipping a real day is that it stays
-/// unwritten until the collectors fill it in; the cost of narrating an empty one is
-/// a confident, permanent, searchable account of a life nobody lived.
-const MIN_SPANS: usize = 3;
-
 /// What a day's sources amount to, measured the way the segmenter measures it.
 ///
 /// One definition, two readers. The segmenter asks it before spending a model
@@ -232,8 +212,25 @@ impl DayShape {
         Self { acted, shaped }
     }
 
-    /// Enough of a day to hand to the detective. `MIN_SPANS` documents the
-    /// doctrine; `MIN_ACTIVATION_SOURCES` is the gate that has always been applied.
+    /// Enough of a day to hand to the detective.
+    ///
+    /// `MIN_ACTIVATION_SOURCES` is the gate that has always been applied; on the
+    /// span side the gate is only "at least one". A `wiki_event` is a span, and
+    /// the doctrine wants 8–16 of them in a day, which you cannot cut out of one
+    /// thing — and one thing is what most of history holds. Measured on the real
+    /// box, the distribution is not a gradient, it is a cliff:
+    ///
+    /// ```text
+    ///   13–373 spans   7 days    ← transcripts + visits: the week the collectors ran
+    ///        2 spans   6 days    ← a couple of calendar entries
+    ///        1 span   84 days    ← one calendar entry, sometimes an all-day one
+    /// ```
+    ///
+    /// An all-day calendar event is 24 hours long and bounds nothing, and a day
+    /// with one meeting in it is a day the model would have to invent 15 waking
+    /// hours of. A stricter floor of three spans was written down as the doctrine
+    /// but never applied as a gate; raising this to it is a product decision
+    /// (it skips ~90% of the days above), not a tidy-up.
     pub fn is_enough(&self) -> bool {
         self.acted >= MIN_ACTIVATION_SOURCES && self.shaped > 0
     }
@@ -683,28 +680,22 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     // Chat slot: this is the narrative call, and the only one left that earns it.
     // Slot DEFAULT via the completion helper, never the pinned chat model.
     let raw = call_virtues_api(pool, NARRATE_PROMPT, ModelSlot::Chat, &prompt).await?;
-    let mut parsed = parse_virtues_api_response(&raw);
-    parsed.diary = strip_prompt_echo(&parsed.diary);
-    parsed.diary = unlink_uninvited_refs(&parsed.diary, &entities);
+    let mut diary = parse_virtues_api_response(&raw);
+    diary = strip_prompt_echo(&diary);
+    diary = unlink_uninvited_refs(&diary, &entities);
 
-    let day = update_day(
-        pool,
-        date,
-        UpdateWikiDayRequest {
-            epigraph: parsed.epigraph,
-            last_edited_by: Some("ai".to_string()),
-            cover_image: None,
-            start_timezone: Some(day_tz),
-            data_quality: parsed
-                .data_quality
-                .as_deref()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
-            snapshot: None,
-        },
-    )
-    .await?;
+    // The only field narration has ever really set. `epigraph` and
+    // `data_quality` went with the prompt that forbids them, and
+    // `last_edited_by` was a freeze flag that no longer decides anything —
+    // the article is edited, and its history says who wrote each version.
+    let day = crate::api::wiki_days::get_or_create_day(pool, date).await?;
+    sqlx::query("UPDATE wiki_days SET start_timezone = $1, updated_at = now() WHERE id = $2")
+        .bind(&day_tz)
+        .bind(&day.id)
+        .execute(pool)
+        .await?;
 
-    save_day_article(pool, &day.id, date, &parsed.diary).await?;
+    save_day_article(pool, &day.id, date, &diary).await?;
 
     sqlx::query("UPDATE wiki_days SET narrated_at = now() WHERE date = $1")
         .bind(date)
@@ -714,23 +705,62 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
     // Re-fetch: `day` was read before the article landed, so its `article`
     // field predates the write — returning it as-is showed callers (the CLI,
     // the API response) yesterday's prose under a "narrated" banner.
-    let day = crate::api::wiki::get_or_create_day(pool, date).await?;
+    let day = crate::api::wiki_days::get_or_create_day(pool, date).await?;
     Ok(Some(day))
 }
 
 /// Land the narration in the day's article page — the one prose store.
 ///
-/// An article has exactly one pen at a time. A day article starts KEPT
-/// (`auto_update = true`): the nightly narration is its maintenance, and the
-/// record may rewrite it. Editing the article claims it — the Yjs layer
-/// flips `auto_update` off on the first real user edit — and from then on
-/// this writer refuses and stamps `dirty_at`; new evidence for a claimed day
-/// belongs in notes, never in prose the user owns.
+/// A day article's maintenance is the nightly narration. It is written unless
+/// the person has turned maintenance off for that page, which is now a setting
+/// they choose rather than a flag their first edit trips: touching one
+/// sentence is not a decision to take over a page, and it used to cost them
+/// the record's maintenance forever.
 ///
-/// Even for a kept article, a pool-side rewrite is only safe while
-/// `yjs_state IS NULL` — once a CRDT exists, an UPDATE of `content` would be
-/// clobbered by the next debounced save. A kept-but-opened page is skipped
-/// with a dirty stamp; a server-side (Yjs-aware) writer can pick it up.
+/// Even for a kept article, a pool-side rewrite has to reckon with the CRDT:
+/// an UPDATE of `content` alone would be clobbered by the next debounced save.
+///
+/// This used to be answered by writing only `WHERE yjs_state IS NULL` and
+/// stamping `dirty_at` otherwise, deferring to "a server-side (Yjs-aware)
+/// writer" that was never built. Nothing reads `dirty_at`, so the real
+/// behaviour was: **once a day's page had been opened in the editor, that day
+/// never received narration again** — silently, for the life of the box. A
+/// re-cut day kept its first draft forever.
+///
+/// The protocol that makes the pool write safe already exists in the other
+/// direction: an external writer sets `yjs_state = NULL`, and
+/// `DocCache::get_or_create` treats that as "rewritten outside the CRDT",
+/// evicts the cached doc and reseeds it from `content`
+/// ([server/yjs.rs] — added after a cached doc was observed resurrecting
+/// stale prose over a narration). So narration uses it: content and
+/// `yjs_state = NULL` together, and the next reader gets a doc seeded from
+/// the new prose.
+///
+/// **Narration is a FIRST DRAFT, and a draft is only safe on a page nobody has
+/// written on.** This overwrites the whole document — content replaced,
+/// `yjs_state` nulled — so anything the person typed into a day article would
+/// go with it.
+///
+/// That used to be impossible rather than guarded: `claim_article_on_user_edit`
+/// flipped `auto_update` off on the first doc update that changed the text, so
+/// a still-maintained article had by definition never been touched. Removing
+/// the claim flip removed that guarantee, and the day did not get the
+/// replacement the other rungs got — the editor diffs its output against the
+/// live text and the server refuses any edit that loses a sentence the person
+/// wrote, but the day is excluded from that door while its narrator stays
+/// one-shot. So the guarantee is restored here, from evidence rather than a
+/// flag: `last_human_edit_at` is stamped by `note_human_edit` on every doc
+/// update that changes the text, and a day carrying one is never re-drafted.
+///
+/// A day they have written on needs REVISION, not a new draft, and revision is
+/// what the day rung still owes — see `agents/record/article-resolution.md`.
+/// Until then this stops, which loses them later evidence; the alternative
+/// loses them their own words, and only one of those is recoverable.
+///
+/// The one remaining race is a page open *right now* whose in-memory doc
+/// would save over us before any reader re-seeds it. `updated_at` is the
+/// proxy for that: a page touched in the last 15 minutes is left alone and
+/// picked up on a later run (narration is hourly), which also self-heals.
 async fn save_day_article(
     pool: &PgPool,
     day_id: &str,
@@ -748,34 +778,40 @@ async fn save_day_article(
         let title = date.format("%-d %B %Y").to_string();
         let created =
             crate::api::wiki_articles::create_article(pool, "day", day_id, &title, prose).await?;
-        // Day articles are kept by default — narration IS their maintenance.
-        // (Entity articles stay opt-in; their consent is the explicit toggle.)
-        if let Err(e) = sqlx::query("UPDATE wiki_articles SET auto_update = true WHERE id = $1")
-            .bind(&created.id)
-            .execute(pool)
-            .await
-        {
-            tracing::warn!(date = %date, error = %e, "could not mark the day article kept");
-        }
+        // A day article is maintained from birth — narration IS its
+        // maintenance — which is the DEFAULT for the column, so there is
+        // nothing to set. Entity articles are opt-in and say so themselves.
+        let _ = created;
         return Ok(());
     };
 
-    if !article.auto_update {
+    let (maintenance, last_human_edit_at): (String, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as("SELECT maintenance, last_human_edit_at FROM wiki_articles WHERE id = $1")
+            .bind(&article.id)
+            .fetch_one(pool)
+            .await?;
+    if maintenance == "never" {
         tracing::info!(
             date = %date,
             page_id = %article.page_id,
-            "day article is claimed (yours) — narration files nothing; marked dirty"
+            "the owner has turned maintenance off for this day — narration files nothing"
         );
-        sqlx::query("UPDATE wiki_articles SET dirty_at = now() WHERE id = $1")
-            .bind(&article.id)
-            .execute(pool)
-            .await?;
+        return Ok(());
+    }
+    if last_human_edit_at.is_some() {
+        tracing::info!(
+            date = %date,
+            page_id = %article.page_id,
+            "this day has been edited by hand — a first draft would overwrite it, and \
+             narration has no way to edit around their sentences yet"
+        );
         return Ok(());
     }
 
     let updated = sqlx::query(
-        "UPDATE app_pages SET content = $1, updated_at = now() \
-         WHERE id = $2 AND yjs_state IS NULL",
+        "UPDATE app_pages SET content = $1, yjs_state = NULL, updated_at = now() \
+         WHERE id = $2 \
+           AND (yjs_state IS NULL OR updated_at < now() - interval '15 minutes')",
     )
     .bind(prose)
     .bind(&article.page_id)
@@ -784,7 +820,7 @@ async fn save_day_article(
 
     if updated.rows_affected() > 0 {
         sqlx::query(
-            "UPDATE wiki_articles SET last_written_at = now(), dirty_at = NULL WHERE id = $1",
+            "UPDATE wiki_articles SET last_written_at = now() WHERE id = $1",
         )
         .bind(&article.id)
         .execute(pool)
@@ -793,12 +829,9 @@ async fn save_day_article(
         tracing::info!(
             date = %date,
             page_id = %article.page_id,
-            "kept day article has a live CRDT — pool write would be clobbered; marked dirty"
+            "kept day article was touched in the last 15 minutes — someone may have it \
+             open; leaving it and trying again on a later run"
         );
-        sqlx::query("UPDATE wiki_articles SET dirty_at = now() WHERE id = $1")
-            .bind(&article.id)
-            .execute(pool)
-            .await?;
     }
     Ok(())
 }
@@ -821,9 +854,13 @@ async fn build_health_snapshot(
         let mut lines = Vec::new();
 
         // Heart rate
-        let hr: Option<(Option<i32>, Option<i32>, Option<f64>, i32)> = sqlx::query_as(
+        // `AVG` over an integer column is NUMERIC in Postgres, which sqlx
+        // will not decode as f64, and `COUNT(*)` is INT8, not INT4 — both
+        // failed at row decode, and the `?` on every caller took the whole
+        // narration down with them. Cast at the boundary; the count is i64.
+        let hr: Option<(Option<i32>, Option<i32>, Option<f64>, i64)> = sqlx::query_as(
             r#"
-        SELECT MIN(bpm), MAX(bpm), ROUND(AVG(bpm)), COUNT(*)
+        SELECT MIN(bpm), MAX(bpm), ROUND(AVG(bpm))::float8, COUNT(*)
         FROM data_health_heart_rate
         WHERE occurred_at >= $1::timestamptz AND occurred_at <= $2::timestamptz
         "#,
@@ -1927,33 +1964,23 @@ async fn call_virtues_api(
         "day_summary",
         system_prompt,
         user_prompt,
-        // 16 events x ~60-90 tokens is 960-1440 for the events ALONE, before
-        // the 180-word diary, the epigraph and the data_quality JSON. At 1000
-        // a rich day truncated mid-array — and since the parse was
-        // all-or-nothing, that day lost EVERY event with only a warn!.
-        // Raised to 4000, and the parse now salvages besides.
+        // Low effort, no cap. The detective job is adjudicating witnesses
+        // into a timeline, not proving a theorem; the helper turns "low" into
+        // whatever lever the model lists, and a model without one ignores it.
         //
-        // Then 4000 failed the same way one level up. The Chat slot moved to
-        // `anthropic/claude-sonnet-5` (2026-08-27, on dragon from 09-04), and
-        // that model THINKS before it answers — and Anthropic counts the
-        // thinking against max_tokens. On the day dossier it wanted more than
-        // 4000 to think, so it hit the cap with zero content tokens: 237 of
-        // 276 calls, all billed, all three retries, every hour on the same
-        // never-fingerprinted day. $13.61 to produce nothing, and the day
-        // never narrated. Even the calls that did answer maxed at exactly
-        // 4000, i.e. were truncated and salvaged.
+        // There used to be a number here, twice. 1000 truncated a rich day
+        // mid-array. 4000 then failed one level up when the Chat slot became
+        // a model that thinks inside max_tokens: 237 of 276 calls spent the
+        // whole cap reasoning and returned nothing, all billed, hourly, on
+        // the same day (2026-09-04..08). 16k worked by paying for thinking
+        // nobody wanted. The cap was never the lever; the effort is.
         //
-        // So the cap is sized for thinking plus answer, with real headroom
-        // because the failing calls stopped AT the cap and never showed how
-        // much thinking the model actually wanted. Read `reasoning_tokens` in
-        // `app_ai_calls` after a few nights before tightening this.
-        16_000,
+        // Do not read `reasoning_tokens` in `app_ai_calls` to tune this: the
+        // gateway reports none for Anthropic, so the column is zero whether
+        // or not thinking happened. `finish_reason` and completion tokens
+        // are the honest signals.
+        crate::virtues_api::request::Thinking::Low,
         0.3,
-        // Low effort: the detective job is adjudicating witnesses into a
-        // timeline, not proving a theorem. The lever exists on this model
-        // (see the registry's slot note) and trims the thinking tax that made
-        // 4000 fatal; a model without the lever just ignores the hint.
-        Some("low"),
     )
     .await
 }
@@ -2047,22 +2074,6 @@ fn parse_events_salvaging(raw: &str) -> Option<Vec<LlmEvent>> {
     Some(events)
 }
 
-/// Parsed day summary from LLM response
-struct ParsedDaySummary {
-    diary: String,
-    epigraph: Option<String>,
-    data_quality: Option<String>,
-    events: Option<Vec<LlmEvent>>,
-}
-
-/// Split virtues-api response into diary text, epigraph, data quality, and optional events JSON.
-/// Expected format:
-///   [diary text]
-///   ---EPIGRAPH---
-///   [one-line epigraph]
-///   ---DATA_QUALITY---
-///   {"coverage":{...},"overall":3,"note":"..."}
-///   ---EVENTS---
 /// Drop prompt-instruction echo from the article prose.
 ///
 /// Observed live (2025-12-16): the model opened its output with
@@ -2146,70 +2157,17 @@ fn unlink_uninvited_refs(prose: &str, candidates: &[String]) -> String {
     out
 }
 
-///   [JSON events]
+/// The model's reply IS the article. Nothing is split off it.
 ///
-/// All markers except the diary are optional. Handles markdown code fences around JSON.
-fn parse_virtues_api_response(response: &str) -> ParsedDaySummary {
-    // 1. Split off events JSON first (it's always at the end)
-    let (before_events, events) = if let Some(idx) = response.find("---EVENTS---") {
-        let before = &response[..idx];
-        let mut events_str = response[idx + "---EVENTS---".len()..].trim();
-        events_str = events_str
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim();
-        let parsed = parse_events_salvaging(events_str);
-        (before, parsed)
-    } else {
-        (response, None)
-    };
-
-    // 2. Split off data_quality from the remaining text
-    let (before_quality, data_quality) = if let Some(idx) = before_events.find("---DATA_QUALITY---")
-    {
-        let before = &before_events[..idx];
-        let mut dq_str = before_events[idx + "---DATA_QUALITY---".len()..].trim();
-        dq_str = dq_str
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim();
-        // Validate it's parseable JSON, then store as raw string
-        let validated: Option<String> = serde_json::from_str::<serde_json::Value>(dq_str)
-            .map_err(|e| {
-                tracing::warn!(error = %e, raw = dq_str, "Failed to parse data_quality from LLM");
-                e
-            })
-            .ok()
-            .map(|v| v.to_string());
-        (before, validated)
-    } else {
-        (before_events, None)
-    };
-
-    // 3. Split off epigraph from the remaining text
-    let (diary, epigraph) = if let Some(idx) = before_quality.find("---EPIGRAPH---") {
-        let d = before_quality[..idx].trim().to_string();
-        let e_raw = before_quality[idx + "---EPIGRAPH---".len()..].trim();
-        // Epigraph is a single line — take only the first non-empty line
-        let e = e_raw
-            .lines()
-            .map(str::trim)
-            .find(|l| !l.is_empty())
-            .map(|l| l.trim_matches(['"', '\'', '—', '–']).trim().to_string())
-            .filter(|l| !l.is_empty());
-        (d, e)
-    } else {
-        (before_quality.trim().to_string(), None)
-    };
-
-    ParsedDaySummary {
-        diary,
-        epigraph,
-        data_quality,
-        events,
-    }
+/// This used to carve `---EPIGRAPH---` and `---DATA_QUALITY---` off the end
+/// and store both on `wiki_days`. The narrate prompt has forbidden the model
+/// to emit either for months ("no epigraph, no closing metric, no data
+/// quality note"), so both parsed to None on every run while three columns,
+/// a request struct, an HTTP route and a CLI branch went on carrying them.
+/// A parser for output a prompt forbids is not defensive, it is a second
+/// description of the format that nobody keeps true.
+fn parse_virtues_api_response(response: &str) -> String {
+    response.trim().to_string()
 }
 
 /// Store LLM-identified events as wiki_events rows — delete the old cut and land
@@ -2948,5 +2906,207 @@ mod dossier_tests {
             .await
             .expect("narration must not die on its own SQL");
         assert!(out.is_none(), "an empty day earns no story");
+    }
+
+    /// The heart-rate snapshot decodes. `ROUND(AVG(bpm))` over an integer
+    /// column is NUMERIC and `COUNT(*)` is INT8 in Postgres; read as f64 and
+    /// i32 they fail at decode time, and both callers propagate with `?` — so
+    /// every day that had events lost its narration to this one row. An empty
+    /// table does not dodge it: the aggregate row always exists and its types
+    /// are fixed at plan time.
+    #[sqlx::test]
+    async fn health_snapshot_decodes_with_and_without_readings(pool: PgPool) {
+        let (start, end) = ("2026-09-10T00:00:00Z", "2026-09-11T00:00:00Z");
+        let empty = build_health_snapshot(&pool, start, end)
+            .await
+            .expect("the aggregate row must decode over an empty table");
+        assert!(empty.is_none(), "no readings, no section");
+
+        for (i, bpm) in [60, 70, 80].iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO data_health_heart_rate \
+                 (id, bpm, occurred_at, source_stream_id, source_table, source_provider) \
+                 VALUES ($1, $2, '2026-09-10T08:00:00Z'::timestamptz + make_interval(mins => $3), \
+                         $4, 't', 'p')",
+            )
+            .bind(format!("hr{i}"))
+            .bind(bpm)
+            .bind(i as i32)
+            // source_stream_id is unique per row.
+            .bind(format!("src{i}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let section = build_health_snapshot(&pool, start, end)
+            .await
+            .expect("the aggregate row must decode over readings")
+            .expect("three readings earn a section");
+        assert!(
+            section.body.contains("avg 70, min 60, max 80 (3 readings)"),
+            "{}",
+            section.body
+        );
+    }
+
+    /// A day whose page has been opened in the editor must still receive
+    /// narration.
+    ///
+    /// THE FAILURE CLASS: **a maintenance write that defers to a queue nobody
+    /// consumes is not deferred, it is dropped.** This write was guarded
+    /// `WHERE yjs_state IS NULL` and stamped `dirty_at` otherwise, deferring
+    /// to a Yjs-aware writer that was never built — and nothing reads
+    /// `dirty_at`. So opening a day page once froze that day's article at its
+    /// first draft for the life of the box, and re-cutting the day changed
+    /// nothing. Invisible from outside: the page still holds plausible prose,
+    /// just never the current prose.
+    #[sqlx::test]
+    async fn narration_lands_on_a_day_page_that_has_been_opened(pool: PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 26).unwrap();
+        let day = get_or_create_day(&pool, date).await.unwrap();
+
+        save_day_article(&pool, &day.id, date, "First draft.")
+            .await
+            .unwrap();
+        let article = crate::api::wiki_articles::get_article(&pool, "day", &day.id)
+            .await
+            .unwrap()
+            .expect("the first narration creates the article");
+
+        // Someone opens the page: a CRDT exists for it from then on, and
+        // nothing ever sets it back to NULL. Backdated so this is not the
+        // "being edited right now" case, which is the next test.
+        // `app_pages` carries a BEFORE UPDATE trigger that stamps
+        // `updated_at = now()`, which is what makes that column mean "last
+        // written by anything" in production — and what stops a plain UPDATE
+        // here from backdating it. Suspend it for the one statement.
+        for stmt in [
+            "ALTER TABLE app_pages DISABLE TRIGGER set_updated_at",
+            "UPDATE app_pages SET yjs_state = '\\x010203'::bytea, \
+             updated_at = now() - interval '1 hour' WHERE id = $1",
+            "ALTER TABLE app_pages ENABLE TRIGGER set_updated_at",
+        ] {
+            let q = sqlx::query(stmt);
+            let q = if stmt.contains("$1") {
+                q.bind(&article.page_id)
+            } else {
+                q
+            };
+            q.execute(&pool).await.unwrap();
+        }
+
+        save_day_article(&pool, &day.id, date, "Second draft, after the re-cut.")
+            .await
+            .unwrap();
+
+        let (content, state): (String, Option<Vec<u8>>) =
+            sqlx::query_as("SELECT content, yjs_state FROM app_pages WHERE id = $1")
+                .bind(&article.page_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            content, "Second draft, after the re-cut.",
+            "an opened page must still receive narration"
+        );
+        assert!(
+            state.is_none(),
+            "the CRDT must be cleared, so the next reader reseeds from the new \
+             prose instead of resurrecting the old doc over it"
+        );
+    }
+
+    /// The one page narration leaves alone: one someone may have open at this
+    /// moment, whose in-memory doc would save over the write before any reader
+    /// re-seeds it. Not skipped forever — narration runs hourly and the page
+    /// stops being fresh.
+    #[sqlx::test]
+    async fn narration_waits_for_a_page_touched_a_moment_ago(pool: PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap();
+        let day = get_or_create_day(&pool, date).await.unwrap();
+        save_day_article(&pool, &day.id, date, "First draft.")
+            .await
+            .unwrap();
+        let article = crate::api::wiki_articles::get_article(&pool, "day", &day.id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        sqlx::query("UPDATE app_pages SET yjs_state = $1, updated_at = now() WHERE id = $2")
+            .bind(vec![1u8, 2, 3])
+            .bind(&article.page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        save_day_article(&pool, &day.id, date, "Second draft.")
+            .await
+            .unwrap();
+
+        let content: String = sqlx::query_scalar("SELECT content FROM app_pages WHERE id = $1")
+            .bind(&article.page_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            content, "First draft.",
+            "a page touched seconds ago is left for a later run"
+        );
+    }
+
+    /// The day article someone has written in is never re-drafted over.
+    ///
+    /// This is the guarantee the one-pen rule used to provide structurally: a
+    /// still-maintained article had by definition never been edited, so
+    /// overwriting it wholesale was safe. Ownership no longer flips, and the
+    /// day is excluded from the editor that diffs its output against the live
+    /// text — so without this gate a person who fixed one sentence in a day
+    /// article lost it on the next nightly pass, with nothing in the UI to say
+    /// a thing had happened.
+    #[sqlx::test]
+    async fn a_day_someone_has_written_in_is_not_redrafted_over(pool: PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 8, 28).unwrap();
+        let day = get_or_create_day(&pool, date).await.unwrap();
+        save_day_article(&pool, &day.id, date, "First draft.")
+            .await
+            .unwrap();
+        let article = crate::api::wiki_articles::get_article(&pool, "day", &day.id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // They open it and change a sentence. `note_human_edit` stamps the
+        // article; the page keeps their text. Backdated past the 15-minute
+        // "someone may have it open" window so THAT guard is not what is being
+        // tested here — see `narration_waits_for_a_page_touched_a_moment_ago`.
+        sqlx::query("UPDATE wiki_articles SET last_human_edit_at = now() WHERE id = $1")
+            .bind(&article.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for stmt in [
+            "ALTER TABLE app_pages DISABLE TRIGGER set_updated_at",
+            "UPDATE app_pages SET content = 'First draft. I was actually at the coast.', \
+             updated_at = now() - interval '1 hour' WHERE id = $1",
+            "ALTER TABLE app_pages ENABLE TRIGGER set_updated_at",
+        ] {
+            let q = sqlx::query(stmt);
+            let q = if stmt.contains("$1") { q.bind(&article.page_id) } else { q };
+            q.execute(&pool).await.unwrap();
+        }
+
+        save_day_article(&pool, &day.id, date, "A completely different second draft.")
+            .await
+            .unwrap();
+
+        let content: String = sqlx::query_scalar("SELECT content FROM app_pages WHERE id = $1")
+            .bind(&article.page_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            content, "First draft. I was actually at the coast.",
+            "their correction must survive the next night's narration"
+        );
     }
 }

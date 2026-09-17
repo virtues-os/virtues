@@ -112,15 +112,24 @@ export async function checkAppUpdate(): Promise<void> {
 	}
 }
 
-/** Restart into a staged app update. No-op when nothing is staged. */
-export async function applyAppUpdate(): Promise<void> {
+/**
+ * Restart into a staged app update.
+ *
+ * Resolves `false` when nothing happened — no shell, a shell too old for the
+ * command, or a shell that found nothing staged after all. It never resolves
+ * `true`: a successful apply restarts the process, so the caller is gone. The
+ * point of the return is that a caller can tell "restarting" from "that did
+ * nothing", and a chip that does nothing when pressed can take itself down.
+ */
+export async function applyAppUpdate(): Promise<boolean> {
 	const invoke = await getInvoke();
-	if (!invoke) return;
+	if (!invoke) return false;
 	try {
-		await invoke('apply_update_cmd');
+		return (await invoke<boolean>('apply_update_cmd')) ?? false;
 	} catch {
 		// Shell too old for the command — the chip that calls this only renders
 		// when appUpdateState() answered, so this is belt-and-braces.
+		return false;
 	}
 }
 
@@ -142,7 +151,9 @@ export type OtaCheck =
 	| { state: 'applied'; contentHash: string }
 	| { state: 'shell_too_old'; needs: number; have: number }
 	| { state: 'no_bundle_on_box' }
-	| { state: 'rolled_back'; contentHash: string };
+	| { state: 'rolled_back'; contentHash: string }
+	| { state: 'box_behind'; boxVersion: string; have: string }
+	| { state: 'version_unreadable'; boxVersion: string; have: string | null };
 
 /**
  * One line describing an update check, or null when there is nothing worth
@@ -163,6 +174,13 @@ export function describeOtaCheck(c: OtaCheck | null): string | null {
 			// bundle after a failed boot, which otherwise looks like OTA
 			// silently not working.
 			return 'A newer UI failed to start on this device and was set aside — the next box update clears it.';
+		case 'box_behind':
+			// The other half of shell_too_old, and the ordinary one: this app
+			// updates on Apple's cadence, your box when you upgrade it. Silence
+			// here would read as OTA being broken.
+			return `This app already has newer UI than your box (box ${c.boxVersion}, app ${c.have}) — it stays on its own until you run \`sudo virtues upgrade\`.`;
+		case 'version_unreadable':
+			return "This app can't tell whether your box's UI is newer than its own, so it's staying on the build it shipped with.";
 		default:
 			return null;
 	}

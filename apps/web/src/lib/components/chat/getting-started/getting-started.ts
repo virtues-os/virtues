@@ -2,104 +2,93 @@
  * Getting started — the room after the founder's letter.
  *
  * One fixed conversation, seeded at boot; the server forces its mode by id
- * (see chat_handler) and refuses to delete or retitle it. Everything above
- * the first stored message is SYNTHETIC: the mast, one card per open step,
- * the promise line, the authored first line. They are rebuilt from the
- * derived state on every load and every state change, never persisted, so a
- * person back after a week sees today, not a replay of cards that no longer
- * apply. The interview room does the same with its opening
- * (chat/interview/interview.ts); this module is that pattern's second use.
+ * (see chat_handler) and refuses to delete or retitle it. THE ROOM'S OWN
+ * LINES ARE REAL TURNS: the server appends each one once, in order, marked
+ * by `subject` (see getting_started.rs `narrate`), so the client places
+ * nothing and the thread cannot repeat itself. Until 2026-09-14 the client
+ * re-rendered those lines from state on every change, which asked a
+ * question again underneath the answer to it.
+ *
+ * What stays here: the room's id, the slash command, and the interview's
+ * opening — which is the INTERVIEW's, not the room's, so it is shown
+ * without persisting (one copy of that text, in chat/interview) and placed
+ * among the turns by the instant the interview began.
  */
 import type { Chat } from "@ai-sdk/svelte";
-import type { GettingStartedState, GettingStartedStepId } from "$lib/api/client";
+import type { GettingStartedState } from "$lib/api/client";
+import {
+	INTERVIEW_OPENING_LEAD,
+	INTERVIEW_OPENING_BODY,
+	INTERVIEW_OPENING_ASK,
+} from "$lib/components/chat/interview/interview";
 
 /** Mirrors getting_started::GETTING_STARTED_CHAT_ID on the server. */
 export const GETTING_STARTED_CHAT_ID = "chat_getting_started";
 
-/** Every synthetic message id starts with this; the room renders them as
- *  cards, and the opening strips and rebuilds them by it. */
-export const GS_PREFIX = "gs-";
-export const GS_MAST_ID = "gs-mast";
-export const GS_PROMISE_ID = "gs-promise";
-export const GS_FIRST_LINE_ID = "gs-first-line";
+/** The interview's opening, shown in the room, never persisted. */
+export const GS_INTERVIEW_PREFIX = "gs-iv-";
+export const GS_INTERVIEW_OPENING_ID = "gs-iv-opening";
 
-export const STEP_ORDER: GettingStartedStepId[] = [
-	"connect_ai",
-	"introductions",
-	"connect_world",
-	"interview",
-];
-
-export function gsCardId(step: GettingStartedStepId): string {
-	return `${GS_PREFIX}card-${step}`;
-}
-
-export function gsCardStep(id: string): GettingStartedStepId | null {
-	const m = id.match(/^gs-card-(connect_ai|introductions|connect_world|interview)$/);
-	return (m?.[1] as GettingStartedStepId | undefined) ?? null;
-}
+/**
+ * The slash command, which does exactly what the door does: leave. It was
+ * `/dangerously-skip-onboarding` and it also wrote a skip against connect_ai
+ * — that mattered while the app was closed off and the skip was the key out.
+ * Nothing is closed off now, so there was nothing dangerous about it, and two
+ * exits with different side effects and no way to tell them apart is worse
+ * than one. Typed, not discovered: the one place "onboarding" survives in the
+ * visible vocabulary.
+ */
+export const SKIP_COMMAND = "/skip-onboarding";
 
 export function isGettingStartedChat(convId: string | null | undefined): boolean {
 	return convId === GETTING_STARTED_CHAT_ID;
 }
 
-/** The slash command that does what the door does. Typed, not discovered:
- *  the one place "onboarding" survives in the visible vocabulary. */
-export const SKIP_COMMAND = "/dangerously-skip-onboarding";
+function opening(id: string, text: string) {
+	return { id, role: "assistant" as const, parts: [{ type: "text" as const, text }] };
+}
 
-/** The authored first line: shown the moment AI is connected and the room
- *  has no stored messages. No model call — the model speaks on the reply. */
-export const FIRST_LINE =
-	"Your server can think now. I’m here for the rest of the setup: " +
-	"say what you’d like to be called, ask why any of this matters, or " +
-	"just work through the cards above. Nothing here expires.";
-
-/** Rebuild the synthetic top of the room from the derived state.
- *
- *  PREPENDS after stripping: the load paths replace `chat.messages`
- *  wholesale, and the state changes underneath (a source lands, the
- *  interview closes in its own room), so this must be safe to run any
- *  number of times. `state === null` (not loaded, or an older box without
- *  the endpoint) leaves the stored transcript alone. */
-export function applyGettingStartedOpening(
+/**
+ * Put the interview's opening in the thread at the instant the interview
+ * began: after the setup turns, before the interview's own. Stored turns
+ * carry `createdAt`; a turn still streaming has none and is after the
+ * boundary by construction. Safe to run repeatedly, and it does nothing
+ * until the interview has started.
+ */
+export function applyInterviewOpening(
 	chat: Chat,
 	convId: string | null | undefined,
 	state: GettingStartedState | null,
 ): void {
 	if (!isGettingStartedChat(convId)) return;
-	const stored = chat.messages.filter((m) => !m.id.startsWith(GS_PREFIX));
-	if (!state) {
-		if (stored.length !== chat.messages.length) {
-			chat.messages = stored as typeof chat.messages;
-		}
+	const stored = chat.messages.filter((m) => !m.id.startsWith(GS_INTERVIEW_PREFIX));
+	const startedAt = state?.interview_started_at;
+	if (!startedAt) {
+		if (stored.length !== chat.messages.length) chat.messages = stored as typeof chat.messages;
 		return;
 	}
-	// A single space, not empty: an assistant message with no text reads as
-	// "loading" to the room's chrome. The card branch never renders it.
-	const blank = { type: "text", text: " " } as const;
-	const synthetic: { id: string; role: "assistant"; parts: (typeof blank)[] }[] = [];
-	synthetic.push({ id: GS_MAST_ID, role: "assistant", parts: [blank] });
-	for (const step of STEP_ORDER) {
-		const s = state.steps.find((x) => x.id === step);
-		if (s?.status === "open") synthetic.push({ id: gsCardId(step), role: "assistant", parts: [blank] });
+	const already = chat.messages.some((m) => m.id === GS_INTERVIEW_OPENING_ID);
+	const boundary = new Date(startedAt).getTime();
+	const before: typeof stored = [];
+	const after: typeof stored = [];
+	for (const m of stored) {
+		const at = (m as { createdAt?: Date | string }).createdAt;
+		const t = at ? new Date(at).getTime() : Number.POSITIVE_INFINITY;
+		(t >= boundary ? after : before).push(m);
 	}
-	const world = state.steps.find((s) => s.id === "connect_world");
-	if (world?.status === "done" || state.first_day) {
-		synthetic.push({ id: GS_PROMISE_ID, role: "assistant", parts: [blank] });
+	const lines = [
+		// No heading of its own: the step's own "4 of 4 · Your story" stands
+		// directly above this, and two headings for one thing read as two
+		// things. The lead carries the message, and the plate renders after
+		// its text as before.
+		opening(GS_INTERVIEW_OPENING_ID, INTERVIEW_OPENING_LEAD),
+		opening("gs-iv-body", INTERVIEW_OPENING_BODY),
+		opening("gs-iv-ask", INTERVIEW_OPENING_ASK),
+	];
+	// Nothing to do when the opening already sits where it belongs.
+	if (already && chat.messages.length === stored.length + lines.length) {
+		const at = chat.messages.findIndex((m) => m.id === GS_INTERVIEW_OPENING_ID);
+		if (at === before.length) return;
 	}
-	if (state.ai_connected && stored.length === 0) {
-		synthetic.push({ id: GS_FIRST_LINE_ID, role: "assistant", parts: [blank] });
-	}
-	// Reassign ONLY when the synthetic set actually changed. The store's poll
-	// hands out a fresh state object every 30s, and reassigning the transcript
-	// on each one replaced the live message under the SDK's feet mid-stream:
-	// a streamed tool part landed in the SDK's own object and was gone from
-	// the copy the room rendered (the introductions card never appeared until
-	// a reload).
-	const currentSynthetic = chat.messages
-		.filter((m) => m.id.startsWith(GS_PREFIX))
-		.map((m) => m.id)
-		.join("|");
-	if (currentSynthetic === synthetic.map((m) => m.id).join("|")) return;
-	chat.messages = [...synthetic, ...stored] as unknown as typeof chat.messages;
+	chat.messages = [...before, ...lines, ...after] as unknown as typeof chat.messages;
 }

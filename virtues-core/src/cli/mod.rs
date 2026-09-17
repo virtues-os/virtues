@@ -488,7 +488,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                         .fetch_optional(pool)
                         .await?;
                 if let Some(day_id) = day_id {
-                    let events = crate::api::wiki::get_day_events(pool, day_id).await?;
+                    let events = crate::api::wiki_events::get_day_events(pool, day_id).await?;
                     println!();
                     println!("Event timeline ({}):", events.len());
                     for ev in &events {
@@ -572,11 +572,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
             println!();
             println!("✅ Day narrated — id={}", day.id);
-            if let Some(epigraph) = &day.epigraph {
-                println!();
-                println!("Epigraph:");
-                println!("  {epigraph}");
-            }
             // The prose lives on the day's article page, and only there — the
             // legacy `autobiography` column and the view's fallback arm were
             // dropped in 0106.
@@ -587,13 +582,8 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                     println!("  {line}");
                 }
             }
-            if let Some(dq) = &day.data_quality {
-                println!();
-                println!("Data quality: {dq}");
-            }
-
             // Show events that were created
-            let events = crate::api::wiki::get_day_events(pool, day.id.clone()).await?;
+            let events = crate::api::wiki_events::get_day_events(pool, day.id.clone()).await?;
             println!();
             println!("Events ({}):", events.len());
             for ev in &events {

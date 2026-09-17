@@ -1,0 +1,86 @@
+name = "Wiki Editor"
+description = "Keeps the wiki's articles true as the record grows."
+owner = "system"
+command = ["wiki_editor"]
+triggers = ["cron", "manual", "tool"]
+schedule = "0 0 * * * *"
+# Off until a box opts in. The editor writes prose into pages a person reads,
+# and the first run must be something they chose rather than something they
+# discovered.
+default_enabled = false
+
+# NOTE: this MUST stay above any [table] header. TOML binds every key
+# after a table header to that table, so an `agent` written below
+# [config.limits] is parsed as config.limits.agent — the column stays NULL,
+# the agent phase never runs, and nothing complains.
+agent = """
+The subprocess has already chosen the article and told you which one, and
+whether this is a FIRST WRITE or a REVISION. If it reported that nothing is
+due, reply "nothing due" and stop — do not go looking for work.
+
+Those two tasks are not the same. On a FIRST WRITE there is no article yet: the
+text you are shown is the owner's own seeding sentence, and "the evidence
+confirms what is already written" is never a reason to decline, because nothing
+is written. Research, then write the piece.
+
+Your job is ONE revision of ONE article, and the rules for writing it are in
+your instructions above. This says only how to go about it.
+
+YOU HAVE ALREADY BEEN GIVEN the article as it stands and what changed beneath
+it. Do not spend a call rediscovering either. Most revisions need NO tool calls
+at all before the write: read what you were handed, decide, and write.
+
+Reach for a tool only when a specific claim needs one — and then use two or
+three, never a survey. A run that spends its budget researching and writes
+nothing is the worst outcome available to you; it costs real money and leaves
+the article exactly as it was.
+
+- `semantic_search` when what you were handed names something you need detail
+  on to write a true sentence.
+- `sql_query` when a claim depends on a number or a span. "The first in
+  months" is a claim about the record; check it rather than writing it.
+- `get_page_content` only for a NEIGHBOURING page, never for this one.
+
+THEN DECIDE WHETHER TO WRITE AT ALL. New evidence is not the same as a reason
+to edit. If what you found is more of what the article already describes, the
+honest outcome is to leave it alone: say so and stop. An article rewritten
+every hour to say the same thing in new words is worse than one that sits
+still.
+
+WHEN YOU DO WRITE, call `revise_article` — never `edit_page`. That is not a
+preference. `revise_article` is the only door that checks the edit against the
+owner's own sentences before it lands; `edit_page` will happily overwrite them,
+and on a wiki article it is the wrong tool even when it appears to work.
+
+Call it once, with the whole article as it should now read. Everything still true must appear again unchanged; anything
+you leave out is deleted. The box works out what actually changed and applies
+only that, so a small change stays a small change in the page's history.
+
+If the call comes back refused, read the reason and try again. The usual
+reason is that your text dropped or reworded something the owner wrote — you
+may not do that, not even to improve it. Put their sentence back exactly as it
+was and keep your edit to your own prose.
+
+Reply with one line: what you changed, or that you left it alone.
+"""
+
+
+# A ceiling, because the doctrine that applies to everything scheduled applies
+# here: anything on a timer that calls a model gets a cap, or it is a hope
+# rather than a limit. One article per run, at most one run an hour.
+[config]
+# The CHAT slot, not the background one. An agent applet gets the lite model by
+# default, which is right for summarizing and bookkeeping and wrong here: what
+# this applet produces is prose a person reads on their own wiki, held to the
+# same bar as the day's article. A slot rather than a model id, because the
+# registry owns model selection and a literal in a manifest goes stale the
+# moment the catalog moves.
+model_slot = "chat"
+
+[config.limits]
+# A year's revision runs longer than an entity's — more text in, more text
+# back — and the first one stopped at $0.31. The ceiling is per RUN and a run
+# revises exactly one article, so this is the price of one edition, not of an
+# hour.
+max_llm_cost = 0.60
+

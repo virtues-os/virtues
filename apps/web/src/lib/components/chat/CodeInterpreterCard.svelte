@@ -7,6 +7,7 @@
 	 */
 	import { slide } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
+	import IconButton from "$lib/components/IconButton.svelte";
 
 	interface CodeOutput {
 		stdout?: string;
@@ -110,19 +111,14 @@
 		</div>
 		<div class="header-right">
 			{#if outputText()}
-				<button
-					class="copy-btn"
+				<IconButton
+					icon={copySuccess
+						? "ri:check-line"
+						: "ri:file-copy-line"}
+					label={copySuccess ? "Copied" : "Copy output"}
+					size="sm"
 					onclick={handleCopy}
-					type="button"
-					title={copySuccess ? "Copied!" : "Copy output"}
-				>
-					<Icon
-						icon={copySuccess
-							? "ri:check-line"
-							: "ri:file-copy-line"}
-						width="16"
-					/>
-				</button>
+				/>
 			{/if}
 			<Icon
 				icon={expanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
@@ -242,24 +238,6 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.copy-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0.25rem;
-		background: transparent;
-		border: none;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		border-radius: 0.25rem;
-		transition: all 0.15s ease;
-	}
-
-	.copy-btn:hover {
-		background: var(--color-surface-hover);
-		color: var(--color-text);
-	}
-
 	/* Content */
 	.card-content {
 		border-top: 1px solid var(--color-border);
@@ -332,23 +310,6 @@
 
 	.output-view.error .output-text {
 		color: var(--color-error);
-	}
-
-	/* Scrollbar styling */
-	.code-view::-webkit-scrollbar,
-	.output-view::-webkit-scrollbar {
-		width: 4px;
-	}
-
-	.code-view::-webkit-scrollbar-track,
-	.output-view::-webkit-scrollbar-track {
-		background: transparent;
-	}
-
-	.code-view::-webkit-scrollbar-thumb,
-	.output-view::-webkit-scrollbar-thumb {
-		background-color: var(--color-border);
-		border-radius: 2px;
 	}
 
 	/* Reduced motion */

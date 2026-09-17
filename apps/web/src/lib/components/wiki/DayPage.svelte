@@ -8,9 +8,9 @@
 -->
 
 <script lang="ts">
+	import { subjectHref } from "$lib/wiki/links";
 	import { browser } from "$app/environment";
-	import type { DayPage as DayPageType, DayEvent } from "$lib/wiki/types";
-	import { flattenLinkedEntities } from "$lib/wiki/types";
+	import type { DayEvent } from "$lib/wiki/types";
 	import {
 		getDaySources,
 		getDayEvents,
@@ -20,29 +20,49 @@
 		type DaySourceApi,
 		type DayChatApi,
 		type TimelineDayLocationChunk,
+		type WikiDayApi,
 	} from "$lib/wiki/api";
 	import { apiToDayEvent } from "$lib/wiki/converters";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import { getOntologyName } from "$lib/wiki/ontology";
-	import { getLocalDateSlug } from "$lib/utils/dateUtils";
+	import { getLocalDateSlug, parseDateSlug } from "$lib/utils/dateUtils";
 	import { getChapters, type ChapterApi } from "$lib/wiki/api";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import EventTimeline from "./EventTimeline.svelte";
 	import DaylineChart from "./DaylineChart.svelte";
 	import DayToolbar from "./DayToolbar.svelte";
-	import DataQualityCoverage from "./DataQualityCoverage.svelte";
 	import NotesRail from "./NotesRail.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import TableOfContents, { type TocHeading } from "$lib/components/TableOfContents.svelte";
 
 	import Icon from "$lib/components/Icon.svelte";
-
+	import Button from "$lib/components/Button.svelte";
 
 	interface Props {
-		page: DayPageType;
+		/** The wire shape. See PersonPage for why the converter is gone. */
+		page: WikiDayApi;
 	}
 
 	let { page }: Props = $props();
+
+	// `page.date` is an ISO day string. Read it as a LOCAL date — `new Date`
+	// on a bare `YYYY-MM-DD` is UTC midnight, which is the previous day for
+	// everyone west of Greenwich, and this one feeds the chart's axis.
+	const date = $derived(parseDateSlug(page.date));
+	const dayOfWeek = $derived(
+		["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][
+			date.getDay()
+		]
+	);
+	const sleepCycles = $derived(
+		(page.sleep_cycles ?? []).map((c) => ({
+			startTime: new Date(c.start_time),
+			endTime: new Date(c.end_time),
+			dominantStage: c.dominant_stage,
+			avgHr: c.avg_hr,
+			autonomicZ: c.autonomic_z,
+		}))
+	);
 
 	// Shared hover state for chart ↔ timeline sync
 	let hoveredEventId = $state<string | null>(null);
@@ -64,9 +84,6 @@
 		return parts[parts.length - 1].replace(/_/g, " ");
 	}
 
-	// Flatten linked entities for entity display
-	const allLinkedPages = $derived(flattenLinkedEntities(page.linkedEntities));
-
 	// Timezone display — fallback to browser timezone for ungenerated days
 	function getBrowserTimezone(): string | null {
 		if (!browser) return null;
@@ -76,17 +93,17 @@
 	}
 
 	const timezoneDisplay = $derived(
-		formatTimezoneDisplay(page.startTimezone) ?? getBrowserTimezone(),
+		formatTimezoneDisplay(page.start_timezone) ?? getBrowserTimezone(),
 	);
 
 	// Render timestamps in the SAME zone the server windowed this day in: the
 	// locked per-day start_timezone, else the viewing device's zone (which is
 	// also what get_day_sources used for an in-progress today). Keeps the Time
 	// column consistent with which records appear. See agents/record/timezone-model.md.
-	const rowTz = $derived(page.startTimezone ?? undefined);
+	const rowTz = $derived(page.start_timezone ?? undefined);
 
 
-	const currentDateSlug = $derived(getLocalDateSlug(page.date));
+	const currentDateSlug = $derived(getLocalDateSlug(date));
 	const todaySlug = $derived(getLocalDateSlug(new Date()));
 
 	// The day's chapter — the gapless partition made felt where a day is
@@ -97,6 +114,9 @@
 	$effect(() => {
 		void getChapters().then((rows) => (chapters = rows));
 	});
+	/** The year this day belongs to, for the way back up. */
+	const dayYear = $derived(page?.date ? Number(page.date.slice(0, 4)) : null);
+
 	const dayChapter = $derived.by(() => {
 		if (!chapters.length) return null;
 		return (
@@ -456,15 +476,16 @@
 	// `save_day_article` already guards against by refusing when
 	// `yjs_state IS NOT NULL`. The page editor is CRDT-aware; this was never
 	// going to be. One editor, and it is that one.
-	let summaryText = $state(page.autobiography || "");
+	let summaryText = $state((page.article ?? "") || "");
 
 	$effect(() => {
-		summaryText = page.autobiography || "";
+		summaryText = (page.article ?? "") || "";
 	});
 
-	// The day article IS a page — Edit opens the page editor. The first real
-	// edit claims it (the server flips auto_update off) and the nightly
-	// narration stops rewriting that day.
+	// The day article IS a page — Edit opens the page editor. Editing it does
+	// stop the nightly narration for that day, which is the one rung where that
+	// is still true: narration writes a whole first draft and has no way to
+	// edit around your sentences, so it stands down once there are any.
 	async function openDayArticle() {
 		const a = await getArticle("day", page.id);
 		if (a?.page_id) windowShellStore.openTabFromRoute(`/page/${a.page_id}`);
@@ -478,21 +499,19 @@
 		dayEvents.filter((e) => !e.isUnknown).length > 0,
 	);
 	const showMovement = $derived(hasLocationData);
-	const showEntities = $derived(allLinkedPages.length > 0);
+	// An "Entities" section stood here and could never draw: the converter
+	// hardcoded the list empty and the server never sent one on a day at all,
+	// so a day full of people rendered none while the Metadata block below
+	// reported how many were new. The section is gone rather than left as a
+	// stub; listing a day's entities is a thing to BUILD, from `wiki_refs`,
+	// not a thing to leave half-wired.
 	const showSources = $derived(dataSources.length > 0);
 	const showChats = $derived(dayChats.length > 0);
-
-	// Aggregate coverage percentage from W6H data quality (each dimension 1-5, overall is avg/5 → %)
-	const coveragePercent = $derived.by<number | null>(() => {
-		if (!page.dataQuality) return null;
-		return (page.dataQuality.overall / 5) * 100;
-	});
 
 	const hasAnyContent = $derived(
 		showAutobiography ||
 			showTimeline ||
 			showMovement ||
-			showEntities ||
 			showSources ||
 			showChats,
 	);
@@ -506,7 +525,6 @@
 		h.push({ id: "dayline", text: "The Dayline", level: 2 });
 		if (showTimeline) h.push({ id: "timeline", text: "Event Timeline", level: 2 });
 		if (showChats) h.push({ id: "chats", text: "AI Chats", level: 2 });
-		if (showEntities) h.push({ id: "entities", text: "Entities", level: 2 });
 		if (hasAnyContent) h.push({ id: "ontologies", text: "Data Ontologies", level: 2 });
 		if (hasAnyContent) h.push({ id: "metadata", text: "Metadata", level: 3 });
 		return h;
@@ -516,12 +534,11 @@
 
 <div class="day-page-outer">
 	<DayToolbar
-		pageDate={page.date}
+		pageDate={date}
 		{currentDateSlug}
 		{todaySlug}
 		onNavigateDay={navigateToDay}
 		{headerScrolledAway}
-		{coveragePercent}
 	/>
 
 	<div class="day-page-layout">
@@ -531,12 +548,18 @@
 				<!-- Header: title-page layout (h1 → meta → rule) -->
 				<header class="day-header" bind:this={headerEl}>
 					<h1 class="day-title">
-						{formatDate(page.date, page.dayOfWeek)}
+						{formatDate(date, dayOfWeek)}
 					</h1>
-					{#if relativeDateLabel() || dayChapter}
+					{#if relativeDateLabel() || dayChapter || dayYear}
 						<div class="day-subtitle">
 							{#if relativeDateLabel()}
 								<span class="date-badge">{relativeDateLabel()}</span>
+							{/if}
+							{#if dayYear}
+								<!-- Up one rung. The year's article links the days it
+								     rests on; without this the link only ran one way,
+								     and a day was a leaf you could not climb out of. -->
+								<a class="chapter-dateline" href="/year/year_{dayYear}">{dayYear}</a>
 							{/if}
 							{#if dayChapter}
 								<!-- The chapter dateline: which era of the life this day
@@ -547,47 +570,32 @@
 							{/if}
 						</div>
 					{/if}
-					{#if page.epigraph}
-						<p class="day-epigraph">{page.epigraph}</p>
-					{/if}
 					<!-- The record's colophon, where a title page would carry one:
 					     when this was last written, by whose hand, and how much of
 					     the day the record actually saw. The audit trail below
 					     keeps the rest. -->
-					{#if page.updatedAt || page.dataQuality}
+					{#if page.updated_at}
 						<p class="day-byline">
-							{#if page.updatedAt}
-								<span>
-									Updated {new Date(page.updatedAt).toLocaleDateString("en-US", {
-										month: "short",
-										day: "numeric",
-										year: "numeric",
-									})}{page.lastEditedBy
-										? ` · by ${page.lastEditedBy === "ai" ? "the record" : "you"}`
-										: ""}
-								</span>
-							{/if}
-							{#if page.updatedAt && page.dataQuality}
-								<span class="byline-sep">·</span>
-							{/if}
-							{#if page.dataQuality}
-								<span title={page.dataQuality.note}>
-									Coverage {page.dataQuality.overall}/5
-								</span>
-							{/if}
+							<span>
+								Updated {new Date(page.updated_at).toLocaleDateString("en-US", {
+									month: "short",
+									day: "numeric",
+									year: "numeric",
+								})}
+							</span>
 						</p>
 					{/if}
 					<div class="day-title-rule" aria-hidden="true"></div>
 				</header>
 
-				<!-- Narrative first: the day told in words (unfolds from the epigraph) -->
+				<!-- Narrative first: the day told in words -->
 				{#if showAutobiography}
 					<section class="section lead-section" id="summary">
 						<h2 class="section-title">
 							The Day
-							<!-- One pen at a time: the day article is kept by the
-							     nightly narration until you edit it, at which point
-							     it becomes yours and the record files notes instead. -->
+							<!-- The nightly narration keeps this page. Editing it does
+							     not take that away: your sentences stay yours and the
+							     record edits around them. -->
 							<button
 								type="button"
 								class="day-edit"
@@ -606,7 +614,7 @@
 				<!-- Dayline chart: visual bridge between narrative and timeline -->
 				<section class="section" id="dayline">
 					<h2 class="section-title">The Dayline</h2>
-					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.startTimezone} pageDate={page.date} readinessScore={page.readinessScore} sleepCycles={page.sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
+					<DaylineChart events={dayEvents} {priorSleepEvents} timezone={page.start_timezone} pageDate={date} sleepCycles={sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
 				</section>
 
 				{#if hasAnyContent}
@@ -616,12 +624,12 @@
 							<div class="section-header-row">
 								<h2 class="section-title">Event Timeline</h2>
 								<div class="section-actions">
-								<button class="section-action-btn" type="button" onclick={() => timelineRef?.toggleAll()}>
+								<Button variant="ghost" size="sm" onclick={() => timelineRef?.toggleAll()}>
 									{timelineRef?.allExpanded ? 'Collapse all' : 'Expand all'}
-								</button>
+								</Button>
 							</div>
 							</div>
-							<EventTimeline bind:this={timelineRef} events={dayEvents} timezone={page.startTimezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} pageDate={page.date} />
+							<EventTimeline bind:this={timelineRef} events={dayEvents} timezone={page.start_timezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} pageDate={date} />
 						</section>
 					{/if}
 
@@ -671,27 +679,6 @@
 						</section>
 					{/if}
 
-					<!-- Entities -->
-					{#if showEntities}
-						<section class="section" id="entities">
-							<h2 class="section-title">Entities</h2>
-							<ul class="footer-list">
-								{#each allLinkedPages as entity}
-									<li>
-										<a
-											href="/wiki/{entity.pageId}"
-											class="footer-link"
-										>
-											<span class="link-text"
-												>{entity.displayName}</span
-											>
-										</a>
-									</li>
-								{/each}
-							</ul>
-						</section>
-					{/if}
-
 					<!-- Ontologies: one chronological table of every data point -->
 					<section class="section" id="ontologies">
 						<h2 class="section-title">Data Ontologies</h2>
@@ -730,13 +717,13 @@
 					<section class="section" id="metadata">
 						<h2 class="section-title">Metadata</h2>
 						<dl class="metadata-grid">
-							{#if page.startTimezone}
+							{#if page.start_timezone}
 								<dt>Timezone</dt>
 								<dd>{timezoneDisplay}</dd>
 							{/if}
-							{#if page.createdAt}
+							{#if page.created_at}
 								<dt>Created</dt>
-								<dd>{new Date(page.createdAt).toLocaleString()}</dd>
+								<dd>{new Date(page.created_at).toLocaleString()}</dd>
 							{/if}
 							<!-- "Last updated" moved to the byline under the title —
 							     it is the one line a reader wants before the prose,
@@ -746,21 +733,11 @@
 							<dt>Sources</dt>
 							<dd>{dataSources.length}</dd>
 							<dt>New entities</dt>
-							<dd>{page.newEntityCount}</dd>
+							<dd>{page.new_entity_count}</dd>
 							<dt>New topics</dt>
-							<dd>{page.newTopicCount}</dd>
-							{#if page.readinessScore != null}
-								<dt>Readiness</dt>
-								<dd>{page.readinessScore}%</dd>
-							{/if}
+							<dd>{page.new_topic_count}</dd>
 							<dt>Page ID</dt>
 							<dd class="metadata-mono">{page.id}</dd>
-							{#if page.dataQuality}
-								<dt>Coverage</dt>
-								<dd>
-									<DataQualityCoverage dataQuality={page.dataQuality} />
-								</dd>
-							{/if}
 						</dl>
 					</section>
 				{:else}
@@ -854,23 +831,6 @@
 		font-family: var(--font-sans, system-ui, sans-serif);
 		font-size: 0.6875rem;
 		color: var(--color-foreground-subtle);
-	}
-
-	.byline-sep {
-		margin: 0 0.375rem;
-		opacity: 0.5;
-	}
-
-	.day-epigraph {
-		font-family: var(--font-sans, system-ui, sans-serif);
-		font-style: italic;
-		font-weight: 400;
-		font-size: 0.9375rem;
-		line-height: 1.5;
-		color: var(--color-foreground-subtle);
-		letter-spacing: 0.01em;
-		margin: 0;
-		max-width: 32rem;
 	}
 
 	.day-title {
@@ -995,21 +955,6 @@
 		align-items: center;
 		gap: 0.25rem;
 		flex-shrink: 0;
-	}
-
-	.section-action-btn {
-		background: none;
-		border: none;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		padding: 0.125rem 0.25rem;
-		border-radius: 3px;
-	}
-
-	.section-action-btn:hover {
-		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
 	}
 
 	/* Footer sections */

@@ -53,9 +53,16 @@
 </script>
 
 <div class="user-message-container">
+	<!-- `text-foreground`, NOT `text-primary`. Tailwind's `text-primary` reads
+	     like "the primary text color" and resolves to `--color-primary`, which
+	     in this system is the ACCENT — the one blue, which means interactive
+	     (themes.css). So every user message in the app was painted #0A84FF
+	     while the assistant's reply beside it was ink, and the person's own
+	     words looked like a link they could click. What someone typed is text,
+	     and it is the same text as the answer under it. -->
 	<div
 		bind:this={textContainer}
-		class="text-base text-primary user-message-content"
+		class="text-base text-foreground user-message-content"
 		style="max-height: {maxHeight}; overflow: hidden;"
 	>{#each segments as seg, i (i)}{#if seg.kind === 'ref'}<Ref displayName={seg.name} url={seg.url} />{:else}{seg.text}{/if}{/each}</div>
 

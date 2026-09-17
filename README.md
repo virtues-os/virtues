@@ -471,7 +471,7 @@ virtues/
 ├── docs/                    # The public manual — publishes to virtues.com/docs
 ├── agents/                  # The workshop: build contracts, records, plans (never published)
 ├── tools/                   # bootstrap.sh + virtues-installer (virtues.com/sh)
-└── masters/, deploy/, vendor/
+└── masters/, deploy/
 ```
 
 <a id="security"></a>

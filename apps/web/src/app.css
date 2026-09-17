@@ -69,7 +69,19 @@
 }
 
 /* Avenir (sans) — self-hosted so it renders off-Apple (Jetson/Linux), not just
-   where it's a system font. Three static weights cover regular/medium/bold. */
+   where it's a system font. Three static weights cover regular/medium/bold.
+
+   ⚠ LICENSE UNVERIFIED — A HUMAN MUST ANSWER THIS. Avenir is a commercial
+   Linotype/Monotype family. Every other face we self-host is free to
+   redistribute (IBM Plex Mono is OFL); these three .woff2 files are not
+   obviously covered by anything on record. Self-hosting redistributes the
+   webfont from a PUBLIC repo and from every box we ship, which is a heavier
+   use than "it happens to be installed on this Mac." Nobody on the build side
+   can settle this by reading code, so do not treat the files' presence as
+   evidence that a web license exists. Until a human confirms one: do not add
+   weights, do not copy these files into another repo or another product, and
+   do not remove them either — swapping the sans is a design decision, not a
+   cleanup. See agents/build/typography.md. */
 @font-face {
 	font-family: 'Avenir';
 	src: url('/fonts/Avenir-Regular.woff2') format('woff2');
@@ -118,6 +130,28 @@
 	font-display: swap;
 }
 
+/* JJannon (serif) — ONE CUT. Read this before designing anything with it.
+   `JJannon-Display-Regular.woff2` is the only serif file we have: no bold, no
+   semibold, no italic, no second optical size. The three @font-face rules
+   below all point at that same file — 'JJannon' at 300, 'JJannon' at 400, and
+   'JJannon UI' with corrected metrics — so the family looks richer in this
+   stylesheet than it is on disk.
+
+   The consequence is a CONSTRAINT, not a taste: "the serif is never bold and
+   never italic" cannot be violated, only faked. Ask a browser for JJannon 700
+   and CSS font matching stays inside the family and hands back the one cut, so
+   the heading silently renders regular; ask for italic and the browser
+   synthesizes an oblique — a mechanical slant, not a drawn italic, and it
+   looks it. There is no fall-through to another family for weight or style:
+   family fallback happens only for missing glyphs and while the file loads.
+
+   So a serif hierarchy CANNOT be set with weight or slope. Set it with size,
+   case, color, and space — which is what the design grammar already asks for.
+   The 300 and 400 registrations exist so that either number in a `font-weight`
+   resolves without synthesis; they are the same ink.
+
+   Anyone proposing a serif system here (including an outside agency) is
+   proposing a license purchase and a new file, not a CSS change. */
 @font-face {
 	font-family: 'JJannon';
 	src: url('/fonts/JJannon-Display-Regular.woff2') format('woff2');
@@ -165,12 +199,50 @@
 	line-gap-override: 0%;
 }
 
-@font-face {
-	font-family: 'Lora';
-	src: url('/fonts/Lora-VariableFont_wght.ttf') format('truetype');
-	font-weight: 300 700;
-	font-style: normal;
-	font-display: swap;
+/* No serif fallback webfont. Lora used to be registered here — a 212 KB
+   UNCOMPRESSED .ttf, the only non-woff2 face we shipped — and it sat second in
+   `--font-serif`, behind JJannon. It could never earn that: family fallback is
+   reached only for a glyph JJannon lacks or during the swap window, and in
+   both cases Lora's own coverage is Latin, the same ground a system serif
+   already covers for free. So the user paid a quarter of a megabyte for the
+   flash before the real serif landed. The fallback is now a system stack —
+   zero bytes, drawn on frame one. If a serif fallback ever has to come back,
+   it comes back as woff2. */
+
+/* ===================================
+   SCROLLBARS — one rule, inherited
+   =================================== */
+
+/* There was no global scrollbar style at all. Ten components hand-rolled their
+   own at SIX different widths (3px, 4px, 6px, 8px, `thin`, hidden) and every
+   room that hadn't got round to it — Home, Wiki, Pages, Settings, Sources,
+   Drive, every list view — showed the raw platform bar: a 15px opaque slab
+   that steals 15px of content width, so a page that grows past one screen
+   shifts its centred column and stops lining up with its neighbours.
+   The merged card made it louder still, landing that slab against a 1px
+   divider.
+
+   STANDARD PROPERTIES ONLY, and that is the load-bearing part: unlike
+   `::-webkit-scrollbar`, they do not force classic layout-stealing scrollbars
+   on anyone whose platform draws overlay ones. Eight of the ten components
+   were reaching for `::-webkit-scrollbar` to make the gutter less ugly, which
+   was also what opted them INTO the gutter.
+
+   THE TWO PROPERTIES DO NOT BEHAVE THE SAME WAY, and writing both on `:root`
+   silently half-worked: `scrollbar-color` inherits, `scrollbar-width` does
+   NOT. Every scroller in the app took the colour and kept `width: auto`, so
+   the 15px platform gutter survived a rule that looked like it had replaced
+   it. Hence the universal selector — it is what makes the width reach the
+   elements that actually scroll.
+
+   `:where()` keeps the specificity at zero, so a component that genuinely
+   needs its own answer (the hidden ones below) still wins without `!important`.
+
+   Hiding is a different intent and stays local (`scrollbar-width: none` in the
+   tab strip and the wiki articles). */
+:where(*) {
+	scrollbar-width: thin;
+	scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 /* Themed root background. On the mobile shell the page paints edge-to-edge
@@ -311,21 +383,55 @@ h6 {
 	background: transparent;
 }
 
+/* Lists sit closer to the margin and closer to each other than they did.
+   2em of indent and 0.5rem between items reads as five separate paragraphs
+   that happen to have dots; a list is one thought in parts, and should look
+   like one block. The reference points: GitHub indents 2em and spaces items
+   0.25em, Tailwind's prose indents 1.625em, Stripe's docs about 1.25em —
+   1.5em and 0.35em sits inside that range, in `em` so it tracks the type.
+   Block margins stay at the paragraph's own rhythm. */
 .markdown ul {
-	@apply list-disc mb-4 space-y-2;
-	padding-left: 2em;
+	@apply list-disc mb-4;
+	/* Streamdown ships its own `ml-4` on every list, which stacked 16px on top
+	   of whatever we set here — the reason a five-line list sat 40px in from
+	   its own paragraph. Padding is the one knob; the margin is zeroed so
+	   there is nothing to stack with. */
+	margin-left: 0;
+	padding-left: 1.5em;
 	list-style-position: outside;
 }
 
 .markdown ol {
-	@apply list-decimal mb-4 space-y-2;
-	padding-left: 2em;
+	@apply list-decimal mb-4;
+	margin-left: 0;
+	padding-left: 1.5em;
 	list-style-position: outside;
 }
 
 .markdown li {
 	line-height: var(--md-body-lh);
 	contain: layout;
+}
+
+.markdown li + li {
+	margin-top: 0.35em;
+}
+
+/* A nested list is part of its parent item, not a new block after it. */
+.markdown li > ul,
+.markdown li > ol {
+	margin-top: 0.35em;
+	margin-bottom: 0;
+}
+
+/* A paragraph inside a list item is the item, not a block in its own right —
+   markdown makes these the moment any item in the list has a blank line. */
+.markdown li > p {
+	margin-bottom: 0;
+}
+
+.markdown li > p + p {
+	margin-top: 0.5em;
 }
 
 .markdown blockquote {
@@ -408,6 +514,29 @@ h6 {
 
 .markdown img {
 	@apply max-w-full h-auto rounded-lg my-4;
+}
+
+/* The spinner every "working" glyph in the app wears: `<Icon … class="spin" />`.
+   It lives here because it was never anywhere: SIX components each declared
+   their own `:global(.spin)` (ContextMenuItem, CoverImagePicker,
+   NotebookDetailView, PageContent, VersionHistoryPanel, the public share page)
+   and TEN more used the class without declaring it — SubagentPanel,
+   SystemInfoView, DeveloperSqlView, ReferencesPanel and the rest — so whether
+   your spinner turned depended on whether an unrelated component happened to
+   be mounted. Removing ContextMenuItem's copy on 2026-09-16 is what surfaced
+   it. The duplicate declarations are harmless now and should go. */
+.spin {
+	animation: virtues-spin 1s linear infinite;
+}
+
+@keyframes virtues-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+/* Keep the information, drop the travel (design.md). */
+@media (prefers-reduced-motion: reduce) {
+	.spin { animation: none; }
 }
 
 /* Button Variants - Using semantic colors */

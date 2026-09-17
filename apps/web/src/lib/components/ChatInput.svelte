@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { serializeComposer } from "$lib/utils/composerText";
 	import Icon from "$lib/components/Icon.svelte";
-	import { onMount } from "svelte";
+	import { onDestroy, onMount } from "svelte";
 	import { Spring } from "svelte/motion";
-	import { createEntityBadgeElement } from "$lib/utils/refBadge";
 	import RefPicker, { type EntityResult } from "./RefPicker.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { closeOpenFence, createComposerEditor, type ComposerEditor } from "$lib/codemirror/composer";
+	import { createRefPicker, insertRef } from "$lib/codemirror/extensions/ref-picker";
 
 	let {
 		value = $bindable(""),
@@ -15,7 +15,7 @@
 		isStreaming = false,
 		maxWidth = "max-w-3xl",
 		focused = $bindable(false),
-		placeholder = "Write a message...",
+		placeholder = "Ask Virtues",
 		onAttach = undefined as ((files: File[]) => void) | undefined,
 		onSubmit = undefined as ((content: string) => void) | undefined,
 		onStop = undefined as (() => void) | undefined,
@@ -47,11 +47,20 @@
 		input.value = ""; // allow re-picking the same file
 	}
 
+	// The composer is a CodeMirror instance — the same kernel as Pages, in a
+	// smaller configuration (see lib/codemirror/composer.ts). The document is
+	// the message: a markdown string, no DOM to serialize.
 	let inputEl: HTMLDivElement;
+	let editor: ComposerEditor | null = null;
 	let isFocused = $state(false);
 	let inputIsEmpty = $state(true);
+	// Mirror of the editor document, so an external `value` set can be told
+	// apart from our own echo of a keystroke.
+	let docText = "";
 
-	const MIN_HEIGHT = 24;
+	// One line of 1rem × 1.5 plus the content padding; the cap matches the old
+	// composer. The spring animates the mount box between the two.
+	const MIN_HEIGHT = 28;
 	const MAX_HEIGHT = 200;
 	const inputHeight = new Spring(MIN_HEIGHT, { stiffness: 0.18, damping: 0.8 });
 
@@ -60,14 +69,10 @@
 	// Bottom-align the controls once the field wraps past a single line.
 	const isMultiline = $derived(inputHeight.current > MIN_HEIGHT + 6);
 
-	// @ mention state - uses RefPicker
+	// `@` picker — detection lives in the ref-picker extension; the panel is
+	// the same RefPicker component, anchored above the pill as before.
 	let showEntityPicker = $state(false);
-	// Save the text node and cursor position when @ is typed (before picker steals focus)
-	let savedTextNode: Text | null = $state(null);
-	let savedCursorOffset: number = $state(0);
-
-	// Store entity references by ID for expansion on submit
-	let entityMentions = $state<Map<string, EntityResult>>(new Map());
+	let entityPickerFrom = 0;
 
 	// Can we submit? (has content, or staged refs/attachments allow an empty send)
 	const canSubmit = $derived((!inputIsEmpty || allowEmptySubmit) && !sendDisabled);
@@ -89,7 +94,7 @@
 
 	// Focus input when focused prop is set to true externally
 	$effect(() => {
-		if (focused && inputEl && !isFocused) {
+		if (focused && editor && !isFocused) {
 			// Don't steal focus if a modal/overlay is open
 			const hasModalOpen = document.querySelector('.modal-backdrop, .picker-backdrop, [role="dialog"]');
 			if (hasModalOpen) return;
@@ -101,153 +106,71 @@
 				(active as HTMLElement).isContentEditable
 			);
 			if (!isOtherInputFocused) {
-				inputEl.focus();
+				editor.view.focus();
 			}
 		}
 	});
 
-	// The composer is a contenteditable, so line structure lives in the DOM
-	// (blocks, <br>, U+00A0) rather than in `\n`. `textContent` and a
-	// text-node-only walk drop all of it — three typed bullet lines reached
-	// the model as one run-on line. serializeComposer reads blocks as lines.
-	const PILL = {
-		className: "ref-pill",
-		serialize: (el: HTMLElement) => {
-			const entityUrl = el.dataset.entityUrl;
-			const name = el.textContent?.replace(/^@/, "") || "";
-			return entityUrl ? `[${name}](${entityUrl})` : null;
-		},
-	};
-
-	// Text with mentions expanded to markdown links — what gets sent.
-	function getExpandedContent(): string {
-		return inputEl ? serializeComposer(inputEl, PILL) : "";
-	}
-
-	// Text with mentions as their visible label — for the value binding.
-	function getPlainContent(): string {
-		return inputEl ? serializeComposer(inputEl) : "";
-	}
-
-	function updateHeight() {
-		if (!inputEl) return;
-		// Temporarily reset height to measure natural scrollHeight
-		inputEl.style.height = 'auto';
-		const newHeight = Math.min(Math.max(inputEl.scrollHeight, MIN_HEIGHT), MAX_HEIGHT);
-		inputEl.style.height = `${inputHeight.current}px`;
-		inputHeight.target = newHeight;
-	}
-
-	function handleInput() {
-		// Sync value for external binding
-		value = getPlainContent();
-
-		// Update empty state for placeholder
-		inputIsEmpty = !value.trim();
-
-		// Animate height change
-		updateHeight();
-
-		// Check for @ trigger
-		const selection = window.getSelection();
-		if (!selection || selection.rangeCount === 0) return;
-
-		const range = selection.getRangeAt(0);
-		if (!range.collapsed) return;
-
-		const textNode = range.startContainer;
-		if (textNode.nodeType !== Node.TEXT_NODE) return;
-
-		const text = textNode.textContent || "";
-		const cursorPos = range.startOffset;
-		const textBeforeCursor = text.slice(0, cursorPos);
-
-		if (textBeforeCursor.endsWith("@")) {
-			savedTextNode = textNode as Text;
-			savedCursorOffset = cursorPos;
-			showEntityPicker = true;
+	// External `value` set (the host clears it after a send, or prefills it)
+	// → replace the document. Our own onChange echo lands here equal to
+	// docText and is a no-op.
+	$effect(() => {
+		if (editor && value !== docText) {
+			docText = value;
+			editor.setDoc(value);
 		}
+	});
+
+	$effect(() => {
+		editor?.setDisabled(disabled);
+	});
+
+	function setHeight(contentPx: number) {
+		inputHeight.target = Math.min(Math.max(contentPx, MIN_HEIGHT), MAX_HEIGHT);
 	}
 
 	function handleEntityPickerSelect(entity: EntityResult) {
-		if (!savedTextNode || !savedTextNode.parentNode) {
-			closeEntityPicker();
-			return;
-		}
-
-		const text = savedTextNode.textContent || "";
-		const cursorPos = savedCursorOffset;
-
-		const atIndex = text.lastIndexOf("@", cursorPos - 1);
-		if (atIndex !== -1) {
-			const chip = createEntityBadgeElement(entity.name, entity.url, {
-				className: 'ref-pill',
-			});
-
-			const space = document.createTextNode(" ");
-
-			const beforeText = text.slice(0, atIndex);
-			const afterText = text.slice(cursorPos);
-
-			savedTextNode.textContent = beforeText;
-
-			const parent = savedTextNode.parentNode;
-			const afterNode = document.createTextNode(afterText);
-			parent.insertBefore(chip, savedTextNode.nextSibling);
-			parent.insertBefore(space, chip.nextSibling);
-			parent.insertBefore(afterNode, space.nextSibling);
-
-			const selection = window.getSelection();
-			if (selection) {
-				const newRange = document.createRange();
-				newRange.setStartAfter(space);
-				newRange.collapse(true);
-				selection.removeAllRanges();
-				selection.addRange(newRange);
-			}
-
-			entityMentions.set(entity.id, entity);
-		}
-
-		closeEntityPicker();
-		value = getPlainContent();
-		inputIsEmpty = !value.trim();
+		if (!editor) return;
+		// Always the inline form. Pages hand files to the media widgets as
+		// `![label](url)`; a message attaches files through the attach path
+		// instead, so a picked file is a link here like any other ref.
+		insertRef(editor.view, entityPickerFrom, entity.name, entity.url);
+		showEntityPicker = false;
 	}
 
 	function closeEntityPicker() {
 		showEntityPicker = false;
-		savedTextNode = null;
-		savedCursorOffset = 0;
-		inputEl?.focus();
+		editor?.view.focus();
 	}
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (showEntityPicker) {
-			if (e.key === "Escape") {
-				e.preventDefault();
-				closeEntityPicker();
-			}
-			return;
-		}
-
-		if (e.key === "Enter" && !e.shiftKey) {
-			e.preventDefault();
-			handleSubmit();
-		}
+	// What gets sent. The document is already markdown; three transforms only.
+	// The ref label: the picker writes `[@Label](url)` (the Pages form) and
+	// the thread and the model have always seen `[Label](url)`, so the `@`
+	// comes off here. A trailing empty list marker: on the phone Return
+	// continues the list, so the natural last keystroke before Send leaves a
+	// bare `- ` on its own line, which is never intended content. And a fence
+	// left open gets its closing line, so the message is well-formed markdown
+	// for anything that renders it later.
+	const TRAILING_EMPTY_MARKER = /\n\s*(?:[-*+]|\d+[.)])(?:\s+\[[ xX]\])?\s*$/;
+	function outgoingContent(): string {
+		const text = docText
+			.replace(/\[@([^\]]+)\]\(/g, "[$1](")
+			.replace(/\s+$/, "")
+			.replace(TRAILING_EMPTY_MARKER, "")
+			.trim();
+		return closeOpenFence(text);
 	}
 
 	function handleSubmit() {
-		const content = getExpandedContent().trim();
+		const content = outgoingContent();
 		if ((!content && !allowEmptySubmit) || disabled) return;
 
 		onSubmit?.(content);
 
-		if (inputEl) {
-			inputEl.innerHTML = "";
-		}
+		docText = "";
 		value = "";
+		editor?.setDoc("");
 		inputIsEmpty = true;
-		entityMentions.clear();
 		inputHeight.target = MIN_HEIGHT;
 	}
 
@@ -260,55 +183,56 @@
 		if (target.tagName === "BUTTON" || target.closest("button")) {
 			return;
 		}
-		if (inputEl) {
-			inputEl.focus();
-		}
-	}
-
-	function handlePaste(e: ClipboardEvent) {
-		const dt = e.clipboardData;
-		if (!dt) return;
-
-		const imgs: File[] = [];
-		for (const it of Array.from(dt.items || [])) {
-			if (it.kind === "file" && it.type.startsWith("image/")) {
-				const f = it.getAsFile();
-				if (f) imgs.push(f);
-			}
-		}
-		if (imgs.length === 0) {
-			for (const f of Array.from(dt.files || [])) {
-				if (f.type.startsWith("image/")) imgs.push(f);
-			}
-		}
-		if (imgs.length > 0 && onAttach) {
-			e.preventDefault();
-			onAttach(imgs);
-			return;
-		}
-
-		const text = dt.getData("text/plain") || "";
-		if (text.length > 1500 && onAttach) {
-			e.preventDefault();
-			onAttach([new File([text], "Pasted Text.txt", { type: "text/plain" })]);
-			return;
-		}
-
-		e.preventDefault();
-		document.execCommand("insertText", false, text);
+		editor?.view.focus();
 	}
 
 	onMount(() => {
-		if (value && inputEl) {
-			inputEl.textContent = value;
-		}
-		// Set imperatively: `autocorrect` is WebKit's own attribute (not in
-		// Svelte's HTML typings) and iOS keys the QuickType prediction row off
-		// it — with it off (plus spellcheck=false above), the keyboard drops
-		// the suggested-words strip the way native chat apps do.
-		if (mobileLayout.isMobile && inputEl) {
-			inputEl.setAttribute("autocorrect", "off");
-		}
+		editor = createComposerEditor({
+			parent: inputEl,
+			doc: value,
+			placeholder,
+			disabled,
+			isMobile: () => mobileLayout.isMobile,
+			onSubmit: handleSubmit,
+			onChange: (doc) => {
+				docText = doc;
+				value = doc;
+				inputIsEmpty = !doc.trim();
+			},
+			onFocusChange: (f) => {
+				isFocused = f;
+			},
+			onHeight: setHeight,
+			onAttach,
+			onEscape: () => {
+				if (showEntityPicker) {
+					closeEntityPicker();
+					return true;
+				}
+				return false;
+			},
+			extensions: [
+				createRefPicker({
+					onOpen: (_coords, from) => {
+						entityPickerFrom = from;
+						showEntityPicker = true;
+					},
+					onClose: () => {
+						showEntityPicker = false;
+					},
+					onQueryChange: () => {
+						// RefPicker has its own search input; nothing to relay.
+					},
+				}),
+			],
+		});
+		docText = value;
+		inputIsEmpty = !value.trim();
+	});
+
+	onDestroy(() => {
+		editor?.destroy();
+		editor = null;
 	});
 </script>
 
@@ -323,8 +247,6 @@
 		role="textbox"
 		tabindex="-1"
 	>
-		<label for="chat-input" class="sr-only">Message</label>
-
 		{#if onAttach}
 			<button
 				type="button"
@@ -345,29 +267,15 @@
 			/>
 		{/if}
 
-		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+		<!-- The editor mounts here. The box's height is the spring; the
+		     editor's own scroller stays unclipped and this box scrolls once
+		     the content passes the cap, so the caret scrolls into view
+		     through the nearest scrollable ancestor as CodeMirror expects. -->
 		<div
 			id="chat-input"
 			bind:this={inputEl}
-			contenteditable={!disabled}
-			oninput={handleInput}
-			onkeydown={handleKeydown}
-			onpaste={handlePaste}
-			onfocus={() => {
-				isFocused = true;
-			}}
-			onblur={() => {
-				isFocused = false;
-			}}
-			class="chat-input resize-none outline-none text-foreground font-sans text-base bg-transparent"
+			class="chat-input text-foreground font-sans bg-transparent"
 			class:empty={inputIsEmpty}
-			data-placeholder={placeholder}
-			role="textbox"
-			aria-multiline="true"
-			tabindex="0"
-			spellcheck={mobileLayout.isMobile ? false : undefined}
-			autocapitalize={mobileLayout.isMobile ? "sentences" : undefined}
-			enterkeyhint={mobileLayout.isMobile ? "send" : undefined}
 			style:height="{inputHeight.current}px"
 			style:overflow-y={shouldScroll ? 'auto' : 'hidden'}
 		></div>
@@ -451,33 +359,16 @@
 	.chat-input {
 		flex: 1;
 		min-width: 0;
-		line-height: 1.5;
-		padding: 0.125rem 0.25rem;
-		white-space: pre-wrap;
-		word-wrap: break-word;
 		font-family: var(--font-sans);
 	}
 
-	/* Placeholder using ::before pseudo-element */
-	.chat-input.empty::before {
-		content: attr(data-placeholder);
-		color: var(--color-foreground-subtle);
-		pointer-events: none;
-		position: absolute;
-	}
-
-	.chat-input::-webkit-scrollbar {
-		width: 6px;
-	}
-	.chat-input::-webkit-scrollbar-track {
+	/* The editor fills the animated box; the box, not the editor, clips. */
+	.chat-input :global(.cm-editor) {
+		height: auto;
 		background: transparent;
 	}
-	.chat-input::-webkit-scrollbar-thumb {
-		background: var(--color-border-subtle);
-		border-radius: 3px;
-	}
-	.chat-input::-webkit-scrollbar-thumb:hover {
-		background: var(--color-border-strong);
+	.chat-input :global(.cm-scroller) {
+		overflow: visible;
 	}
 
 	/* Round icon buttons that sit inside the pill */

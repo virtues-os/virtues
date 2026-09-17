@@ -128,9 +128,13 @@ pub fn format_usd(micros: i64) -> String {
 ///
 /// Joins `app_ai_calls` to the applet through the run that spent it. Runs are
 /// never pruned, so this window is always complete.
+///
+/// The `::bigint` cast is load-bearing: `SUM(bigint)` is `NUMERIC` in
+/// Postgres and sqlx will not decode that as `i64`, so the gate would have
+/// errored on its first spend check instead of enforcing anything.
 pub async fn spend_micros_last_day(db: &PgPool, applet_id: &str) -> Result<i64> {
     let total: Option<i64> = sqlx::query_scalar(
-        r#"SELECT COALESCE(SUM(c.cost_micros), 0)
+        r#"SELECT COALESCE(SUM(c.cost_micros), 0)::bigint
              FROM app_ai_calls c
              JOIN app_applet_runs r ON r.id = c.applet_run_id
             WHERE r.applet_id = $1
@@ -146,7 +150,7 @@ pub async fn spend_micros_last_day(db: &PgPool, applet_id: &str) -> Result<i64> 
 /// to show what a run actually cost; the live cap is tracked in memory.
 pub async fn spend_micros_for_run(db: &PgPool, run_id: &str) -> Result<i64> {
     let total: Option<i64> = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(cost_micros), 0) FROM app_ai_calls WHERE applet_run_id = $1",
+        "SELECT COALESCE(SUM(cost_micros), 0)::bigint FROM app_ai_calls WHERE applet_run_id = $1",
     )
     .bind(run_id)
     .fetch_one(db)

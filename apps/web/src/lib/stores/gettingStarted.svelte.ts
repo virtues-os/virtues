@@ -6,12 +6,13 @@
  * read. `refresh()` after anything that could flip a step (a card's write,
  * a source connecting, a skip) — the server has nothing to push.
  *
- * A 404 reads as "an older box": unlocked, nothing to show. A phone that
+ * A 404 reads as "an older box": nothing to show. A phone that
  * updated ahead of its server must never strand on a missing endpoint.
  */
 import {
 	getGettingStarted,
 	skipGettingStartedStep,
+	startGettingStartedInterview,
 	type GettingStartedState,
 	type GettingStartedStepId,
 } from "$lib/api/client";
@@ -21,14 +22,11 @@ const POLL_MS = 30_000;
 class GettingStartedStore {
 	state = $state<GettingStartedState | null>(null);
 	loaded = $state(false);
-	/** The endpoint is missing (an older box): behave as unlocked and done. */
+	/** The endpoint is missing (an older box): behave as done. */
 	unsupported = $state(false);
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private inflight: Promise<void> | null = null;
 
-	get locked(): boolean {
-		return this.state?.locked ?? false;
-	}
 	get aiConnected(): boolean {
 		return this.state?.ai_connected ?? true;
 	}
@@ -71,6 +69,25 @@ class GettingStartedStore {
 
 	async skip(step: GettingStartedStepId, skipped = true): Promise<void> {
 		this.state = await skipGettingStartedStep(step, skipped);
+	}
+
+	/**
+	 * Set by `startInterview` and consumed by the room once the opening is
+	 * in the thread: the opening is authored, not streamed, so the room
+	 * reveals it the way a turn arrives — but only on the press of Start,
+	 * never on a reload of a thread that already holds it.
+	 */
+	revealOpening = $state(false);
+
+	/** The interview begins, inside the room. */
+	async startInterview(): Promise<void> {
+		this.state = await startGettingStartedInterview();
+		this.revealOpening = true;
+	}
+
+	/** The interview is the conversation now: begun, and no document yet. */
+	get interviewUnderway(): boolean {
+		return !!this.state?.interview_started_at && this.step("interview")?.status !== "done";
 	}
 
 	/** Poll while anything is open: sources land on cron, the interview

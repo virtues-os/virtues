@@ -75,6 +75,16 @@ const EMPTY_COMPLETION_ATTEMPTS: u32 = 3;
 /// Gated on `choices` being present so it only judges chat-shaped responses,
 /// and on success so a real error status falls through to the caller's own
 /// handling untouched.
+///
+/// "No assistant text" is not "no answer". An image model answers with
+/// `content: ""` and the picture in `message.images[]` (the shape
+/// `image_gen.rs` parses), and a tool-calling model answers with
+/// `tool_calls[]` and blank content. Measured on the box 2026-09-14: every
+/// `generate_image` call came back in ~18s with a billed image, was judged
+/// empty on its blank `content`, and was resent — and the 30s per-tool
+/// timeout then killed the resend mid-flight. Three images paid for, none
+/// shown. So a choice is empty only when it carries no text, no image, no
+/// content parts, and no tool call.
 fn is_empty_completion(resp: &ApiResponse) -> bool {
     if !resp.is_success() {
         return false;
@@ -84,10 +94,17 @@ fn is_empty_completion(resp: &ApiResponse) -> bool {
     };
     // An empty `choices` array is the same failure wearing a different shape.
     choices.iter().all(|c| {
-        c["message"]["content"]
+        let message = &c["message"];
+        let has_text = message["content"]
             .as_str()
-            .map(|s| s.trim().is_empty())
-            .unwrap_or(true)
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        let non_empty_array =
+            |key: &str| message[key].as_array().is_some_and(|a| !a.is_empty());
+        !(has_text
+            || non_empty_array("content")
+            || non_empty_array("images")
+            || non_empty_array("tool_calls"))
     })
 }
 
@@ -950,6 +967,40 @@ mod byo_fork_tests {
         assert!(!is_empty_completion(&completion(
             200,
             json!({"data": [{"embedding": [0.1, 0.2]}]}),
+        )));
+    }
+
+    #[test]
+    fn an_answer_that_is_not_text_is_not_empty() {
+        // An image model's answer: blank content, the picture in images[].
+        // This was resent (and billed again) as "empty" on 2026-09-14.
+        assert!(!is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {
+                "content": "",
+                "images": [{"image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}]
+            }}]}),
+        )));
+        // A tool call with no prose around it.
+        assert!(!is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {
+                "content": null,
+                "tool_calls": [{"id": "c1", "type": "function",
+                                "function": {"name": "f", "arguments": "{}"}}]
+            }}]}),
+        )));
+        // Multimodal content parts.
+        assert!(!is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {
+                "content": [{"type": "text", "text": "hi"}]
+            }}]}),
+        )));
+        // But empty arrays are still nothing.
+        assert!(is_empty_completion(&completion(
+            200,
+            json!({"choices": [{"message": {"content": "", "images": [], "tool_calls": []}}]}),
         )));
     }
 

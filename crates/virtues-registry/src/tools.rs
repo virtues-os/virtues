@@ -72,7 +72,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         think_tool(),
         propose_narrative_identity_tool(),
         write_it_up_tool(),
-        show_step_tool(),
+        revise_article_tool(),
         skip_step_tool(),
         record_introductions_tool(),
         update_memory_tool(),
@@ -180,6 +180,53 @@ If you are unsure whether something qualifies, it does not."#.to_string(),
 /// The narrative interview's ONE tool: turn the transcript into the person's
 /// document and chapters. Interview-mode only (see get_tools_for_agent_mode);
 /// is_system keeps it out of every other room's tool set.
+fn revise_article_tool() -> ToolConfig {
+    ToolConfig {
+        id: "revise_article".to_string(),
+        name: "Revise a wiki article".to_string(),
+        description: "Hand back a revised wiki article; the record applies what changed"
+            .to_string(),
+        // The HOW-TO-WRITE lives in the editor's constitution and brief
+        // (virtues-core/prompts/wiki/), in one place. This describes only the
+        // arguments and what the box does with them, so the two cannot drift.
+        llm_description: r#"Hand back the WHOLE article as it should now read. You do not patch it and you do not describe the change: you write the finished document, and the record works out what actually changed and applies only that. History therefore shows a small diff, not a rewrite.
+
+Arguments:
+- subject_type / subject_id: the article you were asked to revise.
+- article: the complete new text. Everything still true must appear again, unchanged — anything you leave out is deleted.
+- summary: one line on WHAT you changed and WHY, in plain words ("added the spring recital and three lessons in March"). Never "improved the article". The box appends its own count of what moved, so do not pad this with numbers.
+
+A refused call is not an error. It returns the sentence to act on — most often that your text dropped or reworded something the owner wrote, which you may not do even to improve it. Fix that and call again."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "subject_type": {
+                    "type": "string",
+                    "description": "The article's subject type, e.g. person, place, organization, year."
+                },
+                "subject_id": {
+                    "type": "string",
+                    "description": "The article's subject id, exactly as given to you."
+                },
+                "article": {
+                    "type": "string",
+                    "description": "The complete revised article. Anything omitted is deleted."
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "One plain line: what changed and why."
+                }
+            },
+            "required": ["subject_type", "subject_id", "article", "summary"]
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:draft-line".to_string(),
+        display_order: 0,
+        is_system: true,
+    }
+}
+
 fn write_it_up_tool() -> ToolConfig {
     ToolConfig {
         id: "write_it_up".to_string(),
@@ -226,26 +273,6 @@ A refused call is not an error: it returns the sentence to act on, and the inter
 /// Getting started's tools. Mode-only (see get_tools_for_agent_mode);
 /// is_system keeps them out of every other room. None writes anything: they
 /// return markers the client renders as cards, and the cards do the work.
-fn show_step_tool() -> ToolConfig {
-    ToolConfig {
-        id: "show_step".to_string(),
-        name: "Open a getting-started step".to_string(),
-        description: "Open one step's card in the getting-started conversation".to_string(),
-        llm_description: "Open the card for one getting-started step (introductions, connect_world, interview). The card is the person's way to do the step; you cannot do it for them. Refused for a step that is already done.".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "step": { "type": "string", "enum": ["introductions", "connect_world", "interview"] }
-            },
-            "required": ["step"]
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:layout-top-line".to_string(),
-        display_order: 0,
-        is_system: true,
-    }
-}
 
 fn skip_step_tool() -> ToolConfig {
     ToolConfig {
@@ -272,15 +299,16 @@ fn skip_step_tool() -> ToolConfig {
 fn record_introductions_tool() -> ToolConfig {
     ToolConfig {
         id: "record_introductions".to_string(),
-        name: "Play introductions back".to_string(),
-        description: "Show the introductions the person gave on a card for them to confirm".to_string(),
-        llm_description: "Play back what the person said about themselves as a confirmation card: what to call them, what they will call you, home time zone (an IANA name you resolve from the place they named), and birth date (YYYY-MM-DD). Include only fields they gave; leave the rest out rather than guessing. The card writes when they confirm; this tool writes nothing.".to_string(),
+        name: "Write the introductions down".to_string(),
+        description: "Record what the person said about themselves and show it back".to_string(),
+        llm_description: "Write down what the person said about themselves: their full name, what to call them, what they will call you, the city they live in with the IANA time zone you resolve from it, and their birth date (pass it EXACTLY as they wrote it — June 6 1997, 6/6/97, whatever they typed; it is parsed on the other side, and dropping a date you were unsure how to format is the one failure that matters here). Include only what they gave; leave the rest out rather than guessing, and each field you omit is left as it was. Call this the moment you have anything — it writes immediately and shows what it wrote under your turn, so do not ask them to confirm and do not list the fields back in your own words. If they gave only a first name, or left out the birth date, or gave a year without a day, ask once for what is missing. The result tells you what is still missing after the write; if it names anything, ask for that in one short question rather than moving on. If they correct something afterwards, call this again with only what changed.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "preferred_name": { "type": "string" },
+                "full_name": { "type": "string", "description": "First and last, as they gave it." },
+                "preferred_name": { "type": "string", "description": "What they like to be called." },
                 "assistant_name": { "type": "string" },
-                "home_place": { "type": "string", "description": "The place as they said it, for the card's label." },
+                "home_place": { "type": "string", "description": "The city as they said it, for the card's label." },
                 "home_timezone": { "type": "string", "description": "IANA time zone, e.g. America/Chicago." },
                 "birth_date": { "type": "string", "description": "YYYY-MM-DD" }
             }
@@ -682,18 +710,51 @@ WIKI TABLES (entity resolution + temporal context)
 ENTITIES (resolved nouns in user's life)
   wiki_people       People with names, emails, relationship info
   wiki_places       Places with name, address, coordinates, visit stats
-  wiki_orgs         Organizations with type, role, interaction history
+  wiki_orgs         Organizations with type, role, and the span you were there
 
 TEMPORAL (daily/yearly context)
   wiki_days         Day summaries with autobiography, context vector
   wiki_events       Timeline events within a day
 
 REFERENCES
-  entity_references Junction table linking entities to ontology records
+  wiki_refs         Junction table linking entities to ontology records.
+                    Columns: entity_type, entity_id, source_table, source_id,
+                    role, occurred_at. `role` is one of sender, recipient,
+                    attendee, location, merchant. This is the ONLY way to get
+                    from a data_* row to a resolved person/place/org — data
+                    tables carry raw identifiers, never an entity id.
+
+NARRATIVE (life story structure)
+  wiki_years        Year-level summaries
+  wiki_chapters     Named spans of life
+  wiki_stories      Story-level groupings within a chapter
+  wiki_articles     Resolved articles about a subject
+  wiki_day_prose    The day's written prose
+  wiki_notes        User-authored notes
+  wiki_rules        User-authored rules
 
 ================================================================================
-NARRATIVE TABLES (life story structure — wiki_* prefix)
+COLUMN NAMING (house rules — guess with these, not with English)
 ================================================================================
+These are conventions, not English defaults, so a plausible-sounding column name
+is usually wrong. The schema was renamed to hold to them:
+
+- Time: `occurred_at` for an instant; `started_at`/`ended_at` for a span.
+  `created_at`/`updated_at` mean when WE wrote the row — never when the thing
+  happened, so never filter an event by them. A table has one or the other:
+  data_health_sleep is a span and has NO occurred_at.
+- Booleans carry `is_`/`has_`: `is_pending`, `is_all_day`, `is_read`,
+  `has_attachments`. Never a bare adjective.
+- Quantities carry their unit: `duration_minutes`, `hrv_ms`, `amount_cents`
+  where cents is the unit. (data_financial_transaction is the exception: its
+  column is `amount`, in cents.)
+- Message bodies are `body`, not `content`/`body_text`. Places are
+  `location_name`, not `location`. Raw contact strings are `from_identifier` /
+  `to_identifiers` / `from_handle`, not `from_address` or `sender_url`.
+- Plural table names except `data_*`, which is singular (one observation).
+
+If you are not certain of a column, call get_schema — it costs one round trip,
+and a wrong column costs the same round trip plus a wasted query.
 
 ================================================================================
 QUERY TIPS (PostgreSQL dialect)
@@ -703,7 +764,7 @@ QUERY TIPS (PostgreSQL dialect)
 - Truncate to a period: date_trunc('month', now()), date_trunc('day', now())
 - Cast a timestamp to a date: timestamp::date  (today = current_date)
 - Financial: amount/100.0 for dollars
-- JOIN data tables to wiki_* for resolved names
+- JOIN data tables to wiki_people/places/orgs THROUGH wiki_refs (see above)
 - Always LIMIT results (max 200)
 
 ================================================================================
@@ -716,21 +777,23 @@ FROM data_financial_transaction
 WHERE occurred_at >= date_trunc('month', now())
 GROUP BY category ORDER BY dollars DESC
 
--- Most contacted people this week
-SELECT wp.name, COUNT(*) as messages
+-- Most contacted people this week (data row -> entity, via wiki_refs)
+SELECT p.name, COUNT(*) as messages
 FROM data_communication_message m
-JOIN wiki_people wp ON m.sender_url = wp.url OR m.recipient_url = wp.url
+JOIN wiki_refs r ON r.source_table = 'data_communication_message'
+                AND r.source_id = m.id AND r.role = 'sender'
+JOIN wiki_people p ON p.id = r.entity_id
 WHERE m.occurred_at > now() - interval '7 days'
-GROUP BY wp.name ORDER BY messages DESC LIMIT 10
+GROUP BY p.name ORDER BY messages DESC LIMIT 10
 
--- Sleep patterns last 2 weeks
+-- Sleep patterns last 2 weeks (a span: started_at/ended_at, no occurred_at)
 SELECT started_at::date as day, duration_minutes, sleep_quality_score
 FROM data_health_sleep
 WHERE started_at > now() - interval '14 days'
-ORDER BY occurred_at DESC
+ORDER BY started_at DESC
 
 -- Calendar events today
-SELECT title, started_at, ended_at, location
+SELECT title, started_at, ended_at, location_name
 FROM data_calendar_event
 WHERE started_at::date = current_date
 ORDER BY started_at"#.to_string(),

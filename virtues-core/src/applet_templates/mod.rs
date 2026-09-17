@@ -788,6 +788,18 @@ pub fn declares_vault_key_need(applet_id: &str) -> bool {
     }
 }
 
+/// What the folder at `dir` was forked from, if its manifest records it —
+/// the read side of [`stamp_forked_from`]. The source pane shows it, so "what
+/// did this diverge from" is answered where the code is read.
+pub fn forked_from_for_dir(dir: &str) -> Option<String> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard
+        .action
+        .iter()
+        .find(|t| t.dir == dir)
+        .and_then(|t| t.forked_from.clone())
+}
+
 /// Whether the manifest at `dir` declares it needs the vault key.
 fn template_needs_vault_key(dir: &str) -> bool {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");
@@ -1081,36 +1093,44 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                 // Device source (iOS/Mac/sensor): fan out per DEVICE. The device's
                 // allowlisted iroh key authorizes its `/webhook/:applet_id` posts,
                 // so the action is anchored on device_id — no credential/bearer.
-                let device_ids: Vec<(String,)> = sqlx::query_as(
-                    "SELECT id FROM app_device WHERE source_id = $1 AND revoked_at IS NULL",
+                let devices: Vec<(String, Option<String>)> = sqlx::query_as(
+                    "SELECT id, label FROM app_device
+                      WHERE source_id = $1 AND revoked_at IS NULL
+                      ORDER BY created_at",
                 )
                 .bind(source_id)
                 .fetch_all(db)
                 .await?;
-                for (device_id,) in device_ids {
+                let qualify = devices.len() > 1;
+                for (device_id, label) in &devices {
                     let applet_id = format!("{}_{}", id_prefix, device_id);
-                    upsert_row(db, template, &applet_id, None, Some(&device_id)).await?;
+                    let anchor = qualify.then(|| label.as_deref()).flatten();
+                    upsert_row(db, template, &applet_id, None, Some(device_id), anchor).await?;
                     live_ids.push(applet_id);
                     upserted += 1;
                 }
             } else {
                 // OAuth / API-key source: fan out per credential (the outbound
                 // secret the action uses to call the provider).
-                let credential_ids: Vec<(String,)> = sqlx::query_as(
-                    "SELECT id FROM credentials WHERE source_id = $1 AND status = 'active'",
+                let credentials: Vec<(String, Option<String>)> = sqlx::query_as(
+                    "SELECT id, name FROM credentials
+                      WHERE source_id = $1 AND status = 'active'
+                      ORDER BY created_at",
                 )
                 .bind(source_id)
                 .fetch_all(db)
                 .await?;
-                for (cred_id,) in credential_ids {
+                let qualify = credentials.len() > 1;
+                for (cred_id, name) in &credentials {
                     let applet_id = format!("{}_{}", id_prefix, cred_id);
-                    upsert_row(db, template, &applet_id, Some(&cred_id), None).await?;
+                    let anchor = qualify.then(|| name.as_deref()).flatten();
+                    upsert_row(db, template, &applet_id, Some(cred_id), None, anchor).await?;
                     live_ids.push(applet_id);
                     upserted += 1;
                 }
             }
         } else {
-            upsert_row(db, template, id_prefix, None, None).await?;
+            upsert_row(db, template, id_prefix, None, None, None).await?;
 
             // Bring the applet's own tables up to whatever its folder declares.
             // Only concrete (non-fan-out) applets own a schema — a per-credential
@@ -1202,13 +1222,39 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     Ok(upserted)
 }
 
+/// The row's display name: the manifest's, qualified by the thing it fans out
+/// from when that is the only way to tell two rows apart.
+///
+/// A `per_credential` manifest has ONE name and produces one row per account,
+/// so connecting a second bank rendered "Plaid Transactions" twice — same
+/// name, same description, same schedule, differing only in a "last run"
+/// column, which reads as a rendering bug rather than as two banks. Four
+/// Plaid manifests × two institutions = eight rows, four visible names.
+/// The device branch has the same shape latent in it: a second iPhone would
+/// duplicate "iOS Ingest".
+///
+/// Qualified only when the source actually has more than one anchor, so a box
+/// with one Google account keeps "Google Mail" rather than carrying an email
+/// address around in a list. The caller decides that from the same fetch it
+/// fans out over, so it is one pass and deterministic — and because system
+/// rows take `name = EXCLUDED.name` on conflict, adding or removing an account
+/// re-qualifies every sibling on the next reconcile with no migration.
+fn row_name(template: &Template, anchor_label: Option<&str>) -> String {
+    match anchor_label.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(label) => format!("{} — {}", template.name, label),
+        None => template.name.clone(),
+    }
+}
+
 async fn upsert_row(
     db: &PgPool,
     template: &Template,
     applet_id: &str,
     credential_id: Option<&str>,
     device_id: Option<&str>,
+    anchor_label: Option<&str>,
 ) -> Result<()> {
+    let name = row_name(template, anchor_label);
     let triggers_json = serde_json::to_string(&template.triggers)
         .map_err(|e| Error::Other(format!("failed to serialize triggers: {e}")))?;
 
@@ -1253,26 +1299,63 @@ async fn upsert_row(
     //           `memory`, and non-manifest config keys — manifest config
     //           merges OVER existing config so runtime keys survive.
     let sql = if template.owner == "user" {
+        // `agent` is COALESCEd rather than left alone, and it is the one
+        // exception to "the row is the user's after the first seed".
+        //
+        // A user-owned applet's prompt IS editable (the PATCH path writes
+        // `agent`), so overwriting it would throw away their edit. But a NULL
+        // agent is not an edit — it is a hole, and an agent applet with no
+        // prompt is a scheduled no-op that reports success. Morning Examen
+        // sat in exactly that state on every box: its manifest once wrote
+        // `agent` below a `[config.limits]` header, where TOML binds it to
+        // that table instead of the top level, so the column seeded NULL.
+        // Fixing the manifest repaired nothing, because reconcile never
+        // touched the field again — and `updated_at = now()` fires on every
+        // boot, so the row looked freshly synced while the one part that
+        // mattered stayed empty.
+        //
+        // COALESCE fills the hole and can never overwrite a prompt the person
+        // wrote.
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, schedule, enabled, config, condition,
-            triggers, credential_id, command, device_id, until, description
+            id, name, owner, agent, agent_shipped, schedule, enabled, config,
+            condition, triggers, credential_id, command, device_id, until,
+            description
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
+            agent = CASE
+                -- A hole. An agent applet with no prompt is a scheduled no-op
+                -- that reports success, which is how the Morning Examen ran
+                -- every morning doing nothing on every box.
+                WHEN app_applets.agent IS NULL THEN EXCLUDED.agent
+                -- They never touched it — the row still holds exactly what we
+                -- last gave them — so a fix reaches them.
+                WHEN app_applets.agent = app_applets.agent_shipped THEN EXCLUDED.agent
+                -- We have never recorded what we shipped, so this row predates
+                -- the column. Adopt: see 0028 for why this one-time reading of
+                -- an ambiguous state goes this way.
+                WHEN app_applets.agent_shipped IS NULL THEN EXCLUDED.agent
+                -- Theirs. Left exactly as written; the UI shows them that a
+                -- newer version exists and what it changes.
+                ELSE app_applets.agent
+            END,
+            agent_shipped  = EXCLUDED.agent,
             device_id      = EXCLUDED.device_id,
             updated_at     = now()
         "#
     } else if template.owner == "ai" {
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, schedule, enabled, config, condition,
-            triggers, credential_id, command, device_id, until, description
+            id, name, owner, agent, agent_shipped, schedule, enabled, config,
+            condition, triggers, credential_id, command, device_id, until,
+            description
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             agent          = EXCLUDED.agent,
+            agent_shipped  = EXCLUDED.agent,
             schedule  = EXCLUDED.schedule,
             config         = app_applets.config || EXCLUDED.config,
             condition      = EXCLUDED.condition,
@@ -1284,14 +1367,16 @@ async fn upsert_row(
     } else {
         r#"
         INSERT INTO app_applets (
-            id, name, owner, agent, schedule, enabled, config, condition,
-            triggers, credential_id, command, device_id, until, description
+            id, name, owner, agent, agent_shipped, schedule, enabled, config,
+            condition, triggers, credential_id, command, device_id, until,
+            description
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             owner          = EXCLUDED.owner,
             agent          = EXCLUDED.agent,
+            agent_shipped  = EXCLUDED.agent,
             config         = EXCLUDED.config,
             condition      = EXCLUDED.condition,
             triggers       = EXCLUDED.triggers,
@@ -1306,7 +1391,7 @@ async fn upsert_row(
 
     sqlx::query(sql)
         .bind(applet_id)
-        .bind(&template.name)
+        .bind(&name)
         .bind(&template.owner)
         .bind(&template.agent)
         .bind(&template.schedule)
@@ -1796,6 +1881,148 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         );
     }
 
+    /// Every shipped applet that declares an agent prompt must HAVE one on the
+    /// row, and a NULL one must heal on the next reconcile.
+    ///
+    /// Morning Examen shipped, scheduled and enabled with `agent` NULL on
+    /// every box: its manifest once wrote the key below a `[config.limits]`
+    /// header, where TOML binds it to that table rather than the top level.
+    /// It ran every morning and did nothing, reporting success. Fixing the
+    /// manifest repaired no existing box, because a user-owned applet's row is
+    /// the user's after the first seed and reconcile never touched the field
+    /// again.
+    #[sqlx::test]
+    async fn a_missing_agent_prompt_heals_but_an_edited_one_is_left_alone(pool: sqlx::PgPool) {
+        reconcile_templates(&pool).await.expect("reconcile");
+
+        // SCHEDULED is the operative word. `dot_cloud` has no command and no
+        // prompt and is perfectly correct: it is face-only, `triggers = []`,
+        // and nothing server-side ever runs it. What cannot exist is an applet
+        // the scheduler WILL pick up with nothing to do when it gets there.
+        let hollow: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM app_applets \
+             WHERE triggers::text NOT IN ('[]', 'null') \
+               AND (command IS NULL OR command::text IN ('null', '[]')) \
+               AND (agent IS NULL OR btrim(agent) = '') \
+             ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            hollow.is_empty(),
+            "applets the scheduler will run that have nothing to do when it \
+             gets there — each reports success and does nothing: {hollow:?}"
+        );
+
+        // A hole heals.
+        sqlx::query("UPDATE app_applets SET agent = NULL WHERE id = 'applet_morning_examen'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        reconcile_templates(&pool).await.expect("reconcile");
+        let healed: Option<String> =
+            sqlx::query_scalar("SELECT agent FROM app_applets WHERE id = 'applet_morning_examen'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            healed.is_some_and(|a| a.contains("Examen")),
+            "a NULL prompt on a shipped applet is a hole, and reconcile fills it"
+        );
+
+        // Their own words are not a hole.
+        sqlx::query(
+            "UPDATE app_applets SET agent = 'Mine. Leave it.' WHERE id = 'applet_morning_examen'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        reconcile_templates(&pool).await.expect("reconcile");
+        let theirs: Option<String> =
+            sqlx::query_scalar("SELECT agent FROM app_applets WHERE id = 'applet_morning_examen'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            theirs.as_deref(),
+            Some("Mine. Leave it."),
+            "a user-owned applet's prompt is editable, so reconcile must never \
+             overwrite one that is actually there"
+        );
+    }
+
+    /// A prompt fix reaches a box that never edited its copy, and stops at one
+    /// that did.
+    ///
+    /// The Morning Examen was caught inventing a Gospel citation on a box with
+    /// no readings cached. Fixing the manifest could not reach a single
+    /// existing install: a user-owned applet's row is the user's after the
+    /// first seed, so reconcile updated `device_id` and left the prompt. That
+    /// is right in the case it was written for and wrong in every other, and
+    /// the missing piece was never a way to detect an edit — it was that we
+    /// never recorded what the default HAD been.
+    #[sqlx::test]
+    async fn a_prompt_fix_reaches_an_untouched_box_and_stops_at_an_edited_one(
+        pool: sqlx::PgPool,
+    ) {
+        reconcile_templates(&pool).await.expect("reconcile");
+
+        // What we ship is recorded beside what the row holds.
+        let (agent, shipped): (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT agent, agent_shipped FROM app_applets WHERE id = 'applet_morning_examen'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(agent.is_some() && agent == shipped, "seeded and tracked");
+
+        // A box that never opened the editor: the row still holds exactly what
+        // we last gave it, so a new prompt lands.
+        sqlx::query(
+            "UPDATE app_applets SET agent = 'OLD SHIPPED TEXT', \
+                                    agent_shipped = 'OLD SHIPPED TEXT' \
+             WHERE id = 'applet_morning_examen'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        reconcile_templates(&pool).await.expect("reconcile");
+        let landed: Option<String> =
+            sqlx::query_scalar("SELECT agent FROM app_applets WHERE id = 'applet_morning_examen'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            landed.is_some_and(|a| a.contains("Examen")),
+            "an untouched prompt takes the fix — this is the whole point, and \
+             it is the case nearly every box is in"
+        );
+
+        // A box where somebody wrote their own: untouched, and still tracking
+        // what we ship so the UI can show them the difference.
+        sqlx::query(
+            "UPDATE app_applets SET agent = 'Mine. Skip the Gospel.' \
+             WHERE id = 'applet_morning_examen'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        reconcile_templates(&pool).await.expect("reconcile");
+        let (theirs, still_tracked): (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT agent, agent_shipped FROM app_applets WHERE id = 'applet_morning_examen'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(theirs.as_deref(), Some("Mine. Skip the Gospel."));
+        assert!(
+            still_tracked.is_some_and(|s| s.contains("Examen")),
+            "their edit stands, and `agent_shipped` still says what we ship — \
+             which is what lets the page offer a diff rather than a surprise"
+        );
+    }
+
     /// The sentence is reconcile's to own, like `name` — editing a shipped
     /// manifest and reconciling has to change what the user reads, or fixing
     /// a description would require a database migration.
@@ -1948,6 +2175,66 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         assert_eq!(
             snapshot_before, snapshot_after,
             "row set must be byte-identical across back-to-back reconciles"
+        );
+    }
+
+    /// Two accounts on one source must not produce two rows with one name.
+    ///
+    /// Connecting a second bank made every Plaid manifest render twice —
+    /// identical name, description and schedule — so the applets page showed
+    /// four names for eight rows and the only thing separating them was a
+    /// timestamp. A single account stays unqualified: a box with one Google
+    /// account should read "Google Mail", not carry an email address around.
+    #[sqlx::test]
+    async fn a_second_account_makes_its_applets_tell_themselves_apart(pool: sqlx::PgPool) {
+        let seed = |id: &'static str, name: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+                     VALUES ($1, 'plaid', $2, 'active', 'x')",
+                )
+                .bind(id)
+                .bind(name)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+
+        // One account: the manifest name stands alone.
+        seed("cred_one", "Brex").await;
+        reconcile_templates(&pool).await.expect("reconcile one");
+        let solo: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM app_applets WHERE credential_id = 'cred_one' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(!solo.is_empty(), "plaid templates should fan out");
+        assert!(
+            solo.iter().all(|n| !n.contains('—')),
+            "a lone account must not be qualified: {solo:?}"
+        );
+
+        // Second account: every row on the source says which one it is.
+        seed("cred_two", "SoFi").await;
+        reconcile_templates(&pool).await.expect("reconcile two");
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM app_applets WHERE credential_id IN ('cred_one', 'cred_two')",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "names must be distinct: {names:?}");
+        assert!(
+            names.iter().any(|n| n.ends_with("— Brex"))
+                && names.iter().any(|n| n.ends_with("— SoFi")),
+            "each row should name its institution: {names:?}"
         );
     }
 }

@@ -4,6 +4,7 @@
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { routeToEntityId } from '$lib/tabs/types';
@@ -35,6 +36,22 @@
 	let loading = $state(false);
 	let saving = $state(false);
 	let err = $state<string | null>(null);
+
+	/**
+	 * Their prompt differs from the one we ship.
+	 *
+	 * Either they edited it, or they are on a box that predates us recording
+	 * what we shipped. This deliberately does not guess which: both mean "what
+	 * you are running is not what we would give you now", and the honest
+	 * affordance for both is the same one.
+	 */
+	const customized = $derived(
+		Boolean(
+			action?.agent_shipped &&
+				action?.agent &&
+				action.agent.trim() !== action.agent_shipped.trim()
+		)
+	);
 
 	let edit = $state<{ name: string; agent: string; schedule: string; memory: string }>({
 		name: '',
@@ -217,6 +234,19 @@
 
 	function markDirty() {
 		isDirty = true;
+	}
+
+	/**
+	 * Take the shipped prompt back.
+	 *
+	 * Loads it into the editor rather than saving it, so the change is visible
+	 * and reversible before it is committed — replacing prose someone wrote
+	 * should not happen on one click with nothing shown.
+	 */
+	function useShippedPrompt() {
+		if (!action?.agent_shipped) return;
+		edit.agent = action.agent_shipped;
+		markDirty();
 	}
 
 	async function save() {
@@ -466,9 +496,12 @@
 			<section class="face-block">
 				<div class="face-head">
 					<h2>What it shows</h2>
-					<button type="button" class="open-view" onclick={openView}>
-						<Icon icon="ri:external-link-line" width="12" /> Open full page
-					</button>
+					<Button
+						variant="secondary"
+						size="sm"
+						icon="ri:external-link-line"
+						onclick={openView}>Open full page</Button
+					>
 				</div>
 				<FaceFrame appletId={action.id} height="460px" />
 			</section>
@@ -537,6 +570,21 @@
 							<span class="hint">
 								<Icon icon="ri:lock-line" width="12" /> Read-only — this prompt ships with the applet
 							</span>
+						{:else if customized}
+							<!-- The only channel an edited applet has. A prompt you
+							     wrote is never overwritten on upgrade, which is right
+							     and also means a fix we ship cannot reach you — so
+							     this line is how you find out one exists. -->
+							<div class="prompt-drift">
+								<span>
+									You've edited this. The version that ships with the applet
+									has changed since — improvements and fixes land there, not
+									here.
+								</span>
+								<TextAction inline onclick={useShippedPrompt}>
+									Use the version that ships
+								</TextAction>
+							</div>
 						{/if}
 					</label>
 				{/if}
@@ -824,19 +872,6 @@
 	.del .dim {
 		color: var(--color-foreground-subtle);
 	}
-	.open-view {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		padding: 0.25rem 0.6rem;
-		font-size: 0.8125rem;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
-		cursor: pointer;
-	}
-	.open-view:hover { border-color: var(--color-foreground-subtle); }
 
 	.detail {
 		display: flex;
@@ -1226,4 +1261,19 @@
 		font-size: 0.75rem;
 		font-style: normal;
 	}
+
+	/* The prompt you are running is not the prompt we ship. Stated plainly and
+	   quietly: it is information, not a warning — an edited prompt is a
+	   legitimate thing to have. */
+	.prompt-drift {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.4rem;
+		margin-top: 0.4rem;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--color-foreground-subtle);
+	}
+
 </style>

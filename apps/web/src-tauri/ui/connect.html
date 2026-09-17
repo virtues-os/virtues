@@ -219,6 +219,7 @@
       .wait .pip { width: 7px; height: 7px; border-radius: 50%; background: var(--blue);
                    flex: none; animation: pulse 1.6s ease-in-out infinite; }
       @keyframes pulse { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
+
       .steps { margin: 26px 0 0; padding: 0; list-style: none; }
       .steps li { font-size: 13px; color: var(--ink-subtle); line-height: 1.6;
                   padding-left: 18px; position: relative; margin-bottom: 6px; }
@@ -580,32 +581,126 @@
       // in the hash. Mobile can't: its window is built before reach is up, so
       // it probes from here. Same three destinations either way.
 
-      // A paired phone gets a "opening your box" screen IMMEDIATELY — not the
-      // connect UI. reach_status runs a live probe that can take 10-15s when
-      // the direct path is blocked (office networks) and the tailnet/relay
-      // route has to be found; rendering the connect screen during that
-      // window reads as "your pairing is gone" (it did, live, 2026-08-11,
-      // minutes after the first successful office pairing).
+      // ── A PAIRED DEVICE ARRIVES; IT IS NOT TOLD THAT IT IS ARRIVING ───────
       //
-      // The probe's three answers get three DIFFERENT screens, and only
-      // 'authed' opens the SPA. Loading the SPA on anything less lands on its
-      // legacy connect page — the "old path" that must never appear on a
-      // phone (seen live 2026-08-11, twice, two different ways).
-      function bootPaired() {
+      // The airlock must never render its connect UI while a paired device is
+      // still working out where it stands: that reads as "your pairing is
+      // gone", and it did, live, minutes after the first successful office
+      // pairing (2026-08-11). `reach_status` runs a LIVE probe that can take
+      // 10-15s when the direct path is blocked and the relay route has to be
+      // found, so for a while this screen covered that wait with a headline —
+      // "Opening your server…" and a pip.
+      //
+      // Which made the airlock a stop on every single launch of an ordinary
+      // paired phone: a sentence the owner read every time, telling them what
+      // they had just asked for. Arriving is the whole ask (2026-09-14).
+      //
+      // So the paired path shows NOTHING — bare paper, chrome hidden — and
+      // races the probe against a short clock. Nothing is drawn because
+      // nothing here is worth drawing: whatever went on this screen would be
+      // a placeholder for the app, and a placeholder has to be handed over to
+      // the real thing, across a document navigation, in a position the two
+      // agree on. That was built and then removed the same day: three
+      // painters (this page, `app.html`, `ChatView`) each holding a copy of a
+      // hand-measured offset, kept in step by a comment. The seam cost more
+      // than the paper it covered.
+      //
+      // WHAT MAKES RACING SAFE IS WHICH ANSWERS ARE SLOW. `Reach::status` only
+      // makes a round trip when the device IS paired — `is_paired()` is a local
+      // store read, and an unpaired device short-circuits to `session:
+      // "unpaired"` with no network at all. So the one answer that must never
+      // be guessed at — "you unpaired in this session, the injected
+      // `__VIRTUES_PAIRED__` is lying, do not drop them back into the app they
+      // just left" — is also the one that always lands in single-digit ms. A
+      // timeout means paired-and-the-box-is-slow, and nothing else.
+      //
+      // PAST THE WINDOW, THE APP'S OWN STATES TAKE OVER, and that is the real
+      // change: the probe's verdicts stop being the only way these situations
+      // get told.
+      //
+      //   * `rejected` — the box refused our key. Opening the SPA on that used
+      //     to land on `/pair`, the "old path" that must never appear on a
+      //     phone (seen live 2026-08-11, twice, two different ways). That is
+      //     now closed where it belongs: `(auth)/pair/+page.ts` bounces a
+      //     mobile shell straight back here to `#reset`. Closing it there
+      //     rather than by pre-flighting a probe is what buys every other
+      //     launch its half-second.
+      //
+      //   * `unreachable` — timing-dependent by design. Airplane mode fails
+      //     instantly and gets this page's screen, which carries the "forget
+      //     this server" escape; a box that is merely off or far away takes
+      //     seconds to fail, so the app opens and its own "Can't reach your
+      //     server" banner says the same thing with a door into the diagnosis.
+      //     `(app)/+layout.ts` treats a transport failure as offline and keeps
+      //     the shell mounted, so nothing strands.
+      //
+      // There is no minimum hold. A floor exists to stop something being shown
+      // for three frames; with nothing shown, waiting is only ever cost.
+      const OPTIMISTIC_AFTER = 500; // past here, stop waiting and just open
+
+      // Not `window.chrome` via the id-becomes-a-global rule: that name is a
+      // real API surface in Chromium webviews, and a header element shadowing
+      // it is the kind of thing that works here and breaks on Android.
+      const chromeEl = document.getElementById('chrome');
+
+      /**
+       * Bare paper while we decide: no chrome, no content, nothing to hand over
+       * — and in the colour the app is about to be, not this page's own white.
+       *
+       * The blank IS the launch now, so its colour is the only thing on screen,
+       * and a step in it is the only event. `app.html` paints the theme's
+       * `--surface` from `virtues-theme-surface`; we share that origin (the
+       * same shelf `virtues-just-paired` crosses on), so reading the same key
+       * makes the navigation invisible instead of a tint change. White is the
+       * fallback, which is also this page's own paper: a device that has never
+       * reached the app has nothing cached and nothing to match.
+       *
+       * ONLY THE BLANK. Every airlock SCREEN stays on the light register this
+       * page hardcodes — `--ink` on `--paper`, Pemberley by hand. Painting a
+       * dark theme's surface behind those would be graphite text on graphite.
+       */
+      function blankForDecision() {
         setServer('');
-        app.innerHTML = `
-          <h1>Opening your server…</h1>
-          <div class="wait"><span class="pip"></span><span>Connecting</span></div>`;
-        invoke('plugin:reach|reach_status')
-          .then((s) => {
-            switch (Router.pairedProbe(s)) {
-              case 'open':        openBox(); break;
-              case 'forgot-us':   renderBoxForgotUs(); break;
-              case 'unreachable': renderBoxUnreachable(); break;
-              default:            renderEntry(); break;
-            }
-          })
-          .catch(() => { renderEntry(); });
+        app.innerHTML = '';
+        chromeEl.style.visibility = 'hidden';
+        try {
+          // The same fallback chain app.html uses, in the same order. Not just
+          // the surface key: a device whose cache predates it has only
+          // `virtues-theme-bg`, and app.html would paint THAT while this page
+          // painted its own white — the very step this is here to remove, on
+          // the one launch after an update.
+          const surface =
+            localStorage.getItem('virtues-theme-surface') ||
+            localStorage.getItem('virtues-theme-bg');
+          if (surface) document.body.style.backgroundColor = surface;
+        } catch { /* no storage: this page's own paper is the fallback */ }
+      }
+
+      /** Give the page back its own paper and chrome, then draw an airlock screen. */
+      function showAirlock(draw) {
+        document.body.style.backgroundColor = '';
+        chromeEl.style.visibility = '';
+        draw();
+      }
+
+      function bootPaired() {
+        blankForDecision();
+        // `null` is the clock's answer, and is distinguishable from every real
+        // verdict — `catch` resolves to 'entry', which is a verdict.
+        Promise.race([
+          invoke('plugin:reach|reach_status')
+            .then((s) => Router.pairedProbe(s))
+            .catch(() => 'entry'),
+          new Promise((r) => setTimeout(() => r(null), OPTIMISTIC_AFTER)),
+        ]).then((verdict) => {
+          switch (verdict) {
+            case null:   // the clock won: paired, box slow, open anyway
+            case 'open': openBox(); break;
+            case 'forgot-us':   showAirlock(renderBoxForgotUs); break;
+            case 'unreachable': showAirlock(renderBoxUnreachable); break;
+            default:            showAirlock(renderEntry); break;
+          }
+        });
       }
 
       function renderBoxUnreachable() {

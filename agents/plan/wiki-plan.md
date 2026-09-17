@@ -864,6 +864,20 @@ trigger is two-sourced — **novelty** from day notes, **accumulation** from
 
 ### 10. Articles are edited, never regenerated — and the edit runs in the agent phase.
 
+> **THE ONE-PEN RULE IS OVERRULED, 2026-09-14.** Ownership never flips. The
+> paragraph below is kept because it is the reasoning that has to be answered,
+> not because it still holds — see
+> [agents/record/article-resolution.md](../record/article-resolution.md), "Ownership never flips". In short:
+> almost nobody wants to maintain their own record; they want to leave
+> marginalia and touch a sentence without taking the pen. So both keep editing
+> one article, and what protects the person's words is that the editor is shown
+> them and the server refuses an edit that loses them — plus an edit summary on
+> every version, a mechanical diff line beside it, and revert. The claim flip
+> (`claim_article_on_user_edit`) and `wiki_days.last_edited_by` are gone. What
+> survives from below is exactly what it says survives: whole-document
+> replacement is still wrong in a CRDT, and the agent phase is still where a
+> Yjs-aware writer must run.
+>
 > **Superseded in part, 2026-08-03 — the one-pen rule.** An article is either
 > the record's or yours, never both: interleaved authorship is hard to follow
 > narratively and in telemetry, so it does not exist. `auto_update = true`

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { highlightCode, getThemeFromCSS } from '$lib/shiki/highlighter';
+	import Button from '$lib/components/Button.svelte';
 	import type { ThemedToken } from 'shiki';
 
 	// Custom renderer for svelte-streamdown `code` tokens. We override the default
@@ -68,14 +69,9 @@
 		class="flex items-center justify-between px-4 py-2 text-foreground-muted text-xs font-mono bg-surface-elevated"
 	>
 		<span class="text-foreground-muted font-medium">{lang || ''}</span>
-		<button
-			type="button"
-			onclick={copy}
-			class="px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted"
-			aria-label="Copy code"
-		>
+		<Button variant="ghost" size="sm" onclick={copy}>
 			{copied ? 'Copied' : 'Copy'}
-		</button>
+		</Button>
 	</div>
 
 	{#if tokens}

@@ -1,0 +1,36 @@
+-- Track the prompt we last SHIPPED, so a fix to one can reach a box that has
+-- already installed it.
+--
+-- A user-owned applet's row belongs to the user after the first seed —
+-- reconcile updates `device_id` and nothing else — because the prompt IS
+-- editable for them (AppletDetailView has the textarea; `agent` is in the
+-- PATCH allowlist). That is honest, and it means every prompt fix we make is
+-- inert on every box that already has the applet. The Morning Examen was
+-- caught fabricating a Gospel citation on a box with no readings cached; the
+-- fix for it could not reach a single existing install.
+--
+-- The problem was never that we cannot tell an edit from a default. It is that
+-- we never wrote down what the default WAS. With that recorded, the three
+-- states separate cleanly on every later reconcile:
+--
+--   agent = agent_shipped   they never touched it     → adopt the new prompt
+--   agent <> agent_shipped  they wrote that           → leave it, and say so
+--   agent IS NULL           a hole                    → fill it
+--
+-- Storing the TEXT rather than a hash costs the same and buys two things a
+-- hash cannot: a real diff to show the person whose prompt now differs, and a
+-- "reset to what we ship" that has never existed.
+ALTER TABLE app_applets ADD COLUMN agent_shipped text;
+
+-- No backfill here, deliberately. This migration cannot know what the current
+-- manifest says — only reconcile can, and it runs on the next boot. What it
+-- does on first sight of a NULL `agent_shipped` is a judgement recorded in
+-- `applet_templates::reconcile`: it ADOPTS the shipped prompt rather than
+-- assuming an edit.
+--
+-- That one-time adoption can overwrite a prompt someone hand-edited before
+-- this column existed. The exposure is small and bounded — exactly one shipped
+-- applet has a prompt at all, and the editor is young — and the alternative is
+-- that every box already in the field is stranded on its first prompt forever,
+-- including the one that invents scripture. From the next change onward no
+-- edit is ever at risk, because the column will be there to prove it was one.

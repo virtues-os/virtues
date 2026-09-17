@@ -48,6 +48,7 @@
 	} from "$lib/wiki/api";
 	import { getStreamHealth, type StreamHealth } from "$lib/api/client";
 	import Icon from "$lib/components/Icon.svelte";
+	import { IconButton, TextAction } from "$lib";
 	import { notebookStore } from "$lib/stores/notebook.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
@@ -351,9 +352,12 @@
 					<div class="mhead">
 						<span class="mono mt">{keptTime(new Date(pinnedMs).toISOString())}</span>
 						<span class="mlabel">± 15 minutes</span>
-						<button class="mclose" type="button" onclick={() => (pinnedMs = null)} aria-label="Close this moment">
-							<Icon icon="ri:close-line" width="15" />
-						</button>
+						<IconButton
+							icon="ri:close-line"
+							label="Close this moment"
+							size="sm"
+							onclick={() => (pinnedMs = null)}
+						/>
 					</div>
 					{#if momentLoading && !moment}
 						<p class="mnone">Looking…</p>
@@ -426,9 +430,9 @@
 				{#if keepText.trim() || keeping}
 					<div class="krow">
 						<span class="khint">Shift + Enter for a new line</span>
-						<button class="ksave" type="button" onclick={keep} disabled={keeping}>
-							{keeping ? "Saving…" : "Save"}
-						</button>
+						<TextAction loading={keeping} loadingLabel="Saving…" onclick={keep}>
+							Save
+						</TextAction>
 					</div>
 				{/if}
 
@@ -440,21 +444,26 @@
 							<li><span class="kt mono">{keptTime(n.created_at)}</span><span class="kb">{n.body}</span></li>
 						{/each}
 					</ul>
-					<button class="link kfoot" type="button" onclick={() => open(`/day/day_${todayDate}`, "Today")}>
-						In the margin of today's page →
-					</button>
+					<p class="kfoot">
+						<TextAction onclick={() => open(`/day/day_${todayDate}`, "Today")}>
+							In the margin of today's page →
+						</TextAction>
+					</p>
 				{/if}
 			</div>
 		</section>
 	</section>
 
-	<!-- The two adjacent pages. These lived on the frontispiece until
-	     2026-09-08; the painting retires with getting started (it is the
-	     one framed object the setup spread and Home shared), and the
-	     doors stay. -->
+	<!-- The two adjacent pages. They lived on the frontispiece — the framed
+	     painting in the margin — until 2026-09-08, when Home shed the painting
+	     and kept only the doors. The painting was the one framed object Home
+	     and the setup page shared, which was the only thing justifying it;
+	     setup became a chat room on 2026-09-13 and the component, its line bank
+	     and its plates are gone from the tree. The doors were always the half
+	     that did work. -->
 	<nav class="pages" aria-label="Adjacent pages">
-		<button class="link" type="button" onclick={() => open(`/day/day_${yesterdayDate}`, "Yesterday")}>Yesterday's page →</button>
-		<button class="link" type="button" onclick={() => open(`/day/day_${todayDate}`, "Today")}>Today's page →</button>
+		<TextAction onclick={() => open(`/day/day_${yesterdayDate}`, "Yesterday")}>Yesterday's page →</TextAction>
+		<TextAction onclick={() => open(`/day/day_${todayDate}`, "Today")}>Today's page →</TextAction>
 	</nav>
 </div>
 </div>
@@ -462,14 +471,28 @@
 <style>
 	.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
-	/* The host: the pane's full height and its own scroll, for both the
-	   getting-started spread and Home's. Getting started is display:none
-	   (not unmounted) once Home takes over — see GettingStarted.svelte. */
+	/* The host: the pane's full height and its own scroll. It used to be a
+	   shared shell — getting started and Home lived inside it together, and
+	   getting started was display:none once Home took over rather than
+	   unmounted. That was not tidiness: a component that computes its own
+	   phase and gets re-created on a phase change chases itself, and this pair
+	   managed twelve instances a second when a parent switched props on that
+	   phase. Getting started left this page on 2026-09-13 and is a chat room
+	   now, so nothing here is hidden-but-mounted any more and there is no
+	   component on Home the rule still applies to. The rule outlives the
+	   example: phase is a thing a component reports, not a thing a parent
+	   remounts it to change. */
 	.host { height: 100%; overflow-y: auto; }
 
-	/* One column. Getting Started is a spread — work on the left, painting on
-	   the right — but once it retires Home is the work alone, in the page's
-	   measure; the painting was the setup spread's object, not Home's. */
+	/* One column; `spread` is a class name that outlived its idea. The plan was
+	   a literal spread — the work on the left, a painting set in the margin on
+	   the right — and its whole justification was that Home and the setup page
+	   shared it. Home shed the painting on 2026-09-08 and setup became a chat
+	   room on 2026-09-13, so there was no "shared" left, and a single page
+	   carrying a framed painting for itself is a decoration rather than a
+	   grammar. What ships is the work alone in the page's measure. The reasoning
+	   is kept under "Struck" in agents/build/design-grammar.md; do not rebuild
+	   it without answering that. */
 	.spread {
 		max-width: 920px;
 		min-height: calc(100dvh - var(--chrome-row-h, 40px) - 2 * var(--pane-inset, 12px) - 2px);
@@ -490,8 +513,6 @@
 	.head { margin-bottom: 40px; }
 
 	.kicker { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); margin: 0 0 12px; font-weight: 400; }
-	.link { font-family: var(--font-sans); font-size: 14px; font-weight: 500; color: var(--color-primary); background: none; border: 0; padding: 0; cursor: pointer; }
-	.link:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 	/* the deck */
 	.today { padding-bottom: 48px; }
@@ -509,9 +530,7 @@
 	.moment { margin-top: 24px; margin-left: 62px; max-width: 720px; }
 	.mhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
 	.mhead .mt { font-size: 12px; color: var(--color-foreground); }
-	.mlabel { font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); }
-	.mclose { margin-left: auto; display: flex; align-items: center; background: none; border: 0; padding: 3px; border-radius: 6px; color: var(--color-foreground-subtle); cursor: pointer; }
-	.mclose:hover { background: var(--hover-bg); color: var(--color-foreground); }
+	.mlabel { margin-right: auto; font-family: var(--font-sans); font-size: 13px; color: var(--color-foreground-subtle); }
 	.mlist { list-style: none; margin: 0; padding: 0; }
 	.mlist li { display: flex; gap: 12px; align-items: baseline; padding: 4px 0; font-family: var(--font-sans); font-size: 14px; line-height: 1.45; }
 	.mlist .rt { font-size: 12px; color: var(--color-foreground-subtle); flex: none; width: 40px; }
@@ -555,20 +574,12 @@
 		color: var(--color-foreground); background: none; border: 0; padding: 0;
 	}
 	.card textarea:focus { outline: none; }
-	.krow { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+	.krow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
 	.khint { font-family: var(--font-sans); font-size: 12px; color: var(--color-foreground-subtle); }
-	.ksave {
-		margin-left: auto; flex: none; cursor: pointer;
-		font-family: var(--font-sans); font-size: 14px; font-weight: 500;
-		background: none; border: 0; padding: 0;
-		color: var(--color-primary);
-	}
-	.ksave:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
-	.ksave:disabled { color: var(--color-foreground-disabled); cursor: default; }
 	.kerr { font-family: var(--font-sans); font-size: 13px; color: var(--color-error); margin: 12px 0 0; }
 	.kept { list-style: none; margin: 20px 0 0; padding: 0; }
 	.kept li { display: flex; gap: 16px; align-items: baseline; padding: 6px 0; }
 	.kept .kt { font-size: 12px; color: var(--color-foreground-subtle); flex: none; width: 64px; }
 	.kept .kb { font-family: var(--font-serif); font-size: 16px; line-height: 1.45; color: var(--color-foreground); }
-	.kfoot { margin-top: 12px; }
+	.kfoot { margin: 12px 0 0; }
 </style>

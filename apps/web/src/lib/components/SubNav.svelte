@@ -50,7 +50,7 @@
 		// Match on the FIRST segment only, so a nested route (`${base}/x/y`) still
 		// highlights `x`. This lets a primary sub-nav sit above a secondary one:
 		// the primary reads segment 1, the secondary (with a deeper `base`) reads
-		// segment 2. For single-level rooms `rest` has no slash, so behaviour is
+		// segment 2. For single-level rooms `rest` has no slash, so behavior is
 		// unchanged.
 		const seg = rest.split("/")[0];
 		return validIds.has(seg) ? seg : defaultId;

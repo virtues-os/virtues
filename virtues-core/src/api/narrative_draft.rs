@@ -109,13 +109,16 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
     // drafter's prompt firewalls the interviewer's turns (scaffolding, never
     // material), but they stay in the input because a person's answer often
     // only makes sense against the question it answered.
+    let (source_chat, since) = crate::api::getting_started::interview_source(pool).await?;
     let turns: Vec<(String, String)> = sqlx::query_as(
         "SELECT role, content FROM app_chat_messages \
          WHERE chat_id = $1 AND role IN ('user', 'assistant') \
            AND content <> '' \
+           AND ($2::timestamptz IS NULL OR created_at >= $2) \
          ORDER BY sequence_num ASC",
     )
-    .bind(INTERVIEW_CHAT_ID)
+    .bind(source_chat)
+    .bind(since)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("read interview transcript: {e}")))?;
@@ -334,11 +337,14 @@ pub fn close_gate(req: &CloseRequest, their_replies: usize) -> std::result::Resu
 
 /// The person's replies so far in the interview transcript.
 pub async fn their_reply_count(pool: &PgPool) -> Result<usize> {
+    let (source_chat, since) = crate::api::getting_started::interview_source(pool).await?;
     let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM app_chat_messages \
-         WHERE chat_id = $1 AND role = 'user' AND content <> ''",
+         WHERE chat_id = $1 AND role = 'user' AND content <> '' \
+           AND ($2::timestamptz IS NULL OR created_at >= $2)",
     )
-    .bind(INTERVIEW_CHAT_ID)
+    .bind(source_chat)
+    .bind(since)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("count interview replies: {e}")))?;
@@ -405,13 +411,16 @@ async fn chapters_from_interview(pool: &PgPool) -> Result<usize> {
         return Ok(0);
     }
 
+    let (source_chat, since) = crate::api::getting_started::interview_source(pool).await?;
     let turns: Vec<(String, String)> = sqlx::query_as(
         "SELECT role, content FROM app_chat_messages \
          WHERE chat_id = $1 AND role IN ('user', 'assistant') \
            AND content <> '' \
+           AND ($2::timestamptz IS NULL OR created_at >= $2) \
          ORDER BY sequence_num ASC",
     )
-    .bind(INTERVIEW_CHAT_ID)
+    .bind(source_chat)
+    .bind(since)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("read interview transcript: {e}")))?;
@@ -518,7 +527,7 @@ fn span_label(started_at: chrono::NaiveDate, ended_at: Option<chrono::NaiveDate>
 }
 
 /// One chapter, as the wiki identity page lists them.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct ChapterRow {
     pub id: String,
     pub kind: String,
@@ -538,6 +547,131 @@ pub async fn list_chapters(pool: &PgPool) -> Result<Vec<ChapterRow>> {
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("list chapters: {e}")))
+}
+
+/// What may be changed about a chapter. All optional: a person fixing a date
+/// should not have to restate the name.
+#[derive(Debug, serde::Deserialize)]
+pub struct ChapterEdit {
+    pub title: Option<String>,
+    pub started_at: Option<chrono::NaiveDate>,
+    pub ended_at: Option<chrono::NaiveDate>,
+    pub started_precision: Option<String>,
+    pub ended_precision: Option<String>,
+    pub changepoint: Option<String>,
+    pub summary: Option<String>,
+}
+
+/// Edit a chapter.
+///
+/// Chapters were written once by the interview and there has never been a way
+/// to change one — no UPDATE and no DELETE existed anywhere — so a boundary in
+/// the wrong place, or a name someone regretted, was permanent. That is a hard
+/// thing to live with on a partition of your own life, and it also made the
+/// lifeline's "correct it later" promise untrue.
+///
+/// The no-overlap EXCLUDE constraint refuses a boundary that would collide,
+/// and the error says so in words rather than as a constraint name.
+pub async fn update_chapter(pool: &PgPool, id: &str, e: &ChapterEdit) -> Result<ChapterRow> {
+    let n = sqlx::query(
+        "UPDATE wiki_chapters SET \
+             title = COALESCE($2, title), \
+             started_at = COALESCE($3, started_at), \
+             ended_at = COALESCE($4, ended_at), \
+             started_precision = COALESCE($5, started_precision), \
+             ended_precision = COALESCE($6, ended_precision), \
+             changepoint = COALESCE($7, changepoint), \
+             summary = COALESCE($8, summary), \
+             updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(e.title.as_deref().map(str::trim).filter(|t| !t.is_empty()))
+    .bind(e.started_at)
+    .bind(e.ended_at)
+    .bind(e.started_precision.as_deref())
+    .bind(e.ended_precision.as_deref())
+    .bind(e.changepoint.as_deref())
+    .bind(e.summary.as_deref())
+    .execute(pool)
+    .await
+    .map_err(|err| {
+        let msg = err.to_string();
+        if msg.contains("wiki_chapters_no_overlap") {
+            Error::InvalidInput(
+                "those dates would put this chapter on top of another one".into(),
+            )
+        } else if msg.contains("wiki_chapters_span_check") {
+            Error::InvalidInput("a chapter has to end after it starts".into())
+        } else {
+            Error::Database(format!("update chapter: {err}"))
+        }
+    })?
+    .rows_affected();
+    if n == 0 {
+        return Err(Error::NotFound(format!("No chapter: {id}")));
+    }
+    get_chapter(pool, id).await
+}
+
+pub async fn get_chapter(pool: &PgPool, id: &str) -> Result<ChapterRow> {
+    sqlx::query_as::<_, ChapterRow>(
+        "SELECT id, kind, title, started_at, ended_at, is_current, changepoint, summary \
+         FROM wiki_chapters WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("get chapter: {e}")))?
+    .ok_or_else(|| Error::NotFound(format!("No chapter: {id}")))
+}
+
+/// Remove a chapter, leaving the years it covered as an UNNAMED stretch.
+///
+/// The partition is gapless by construction, and it stays gapless by
+/// MATERIALISING the holes rather than allowing them — the same contract the
+/// day rung keeps with `kind='unknown'`. So deleting a chapter does not delete
+/// the time: it converts it, and "the years I would rather not name" remains a
+/// real part of the shape of a life.
+///
+/// The article goes with the name, because it was about the named thing.
+pub async fn delete_chapter(pool: &PgPool, id: &str) -> Result<ChapterRow> {
+    let chapter = get_chapter(pool, id).await?;
+    if chapter.kind == "unknown" {
+        return Err(Error::InvalidInput(
+            "that stretch is already unnamed — there is nothing to remove".into(),
+        ));
+    }
+
+    if let Some(page) = sqlx::query_scalar::<_, String>(
+        "SELECT page_id FROM wiki_articles WHERE subject_type = 'chapter' AND subject_id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("find chapter article: {e}")))?
+    {
+        let _ = sqlx::query("DELETE FROM wiki_articles WHERE subject_type = 'chapter' AND subject_id = $1")
+            .bind(id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM app_pages WHERE id = $1")
+            .bind(&page)
+            .execute(pool)
+            .await;
+    }
+
+    sqlx::query(
+        "UPDATE wiki_chapters \
+         SET kind = 'unknown', title = NULL, changepoint = NULL, summary = NULL, \
+             updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("unname chapter: {e}")))?;
+    get_chapter(pool, id).await
 }
 
 pub async fn chapters_handler(
@@ -668,13 +802,13 @@ fn split_draft(raw: &str) -> (String, Vec<String>) {
 /// The Chat slot is the Virtues-curated map and stays ZDR-capable. (See
 /// `model_choice::honors_pin` for the same ruling on the interview turns.)
 ///
-/// The cap is sized for THINKING plus answer. It was 4000 here, and the Chat
-/// slot's model reasons inside `max_tokens`: on a 19-chapter transcript the
-/// extraction spent the cap thinking and returned a truncated array, which
-/// serde refused, and the person was told their chapters "didn't take" for a
-/// reason that had nothing to do with what they said. Same failure
-/// day_summary hit under the same cap (see its 16k note). Low effort: both
-/// jobs are arrangement, not composition.
+/// Thinking OFF, no cap: both jobs are arrangement, not composition. There
+/// was a cap of 4000 here once, and the Chat slot's model reasoned inside it:
+/// on a 19-chapter transcript the extraction spent the cap thinking and
+/// returned a truncated array, which serde refused, and the person was told
+/// their chapters "didn't take" for a reason that had nothing to do with what
+/// they said. Same failure day_summary hit under the same cap. The helper now
+/// asks the model not to think where it can be asked, and sends no cap at all.
 async fn call_model(
     pool: &PgPool,
     system_prompt: &str,
@@ -687,9 +821,8 @@ async fn call_model(
         feature,
         system_prompt,
         user_prompt,
-        16_000,
+        crate::virtues_api::request::Thinking::Off,
         0.3,
-        Some("low"),
     )
     .await
 }
@@ -868,6 +1001,84 @@ pub async fn save_rules_handler(
         Json(serde_json::json!({ "saved": req.rules.len() })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod chapter_edit_tests {
+    use super::*;
+
+    async fn seed(pool: &PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_chapters (id, title, started_at, ended_at) VALUES \
+             ('chapter_a', 'School', '2009-06-10', '2016-08-20'), \
+             ('chapter_b', 'The band years', '2016-08-20', NULL)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[sqlx::test]
+    async fn a_boundary_can_be_moved_and_a_collision_says_so_in_words(pool: PgPool) {
+        seed(&pool).await;
+        let moved = update_chapter(
+            &pool,
+            "chapter_a",
+            &ChapterEdit {
+                title: None,
+                started_at: None,
+                ended_at: Some(chrono::NaiveDate::from_ymd_opt(2015, 1, 1).unwrap()),
+                started_precision: None,
+                ended_precision: None,
+                changepoint: Some("I left before the last year".into()),
+                summary: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            moved.ended_at,
+            Some(chrono::NaiveDate::from_ymd_opt(2015, 1, 1).unwrap())
+        );
+        assert_eq!(moved.title.as_deref(), Some("School"), "a date edit is not a rename");
+
+        // Now push it over its neighbour.
+        let err = update_chapter(
+            &pool,
+            "chapter_a",
+            &ChapterEdit {
+                title: None,
+                started_at: None,
+                ended_at: Some(chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap()),
+                started_precision: None,
+                ended_precision: None,
+                changepoint: None,
+                summary: None,
+            },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("on top of another one"), "{err}");
+    }
+
+    #[sqlx::test]
+    async fn deleting_a_chapter_unnames_the_time_rather_than_removing_it(pool: PgPool) {
+        seed(&pool).await;
+        let gone = delete_chapter(&pool, "chapter_a").await.unwrap();
+        assert_eq!(gone.kind, "unknown");
+        assert!(gone.title.is_none());
+        assert_eq!(
+            gone.started_at,
+            chrono::NaiveDate::from_ymd_opt(2009, 6, 10).unwrap(),
+            "the years are still accounted for — the partition stays gapless by \
+             materialising the hole, exactly as the day rung does"
+        );
+        assert!(
+            delete_chapter(&pool, "chapter_a").await.is_err(),
+            "an unnamed stretch has nothing left to remove"
+        );
+    }
 }
 
 #[cfg(test)]

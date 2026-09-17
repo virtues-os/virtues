@@ -74,8 +74,47 @@ say "flattening app icons to RGB"
 python3 "$REPO_ROOT/tools/strip-icon-alpha.py"
 
 # ── 3. archive + export ─────────────────────────────────────────────────────
-# `beforeBuildCommand` in tauri.ios.conf.json runs `pnpm build`, which also
-# stamps build/.virtues-bundle.json — the manifest the box serves for OTA.
+# `beforeBuildCommand` in tauri.ios.conf.json runs `pnpm build`, which stamps
+# build/.virtues-bundle.json — the same manifest shape the box serves for OTA,
+# baked into the binary as its own `version`.
+#
+# STAMP IT, or the binary bakes a SPA calling itself `dev`. That is not
+# cosmetic: `web_bundle::version_gate` refuses any bundle it cannot prove is
+# forward, and `dev` orders against nothing — a TestFlight build with an
+# unstamped SPA takes no OTA update, ever. (It also reported `version=dev` in
+# the X-Virtues-Client header, so every TestFlight phone showed as `dev` on the
+# Devices page.)
+#
+# The NEAREST TAG, not `git describe`'s full form. `--abbrev=0` deliberately
+# drops the `-40-g6b999a11` offset: git puts that in the semver PRERELEASE
+# field, where an alphanumeric identifier outranks a numeric one — so
+# `0.1.7-staging.78-40-gabc` sorts ABOVE `0.1.7-staging.79`, and a phone stamped
+# that way would refuse every later staging bundle the box ever serves. The
+# nearest clean tag understates a build that is ahead of it, which is the
+# harmless direction: same tag compares equal and the content hash decides.
+#
+# `v[0-9]*` because this repo publishes several tag lines into one namespace
+# (`mac-v*`, `win-edge`, `edge`) and only the box/SPA line is orderable here.
+#
+# AN OPERATOR-SET GIT_DESCRIBE WINS — deriving over the top of it would hand
+# back a build that is not the one asked for, silently. The physical-device
+# recipe stamps `v<box-tag>.local1` on purpose: one prerelease identifier above
+# the version the box serves, so `drop_stale_overlay` evicts the box's overlay
+# at startup and local UI changes are actually visible on the phone. The nearest
+# tag alone compares EQUAL to the box's and loses to the overlay already applied.
+if [[ -n "${GIT_DESCRIBE:-}" ]]; then
+  say "SPA stamped $GIT_DESCRIBE (preset — not derived)"
+else
+  GIT_DESCRIBE="$(git -C "$REPO_ROOT" describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || echo dev)"
+  if [[ "$GIT_DESCRIBE" == dev ]]; then
+    printf '⚠ %s\n' "no v* tag reachable — the SPA stamps as 'dev', and a 'dev' bake takes no OTA update and cannot evict an overlay already on the device"
+  else
+    say "SPA stamped $GIT_DESCRIBE (nearest tag)"
+  fi
+fi
+GIT_COMMIT="${GIT_COMMIT:-$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo dev)}"
+export GIT_DESCRIBE GIT_COMMIT
+
 say "archiving (this is the long one)"
 ( cd "$WEB" && pnpm tauri ios build --export-method app-store-connect )
 

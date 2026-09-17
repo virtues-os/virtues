@@ -14,10 +14,19 @@
     - DONE = daemon running AND Full Disk Access granted (Messages is the
       marquee Mac data). Accessibility stays optional/amber.
     - Browser (non-Tauri): can't drive a local daemon — nudge the desktop app.
+
+  ORPHANED ON PURPOSE (2026-09-16). Its only importer was ConnectWorld.svelte,
+  which was deleted unreferenced along with the rest of the old document
+  onboarding. This is KEPT because it is the remedy to a problem the room
+  currently states and cannot solve: `getting_started::compute` builds a
+  `detail` reading "this Mac is running without Screen Recording" from
+  `setup.degraded`, the room says it in `settled_line`, and there is no door
+  under it. Wire this into the integrations step, or into Sources beside the
+  device row — do not delete it as dead code without answering that.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import { Button } from "$lib";
+	import { Button, TextAction } from "$lib";
 	import { isTauri } from "$lib/utils/platform";
 	import * as api from "$lib/api/client";
 	import {
@@ -156,12 +165,14 @@
 						<span class="text-foreground">Full Disk Access</span>
 						<span class="text-foreground-subtle">— Messages, read locally, never sent to Virtues</span>
 						{#if !status.hasFullDiskAccess}
-							<button
-								class="text-xs text-primary hover:underline mt-1 block"
-								onclick={() => openFullDiskAccess()}
-							>
-								Open Full Disk Access → turn on Virtues Collector
-							</button>
+							<!-- The wrapper carries the line break and the spacing: the
+							     primitive is `display: inline; margin: 0` from a scoped
+							     rule, which outranks a forwarded `block`/`mt-*`. -->
+							<div class="mt-1">
+								<TextAction onclick={() => openFullDiskAccess()}>
+									Open Full Disk Access → turn on Virtues Collector
+								</TextAction>
+							</div>
 							<span class="text-xs text-foreground-subtle mt-0.5 block">
 								Not listed? Click <strong>+</strong> and add
 								<code>~/.virtues/bin/virtues-collector</code>.
@@ -182,12 +193,11 @@
 						<span class="text-foreground">Accessibility</span>
 						<span class="text-foreground-subtle">— optional; adds what's on your screen, kept on your server</span>
 						{#if !status.hasAccessibility}
-							<button
-								class="text-xs text-primary hover:underline mt-1 block"
-								onclick={() => openAccessibilitySettings()}
-							>
-								Open Accessibility → turn on Virtues Collector
-							</button>
+							<div class="mt-1">
+								<TextAction onclick={() => openAccessibilitySettings()}>
+									Open Accessibility → turn on Virtues Collector
+								</TextAction>
+							</div>
 						{/if}
 					</div>
 				</li>

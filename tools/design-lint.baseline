@@ -1,0 +1,16 @@
+# Design debt frozen by tools/design-lint.sh. One line per rule: <count> <rule>.
+# The count may only go DOWN. Regenerate with:
+#     bash tools/design-lint.sh --update-baseline
+# Raising a number here is how the ratchet stops being one — fix the page instead,
+# or annotate the single line with `design-ok: <why>` if the grammar allows it.
+60 shadow
+31 tiny-type
+11 half-px-type
+26 mono
+36 mono-literal
+369 hex-literal
+64 rgb-literal
+227 radius
+317 off-grid
+78 no-reduced-motion
+0 serif-impossible

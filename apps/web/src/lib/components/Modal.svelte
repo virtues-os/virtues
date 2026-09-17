@@ -208,38 +208,10 @@
 		margin-bottom: 6px;
 	}
 
-	:global(.modal-btn) {
-		padding: 8px 16px;
-		font-size: 13px;
-		font-weight: 500;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: all 150ms ease;
-	}
-
-	:global(.modal-btn-primary) {
-		background: var(--primary);
-		color: white;
-		border: none;
-	}
-
-	:global(.modal-btn-primary:hover) {
-		opacity: 0.9;
-	}
-
-	:global(.modal-btn-primary:disabled) {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	:global(.modal-btn-secondary) {
-		background: transparent;
-		color: var(--foreground-muted);
-		border: 1px solid var(--border);
-	}
-
-	:global(.modal-btn-secondary:hover) {
-		background: var(--surface-overlay);
-		color: var(--foreground);
-	}
+	/* The `:global(.modal-btn*)` recipe lived here until 2026-09-16 — a button
+	   definition leaking out of one component's <style> and consumed by fifteen
+	   buttons in four other files, which is how a modal footer came to be
+	   styled by whichever component happened to own the dialog. Its last two
+	   consumers (DialogHost, PersonaSettings) now use `Button`, so it is gone.
+	   A modal's footer takes the same buttons as the rest of the app. */
 </style>

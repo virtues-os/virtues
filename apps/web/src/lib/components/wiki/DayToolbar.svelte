@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Icon from "$lib/components/Icon.svelte";
+	import IconButton from "$lib/components/IconButton.svelte";
 	import Popover from "$lib/floating/primitives/Popover.svelte";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
 
@@ -9,7 +9,6 @@
 		todaySlug: string;
 		onNavigateDay: (date: Date) => void;
 		headerScrolledAway?: boolean;
-		coveragePercent?: number | null;
 	}
 
 	let {
@@ -18,7 +17,6 @@
 		todaySlug,
 		onNavigateDay,
 		headerScrolledAway = false,
-		coveragePercent = null,
 	}: Props = $props();
 
 	const shortDateLabel = $derived(
@@ -107,37 +105,38 @@
 
 <div class="day-toolbar">
 	<div class="toolbar-left">
-		<button
-			class="nav-btn"
+		<IconButton
+			icon="ri:arrow-left-s-line"
+			label="Previous day"
 			onclick={() => onNavigateDay(yesterday())}
-			type="button"
-			aria-label="Previous day"
-			title={yesterday().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-		>
-			<Icon icon="ri:arrow-left-s-line" width="16" />
-		</button>
+		/>
 
 		<Popover bind:open={calendarOpen} placement="bottom-start" offset={4}>
 			{#snippet trigger({ toggle })}
-				<button
-					class="nav-btn calendar-btn"
+				<IconButton
+					icon="ri:calendar-line"
+					label="Open date picker"
+					expanded={calendarOpen}
+					haspopup="dialog"
 					onclick={toggle}
-					type="button"
-					aria-label="Open date picker"
-				>
-					<Icon icon="ri:calendar-line" width="15" />
-				</button>
+				/>
 			{/snippet}
 			{#snippet children()}
 				<div class="calendar-popover">
 					<div class="cal-header">
-						<button class="cal-nav" onclick={prevMonth} type="button" aria-label="Previous month">
-							<Icon icon="ri:arrow-left-s-line" width="14" />
-						</button>
+						<IconButton
+							icon="ri:arrow-left-s-line"
+							label="Previous month"
+							size="sm"
+							onclick={prevMonth}
+						/>
 						<span class="cal-month-label">{calendarMonthLabel}</span>
-						<button class="cal-nav" onclick={nextMonth} type="button" aria-label="Next month">
-							<Icon icon="ri:arrow-right-s-line" width="14" />
-						</button>
+						<IconButton
+							icon="ri:arrow-right-s-line"
+							label="Next month"
+							size="sm"
+							onclick={nextMonth}
+						/>
 					</div>
 					<div class="cal-dow-row">
 						{#each ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as dow}
@@ -169,45 +168,24 @@
 		</Popover>
 
 		{#if isNotToday}
-			<button
-				class="nav-btn calendar-btn"
+			<IconButton
+				icon="ri:calendar-check-line"
+				label="Go to today"
 				onclick={() => onNavigateDay(new Date())}
-				type="button"
-				aria-label="Go to today"
-				title="Today"
-			>
-				<Icon icon="ri:calendar-check-line" width="15" />
-			</button>
+			/>
 		{/if}
 
-		<button
-			class="nav-btn"
+		<IconButton
+			icon="ri:arrow-right-s-line"
+			label="Next day"
 			onclick={() => onNavigateDay(tomorrow())}
-			type="button"
-			aria-label="Next day"
-			title={tomorrow().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-		>
-			<Icon icon="ri:arrow-right-s-line" width="16" />
-		</button>
+		/>
 	</div>
 
 	<span class="toolbar-date" class:visible={headerScrolledAway}>{shortDateLabel}</span>
 
 	<div class="toolbar-right">
-		{#if coveragePercent != null}
-			<span class="coverage-badge" title="Data coverage for this day">
-				{Math.round(coveragePercent)}%
-			</span>
-		{/if}
-		<button
-			class="nav-btn"
-			type="button"
-			title="Page settings"
-			aria-label="Page settings"
-			disabled
-		>
-			<Icon icon="ri:more-2-fill" width="16" />
-		</button>
+		<IconButton icon="ri:more-2-fill" label="Page settings" disabled />
 	</div>
 </div>
 
@@ -246,42 +224,6 @@
 		gap: 6px;
 	}
 
-	.coverage-badge {
-		font-family: var(--font-mono, "SF Mono", Menlo, monospace);
-		font-size: 0.625rem;
-		font-weight: 500;
-		color: var(--color-foreground-subtle);
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
-		padding: 1px 6px;
-		border-radius: var(--radius-full);
-		letter-spacing: 0.02em;
-		cursor: default;
-	}
-
-	/* Navigation buttons (chevrons + calendar) */
-	.nav-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		background: none;
-		border: none;
-		padding: 0;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		border-radius: 6px;
-		flex-shrink: 0;
-	}
-	.nav-btn:hover {
-		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
-	}
-
-	.calendar-btn {
-		color: var(--color-foreground-muted);
-	}
-
 	/* Calendar popover (positioning handled by the floating primitive) */
 	.calendar-popover {
 		background: var(--color-background);
@@ -303,24 +245,6 @@
 		font-size: 0.8125rem;
 		font-weight: 600;
 		color: var(--color-foreground);
-	}
-
-	.cal-nav {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		background: none;
-		border: none;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		border-radius: 4px;
-		padding: 0;
-	}
-	.cal-nav:hover {
-		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 	}
 
 	.cal-dow-row {
@@ -381,8 +305,4 @@
 		font-weight: 600;
 	}
 
-	.nav-btn:disabled {
-		opacity: 0.4;
-		cursor: default;
-	}
 </style>

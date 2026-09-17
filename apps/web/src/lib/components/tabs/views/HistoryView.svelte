@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { Page } from "$lib";
+	import { Button, Page } from "$lib";
 	import UniversalDataGrid, {
 		type Column,
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
@@ -9,6 +9,7 @@
 	import { formatRelativeTimestamp } from "$lib/utils/dateUtils";
 	import { listChats } from "$lib/api/client";
 	import Icon from "$lib/components/Icon.svelte";
+	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -91,15 +92,17 @@
 	}
 </script>
 
+<!-- "All chats", as the drawer and the tab already call it — the page was
+     the one place still saying "Chat History". -->
 <Page
-	title="Chat History"
+	title="All chats"
 	description={`${sessions.length} conversation${sessions.length !== 1 ? "s" : ""}`}
 	maxWidth="wide"
 >
 	{#snippet actions()}
-		<button class="new-btn" onclick={handleNewChat}>
-			<Icon icon="ri:add-line" width="16" /> New Chat
-		</button>
+		<Button variant="secondary" size="sm" icon="ri:add-line" onclick={handleNewChat}
+			>New Chat</Button
+		>
 	{/snippet}
 
 	<UniversalDataGrid
@@ -112,13 +115,20 @@
 		emptyMessage="No conversations yet"
 		loadingMessage="Loading conversations..."
 		searchPlaceholder="Search chats..."
+		mobileViewMode="table"
 		onItemClick={handleItemClick}
 		rowHref={(c) => `/chat/${c.id}`}
 		onRetry={loadSessions}
 	>
+		<!-- On the phone the row is the drawer's Recents row: the title, and
+		     the time as a caption beneath it. The Updated column is hidden there
+		     (hideOnMobile), so the caption is where the time survives. -->
 		{#snippet tableRow(item: ChatItem)}
 			<td class="col-title">
 				<span class="title-text">{item.title}</span>
+				{#if mobileLayout.isMobile}
+					<span class="date-text row-when">{formatRelativeTimestamp(item.updated_at)}</span>
+				{/if}
 			</td>
 			<td class="col-updated hide-mobile">
 				<span class="date-text"
@@ -139,13 +149,6 @@
 </Page>
 
 <style>
-	.new-btn {
-		display: inline-flex; align-items: center; gap: 5px;
-		padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 8px;
-		background: var(--color-surface-elevated); color: var(--color-foreground);
-		font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap;
-	}
-	.new-btn:hover { background: var(--color-surface); }
 
 	.title-text {
 		font-weight: 500;
@@ -155,6 +158,11 @@
 	.date-text {
 		color: var(--color-foreground-muted);
 		font-size: 0.8125rem;
+	}
+
+	.row-when {
+		display: block;
+		margin-top: 2px;
 	}
 
 	.card-content {
@@ -194,6 +202,12 @@
 
 		.col-title {
 			width: 100%;
+			padding: 0.5rem 0;
+		}
+
+		.title-text {
+			font-size: 1rem;
+			font-weight: 400;
 		}
 	}
 </style>

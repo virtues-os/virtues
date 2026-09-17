@@ -21,7 +21,7 @@
 >    `api/box_status.rs`, `apps/web/src-tauri/ui/connect.html`,
 >    `apps/web/src/routes/(public)/display`,
 >    `apps/web/src/routes/(onboarding)/founders-letter/`,
->    `apps/web/src/lib/components/home/GettingStarted.svelte`.
+>    `apps/web/src/lib/components/chat/getting-started/`.
 > 3. This file — what is *built*.
 
 Imaging and manufacturing live in [appliance-image.md](appliance-image.md),
@@ -370,7 +370,8 @@ IP · first_source = an active non-device credential · remote_access = **iroh
 relay registered** · first_sync = a successful applet run ·
 narrative_identity_ready = the narrative-identity ARTICLE exists
 (`wiki_articles`, subject_type `narrative_identity`) — the abridged
-`wiki_narrative_identity` capsule this used to check was deleted 2026-09-01;
+`wiki_narrative_identity` capsule this used to check had its COLUMN dropped
+2026-09-01 (0006 — the table is still there, orphaned);
 the document is the one artifact. Derivation
 means the state survives re-installs, restores, and out-of-band changes.
 
@@ -389,7 +390,7 @@ in prod.
 | Where | What |
 |---|---|
 | `/founders-letter` | the one onboarding screen — the letter, then "Enter Virtues" |
-| Home, getting-started | the numbered list: introductions · connect your world · sign in (appliance) · the interview ("In your own words") · your first day · go further |
+| The getting-started room | one seeded chat, four steps numbered on the reading axis: Connect AI · Introductions · Integrations · Your story (the interview). Steps are DERIVED from the record, never stored, so a step already satisfied arrives settled. It stopped being a page on Home on 2026-09-13; `STEP_IDS` in `virtues-core/src/api/getting_started.rs` is the list. |
 
 The shell redirects to the letter only on `onboarding_status` — never on
 `setup_complete`, which on an appliance also requires the account and once
@@ -401,7 +402,7 @@ interview is the product's first *conversation* — one chat in the real app
 (`chat_narrative_interview`) — and the getting-started row that points at it
 says "underway" between a first answer and the close ("write it up", the
 interview's one tool, after which the composer retires). Three form factors
-died teaching us this; see [lsi-plan.md](lsi-plan.md).
+died teaching us this; see [lsi-plan.md](../record/lsi-plan.md).
 
 `/setup` is a **308 redirect** to `/onboarding`, kept rather than deleted
 because the box's own copy points there and SPA delivery is OTA — a bundle baked

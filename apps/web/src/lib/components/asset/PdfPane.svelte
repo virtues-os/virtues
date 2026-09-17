@@ -9,6 +9,7 @@
 	// IntersectionObserver; the download route's Range support (Phase 2) lets
 	// pdf.js fetch large documents piecewise instead of whole.
 	import Icon from "$lib/components/Icon.svelte";
+	import IconButton from "$lib/components/IconButton.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import RefPicker, { type EntityResult } from "$lib/components/RefPicker.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -749,9 +750,12 @@
 
 <div class="pdf-pane">
 	<div class="pdf-toolbar">
-		<button class="pdf-btn" onclick={() => scrollToPage(currentPage - 1)} title="Previous page">
-			<Icon icon="ri:arrow-up-s-line" width="14" />
-		</button>
+		<IconButton
+			icon="ri:arrow-up-s-line"
+			label="Previous page"
+			size="sm"
+			onclick={() => scrollToPage(currentPage - 1)}
+		/>
 		<input
 			class="pdf-page-input"
 			bind:value={pageInput}
@@ -759,20 +763,17 @@
 			onkeydown={(e) => e.key === "Enter" && commitPageInput()}
 		/>
 		<span class="pdf-page-total">/ {numPages || "–"}</span>
-		<button class="pdf-btn" onclick={() => scrollToPage(currentPage + 1)} title="Next page">
-			<Icon icon="ri:arrow-down-s-line" width="14" />
-		</button>
+		<IconButton
+			icon="ri:arrow-down-s-line"
+			label="Next page"
+			size="sm"
+			onclick={() => scrollToPage(currentPage + 1)}
+		/>
 		<div class="pdf-toolbar-spacer"></div>
-		<button class="pdf-btn" onclick={() => zoomBy(-1)} title="Zoom out">
-			<Icon icon="ri:zoom-out-line" width="14" />
-		</button>
+		<IconButton icon="ri:zoom-out-line" label="Zoom out" size="sm" onclick={() => zoomBy(-1)} />
 		<span class="pdf-zoom-label">{Math.round(zoom * 100)}%</span>
-		<button class="pdf-btn" onclick={() => zoomBy(1)} title="Zoom in">
-			<Icon icon="ri:zoom-in-line" width="14" />
-		</button>
-		<button class="pdf-btn" onclick={openFind} title="Find in document (⌘F)">
-			<Icon icon="ri:search-line" width="14" />
-		</button>
+		<IconButton icon="ri:zoom-in-line" label="Zoom in" size="sm" onclick={() => zoomBy(1)} />
+		<IconButton icon="ri:search-line" label="Find in document (⌘F)" size="sm" onclick={openFind} />
 		<button
 			class="pdf-btn"
 			class:active={railOpen}
@@ -801,15 +802,21 @@
 			<span class="pdf-find-count">
 				{findMatches.length ? `${findIndex + 1} / ${findMatches.length}` : findQuery.length >= 2 ? "0" : ""}
 			</span>
-			<button class="pdf-btn" onclick={() => gotoMatch(findIndex - 1)} title="Previous (⇧⏎)" disabled={!findMatches.length}>
-				<Icon icon="ri:arrow-up-s-line" width="13" />
-			</button>
-			<button class="pdf-btn" onclick={() => gotoMatch(findIndex + 1)} title="Next (⏎)" disabled={!findMatches.length}>
-				<Icon icon="ri:arrow-down-s-line" width="13" />
-			</button>
-			<button class="pdf-btn" onclick={closeFind} title="Close (Esc)">
-				<Icon icon="ri:close-line" width="13" />
-			</button>
+			<IconButton
+				icon="ri:arrow-up-s-line"
+				label="Previous match (⇧⏎)"
+				size="sm"
+				disabled={!findMatches.length}
+				onclick={() => gotoMatch(findIndex - 1)}
+			/>
+			<IconButton
+				icon="ri:arrow-down-s-line"
+				label="Next match (⏎)"
+				size="sm"
+				disabled={!findMatches.length}
+				onclick={() => gotoMatch(findIndex + 1)}
+			/>
+			<IconButton icon="ri:close-line" label="Close find (Esc)" size="sm" onclick={closeFind} />
 		</div>
 	{/if}
 
@@ -867,9 +874,12 @@
 				<span class="pdf-rail-count">{annotations.length}</span>
 				<div class="pdf-rail-spacer"></div>
 				{#if annotations.length}
-					<button class="pdf-rail-export" title="Export highlights as markdown" onclick={exportHighlights}>
-						<Icon icon="ri:download-line" width="12" />
-					</button>
+					<IconButton
+						icon="ri:download-line"
+						label="Export highlights as markdown"
+						size="xs"
+						onclick={exportHighlights}
+					/>
 				{/if}
 			</div>
 			{#if annotations.length === 0}
@@ -944,9 +954,13 @@
 			>
 				<Icon icon="ri:file-add-line" width="13" /> Send
 			</button>
-			<button class="pdf-note-del" title="Delete highlight" onclick={removeAnno}>
-				<Icon icon="ri:delete-bin-line" width="13" />
-			</button>
+			<IconButton
+				icon="ri:delete-bin-line"
+				label="Delete highlight"
+				size="xs"
+				variant="danger"
+				onclick={removeAnno}
+			/>
 		</div>
 		<textarea
 			class="pdf-note-input"
@@ -1028,10 +1042,6 @@
 		min-width: 3.5em;
 		text-align: right;
 		white-space: nowrap;
-	}
-	.pdf-btn:disabled {
-		opacity: 0.35;
-		cursor: default;
 	}
 	.pdf-btn {
 		display: inline-flex;
@@ -1124,21 +1134,6 @@
 	}
 	.pdf-rail-spacer {
 		flex: 1;
-	}
-	.pdf-rail-export {
-		display: grid;
-		place-items: center;
-		width: 20px;
-		height: 20px;
-		border: none;
-		border-radius: 5px;
-		background: transparent;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-	}
-	.pdf-rail-export:hover {
-		background: var(--ref-pill-bg);
-		color: var(--color-primary);
 	}
 	.pdf-rail-count {
 		padding: 0 6px;
@@ -1365,19 +1360,6 @@
 	}
 	.pdf-note-spacer {
 		flex: 1;
-	}
-	.pdf-note-del {
-		display: inline-flex;
-		padding: 3px;
-		border: none;
-		background: transparent;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		border-radius: 5px;
-	}
-	.pdf-note-del:hover {
-		color: var(--color-danger, #e5484d);
-		background: var(--ref-pill-bg);
 	}
 	.pdf-note-input {
 		width: 100%;

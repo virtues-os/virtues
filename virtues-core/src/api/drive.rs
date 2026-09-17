@@ -1709,7 +1709,9 @@ pub async fn reconcile_usage(pool: &PgPool, config: &DriveConfig) -> Result<Driv
     let (drive_bytes, file_count, folder_count): (i64, i64, i64) = sqlx::query_as(
         r#"
         SELECT
-            COALESCE(SUM(size_bytes), 0),
+            -- SUM(bigint) is NUMERIC, which sqlx will not read as i64; the
+            -- two CASE sums are over int literals and land as bigint already.
+            COALESCE(SUM(size_bytes), 0)::bigint,
             COALESCE(SUM(CASE WHEN is_folder = FALSE THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN is_folder = TRUE THEN 1 ELSE 0 END), 0)
         FROM app_drive_files
