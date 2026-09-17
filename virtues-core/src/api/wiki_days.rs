@@ -286,7 +286,7 @@ async fn compute_sleep_cycles(pool: &PgPool, date: NaiveDate) -> Result<Vec<Scor
             .bind(end)
             .fetch_optional(pool)
             .await
-            .ok()
+            .map_err(|e| Error::Database(format!("Failed to read sleep-cycle heart rate: {e}")))?
             .flatten();
 
             let autonomic_z = match (avg_hr, baseline_std > 0.0) {
@@ -610,6 +610,7 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
             let arrival_ts: DateTime<Utc> = row.try_get("started_at").ok()?;
             let arrival = arrival_ts.to_rfc3339();
             let departure: Option<String> = row
+                // absent-ok: a visit with no `ended_at` has not ended yet.
                 .try_get::<Option<DateTime<Utc>>, _>("ended_at")
                 .ok()
                 .flatten()
@@ -660,10 +661,15 @@ pub async fn get_timeline_day(pool: &PgPool, date: NaiveDate) -> Result<Timeline
 
     let points: Vec<TimelinePoint> = point_rows
         .iter()
+        // These read COLUMNS off rows already in hand — the query's own error
+        // was handled above — and a point missing a coordinate or a timestamp
+        // is one this timeline cannot place, so `filter_map` drops it rather
+        // than inventing one.
         .filter_map(|row| {
             let lat: Option<f64> = row.try_get("latitude").ok();
             let lng: Option<f64> = row.try_get("longitude").ok();
             let ts: Option<String> = row
+                // absent-ok: a row without a timestamp cannot be placed in time.
                 .try_get::<Option<DateTime<Utc>>, _>("occurred_at")
                 .ok()
                 .flatten()
