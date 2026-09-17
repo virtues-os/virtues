@@ -13,15 +13,19 @@
 ///
 /// `git describe` joins its commit offset and sha to the tag with HYPHENS:
 ///
-///     v0.1.7-staging.78-13-ga2ee5292-dirty
+/// ```text
+/// v0.1.7-staging.78-13-ga2ee5292-dirty
+/// ```
 ///
 /// Semver splits a prerelease on DOTS, so that trailing run is not a separate
 /// field — it is swallowed into the second prerelease identifier, making it
 /// the string `78-13-ga2ee5292-dirty`. And semver's rule for comparing two
 /// identifiers checks their TYPE before their value:
 ///
-///     "Numeric identifiers always have lower precedence than non-numeric
-///      identifiers." — semver.org §11.4.3
+/// ```text
+/// "Numeric identifiers always have lower precedence than non-numeric
+///  identifiers." — semver.org §11.4.3
+/// ```
 ///
 /// `79` is numeric; `78-13-ga2ee5292-dirty` is alphanumeric. So the local
 /// build outranks `staging.79` — and `.80`, and `.150`, because the rule is
@@ -33,11 +37,15 @@
 /// Semver has a field for exactly this data, and is explicit that it does not
 /// count:
 ///
-///     "Build metadata MUST be ignored when determining version precedence."
+/// ```text
+/// "Build metadata MUST be ignored when determining version precedence."
+/// ```
 ///
 /// So `+` instead of `-`:
 ///
-///     v0.1.7-staging.78+13.ga2ee5292.dirty
+/// ```text
+/// v0.1.7-staging.78+13.ga2ee5292.dirty
+/// ```
 ///
 /// which compares EQUAL to `v0.1.7-staging.78` — the truth about what the
 /// binary was built from — and upgrades to `.79` with nothing overridden.
