@@ -794,14 +794,39 @@ def _day_calendar(d, off, cal, weekend, chi, ctx):
 def _day_events(d, off, did, events, migraine, instrumented, lisbon, chi, weekend, ctx):
     """The derived layer, composed from what the day actually holds.
 
-    Every summary is built out of `ctx` — the workout and its distance, the
-    places, who was messaged, the weather, what was spent — so no two days read
-    alike and the embedding space has real spread. That matters mechanically,
-    not only aesthetically: local novelty is a LOF z-score, and LOF needs
-    variance in outlierness to be computable at all.
+    ## The lede rule
 
-    On a real box these come out of the segmentation pass; seeding the streams
-    first means that pass can be re-run to replace them.
+    A day's events are not a roll-up of its slots. The day's headline event
+    leads with the one thing that separates this day from the one before it —
+    the reason it asks to be remembered — and numbers appear only where they
+    are the evidence for that reason, never as a tally.
+
+    This is mechanical before it is aesthetic. `dayline/novelty.rs` embeds
+    `wiki_events.event_summary` verbatim, so the PROSE is the novelty signal.
+    The first version of this generator gave every day the same three
+    sentences with the digits swapped — "N minutes of X, D km, average H bpm"
+    — and the skeleton carried more signal than the content: a walk and a
+    kayak trip measured 0.705 cosine apart, against 0.374 for the same two
+    activities in plain language. Local novelty is a LOF z-score, LOF needs
+    variance in outlierness, and a templated corpus has none. So vary the
+    sentence, not only the numbers in it.
+
+    ## Step counts never appear
+
+    A step count is the least distinguishing thing a day holds, and in the
+    first version it closed 1,068 of 1,095 days — in the last clause, the
+    position that should carry the point. The ONE exception is a migraine day,
+    where a low count is evidence of a day spent in the dark rather than a
+    score.
+
+    ## A quiet day still emits four events
+
+    `MIN_EVENTS_TO_NARRATE` in `api/day_summary.rs` is 4: below it the box does
+    not narrate the day at all — no LLM call, no day article — and Chapters,
+    Years and Lifeline are all built on narration. So an unremarkable day keeps
+    its four events. It simply stops writing four ledes for them: one event
+    carries the day, and the rest name a particular (a place, a person, a
+    purchase, the weather) instead of reciting the same metrics.
     """
     k = d.isoformat()
     seq = 0
@@ -813,12 +838,27 @@ def _day_events(d, off, did, events, migraine, instrumented, lisbon, chi, weeken
                    onts, topics or [], entities or [], summary, kind, conf)
         seq += 1
 
-    def money(n=2):
-        b = ctx.get("bought", [])[:n]
-        return ", ".join(f"${a / 100:.2f} at {m}" for m, a in b)
+    # --- the particulars this day actually holds --------------------------
+    w = ctx.get("workout")
+    mins = ctx.get("sleep_min", 0)
+    hrv_v = ctx.get("hrv")
+    sleep_txt = f"{mins // 60}h{mins % 60:02d}"
+    people = ctx.get("spoke", [])
+    away = [p for p in ctx.get("stops", []) if p != "Home"]
+    meetings = ctx.get("meetings", [])
+    bought = ctx.get("bought", [])
+    hi, lo, rain = ctx.get("weather", (21.0, 12.0, 0.0))
+
+    def money(n=1):
+        # The Lisbon rows are written in EUR (`_day_money`), so the symbol has
+        # to follow the data. The lede literally says "everything in euros";
+        # printing dollars underneath it is the seed contradicting itself, and
+        # this demo's whole claim is that the prose stands on the record.
+        sym = "\u20ac" if lisbon else "$"
+        return ", ".join(f"{sym}{a / 100:.2f} at {m}" for m, a in bought[:n])
 
     def who(n=3):
-        p = ctx.get("spoke", [])[:n]
+        p = people[:n]
         if not p:
             return ""
         if len(p) == 1:
@@ -826,124 +866,259 @@ def _day_events(d, off, did, events, migraine, instrumented, lisbon, chi, weeken
         return ", ".join(p[:-1]) + " and " + p[-1]
 
     def sky():
-        if "weather" not in ctx:
-            return ""
-        hi, lo, rain = ctx["weather"]
+        """Weather, but only when it did something. Otherwise silence — a
+        temperature nobody noticed is the same padding as a step count."""
         if rain > 8:
-            return f"Heavy rain, {hi:.0f}°C."
+            return RNG.choice(["Rain all day, the heavy kind.",
+                               "It rained like it meant it.",
+                               "Heavy rain from the morning on."])
         if rain > 1:
-            return f"Wet, {hi:.0f}°C."
-        if hi > 33:
-            return f"{hi:.0f}°C and nowhere to put it."
+            return RNG.choice(["Wet underfoot.", "Rain on and off.", "Grey and wet."])
+        if hi > 34:
+            return RNG.choice([f"{hi:.0f}°C and nowhere to put it.",
+                               f"{hi:.0f}°C, the kind that ends plans."])
         if lo < 2:
-            return f"Down to {lo:.0f}°C overnight."
-        return f"{hi:.0f}°C."
+            return RNG.choice([f"Down to {lo:.0f}°C overnight.",
+                               f"A hard frost, {lo:.0f}°C before dawn."])
+        return ""
 
-    # --- sleep -----------------------------------------------------------
-    mins = ctx.get("sleep_min", 0)
-    hrv_v = ctx.get("hrv")
-    sleep_txt = f"{mins // 60}h{mins % 60:02d}"
-    ev(0, 7, "Asleep", "Home", ["data_health_sleep", "data_health_hrv"],
-       f"{sleep_txt} down, HRV {hrv_v}." + (" Short, and it shows in the morning."
-                                           if mins < 330 else ""),
-       kind="sleep", conf="high")
+    def workout_line():
+        """Plain language first, the figure second and only when it carries
+        something. Kind-specific frames so two different activities do not
+        come out as the same sentence with different digits."""
+        kind, mn, _cal, km, avg, peak = w
+        if kind == "strength_training":
+            return RNG.choice([
+                f"The usual barbell hour, {mn} minutes of it.",
+                f"Lifting. Nothing in it that {mn} minutes does not explain.",
+                f"Back under the bar for {mn} minutes.",
+            ])
+        if kind == "walking":
+            return RNG.choice([
+                f"A walk that turned into {km} km without meaning to.",
+                f"Out on foot, {km} km of it, mostly to be outside.",
+                f"Walked for {mn} minutes and thought about very little.",
+            ])
+        if kind == "running":
+            return RNG.choice([
+                f"Ran {km} km, and felt every one of them.",
+                f"{km} km on the road, holding {avg}.",
+            ])
+        return f"{km} km of {kind.replace('_', ' ')}."
 
-    # --- the migraine days -----------------------------------------------
+    # ------------------------------------------------------------------
+    # The lede. Scripted singular days first, then whatever this day's own
+    # data makes unusual, then nothing in particular — and a day with nothing
+    # in particular says so, briefly, rather than manufacturing a headline.
+    #
+    # `spent` is what the lede has already used. A particular belongs to ONE
+    # sentence: a lede that has already named the day's single purchase and a
+    # supporting event that names it again is the padding this rewrite exists
+    # to remove, and it reads worse than the template did.
+    # ------------------------------------------------------------------
+    spent = set()
+
     if migraine:
-        late = next((f"${a / 100:.2f} at {m}" for m, a in ctx.get("bought", [])
-                     if m == "Jo's"), None)
-        ev(7, 12, "A slow morning", "Home",
+        late = next((f"${a / 100:.2f} at {m}" for m, a in bought if m == "Jo's"), None)
+        ev(7, 12, "A migraine took the morning", "Home",
            ["data_health_heart_rate", "data_health_hrv", "data_health_sleep"],
-           f"Migraine. {sleep_txt} of sleep behind it and HRV at {hrv_v}, the lowest "
-           f"in weeks. Low light, no screen, {ctx.get('steps', 0):,} steps for the "
-           f"whole day." + (f" A late coffee the night before — {late}." if late else ""),
-           conf="high", topics=["health"], entities=[])
-        ev(12, 22, "Recovering", "Home", ["data_location_visit", "data_health_steps"],
-           f"Lifted by the afternoon. {sky()} Nothing on the calendar, and nothing "
-           f"attempted.", conf="medium")
+           f"Migraine. {sleep_txt} behind it and HRV at {hrv_v}, the lowest in weeks "
+           f"— then low light and no screen until the afternoon. "
+           f"{ctx.get('steps', 0):,} steps for the whole day, which is what a day "
+           f"spent in the dark looks like."
+           + (f" A late coffee the night before, {late}." if late else ""),
+           conf="high", topics=["health"])
+        ev(12, 22, "It lifted by the afternoon", "Home",
+           ["data_location_visit", "data_health_steps"],
+           RNG.choice([f"Enough to eat by evening. Nothing attempted on a "
+                       f"{d.strftime('%A')}, and nothing missed.",
+                       f"Lifted enough to sit up, {sleep_txt} of sleep still "
+                       f"owed. The calendar was empty anyway.",
+                       f"By four it had gone. Nothing on, and nothing wanted."]),
+           conf="medium")
+        ev(22, 23, "Early night", "Home", ["data_health_sleep"],
+           "In bed before ten.", kind="sleep", conf="medium")
+        ev(0, 7, "Asleep", "Home", ["data_health_sleep", "data_health_hrv"],
+           f"{sleep_txt}, and not much of it good.", kind="sleep", conf="high")
         return
 
-    # --- the ghost -------------------------------------------------------
-    if off == GHOST_EVENT:
-        ev(15, 16, None, None, ["data_calendar_event"],
-           "A calendar block — \u201cCoffee \u2014 J.\u201d \u2014 with nothing behind it. "
-           "No location, no messages, no spend in the hour either side. I cannot say "
-           "whether it happened.", kind="unknown", conf="low")
-
-    # --- travel ----------------------------------------------------------
     if lisbon:
         spend = money(2)
         ev(8, 20, "Lisbon", "Lisbon",
            ["data_location_visit", "data_financial_transaction", "data_environment_weather"],
-           f"Out most of the day. {sky()} "
-           + (f"Everything in euros — {spend}." if spend else "Everything in euros."),
-           conf="medium", topics=["travel"], entities=[])
-        if ctx.get("spoke"):
-            ev(21, 23, "Evening", "Lisbon", ["data_communication_message"],
-               f"Messages home to {who(2)}.", conf="medium")
+           RNG.choice([
+               "A day of walking a city on foot and getting lost in it on purpose.",
+               "Out from morning until the light went, and none of it planned.",
+               "Lisbon, at the pace of somewhere you do not have to be anywhere.",
+           ]) + (f" Everything in euros — {spend}." if spend else " Everything in euros."),
+           conf="medium", topics=["travel"])
+        ev(20, 22, "The walk back", "Lisbon", ["data_location_visit"],
+           RNG.choice(["The long way back along the water.",
+                       "Back on foot, the river on one side the whole way.",
+                       "A slow walk home in the last of the heat."]), conf="medium")
+        ev(22, 23, "Messages home", "Lisbon", ["data_communication_message"],
+           f"A few words to {who(2)}." if people else "Nothing said to anyone.",
+           conf="medium")
+        ev(0, 7, "Asleep", "Lisbon", ["data_health_sleep"],
+           f"{sleep_txt}, on a mattress with opinions.", kind="sleep", conf="high")
         return
 
-    # --- the two novelty cases, described rather than scored -------------
-    w = ctx.get("workout")
     if off == FIRST_KAYAK:
-        ev(9, 12, "Kayaking on the lake", "Lady Bird Lake",
+        ev(9, 12, "First time on the water", "Lady Bird Lake",
            ["data_health_workout", "data_location_visit", "data_location_point"],
-           f"Three hours on the water — {w[3]} km, average heart rate {w[4]}. "
-           f"{sky()} Nothing else in the record looks like it.",
+           f"First time in a kayak. Three hours out and {w[3]} km of it, and the "
+           f"arms knew about it long before the lake ended. Nothing else in three "
+           f"years looks like this.",
            conf="high", topics=["outdoors", "first"])
     elif off == RAN_INSTEAD:
         ev(17, 18, "Ran instead of lifting", "Mueller Trails",
            ["data_health_workout", "data_health_heart_rate"],
-           f"{w[3]} km at an average of {w[4]} bpm, on an evening that is normally "
-           f"a barbell and forty minutes indoors.", conf="high", topics=["fitness"])
-    elif chi:
-        ev(9, 18, "At the agency", "The agency",
+           f"Ran, on an evening that is normally a barbell and forty minutes "
+           f"indoors. {w[3]} km at {w[4]}, and no decision behind it worth the name.",
+           conf="high", topics=["fitness"])
+    elif off == GHOST_EVENT:
+        ev(15, 16, None, None, ["data_calendar_event"],
+           "A calendar block — “Coffee — J.” — with nothing behind it. "
+           "No location, no messages, no spend in the hour either side. I cannot say "
+           "whether it happened.", kind="unknown", conf="low")
+    elif rain > 8:
+        # Every frame has to name something only this day holds — rainfall, a
+        # place, a meeting. A frame with no slot in it repeats verbatim across
+        # hundreds of days, which is the degenerate embedding space again.
+        if meetings:
+            spent.add("meeting")
+            held = f" {meetings[0]} went ahead anyway."
+        elif bought:
+            spent.add("money")
+            held = f" {money(1)} was the whole of it."
+        elif people:
+            held = f" {who(1)} had the same weather."
+        else:
+            held = ""
+        ev(9, 17, "Rain shut the day in", away[0] if away else "Home",
+           ["data_environment_weather", "data_location_visit"],
+           RNG.choice([
+               f"Rain from before dawn \u2014 {rain:.0f} mm of it \u2014 and it never "
+               f"let up.{held}",
+               f"{rain:.0f} mm since the night before. Whatever the day was going "
+               f"to be, it was this instead.{held}",
+               f"It rained hard enough \u2014 {rain:.0f} mm \u2014 to make the day a "
+               f"small one.{held}",
+           ]), conf="high")
+    elif hi > 34:
+        ev(12, 18, "Too hot to be outside", "Home",
+           ["data_environment_weather"],
+           f"{hi:.0f}°C by noon, which ended any argument about going out.",
+           conf="high")
+    elif len(meetings) >= 3:
+        ev(9, 17, "A day that was all calendar", "Office" if chi else "Home",
+           ["data_calendar_event", "data_activity_app_session"],
+           f"{len(meetings)} things back to back — {', '.join(meetings[:2])} "
+           f"— and nothing between them long enough to be called work.",
+           conf="high")
+    elif weekend and away:
+        ev(10, 15, away[0], away[0],
+           ["data_location_visit", "data_financial_transaction"],
+           RNG.choice([f"{away[0]}, without much of a reason.",
+                       f"Out to {away[0]} and no further.",
+                       f"{away[0]} in the middle of the day."])
+           + (f" {money(1)}." if bought else ""), conf="medium")
+        if bought:
+            spent.add("money")
+    elif w and w[0] == "walking":
+        ev(9, 11, "A long walk", away[0] if away else "Mueller",
+           ["data_health_workout"], workout_line(), conf="high", topics=["outdoors"])
+    else:
+        # Nothing asked to be remembered. Say that, and say it short — but a
+        # quiet day is still a PARTICULAR quiet day, and the line has to carry
+        # whichever particular it has, or 700 of these come out identical.
+        dayname = d.strftime("%A")
+        if meetings:
+            spent.add("meeting")
+            tail = f" {meetings[0]}, and nothing after it."
+        elif bought:
+            spent.add("money")
+            tail = f" {money(1)}, which was the day's one decision."
+        elif people:
+            tail = f" {who(1)} the only voice in it."
+        else:
+            tail = ""
+        ev(9, 17, "A quiet one", "Office" if chi else "Home",
            ["data_location_visit", "data_calendar_event"],
-           _work_line(ctx, sky, money, "A studio day"), conf="high")
-    elif weekend:
-        stops = [p for p in ctx.get("stops", []) if p != "Home"]
-        where = stops[0] if stops else "Austin"
-        ev(10, 15, "Out", where, ["data_location_visit", "data_financial_transaction"],
-           f"{where}" + (f", then {money(1)}" if ctx.get("bought") else "") + f". {sky()}",
+           RNG.choice([f"A {dayname} that left nothing behind.",
+                       f"Work, and not much else worth the name on a {dayname}.",
+                       f"Nothing in this {dayname} the next one would not repeat.",
+                       f"An ordinary {dayname}, start to finish."])
+           + tail + (f" {sky()}" if sky() else ""), conf="high")
+
+    # ------------------------------------------------------------------
+    # Supporting events. Each names a particular, not a metric. They exist so
+    # the day clears MIN_EVENTS_TO_NARRATE with things that are true, not so
+    # every slot gets a sentence.
+    # ------------------------------------------------------------------
+
+    ev(0, 7, "Asleep", "Home", ["data_health_sleep", "data_health_hrv"],
+       RNG.choice([f"{sleep_txt}, straight through.",
+                   f"Down early, {sleep_txt} of it.",
+                   f"{sleep_txt}, and awake before the alarm."])
+       if mins >= 392 else
+       RNG.choice([f"A short night — {sleep_txt}, and HRV down at {hrv_v}.",
+                   f"{sleep_txt}, which was not enough and showed by eleven."]),
+       kind="sleep", conf="high")
+
+    if off not in (FIRST_KAYAK, RAN_INSTEAD) and w and not (w[0] == "walking" and away):
+        ev(17, 18, w[0].replace("_", " ").title(),
+           away[-1] if away else "Home", ["data_health_workout"],
+           workout_line(), conf="high", topics=["fitness"])
+
+    if meetings and len(meetings) < 3 and "meeting" not in spent:
+        ev(11, 12, meetings[0], "Office" if chi else "Home",
+           ["data_calendar_event"],
+           RNG.choice([f"{meetings[0]}, and it ran short.",
+                       f"{meetings[0]}. Half an hour, and settled.",
+                       f"One thing on the calendar: {meetings[0]}."]), conf="high")
+    elif bought and "money" not in spent:
+        ev(13, 14, "Out briefly", away[0] if away else "Mueller",
+           ["data_financial_transaction", "data_location_visit"],
+           RNG.choice([f"{money(1)}, and back.",
+                       f"Out as far as {bought[0][0]} and no further.",
+                       f"{money(1)}. The only reason to leave the house."]),
+           conf="medium")
+    elif away:
+        ev(13, 14, away[0], away[0], ["data_location_visit"],
+           RNG.choice([f"An hour at {away[0]}.",
+                       f"{away[0]}, and not long there.",
+                       f"Out to {away[0]} and straight back."]), conf="medium")
+    elif people:
+        ev(13, 14, "Midday", "Office" if chi else "Home",
+           ["data_communication_message"],
+           RNG.choice([f"{who(1)} halfway through the afternoon.",
+                       f"A message from {who(1)} and nothing that needed answering."]),
            conf="medium")
     else:
-        ev(9, 17, "Working", "Office" if off < D(2025, 1, 15) else "Home",
-           ["data_location_visit", "data_calendar_event", "data_activity_app_session"],
-           _work_line(ctx, sky, money, "A working day"), conf="high")
+        # Something has to stand here: below MIN_EVENTS_TO_NARRATE the box does
+        # not narrate the day at all, and the lede having eaten this day's only
+        # particular is not a reason to lose the day from Chapters and Years.
+        ev(13, 14, "Midday", "Office" if chi else "Home",
+           ["data_location_visit", "data_activity_app_session"],
+           RNG.choice([f"The middle of a {d.strftime('%A')} and nothing in it.",
+                       f"Straight through the middle of the day without stopping.",
+                       f"A {d.strftime('%A')} afternoon that asked for nothing."]),
+           conf="low")
 
-    # --- the workout, when it is not the day's headline -------------------
-    if w and off not in (FIRST_KAYAK, RAN_INSTEAD):
-        kindname = w[0].replace("_", " ")
-        dist = f", {w[3]} km" if w[3] else ""
-        ev(17, 18, kindname.title(), ctx.get("stops", ["Home"])[-1],
-           ["data_health_workout"],
-           f"{w[1]} minutes of {kindname}{dist}, average {w[4]} bpm.", conf="high",
-           topics=["fitness"])
-
-    # --- the evening ------------------------------------------------------
-    people = who(3)
-    steps = ctx.get("steps", 0)
-    ev(18, 23, "Evening", "Home",
-       ["data_location_visit", "data_communication_message", "data_health_steps"],
-       (f"Home by six. Messages with {people}. " if people else "Home by six. ")
-       + f"{steps:,} steps on the day.", conf="medium")
-
-
-def _work_line(ctx, sky, money, opener):
-    """One sentence about a working day, built from that day's own contents."""
-    bits = [opener + "."]
-    meetings = ctx.get("meetings", [])
-    if len(meetings) == 1:
-        bits.append(f"One thing on the calendar: {meetings[0]}.")
-    elif meetings:
-        bits.append(f"{len(meetings)} on the calendar — {', '.join(meetings[:2])}.")
+    if people:
+        ev(18, 23, "Evening", "Home",
+           ["data_location_visit", "data_communication_message"],
+           RNG.choice([f"Messages back and forth with {who(2)}.",
+                       f"{who(1)} texting about nothing in particular.",
+                       f"In for the night, {who(2)} on and off."]), conf="medium")
     else:
-        bits.append("Nothing on the calendar.")
-    spend = money(1)
-    if spend:
-        bits.append(f"{spend}.")
-    bits.append(sky())
-    return " ".join(b for b in bits if b)
+        ev(18, 23, "Evening", "Home", ["data_location_visit"],
+           RNG.choice([f"Home by six on a {d.strftime('%A')}, and nobody needed "
+                       f"anything.",
+                       f"An evening with no one in it, {d.strftime('%B')} being "
+                       f"the kind of month for that.",
+                       f"In, and quiet with it. {sky()}".strip()]), conf="medium")
 
 
 # --------------------------------------------------------------------------
