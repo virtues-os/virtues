@@ -1437,10 +1437,25 @@ BEGIN
   -- back means a second run computes zero and returns, and that is also what
   -- makes re-running the seed the way to re-age a long-lived demo box.
   --
-  -- Anchored on this set's own events (`p3y_`) rather than on max(wiki_days),
-  -- because `demo_day.sql` shares the `day_<date>` id namespace and its own
-  -- instrumented Friday sits two days later.
-  SELECT max(ended_at)::date INTO cur_anchor FROM wiki_events WHERE id LIKE 'p3y_%%';
+  -- ANCHOR ON A DATE, NEVER ON A TIMESTAMP. This read
+  -- `max(ended_at)::date ... WHERE id LIKE 'p3y_%%'`, and a timestamptz cast to
+  -- date uses the SESSION timezone — which is `Etc/UTC` on a box, while the
+  -- days themselves are America/Chicago. The last event of the newest day runs
+  -- to local midnight, i.e. 05:00 UTC the NEXT day, so the anchor read one day
+  -- ahead of the day it belonged to, the shift computed to zero, and the
+  -- seeded life came to rest ENDING YESTERDAY. Home asks for the browser's
+  -- literal today with no fallback, so the demo's front page was empty every
+  -- day, which is the exact failure this file exists to prevent.
+  --
+  -- The day rows carry real dates, so ask them instead and no timezone enters
+  -- the arithmetic. Restricted to days holding THIS set's events: a running box
+  -- auto-creates an empty `wiki_days` row for today with a hashed id, and
+  -- `max(wiki_days.date)` would read that empty row as the anchor and again
+  -- compute a zero shift.
+  SELECT max(d.date) INTO cur_anchor
+    FROM wiki_days d
+   WHERE EXISTS (SELECT 1 FROM wiki_events e
+                  WHERE e.day_id = d.id AND e.id LIKE 'p3y!_%%' ESCAPE '!');
   IF cur_anchor IS NULL THEN RETURN; END IF;
   shift_days := current_date - cur_anchor;
   IF shift_days = 0 THEN RETURN; END IF;
