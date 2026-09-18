@@ -376,14 +376,67 @@
 	// for its live stream. The SDK replays what was said and follows the rest;
 	// a 204 means nothing is running and the load stands as it is. Never for a
 	// ghost: its transcript lives in this tab and nowhere the box could resume.
+	// When the last rejoin was attempted, so the several triggers that legitimately
+	// fire together on a load do not each open a reader on the same turn.
+	//
+	// An "in flight" boolean was not enough, and the network log said so: three
+	// requests 3ms apart, because a 204 settles fast enough that the `finally`
+	// clears the flag before the next caller looks at it. Against a dead turn
+	// that is only waste; against a LIVE one it is three readers on one stream,
+	// which is the thing the guard exists to prevent. A short floor covers both
+	// the overlapping case and the rapid-succession one.
+	let lastRejoinAt = 0;
+	const REJOIN_FLOOR_MS = 1500;
+
 	function resumeIfDangling() {
 		if (isGhost) return;
-		const last = chat.messages[chat.messages.length - 1];
-		if (!last || last.role !== "user") return;
+		const now = Date.now();
+		if (now - lastRejoinAt < REJOIN_FLOOR_MS) return;
+		lastRejoinAt = now;
 		if (chat.status !== "ready") return;
-		void chat.resumeStream().catch((e: unknown) => {
-			console.warn("[ChatView] could not rejoin the running turn:", e);
-		});
+		const last = chat.messages[chat.messages.length - 1];
+		if (!last) return;
+
+		// No "is the last message a user message?" gate any more. It used to be
+		// here, and it meant the rejoin only ever fired for a turn that had not
+		// produced a single token: the moment the assistant started streaming,
+		// an assistant message existed and the door shut. A phone that slept, a
+		// lift, a Wi-Fi handover — all threw away a turn the box was still
+		// running and still paying for, and offered a Retry that bills a second
+		// one. That is the whole case this exists for.
+		//
+		// We cannot tell "unfinished" from the client with any confidence, and
+		// we do not have to: the box is authoritative and answers 204 when no
+		// turn is live, so an unnecessary ask is one cheap GET.
+		void chat
+			.resumeStream()
+			.catch((e: unknown) => {
+				console.warn("[ChatView] could not rejoin the running turn:", e);
+			})
+			.finally(() => {
+				// Nothing was running, and the last thing said was ours. The
+				// turn died with the box — see `danglingTurn`.
+				markDanglingIfUnanswered();
+			});
+	}
+
+	// A turn the box started and never finished, with nothing left to rejoin.
+	//
+	// The assistant row is only written once the loop completes, so a box that
+	// dies mid-turn (crash, power, upgrade) leaves the person's message sitting
+	// there with no reply and NO marker — indistinguishable from a message that
+	// was never sent. Reload asks to rejoin, gets 204, and used to leave it
+	// looking like nothing had happened.
+	let danglingTurn = $state(false);
+
+	function markDanglingIfUnanswered() {
+		if (isGhost) {
+			danglingTurn = false;
+			return;
+		}
+		const last = chat.messages[chat.messages.length - 1];
+		danglingTurn =
+			chat.status === "ready" && !!last && last.role === "user" && !isAwaitingResponse;
 	}
 
 	// Chat instance - fetched from shared store to survive remounts
@@ -496,6 +549,7 @@
 			titleGenerated = false;
 			isAwaitingResponse = false;
 			isGhost = isTemporaryRoute(currentTabRoute);
+			danglingTurn = false;
 			queuedMessages = [];
 			input = "";
 			refs.clear();
@@ -570,6 +624,26 @@
 				isLoading = false;
 			}
 		}
+	});
+
+	// Rejoin a running turn when the connection or the screen comes back.
+	//
+	// Mount was the ONLY trigger before, which covers a reload and a tab switch
+	// and nothing else — so a view that stayed mounted through a Wi-Fi handover
+	// or a locked phone never reconnected, even though the box holds a turn for
+	// five minutes precisely so it can be rejoined (live_turn.rs UNATTENDED_CAP).
+	// The backend was already doing its half.
+	$effect(() => {
+		if (!active) return;
+		const onBack = () => {
+			if (document.visibilityState === "visible") resumeIfDangling();
+		};
+		window.addEventListener("online", onBack);
+		document.addEventListener("visibilitychange", onBack);
+		return () => {
+			window.removeEventListener("online", onBack);
+			document.removeEventListener("visibilitychange", onBack);
+		};
 	});
 
 	// Load conversation data on mount
@@ -1202,6 +1276,9 @@
 		// would put an already-sent message back in the composer and its files
 		// back in the tray, next to the copies sitting in the transcript.
 		let handedOff = false;
+
+		// A new turn answers the dangling one, whatever it was.
+		danglingTurn = false;
 
 		// New turn → clear any leftover Deep Research panel from the previous turn.
 		chatInstances.clearSubagents(conversationId);
@@ -1898,6 +1975,28 @@
 											agentMode={selectedAgentMode}
 										/>
 									</div>
+								</div>
+							{/if}
+
+							<!-- A turn the box began and never finished. Not an error —
+							     nothing failed on the wire, the box simply stopped
+							     existing mid-turn — so it gets the same quiet chip as
+							     the other partial endings rather than the error card,
+							     plus the one thing the person actually needs, which is
+							     a way to ask again without retyping. -->
+							{#if danglingTurn && !chat.error}
+								<div class="dangling-turn">
+									<StoppedNotice reason="no_reply" />
+									<button
+										type="button"
+										class="dangling-retry"
+										onclick={() => {
+											danglingTurn = false;
+											void chat.regenerate();
+										}}
+									>
+										Try again
+									</button>
 								</div>
 							{/if}
 
@@ -3016,6 +3115,26 @@
 		100% {
 			background-position: 0% center;
 		}
+	}
+
+	.dangling-turn {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.25rem;
+	}
+
+	.dangling-retry {
+		font-size: 0.75rem;
+		color: var(--color-primary);
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+	}
+
+	.dangling-retry:hover {
+		text-decoration: underline;
 	}
 
 </style>
