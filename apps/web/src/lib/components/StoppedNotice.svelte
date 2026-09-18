@@ -10,7 +10,7 @@
 	// up its allowance of tool calls.
 	// Same chip, different word, because the difference is who to blame.
 	let { reason = 'stopped' }: {
-		reason?: 'stopped' | 'length' | 'interrupted' | 'unattended' | 'max_steps';
+		reason?: 'stopped' | 'length' | 'interrupted' | 'unattended' | 'max_steps' | 'no_reply';
 	} = $props();
 </script>
 
@@ -27,6 +27,9 @@
 	{:else if reason === 'unattended'}
 		<Icon icon="ri:moon-line" width="13" />
 		<span>Stopped by your box — nothing was watching</span>
+	{:else if reason === 'no_reply'}
+		<Icon icon="ri:plug-line" width="13" />
+		<span>Your server never finished this one</span>
 	{:else if reason === 'max_steps'}
 		<Icon icon="ri:footprint-line" width="13" />
 		<span>Used up its steps before it finished</span>
