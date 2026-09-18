@@ -95,38 +95,30 @@ function readAsText(file: File): Promise<string> {
 }
 
 /**
- * What the PROVIDER will take in one request — NOT what the media backend will
- * store. A chat attachment never reaches the media backend: it travels as
- * base64 inside the message, is persisted that way, and `build_context_for_llm`
- * re-emits it on every later turn (virtues-core/src/api/compaction.rs). The old
- * cap was 100 MB "to match the media backend", which let a file stage that the
- * gateway would then refuse mid-turn — an error the capability gate has no way
- * to predict, because it judges modality and never size.
+ * How big a file may be to ride inside a message, by kind.
  *
- * These are the tightest documented per-request ceilings across the models we
- * route to, measured on the ENCODED payload, since that is what ships.
- */
-const ENCODED_MAX: Record<Attachment["kind"], number> = {
-	image: 5 * 1024 * 1024,
-	pdf: 30 * 1024 * 1024,
-	audio: 20 * 1024 * 1024,
-	text: 1 * 1024 * 1024, // never reached: the content is truncated to MAX_TEXT
-};
-
-/**
- * The cap we can apply BEFORE reading the file, from `File.size` alone.
+ * NOT the media backend's cap, which is what the old 100 MB here was copied
+ * from. A chat attachment never reaches that backend: it travels as base64
+ * inside the message, is persisted that way, and `build_context_for_llm`
+ * re-emits it on every later turn (virtues-core/src/api/compaction.rs). So the
+ * limit that matters is what a provider takes in one request, and base64 adds a
+ * third on top of every number below.
  *
- * base64 inflates by 4/3, so a raw file three-quarters of the ceiling encodes to
- * about the ceiling. An image is the exception: `normalizeImage` downscales it
- * to ~1568px first, so a 12 MP photo lands near 400 KB however big it started —
- * judging it on its raw size would turn away files that are perfectly fine. Its
- * number here only bounds the decode, and the real check happens after.
+ * These four are conservative estimates, not quotes from a provider's docs —
+ * pinned low enough to fail here, with a reason, rather than at the gateway
+ * mid-turn where the error explains nothing. Raise one when something real
+ * argues for it.
+ *
+ * The image number is generous because `normalizeImage` downscales to ~1568px
+ * anyway — a 12 MP photo lands near 400 KB whatever it started at. It matters
+ * only for the formats that pass through untouched, GIF being the deliberate
+ * one.
  */
-const RAW_MAX: Record<Attachment["kind"], number> = {
-	image: 50 * 1024 * 1024,
-	pdf: Math.floor((ENCODED_MAX.pdf * 3) / 4),
-	audio: Math.floor((ENCODED_MAX.audio * 3) / 4),
-	text: 10 * 1024 * 1024,
+const MAX_BYTES: Record<Attachment["kind"], number> = {
+	image: 10 * 1024 * 1024,
+	pdf: 20 * 1024 * 1024,
+	audio: 15 * 1024 * 1024,
+	text: 10 * 1024 * 1024, // read whole, then truncated to MAX_TEXT
 };
 
 const KINDS_SENTENCE = "Images, PDFs, audio, and text files only.";
@@ -160,10 +152,10 @@ export class AttachmentsController {
 				turnedAway.push({ name: file.name, why: KINDS_SENTENCE });
 				continue;
 			}
-			if (file.size > RAW_MAX[kind]) {
+			if (file.size > MAX_BYTES[kind]) {
 				turnedAway.push({
 					name: file.name,
-					why: `${formatFileSize(file.size)}, over the ${formatFileSize(RAW_MAX[kind])} limit.`,
+					why: `${formatFileSize(file.size)}, over the ${formatFileSize(MAX_BYTES[kind])} limit.`,
 				});
 				continue;
 			}
@@ -180,16 +172,6 @@ export class AttachmentsController {
 
 				if (kind === "image") {
 					const norm = await normalizeImage(file);
-					// normalizeImage passes some formats through untouched — GIF
-					// deliberately, to keep the animation — so the only honest
-					// place to weigh an image is after it, on what will ship.
-					if (norm.dataUrl.length > ENCODED_MAX.image) {
-						turnedAway.push({
-							name: file.name,
-							why: `Still ${formatFileSize(norm.dataUrl.length)} after encoding, over the ${formatFileSize(ENCODED_MAX.image)} limit.`,
-						});
-						continue;
-					}
 					url = norm.dataUrl;
 					mediaType = norm.mediaType;
 					// norm.width/height are deliberately not kept: they were stored
