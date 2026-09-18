@@ -456,7 +456,6 @@ jobs:
             dist/${{ steps.tarball.outputs.installer_name }}
             dist/${{ steps.tarball.outputs.installer_name }}.sha256
           fail_on_unmatched_files: true
-          draft: true
           # Don't auto-publish: lets the release page collect both arches
           # before going live. The release shows up as draft after the
           # first job and ships once you manually publish (or call it as
