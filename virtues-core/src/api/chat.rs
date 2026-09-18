@@ -2434,6 +2434,28 @@ fn create_agent_stream(
                 },
             };
 
+            // WHAT THE REPLY LINKED TO, CHECKED AFTER THE FACT.
+            //
+            // The wiki REFUSES a bad link (`wiki_editor::check_links`), because
+            // an article is a stored artifact and nothing has been shown yet.
+            // A chat reply has already streamed past the person by the time
+            // anything could object, so the same finding is reported instead —
+            // it cannot be enforced here without rewriting text somebody has
+            // read, and a link that silently vanishes on reload is its own kind
+            // of lie. The citation example in the prompt used to be a literal
+            // id (`/person/person_ab12`), which is exactly how the wiki's first
+            // invented link got written, so this is also how we find out
+            // whether removing it was enough.
+            match crate::api::wiki_editor::dead_links(&pool, &full_content).await {
+                Ok(problems) if !problems.is_empty() => {
+                    for problem in &problems {
+                        tracing::warn!(chat_id = %chat_id, model = %model, "the reply {problem}");
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(chat_id = %chat_id, error = %e, "could not check the reply's links"),
+            }
+
             if temporary {
                 // Ghost: nothing written. The client keeps the turn in its tab.
             } else if let Err(e) = append_message(&pool, chat_id.clone(), assistant_message).await {

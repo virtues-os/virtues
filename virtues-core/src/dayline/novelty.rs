@@ -194,8 +194,7 @@ pub async fn compute_and_store_novelty(
     };
 
     // GLOBAL ONLY on this path. The single-event entry points fire on every
-    // event NEW/CONTINUE (tools/dayline_events.rs spawns this per edit), and
-    // building the LOF model is O(n²). Global novelty is O(n) — the original
+    // event NEW/CONTINUE, and building the LOF model is O(n²). Global novelty is O(n) — the original
     // cost of this path. Local novelty is a chart signal with no latency need,
     // so it's left to the daily batch (`compute_novelty_for_day`), which the
     // re-score predicate reaches because local_novelty_z stays NULL here.
