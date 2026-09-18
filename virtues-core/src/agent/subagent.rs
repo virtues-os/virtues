@@ -274,7 +274,7 @@ async fn run_one_worker(
             crate::tools::get_tools_for_council_voice(),
         ),
     };
-    let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt));
+    let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt), None);
 
     let (notebook_id, scope_mode) = scope;
     let context = ToolContext {
