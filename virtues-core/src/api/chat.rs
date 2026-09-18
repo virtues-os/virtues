@@ -1605,15 +1605,39 @@ async fn chat_handler_inner(
 
     // Check if compaction is needed before sending to LLM. A ghost chat has
     // no usage row to read and no summary to write, so it never compacts.
-    let compaction_needed = if temporary {
-        false
+    // Compaction runs HERE, before the context is built — not inside the
+    // stream, where it used to. The turn that triggers it is the turn whose
+    // context is too big, and a summary written after `build_context_for_llm`
+    // has already run does nothing for it: the full transcript went out
+    // anyway, after up to sixty seconds of waiting for a summary it did not
+    // use. The saving only ever landed on the NEXT turn.
+    //
+    // The checkpoint event still reaches the client first thing, so the UI
+    // paints "N messages summarized" exactly as before.
+    let checkpoint_event = if temporary {
+        None
     } else {
         let compaction_status =
             crate::api::chat_usage::check_compaction_needed(&pool, request.chat_id.clone(), &model)
                 .await;
-        // Pass compaction_needed flag to stream - compaction will run inside stream
-        // and emit a checkpoint event for real-time UI updates
-        matches!(compaction_status, Ok(ContextStatus::Critical))
+        if matches!(compaction_status, Ok(ContextStatus::Critical)) {
+            tracing::info!(chat_id = %chat_id_str, "context critical, compacting before the turn");
+            let options = CompactionOptions {
+                model_id: Some(model.clone()),
+                ..Default::default()
+            };
+            match compact_chat(&pool, chat_id_str.clone(), options).await {
+                Ok(_) => get_latest_checkpoint(&pool, &chat_id_str).await,
+                Err(e) => {
+                    // A chat that cannot compact still gets its answer; it is
+                    // just a large one.
+                    tracing::warn!(chat_id = %chat_id_str, error = %e, "auto-compaction failed; continuing with the full context");
+                    None
+                }
+            }
+        } else {
+            None
+        }
     };
 
     use sqlx::Row;
@@ -1814,7 +1838,7 @@ async fn chat_handler_inner(
         model,
         api_messages,
         msg_id,
-        compaction_needed,
+        checkpoint_event,
         turn_token.clone(),
     );
     {
@@ -1907,7 +1931,8 @@ fn create_agent_stream(
     model: String,
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
-    compaction_needed: bool,
+    // Emitted first when this turn compacted the chat before it started.
+    checkpoint_event: Option<StreamEvent>,
     cancel_token: CancellationToken,
 ) -> Pin<Box<dyn Stream<Item = String> + Send>> {
     let chat_id = request.chat_id.clone();
@@ -1920,33 +1945,6 @@ fn create_agent_stream(
         // The token was registered by the handler; this is the same one the
         // driver watches.
         let cancel_token = cancel_token;
-
-        // Run compaction BEFORE the agent loop if needed, and emit checkpoint event
-        if compaction_needed {
-            tracing::info!(
-                chat_id = %chat_id,
-                "Context critical, auto-compacting chat"
-            );
-            let compaction_options = CompactionOptions {
-                model_id: Some(model.clone()),
-                ..Default::default()
-            };
-            match compact_chat(&pool, chat_id.clone(), compaction_options).await {
-                Ok(_) => {
-                    // Fetch the checkpoint message that was just created
-                    if let Some(checkpoint_event) = get_latest_checkpoint(&pool, &chat_id).await {
-                        yield (serialize_event(&checkpoint_event));
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        chat_id = %chat_id,
-                        error = %e,
-                        "Auto-compaction failed, continuing with full context"
-                    );
-                }
-            }
-        }
 
         // Determine max_steps based on agent mode
         // - deep_research: 50 (read-only, needs more exploration)
@@ -2001,6 +1999,14 @@ fn create_agent_stream(
         // delta with no home. (The turn used to stream as one text part
         // for its whole length, which is why it could never emit steps.)
         yield (serialize_event(&StreamEvent::Start { message_id: msg_id.clone() }));
+        // Compaction already happened, in the handler, before the context was
+        // built from the compacted history. All that is left is to say so —
+        // AFTER `start`, because a data part that arrives before the message
+        // exists is pushed onto it as an invisible one and shown again as the
+        // synthetic checkpoint the client inserts from `onData`.
+        if let Some(event) = &checkpoint_event {
+            yield (serialize_event(event));
+        }
         yield (serialize_event(&StreamEvent::StartStep));
 
         // Track accumulated content

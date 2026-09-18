@@ -1242,44 +1242,15 @@ impl ToolExecutor {
         }
     }
 
-    /// Get the list of available tool names
-    pub fn available_tools(&self) -> Vec<&'static str> {
-        vec![
-            "think",
-            "update_memory",
-            "set_user_name",
-            "set_assistant_name",
-            "web_search",
-            "semantic_search",
-            "sql_query",
-            "sql_write",
-            "code_interpreter",
-            "create_page",
-            "get_page_content",
-            "edit_page",
-            "setup_applet",
-            "update_applet_memory",
-            "list_applets",
-            "get_applet",
-            "edit_applet",
-            "delete_applet",
-            "run_applet",
-            "dayline_event",
-            "get_project_item",
-        ]
-    }
-
-    /// Check if a tool is available
-    pub fn has_tool(&self, name: &str) -> bool {
-        self.available_tools().contains(&name)
-    }
 }
 
 impl std::fmt::Debug for ToolExecutor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ToolExecutor")
-            .field("available_tools", &self.available_tools())
-            .finish()
+        // Deliberately opaque: a hand-maintained tool list here was stale by
+        // eight tools and had no caller but this line — a second source of
+        // truth for something the registry already owns, waiting to be
+        // believed.
+        f.debug_struct("ToolExecutor").finish_non_exhaustive()
     }
 }
 
