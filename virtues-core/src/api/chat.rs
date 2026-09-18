@@ -1010,7 +1010,7 @@ async fn build_system_prompt(
     agent_mode: &str,
     persona_id: &str,
     notebook_id: Option<&str>,
-) -> String {
+) -> (String, String) {
     use crate::api::assistant_profile::get_assistant_name;
     use crate::api::profile::get_display_name;
 
@@ -1030,7 +1030,11 @@ async fn build_system_prompt(
                 tracing::warn!(error = %e, "interview reply count unavailable; prompt says 0");
                 0
             });
-        return crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name, their_replies);
+        // Whole-prompt stable: it changes only when the reply count does.
+        return (
+            crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name, their_replies),
+            String::new(),
+        );
     }
 
     // Getting started: its own prompt plus the derived state, regenerated per
@@ -1043,10 +1047,15 @@ async fn build_system_prompt(
                 "<getting_started>\n(state unavailable this turn; say so if asked, never guess)\n</getting_started>".to_string()
             }
         };
-        return crate::agent::prompt::build_getting_started_prompt(&assistant_name, &user_name, &block);
+        // Regenerated per turn, but its BYTES change only when a step does, so
+        // it is stable for caching: it busts once when the state moves on.
+        return (
+            crate::agent::prompt::build_getting_started_prompt(&assistant_name, &user_name, &block),
+            String::new(),
+        );
     }
 
-    build_system_prompt_blocks(
+    let (stable, volatile, _rendered) = build_system_prompt_blocks(
         pool,
         active_page,
         timezone,
@@ -1056,8 +1065,8 @@ async fn build_system_prompt(
         &assistant_name,
         &user_name,
     )
-    .await
-    .0
+    .await;
+    (stable, volatile)
 }
 
 /// The registry: every prompt section as a named block, rendered in list
@@ -1074,7 +1083,7 @@ async fn build_system_prompt_blocks(
     notebook_id: Option<&str>,
     assistant_name: &str,
     user_name: &str,
-) -> (String, Vec<crate::agent::prompt_blocks::RenderedBlock>) {
+) -> (String, String, Vec<crate::agent::prompt_blocks::RenderedBlock>) {
     use crate::agent::prompt::build_personalized_prompt;
     use crate::agent::prompt_blocks::{assemble, Author, Block, BlockMeta, Cadence, Mood};
     use crate::api::personas::get_persona_content;
@@ -1241,7 +1250,9 @@ fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<St
 /// assert on what the model is actually sent rather than re-deriving it.
 #[cfg(test)]
 pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
-    build_system_prompt(pool, None, Some("America/Chicago"), "default", "default", None).await
+    let (stable, volatile) =
+        build_system_prompt(pool, None, Some("America/Chicago"), "default", "default", None).await;
+    format!("{stable}{volatile}")
 }
 
 /// Maximum member URLs to inline for a Notebook before truncating.
@@ -1803,7 +1814,11 @@ async fn chat_handler_inner(
     };
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
-    let mut system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, effective_notebook_id.as_deref()).await;
+    // Split at the cache breakpoint: `system_prompt` is the stable prefix that
+    // gets the marker, `system_tail` is the per-turn tail (the open page's live
+    // text, and the rules that deliberately sit behind it) which must stay
+    // OUTSIDE the cached block or it invalidates the prefix on every keystroke.
+    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, effective_notebook_id.as_deref()).await;
     // Scoped (grounded) chat: retrieval is hard-filtered to the notebook's
     // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
     // answer contract. Only meaningful inside a notebook.
@@ -1823,6 +1838,7 @@ async fn chat_handler_inner(
         conversation_summary.as_deref(),
         summary_up_to_index as usize,
         Some(&system_prompt),
+        Some(&system_tail),
     );
 
     // The turn is driven by its own task and outlives this request: a tab
@@ -2811,7 +2827,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let (prompt, rendered) = build_system_prompt_blocks(
+        let (stable, volatile, rendered) = build_system_prompt_blocks(
             &pool, None, Some("America/Chicago"), "default", "default", None, "Ari",
             "Adam",
         )
@@ -2831,8 +2847,24 @@ mod tests {
             assert!(pos >= last, "block {t} rendered out of registry order: {tags:?}");
             last = pos;
         }
-        // And the assembly is still one contiguous prompt, not fragments.
+        // And the assembly is still the whole prompt across the cache split.
+        let prompt = format!("{stable}{volatile}");
         assert!(prompt.contains("<rules>") && prompt.contains("<circumstances>"));
+        // The split is the point of the split: the per-turn tail (and the rules
+        // that deliberately sit behind it) must be on the uncached side, or a
+        // bound page's live text invalidates the prefix on every keystroke.
+        assert!(
+            volatile.contains("<rules>"),
+            "rules sit behind the per-turn tail, so they are outside the cached prefix"
+        );
+        assert!(
+            stable.contains("<circumstances>"),
+            "the quantized clock belongs to the stable prefix"
+        );
+        assert!(
+            !stable.contains("<rules>"),
+            "nothing behind the per-turn boundary may land in the cached prefix"
+        );
     }
 
     #[test]
@@ -2955,6 +2987,8 @@ mod live_prompt_audit {
                 nb,
             )
             .await;
+            // Measured across the cache split: this reads the whole prompt.
+            let p = format!("{}{}", p.0, p.1);
 
             // ~4 chars/token is the usual English approximation; this is an
             // order-of-magnitude reading, not a billing figure.

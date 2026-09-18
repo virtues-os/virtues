@@ -105,20 +105,40 @@ pub struct RenderedBlock {
 /// in list order. Blocks own their separators (each body starts with the
 /// `\n\n` its section always carried), so assembly is pure concatenation and
 /// the output is byte-identical to the old push_str chain.
-pub async fn assemble(blocks: Vec<Block<'_>>) -> (String, Vec<RenderedBlock>) {
+pub async fn assemble(blocks: Vec<Block<'_>>) -> (String, String, Vec<RenderedBlock>) {
     let (metas, bodies): (Vec<_>, Vec<_>) =
         blocks.into_iter().map(|b| (b.meta, b.body)).unzip();
     let results = futures::future::join_all(bodies).await;
 
-    let mut out = String::new();
+    let mut stable = String::new();
+    let mut volatile = String::new();
+    let mut in_tail = false;
     let mut rendered = Vec::new();
     for (meta, body) in metas.into_iter().zip(results) {
+        // A cache breakpoint marks a PREFIX, so the split is the FIRST block
+        // that changes every turn — not every volatile block. `rules` is Slow
+        // but deliberately sits last, behind the per-turn tail, so it falls on
+        // the uncached side too; that is exactly what its own placement note
+        // in the registry describes, and it is a few hundred tokens.
+        //
+        // The boundary is fixed by cadence, not by whether the block rendered
+        // anything this turn. An `active_context` that renders nothing when no
+        // page is open would otherwise move `rules` in and out of the cached
+        // prefix as pages are bound, which busts the cache on a transition
+        // that has no business touching it.
+        if meta.cadence == Cadence::PerTurn {
+            in_tail = true;
+        }
         if let Some(body) = body {
             rendered.push(RenderedBlock { tag: meta.tag, chars: body.chars().count() });
-            out.push_str(&body);
+            if in_tail {
+                volatile.push_str(&body);
+            } else {
+                stable.push_str(&body);
+            }
         }
     }
-    (out, rendered)
+    (stable, volatile, rendered)
 }
 
 /// The precedence ladder, stated once near the head of the prompt. Rendered

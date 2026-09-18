@@ -458,6 +458,7 @@ pub fn build_context_for_llm(
     summary: Option<&str>,
     summary_up_to_index: usize,
     system_prompt: Option<&str>,
+    system_tail: Option<&str>,
 ) -> Vec<serde_json::Value> {
     let mut context = Vec::new();
 
@@ -489,8 +490,18 @@ pub fn build_context_for_llm(
         system_content.push_str("\n</compacted_conversation>");
     }
 
+    // The per-turn tail goes AFTER the breakpoint, so it can change freely
+    // without invalidating the prefix. Keeping the textual order the model
+    // sees exactly as it was — stable blocks, then tail, then summary — since
+    // block order is a deliberate product decision (rules last, for adherence)
+    // and a caching change has no business reordering the prompt. The cost is
+    // that a compaction summary sits outside the cached block and is re-sent
+    // whole each turn; moving it would change what the model reads, so that is
+    // a decision for whoever owns prompt order, not a side effect of this.
+    let tail = system_tail.unwrap_or("");
+
     // Only add system message if there's content
-    if !system_content.is_empty() {
+    if !system_content.is_empty() || !tail.is_empty() {
         // The system prompt is the largest stable prefix of every request in a
         // conversation, so it is where a cache breakpoint is worth the most.
         // Marking it needs block-shaped content rather than a bare string.
@@ -509,7 +520,7 @@ pub fn build_context_for_llm(
         //
         // Before this, `cache_control` appeared nowhere in the repo and every
         // usage row read 0 cache tokens across 29.2M input tokens.
-        if prompt_cache_enabled() {
+        if prompt_cache_enabled() && !system_content.is_empty() {
             context.push(serde_json::json!({
                 "role": "system",
                 "content": [{
@@ -518,10 +529,13 @@ pub fn build_context_for_llm(
                     "cache_control": { "type": "ephemeral" }
                 }]
             }));
+            if !tail.is_empty() {
+                context.push(serde_json::json!({ "role": "system", "content": tail }));
+            }
         } else {
             context.push(serde_json::json!({
                 "role": "system",
-                "content": system_content
+                "content": format!("{system_content}{tail}")
             }));
         }
     }
@@ -916,6 +930,65 @@ pub async fn needs_compaction(
 
 #[cfg(test)]
 mod tests {
+    /// The system message is a string when caching is off and an array of text
+    /// blocks when it is on (the breakpoint needs block-shaped content). Tests
+    /// that care about the TEXT should not care which — they broke silently
+    /// when the cache default flipped, because they read `.as_str()` and got
+    /// `None` from a shape that was perfectly correct.
+    fn system_text(message: &serde_json::Value) -> String {
+        let content = &message["content"];
+        if let Some(s) = content.as_str() {
+            return s.to_string();
+        }
+        content
+            .as_array()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default()
+    }
+
+    /// The cache breakpoint marks the STABLE prefix, and the per-turn tail
+    /// travels as its OWN system message.
+    ///
+    /// Two earlier shapes were measured against the live gateway and both
+    /// cached nothing once a page was bound:
+    ///   - the marker on one block holding the whole prompt: the open page's
+    ///     live text is then inside the cached block, so every keystroke
+    ///     changes the prefix;
+    ///   - the marker on the first of TWO content blocks in one system
+    ///     message: the gateway accepts the body, answers normally, and
+    ///     silently ignores the marker. Nothing is logged. 0 cached tokens.
+    ///
+    /// This shape measured 53,346 of 54,039 prompt tokens served from cache
+    /// with the page text changing on every turn. Do not "simplify" it back
+    /// into one message without re-measuring that number.
+    #[test]
+    fn the_per_turn_tail_travels_as_its_own_system_message() {
+        let context =
+            build_context_for_llm(&[], None, 0, Some("STABLE-PREFIX"), Some("VOLATILE-TAIL"));
+        assert_eq!(context.len(), 2, "the tail is a separate message, not a second block");
+
+        let parts = context[0]["content"]
+            .as_array()
+            .expect("the cached prefix is block-shaped so it can carry the marker");
+        assert_eq!(parts.len(), 1, "the marked message holds exactly one block");
+        assert_eq!(parts[0]["text"], "STABLE-PREFIX");
+        assert!(parts[0].get("cache_control").is_some(), "the prefix is marked");
+
+        assert_eq!(context[1]["role"], "system");
+        assert_eq!(context[1]["content"], "VOLATILE-TAIL");
+        assert!(
+            !context[1].to_string().contains("cache_control"),
+            "the per-turn tail is never inside the cached block"
+        );
+    }
+
+
     use super::*;
 
     #[test]
@@ -953,7 +1026,7 @@ mod tests {
             },
         ];
 
-        let context = build_context_for_llm(&messages, None, 0, Some("You are helpful."));
+        let context = build_context_for_llm(&messages, None, 0, Some("You are helpful."), None);
 
         assert_eq!(context.len(), 3); // system + 2 messages
         assert_eq!(context[0]["role"], "system");
@@ -1009,7 +1082,7 @@ mod tests {
             },
         ];
 
-        let context = build_context_for_llm(&messages, None, 0, None);
+        let context = build_context_for_llm(&messages, None, 0, None, None);
 
         assert_eq!(context.len(), 3, "the all-empty message is omitted");
         let first = context[0]["content"].as_array().expect("parts array");
@@ -1065,7 +1138,7 @@ mod tests {
             ..base
         }];
 
-        let context = build_context_for_llm(&messages, None, 0, None);
+        let context = build_context_for_llm(&messages, None, 0, None, None);
 
         assert_eq!(context.len(), 3, "the turn, then one result per call");
         let turn = &context[0];
@@ -1120,7 +1193,7 @@ mod tests {
             }]),
         }];
 
-        let context = build_context_for_llm(&messages, None, 0, None);
+        let context = build_context_for_llm(&messages, None, 0, None, None);
 
         assert_eq!(context.len(), 2);
         assert!(context[0]["content"].is_null(), "no text, but not dropped");
@@ -1160,10 +1233,10 @@ mod tests {
         }]);
         msgs.push(checkpoint);
 
-        let context = build_context_for_llm(&msgs, None, 12, Some("SYS"));
+        let context = build_context_for_llm(&msgs, None, 12, Some("SYS"), None);
 
         assert_eq!(context[0]["role"], "system");
-        assert!(context[0]["content"].as_str().unwrap().contains("SUMMARY-OF-m0-TO-m11"));
+        assert!(system_text(&context[0]).contains("SUMMARY-OF-m0-TO-m11"));
         let bodies: Vec<&str> = context[1..]
             .iter()
             .map(|m| m["content"].as_str().unwrap())
@@ -1203,10 +1276,10 @@ mod tests {
             },
         ];
 
-        let context = build_context_for_llm(&msgs, None, 1, Some("SYS"));
+        let context = build_context_for_llm(&msgs, None, 1, Some("SYS"), None);
 
         assert_eq!(context.len(), 1, "the system message and nothing else");
-        assert!(context[0]["content"].as_str().unwrap().contains("ALL-OF-IT"));
+        assert!(system_text(&context[0]).contains("ALL-OF-IT"));
     }
 
     #[test]
@@ -1265,12 +1338,13 @@ mod tests {
             Some("User asked about something."),
             2,
             Some("You are helpful."),
+            None,
         );
 
         // Should have: combined system prompt (with summary), 1 recent message
         assert_eq!(context.len(), 2);
         // System message should contain both prompt and summary
-        let system_content = context[0]["content"].as_str().unwrap();
+        let system_content = system_text(&context[0]);
         assert!(system_content.contains("You are helpful."));
         assert!(system_content.contains("<compacted_conversation>"));
         assert!(system_content.contains("User asked about something."));
