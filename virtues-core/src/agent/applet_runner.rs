@@ -382,8 +382,7 @@ async fn build_applet_system_prompt(
         .await
         .unwrap_or_else(|_| "there".to_string());
 
-    let now = Utc::now();
-    let datetime = now.format("%A, %B %-d, %Y at %-I:%M %p UTC").to_string();
+    let datetime = crate::api::profile::local_datetime_line(pool).await;
 
     let mut prompt = format!(
         "You are {assistant_name}, {user_name}'s personal AI assistant, running autonomously.\n\n\
@@ -396,7 +395,7 @@ async fn build_applet_system_prompt(
     if let Some(mem) = memory {
         if !mem.trim().is_empty() {
             prompt.push_str(&format!(
-                "\n\n<memory>\nYour persistent memory from prior runs. You can update this with the update_action_memory tool.\n{}\n</memory>",
+                "\n\n<memory>\nYour persistent memory from prior runs. You can update this with the update_applet_memory tool.\n{}\n</memory>",
                 mem
             ));
         }

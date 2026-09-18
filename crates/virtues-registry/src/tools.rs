@@ -310,7 +310,7 @@ fn record_introductions_tool() -> ToolConfig {
                 "assistant_name": { "type": "string" },
                 "home_place": { "type": "string", "description": "The city as they said it, for the card's label." },
                 "home_timezone": { "type": "string", "description": "IANA time zone, e.g. America/Chicago." },
-                "birth_date": { "type": "string", "description": "YYYY-MM-DD" }
+                "birth_date": { "type": "string", "description": "Exactly as they wrote it — \"March 1962\", \"the 3rd\", \"1987-04-02\". Do not reformat or complete it." }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -713,7 +713,7 @@ ENTITIES (resolved nouns in user's life)
   wiki_orgs         Organizations with type, role, and the span you were there
 
 TEMPORAL (daily/yearly context)
-  wiki_days         Day summaries with autobiography, context vector
+  wiki_days         One row per day; its prose lives in the wiki_day_prose view
   wiki_events       Timeline events within a day
 
 REFERENCES
@@ -771,11 +771,15 @@ QUERY TIPS (PostgreSQL dialect)
 EXAMPLE QUERIES
 ================================================================================
 
--- Spending by category this month
-SELECT category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
+-- Spending by category this month.
+-- `category` is a jsonb ARRAY (one row can carry several); `merchant_category`
+-- is the scalar to group by. Grouping by the array gives one group per
+-- permutation, not per category.
+SELECT merchant_category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
 FROM data_financial_transaction
 WHERE occurred_at >= date_trunc('month', now())
-GROUP BY category ORDER BY dollars DESC
+  AND amount > 0
+GROUP BY merchant_category ORDER BY dollars DESC
 
 -- Most contacted people this week (data row -> entity, via wiki_refs)
 SELECT p.name, COUNT(*) as messages
@@ -1282,9 +1286,10 @@ Optional filters:
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "owner": { "type": "string", "enum": ["system", "user"] },
+                "owner": { "type": "string", "enum": ["system", "user", "ai"], "description": "`ai` is anything created from a chat — omitting it hid every applet this assistant made" },
                 "enabled": { "type": "boolean" },
-                "trigger": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook"] }
+                "trigger": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook", "message"] },
+                "include_archived": { "type": "boolean", "description": "Include applets that have been archived (the handler always read this; it was never declared)" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1534,7 +1539,7 @@ fn get_project_item_tool() -> ToolConfig {
 
 Use this when:
 - The user @-mentions something — a markdown link like [name](/chat/chat_xxx),
-  [name](/page/page_xxx), or [name](/space/space_xxx) in their message — and its
+  [name](/page/page_xxx), or [name](/notebook/notebook_xxx) in their message — and its
   content is RELEVANT to answering. The @-mention is a pointer; pull it in only
   if you actually need it.
 - An attached_project lists items and you need one's full content.
@@ -1548,7 +1553,7 @@ person/place/org details). Don't fetch a reference you don't need."#.to_string()
             "properties": {
                 "item_url": {
                     "type": "string",
-                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /chat/chat_xxx, /space/space_xxx, /person/person_xxx"
+                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /chat/chat_xxx, /notebook/notebook_xxx, /person/person_xxx"
                 }
             }
         }),

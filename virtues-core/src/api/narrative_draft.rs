@@ -901,7 +901,7 @@ pub struct SaveRules {
 
 pub async fn list_rules(pool: &PgPool) -> Result<Vec<Rule>> {
     sqlx::query_as::<_, Rule>(
-        "SELECT id, rule, kind, active FROM wiki_rules WHERE active ORDER BY created_at",
+        "SELECT id, rule, kind, active FROM wiki_rules WHERE active ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await

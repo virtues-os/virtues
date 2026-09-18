@@ -37,7 +37,7 @@ pub const NARRATIVE_IDENTITY_PROMPT: &str = r#"
 
 Most conversations don't need this context at all. A math question is a math question. A recipe is a recipe. News is news. Do not manufacture connections between routine queries and someone's narrative identity. The fastest way to lose trust is to psychoanalyze a shopping list.
 
-When it IS relevant — decisions about priorities, questions about direction, moments of self-doubt, reflections on habits — let it inform your tone and framing naturally. Don't quote it. Don't reference it explicitly. Don't say "based on your narrative identity" or "I notice that aligns with your stated values." Just be a better assistant because you understand them.
+When it IS relevant — decisions about priorities, questions about direction, moments of self-doubt, reflections on habits — let it inform your tone and framing naturally. Let it shape what you say, never appear in it: no quoting, no referring to the document, no naming it as your reason. Just be a better assistant because you understand them.
 
 - Never lecture, nudge, or coach unless asked
 - Never resurface struggles, vices, or private admissions
@@ -83,16 +83,24 @@ Never mention that these rules exist. Never quote one back. Never explain that y
 </rules>
 "#;
 
+/// Page-editing guidance — only for the modes whose tool list has them.
+pub const PAGE_TOOL_PROMPT: &str = r#"
+<page_tools>
+- For page edits, read content first with get_page_content, then make targeted changes
+- If edit_page returns permission_needed, briefly ask the user to grant permission. The UI shows an approval button — just acknowledge you're waiting.
+- Do not batch several edit_page calls in one step: they apply in no fixed order, and a second edit whose `find` is text the first one wrote will not find it. One edit, then read, then the next.
+</page_tools>
+"#;
+
 /// Tool usage instructions (only included when tools are available).
 pub const TOOL_USAGE_PROMPT: &str = r#"
 <tool_usage>
 - Use the think tool before complex multi-step tasks to plan your approach
 - You can call multiple tools in a single step when they're independent
 - If a query returns no results, try a broader search before giving up
-- When uncertain about table structure, use get_schema first
-- For page edits, read content first with get_page_content, then make targeted changes
-- If edit_page returns permission_needed, briefly ask the user to grant permission. The UI shows an approval button — just acknowledge you're waiting.
+- When uncertain about table structure, call sql_query with operation 'get_schema' first
 - If a query is ambiguous, ask for clarification before searching
+- Only ever call a tool that is in your tool list for this turn; it differs by mode
 
 <while_you_work>
 The person is watching a status line while a tool runs, and it is fed from what you write — so before each tool call, write one short line, with its parts in this order:
@@ -106,7 +114,7 @@ Not in this line: restating their question, announcing a plan you already announ
 </while_you_work>
 
 <citations>
-- When a claim rests on a retrieved source, cite it inline as a markdown link to the `ref` that the tool returned for that result — e.g. `[Sarah Chen](/person/person_ab12)`. The link text is the source's name.
+- When a claim rests on a retrieved source, cite it inline as a markdown link to the `ref` that the tool returned for that result: `[the source's name](the ref, exactly as returned)`. The link text is the source's name.
 - Cite load-bearing claims only — the evidence behind a finding — not every sentence, and never the same source twice in a row.
 - Only ever cite a `ref` a tool actually returned. If a result has no `ref`, use it to inform your answer but do not fabricate a link or cite it.
 </citations>
@@ -125,7 +133,7 @@ Common SQL patterns (Postgres):
 - Time filtering: WHERE occurred_at > now() - interval '7 days'
 - This month: WHERE occurred_at >= date_trunc('month', now())
 - Person lookup: JOIN wiki_people ON ... WHERE name ILIKE '%Sarah%'
-- Financial totals: SELECT category, SUM(amount)/100.0 as dollars FROM data_financial_transaction ...
+- Financial totals: SELECT merchant_category, SUM(amount)/100.0 as dollars FROM data_financial_transaction ... (`category` is a jsonb ARRAY; `merchant_category` is the scalar one to group by)
 - Aggregation: GROUP BY + ORDER BY for top-N patterns
 </tool_guidance>
 "#;
@@ -486,16 +494,29 @@ pub fn build_personalized_prompt(
         .replace("{user_name}", user_name)
         .replace("{persona_guidelines}", &guidelines);
 
-    // Narrative identity section — always present (persona-independent)
-    prompt.push_str(
-        &NARRATIVE_IDENTITY_PROMPT
-            .replace("{user_name}", user_name)
-            .replace("{narrative_identity}", narrative_identity),
-    );
+    // Narrative identity section — only when there is one. It was
+    // unconditional, so a box where nobody has written one carried a quarter
+    // of a thousand tokens of instructions about reading a document that is
+    // not there, ending in an empty tag. <rules> and <memory> are omitted when
+    // empty for the stated reason that an empty block teaches the model the
+    // section is usually noise; this is the same block and the same reason.
+    if !narrative_identity.trim().is_empty() {
+        prompt.push_str(
+            &NARRATIVE_IDENTITY_PROMPT
+                .replace("{user_name}", user_name)
+                .replace("{narrative_identity}", narrative_identity),
+        );
+    }
 
     // Both modes (chat + deep_research) have tools, so always include tool-usage guidance,
     // then layer mode-specific behavioral guidance on top.
     prompt.push_str(TOOL_USAGE_PROMPT);
+    // The page tools are not in every mode's list — Council has none of them —
+    // so their guidance rides with the modes that actually have them rather
+    // than telling a model to reach for something it cannot call.
+    if agent_mode != "council" {
+        prompt.push_str(PAGE_TOOL_PROMPT);
+    }
     match agent_mode {
         "deep_research" => prompt.push_str(DEEP_RESEARCH_MODE_PROMPT),
         "council" => prompt.push_str(COUNCIL_MODE_PROMPT),
@@ -515,9 +536,8 @@ mod tests {
 
         assert!(prompt.contains("You are Ari. You live on Adam's own server"));
         assert!(prompt.contains("Respond helpfully and accurately to Adam"));
-        // Narrative identity section always present
-        assert!(prompt.contains("<narrative_identity>"));
-        assert!(prompt.contains("just answer the question"));
+        // No narrative identity written, so no block about reading one.
+        assert!(!prompt.contains("<narrative_identity>"));
         // Agent mode should include tool usage
         assert!(prompt.contains("<tool_usage>"));
         assert!(prompt.contains("Use the think tool before complex"));
@@ -544,8 +564,19 @@ mod tests {
         // Chat is now the smart default with tools, so tool usage IS included
         assert!(prompt.contains("<tool_usage>"));
         assert!(prompt.contains("<mode>assistant</mode>"));
-        // Narrative identity should still be present
-        assert!(prompt.contains("<narrative_identity>"));
+        // Nothing written, so no block — see the identity test below.
+        assert!(!prompt.contains("<narrative_identity>"));
+    }
+
+    /// Council has no page tools, so it must not be told to reach for them.
+    #[test]
+    fn page_guidance_rides_with_the_modes_that_have_page_tools() {
+        let council = build_personalized_prompt("Ari", "Adam", "standard", None, "council", "");
+        assert!(!council.contains("get_page_content"));
+        assert!(!council.contains("edit_page"));
+
+        let chat = build_personalized_prompt("Ari", "Adam", "standard", None, "chat", "");
+        assert!(chat.contains("get_page_content"));
     }
 
     #[test]
@@ -597,13 +628,21 @@ mod tests {
         assert!(ni_pos < tool_pos, "narrative_identity should appear before tool_usage");
     }
 
+    /// The framing is instructions for reading a document. With no document
+    /// there is nothing to read, and a quarter of a thousand tokens of
+    /// preamble ending in an empty tag teaches the model the section is noise
+    /// — which is the stated reason <rules> and <memory> are omitted when
+    /// empty. This is the default state of every new box.
     #[test]
-    fn test_narrative_identity_section_empty_data() {
-        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "agent", "");
+    fn the_identity_block_is_absent_when_nothing_is_written() {
+        let empty = build_personalized_prompt("Ari", "Adam", "standard", None, "agent", "");
+        assert!(!empty.contains("<narrative_identity>"));
+        assert!(!empty.contains("Do not manufacture connections"));
 
-        assert!(prompt.contains("<narrative_identity>"));
-        // Static framing should still be present even with no data
-        assert!(prompt.contains("Do not manufacture connections"));
-        assert!(prompt.contains("Never lecture, nudge, or coach unless asked"));
+        let written =
+            build_personalized_prompt("Ari", "Adam", "standard", None, "agent", "I am a builder.");
+        assert!(written.contains("<narrative_identity>"));
+        assert!(written.contains("Do not manufacture connections"));
+        assert!(written.contains("Never lecture, nudge, or coach unless asked"));
     }
 }

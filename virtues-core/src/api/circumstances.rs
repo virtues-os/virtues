@@ -20,13 +20,22 @@ use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use sqlx::{PgPool, Row};
 
-/// Clip a free-text field to a fixed width. Titles and names are data, not
-/// prose — the budget lives in caps × widths, so no field gets to blow it.
+/// Clip a free-text field to a fixed width, and neuter its angle brackets.
+///
+/// Titles and names are data, not prose — the budget lives in caps × widths,
+/// so no field gets to blow it. They are also not OURS: a calendar title was
+/// written by whoever sent the invite, and the day prose is machine-written
+/// from mail and messages, so everything the record ingested can reach this
+/// block. All of it lands inside the SYSTEM message, where a `</circumstances>`
+/// in a 64-character title would close the block and let what follows read as
+/// instruction. The notebook block a few hundred lines away already escapes for
+/// this reason; this one only clipped.
 fn clip(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
+    let flattened = s.replace('<', "&lt;").replace('>', "&gt;");
+    if flattened.chars().count() <= max {
+        flattened
     } else {
-        let cut: String = s.chars().take(max.saturating_sub(1)).collect();
+        let cut: String = flattened.chars().take(max.saturating_sub(1)).collect();
         format!("{cut}…")
     }
 }
@@ -233,6 +242,15 @@ async fn build_section(
             // Recency, never significance: who has been AROUND these two
             // weeks. Who MATTERS is the narrative identity's to say. Entity
             // ids ride along so tool calls can join without a lookup.
+            //
+            // The ORDER BY is the whole claim. It read `count(*) DESC` —
+            // frequency, which is significance by volume, the one thing both
+            // this comment and the block's own sentence disclaim — while
+            // `last_at` was selected and never used. Someone who wrote once
+            // yesterday ranked below someone with four hundred archived emails
+            // from a fortnight ago, and the model answered "who have I heard
+            // from lately" off that order, on our guarantee that it meant
+            // recency.
             let rows = sqlx::query(
                 r#"SELECT p.id, p.name, count(*) AS refs, max(er.occurred_at) AS last_at
                    FROM wiki_refs er
@@ -240,7 +258,7 @@ async fn build_section(
                    WHERE er.entity_type = 'person'
                      AND er.occurred_at > $1::timestamptz - interval '14 days'
                    GROUP BY p.id, p.name
-                   ORDER BY count(*) DESC, p.id LIMIT 8"#,
+                   ORDER BY max(er.occurred_at) DESC, p.id LIMIT 8"#,
             )
             .bind(now.to_rfc3339())
             .fetch_all(pool)

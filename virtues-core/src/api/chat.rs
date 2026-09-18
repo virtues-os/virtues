@@ -915,7 +915,7 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
 /// read silently un-enforces, which is why it is logged.
 async fn build_rules(pool: &PgPool) -> String {
     let rows = match sqlx::query_as::<_, (String, String)>(
-        "SELECT kind, rule FROM wiki_rules WHERE active ORDER BY created_at",
+        "SELECT kind, rule FROM wiki_rules WHERE active ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await
