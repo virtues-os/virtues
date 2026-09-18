@@ -263,6 +263,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tool_executor,
         yjs_state: yjs_state.clone(),
         chat_cancel_state,
+        ghost_permissions: crate::api::chat_permissions::GhostPermissions::new(),
         live_turns,
     };
 

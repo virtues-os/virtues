@@ -93,7 +93,6 @@
 		set_user_name: 4,
 		set_assistant_name: 4,
 		propose_narrative_identity_edit: 4,
-		dayline_event: 4,
 		get_project_item: 4,
 		record_introductions: 4,
 		skip_step: 4,
@@ -315,7 +314,6 @@
 		update_memory: "memory",
 		write_it_up: "an article",
 		revise_article: "an article",
-		dayline_event: "your day",
 		get_project_item: "a project",
 	};
 
@@ -425,8 +423,6 @@
 				return tense(pending, "Writing it up", "Wrote it up");
 			case "revise_article":
 				return tense(pending, "Revising an article", "Revised an article");
-			case "dayline_event":
-				return tense(pending, "Marking your day", "Marked your day");
 			case "sql_write":
 				return tense(pending, "Writing to your records", "Wrote to your records");
 			case "set_user_name":

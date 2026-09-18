@@ -468,13 +468,39 @@
 				currentTabConversationId || `chat_${generateHex16()}`;
 			conversationId = newConversationId;
 
-			// Reset chat state
+			// Reset chat state.
+			//
+			// EVERYTHING that belongs to ONE conversation resets here. The list
+			// was incomplete and each omission was its own bug, because
+			// navigation is in-place — `TabContent` keys on `tab.id`, so this
+			// component is NOT remounted and anything left behind silently
+			// becomes the next conversation's state:
+			//
+			//  - `isGhost` leaking meant a saved chat inherited "temporary" and
+			//    every turn in it went out with `temporary: true`, was never
+			//    stored, and was gone on reload — while the toggle that would
+			//    undo it is disabled on a non-empty chat. Silent data loss.
+			//  - `queuedMessages` leaking sent chat A's follow-up into chat B.
+			//  - `input` leaking overwrote B's saved draft with A's text, since
+			//    `draftId` is derived from the route and the debounced writer
+			//    fires after the switch.
+			//  - staged refs pointed into torn-down DOM; staged attachments
+			//    rode along on the first send in the new chat.
+			//
+			// Before adding state to this component, ask whether it belongs to
+			// the conversation or to the view. If the conversation: reset here.
 			chat.messages = [];
 			loadedMessages = [];
 			messageMetadata = new Map();
 			contextUsage = undefined;
 			titleGenerated = false;
 			isAwaitingResponse = false;
+			isGhost = isTemporaryRoute(currentTabRoute);
+			queuedMessages = [];
+			input = "";
+			refs.clear();
+			attachments.items = [];
+			attachments.dragActive = false;
 			// Reset page create tracking (for auto-open)
 			tools.reset();
 			// NOTE: We no longer unbind the active page when switching chats.
@@ -540,7 +566,7 @@
 				})();
 			} else {
 				// New chat - set chatId so permissions can sync when granted
-				editAllowListStore.setChatId(newConversationId);
+				editAllowListStore.setChatId(newConversationId, isGhost);
 				isLoading = false;
 			}
 		}
@@ -637,7 +663,7 @@
 				]);
 			} else {
 				// New chat - set defaults from profile
-				editAllowListStore.setChatId(conversationId);
+				editAllowListStore.setChatId(conversationId, isGhost);
 				if (profileDefaultPersona) {
 					selectedPersona = profileDefaultPersona;
 				}
@@ -1066,6 +1092,22 @@
 		// Stop the client-side stream
 		chat.stop();
 
+		// And drop anything waiting behind it. Stop is the one gesture that has
+		// to mean "nothing more": the queue used to survive it and then drain
+		// the instant the drain effect saw `ready` again, so stopping a turn
+		// with three follow-ups queued sent all three. The SDK's `stop()`
+		// resolves rather than throwing, so `handleChatSubmit`'s `finally`
+		// clears `isAwaitingResponse` and the effect fires immediately.
+		//
+		// Handed back to the composer rather than discarded when there is just
+		// one, since a queued line is something the person typed and has not
+		// seen sent. More than one cannot go in a single-line composer, so they
+		// are dropped — the chips are gone from the screen either way.
+		if (queuedMessages.length === 1 && !input.trim()) {
+			input = queuedMessages[0];
+		}
+		queuedMessages = [];
+
 		// Mark the in-flight assistant message as user-stopped so the "Stopped"
 		// notice shows immediately (reload reads the persisted subject='cancelled').
 		const stoppedId = lastAssistantMessage?.id;
@@ -1150,8 +1192,16 @@
 		}
 		input = "";
 
-		// Capture + clear attachments as AI SDK file parts.
+		// Capture + clear attachments as AI SDK file parts. The snapshot is what
+		// goes back in the tray if this send never reaches the box (see the catch):
+		// `items` is replaced wholesale on every change, so the reference is stable.
+		const stagedBeforeSend = attachments.items;
 		const files = attachments.takeAsFileParts();
+		// Everything after sendMessage resolves — the title, the session refresh —
+		// is inside the same try. Without this flag a throw from any of THOSE
+		// would put an already-sent message back in the composer and its files
+		// back in the tray, next to the copies sitting in the transcript.
+		let handedOff = false;
 
 		// New turn → clear any leftover Deep Research panel from the previous turn.
 		chatInstances.clearSubagents(conversationId);
@@ -1185,6 +1235,8 @@
 					: { text: messageToSend },
 			);
 
+			handedOff = true;
+
 			if (chat.messages.length >= 2 && !isGhost && !titleGenerated) {
 				await generateTitle();
 				// Update tab route if it's a new chat
@@ -1213,7 +1265,22 @@
 			}, 2000);
 		} catch (error) {
 			console.error("[handleChatSubmit] Error:", error);
-			input = "";
+			// Nothing was sent, so nothing should have been consumed. Both the
+			// text and the files were already cleared on the optimistic path;
+			// hand them back rather than leaving the person to retype and
+			// re-drag. A staged ref comes back inside the text, since it was
+			// serialized into it before the send — flattened, but not lost.
+			//
+			// Narrow on purpose. A transport failure does NOT land here —
+			// measured: the SDK keeps it, the message is already in
+			// `chat.messages` with its file parts, and ChatError offers "Try
+			// again". What reaches this catch is a throw BEFORE sendMessage
+			// resolves, the permissions sync above being the one in the path
+			// today, where nothing entered the transcript to retry from.
+			if (!handedOff) {
+				input = messageToSend;
+				attachments.restore(stagedBeforeSend);
+			}
 		} finally {
 			isAwaitingResponse = false;
 		}
@@ -1241,6 +1308,9 @@
 	function toggleGhost() {
 		if (!isEmpty) return;
 		isGhost = !isGhost;
+		// The allow list has to know: a ghost's grants stay in the box's memory
+		// and never become rows.
+		if (conversationId) editAllowListStore.setChatId(conversationId, isGhost);
 	}
 
 	// Publish this chat's state to the phone shell, whose top-right button is
@@ -1294,8 +1364,16 @@
 			}
 		}}
 		ondrop={(e) => {
-			e.preventDefault();
 			attachments.dragActive = false;
+			// The composer is a CodeMirror editor INSIDE this root, and it
+			// handles drops on itself (calling preventDefault + onAttach).
+			// Returning true from a CodeMirror dom event handler does not stop
+			// DOM propagation, so that drop still bubbles here — and until
+			// 2026-09-17 this added the same files a second time. Cleared
+			// dragActive first, because the sticky part of the overlay is not
+			// optional: no dragleave fires on the element that took the drop.
+			if (e.defaultPrevented) return;
+			e.preventDefault();
 			if (e.dataTransfer?.files?.length) attachments.add(Array.from(e.dataTransfer.files));
 		}}
 	>
@@ -1752,6 +1830,10 @@
 												<StoppedNotice reason="length" />
 											{:else if messageMetadata.get(message.id)?.interrupted}
 												<StoppedNotice reason="interrupted" />
+											{:else if messageMetadata.get(message.id)?.unattended}
+												<StoppedNotice reason="unattended" />
+											{:else if messageMetadata.get(message.id)?.maxSteps}
+												<StoppedNotice reason="max_steps" />
 											{/if}
 										{:else}
 											{@const fileParts = message.parts.filter((p: any) => p.type === "file")}
@@ -1878,7 +1960,7 @@
 						{#if attachments.dragActive}
 							<div class="drop-hint">
 								<Icon icon="ri:download-2-line" width="15" />
-								<span>Drop to attach &middot; images, PDFs, or audio</span>
+								<span>Drop to attach &middot; images, PDFs, audio, or text</span>
 							</div>
 						{/if}
 						{#if attachments.count > 0}

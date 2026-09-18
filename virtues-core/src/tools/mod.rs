@@ -32,7 +32,6 @@ mod semantic_search;
 pub mod applet_schema;
 pub mod applet_setup;
 pub mod applet_management;
-pub mod dayline_events;
 
 pub use executor::{
     SubagentStatus, SubagentUpdate, ToolAttachment, ToolContext, ToolError, ToolExecutor,

@@ -376,10 +376,26 @@ pub async fn write_year_article(pool: &PgPool, year: i32) -> Result<String> {
 /// article WITHOUT the standing rules and nothing would ever say so. That is
 /// the failure class `.claude/rules/query-errors.md` exists for.
 async fn load_rules(pool: &PgPool) -> Result<Vec<String>> {
-    sqlx::query_scalar::<_, String>("SELECT rule FROM wiki_rules WHERE active")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to read the standing rules: {e}")))
+    // `kind` is half the rule. The stored text is a bare subject — the
+    // interview writes 'my brother' with kind 'avoid' — so dropping the kind
+    // and rendering the rest under "these are absolute instructions" turned
+    // every AVOID into an instruction to write about the thing. Chat renders
+    // the two apart for exactly this reason; this read did not even select it.
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT kind, rule FROM wiki_rules WHERE active ORDER BY created_at, id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read the standing rules: {e}")))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(kind, rule)| match kind.as_str() {
+            "avoid" => format!("Do not write about {rule}."),
+            "defend" => format!("Write about {rule} plainly; do not soften it."),
+            other => format!("{other}: {rule}"),
+        })
+        .collect())
 }
 
 #[cfg(test)]
