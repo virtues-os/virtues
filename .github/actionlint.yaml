@@ -1,0 +1,10 @@
+# Runner labels actionlint cannot know about: these are Blacksmith's hosted
+# runners, not GitHub's. Without this every workflow reports three "label is
+# unknown" errors and the real findings drown in them.
+self-hosted-runner:
+  labels:
+    - blacksmith-4vcpu-ubuntu-2204
+    - blacksmith-8vcpu-ubuntu-2204
+    - blacksmith-16vcpu-ubuntu-2204
+    - blacksmith-16vcpu-ubuntu-2204-arm
+    - blacksmith-6vcpu-macos-15

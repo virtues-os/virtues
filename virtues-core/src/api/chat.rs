@@ -1432,6 +1432,25 @@ async fn chat_handler_inner(
             .into_response();
     }
 
+    // One turn per chat at a time. A turn outlives its request (live_turn.rs),
+    // so a client that lost the wire and asks again would otherwise start a
+    // SECOND turn while the first is still running: `LiveTurns::start`
+    // replaces the entry and lets the old task finish, both write an
+    // assistant row, and the transcript shows two replies to one question,
+    // both billed. The client's Try again rejoins first and only asks anew
+    // when nothing is live; this is the boundary for a client that does not,
+    // or a double tap. 409, with the name the client keys on.
+    if !request.temporary && live_turns.get(&request.chat_id).is_some() {
+        return (
+            StatusCode::CONFLICT,
+            Json(ChatError {
+                error: "turn_in_progress".to_string(),
+                details: Some("A reply to this chat is still being written.".to_string()),
+            }),
+        )
+            .into_response();
+    }
+
     // Which model answers. One door — the box decides, from the mode and the
     // owner's pin; the request's `model` is a per-turn override and nothing
     // else. See `model_choice` for why the interview refuses that override,
@@ -1551,36 +1570,12 @@ async fn chat_handler_inner(
         }
     }
 
-    // Regenerate: the client has dropped its last assistant message and is
-    // asking for the last user turn to be answered again. Drop the box's copy
-    // too, or the model answers with its previous reply in front of it.
-    let regenerating = matches!(
-        request.trigger.as_deref(),
-        Some("regenerate-message") | Some("regenerate-assistant-message")
-    );
-    if regenerating && !temporary {
-        if let Err(e) = sqlx::query(
-            "DELETE FROM app_chat_messages \
-             WHERE chat_id = $1 AND role = 'assistant' \
-               AND sequence_num > COALESCE((SELECT MAX(sequence_num) FROM app_chat_messages \
-                                            WHERE chat_id = $1 AND role = 'user'), 0)",
-        )
-        .bind(&chat_id_str)
-        .execute(&pool)
-        .await
-        {
-            tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not drop the previous answer");
-        }
-    }
-
-    // Save the last user message to the chat. Not on regenerate: there is no
-    // new user turn, and a client that still sends the full history would
-    // otherwise re-append the last one.
-    if let Some(last_user_msg) = request.messages.iter().rev().filter(|_| !regenerating).find(|m| m.role == "user") {
-        // Normal flow: save the last user message from the request
-        let user_content = last_user_msg.content.clone().unwrap_or_else(|| {
-            last_user_msg
-                .parts
+    // What the person said, as it is stored: the legacy `content` if the
+    // client sent one, else the text parts joined. One derivation, used both
+    // to write the row and, on regenerate, to recognize it.
+    fn user_text(m: &UIMessage) -> String {
+        m.content.clone().unwrap_or_else(|| {
+            m.parts
                 .as_ref()
                 .map(|p| {
                     p.iter()
@@ -1592,7 +1587,87 @@ async fn chat_handler_inner(
                         .join("\n")
                 })
                 .unwrap_or_default()
-        });
+        })
+    }
+
+    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
+
+    // Regenerate: the client has dropped its last assistant message and is
+    // asking for the last user turn to be answered again. Drop the box's copy
+    // too, or the model answers with its previous reply in front of it.
+    //
+    // ONLY if that user turn is on disk. The client offers Try again on every
+    // error card, and some of those errors happened before anything was
+    // written: 409 not connected, 400 invalid model, 413, a request that
+    // never arrived. The message is then still only in the client. Treating
+    // that as a regenerate deleted the previous good answer and re-answered
+    // the question before it — on a new chat, an empty transcript went to the
+    // model. So: the client sends its last user message on regenerate too,
+    // and if it is not the last user row here, this is a first send of it.
+    // Matched by id (a transcript loaded from the box carries row ids) or by
+    // text (a message sent this session carries the SDK's id, not ours).
+    //
+    // The room's own lines (`gs:` subjects) are not "the previous answer" and
+    // stay: regenerate in the getting-started room used to delete the step
+    // the room had just narrated.
+    let mut regenerating = matches!(
+        request.trigger.as_deref(),
+        Some("regenerate-message") | Some("regenerate-assistant-message")
+    );
+    if regenerating && !temporary {
+        let answered_turn_on_disk = match last_user_msg {
+            // An older client sends nothing on regenerate; nothing to compare.
+            None => true,
+            Some(m) => {
+                match sqlx::query_as::<_, (String, String)>(
+                    "SELECT id, content FROM app_chat_messages \
+                     WHERE chat_id = $1 AND role = 'user' \
+                     ORDER BY sequence_num DESC LIMIT 1",
+                )
+                .bind(&chat_id_str)
+                .fetch_optional(&pool)
+                .await
+                {
+                    Ok(Some((id, content))) => {
+                        m.id.as_deref() == Some(id.as_str()) || content == user_text(m)
+                    }
+                    Ok(None) => false,
+                    Err(e) => {
+                        // Unknown. Deleting on a guess is the failure this
+                        // exists to stop; answering the message as new is
+                        // the harmless side.
+                        tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not read the last user turn");
+                        false
+                    }
+                }
+            }
+        };
+        if answered_turn_on_disk {
+            if let Err(e) = sqlx::query(
+                "DELETE FROM app_chat_messages \
+                 WHERE chat_id = $1 AND role = 'assistant' \
+                   AND COALESCE(subject, '') NOT LIKE 'gs:%' \
+                   AND sequence_num > COALESCE((SELECT MAX(sequence_num) FROM app_chat_messages \
+                                                WHERE chat_id = $1 AND role = 'user'), 0)",
+            )
+            .bind(&chat_id_str)
+            .execute(&pool)
+            .await
+            {
+                tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not drop the previous answer");
+            }
+        } else {
+            tracing::info!(chat_id = %chat_id_str, "regenerate asked for a turn that was never saved; answering it as new");
+            regenerating = false;
+        }
+    }
+
+    // Save the last user message to the chat. Not on regenerate: there is no
+    // new user turn, and a client that still sends the full history would
+    // otherwise re-append the last one.
+    if let Some(last_user_msg) = last_user_msg.filter(|_| !regenerating) {
+        // Normal flow: save the last user message from the request
+        let user_content = user_text(last_user_msg);
 
         let user_message = ChatMessage {
             id: None,
