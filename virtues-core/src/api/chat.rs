@@ -2063,6 +2063,7 @@ fn create_agent_stream(
         let mut total_output_tokens: u32 = 0;
         let mut total_reasoning_tokens: u32 = 0;
         let mut total_cache_read_tokens: u32 = 0;
+        let mut total_cache_write_tokens: u32 = 0;
         // Authoritative spend for this turn (sum of gateway-reported usage.cost
         // across every step), captured into app_ai_calls for the Usage tab.
         let mut total_cost_micros: i64 = 0;
@@ -2264,7 +2265,7 @@ fn create_agent_stream(
                     }
                 }
 
-                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cache_read_tokens, cost_micros } => {
+                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost_micros } => {
                     total_input_tokens += prompt_tokens;
                     total_output_tokens += completion_tokens;
                     if let Some(r) = reasoning_tokens {
@@ -2272,6 +2273,9 @@ fn create_agent_stream(
                     }
                     if let Some(c) = cache_read_tokens {
                         total_cache_read_tokens += c;
+                    }
+                    if let Some(c) = cache_write_tokens {
+                        total_cache_write_tokens += c;
                     }
                     if let Some(c) = cost_micros {
                         total_cost_micros += c;
@@ -2521,7 +2525,10 @@ fn create_agent_stream(
                 output_tokens: total_output_tokens as i64,
                 reasoning_tokens: total_reasoning_tokens as i64,
                 cache_read_tokens: total_cache_read_tokens as i64,
-                cache_write_tokens: 0,
+                // Was a literal 0 — the same sin the comment above describes,
+                // one field over. It is still 0 on every turn, but now because
+                // nothing reported a cache write, not because someone typed it.
+                cache_write_tokens: total_cache_write_tokens as i64,
                 cost_micros: Some(total_cost_micros),
             };
 

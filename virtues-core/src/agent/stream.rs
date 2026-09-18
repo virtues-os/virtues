@@ -54,6 +54,9 @@ pub struct TokenUsage {
     pub reasoning_tokens: Option<u32>,
     /// Prompt tokens the provider served from its cache, when it says so.
     pub cache_read_tokens: Option<u32>,
+    /// Prompt tokens the provider wrote INTO its cache, when it says so. Always
+    /// `None` today: see the parse site for why no field is guessed at.
+    pub cache_write_tokens: Option<u32>,
     /// Authoritative cost in micros-USD, from the gateway's `usage.cost` (the
     /// real upstream price for this call). `None` if the gateway didn't report
     /// it. Captured into `app_ai_calls` rather than re-estimated locally.
@@ -315,6 +318,30 @@ where
                         if let Some(t) = details.get("cached_tokens").and_then(|t| t.as_u64()) {
                             usage.cache_read_tokens = Some(t as u32);
                         }
+                        // Cache WRITES have no OpenAI-compatible spelling — they
+                        // are an Anthropic concept, and what (if anything) the
+                        // gateway calls them through this surface is not known
+                        // from the repo. So: no guess. Log the keys we did not
+                        // read, once per turn that carries any, and let one real
+                        // payload name the field instead of a plausible-looking
+                        // constant that silently records nothing.
+                        //
+                        // Until then `cache_write_tokens` stays None and lands
+                        // as 0 — but as "nobody reported it", not as a literal
+                        // typed into the insert (which is what it was).
+                        if let Some(map) = details.as_object() {
+                            let unread: Vec<&String> = map
+                                .keys()
+                                .filter(|k| k.as_str() != "cached_tokens")
+                                .collect();
+                            if !unread.is_empty() {
+                                tracing::debug!(
+                                    keys = ?unread,
+                                    details = %details,
+                                    "gateway prompt_tokens_details carries fields we do not read"
+                                );
+                            }
+                        }
                     }
                     
                     if let Some(details) = usage_obj.get("completion_tokens_details") {
@@ -368,6 +395,7 @@ where
             total_tokens: Some(usage.prompt_tokens + usage.completion_tokens),
             reasoning_tokens: usage.reasoning_tokens,
             cache_read_tokens: usage.cache_read_tokens,
+            cache_write_tokens: usage.cache_write_tokens,
             cost_micros: usage.cost_micros,
         });
     }
