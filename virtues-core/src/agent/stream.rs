@@ -255,12 +255,23 @@ where
                                         }
                                         entry.2.push_str(args);
                                         
-                                        // Emit start event on first encounter
-                                        if !tc_id.is_empty() && !name.is_empty() && !tool_calls_started.contains(&idx) {
+                                        // Emit start event on first encounter.
+                                        //
+                                        // Off the ACCUMULATED id and name, not
+                                        // this chunk's: a provider that sends
+                                        // the id in one frame and the name in
+                                        // the next never satisfied both at
+                                        // once, so the start never fired, every
+                                        // argument delta was suppressed with
+                                        // it, and the call never made it into
+                                        // the turn's record at all — no name,
+                                        // no result, absent from the saved
+                                        // parts.
+                                        if !entry.0.is_empty() && !entry.1.is_empty() && !tool_calls_started.contains(&idx) {
                                             tool_calls_started.insert(idx);
-                                            emit(AgentEvent::tool_start(tc_id, name));
+                                            emit(AgentEvent::tool_start(entry.0.clone(), entry.1.clone()));
                                         }
-                                        
+
                                         // Emit delta for arguments
                                         if !args.is_empty() && tool_calls_started.contains(&idx) {
                                             emit(AgentEvent::ToolCallArgsPartial {

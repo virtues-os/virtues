@@ -16,18 +16,6 @@ use crate::types::Timestamp;
 // Helper Functions
 // ============================================================================
 
-/// Get the next sequence number for a chat
-async fn get_next_sequence_num(pool: &PgPool, chat_id: &str) -> Result<i32> {
-    let row = sqlx::query_scalar!(
-        r#"SELECT COALESCE(MAX(sequence_num), 0) as "seq!: i64" FROM app_chat_messages WHERE chat_id = $1"#,
-        chat_id
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok((row as i32) + 1)
-}
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -178,6 +166,13 @@ pub struct MessageResponse {
     pub timestamp: Timestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Both of these were read off the row and dropped on the floor: the
+    /// client asks for `provider` and `agentId` when it rebuilds a message's
+    /// metadata, and got `undefined` for every message on every reload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(rename = "agentId", skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -376,8 +371,8 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
                 let role: String = row.get("role");
                 let content: String = row.get("content");
                 let model: Option<String> = row.get("model");
-                let _provider: Option<String> = row.get("provider");
-                let _agent_id: Option<String> = row.get("agent_id");
+                let provider: Option<String> = row.get("provider");
+                let agent_id: Option<String> = row.get("agent_id");
                 let reasoning: Option<String> = row.get("reasoning");
                 let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
                 let subject: Option<String> = row.get("subject");
@@ -396,6 +391,8 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
                     content,
                     timestamp,
                     model,
+                    provider,
+                    agent_id,
                     tool_calls,
                     reasoning,
                     subject,
@@ -621,8 +618,6 @@ pub async fn append_message(
         crate::ids::generate_id(crate::ids::MESSAGE_PREFIX, &[&chat_id_str, &uuid::Uuid::new_v4().to_string()])
     });
 
-    // Get next sequence number atomically
-    let sequence_num = get_next_sequence_num(pool, &chat_id_str).await?;
 
     // Serialize tool_calls/intent/parts to serde_json::Value so sqlx binds
     // them as jsonb (the columns are jsonb, not text — binding a String would
@@ -638,13 +633,23 @@ pub async fn append_message(
     let parts_json: Option<serde_json::Value> =
         message.parts.as_deref().map(crate::api::chat::parts_to_jsonb);
 
+    // The sequence number is chosen INSIDE the insert. It used to be a
+    // `SELECT MAX + 1` followed by a separate statement, described in its own
+    // comment as atomic; `(chat_id, sequence_num)` is UNIQUE, so two appends
+    // that read the same maximum — a turn finishing while the
+    // getting-started room's poll narrates, or one chat open on two devices —
+    // raced, and whichever lost was simply never written. If that was the
+    // assistant row, the reply the person had just watched was gone on reload.
     let result = sqlx::query(
         r#"
         INSERT INTO app_chat_messages (
             id, chat_id, role, content, model, provider, agent_id,
             reasoning, tool_calls, intent, subject, reasoning_details, sequence_num, created_at, parts
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+               COALESCE(MAX(m.sequence_num), 0) + 1, $13, $14
+        FROM app_chat_messages m
+        WHERE m.chat_id = $2
         ON CONFLICT (id) DO NOTHING
         "#,
     )
@@ -660,7 +665,6 @@ pub async fn append_message(
     .bind(&intent_json)
     .bind(&message.subject)
     .bind(&message.reasoning_details)
-    .bind(sequence_num)
     .bind(&message.timestamp)
     .bind(&parts_json)
     .execute(pool)
@@ -668,11 +672,18 @@ pub async fn append_message(
 
     // Only update chat metadata if we actually inserted a new row
     if result.rows_affected() > 0 {
-        // Update chat metadata (message count and updated_at)
+        // Counted, not incremented. `+ 1` has no inverse, and rows are deleted
+        // in two places that never decremented — regenerate, and the room's own
+        // sweep — so the count drifted upward for good and everything derived
+        // from it (`message_count - messages_summarized`, shown in the context
+        // panel) drifted with it, into negative numbers after an edit.
         sqlx::query(
             r#"
             UPDATE app_chats
-            SET message_count = message_count + 1, updated_at = now()
+            SET message_count = (
+                    SELECT count(*) FROM app_chat_messages WHERE chat_id = $1
+                ),
+                updated_at = now()
             WHERE id = $1
             "#,
         )

@@ -265,6 +265,32 @@ fn ghost_history(messages: &[UIMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
+/// Replace embedded data URLs with a note about what was there.
+///
+/// A `data:` URL is for the browser. Kept in a tool result it is carried to the
+/// model, stored in `parts`, and replayed on every subsequent turn — none of
+/// which it survives usefully, and all of which it fills.
+fn redact_inline_data(value: &mut serde_json::Value) {
+    /// Long enough that a small inline icon survives; short enough that no
+    /// real payload does.
+    const INLINE_LIMIT: usize = 2048;
+    match value {
+        serde_json::Value::String(s) if s.starts_with("data:") && s.len() > INLINE_LIMIT => {
+            let kind = s
+                .split_once(';')
+                .map(|(head, _)| head.trim_start_matches("data:"))
+                .filter(|k| !k.is_empty())
+                .unwrap_or("file");
+            *s = format!("[{kind}, {} KB, shown in the chat]", s.len() / 1024);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(redact_inline_data),
+        serde_json::Value::Object(map) => {
+            map.values_mut().for_each(redact_inline_data)
+        }
+        _ => {}
+    }
+}
+
 /// Materialize a turn's ordered `parts` from the pieces the stream collected.
 ///
 /// Text runs keep their order relative to the tool calls that ran between them,
@@ -430,6 +456,16 @@ pub enum UIPart {
         version: i32,
         /// Number of messages that were summarized
         messages_summarized: i32,
+        /// The id of the LAST message this summary covers.
+        ///
+        /// The count above is a position frozen at compaction time, and the
+        /// list it indexes keeps changing — regenerate deletes rows, and so
+        /// does the getting-started room's own sweep — so a count used as a
+        /// position silently drops one verbatim message per row deleted below
+        /// it. An id still points at the same message afterwards. Optional so
+        /// a checkpoint written before this reads; the count is the fallback.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_message_id: Option<String>,
         /// The summary text (XML structured)
         summary: String,
         /// When the checkpoint was created
@@ -741,6 +777,7 @@ async fn get_latest_checkpoint(pool: &PgPool, chat_id: &str) -> Option<StreamEve
             messages_summarized,
             summary,
             timestamp,
+            ..
         } = part
         {
             return Some(StreamEvent::Checkpoint {
@@ -1416,7 +1453,11 @@ async fn chat_handler_inner(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ChatError {
                     error: "Failed to resolve model".to_string(),
-                    details: Some(e.to_string()),
+                    // The error is already logged above. `sqlx::Error`'s
+                    // Display carries the Postgres message and often the
+                    // column or constraint name, and this JSON goes to a
+                    // browser.
+                    details: None,
                 }),
             )
                 .into_response();
@@ -1596,7 +1637,9 @@ async fn chat_handler_inner(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ChatError {
                         error: "Failed to load chat".to_string(),
-                        details: Some(e.to_string()),
+                        // Logged above; the raw database error does not
+                        // travel to the browser.
+                        details: None,
                     }),
                 )
                     .into_response();
@@ -1630,7 +1673,9 @@ async fn chat_handler_inner(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ChatError {
                         error: "Failed to load messages".to_string(),
-                        details: Some(e.to_string()),
+                        // Logged above; the raw database error does not
+                        // travel to the browser.
+                        details: None,
                     }),
                 )
                     .into_response();
@@ -1718,7 +1763,11 @@ async fn chat_handler_inner(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ChatError {
                     error: "Failed to resolve chat notebook".to_string(),
-                    details: Some(e.to_string()),
+                    // The error is already logged above. `sqlx::Error`'s
+                    // Display carries the Postgres message and often the
+                    // column or constraint name, and this JSON goes to a
+                    // browser.
+                    details: None,
                 }),
             )
                 .into_response();
@@ -2159,9 +2208,16 @@ fn create_agent_stream(
                 }
 
                 AgentEvent::ToolCallResult { id, result, success: true, error: _ } => {
-                    // Update the tracked tool call with the result
+                    // Update the tracked tool call with the result. The CLIENT
+                    // gets the value whole, below — it has to, that is how a
+                    // generated image reaches the chat. The ROW does not: a
+                    // data URL is a megabyte of base64 that the model cannot
+                    // read and that would be replayed into every later turn
+                    // from `parts`, which is a chat poisoned by one picture.
                     if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
-                        tc.result = Some(result.clone());
+                        let mut stored = result.clone();
+                        redact_inline_data(&mut stored);
+                        tc.result = Some(stored);
                     }
                     // The interview's finisher names the page the client
                     // should open beside the chat (see NarrativeDocumentReady).
@@ -2405,9 +2461,18 @@ fn create_agent_stream(
                 }
             }
 
-            // Record token usage. `cost_micros` is the gateway's authoritative
-            // figure — the same one recorded in app_ai_calls below, and the one
-            // the wallet was actually debited for. No estimating.
+        }
+
+        // Record token usage — OUTSIDE the block above, which is about whether
+        // there is a message worth keeping. It is not about whether the wallet
+        // was debited. A model that spends its whole output budget thinking and
+        // returns no content is billed in full, and this used to record nothing
+        // at all for it: no usage row, no cost row, no trace of the turn. The
+        // spend happened either way.
+        {
+            // `cost_micros` is the gateway's authoritative figure — the same
+            // one recorded in app_ai_calls below, and the one the wallet was
+            // actually debited for. No estimating.
             // These were literal zeros while the same totals were handed to
             // `app_ai_calls` one call below — so the per-chat panel read 0
             // reasoning tokens on every box while the number sat in the next
