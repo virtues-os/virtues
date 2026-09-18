@@ -1832,6 +1832,14 @@ async fn chat_handler_inner(
         );
     }
 
+    // Tell the gauge how big the prompt actually is. It cannot rebuild it, so
+    // without this the biggest single part of the request is invisible to both
+    // the context ring the user reads and the threshold that fires compaction.
+    crate::api::token_estimation::record_system_prompt_tokens(
+        crate::api::token_estimation::estimate_tokens(&system_prompt)
+            + crate::api::token_estimation::estimate_tokens(&system_tail),
+    );
+
     // Build context using compaction summary if available
     let api_messages = build_context_for_llm(
         &messages,
@@ -2550,7 +2558,29 @@ fn create_agent_stream(
 
             // Read once and shared with the cost log below, so the two cannot
             // disagree about which route paid for this turn.
-            let byo = crate::api::settings_byo::byo_is_active(&pool).await;
+            //
+            // The CHECKED form, because this value decides whether the box
+            // prices the turn from its own catalog. A swallowed error here read
+            // as "not BYO" and wrote real dollars into estimated_cost_usd for
+            // tokens the owner had already paid their own provider for — the
+            // very failure `resolve_cost_usd`'s comment says was fixed once.
+            //
+            // Unknown is treated as BYO, i.e. do not price it ourselves. Of the
+            // two ways to be wrong, under-reporting a wallet turn is a gap in a
+            // display figure that app_ai_calls still records properly, while
+            // over-reporting invents a charge the person never incurred. A
+            // fabricated number is worse than a missing one.
+            let byo = match crate::api::settings_byo::byo_is_active_checked(&pool).await {
+                Ok(active) => active,
+                Err(e) => {
+                    tracing::warn!(
+                        chat_id = %chat_id,
+                        error = %e,
+                        "BYO status unreadable; not pricing this turn rather than guessing a cost"
+                    );
+                    true
+                }
+            };
             if temporary {
                 // Ghost: app_chat_usage keys on a chat row that does not exist.
                 // app_ai_calls below still records cost and counts, no content.
@@ -2861,8 +2891,11 @@ mod tests {
             stable.contains("<circumstances>"),
             "the quantized clock belongs to the stable prefix"
         );
+        // As the audit above notes, <precedence> legitimately NAMES <rules>,
+        // and <precedence> is stable. What must not be in the cached half is
+        // the rules block's own BODY.
         assert!(
-            !stable.contains("<rules>"),
+            !stable.contains("has marked some things as rules"),
             "nothing behind the per-turn boundary may land in the cached prefix"
         );
     }
