@@ -268,31 +268,49 @@ impl ToolExecutor {
         let Some(chat_id) = context.chat_id.as_deref() else {
             return Ok(None);
         };
-        // The gated action tools all identify their target via `id`. If absent, let the tool
-        // surface its own validation error.
-        let Some(applet_id) = arguments.get("id").and_then(|v| v.as_str()) else {
-            return Ok(None);
-        };
+        // What is being asked for. Some gated tools name an existing applet in
+        // `id`; the rest act with no target of their own — `sql_write` deletes
+        // rows, `generate_image` spends money, `setup_applet` writes a new one
+        // to disk — and for those the tool itself is what the person grants.
+        // Keying only on `id` meant a tool without one returned "not gated",
+        // which is the quiet way a gate stops being a gate.
+        let (entity_id, entity_type, title, verb) =
+            match arguments.get("id").and_then(|v| v.as_str()) {
+                Some(applet_id) => {
+                    let title = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
+                        .await
+                        .map(|a| a.name)
+                        .unwrap_or_else(|_| "this action".to_string());
+                    let verb = match tool_name {
+                        "delete_applet" => "delete",
+                        "edit_applet" => "change",
+                        _ => "run",
+                    };
+                    (applet_id.to_string(), "action", title, verb)
+                }
+                None => {
+                    let (title, verb) = match tool_name {
+                        "sql_write" => ("your records".to_string(), "write to"),
+                        "generate_image" => ("an image".to_string(), "generate"),
+                        "setup_applet" => ("a new action".to_string(), "create"),
+                        other => (other.to_string(), "run"),
+                    };
+                    (tool_name.to_string(), "tool", title, verb)
+                }
+            };
 
         let granted =
-            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, applet_id)
+            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, &entity_id)
                 .await
                 .unwrap_or(false);
         if granted {
             return Ok(None);
         }
 
-        let title = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
-            .await
-            .map(|a| a.name)
-            .unwrap_or_else(|_| "this action".to_string());
-
-        let verb = if tool_name.starts_with("delete_") { "delete" } else { "run" };
-
         Ok(Some(ToolResult::success(serde_json::json!({
             "permission_needed": true,
-            "entity_id": applet_id,
-            "entity_type": "action",
+            "entity_id": entity_id,
+            "entity_type": entity_type,
             "entity_title": title,
             "message": format!("AI wants to {verb} \"{title}\""),
         }))))

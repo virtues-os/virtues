@@ -385,6 +385,12 @@ pub async fn compact_chat(
     let checkpoint_part = UIPart::Checkpoint {
         version: new_version,
         messages_summarized: new_summary_index,
+        // The last message this summary covers, by id — the boundary has to
+        // survive rows being deleted below it.
+        last_message_id: split_index
+            .checked_sub(1)
+            .and_then(|i| messages.get(i))
+            .and_then(|m| m.id.clone()),
         summary: new_summary.clone(),
         timestamp: now.to_rfc3339(),
     };
@@ -561,6 +567,7 @@ pub fn build_context_for_llm(
                             (None, Some(res)) => res.to_string(),
                             (None, None) => "the tool did not finish".to_string(),
                         };
+                        let content = clip_replayed_output(content);
                         tool_results.push(serde_json::json!({
                             "role": "tool",
                             "tool_call_id": tool_call_id,
@@ -607,18 +614,28 @@ pub fn build_context_for_llm(
                             // a text block so any model can read them. The data URL holds
                             // base64 UTF-8.
                             let b64 = url.split_once(',').map(|(_, b)| b).unwrap_or(url.as_str());
-                            let content = base64::Engine::decode(
+                            let name = filename.clone().unwrap_or_else(|| "file.txt".to_string());
+                            // Two `.ok()`s and a default used to make a payload
+                            // that would not decode into an empty string, and
+                            // the model was handed `[File: notes.txt]` with
+                            // nothing under it — a header asserting a file that
+                            // has no contents, which it then answered about
+                            // confidently. Say what is true instead.
+                            let decoded = base64::Engine::decode(
                                 &base64::engine::general_purpose::STANDARD,
                                 b64,
                             )
                             .ok()
-                            .and_then(|bytes| String::from_utf8(bytes).ok())
-                            .unwrap_or_default();
-                            let name = filename.clone().unwrap_or_else(|| "file.txt".to_string());
-                            parts.push(serde_json::json!({
-                                "type": "text",
-                                "text": format!("[File: {}]\n{}", name, content)
-                            }));
+                            .and_then(|bytes| String::from_utf8(bytes).ok());
+                            let text = match decoded {
+                                Some(content) => format!("[File: {}]\n{}", name, content),
+                                None => format!(
+                                    "[File: {}] — attached, but its contents could not be read. \
+                                     Say so rather than guessing what it said.",
+                                    name
+                                ),
+                            };
+                            parts.push(serde_json::json!({ "type": "text", "text": text }));
                         } else {
                             // Unknown type — at least make the model aware of it.
                             parts.push(serde_json::json!({
@@ -672,6 +689,34 @@ pub fn build_context_for_llm(
     context
 }
 
+/// How much of one tool's output is replayed on later turns.
+///
+/// The turn that called the tool sees all of it — that is what it asked for.
+/// Every turn after replays it, though, and measured on a real box the median
+/// tool result is 15 KB and the ninetieth percentile 94 KB, so three of them
+/// compound past any window. The turn that needed the detail had it; a later
+/// turn needs to know what was found, and can call again.
+const MAX_REPLAYED_TOOL_BYTES: usize = 32 * 1024;
+
+fn clip_replayed_output(content: String) -> String {
+    if content.len() <= MAX_REPLAYED_TOOL_BYTES {
+        return content;
+    }
+    // On a char boundary, or `String::truncate` panics on multi-byte text.
+    let mut cut = MAX_REPLAYED_TOOL_BYTES;
+    while cut > 0 && !content.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let dropped = content.len() - cut;
+    let mut clipped = content;
+    clipped.truncate(cut);
+    clipped.push_str(&format!(
+        "\n… [{dropped} more bytes were returned to an earlier turn and are not repeated here; \
+         call the tool again if you need them]"
+    ));
+    clipped
+}
+
 /// Find the latest checkpoint message and extract its summary.
 ///
 /// Returns `(Option<summary_text>, first_message_the_summary_does_not_cover)`.
@@ -691,8 +736,25 @@ fn find_latest_checkpoint(messages: &[ChatMessage]) -> (Option<String>, usize) {
             // Extract summary from checkpoint part
             if let Some(parts) = &msg.parts {
                 for part in parts {
-                    if let UIPart::Checkpoint { summary, messages_summarized, .. } = part {
-                        return (Some(summary.clone()), (*messages_summarized).max(0) as usize);
+                    if let UIPart::Checkpoint {
+                        summary,
+                        messages_summarized,
+                        last_message_id,
+                        ..
+                    } = part
+                    {
+                        // By id where there is one: the count is a position
+                        // taken when the checkpoint was written, and rows get
+                        // deleted below it.
+                        let by_id = last_message_id.as_deref().and_then(|id| {
+                            messages
+                                .iter()
+                                .position(|m| m.id.as_deref() == Some(id))
+                                .map(|i| i + 1)
+                        });
+                        let start =
+                            by_id.unwrap_or_else(|| (*messages_summarized).max(0) as usize);
+                        return (Some(summary.clone()), start);
                     }
                 }
             }
@@ -1047,6 +1109,7 @@ mod tests {
         checkpoint.parts = Some(vec![UIPart::Checkpoint {
             version: 1,
             messages_summarized: 12,
+            last_message_id: None,
             summary: "SUMMARY-OF-m0-TO-m11".to_string(),
             timestamp: "2024-01-01T00:00:00Z".to_string(),
         }]);
@@ -1087,6 +1150,7 @@ mod tests {
                 parts: Some(vec![UIPart::Checkpoint {
                     version: 1,
                     messages_summarized: 1,
+                    last_message_id: None,
                     summary: "ALL-OF-IT".to_string(),
                     timestamp: String::new(),
                 }]),
