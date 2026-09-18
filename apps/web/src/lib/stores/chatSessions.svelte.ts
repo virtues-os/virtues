@@ -27,6 +27,18 @@ class ChatSessionStore {
 	error = $state<string | null>(null);
 
 	/**
+	 * A counter, not a boolean: the sidebar's "Search chats" door bumps it
+	 * and the All chats page focuses its search field when it changes. A
+	 * boolean would need clearing, and a request that arrives while the
+	 * page is still mounting would be cleared before it was honored.
+	 */
+	searchFocusToken = $state(0);
+
+	requestSearchFocus() {
+		this.searchFocusToken += 1;
+	}
+
+	/**
 	 * Load sessions from the API
 	 */
 	async load() {
