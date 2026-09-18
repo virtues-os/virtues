@@ -96,7 +96,6 @@ export const ROOMS: Room[] = [
 		owns: ['/', '/chat', '/chat-history'],
 		panel: { kind: 'chats' },
 		group: 'primary',
-		quickAdd: 'chat',
 	},
 	{
 		id: 'pages',

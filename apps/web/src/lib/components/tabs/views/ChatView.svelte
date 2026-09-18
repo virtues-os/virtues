@@ -393,7 +393,12 @@
 		const now = Date.now();
 		if (now - lastRejoinAt < REJOIN_FLOOR_MS) return;
 		lastRejoinAt = now;
-		if (chat.status !== "ready") return;
+		// "ready" OR "error": the case this exists for — a Wi-Fi handover, a
+		// phone that slept — ends the SDK's fetch with a TypeError, and the
+		// SDK sets status to error. Gated on ready alone, the rejoin never
+		// fired for the drop it was built to survive, and the error card's
+		// Try again started a second turn on top of the one still running.
+		if (chat.status !== "ready" && chat.status !== "error") return;
 		const last = chat.messages[chat.messages.length - 1];
 		if (!last) return;
 
@@ -437,6 +442,52 @@
 		const last = chat.messages[chat.messages.length - 1];
 		danglingTurn =
 			chat.status === "ready" && !!last && last.role === "user" && !isAwaitingResponse;
+	}
+
+	/**
+	 * The error card's Try again. In order:
+	 *
+	 * 1. Rejoin — the box may still be writing the reply (a turn outlives the
+	 *    request), in which case a new request is a second turn and a second
+	 *    charge. `resumeStream` settles at once on a 204 and only after the
+	 *    stream ends on a 200, so "still pending after the status moved" is
+	 *    the attached case.
+	 * 2. Re-read — the turn may have FINISHED while the wire was down; the
+	 *    reply is then on disk, and regenerating would delete it. If a reply
+	 *    now follows the last question, show it and clear the card.
+	 * 3. Only then regenerate. The box, for its part, refuses to start a turn
+	 *    while one is live and answers a regenerate for an unsaved question
+	 *    by answering it as new — this is the client doing its half.
+	 */
+	async function retryLastTurn() {
+		danglingTurn = false;
+		if (!isGhost) {
+			const settled = { done: false };
+			const resume = chat
+				.resumeStream()
+				.catch((e: unknown) => {
+					console.warn("[ChatView] could not rejoin the running turn:", e);
+				})
+				.finally(() => {
+					settled.done = true;
+				});
+			// Give the GET time to answer. Attached = the SDK moved the status
+			// (submitted/streaming) and the promise is still pending.
+			const started = Date.now();
+			while (!settled.done && Date.now() - started < 8000) {
+				if (chat.status === "submitted" || chat.status === "streaming") return;
+				await new Promise((r) => setTimeout(r, 50));
+			}
+			if (chat.status === "submitted" || chat.status === "streaming") return;
+
+			await reloadMessages();
+			const last = chat.messages[chat.messages.length - 1];
+			if (last && last.role === "assistant") {
+				chat.clearError();
+				return;
+			}
+		}
+		void chat.regenerate();
 	}
 
 	// Chat instance - fetched from shared store to survive remounts
@@ -1281,6 +1332,12 @@
 
 		if (!messageToSend && attachments.count === 0) return;
 
+		// After an error the SDK sits in "error" until something clears it,
+		// and nothing did: Send greyed out, Enter queued the text into a chip
+		// that never drained, the draft gone. The next message IS the
+		// recovery — clear the card and send it.
+		if (chat.status === "error") chat.clearError();
+
 		if (chat.status !== "ready") {
 			// Queue text; attachments stay staged and ride along when the drain
 			// effect re-sends this once the current turn finishes.
@@ -1895,7 +1952,10 @@
 														<span>Generating image…</span>
 													</div>
 												{/if}
-												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error"}
+												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error" && !inInterview}
+													<!-- A live static tool part carries no `toolName` (only its
+													     `tool-<name>` type); a reloaded row does. Read the name
+													     off the type so the line never says "Error:  failed". -->
 													<div
 														class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg"
 													>
@@ -1903,7 +1963,7 @@
 															class="font-medium"
 															>Error:</span
 														>
-														{(part as any).toolName}
+														{(part as any).toolName ?? part.type.slice("tool-".length)}
 														failed
 														{#if (part as any).errorText}
 															- {(part as any)
@@ -1964,7 +2024,9 @@
 															width="14"
 														/>
 													</button>
-													{#if message.id === lastAssistantMessage?.id && !isGhost}
+													<!-- Not in the rooms: their last line is the room's own
+													     narration, and a re-roll there re-asks a step. -->
+													{#if message.id === lastAssistantMessage?.id && !isGhost && !inInterview}
 														<button
 															type="button"
 															class="message-action"
@@ -2070,7 +2132,7 @@
 
 							<ChatError
 											error={chat.error ?? null}
-											onRetry={() => chat.regenerate()}
+											onRetry={() => void retryLastTurn()}
 											recommendedName={models.recommendedFallback?.displayName}
 											onSwitchAndRetry={models.recommendedFallback
 												? switchToRecommendedAndRetry
@@ -2256,7 +2318,7 @@
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
-							sendDisabled={chat.status !== "ready"}
+							sendDisabled={chat.status === "submitted" || chat.status === "streaming"}
 							isStreaming={chat.status === "streaming"}
 							maxWidth="max-w-3xl"
 							placeholder={isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}

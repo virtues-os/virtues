@@ -96,7 +96,11 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // DATA TABLES - Calendar
     // ============================================================================
     m.insert("data_calendar_event", TableMetadata {
-        description: "Calendar events with attendees and location",
+        // "with attendees" is how a model comes to write `attendees` — the
+        // description is the only prose it sees, and a word that is not a
+        // column reads as one. Name the column instead: on a live box the
+        // query `attendees::text ILIKE '%name%'` failed exactly this way.
+        description: "Calendar events; attendees are in attendee_identifiers (an array of handles), location in location_name",
         category: "calendar",
         key_columns: &["title", "description", "calendar_name", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "started_at", "ended_at", "is_all_day"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_calendar_event' AND er.source_id = data_calendar_event.id"),
@@ -283,7 +287,12 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // WIKI TABLES - Temporal
     // ============================================================================
     m.insert("wiki_days", TableMetadata {
-        description: "Day records; a day's prose lives in the wiki_day_prose view (day_id, date, prose)",
+        // Both relations carry `date`, and the join hint below sends the
+        // model straight from one to the other — so a bare `SELECT date`
+        // across that join is ambiguous, and a live box answered exactly
+        // that. wiki_day_prose already has the date; the join is only
+        // needed for wiki_days' own columns.
+        description: "Day records; a day's prose lives in the wiki_day_prose view (day_id, date, prose), which already carries date — query it alone for prose, and qualify `date` if you join the two",
         category: "wiki_temporal",
         // `last_edited_by` was here until 0025 dropped it, and this catalog is
         // serialized straight to the model — so the agent was being handed a

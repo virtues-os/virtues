@@ -41,6 +41,37 @@ jobs:
   # without anything noticing. Its own job rather than steps on `rust`: it shares
   # nothing with that job, needs no Postgres, and finishes in a fraction of the
   # time, so a type error in a Svelte file should not wait on a Rust build.
+  # Validates the workflow files themselves. A YAML parse is NOT a validation:
+  # `0b7b4bb5` duplicated a `draft` key inside one `with:` block, which YAML
+  # accepts (keeping the last value) and GitHub Actions rejects — taking the
+  # whole file with it. `release-linux.yml` was unparseable for six hours, no
+  # release could be cut, and v0.1.7 got a tag with no binaries behind it while
+  # virtues.com/sh kept serving v0.1.6.
+  #
+  # Nothing announced it. An invalid workflow produces a run named by its file
+  # path with zero jobs, which reads as noise; it was found only by going
+  # looking for why a tag would not build. This job turns that into a red check
+  # on the PR that introduces it.
+  #
+  # Runner labels live in .github/actionlint.yaml — Blacksmith's are not
+  # GitHub's and actionlint cannot know them.
+  actions:
+    name: Workflow files are valid
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        run: |
+          bash <(curl -sSf https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          # -shellcheck= turns OFF the shellcheck pass. Deliberate: it reports
+          # style in `run:` blocks (SC2129, SC2155) across four workflows that
+          # have shipped fine for months, and a job that is red on the day it
+          # lands is a job everyone learns to ignore. What is kept is the class
+          # that actually cost a release — schema, duplicate keys, expression
+          # syntax, jobs referencing jobs that do not exist. Drop the flag if
+          # the shell style is ever worth fixing.
+          ./actionlint -color -shellcheck=
+
   web:
     runs-on: blacksmith-4vcpu-ubuntu-2204
     steps:
