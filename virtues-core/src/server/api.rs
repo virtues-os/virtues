@@ -42,6 +42,15 @@ fn error_response(error: Error) -> Response {
         _ => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
     };
 
+    // A 500 that only the client sees is a 500 nobody finds. The bookmarks
+    // list answered `no column found for name: timestamp` for a month while
+    // a sweep of the journal for errors showed nothing, because this was the
+    // one place the error passed through and it said nothing. The request
+    // span already carries method, path and request id.
+    if status.is_server_error() {
+        tracing::error!(status = status.as_u16(), error = %error, "request failed");
+    }
+
     (status, Json(serde_json::json!({ "error": message }))).into_response()
 }
 
