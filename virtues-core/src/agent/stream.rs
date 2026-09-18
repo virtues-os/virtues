@@ -52,6 +52,8 @@ pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub reasoning_tokens: Option<u32>,
+    /// Prompt tokens the provider served from its cache, when it says so.
+    pub cache_read_tokens: Option<u32>,
     /// Authoritative cost in micros-USD, from the gateway's `usage.cost` (the
     /// real upstream price for this call). `None` if the gateway didn't report
     /// it. Captured into `app_ai_calls` rather than re-estimated locally.
@@ -284,16 +286,25 @@ where
                     }
                 }
                 
-                // Extract token usage
-                if let Some(usage_obj) = json.get("usage") {
-                    usage.prompt_tokens = usage_obj
-                        .get("prompt_tokens")
-                        .and_then(|t| t.as_u64())
-                        .unwrap_or(0) as u32;
-                    usage.completion_tokens = usage_obj
-                        .get("completion_tokens")
-                        .and_then(|t| t.as_u64())
-                        .unwrap_or(0) as u32;
+                // Extract token usage.
+                //
+                // Null-guarded like the error frame above: many
+                // OpenAI-compatible streams carry `"usage": null` on every
+                // chunk, and an unguarded `get` on one of those ASSIGNED zero
+                // over counts a previous chunk had already set. Each field is
+                // taken only when present, for the same reason.
+                if let Some(usage_obj) = json.get("usage").filter(|v| !v.is_null()) {
+                    if let Some(t) = usage_obj.get("prompt_tokens").and_then(|t| t.as_u64()) {
+                        usage.prompt_tokens = t as u32;
+                    }
+                    if let Some(t) = usage_obj.get("completion_tokens").and_then(|t| t.as_u64()) {
+                        usage.completion_tokens = t as u32;
+                    }
+                    if let Some(details) = usage_obj.get("prompt_tokens_details") {
+                        if let Some(t) = details.get("cached_tokens").and_then(|t| t.as_u64()) {
+                            usage.cache_read_tokens = Some(t as u32);
+                        }
+                    }
                     
                     if let Some(details) = usage_obj.get("completion_tokens_details") {
                         usage.reasoning_tokens = details
@@ -345,6 +356,7 @@ where
             completion_tokens: usage.completion_tokens,
             total_tokens: Some(usage.prompt_tokens + usage.completion_tokens),
             reasoning_tokens: usage.reasoning_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
             cost_micros: usage.cost_micros,
         });
     }

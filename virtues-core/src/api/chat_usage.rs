@@ -221,7 +221,7 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -244,6 +244,9 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
             let agent_id: Option<String> = row.get("agent_id");
             let reasoning: Option<String> = row.get("reasoning");
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
+            // `parts` carries the attachments. Leaving it out here is why the
+            // gauge never saw a PDF: the estimate is what decides compaction.
+            let parts_raw: Option<serde_json::Value> = row.get("parts");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
             let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
@@ -254,7 +257,7 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
                 .and_then(|i| serde_json::from_value(i).ok());
 
             ChatMessage {
-                id: Some(id),
+                id: Some(id.clone()),
                 role,
                 content,
                 timestamp,
@@ -266,7 +269,7 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
                 intent,
                 subject,
                 reasoning_details,
-                parts: None,
+                parts: parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id)),
             }
         })
         .collect();
@@ -315,8 +318,10 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
 
     // Get model context window from registry
     let context_window = match get_model(&last_model).await {
-        Ok(model_info) => model_info.context_window.unwrap_or(1_000_000) as i64,
-        Err(_) => 1_000_000, // Default 1M for Gemini
+        Ok(model_info) => crate::api::token_estimation::context_window_or_assumed(
+                model_info.context_window.map(|w| w as i64),
+            ),
+        Err(_) => crate::api::token_estimation::ASSUMED_CONTEXT_WINDOW, // Default 1M for Gemini
     };
 
     // Calculate message counts
@@ -429,7 +434,7 @@ pub async fn check_compaction_needed(
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -452,6 +457,9 @@ pub async fn check_compaction_needed(
             let agent_id: Option<String> = row.get("agent_id");
             let reasoning: Option<String> = row.get("reasoning");
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
+            // `parts` carries the attachments. Leaving it out here is why the
+            // gauge never saw a PDF: the estimate is what decides compaction.
+            let parts_raw: Option<serde_json::Value> = row.get("parts");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
             let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
@@ -462,7 +470,7 @@ pub async fn check_compaction_needed(
                 .and_then(|i| serde_json::from_value(i).ok());
 
             ChatMessage {
-                id: Some(id),
+                id: Some(id.clone()),
                 role,
                 content,
                 timestamp,
@@ -474,22 +482,27 @@ pub async fn check_compaction_needed(
                 intent,
                 subject,
                 reasoning_details,
-                parts: None,
+                parts: parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id)),
             }
         })
         .collect();
 
     // Get model context window from registry
     let context_window = match get_model(model).await {
-        Ok(model_info) => model_info.context_window.unwrap_or(1_000_000) as i64,
-        Err(_) => 1_000_000,
+        Ok(model_info) => crate::api::token_estimation::context_window_or_assumed(
+                model_info.context_window.map(|w| w as i64),
+            ),
+        Err(_) => crate::api::token_estimation::ASSUMED_CONTEXT_WINDOW,
     };
 
     // Get verbatim messages (after summary)
     let verbatim_messages = if (summary_up_to_index as usize) < messages.len() {
         &messages[(summary_up_to_index as usize)..]
     } else {
-        &messages[..]
+        // The summary covers everything, so what follows it is nothing. This
+        // used to estimate the ENTIRE transcript plus the summary — the largest
+        // number possible, at the moment the answer matters most.
+        &[]
     };
 
     // Estimate context with summary + verbatim messages

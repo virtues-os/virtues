@@ -225,7 +225,7 @@ pub async fn compact_chat(
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -248,6 +248,9 @@ pub async fn compact_chat(
             let agent_id: Option<String> = row.get("agent_id");
             let reasoning: Option<String> = row.get("reasoning");
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
+            // `parts` carries the attachments. Leaving it out here is why the
+            // gauge never saw a PDF: the estimate is what decides compaction.
+            let parts_raw: Option<serde_json::Value> = row.get("parts");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
             let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
@@ -258,7 +261,7 @@ pub async fn compact_chat(
                 .and_then(|i| serde_json::from_value(i).ok());
 
             ChatMessage {
-                id: Some(id),
+                id: Some(id.clone()),
                 role,
                 content,
                 timestamp,
@@ -270,7 +273,7 @@ pub async fn compact_chat(
                 intent,
                 subject,
                 reasoning_details,
-                parts: None,
+                parts: parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id)),
             }
         })
         .collect();
@@ -337,8 +340,10 @@ pub async fn compact_chat(
     // Look up context window from model registry, fallback to conservative default
     let context_window = if let Some(model_id) = &options.model_id {
         match crate::api::models::get_model(model_id).await {
-            Ok(model_info) => model_info.context_window.unwrap_or(200_000) as i64,
-            Err(_) => 200_000, // Conservative default if model not found
+            Ok(model_info) => crate::api::token_estimation::context_window_or_assumed(
+                model_info.context_window.map(|w| w as i64),
+            ),
+            Err(_) => crate::api::token_estimation::ASSUMED_CONTEXT_WINDOW,
         }
     } else {
         200_000 // Conservative default if no model specified
@@ -528,8 +533,7 @@ pub fn build_context_for_llm(
                         // used to be. What a provider can actually take back is
                         // carried by the `reasoning_details` column, not here.
                     }
-                    UIPart::ToolInvocation { tool_call_id, tool_name, input, output, .. } |
-                    UIPart::ToolWebSearch { tool_call_id, tool_name, input, output, .. } => {
+                    UIPart::ToolInvocation { tool_call_id, tool_name, input, output, error_text, .. } => {
                         // `function.arguments` is a JSON *string*, not an object.
                         // Anything that is not an argument map — a turn saved
                         // before the completed args were written back left
@@ -548,10 +552,14 @@ pub fn build_context_for_llm(
                         // Every tool call must be answered or the request is
                         // rejected for the gap, so a call this turn never got
                         // an output for is answered with what is true about it.
-                        let content = match output {
-                            Some(serde_json::Value::String(s)) => s.clone(),
-                            Some(res) => res.to_string(),
-                            None => "the tool did not finish".to_string(),
+                        // A call that FAILED is answered as a failure: replaying
+                        // an error object in the result position tells the model
+                        // the tool succeeded and returned something odd.
+                        let content = match (error_text, output) {
+                            (Some(err), _) => format!("Tool execution failed: {err}"),
+                            (None, Some(serde_json::Value::String(s))) => s.clone(),
+                            (None, Some(res)) => res.to_string(),
+                            (None, None) => "the tool did not finish".to_string(),
                         };
                         tool_results.push(serde_json::json!({
                             "role": "tool",
@@ -725,7 +733,7 @@ pub async fn needs_compaction(
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -748,6 +756,9 @@ pub async fn needs_compaction(
             let agent_id: Option<String> = row.get("agent_id");
             let reasoning: Option<String> = row.get("reasoning");
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
+            // `parts` carries the attachments. Leaving it out here is why the
+            // gauge never saw a PDF: the estimate is what decides compaction.
+            let parts_raw: Option<serde_json::Value> = row.get("parts");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
             let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
@@ -758,7 +769,7 @@ pub async fn needs_compaction(
                 .and_then(|i| serde_json::from_value(i).ok());
 
             ChatMessage {
-                id: Some(id),
+                id: Some(id.clone()),
                 role,
                 content,
                 timestamp,
@@ -770,7 +781,7 @@ pub async fn needs_compaction(
                 intent,
                 subject,
                 reasoning_details,
-                parts: None,
+                parts: parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id)),
             }
         })
         .collect();
@@ -779,7 +790,10 @@ pub async fn needs_compaction(
     let verbatim_messages = if (summary_up_to_index as usize) < messages.len() {
         &messages[(summary_up_to_index as usize)..]
     } else {
-        &messages[..]
+        // The summary covers everything, so what follows it is nothing. This
+        // used to estimate the ENTIRE transcript plus the summary — the largest
+        // number possible, at the moment the answer matters most.
+        &[]
     };
 
     // Estimate context with summary + verbatim messages
@@ -928,6 +942,7 @@ mod tests {
                     input: serde_json::json!({ "queries": ["shared projects"] }),
                     state: "output-available".to_string(),
                     output: Some(serde_json::json!({ "count": 15 })),
+                    error_text: None,
                 },
                 // A turn saved before the completed args were written back.
                 UIPart::ToolInvocation {
@@ -936,6 +951,7 @@ mod tests {
                     input: serde_json::Value::Null,
                     state: "input-available".to_string(),
                     output: None,
+                    error_text: None,
                 },
                 UIPart::Text { text: "Here they are.".to_string() },
             ]),
@@ -993,6 +1009,7 @@ mod tests {
                 input: serde_json::json!({}),
                 state: "output-available".to_string(),
                 output: Some(serde_json::Value::String("nothing found".to_string())),
+                error_text: None,
             }]),
         }];
 
