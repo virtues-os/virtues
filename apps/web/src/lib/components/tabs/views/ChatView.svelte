@@ -797,6 +797,30 @@
 	);
 
 
+	// Which message's Copy just fired, so the tick can replace the icon briefly.
+	let copiedMessageId = $state<string | null>(null);
+
+	function messageText(message: any): string {
+		return (message.parts ?? [])
+			.filter((p: any) => p.type === "text")
+			.map((p: any) => p.text)
+			.join("");
+	}
+
+	async function copyMessage(message: any) {
+		const text = messageText(message).trim();
+		if (!text) return;
+		try {
+			await navigator.clipboard.writeText(text);
+			copiedMessageId = message.id;
+			setTimeout(() => {
+				if (copiedMessageId === message.id) copiedMessageId = null;
+			}, 1500);
+		} catch {
+			/* clipboard unavailable (insecure origin, denied) — say nothing */
+		}
+	}
+
 	// Get the last assistant message
 	const lastAssistantMessage = $derived.by(() => {
 		for (let i = uniqueMessages.length - 1; i >= 0; i--) {
@@ -1911,6 +1935,50 @@
 												<StoppedNotice reason="unattended" />
 											{:else if messageMetadata.get(message.id)?.maxSteps}
 												<StoppedNotice reason="max_steps" />
+											{/if}
+
+											<!-- What to do with an answer once it exists.
+											     `chat.regenerate()` was reachable ONLY through the
+											     error card, so an answer that is wrong but did not
+											     FAIL had no re-roll at all, and copying one meant
+											     dragging a selection across rendered markdown.
+											     Only on a finished turn — controls under a
+											     sentence still being written invite a click that
+											     races the stream. Re-roll is offered on the last
+											     answer alone, because regenerating an earlier one
+											     would silently discard every turn after it, which
+											     is an edit-and-branch feature and not this. -->
+											{#if chat.status === "ready" && messageText(message).trim()}
+												<div class="message-actions">
+													<button
+														type="button"
+														class="message-action"
+														aria-label="Copy this reply"
+														title="Copy"
+														onclick={() => copyMessage(message)}
+													>
+														<Icon
+															icon={copiedMessageId === message.id
+																? "ri:check-line"
+																: "ri:file-copy-line"}
+															width="14"
+														/>
+													</button>
+													{#if message.id === lastAssistantMessage?.id && !isGhost}
+														<button
+															type="button"
+															class="message-action"
+															aria-label="Ask for another answer"
+															title="Try another answer"
+															onclick={() => {
+																danglingTurn = false;
+																void chat.regenerate();
+															}}
+														>
+															<Icon icon="ri:refresh-line" width="14" />
+														</button>
+													{/if}
+												</div>
 											{/if}
 										{:else}
 											{@const fileParts = message.parts.filter((p: any) => p.type === "file")}
@@ -3135,6 +3203,45 @@
 
 	.dangling-retry:hover {
 		text-decoration: underline;
+	}
+
+	/* Quiet until the answer is hovered — an answer should read as prose, not
+	   as a toolbar with text above it. Always visible on a touch screen, where
+	   there is no hover to reveal them. */
+	.message-actions {
+		display: flex;
+		gap: 0.125rem;
+		margin-top: 0.375rem;
+		opacity: 0;
+		transition: opacity 0.12s ease;
+	}
+
+	.message-wrapper:hover .message-actions,
+	.message-actions:focus-within {
+		opacity: 1;
+	}
+
+	@media (hover: none) {
+		.message-actions {
+			opacity: 1;
+		}
+	}
+
+	.message-action {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.25rem;
+		border: none;
+		background: none;
+		border-radius: 0.25rem;
+		color: var(--foreground-subtle);
+		cursor: pointer;
+	}
+
+	.message-action:hover {
+		color: var(--foreground);
+		background: var(--surface-elevated);
 	}
 
 </style>
