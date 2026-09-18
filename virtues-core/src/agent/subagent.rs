@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use chrono::Utc;
 use futures::StreamExt;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -65,6 +64,14 @@ struct MissionResult {
     sources: Vec<Value>,
     input_tokens: u32,
     output_tokens: u32,
+    /// What the gateway charged for this worker's own calls.
+    ///
+    /// Workers run their own loop through `client.stream()`, and the box's
+    /// per-call log only fires on `post_json`, so no `app_ai_calls` row is
+    /// ever written for one. Their tokens were folded into the turn and their
+    /// cost was dropped, so a twelve-worker research turn showed the
+    /// orchestrator's price against the whole fan-out's tokens.
+    cost_micros: i64,
     ok: bool,
 }
 
@@ -180,6 +187,7 @@ pub async fn dispatch(
     let mut ok_count = 0usize;
     let mut total_input: u32 = 0;
     let mut total_output: u32 = 0;
+    let mut total_cost_micros: i64 = 0;
     for result in joined {
         match result {
             Ok(m) => {
@@ -188,6 +196,7 @@ pub async fn dispatch(
                 }
                 total_input = total_input.saturating_add(m.input_tokens);
                 total_output = total_output.saturating_add(m.output_tokens);
+                total_cost_micros = total_cost_micros.saturating_add(m.cost_micros);
                 out_missions.push(json!({
                     "title": m.title,
                     "model": m.model,
@@ -218,7 +227,11 @@ pub async fn dispatch(
         "note": note,
         // Aggregate worker token usage so the chat handler can bill it (the gateway already
         // charged per call; this keeps the app's own accounting honest).
-        "usage": { "input_tokens": total_input, "output_tokens": total_output },
+        "usage": {
+            "input_tokens": total_input,
+            "output_tokens": total_output,
+            "cost_micros": total_cost_micros,
+        },
     })))
 }
 
@@ -273,6 +286,7 @@ async fn run_one_worker(
     let mut findings = String::new();
     let mut input_tokens: u32 = 0;
     let mut output_tokens: u32 = 0;
+    let mut cost_micros: i64 = 0;
     let mut had_error = false;
     // id → (tool_name, args) captured from the call lifecycle, completed into a source on result.
     let mut pending: HashMap<String, (String, Value)> = HashMap::new();
@@ -302,9 +316,12 @@ async fn run_one_worker(
                     }
                 }
             }
-            AgentEvent::Usage { prompt_tokens, completion_tokens, .. } => {
+            AgentEvent::Usage { prompt_tokens, completion_tokens, cost_micros: cost, .. } => {
                 input_tokens = input_tokens.saturating_add(prompt_tokens);
                 output_tokens = output_tokens.saturating_add(completion_tokens);
+                if let Some(c) = cost {
+                    cost_micros = cost_micros.saturating_add(c);
+                }
             }
             AgentEvent::Error { message, .. } => {
                 tracing::warn!(title = %title, error = %message, "Subagent worker error");
@@ -347,6 +364,7 @@ async fn run_one_worker(
         sources,
         input_tokens,
         output_tokens,
+        cost_micros,
         ok,
     }
 }

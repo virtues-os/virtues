@@ -2234,6 +2234,10 @@ fn create_agent_stream(
                     if let Some(usage) = result.get("usage") {
                         total_input_tokens += usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                         total_output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                        // Their cost too. Folding in the tokens and not the
+                        // price showed the orchestrator's bill against the
+                        // whole fan-out's usage.
+                        total_cost_micros += usage.get("cost_micros").and_then(|v| v.as_i64()).unwrap_or(0);
                     }
                     // AI SDK v6: tool-output-available event
                     let event = StreamEvent::ToolOutputAvailable {
@@ -2486,10 +2490,13 @@ fn create_agent_stream(
                 cost_micros: Some(total_cost_micros),
             };
 
+            // Read once and shared with the cost log below, so the two cannot
+            // disagree about which route paid for this turn.
+            let byo = crate::api::settings_byo::byo_is_active(&pool).await;
             if temporary {
                 // Ghost: app_chat_usage keys on a chat row that does not exist.
                 // app_ai_calls below still records cost and counts, no content.
-            } else if let Err(e) = record_chat_usage(&pool, chat_id.clone(), &model, usage_data).await {
+            } else if let Err(e) = record_chat_usage(&pool, chat_id.clone(), &model, usage_data, byo).await {
                 tracing::warn!(
                     chat_id = %chat_id,
                     error = %e,
@@ -2514,7 +2521,7 @@ fn create_agent_stream(
                     // set, and no upstream but our own gateway sends a cost
                     // trailer — so `total_cost_micros` is 0-as-unknown there,
                     // and the Usage tab must show tokens instead of "$0.00".
-                    route: if crate::api::settings_byo::byo_is_active(&pool).await {
+                    route: if byo {
                         crate::api::ai_calls::Route::Byo
                     } else {
                         crate::api::ai_calls::Route::Wallet
