@@ -13,6 +13,7 @@
 	 */
 	import { chatSessions, type ChatSession } from '$lib/stores/chatSessions.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import AtlasIcon from '../AtlasIcon.svelte';
 
 	const UNTITLED = 'New chat';
 
@@ -59,7 +60,36 @@
 			focusExisting: true,
 		});
 	}
+
+	function newChat() {
+		windowShellStore.openTabFromRoute('/', { label: 'New chat', forceNew: true });
+	}
+
+	/** The All chats page IS the search: open it with the caret in its field. */
+	function searchChats() {
+		chatSessions.requestSearchFocus();
+		windowShellStore.openTabFromRoute('/chat-history', {
+			label: 'All chats',
+			focusExisting: true,
+		});
+	}
 </script>
+
+<!-- Two doors before the list, the same two the mobile drawer leads with:
+     the app's primary verb, then the way into the archive. They wear Atlas
+     like every nav door in the shell. "Search chats" is not a field here —
+     the search field lives on the All chats page, which has the room for
+     results; the door only carries you there with the caret placed. -->
+<div class="panel-doors">
+	<button type="button" class="panel-row panel-door" onclick={newChat}>
+		<AtlasIcon name="new-chat" size={16} bare />
+		<span class="panel-row-text">New chat</span>
+	</button>
+	<button type="button" class="panel-row panel-door" onclick={searchChats}>
+		<AtlasIcon name="search" size={16} bare />
+		<span class="panel-row-text">Search chats</span>
+	</button>
+</div>
 
 {#if chatSessions.sessions.length === 0}
 	<p class="panel-empty">No chats yet.</p>
@@ -96,6 +126,19 @@
 
 	.panel-group-label:first-child {
 		margin-top: 0;
+	}
+
+	/* The doors sit in the flow above the list, told apart from it by air,
+	   not a rule — the same way the groups are told from their rows. */
+	.panel-doors {
+		display: flex;
+		flex-direction: column;
+		margin-bottom: 12px;
+	}
+
+	.panel-door {
+		gap: 8px;
+		color: var(--color-foreground);
 	}
 
 	.panel-row {

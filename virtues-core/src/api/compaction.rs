@@ -225,7 +225,7 @@ pub async fn compact_chat(
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -248,17 +248,23 @@ pub async fn compact_chat(
             let agent_id: Option<String> = row.get("agent_id");
             let reasoning: Option<String> = row.get("reasoning");
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
+            // `parts` carries the attachments. Leaving it out here is why the
+            // gauge never saw a PDF: the estimate is what decides compaction.
+            let parts_raw: Option<serde_json::Value> = row.get("parts");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
             let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
 
-            let tool_calls = tool_calls_raw
-                .and_then(|tc| serde_json::from_value(tc).ok());
+            let tool_calls = tool_calls_raw.and_then(|tc| {
+                serde_json::from_value(tc)
+                    .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                    .ok()
+            });
             let intent = intent_raw
                 .and_then(|i| serde_json::from_value(i).ok());
 
             ChatMessage {
-                id: Some(id),
+                id: Some(id.clone()),
                 role,
                 content,
                 timestamp,
@@ -270,7 +276,7 @@ pub async fn compact_chat(
                 intent,
                 subject,
                 reasoning_details,
-                parts: None,
+                parts: parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id)),
             }
         })
         .collect();
@@ -337,8 +343,10 @@ pub async fn compact_chat(
     // Look up context window from model registry, fallback to conservative default
     let context_window = if let Some(model_id) = &options.model_id {
         match crate::api::models::get_model(model_id).await {
-            Ok(model_info) => model_info.context_window.unwrap_or(200_000) as i64,
-            Err(_) => 200_000, // Conservative default if model not found
+            Ok(model_info) => crate::api::token_estimation::context_window_or_assumed(
+                model_info.context_window.map(|w| w as i64),
+            ),
+            Err(_) => crate::api::token_estimation::ASSUMED_CONTEXT_WINDOW,
         }
     } else {
         200_000 // Conservative default if no model specified
@@ -380,6 +388,12 @@ pub async fn compact_chat(
     let checkpoint_part = UIPart::Checkpoint {
         version: new_version,
         messages_summarized: new_summary_index,
+        // The last message this summary covers, by id — the boundary has to
+        // survive rows being deleted below it.
+        last_message_id: split_index
+            .checked_sub(1)
+            .and_then(|i| messages.get(i))
+            .and_then(|m| m.id.clone()),
         summary: new_summary.clone(),
         timestamp: now.to_rfc3339(),
     };
@@ -429,21 +443,32 @@ pub async fn compact_chat(
 /// Returns a vector of messages in OpenAI format ready for the API.
 /// Note: Summary is combined into the system prompt to avoid multiple system messages,
 /// which most LLM providers don't handle well.
+/// Whether to ask the provider to cache the system prefix. ON unless
+/// `VIRTUES_PROMPT_CACHE=0` — a kill switch that needs no rebuild, not an
+/// opt-in. See the call site for what was measured before it was turned on.
+fn prompt_cache_enabled() -> bool {
+    !matches!(
+        std::env::var("VIRTUES_PROMPT_CACHE").as_deref(),
+        Ok("0") | Ok("false") | Ok("FALSE")
+    )
+}
+
 pub fn build_context_for_llm(
     messages: &[ChatMessage],
     summary: Option<&str>,
     summary_up_to_index: usize,
     system_prompt: Option<&str>,
+    system_tail: Option<&str>,
 ) -> Vec<serde_json::Value> {
     let mut context = Vec::new();
 
     // Find the latest checkpoint message and its index
-    let (checkpoint_summary, checkpoint_index) = find_latest_checkpoint(messages);
+    let (checkpoint_summary, checkpoint_split_index) = find_latest_checkpoint(messages);
 
     // Determine which summary to use (checkpoint takes precedence over legacy)
     let effective_summary = checkpoint_summary.as_deref().or(summary);
     let effective_start_index = if checkpoint_summary.is_some() {
-        checkpoint_index + 1 // Start after the checkpoint message
+        checkpoint_split_index
     } else {
         summary_up_to_index
     };
@@ -465,20 +490,64 @@ pub fn build_context_for_llm(
         system_content.push_str("\n</compacted_conversation>");
     }
 
+    // The per-turn tail goes AFTER the breakpoint, so it can change freely
+    // without invalidating the prefix. Keeping the textual order the model
+    // sees exactly as it was — stable blocks, then tail, then summary — since
+    // block order is a deliberate product decision (rules last, for adherence)
+    // and a caching change has no business reordering the prompt. The cost is
+    // that a compaction summary sits outside the cached block and is re-sent
+    // whole each turn; moving it would change what the model reads, so that is
+    // a decision for whoever owns prompt order, not a side effect of this.
+    let tail = system_tail.unwrap_or("");
+
     // Only add system message if there's content
-    if !system_content.is_empty() {
-        context.push(serde_json::json!({
-            "role": "system",
-            "content": system_content
-        }));
+    if !system_content.is_empty() || !tail.is_empty() {
+        // The system prompt is the largest stable prefix of every request in a
+        // conversation, so it is where a cache breakpoint is worth the most.
+        // Marking it needs block-shaped content rather than a bare string.
+        //
+        // Measured end to end on 2026-09-17 before this was turned on, because
+        // a body a gateway refuses is a 400 on every chat turn for every box:
+        //
+        //   - `upstream_body` (services/virtues-api/src/providers.rs) rewrites
+        //     model/stream/temperature/providerOptions and passes `messages`
+        //     through untouched, so the marker survives the hop verbatim.
+        //   - Two identical turns on anthropic/claude-haiku-4.5: the second
+        //     reported 13,522 of ~13,865 prompt tokens served from cache.
+        //   - xai/grok-4.5, zai/glm-4.7-flash and alibaba/qwen3-coder-plus all
+        //     completed normally with the same body — block-shaped system
+        //     content is not an Anthropic-only dialect here.
+        //
+        // Before this, `cache_control` appeared nowhere in the repo and every
+        // usage row read 0 cache tokens across 29.2M input tokens.
+        if prompt_cache_enabled() && !system_content.is_empty() {
+            context.push(serde_json::json!({
+                "role": "system",
+                "content": [{
+                    "type": "text",
+                    "text": system_content,
+                    "cache_control": { "type": "ephemeral" }
+                }]
+            }));
+            if !tail.is_empty() {
+                context.push(serde_json::json!({ "role": "system", "content": tail }));
+            }
+        } else {
+            context.push(serde_json::json!({
+                "role": "system",
+                "content": format!("{system_content}{tail}")
+            }));
+        }
     }
 
     // 2. Recent messages (after checkpoint or summary_up_to_index)
-    let recent_messages = if effective_start_index < messages.len() {
-        &messages[effective_start_index..]
-    } else {
-        messages
-    };
+    //
+    // An index past the end means the summary covers everything, so what
+    // follows it is nothing. This used to fall back to the WHOLE history, which
+    // sent the summary AND every message it replaced — the context grew at the
+    // one moment it had to shrink, since compaction only runs at 85% of the
+    // window.
+    let recent_messages = &messages[effective_start_index.min(messages.len())..];
 
     for msg in recent_messages {
         // Skip checkpoint messages - they're metadata, not conversation
@@ -487,6 +556,16 @@ pub fn build_context_for_llm(
         }
 
         let mut parts = Vec::new();
+        // A turn's tool calls do NOT live in its content. In the chat-completions
+        // shape every provider here speaks, they are a sibling `tool_calls` field
+        // on the assistant message, and each result is its own `role: "tool"`
+        // message that must follow it immediately. Putting them in `content` —
+        // which this did until a turn first arrived with `parts` populated —
+        // is a flat 400 (`param: "messages.N.content"`), and it poisons the chat
+        // rather than the turn: the bad message is persisted, so every later turn
+        // replays it and fails too.
+        let mut tool_calls = Vec::new();
+        let mut tool_results = Vec::new();
 
         // Handle parts if present
         if let Some(msg_parts) = &msg.parts {
@@ -510,31 +589,46 @@ pub fn build_context_for_llm(
                             "text": text
                         }));
                     }
-                    UIPart::Reasoning { text } => {
-                        // Some providers support reasoning as a part
-                        parts.push(serde_json::json!({
-                            "type": "reasoning",
-                            "reasoning": text
-                        }));
+                    UIPart::Reasoning { .. } => {
+                        // `reasoning` is not a content block type either, and a
+                        // replayed one is the same 400 the tool blocks below
+                        // used to be. What a provider can actually take back is
+                        // carried by the `reasoning_details` column, not here.
                     }
-                    UIPart::ToolInvocation { tool_call_id, tool_name, input, output, .. } |
-                    UIPart::ToolWebSearch { tool_call_id, tool_name, input, output, .. } => {
-                        // For tool invocations in history, we send them as tool calls + results
-                        // This matches the OpenAI/Anthropic format for tool history
-                        parts.push(serde_json::json!({
-                            "type": "tool_call",
+                    UIPart::ToolInvocation { tool_call_id, tool_name, input, output, error_text, .. } => {
+                        // `function.arguments` is a JSON *string*, not an object.
+                        // Anything that is not an argument map — a turn saved
+                        // before the completed args were written back left
+                        // `null` here — goes out as `{}` so the call still
+                        // pairs with its result; that heals chats already
+                        // carrying one.
+                        let arguments = match input {
+                            serde_json::Value::Object(_) => input.to_string(),
+                            _ => "{}".to_string(),
+                        };
+                        tool_calls.push(serde_json::json!({
                             "id": tool_call_id,
-                            "name": tool_name,
-                            "arguments": input
+                            "type": "function",
+                            "function": { "name": tool_name, "arguments": arguments }
                         }));
-
-                        if let Some(res) = output {
-                            parts.push(serde_json::json!({
-                                "type": "tool_result",
-                                "tool_call_id": tool_call_id,
-                                "content": res
-                            }));
-                        }
+                        // Every tool call must be answered or the request is
+                        // rejected for the gap, so a call this turn never got
+                        // an output for is answered with what is true about it.
+                        // A call that FAILED is answered as a failure: replaying
+                        // an error object in the result position tells the model
+                        // the tool succeeded and returned something odd.
+                        let content = match (error_text, output) {
+                            (Some(err), _) => format!("Tool execution failed: {err}"),
+                            (None, Some(serde_json::Value::String(s))) => s.clone(),
+                            (None, Some(res)) => res.to_string(),
+                            (None, None) => "the tool did not finish".to_string(),
+                        };
+                        let content = clip_replayed_output(content);
+                        tool_results.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": content
+                        }));
                     }
                     UIPart::File { media_type, url, filename } => {
                         // Convert attachments to OpenAI-compatible content blocks
@@ -576,18 +670,28 @@ pub fn build_context_for_llm(
                             // a text block so any model can read them. The data URL holds
                             // base64 UTF-8.
                             let b64 = url.split_once(',').map(|(_, b)| b).unwrap_or(url.as_str());
-                            let content = base64::Engine::decode(
+                            let name = filename.clone().unwrap_or_else(|| "file.txt".to_string());
+                            // Two `.ok()`s and a default used to make a payload
+                            // that would not decode into an empty string, and
+                            // the model was handed `[File: notes.txt]` with
+                            // nothing under it — a header asserting a file that
+                            // has no contents, which it then answered about
+                            // confidently. Say what is true instead.
+                            let decoded = base64::Engine::decode(
                                 &base64::engine::general_purpose::STANDARD,
                                 b64,
                             )
                             .ok()
-                            .and_then(|bytes| String::from_utf8(bytes).ok())
-                            .unwrap_or_default();
-                            let name = filename.clone().unwrap_or_else(|| "file.txt".to_string());
-                            parts.push(serde_json::json!({
-                                "type": "text",
-                                "text": format!("[File: {}]\n{}", name, content)
-                            }));
+                            .and_then(|bytes| String::from_utf8(bytes).ok());
+                            let text = match decoded {
+                                Some(content) => format!("[File: {}]\n{}", name, content),
+                                None => format!(
+                                    "[File: {}] — attached, but its contents could not be read. \
+                                     Say so rather than guessing what it said.",
+                                    name
+                                ),
+                            };
+                            parts.push(serde_json::json!({ "type": "text", "text": text }));
                         } else {
                             // Unknown type — at least make the model aware of it.
                             parts.push(serde_json::json!({
@@ -609,37 +713,104 @@ pub fn build_context_for_llm(
             // Nothing survived and there is no legacy content either: this
             // message would go out as `"content": ""`, which is the same
             // rejection in string form. Leaving it out is the only honest
-            // rendering of a message with nothing in it.
+            // rendering of a message with nothing in it — unless it is
+            // carrying tool calls, which is a turn that said nothing and
+            // called something, and those take `content: null`.
             if msg.content.trim().is_empty() {
-                continue;
+                if tool_calls.is_empty() {
+                    continue;
+                }
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(msg.content.clone())
             }
-            serde_json::Value::String(msg.content.clone())
         } else {
             serde_json::Value::Array(parts)
         };
 
-        context.push(serde_json::json!({
+        let mut message = serde_json::json!({
             "role": msg.role,
             "content": content
-        }));
+        });
+        if !tool_calls.is_empty() {
+            message["tool_calls"] = serde_json::Value::Array(tool_calls);
+        }
+        context.push(message);
+        // Results answer the message that asked for them, so they follow it
+        // directly — a provider that finds anything else in between rejects
+        // the whole request.
+        context.extend(tool_results);
     }
 
     context
 }
 
-/// Find the latest checkpoint message and extract its summary
+/// How much of one tool's output is replayed on later turns.
 ///
-/// Returns (Option<summary_text>, checkpoint_index)
-/// If no checkpoint found, returns (None, 0)
+/// The turn that called the tool sees all of it — that is what it asked for.
+/// Every turn after replays it, though, and measured on a real box the median
+/// tool result is 15 KB and the ninetieth percentile 94 KB, so three of them
+/// compound past any window. The turn that needed the detail had it; a later
+/// turn needs to know what was found, and can call again.
+const MAX_REPLAYED_TOOL_BYTES: usize = 32 * 1024;
+
+fn clip_replayed_output(content: String) -> String {
+    if content.len() <= MAX_REPLAYED_TOOL_BYTES {
+        return content;
+    }
+    // On a char boundary, or `String::truncate` panics on multi-byte text.
+    let mut cut = MAX_REPLAYED_TOOL_BYTES;
+    while cut > 0 && !content.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let dropped = content.len() - cut;
+    let mut clipped = content;
+    clipped.truncate(cut);
+    clipped.push_str(&format!(
+        "\n… [{dropped} more bytes were returned to an earlier turn and are not repeated here; \
+         call the tool again if you need them]"
+    ));
+    clipped
+}
+
+/// Find the latest checkpoint message and extract its summary.
+///
+/// Returns `(Option<summary_text>, first_message_the_summary_does_not_cover)`.
+/// If no checkpoint is found, returns `(None, 0)`.
+///
+/// That index is the checkpoint's own `messages_summarized`, NOT the position
+/// the checkpoint row sits at. `compact_chat` APPENDS its checkpoint after the
+/// messages it deliberately left out of the summary, so "start after the
+/// checkpoint" started after the verbatim window too — the most recent
+/// exchanges were in neither the summary nor the context, and the model simply
+/// lost them. `messages_summarized` is the split point, and it is the same
+/// number the legacy `summary_up_to_index` path uses, so the two agree.
 fn find_latest_checkpoint(messages: &[ChatMessage]) -> (Option<String>, usize) {
     // Search from the end to find the most recent checkpoint
-    for (idx, msg) in messages.iter().enumerate().rev() {
+    for msg in messages.iter().rev() {
         if msg.role == "checkpoint" {
             // Extract summary from checkpoint part
             if let Some(parts) = &msg.parts {
                 for part in parts {
-                    if let UIPart::Checkpoint { summary, .. } = part {
-                        return (Some(summary.clone()), idx);
+                    if let UIPart::Checkpoint {
+                        summary,
+                        messages_summarized,
+                        last_message_id,
+                        ..
+                    } = part
+                    {
+                        // By id where there is one: the count is a position
+                        // taken when the checkpoint was written, and rows get
+                        // deleted below it.
+                        let by_id = last_message_id.as_deref().and_then(|id| {
+                            messages
+                                .iter()
+                                .position(|m| m.id.as_deref() == Some(id))
+                                .map(|i| i + 1)
+                        });
+                        let start =
+                            by_id.unwrap_or_else(|| (*messages_summarized).max(0) as usize);
+                        return (Some(summary.clone()), start);
                     }
                 }
             }
@@ -680,7 +851,7 @@ pub async fn needs_compaction(
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -703,17 +874,23 @@ pub async fn needs_compaction(
             let agent_id: Option<String> = row.get("agent_id");
             let reasoning: Option<String> = row.get("reasoning");
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
+            // `parts` carries the attachments. Leaving it out here is why the
+            // gauge never saw a PDF: the estimate is what decides compaction.
+            let parts_raw: Option<serde_json::Value> = row.get("parts");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
             let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
 
-            let tool_calls = tool_calls_raw
-                .and_then(|tc| serde_json::from_value(tc).ok());
+            let tool_calls = tool_calls_raw.and_then(|tc| {
+                serde_json::from_value(tc)
+                    .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                    .ok()
+            });
             let intent = intent_raw
                 .and_then(|i| serde_json::from_value(i).ok());
 
             ChatMessage {
-                id: Some(id),
+                id: Some(id.clone()),
                 role,
                 content,
                 timestamp,
@@ -725,7 +902,7 @@ pub async fn needs_compaction(
                 intent,
                 subject,
                 reasoning_details,
-                parts: None,
+                parts: parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id)),
             }
         })
         .collect();
@@ -734,7 +911,10 @@ pub async fn needs_compaction(
     let verbatim_messages = if (summary_up_to_index as usize) < messages.len() {
         &messages[(summary_up_to_index as usize)..]
     } else {
-        &messages[..]
+        // The summary covers everything, so what follows it is nothing. This
+        // used to estimate the ENTIRE transcript plus the summary — the largest
+        // number possible, at the moment the answer matters most.
+        &[]
     };
 
     // Estimate context with summary + verbatim messages
@@ -750,6 +930,65 @@ pub async fn needs_compaction(
 
 #[cfg(test)]
 mod tests {
+    /// The system message is a string when caching is off and an array of text
+    /// blocks when it is on (the breakpoint needs block-shaped content). Tests
+    /// that care about the TEXT should not care which — they broke silently
+    /// when the cache default flipped, because they read `.as_str()` and got
+    /// `None` from a shape that was perfectly correct.
+    fn system_text(message: &serde_json::Value) -> String {
+        let content = &message["content"];
+        if let Some(s) = content.as_str() {
+            return s.to_string();
+        }
+        content
+            .as_array()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default()
+    }
+
+    /// The cache breakpoint marks the STABLE prefix, and the per-turn tail
+    /// travels as its OWN system message.
+    ///
+    /// Two earlier shapes were measured against the live gateway and both
+    /// cached nothing once a page was bound:
+    ///   - the marker on one block holding the whole prompt: the open page's
+    ///     live text is then inside the cached block, so every keystroke
+    ///     changes the prefix;
+    ///   - the marker on the first of TWO content blocks in one system
+    ///     message: the gateway accepts the body, answers normally, and
+    ///     silently ignores the marker. Nothing is logged. 0 cached tokens.
+    ///
+    /// This shape measured 53,346 of 54,039 prompt tokens served from cache
+    /// with the page text changing on every turn. Do not "simplify" it back
+    /// into one message without re-measuring that number.
+    #[test]
+    fn the_per_turn_tail_travels_as_its_own_system_message() {
+        let context =
+            build_context_for_llm(&[], None, 0, Some("STABLE-PREFIX"), Some("VOLATILE-TAIL"));
+        assert_eq!(context.len(), 2, "the tail is a separate message, not a second block");
+
+        let parts = context[0]["content"]
+            .as_array()
+            .expect("the cached prefix is block-shaped so it can carry the marker");
+        assert_eq!(parts.len(), 1, "the marked message holds exactly one block");
+        assert_eq!(parts[0]["text"], "STABLE-PREFIX");
+        assert!(parts[0].get("cache_control").is_some(), "the prefix is marked");
+
+        assert_eq!(context[1]["role"], "system");
+        assert_eq!(context[1]["content"], "VOLATILE-TAIL");
+        assert!(
+            !context[1].to_string().contains("cache_control"),
+            "the per-turn tail is never inside the cached block"
+        );
+    }
+
+
     use super::*;
 
     #[test]
@@ -787,7 +1026,7 @@ mod tests {
             },
         ];
 
-        let context = build_context_for_llm(&messages, None, 0, Some("You are helpful."));
+        let context = build_context_for_llm(&messages, None, 0, Some("You are helpful."), None);
 
         assert_eq!(context.len(), 3); // system + 2 messages
         assert_eq!(context[0]["role"], "system");
@@ -843,7 +1082,7 @@ mod tests {
             },
         ];
 
-        let context = build_context_for_llm(&messages, None, 0, None);
+        let context = build_context_for_llm(&messages, None, 0, None, None);
 
         assert_eq!(context.len(), 3, "the all-empty message is omitted");
         let first = context[0]["content"].as_array().expect("parts array");
@@ -851,6 +1090,196 @@ mod tests {
         assert_eq!(first[0]["type"], "image_url");
         assert_eq!(context[1]["role"], "assistant");
         assert_eq!(context[2]["content"], "and then?");
+    }
+
+    /// A tool-calling turn replayed as history. Every field here was a 400
+    /// at `messages.N.content` when the turn's `parts` first arrived
+    /// populated and the calls went out as content blocks.
+    #[test]
+    fn test_build_context_renders_tool_calls_beside_the_message() {
+        let base = ChatMessage {
+            id: None,
+            role: "assistant".to_string(),
+            content: String::new(),
+            timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: None,
+        };
+        let messages = vec![ChatMessage {
+            content: "Pulling a bit of context.".to_string(),
+            parts: Some(vec![
+                UIPart::Text { text: "Pulling a bit of context.".to_string() },
+                UIPart::ToolInvocation {
+                    tool_call_id: "call-0".to_string(),
+                    tool_name: "semantic_search".to_string(),
+                    input: serde_json::json!({ "queries": ["shared projects"] }),
+                    state: "output-available".to_string(),
+                    output: Some(serde_json::json!({ "count": 15 })),
+                    error_text: None,
+                },
+                // A turn saved before the completed args were written back.
+                UIPart::ToolInvocation {
+                    tool_call_id: "call-1".to_string(),
+                    tool_name: "get_page_content".to_string(),
+                    input: serde_json::Value::Null,
+                    state: "input-available".to_string(),
+                    output: None,
+                    error_text: None,
+                },
+                UIPart::Text { text: "Here they are.".to_string() },
+            ]),
+            ..base
+        }];
+
+        let context = build_context_for_llm(&messages, None, 0, None, None);
+
+        assert_eq!(context.len(), 3, "the turn, then one result per call");
+        let turn = &context[0];
+        assert_eq!(turn["role"], "assistant");
+
+        let content = turn["content"].as_array().expect("parts array");
+        assert_eq!(content.len(), 2, "only the text survives in content");
+        assert!(content.iter().all(|p| p["type"] == "text"));
+
+        let calls = turn["tool_calls"].as_array().expect("tool_calls beside it");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["type"], "function");
+        assert_eq!(calls[0]["function"]["name"], "semantic_search");
+        // A JSON string, not an object — and never `null`.
+        assert_eq!(
+            calls[0]["function"]["arguments"],
+            r#"{"queries":["shared projects"]}"#
+        );
+        assert_eq!(calls[1]["function"]["arguments"], "{}");
+
+        assert_eq!(context[1]["role"], "tool");
+        assert_eq!(context[1]["tool_call_id"], "call-0");
+        assert!(context[1]["content"].is_string());
+        // The unanswered call is still answered, or the request is rejected
+        // for the gap.
+        assert_eq!(context[2]["tool_call_id"], "call-1");
+    }
+
+    /// A turn that said nothing and only called something keeps its calls.
+    #[test]
+    fn test_build_context_keeps_a_silent_tool_turn() {
+        let messages = vec![ChatMessage {
+            id: None,
+            role: "assistant".to_string(),
+            content: String::new(),
+            timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: Some(vec![UIPart::ToolInvocation {
+                tool_call_id: "call-0".to_string(),
+                tool_name: "semantic_search".to_string(),
+                input: serde_json::json!({}),
+                state: "output-available".to_string(),
+                output: Some(serde_json::Value::String("nothing found".to_string())),
+                error_text: None,
+            }]),
+        }];
+
+        let context = build_context_for_llm(&messages, None, 0, None, None);
+
+        assert_eq!(context.len(), 2);
+        assert!(context[0]["content"].is_null(), "no text, but not dropped");
+        assert_eq!(context[0]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(context[1]["content"], "nothing found");
+    }
+
+    /// Compaction summarizes everything up to a split point and keeps the
+    /// exchanges after it verbatim — but it APPENDS its checkpoint at the end,
+    /// after those. Starting "after the checkpoint" therefore started after the
+    /// verbatim window, and an index past the end fell back to the whole
+    /// history.
+    #[test]
+    fn test_checkpoint_keeps_the_window_it_promised_to_keep() {
+        fn m(role: &str, body: &str) -> ChatMessage {
+            ChatMessage {
+                id: None,
+                role: role.to_string(),
+                content: body.to_string(),
+                timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+                model: None, provider: None, agent_id: None, tool_calls: None,
+                reasoning: None, intent: None, subject: None,
+                reasoning_details: None, parts: None,
+            }
+        }
+        // 20 messages; compaction summarized m0..m11 and kept m12..m19.
+        let mut msgs: Vec<ChatMessage> = (0..20)
+            .map(|i| m(if i % 2 == 0 { "user" } else { "assistant" }, &format!("m{i}")))
+            .collect();
+        let mut checkpoint = m("checkpoint", "Checkpoint v1");
+        checkpoint.parts = Some(vec![UIPart::Checkpoint {
+            version: 1,
+            messages_summarized: 12,
+            last_message_id: None,
+            summary: "SUMMARY-OF-m0-TO-m11".to_string(),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+        }]);
+        msgs.push(checkpoint);
+
+        let context = build_context_for_llm(&msgs, None, 12, Some("SYS"), None);
+
+        assert_eq!(context[0]["role"], "system");
+        assert!(system_text(&context[0]).contains("SUMMARY-OF-m0-TO-m11"));
+        let bodies: Vec<&str> = context[1..]
+            .iter()
+            .map(|m| m["content"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            bodies,
+            ["m12", "m13", "m14", "m15", "m16", "m17", "m18", "m19"],
+            "the verbatim window, and nothing the summary already covers"
+        );
+    }
+
+    /// The checkpoint is the last message and nothing has been said since.
+    #[test]
+    fn test_a_summary_that_covers_everything_leaves_nothing_behind() {
+        let base = ChatMessage {
+            id: None,
+            role: "user".to_string(),
+            content: String::new(),
+            timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
+            model: None, provider: None, agent_id: None, tool_calls: None,
+            reasoning: None, intent: None, subject: None,
+            reasoning_details: None, parts: None,
+        };
+        let msgs = vec![
+            ChatMessage { content: "m0".to_string(), ..base.clone() },
+            ChatMessage {
+                role: "checkpoint".to_string(),
+                content: "Checkpoint v1".to_string(),
+                parts: Some(vec![UIPart::Checkpoint {
+                    version: 1,
+                    messages_summarized: 1,
+                    last_message_id: None,
+                    summary: "ALL-OF-IT".to_string(),
+                    timestamp: String::new(),
+                }]),
+                ..base
+            },
+        ];
+
+        let context = build_context_for_llm(&msgs, None, 1, Some("SYS"), None);
+
+        assert_eq!(context.len(), 1, "the system message and nothing else");
+        assert!(system_text(&context[0]).contains("ALL-OF-IT"));
     }
 
     #[test]
@@ -909,12 +1338,13 @@ mod tests {
             Some("User asked about something."),
             2,
             Some("You are helpful."),
+            None,
         );
 
         // Should have: combined system prompt (with summary), 1 recent message
         assert_eq!(context.len(), 2);
         // System message should contain both prompt and summary
-        let system_content = context[0]["content"].as_str().unwrap();
+        let system_content = system_text(&context[0]);
         assert!(system_content.contains("You are helpful."));
         assert!(system_content.contains("<compacted_conversation>"));
         assert!(system_content.contains("User asked about something."));

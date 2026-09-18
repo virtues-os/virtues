@@ -647,6 +647,10 @@ h6 {
 
 [data-sonner-toast] [data-description] {
 	color: var(--foreground-muted) !important;
+	/* A description that lists several items (which files were turned away and
+	   why) writes one per line. Without this they run together into a single
+	   unreadable sentence, because the default collapses the newlines. */
+	white-space: pre-line;
 }
 
 /* =============================================================================

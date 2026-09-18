@@ -268,9 +268,14 @@
 		dragOver = true;
 	}
 
-	// Handle drag leave
-	function handleDragLeave() {
-		dragOver = false;
+	// Handle drag leave. Only when the pointer leaves the zone itself — a
+	// dragleave also fires every time it crosses into a child, which made the
+	// highlight strobe as you moved across the file grid toward the middle.
+	function handleDragLeave(e: DragEvent) {
+		const zone = e.currentTarget as HTMLElement;
+		if (!e.relatedTarget || !zone.contains(e.relatedTarget as Node)) {
+			dragOver = false;
+		}
 	}
 
 	// Create new folder

@@ -83,6 +83,11 @@ pub enum AgentEvent {
         /// Reasoning/thinking tokens (reasoning models). `None` if not reported.
         #[serde(skip_serializing_if = "Option::is_none")]
         reasoning_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+        /// Prompt tokens written INTO the provider's cache. `None` when the
+        /// gateway does not report it, which is every turn today.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_write_tokens: Option<u32>,
         /// Authoritative cost in micros-USD from the gateway `usage.cost`.
         /// `None` if the gateway didn't report it.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -146,6 +151,8 @@ pub enum FinishReason {
     AwaitingUser,
     /// An error occurred
     Error,
+    /// The model's output window ran out before it finished the reply.
+    OutputLimit,
     /// Request was cancelled by user
     Cancelled,
 }

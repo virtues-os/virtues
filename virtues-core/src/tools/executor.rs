@@ -71,6 +71,13 @@ pub struct ToolContext {
     /// Shared per-turn budget of subagent workers, so a Deep Research turn can't fan out without
     /// bound across repeated dispatches. `None` = unbounded (non-chat callers).
     pub worker_budget: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+    /// This turn belongs to a ghost chat: nothing about it is written down,
+    /// including what the person allowed. `chat_id` is still set — a missing
+    /// one reads as "headless, not gated" — so the gate holds and only the
+    /// bookkeeping moves.
+    pub temporary: bool,
+    /// Where a ghost's grants live for as long as the ghost does.
+    pub ghost_permissions: Option<crate::api::chat_permissions::GhostPermissions>,
 }
 
 impl Default for ToolContext {
@@ -85,6 +92,8 @@ impl Default for ToolContext {
             subagent_tx: None,
             cancel_token: None,
             worker_budget: None,
+            temporary: false,
+            ghost_permissions: None,
         }
     }
 }
@@ -229,8 +238,23 @@ impl ToolExecutor {
     /// Tools that require an explicit "I allow" from the user before running, because they
     /// destroy something or take a real-world / outbound action. Everything else runs freely
     /// (reversible, local). The free/gated split is the whole permission model.
-    const PERMISSION_REQUIRED: &'static [&'static str] =
-        &["run_applet", "delete_applet", "run_applet", "delete_applet"];
+    const PERMISSION_REQUIRED: &'static [&'static str] = &[
+        // Runs, or stops running, something on a schedule of its own.
+        "run_applet",
+        "delete_applet",
+        // Writes an applet to disk and runs its schema DDL; and rewrites one
+        // that already exists — including its prompt and its schedule. Gating
+        // `run_applet` and not these meant the model could not run the daily
+        // digest without being asked, but could rewrite what the digest says
+        // and set it to fire hourly, silently. `edit_applet`'s own guard only
+        // ever covered applets it had authored itself.
+        "setup_applet",
+        "edit_applet",
+        // Deletes rows, in the person's own record.
+        "sql_write",
+        // Real money, per call.
+        "generate_image",
+    ];
 
     /// If `tool_name` is gated and the user hasn't granted it for this chat, return a
     /// `permission_needed` result (the frontend then shows an inline allow/deny prompt and
@@ -253,31 +277,55 @@ impl ToolExecutor {
         let Some(chat_id) = context.chat_id.as_deref() else {
             return Ok(None);
         };
-        // The gated action tools all identify their target via `id`. If absent, let the tool
-        // surface its own validation error.
-        let Some(applet_id) = arguments.get("id").and_then(|v| v.as_str()) else {
-            return Ok(None);
-        };
+        // What is being asked for. Some gated tools name an existing applet in
+        // `id`; the rest act with no target of their own — `sql_write` deletes
+        // rows, `generate_image` spends money, `setup_applet` writes a new one
+        // to disk — and for those the tool itself is what the person grants.
+        // Keying only on `id` meant a tool without one returned "not gated",
+        // which is the quiet way a gate stops being a gate.
+        let (entity_id, entity_type, title, verb) =
+            match arguments.get("id").and_then(|v| v.as_str()) {
+                Some(applet_id) => {
+                    let title = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
+                        .await
+                        .map(|a| a.name)
+                        .unwrap_or_else(|_| "this action".to_string());
+                    let verb = match tool_name {
+                        "delete_applet" => "delete",
+                        "edit_applet" => "change",
+                        _ => "run",
+                    };
+                    (applet_id.to_string(), "action", title, verb)
+                }
+                None => {
+                    let (title, verb) = match tool_name {
+                        "sql_write" => ("your records".to_string(), "write to"),
+                        "generate_image" => ("an image".to_string(), "generate"),
+                        "setup_applet" => ("a new action".to_string(), "create"),
+                        other => (other.to_string(), "run"),
+                    };
+                    (tool_name.to_string(), "tool", title, verb)
+                }
+            };
 
-        let granted =
-            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, applet_id)
+        let granted = if context.temporary {
+            context
+                .ghost_permissions
+                .as_ref()
+                .is_some_and(|g| g.has(chat_id, &entity_id))
+        } else {
+            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, &entity_id)
                 .await
-                .unwrap_or(false);
+                .unwrap_or(false)
+        };
         if granted {
             return Ok(None);
         }
 
-        let title = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
-            .await
-            .map(|a| a.name)
-            .unwrap_or_else(|_| "this action".to_string());
-
-        let verb = if tool_name.starts_with("delete_") { "delete" } else { "run" };
-
         Ok(Some(ToolResult::success(serde_json::json!({
             "permission_needed": true,
-            "entity_id": applet_id,
-            "entity_type": "action",
+            "entity_id": entity_id,
+            "entity_type": entity_type,
             "entity_title": title,
             "message": format!("AI wants to {verb} \"{title}\""),
         }))))
@@ -422,7 +470,6 @@ impl ToolExecutor {
                 super::applet_management::run_applet(&self._pool, yjs, arguments, context).await
             }
             // Dayline event CRUD (used by hourly/EOD actions)
-            "dayline_event" => super::dayline_events::execute(&self._pool, arguments, context).await,
             // Project item fetch (for attached project context lens)
             "get_project_item" => self.execute_get_project_item(arguments).await,
             // Text-to-image generation (rendered inline to the user)
@@ -1209,44 +1256,15 @@ impl ToolExecutor {
         }
     }
 
-    /// Get the list of available tool names
-    pub fn available_tools(&self) -> Vec<&'static str> {
-        vec![
-            "think",
-            "update_memory",
-            "set_user_name",
-            "set_assistant_name",
-            "web_search",
-            "semantic_search",
-            "sql_query",
-            "sql_write",
-            "code_interpreter",
-            "create_page",
-            "get_page_content",
-            "edit_page",
-            "setup_applet",
-            "update_applet_memory",
-            "list_applets",
-            "get_applet",
-            "edit_applet",
-            "delete_applet",
-            "run_applet",
-            "dayline_event",
-            "get_project_item",
-        ]
-    }
-
-    /// Check if a tool is available
-    pub fn has_tool(&self, name: &str) -> bool {
-        self.available_tools().contains(&name)
-    }
 }
 
 impl std::fmt::Debug for ToolExecutor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ToolExecutor")
-            .field("available_tools", &self.available_tools())
-            .finish()
+        // Deliberately opaque: a hand-maintained tool list here was stale by
+        // eight tools and had no caller but this line — a second source of
+        // truth for something the registry already owns, waiting to be
+        // believed.
+        f.debug_struct("ToolExecutor").finish_non_exhaustive()
     }
 }
 

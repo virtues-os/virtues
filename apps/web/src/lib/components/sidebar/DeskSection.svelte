@@ -160,14 +160,10 @@
 		<div class="sidebar-expandable" class:expanded={headless || !zoneCollapsed}>
 			<div class="sidebar-expandable-inner">
 				{#if pinsStore.loaded && pins.length === 0}
-					<div class="desk-empty">
-						{#if headless}
-							Nothing here yet. Pin a day, a person, a page — anything
-							the app can name — and it stays on your desk.
-						{:else}
-							Nothing pinned yet
-						{/if}
-					</div>
+					<!-- One line, both ways. The headless version used to explain
+					     what a pin was and list what could be pinned; that is the
+					     picker's job, and the + below it is the how. -->
+					<div class="desk-empty">Nothing pinned yet</div>
 				{:else}
 					{#each pins as pin (pin.id)}
 						<div

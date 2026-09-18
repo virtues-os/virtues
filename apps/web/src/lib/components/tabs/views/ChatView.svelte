@@ -376,14 +376,118 @@
 	// for its live stream. The SDK replays what was said and follows the rest;
 	// a 204 means nothing is running and the load stands as it is. Never for a
 	// ghost: its transcript lives in this tab and nowhere the box could resume.
+	// When the last rejoin was attempted, so the several triggers that legitimately
+	// fire together on a load do not each open a reader on the same turn.
+	//
+	// An "in flight" boolean was not enough, and the network log said so: three
+	// requests 3ms apart, because a 204 settles fast enough that the `finally`
+	// clears the flag before the next caller looks at it. Against a dead turn
+	// that is only waste; against a LIVE one it is three readers on one stream,
+	// which is the thing the guard exists to prevent. A short floor covers both
+	// the overlapping case and the rapid-succession one.
+	let lastRejoinAt = 0;
+	const REJOIN_FLOOR_MS = 1500;
+
 	function resumeIfDangling() {
 		if (isGhost) return;
+		const now = Date.now();
+		if (now - lastRejoinAt < REJOIN_FLOOR_MS) return;
+		lastRejoinAt = now;
+		// "ready" OR "error": the case this exists for — a Wi-Fi handover, a
+		// phone that slept — ends the SDK's fetch with a TypeError, and the
+		// SDK sets status to error. Gated on ready alone, the rejoin never
+		// fired for the drop it was built to survive, and the error card's
+		// Try again started a second turn on top of the one still running.
+		if (chat.status !== "ready" && chat.status !== "error") return;
 		const last = chat.messages[chat.messages.length - 1];
-		if (!last || last.role !== "user") return;
-		if (chat.status !== "ready") return;
-		void chat.resumeStream().catch((e: unknown) => {
-			console.warn("[ChatView] could not rejoin the running turn:", e);
-		});
+		if (!last) return;
+
+		// No "is the last message a user message?" gate any more. It used to be
+		// here, and it meant the rejoin only ever fired for a turn that had not
+		// produced a single token: the moment the assistant started streaming,
+		// an assistant message existed and the door shut. A phone that slept, a
+		// lift, a Wi-Fi handover — all threw away a turn the box was still
+		// running and still paying for, and offered a Retry that bills a second
+		// one. That is the whole case this exists for.
+		//
+		// We cannot tell "unfinished" from the client with any confidence, and
+		// we do not have to: the box is authoritative and answers 204 when no
+		// turn is live, so an unnecessary ask is one cheap GET.
+		void chat
+			.resumeStream()
+			.catch((e: unknown) => {
+				console.warn("[ChatView] could not rejoin the running turn:", e);
+			})
+			.finally(() => {
+				// Nothing was running, and the last thing said was ours. The
+				// turn died with the box — see `danglingTurn`.
+				markDanglingIfUnanswered();
+			});
+	}
+
+	// A turn the box started and never finished, with nothing left to rejoin.
+	//
+	// The assistant row is only written once the loop completes, so a box that
+	// dies mid-turn (crash, power, upgrade) leaves the person's message sitting
+	// there with no reply and NO marker — indistinguishable from a message that
+	// was never sent. Reload asks to rejoin, gets 204, and used to leave it
+	// looking like nothing had happened.
+	let danglingTurn = $state(false);
+
+	function markDanglingIfUnanswered() {
+		if (isGhost) {
+			danglingTurn = false;
+			return;
+		}
+		const last = chat.messages[chat.messages.length - 1];
+		danglingTurn =
+			chat.status === "ready" && !!last && last.role === "user" && !isAwaitingResponse;
+	}
+
+	/**
+	 * The error card's Try again. In order:
+	 *
+	 * 1. Rejoin — the box may still be writing the reply (a turn outlives the
+	 *    request), in which case a new request is a second turn and a second
+	 *    charge. `resumeStream` settles at once on a 204 and only after the
+	 *    stream ends on a 200, so "still pending after the status moved" is
+	 *    the attached case.
+	 * 2. Re-read — the turn may have FINISHED while the wire was down; the
+	 *    reply is then on disk, and regenerating would delete it. If a reply
+	 *    now follows the last question, show it and clear the card.
+	 * 3. Only then regenerate. The box, for its part, refuses to start a turn
+	 *    while one is live and answers a regenerate for an unsaved question
+	 *    by answering it as new — this is the client doing its half.
+	 */
+	async function retryLastTurn() {
+		danglingTurn = false;
+		if (!isGhost) {
+			const settled = { done: false };
+			const resume = chat
+				.resumeStream()
+				.catch((e: unknown) => {
+					console.warn("[ChatView] could not rejoin the running turn:", e);
+				})
+				.finally(() => {
+					settled.done = true;
+				});
+			// Give the GET time to answer. Attached = the SDK moved the status
+			// (submitted/streaming) and the promise is still pending.
+			const started = Date.now();
+			while (!settled.done && Date.now() - started < 8000) {
+				if (chat.status === "submitted" || chat.status === "streaming") return;
+				await new Promise((r) => setTimeout(r, 50));
+			}
+			if (chat.status === "submitted" || chat.status === "streaming") return;
+
+			await reloadMessages();
+			const last = chat.messages[chat.messages.length - 1];
+			if (last && last.role === "assistant") {
+				chat.clearError();
+				return;
+			}
+		}
+		void chat.regenerate();
 	}
 
 	// Chat instance - fetched from shared store to survive remounts
@@ -468,13 +572,40 @@
 				currentTabConversationId || `chat_${generateHex16()}`;
 			conversationId = newConversationId;
 
-			// Reset chat state
+			// Reset chat state.
+			//
+			// EVERYTHING that belongs to ONE conversation resets here. The list
+			// was incomplete and each omission was its own bug, because
+			// navigation is in-place — `TabContent` keys on `tab.id`, so this
+			// component is NOT remounted and anything left behind silently
+			// becomes the next conversation's state:
+			//
+			//  - `isGhost` leaking meant a saved chat inherited "temporary" and
+			//    every turn in it went out with `temporary: true`, was never
+			//    stored, and was gone on reload — while the toggle that would
+			//    undo it is disabled on a non-empty chat. Silent data loss.
+			//  - `queuedMessages` leaking sent chat A's follow-up into chat B.
+			//  - `input` leaking overwrote B's saved draft with A's text, since
+			//    `draftId` is derived from the route and the debounced writer
+			//    fires after the switch.
+			//  - staged refs pointed into torn-down DOM; staged attachments
+			//    rode along on the first send in the new chat.
+			//
+			// Before adding state to this component, ask whether it belongs to
+			// the conversation or to the view. If the conversation: reset here.
 			chat.messages = [];
 			loadedMessages = [];
 			messageMetadata = new Map();
 			contextUsage = undefined;
 			titleGenerated = false;
 			isAwaitingResponse = false;
+			isGhost = isTemporaryRoute(currentTabRoute);
+			danglingTurn = false;
+			queuedMessages = [];
+			input = "";
+			refs.clear();
+			attachments.items = [];
+			attachments.dragActive = false;
 			// Reset page create tracking (for auto-open)
 			tools.reset();
 			// NOTE: We no longer unbind the active page when switching chats.
@@ -540,10 +671,30 @@
 				})();
 			} else {
 				// New chat - set chatId so permissions can sync when granted
-				editAllowListStore.setChatId(newConversationId);
+				editAllowListStore.setChatId(newConversationId, isGhost);
 				isLoading = false;
 			}
 		}
+	});
+
+	// Rejoin a running turn when the connection or the screen comes back.
+	//
+	// Mount was the ONLY trigger before, which covers a reload and a tab switch
+	// and nothing else — so a view that stayed mounted through a Wi-Fi handover
+	// or a locked phone never reconnected, even though the box holds a turn for
+	// five minutes precisely so it can be rejoined (live_turn.rs UNATTENDED_CAP).
+	// The backend was already doing its half.
+	$effect(() => {
+		if (!active) return;
+		const onBack = () => {
+			if (document.visibilityState === "visible") resumeIfDangling();
+		};
+		window.addEventListener("online", onBack);
+		document.addEventListener("visibilitychange", onBack);
+		return () => {
+			window.removeEventListener("online", onBack);
+			document.removeEventListener("visibilitychange", onBack);
+		};
 	});
 
 	// Load conversation data on mount
@@ -637,7 +788,7 @@
 				]);
 			} else {
 				// New chat - set defaults from profile
-				editAllowListStore.setChatId(conversationId);
+				editAllowListStore.setChatId(conversationId, isGhost);
 				if (profileDefaultPersona) {
 					selectedPersona = profileDefaultPersona;
 				}
@@ -696,6 +847,30 @@
 		eyebrowsFor(uniqueMessages as { id: string; subject?: string }[]),
 	);
 
+
+	// Which message's Copy just fired, so the tick can replace the icon briefly.
+	let copiedMessageId = $state<string | null>(null);
+
+	function messageText(message: any): string {
+		return (message.parts ?? [])
+			.filter((p: any) => p.type === "text")
+			.map((p: any) => p.text)
+			.join("");
+	}
+
+	async function copyMessage(message: any) {
+		const text = messageText(message).trim();
+		if (!text) return;
+		try {
+			await navigator.clipboard.writeText(text);
+			copiedMessageId = message.id;
+			setTimeout(() => {
+				if (copiedMessageId === message.id) copiedMessageId = null;
+			}, 1500);
+		} catch {
+			/* clipboard unavailable (insecure origin, denied) — say nothing */
+		}
+	}
 
 	// Get the last assistant message
 	const lastAssistantMessage = $derived.by(() => {
@@ -1066,6 +1241,22 @@
 		// Stop the client-side stream
 		chat.stop();
 
+		// And drop anything waiting behind it. Stop is the one gesture that has
+		// to mean "nothing more": the queue used to survive it and then drain
+		// the instant the drain effect saw `ready` again, so stopping a turn
+		// with three follow-ups queued sent all three. The SDK's `stop()`
+		// resolves rather than throwing, so `handleChatSubmit`'s `finally`
+		// clears `isAwaitingResponse` and the effect fires immediately.
+		//
+		// Handed back to the composer rather than discarded when there is just
+		// one, since a queued line is something the person typed and has not
+		// seen sent. More than one cannot go in a single-line composer, so they
+		// are dropped — the chips are gone from the screen either way.
+		if (queuedMessages.length === 1 && !input.trim()) {
+			input = queuedMessages[0];
+		}
+		queuedMessages = [];
+
 		// Mark the in-flight assistant message as user-stopped so the "Stopped"
 		// notice shows immediately (reload reads the persisted subject='cancelled').
 		const stoppedId = lastAssistantMessage?.id;
@@ -1141,6 +1332,12 @@
 
 		if (!messageToSend && attachments.count === 0) return;
 
+		// After an error the SDK sits in "error" until something clears it,
+		// and nothing did: Send greyed out, Enter queued the text into a chip
+		// that never drained, the draft gone. The next message IS the
+		// recovery — clear the card and send it.
+		if (chat.status === "error") chat.clearError();
+
 		if (chat.status !== "ready") {
 			// Queue text; attachments stay staged and ride along when the drain
 			// effect re-sends this once the current turn finishes.
@@ -1150,8 +1347,19 @@
 		}
 		input = "";
 
-		// Capture + clear attachments as AI SDK file parts.
+		// Capture + clear attachments as AI SDK file parts. The snapshot is what
+		// goes back in the tray if this send never reaches the box (see the catch):
+		// `items` is replaced wholesale on every change, so the reference is stable.
+		const stagedBeforeSend = attachments.items;
 		const files = attachments.takeAsFileParts();
+		// Everything after sendMessage resolves — the title, the session refresh —
+		// is inside the same try. Without this flag a throw from any of THOSE
+		// would put an already-sent message back in the composer and its files
+		// back in the tray, next to the copies sitting in the transcript.
+		let handedOff = false;
+
+		// A new turn answers the dangling one, whatever it was.
+		danglingTurn = false;
 
 		// New turn → clear any leftover Deep Research panel from the previous turn.
 		chatInstances.clearSubagents(conversationId);
@@ -1185,6 +1393,8 @@
 					: { text: messageToSend },
 			);
 
+			handedOff = true;
+
 			if (chat.messages.length >= 2 && !isGhost && !titleGenerated) {
 				await generateTitle();
 				// Update tab route if it's a new chat
@@ -1213,7 +1423,22 @@
 			}, 2000);
 		} catch (error) {
 			console.error("[handleChatSubmit] Error:", error);
-			input = "";
+			// Nothing was sent, so nothing should have been consumed. Both the
+			// text and the files were already cleared on the optimistic path;
+			// hand them back rather than leaving the person to retype and
+			// re-drag. A staged ref comes back inside the text, since it was
+			// serialized into it before the send — flattened, but not lost.
+			//
+			// Narrow on purpose. A transport failure does NOT land here —
+			// measured: the SDK keeps it, the message is already in
+			// `chat.messages` with its file parts, and ChatError offers "Try
+			// again". What reaches this catch is a throw BEFORE sendMessage
+			// resolves, the permissions sync above being the one in the path
+			// today, where nothing entered the transcript to retry from.
+			if (!handedOff) {
+				input = messageToSend;
+				attachments.restore(stagedBeforeSend);
+			}
 		} finally {
 			isAwaitingResponse = false;
 		}
@@ -1241,6 +1466,9 @@
 	function toggleGhost() {
 		if (!isEmpty) return;
 		isGhost = !isGhost;
+		// The allow list has to know: a ghost's grants stay in the box's memory
+		// and never become rows.
+		if (conversationId) editAllowListStore.setChatId(conversationId, isGhost);
 	}
 
 	// Publish this chat's state to the phone shell, whose top-right button is
@@ -1294,8 +1522,16 @@
 			}
 		}}
 		ondrop={(e) => {
-			e.preventDefault();
 			attachments.dragActive = false;
+			// The composer is a CodeMirror editor INSIDE this root, and it
+			// handles drops on itself (calling preventDefault + onAttach).
+			// Returning true from a CodeMirror dom event handler does not stop
+			// DOM propagation, so that drop still bubbles here — and until
+			// 2026-09-17 this added the same files a second time. Cleared
+			// dragActive first, because the sticky part of the overlay is not
+			// optional: no dragleave fires on the element that took the drop.
+			if (e.defaultPrevented) return;
+			e.preventDefault();
 			if (e.dataTransfer?.files?.length) attachments.add(Array.from(e.dataTransfer.files));
 		}}
 	>
@@ -1716,7 +1952,10 @@
 														<span>Generating image…</span>
 													</div>
 												{/if}
-												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error"}
+												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error" && !inInterview}
+													<!-- A live static tool part carries no `toolName` (only its
+													     `tool-<name>` type); a reloaded row does. Read the name
+													     off the type so the line never says "Error:  failed". -->
 													<div
 														class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg"
 													>
@@ -1724,7 +1963,7 @@
 															class="font-medium"
 															>Error:</span
 														>
-														{(part as any).toolName}
+														{(part as any).toolName ?? part.type.slice("tool-".length)}
 														failed
 														{#if (part as any).errorText}
 															- {(part as any)
@@ -1752,6 +1991,56 @@
 												<StoppedNotice reason="length" />
 											{:else if messageMetadata.get(message.id)?.interrupted}
 												<StoppedNotice reason="interrupted" />
+											{:else if messageMetadata.get(message.id)?.unattended}
+												<StoppedNotice reason="unattended" />
+											{:else if messageMetadata.get(message.id)?.maxSteps}
+												<StoppedNotice reason="max_steps" />
+											{/if}
+
+											<!-- What to do with an answer once it exists.
+											     `chat.regenerate()` was reachable ONLY through the
+											     error card, so an answer that is wrong but did not
+											     FAIL had no re-roll at all, and copying one meant
+											     dragging a selection across rendered markdown.
+											     Only on a finished turn — controls under a
+											     sentence still being written invite a click that
+											     races the stream. Re-roll is offered on the last
+											     answer alone, because regenerating an earlier one
+											     would silently discard every turn after it, which
+											     is an edit-and-branch feature and not this. -->
+											{#if chat.status === "ready" && messageText(message).trim()}
+												<div class="message-actions">
+													<button
+														type="button"
+														class="message-action"
+														aria-label="Copy this reply"
+														title="Copy"
+														onclick={() => copyMessage(message)}
+													>
+														<Icon
+															icon={copiedMessageId === message.id
+																? "ri:check-line"
+																: "ri:file-copy-line"}
+															width="14"
+														/>
+													</button>
+													<!-- Not in the rooms: their last line is the room's own
+													     narration, and a re-roll there re-asks a step. -->
+													{#if message.id === lastAssistantMessage?.id && !isGhost && !inInterview}
+														<button
+															type="button"
+															class="message-action"
+															aria-label="Ask for another answer"
+															title="Try another answer"
+															onclick={() => {
+																danglingTurn = false;
+																void chat.regenerate();
+															}}
+														>
+															<Icon icon="ri:refresh-line" width="14" />
+														</button>
+													{/if}
+												</div>
 											{/if}
 										{:else}
 											{@const fileParts = message.parts.filter((p: any) => p.type === "file")}
@@ -1819,9 +2108,31 @@
 								</div>
 							{/if}
 
+							<!-- A turn the box began and never finished. Not an error —
+							     nothing failed on the wire, the box simply stopped
+							     existing mid-turn — so it gets the same quiet chip as
+							     the other partial endings rather than the error card,
+							     plus the one thing the person actually needs, which is
+							     a way to ask again without retyping. -->
+							{#if danglingTurn && !chat.error}
+								<div class="dangling-turn">
+									<StoppedNotice reason="no_reply" />
+									<button
+										type="button"
+										class="dangling-retry"
+										onclick={() => {
+											danglingTurn = false;
+											void chat.regenerate();
+										}}
+									>
+										Try again
+									</button>
+								</div>
+							{/if}
+
 							<ChatError
 											error={chat.error ?? null}
-											onRetry={() => chat.regenerate()}
+											onRetry={() => void retryLastTurn()}
 											recommendedName={models.recommendedFallback?.displayName}
 											onSwitchAndRetry={models.recommendedFallback
 												? switchToRecommendedAndRetry
@@ -1878,7 +2189,7 @@
 						{#if attachments.dragActive}
 							<div class="drop-hint">
 								<Icon icon="ri:download-2-line" width="15" />
-								<span>Drop to attach &middot; images, PDFs, or audio</span>
+								<span>Drop to attach &middot; images, PDFs, audio, or text</span>
 							</div>
 						{/if}
 						{#if attachments.count > 0}
@@ -2007,7 +2318,7 @@
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
-							sendDisabled={chat.status !== "ready"}
+							sendDisabled={chat.status === "submitted" || chat.status === "streaming"}
 							isStreaming={chat.status === "streaming"}
 							maxWidth="max-w-3xl"
 							placeholder={isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
@@ -2934,6 +3245,65 @@
 		100% {
 			background-position: 0% center;
 		}
+	}
+
+	.dangling-turn {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.25rem;
+	}
+
+	.dangling-retry {
+		font-size: 0.75rem;
+		color: var(--color-primary);
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+	}
+
+	.dangling-retry:hover {
+		text-decoration: underline;
+	}
+
+	/* Quiet until the answer is hovered — an answer should read as prose, not
+	   as a toolbar with text above it. Always visible on a touch screen, where
+	   there is no hover to reveal them. */
+	.message-actions {
+		display: flex;
+		gap: 0.125rem;
+		margin-top: 0.375rem;
+		opacity: 0;
+		transition: opacity 0.12s ease;
+	}
+
+	.message-wrapper:hover .message-actions,
+	.message-actions:focus-within {
+		opacity: 1;
+	}
+
+	@media (hover: none) {
+		.message-actions {
+			opacity: 1;
+		}
+	}
+
+	.message-action {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.25rem;
+		border: none;
+		background: none;
+		border-radius: 6px;
+		color: var(--foreground-subtle);
+		cursor: pointer;
+	}
+
+	.message-action:hover {
+		color: var(--foreground);
+		background: var(--surface-elevated);
 	}
 
 </style>
