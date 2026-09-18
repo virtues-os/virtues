@@ -151,6 +151,8 @@ impl AgentLoop {
         Box::pin(stream! {
             let mut messages = initial_messages;
             let mut step: u32 = 0;
+            // How this turn ends. Assigned at each break; reported once, below.
+            let mut finish = protocol::FinishReason::EndTurn;
 
             // Ask the model to RETURN its thinking. Claude 5 omits the text
             // unless told `display: summarized`; Gemini needs
@@ -177,18 +179,22 @@ impl AgentLoop {
                 if let Some(ref token) = cancel_token {
                     if token.is_cancelled() {
                         tracing::info!(step, "Agent loop cancelled by user");
-                        yield AgentEvent::done_with_reason(step.saturating_sub(1), protocol::FinishReason::Cancelled);
+                        finish = protocol::FinishReason::Cancelled;
                         break;
                     }
                 }
 
-                // Check max steps
+                // Check max steps.
+                //
+                // Not an `error` event: the SDK treats one as fatal — it throws
+                // out of the stream, so everything after it is discarded and a
+                // turn that simply ran long renders as a failed request with a
+                // Retry button. The ceiling is an ENDING, and it says so
+                // through the finish reason, which the row and the notice both
+                // read.
                 if step > config.max_steps {
-                    yield AgentEvent::error(
-                        format!("Maximum steps ({}) exceeded", config.max_steps),
-                        Some(ErrorCode::MaxStepsExceeded),
-                        false,
-                    );
+                    tracing::info!(step, max_steps = config.max_steps, "agent loop hit its step ceiling");
+                    finish = protocol::FinishReason::MaxSteps;
                     break;
                 }
 
@@ -251,6 +257,11 @@ impl AgentLoop {
                             stream::StreamError::Interrupted(_) => ErrorCode::Interrupted,
                             _ => ErrorCode::LlmError,
                         };
+                        // The one ending that IS an error event: the reply
+                        // stopped for a reason outside the turn, and the person
+                        // needs the card and the retry.
+                        tracing::error!(step, error = %e, "the model stream failed");
+                        finish = protocol::FinishReason::Error;
                         yield AgentEvent::error(e.to_string(), Some(code), false);
                         break;
                     }
@@ -268,13 +279,9 @@ impl AgentLoop {
                     if result.finish_reason == StepReason::MaxTokens {
                         // `finish_reason: length` used to be mapped and then
                         // ignored, so a reply the model never finished read
-                        // as one it did.
-                        yield AgentEvent::error(
-                            "The model reached its output limit before it finished; \
-                             what it wrote is above.",
-                            Some(ErrorCode::OutputLimit),
-                            false,
-                        );
+                        // as one it did. It is still not an `error` event —
+                        // see the ceiling above — it is how this turn ended.
+                        finish = protocol::FinishReason::OutputLimit;
                     }
                     yield AgentEvent::step_complete(step, result.finish_reason);
                     break;
@@ -314,7 +321,7 @@ impl AgentLoop {
                 // If a tool needs user action, stop the loop early
                 if awaiting_user {
                     tracing::info!(step, "Tool requires user action, pausing loop");
-                    yield AgentEvent::done_with_reason(step, protocol::FinishReason::AwaitingUser);
+                    finish = protocol::FinishReason::AwaitingUser;
                     break;
                 }
 
@@ -322,7 +329,7 @@ impl AgentLoop {
                 if let Some(ref token) = cancel_token {
                     if token.is_cancelled() {
                         tracing::info!(step, "Agent loop cancelled after tool execution");
-                        yield AgentEvent::done_with_reason(step, protocol::FinishReason::Cancelled);
+                        finish = protocol::FinishReason::Cancelled;
                         break;
                     }
                 }
@@ -411,8 +418,12 @@ impl AgentLoop {
                 // Continue loop for next LLM call
             }
 
-            // Emit done
-            yield AgentEvent::done(step);
+            // How it ended, once, at the end. A trailing unconditional
+            // `done()` used to follow every break, so the loop's verdict was
+            // always `EndTurn` and every caller that matched on it — the
+            // finish reason on the wire, the row's subject — was matching on
+            // dead arms.
+            yield AgentEvent::done_with_reason(step, finish);
         })
     }
 }

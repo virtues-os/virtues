@@ -229,8 +229,23 @@ impl ToolExecutor {
     /// Tools that require an explicit "I allow" from the user before running, because they
     /// destroy something or take a real-world / outbound action. Everything else runs freely
     /// (reversible, local). The free/gated split is the whole permission model.
-    const PERMISSION_REQUIRED: &'static [&'static str] =
-        &["run_applet", "delete_applet", "run_applet", "delete_applet"];
+    const PERMISSION_REQUIRED: &'static [&'static str] = &[
+        // Runs, or stops running, something on a schedule of its own.
+        "run_applet",
+        "delete_applet",
+        // Writes an applet to disk and runs its schema DDL; and rewrites one
+        // that already exists — including its prompt and its schedule. Gating
+        // `run_applet` and not these meant the model could not run the daily
+        // digest without being asked, but could rewrite what the digest says
+        // and set it to fire hourly, silently. `edit_applet`'s own guard only
+        // ever covered applets it had authored itself.
+        "setup_applet",
+        "edit_applet",
+        // Deletes rows, in the person's own record.
+        "sql_write",
+        // Real money, per call.
+        "generate_image",
+    ];
 
     /// If `tool_name` is gated and the user hasn't granted it for this chat, return a
     /// `permission_needed` result (the frontend then shows an inline allow/deny prompt and

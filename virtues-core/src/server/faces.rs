@@ -380,11 +380,28 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
         DO $$
         DECLARE t record;
         BEGIN
+            -- pg_class, not pg_tables: `wiki_day_prose` is a VIEW, and so is
+            -- anything else the record grows as one. list_tables deliberately
+            -- shows the model every view, and wiki_days' join hint sends it
+            -- straight at that one, so a table-only grant made the box answer
+            -- `permission denied` to every question about a day. relkind
+            -- covers ordinary tables, views, materialized views, foreign
+            -- tables and partitions.
+            --
+            -- app_pages is named explicitly because it is neither data_ nor
+            -- wiki_ and the wiki_articles join hint points at it: an article's
+            -- prose lives there, so without it the hint the model is given
+            -- cannot be followed either.
             FOR t IN
-                SELECT schemaname, tablename FROM pg_tables
-                WHERE (schemaname = 'public'
-                       AND (tablename LIKE 'data\_%' OR tablename LIKE 'wiki\_%'))
-                   OR schemaname LIKE 'applet\_%'
+                SELECT n.nspname AS schemaname, c.relname AS tablename
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relkind IN ('r', 'v', 'm', 'f', 'p')
+                  AND ((n.nspname = 'public'
+                        AND (c.relname LIKE 'data\_%'
+                             OR c.relname LIKE 'wiki\_%'
+                             OR c.relname = 'app_pages'))
+                       OR n.nspname LIKE 'applet\_%')
             LOOP
                 EXECUTE format('GRANT SELECT ON %I.%I TO virtues_face_reader',
                                t.schemaname, t.tablename);

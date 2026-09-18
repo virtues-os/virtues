@@ -147,6 +147,8 @@ pub enum FinishReason {
     AwaitingUser,
     /// An error occurred
     Error,
+    /// The model's output window ran out before it finished the reply.
+    OutputLimit,
     /// Request was cancelled by user
     Cancelled,
 }

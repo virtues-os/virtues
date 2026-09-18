@@ -1785,6 +1785,10 @@
 												<StoppedNotice reason="length" />
 											{:else if messageMetadata.get(message.id)?.interrupted}
 												<StoppedNotice reason="interrupted" />
+											{:else if messageMetadata.get(message.id)?.unattended}
+												<StoppedNotice reason="unattended" />
+											{:else if messageMetadata.get(message.id)?.maxSteps}
+												<StoppedNotice reason="max_steps" />
 											{/if}
 										{:else}
 											{@const fileParts = message.parts.filter((p: any) => p.type === "file")}
