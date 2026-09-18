@@ -540,7 +540,7 @@
 				})();
 			} else {
 				// New chat - set chatId so permissions can sync when granted
-				editAllowListStore.setChatId(newConversationId);
+				editAllowListStore.setChatId(newConversationId, isGhost);
 				isLoading = false;
 			}
 		}
@@ -637,7 +637,7 @@
 				]);
 			} else {
 				// New chat - set defaults from profile
-				editAllowListStore.setChatId(conversationId);
+				editAllowListStore.setChatId(conversationId, isGhost);
 				if (profileDefaultPersona) {
 					selectedPersona = profileDefaultPersona;
 				}
@@ -1266,6 +1266,9 @@
 	function toggleGhost() {
 		if (!isEmpty) return;
 		isGhost = !isGhost;
+		// The allow list has to know: a ghost's grants stay in the box's memory
+		// and never become rows.
+		if (conversationId) editAllowListStore.setChatId(conversationId, isGhost);
 	}
 
 	// Publish this chat's state to the phone shell, whose top-right button is

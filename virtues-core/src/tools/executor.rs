@@ -71,6 +71,13 @@ pub struct ToolContext {
     /// Shared per-turn budget of subagent workers, so a Deep Research turn can't fan out without
     /// bound across repeated dispatches. `None` = unbounded (non-chat callers).
     pub worker_budget: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+    /// This turn belongs to a ghost chat: nothing about it is written down,
+    /// including what the person allowed. `chat_id` is still set — a missing
+    /// one reads as "headless, not gated" — so the gate holds and only the
+    /// bookkeeping moves.
+    pub temporary: bool,
+    /// Where a ghost's grants live for as long as the ghost does.
+    pub ghost_permissions: Option<crate::api::chat_permissions::GhostPermissions>,
 }
 
 impl Default for ToolContext {
@@ -85,6 +92,8 @@ impl Default for ToolContext {
             subagent_tx: None,
             cancel_token: None,
             worker_budget: None,
+            temporary: false,
+            ghost_permissions: None,
         }
     }
 }
@@ -299,10 +308,16 @@ impl ToolExecutor {
                 }
             };
 
-        let granted =
+        let granted = if context.temporary {
+            context
+                .ghost_permissions
+                .as_ref()
+                .is_some_and(|g| g.has(chat_id, &entity_id))
+        } else {
             crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, &entity_id)
                 .await
-                .unwrap_or(false);
+                .unwrap_or(false)
+        };
         if granted {
             return Ok(None);
         }
