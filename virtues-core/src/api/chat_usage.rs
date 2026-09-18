@@ -102,11 +102,22 @@ pub fn resolve_cost_usd(
     authoritative_micros: Option<i64>,
     input_tokens: i64,
     output_tokens: i64,
+    byo: bool,
 ) -> f64 {
     if let Some(micros) = authoritative_micros {
         if micros > 0 {
             return micros as f64 / 1_000_000.0;
         }
+    }
+
+    // Bring-your-own endpoint: no upstream but our own gateway sends a cost
+    // trailer, so `Some(0)` here means unknown, not free — and estimating it
+    // from OUR catalog prices tokens the person paid their own provider for,
+    // under a model id that is not even the one that ran (the body's model is
+    // rewritten at send time). `app_ai_calls` already knows this; the per-chat
+    // row did not, and wrote dollars.
+    if byo {
+        return 0.0;
     }
 
     match crate::api::model_catalog::pricing(model) {
@@ -136,6 +147,7 @@ pub async fn record_chat_usage(
     chat_id: String,
     model: &str,
     usage: UsageData,
+    byo: bool,
 ) -> Result<()> {
     let chat_id_str = chat_id.clone();
     let id = format!("{}_{}", chat_id_str, model.replace('/', "_"));
@@ -146,6 +158,7 @@ pub async fn record_chat_usage(
         usage.cost_micros,
         usage.input_tokens,
         usage.output_tokens,
+        byo,
     );
 
     // Upsert: increment existing or insert new
@@ -221,7 +234,7 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -244,17 +257,23 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
             let agent_id: Option<String> = row.get("agent_id");
             let reasoning: Option<String> = row.get("reasoning");
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
+            // `parts` carries the attachments. Leaving it out here is why the
+            // gauge never saw a PDF: the estimate is what decides compaction.
+            let parts_raw: Option<serde_json::Value> = row.get("parts");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
             let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
 
-            let tool_calls = tool_calls_raw
-                .and_then(|tc| serde_json::from_value(tc).ok());
+            let tool_calls = tool_calls_raw.and_then(|tc| {
+                serde_json::from_value(tc)
+                    .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                    .ok()
+            });
             let intent = intent_raw
                 .and_then(|i| serde_json::from_value(i).ok());
 
             ChatMessage {
-                id: Some(id),
+                id: Some(id.clone()),
                 role,
                 content,
                 timestamp,
@@ -266,7 +285,7 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
                 intent,
                 subject,
                 reasoning_details,
-                parts: None,
+                parts: parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id)),
             }
         })
         .collect();
@@ -315,8 +334,10 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
 
     // Get model context window from registry
     let context_window = match get_model(&last_model).await {
-        Ok(model_info) => model_info.context_window.unwrap_or(1_000_000) as i64,
-        Err(_) => 1_000_000, // Default 1M for Gemini
+        Ok(model_info) => crate::api::token_estimation::context_window_or_assumed(
+                model_info.context_window.map(|w| w as i64),
+            ),
+        Err(_) => crate::api::token_estimation::ASSUMED_CONTEXT_WINDOW, // Default 1M for Gemini
     };
 
     // Calculate message counts
@@ -429,7 +450,7 @@ pub async fn check_compaction_needed(
         r#"
         SELECT
             id, role, content, created_at as timestamp,
-            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details
+            model, provider, agent_id, reasoning, tool_calls, intent, subject, reasoning_details, parts
         FROM app_chat_messages
         WHERE chat_id = $1
         ORDER BY sequence_num ASC
@@ -452,17 +473,23 @@ pub async fn check_compaction_needed(
             let agent_id: Option<String> = row.get("agent_id");
             let reasoning: Option<String> = row.get("reasoning");
             let tool_calls_raw: Option<serde_json::Value> = row.get("tool_calls");
+            // `parts` carries the attachments. Leaving it out here is why the
+            // gauge never saw a PDF: the estimate is what decides compaction.
+            let parts_raw: Option<serde_json::Value> = row.get("parts");
             let intent_raw: Option<serde_json::Value> = row.get("intent");
             let subject: Option<String> = row.get("subject");
             let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
 
-            let tool_calls = tool_calls_raw
-                .and_then(|tc| serde_json::from_value(tc).ok());
+            let tool_calls = tool_calls_raw.and_then(|tc| {
+                serde_json::from_value(tc)
+                    .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                    .ok()
+            });
             let intent = intent_raw
                 .and_then(|i| serde_json::from_value(i).ok());
 
             ChatMessage {
-                id: Some(id),
+                id: Some(id.clone()),
                 role,
                 content,
                 timestamp,
@@ -474,22 +501,27 @@ pub async fn check_compaction_needed(
                 intent,
                 subject,
                 reasoning_details,
-                parts: None,
+                parts: parts_raw.and_then(|p| crate::api::chat::parts_from_jsonb(p, &id)),
             }
         })
         .collect();
 
     // Get model context window from registry
     let context_window = match get_model(model).await {
-        Ok(model_info) => model_info.context_window.unwrap_or(1_000_000) as i64,
-        Err(_) => 1_000_000,
+        Ok(model_info) => crate::api::token_estimation::context_window_or_assumed(
+                model_info.context_window.map(|w| w as i64),
+            ),
+        Err(_) => crate::api::token_estimation::ASSUMED_CONTEXT_WINDOW,
     };
 
     // Get verbatim messages (after summary)
     let verbatim_messages = if (summary_up_to_index as usize) < messages.len() {
         &messages[(summary_up_to_index as usize)..]
     } else {
-        &messages[..]
+        // The summary covers everything, so what follows it is nothing. This
+        // used to estimate the ENTIRE transcript plus the summary — the largest
+        // number possible, at the moment the answer matters most.
+        &[]
     };
 
     // Estimate context with summary + verbatim messages
@@ -513,7 +545,7 @@ mod tests {
     fn authoritative_gateway_cost_wins() {
         // $0.042 == 42_000 micros. Token counts are deliberately absurd: if
         // they influenced the result at all, this would not be 0.042.
-        let cost = resolve_cost_usd("anthropic/claude-opus-4.8", Some(42_000), 999_999, 999_999);
+        let cost = resolve_cost_usd("anthropic/claude-opus-4.8", Some(42_000), 999_999, 999_999, false);
         assert!((cost - 0.042).abs() < 1e-9, "got {cost}");
     }
 
@@ -522,14 +554,14 @@ mod tests {
     /// table was wrong for every model in it.
     #[test]
     fn no_cost_and_cold_catalog_reports_zero_not_a_fiction() {
-        let cost = resolve_cost_usd("anthropic/claude-opus-4.8", None, 1_000_000, 1_000_000);
+        let cost = resolve_cost_usd("anthropic/claude-opus-4.8", None, 1_000_000, 1_000_000, false);
         assert_eq!(cost, 0.0);
     }
 
     /// A zero from the gateway is treated as absent, not as free.
     #[test]
     fn zero_gateway_cost_is_not_taken_as_free() {
-        let cost = resolve_cost_usd("anthropic/claude-opus-4.8", Some(0), 1_000, 1_000);
+        let cost = resolve_cost_usd("anthropic/claude-opus-4.8", Some(0), 1_000, 1_000, false);
         // Falls through to the catalog (cold in tests) → 0.0, but crucially it
         // did NOT short-circuit on `Some(0)` as though the call were free.
         assert_eq!(cost, 0.0);

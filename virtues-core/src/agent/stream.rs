@@ -52,6 +52,11 @@ pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub reasoning_tokens: Option<u32>,
+    /// Prompt tokens the provider served from its cache, when it says so.
+    pub cache_read_tokens: Option<u32>,
+    /// Prompt tokens the provider wrote INTO its cache, when it says so. Always
+    /// `None` today: see the parse site for why no field is guessed at.
+    pub cache_write_tokens: Option<u32>,
     /// Authoritative cost in micros-USD, from the gateway's `usage.cost` (the
     /// real upstream price for this call). `None` if the gateway didn't report
     /// it. Captured into `app_ai_calls` rather than re-estimated locally.
@@ -253,12 +258,23 @@ where
                                         }
                                         entry.2.push_str(args);
                                         
-                                        // Emit start event on first encounter
-                                        if !tc_id.is_empty() && !name.is_empty() && !tool_calls_started.contains(&idx) {
+                                        // Emit start event on first encounter.
+                                        //
+                                        // Off the ACCUMULATED id and name, not
+                                        // this chunk's: a provider that sends
+                                        // the id in one frame and the name in
+                                        // the next never satisfied both at
+                                        // once, so the start never fired, every
+                                        // argument delta was suppressed with
+                                        // it, and the call never made it into
+                                        // the turn's record at all — no name,
+                                        // no result, absent from the saved
+                                        // parts.
+                                        if !entry.0.is_empty() && !entry.1.is_empty() && !tool_calls_started.contains(&idx) {
                                             tool_calls_started.insert(idx);
-                                            emit(AgentEvent::tool_start(tc_id, name));
+                                            emit(AgentEvent::tool_start(entry.0.clone(), entry.1.clone()));
                                         }
-                                        
+
                                         // Emit delta for arguments
                                         if !args.is_empty() && tool_calls_started.contains(&idx) {
                                             emit(AgentEvent::ToolCallArgsPartial {
@@ -284,16 +300,50 @@ where
                     }
                 }
                 
-                // Extract token usage
-                if let Some(usage_obj) = json.get("usage") {
-                    usage.prompt_tokens = usage_obj
-                        .get("prompt_tokens")
-                        .and_then(|t| t.as_u64())
-                        .unwrap_or(0) as u32;
-                    usage.completion_tokens = usage_obj
-                        .get("completion_tokens")
-                        .and_then(|t| t.as_u64())
-                        .unwrap_or(0) as u32;
+                // Extract token usage.
+                //
+                // Null-guarded like the error frame above: many
+                // OpenAI-compatible streams carry `"usage": null` on every
+                // chunk, and an unguarded `get` on one of those ASSIGNED zero
+                // over counts a previous chunk had already set. Each field is
+                // taken only when present, for the same reason.
+                if let Some(usage_obj) = json.get("usage").filter(|v| !v.is_null()) {
+                    tracing::debug!(usage = %usage_obj, "raw gateway usage object");
+                    if let Some(t) = usage_obj.get("prompt_tokens").and_then(|t| t.as_u64()) {
+                        usage.prompt_tokens = t as u32;
+                    }
+                    if let Some(t) = usage_obj.get("completion_tokens").and_then(|t| t.as_u64()) {
+                        usage.completion_tokens = t as u32;
+                    }
+                    if let Some(details) = usage_obj.get("prompt_tokens_details") {
+                        if let Some(t) = details.get("cached_tokens").and_then(|t| t.as_u64()) {
+                            usage.cache_read_tokens = Some(t as u32);
+                        }
+                        // Cache WRITES have no OpenAI-compatible spelling — they
+                        // are an Anthropic concept, and what (if anything) the
+                        // gateway calls them through this surface is not known
+                        // from the repo. So: no guess. Log the keys we did not
+                        // read, once per turn that carries any, and let one real
+                        // payload name the field instead of a plausible-looking
+                        // constant that silently records nothing.
+                        //
+                        // Until then `cache_write_tokens` stays None and lands
+                        // as 0 — but as "nobody reported it", not as a literal
+                        // typed into the insert (which is what it was).
+                        if let Some(map) = details.as_object() {
+                            let unread: Vec<&String> = map
+                                .keys()
+                                .filter(|k| k.as_str() != "cached_tokens")
+                                .collect();
+                            if !unread.is_empty() {
+                                tracing::debug!(
+                                    keys = ?unread,
+                                    details = %details,
+                                    "gateway prompt_tokens_details carries fields we do not read"
+                                );
+                            }
+                        }
+                    }
                     
                     if let Some(details) = usage_obj.get("completion_tokens_details") {
                         usage.reasoning_tokens = details
@@ -345,6 +395,8 @@ where
             completion_tokens: usage.completion_tokens,
             total_tokens: Some(usage.prompt_tokens + usage.completion_tokens),
             reasoning_tokens: usage.reasoning_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            cache_write_tokens: usage.cache_write_tokens,
             cost_micros: usage.cost_micros,
         });
     }

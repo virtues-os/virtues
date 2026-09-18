@@ -419,6 +419,26 @@ pub async fn delete_handler(
 /// mislabel one row. Harmless for a usage breakdown; never make a billing
 /// decision on it.
 pub async fn byo_is_active(pool: &PgPool) -> bool {
+    match byo_is_active_checked(pool).await {
+        Ok(active) => active,
+        Err(e) => {
+            // Was a bare `.unwrap_or(false)`. A failed read is not "BYO is
+            // off", and saying so silently is how a broken query becomes a
+            // plausible answer — `.claude/rules/query-errors.md`. Callers that
+            // only LABEL a row can live with the false; the one that prices a
+            // turn must not, and uses the checked form below.
+            tracing::warn!(error = %e, "could not read BYO status; assuming off for labelling");
+            false
+        }
+    }
+}
+
+/// The same question, with the failure left visible.
+///
+/// Anything making a decision that costs money reads THIS. `byo_is_active`
+/// cannot tell "no BYO credential" apart from "the database did not answer",
+/// and those two must not lead to the same row.
+pub async fn byo_is_active_checked(pool: &PgPool) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM credentials \
           WHERE source_id = $1 AND status = 'active')",
@@ -426,7 +446,6 @@ pub async fn byo_is_active(pool: &PgPool) -> bool {
     .bind(BYO_SOURCE_ID)
     .fetch_one(pool)
     .await
-    .unwrap_or(false)
 }
 
 /// How long to wait for the endpoint to say anything at all.

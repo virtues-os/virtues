@@ -44,6 +44,13 @@ impl ToolExecutionResult {
     /// Convert to AgentEvent
     pub fn to_event(&self) -> AgentEvent {
         match &self.result {
+            // A tool that answered with a failure carries its reason in
+            // `error`, not in `data`. Passing `success: false` with the reason
+            // dropped left the UI to say only "the tool reported a failure".
+            Ok(result) if !result.success => AgentEvent::tool_error(
+                &self.tool_call_id,
+                result.error.clone().unwrap_or_else(|| "the tool reported a failure".to_string()),
+            ),
             Ok(result) => AgentEvent::tool_result(
                 &self.tool_call_id,
                 result.data.clone(),
@@ -58,12 +65,20 @@ impl ToolExecutionResult {
         matches!(&self.result, Ok(r) if r.success)
     }
 
-    /// Get the result value for LLM context
+    /// Get the result value for LLM context.
+    ///
+    /// A tool that answered with `ToolResult::error` has `data: Null` and its
+    /// reason in `error`. Serializing only `data` handed the model the literal
+    /// string `null` — no reason, not even the fact of a failure — so it
+    /// confabulated or retried the same call. The reason is the content.
     pub fn to_llm_content(&self) -> String {
         match &self.result {
-            Ok(result) => serde_json::to_string(&result.data).unwrap_or_else(|_| {
-                format!("Tool completed: {}", if result.success { "success" } else { "with errors" })
-            }),
+            Ok(result) if !result.success => {
+                let reason = result.error.as_deref().unwrap_or("the tool reported a failure");
+                format!("Tool execution failed: {reason}")
+            }
+            Ok(result) => serde_json::to_string(&result.data)
+                .unwrap_or_else(|_| "Tool completed: success".to_string()),
             Err(e) => format!("Tool execution failed: {}", e),
         }
     }
@@ -177,6 +192,13 @@ async fn execute_single(
         Duration::from_secs(240)
     } else if tool_call.name == "generate_image" {
         Duration::from_secs(120)
+    } else if tool_call.name == "code_interpreter" {
+        // Its schema offers the model a timeout of up to 120s and defaults to
+        // 60. Under the 30s default the DEFAULT was already unreachable: any
+        // code that ran longer died no matter what the model asked for, and
+        // the sandbox subprocess was left running. The ceiling matches what
+        // the tool advertises, plus room for the sandbox to start.
+        Duration::from_secs(150)
     } else {
         config.tool_timeout
     };

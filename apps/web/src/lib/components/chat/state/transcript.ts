@@ -32,6 +32,8 @@ export interface MessageMeta {
 	stopped?: boolean;
 	cutShort?: boolean;
 	interrupted?: boolean;
+	unattended?: boolean;
+	maxSteps?: boolean;
 }
 
 /** Helper function to convert database messages to Chat parts */
@@ -43,13 +45,27 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 	const stopped = msg.subject === "cancelled";
 	const cutShort = msg.subject === "length";
 	const interrupted = msg.subject === "interrupted";
-	if (msg.agentId || msg.provider || stopped || cutShort || interrupted) {
+	// The box's own cap, and the turn using up its steps. Both used to arrive
+	// as one of the three above — the cap as the person's own stop.
+	const unattended = msg.subject === "unattended";
+	const maxSteps = msg.subject === "max_steps";
+	if (
+		msg.agentId ||
+		msg.provider ||
+		stopped ||
+		cutShort ||
+		interrupted ||
+		unattended ||
+		maxSteps
+	) {
 		metadata.set(msg.id, {
 			agentId: msg.agentId,
 			provider: msg.provider,
 			stopped,
 			cutShort,
 			interrupted,
+			unattended,
+			maxSteps,
 		});
 	}
 

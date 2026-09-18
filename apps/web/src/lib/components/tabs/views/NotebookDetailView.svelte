@@ -590,7 +590,14 @@
 				e.preventDefault();
 				dropActive = true;
 			}}
-			ondragleave={() => (dropActive = false)}
+			ondragleave={(e) => {
+				// Crossing into a child fires dragleave too; only leaving the
+				// notebook itself should drop the highlight.
+				const zone = e.currentTarget as HTMLElement;
+				if (!e.relatedTarget || !zone.contains(e.relatedTarget as Node)) {
+					dropActive = false;
+				}
+			}}
 			ondrop={handleDrop}
 		>
 			<header class="head">

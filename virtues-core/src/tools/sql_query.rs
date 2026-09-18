@@ -112,7 +112,11 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         join_hint: None,
     });
     m.insert("data_financial_transaction", TableMetadata {
-        description: "Transactions (amounts in cents, negative=debit)",
+        // positive=expense, negative=credit — Plaid's convention, which is what
+        // the collector writes. This said the opposite, so a model looking for
+        // spending wrote `WHERE amount < 0` and saw under one percent of the
+        // record.
+        description: "Transactions (amounts in cents, positive=money out, negative=refund or credit)",
         category: "financial",
         key_columns: &["account_id", "amount", "currency", "merchant_name", "merchant_category", "description", "category", "is_pending", "transaction_type", "payment_channel", "occurred_at"],
         join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
@@ -721,8 +725,15 @@ impl SqlQueryTool {
             ));
         }
 
-        // Apply limit if not already present
-        let query = if sql_lower.contains("limit") {
+        // Apply limit if not already present.
+        //
+        // Word-boundaried, like `mentions_table` a few hundred lines down and
+        // for the same reason: a bare `contains("limit")` also matched
+        // `credit_limit` and `WITH limits AS (…)`, so those queries ran with no
+        // ceiling at all. It is still only a floor — a model that writes its
+        // own `LIMIT 100000` gets it, which is what the byte budget below is
+        // for.
+        let query = if mentions_table(&sql_lower, "limit") {
             sql.to_string()
         } else {
             format!("{} LIMIT {}", sql, limit)
@@ -799,11 +810,37 @@ impl SqlQueryTool {
         // owner's own data.
         attach_record_refs(&query, &mut json_rows);
 
-        Ok(ToolResult::success(serde_json::json!({
+        // A row cap is not a size cap. 200 rows of `data_communication_email`
+        // measured 2.4 MB of body text on a real box — one tool call, which
+        // then rides in the turn AND is replayed on every turn after it. Rows
+        // are dropped from the end, and the model is told how many, so it can
+        // ask a narrower question rather than believing it saw everything.
+        let returned = json_rows.len();
+        let mut budget = MAX_RESULT_BYTES;
+        let mut kept = 0usize;
+        for row in &json_rows {
+            let size = row.to_string().len();
+            if kept > 0 && size > budget {
+                break;
+            }
+            budget = budget.saturating_sub(size);
+            kept += 1;
+        }
+        json_rows.truncate(kept);
+
+        let mut result = serde_json::json!({
             "operation": "query",
             "row_count": json_rows.len(),
             "rows": json_rows,
-        })))
+        });
+        if kept < returned {
+            result["truncated"] = serde_json::json!({
+                "returned": returned,
+                "shown": kept,
+                "why": "the result was too large to carry; select fewer columns or narrow the query",
+            });
+        }
+        Ok(ToolResult::success(result))
     }
 }
 
@@ -892,6 +929,14 @@ fn mentions_table(lowered_query: &str, table: &str) -> bool {
             before_ok && after_ok
         })
 }
+
+/// How much of one query's result may ride into the conversation.
+///
+/// Every byte here is paid for twice: once in the turn that asked, and again on
+/// every turn after it, because the result is persisted and replayed. 256 KB is
+/// roughly 64k tokens — generous for an answer, and far below the 2.4 MB a
+/// plain `SELECT * … LIMIT 200` over the mail table produces.
+const MAX_RESULT_BYTES: usize = 256 * 1024;
 
 /// Convert Postgres rows to JSON array
 pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow]) -> Vec<serde_json::Value> {
