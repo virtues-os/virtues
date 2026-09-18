@@ -182,11 +182,57 @@ fn normalize_upstream_error(resp: ApiResponse) -> ApiResponse {
 ///   second-guess it.
 /// - **The body names no model at all.** No caller does this today, but the
 ///   legacy `default_model` still fills it if set.
+/// Put the messages back into the plainest OpenAI-compatible shape before they
+/// leave for someone else's server.
+///
+/// The box marks a prompt-cache breakpoint on the system message, which needs
+/// block-shaped content (`[{type:"text", text, cache_control}]`) instead of a
+/// bare string. Our gateway forwards that to Anthropic and it pays for itself.
+/// A BYO endpoint is a different animal: it is llama.cpp or Ollama or vLLM or
+/// LM Studio, it gains NOTHING from an Anthropic cache hint, and a strict body
+/// parser is entitled to refuse both the unknown `cache_control` key and an
+/// array where it wants a string. Sending it would be all risk and no benefit,
+/// on the one route whose failures the owner has to debug themselves.
+///
+/// So: drop `cache_control` wherever it appears, and collapse a content array
+/// back to a string when every part is text. Arrays that carry an image, a file
+/// or audio stay arrays — that shape is the standard one for attachments and is
+/// how a BYO endpoint expects to receive them.
+fn plainest_messages(map: &mut serde_json::Map<String, Value>) {
+    let Some(messages) = map.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return;
+    };
+    for message in messages.iter_mut() {
+        let Some(parts) = message.get_mut("content").and_then(|c| c.as_array_mut()) else {
+            continue;
+        };
+        for part in parts.iter_mut() {
+            if let Some(obj) = part.as_object_mut() {
+                obj.remove("cache_control");
+            }
+        }
+        let all_text = parts.iter().all(|p| {
+            p.get("type").and_then(|t| t.as_str()) == Some("text") && p.get("text").is_some()
+        });
+        if all_text {
+            let joined: String = parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("");
+            if let Some(obj) = message.as_object_mut() {
+                obj.insert("content".into(), Value::String(joined));
+            }
+        }
+    }
+}
+
 fn apply_byo_model(body: &Value, byo: &crate::api::settings_byo::ByoCredential) -> Value {
     let mut body = body.clone();
     let Value::Object(map) = &mut body else {
         return body;
     };
+    plainest_messages(map);
 
     let ours = map.get("model").and_then(|m| m.as_str()).map(String::from);
     let Some(ours) = ours else {
@@ -1045,6 +1091,55 @@ mod byo_fork_tests {
 
     fn model_of(v: &Value) -> &str {
         v["model"].as_str().unwrap_or_default()
+    }
+
+    /// The box's prompt-cache breakpoint must not reach someone else's server:
+    /// it gains them nothing and a strict parser may refuse the shape outright.
+    #[test]
+    fn the_cache_breakpoint_does_not_leave_for_a_byo_endpoint() {
+        let body = json!({
+            "model": "anthropic/claude-sonnet-5",
+            "messages": [{
+                "role": "system",
+                "content": [{
+                    "type": "text",
+                    "text": "You are a careful assistant.",
+                    "cache_control": { "type": "ephemeral" }
+                }]
+            }]
+        });
+        let out = apply_byo_model(&body, &byo(Some("x-ai/grok-4.5")));
+        let content = &out["messages"][0]["content"];
+        assert_eq!(
+            content.as_str(),
+            Some("You are a careful assistant."),
+            "an all-text content array collapses back to a plain string"
+        );
+        assert!(
+            !out.to_string().contains("cache_control"),
+            "no cache_control key survives the trip to a BYO endpoint"
+        );
+    }
+
+    /// The other half of that rule: an attachment is ALSO an array, and that
+    /// array is the standard shape a BYO endpoint expects. Flattening it would
+    /// destroy the image.
+    #[test]
+    fn an_attachment_keeps_its_array_shape() {
+        let body = json!({
+            "model": "anthropic/claude-sonnet-5",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "what is this?" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+                ]
+            }]
+        });
+        let out = apply_byo_model(&body, &byo(Some("x-ai/grok-4.5")));
+        let content = &out["messages"][0]["content"];
+        assert!(content.is_array(), "a multimodal message stays an array");
+        assert_eq!(content.as_array().unwrap().len(), 2, "the image survives");
     }
 
     /// The whole point: our address in, theirs out. Verified against real
