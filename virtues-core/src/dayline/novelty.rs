@@ -59,8 +59,17 @@ const DOW_KAPPA: f64 = 1.5;
 /// Neighbors for the LOF computation.
 const LOF_K: usize = 15;
 
-/// Clamp for the local z-score (the global z is unclamped, matching its prior).
-const Z_MAX: f64 = 3.0;
+/// Numerical guard on the local z (the global z is unclamped, matching its
+/// prior). This is NOT a ranking ceiling and must never bind in practice: the
+/// rank→quantile mapping in `score_local` already bounds |z| by the baseline
+/// size (~3.4 at MAX_BASELINE_EVENTS, ~4.9 at a million), so 6.0 only catches
+/// a non-finite probit argument.
+///
+/// It used to be 3.0 against a MAD z-score, and it clamped **17% of a measured
+/// 3,689-event corpus** — including 37 of 145 members of one ordinary cluster.
+/// A channel with one event in six at its maximum cannot rank anything, which
+/// is the whole job of this number.
+const Z_MAX: f64 = 6.0;
 
 /// Compute global + local novelty for all events on a given day that need it.
 ///
@@ -259,8 +268,20 @@ struct Baseline {
 struct LofModel {
     k_distances: Vec<f64>,
     lrds: Vec<f64>, // local reachability density per baseline point
-    ln_lof_median: f64,
-    ln_lof_mad: f64,
+    /// The baseline's own ln(LOF) values, ascending — the reference
+    /// distribution a query is ranked against.
+    ///
+    /// This replaced a (median, MAD) pair. A robust z-score assumes the
+    /// reference is roughly normal; ln(LOF) is not. LOF pins inliers at ~1
+    /// (ln ≈ 0) and puts every outlier in a long right tail, so the MAD — a
+    /// middle-50% statistic — measures the pin, not the tail, and divides by a
+    /// number far too small. Everything mildly unusual then lands past the
+    /// clamp, indistinguishable from everything wildly unusual.
+    ///
+    /// Ranking the query against this distribution instead makes the baseline
+    /// uniform in percentile by construction, hence ~normal in z, so the clamp
+    /// stops binding and ordering survives all the way up.
+    ln_lofs_sorted: Vec<f64>,
 }
 
 /// Load the recency-bounded baseline. `with_lof` controls whether the O(n²)
@@ -373,18 +394,20 @@ fn build_lof_model(embeddings: &[Vec<f32>]) -> Option<LofModel> {
     if ln_lofs.len() < LOF_K {
         return None;
     }
-    let med = median(&ln_lofs);
-    let mad = median_abs_dev(&ln_lofs, med);
-    if mad < 1e-9 {
-        // No spread in outlierness — can't meaningfully z-score (super-uniform).
+    ln_lofs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    // No spread in outlierness — nothing to rank against (super-uniform). Kept
+    // from the MAD version, and it earns its place: a seed that wrote the same
+    // summary sentence on every day collapsed the embedding space to a handful
+    // of points and this guard is what reported it, by returning no local
+    // novelty at all rather than inventing one.
+    if ln_lofs[ln_lofs.len() - 1] - ln_lofs[0] < 1e-9 {
         return None;
     }
 
     Some(LofModel {
         k_distances,
         lrds,
-        ln_lof_median: med,
-        ln_lof_mad: mad,
+        ln_lofs_sorted: ln_lofs,
     })
 }
 
@@ -476,8 +499,43 @@ fn score_local(baseline: &Baseline, emb: &[f32]) -> Option<(f64, f64)> {
         return None;
     }
 
-    let z = ((raw_lof.ln() - lof.ln_lof_median) / (1.4826 * lof.ln_lof_mad)).clamp(-Z_MAX, Z_MAX);
-    Some((raw_lof, z))
+    // Where does this LOF fall among the baseline's own? Mid-rank, so a query
+    // equal to a run of baseline values sits in the middle of that run rather
+    // than at either end of it.
+    let x = raw_lof.ln();
+    let xs = &lof.ln_lofs_sorted;
+    let below = xs.partition_point(|&v| v < x);
+    let at_or_below = xs.partition_point(|&v| v <= x);
+    let rank = (below + at_or_below) as f64 / 2.0;
+    // (rank + 0.5) / (n + 1) keeps p strictly inside (0, 1), so a query beyond
+    // every baseline point still has a finite quantile — bounded by n, which is
+    // why Z_MAX does not bind.
+    let p = (rank + 0.5) / (xs.len() as f64 + 1.0);
+    let z_rank = probit(p);
+
+    // Above the baseline's whole range the rank saturates — every such query
+    // gets the same top percentile and the same z, which is the collapse this
+    // change exists to remove, just moved to a different ceiling. (A test
+    // caught it: two points at genuinely different distances both scored
+    // 2.8086.) So past the top, keep going monotonically, measuring the excess
+    // in units of the baseline's own upper spread.
+    let n = xs.len();
+    let x_max = xs[n - 1];
+    let z = if x > x_max {
+        // Scale the excess by the baseline's interquartile spread, then squash
+        // it. Bounded (< z_rank + TAIL_SPAN, so it can never reach Z_MAX and
+        // re-create a ceiling) but strictly increasing, which is all that
+        // ranking needs. A plain ratio was tried first and is wrong: on a
+        // near-uniform baseline the divisor goes to zero and every tail event
+        // pins to the clamp — the original bug, rebuilt.
+        const TAIL_SPAN: f64 = 2.0;
+        let iqr = (xs[(n * 3) / 4] - xs[n / 4]).max(1e-12);
+        let excess = (x - x_max) / iqr;
+        z_rank + TAIL_SPAN * (1.0 - (-excess).exp())
+    } else {
+        z_rank
+    };
+    Some((raw_lof, z.clamp(-Z_MAX, Z_MAX)))
 }
 
 // ============================================================================
@@ -513,23 +571,51 @@ fn local_phase(start: DateTime<Utc>, tz: Option<&str>) -> (f64, f64) {
     }
 }
 
-fn median(xs: &[f64]) -> f64 {
-    if xs.is_empty() {
+
+
+/// Inverse standard-normal CDF. Acklam's rational approximation, |error| <
+/// 1.15e-9 across (0, 1) — orders of magnitude finer than a score nobody ever
+/// sees as a number needs, and it costs no dependency.
+///
+/// `p` must lie strictly inside (0, 1); `score_local`'s plotting position
+/// guarantees that.
+fn probit(p: f64) -> f64 {
+    const A: [f64; 6] = [
+        -3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
+        1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00,
+    ];
+    const B: [f64; 5] = [
+        -5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
+        6.680131188771972e+01, -1.328068155288572e+01,
+    ];
+    const C: [f64; 6] = [
+        -7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
+        -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00,
+    ];
+    const D: [f64; 4] = [
+        7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
+        3.754408661907416e+00,
+    ];
+    const P_LOW: f64 = 0.02425;
+
+    if !(0.0..=1.0).contains(&p) || p <= 0.0 || p >= 1.0 {
+        // Defensive: the caller's plotting position cannot reach here.
         return 0.0;
     }
-    let mut v = xs.to_vec();
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let n = v.len();
-    if n % 2 == 1 {
-        v[n / 2]
+    if p < P_LOW {
+        let q = (-2.0 * p.ln()).sqrt();
+        (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
+            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
+    } else if p <= 1.0 - P_LOW {
+        let q = p - 0.5;
+        let r = q * q;
+        (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q
+            / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0)
     } else {
-        (v[n / 2 - 1] + v[n / 2]) / 2.0
+        let q = (-2.0 * (1.0 - p).ln()).sqrt();
+        -((((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
+            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0))
     }
-}
-
-fn median_abs_dev(xs: &[f64], med: f64) -> f64 {
-    let dev: Vec<f64> = xs.iter().map(|x| (x - med).abs()).collect();
-    median(&dev)
 }
 
 // ============================================================================
@@ -560,10 +646,99 @@ mod tests {
     }
 
     #[test]
-    fn median_and_mad() {
-        assert!((median(&[3.0, 1.0, 2.0]) - 2.0).abs() < 1e-9);
-        assert!((median(&[1.0, 2.0, 3.0, 4.0]) - 2.5).abs() < 1e-9);
-        assert!((median_abs_dev(&[1.0, 2.0, 3.0, 4.0, 5.0], 3.0) - 1.0).abs() < 1e-9);
+    fn probit_matches_known_quantiles() {
+        assert!(probit(0.5).abs() < 1e-9);
+        assert!((probit(0.975) - 1.959_963_985).abs() < 1e-6);
+        assert!((probit(0.025) + 1.959_963_985).abs() < 1e-6);
+        assert!((probit(0.841_344_746) - 1.0).abs() < 1e-6);
+        // Monotone, which is the only property ranking actually depends on.
+        let mut prev = f64::NEG_INFINITY;
+        for i in 1..1000 {
+            let z = probit(i as f64 / 1000.0);
+            assert!(z > prev, "probit must increase");
+            prev = z;
+        }
+    }
+
+    /// The bug this file was changed for: under the old (median, MAD) z-score a
+    /// measured corpus put 17% of events at the ±3 clamp, so nothing in the top
+    /// sixth could be ranked against anything else in it. Ranking against the
+    /// baseline's own distribution makes the baseline ~normal in z by
+    /// construction, so the tail is a tail again.
+    #[test]
+    fn baseline_is_not_crushed_against_the_clamp() {
+        // A dense core plus a sparse fringe — the shape that produced the long
+        // right tail in ln(LOF) that a MAD cannot see.
+        let mut embeddings: Vec<Vec<f32>> = Vec::new();
+        for i in 0..400 {
+            let theta = (i as f64) * 0.0005;
+            embeddings.push(vec![theta.cos() as f32, theta.sin() as f32]);
+        }
+        for i in 0..40 {
+            let theta = 0.4 + (i as f64) * 0.05;
+            embeddings.push(vec![theta.cos() as f32, theta.sin() as f32]);
+        }
+        let n = embeddings.len();
+        let model = build_lof_model(&embeddings).expect("model should build");
+        let baseline = Baseline {
+            embeddings: embeddings.clone(),
+            phases: vec![(12.0, 0.0); n],
+            days_ago: vec![1.0; n],
+            distinct_days: n,
+            lof: Some(model),
+        };
+
+        let mut clamped = 0usize;
+        for e in &embeddings {
+            if let Some((_, z)) = score_local(&baseline, e) {
+                if z.abs() >= 3.0 {
+                    clamped += 1;
+                }
+            }
+        }
+        let share = clamped as f64 / n as f64;
+        assert!(
+            share < 0.05,
+            "only a tail should sit past |3|, got {:.1}% ({clamped}/{n})",
+            share * 100.0
+        );
+    }
+
+    /// Two events that are both unusual must not come back with the same score.
+    /// This is what the clamp destroyed: a kind-with-no-neighbours and an
+    /// ordinary-kind-at-its-cluster-edge both read exactly 3.00.
+    #[test]
+    fn degrees_of_outlierness_stay_distinguishable() {
+        // Graded spacing, so ln(LOF) has genuine spread — a perfectly even
+        // arc has none, and then nothing downstream can rank anything.
+        let mut embeddings: Vec<Vec<f32>> = Vec::new();
+        let mut theta = 0.0f64;
+        for i in 0..200 {
+            theta += 0.001 + (i as f64) * 0.00004;
+            embeddings.push(vec![theta.cos() as f32, theta.sin() as f32]);
+        }
+        let n = embeddings.len();
+        let model = build_lof_model(&embeddings).expect("model should build");
+        let baseline = Baseline {
+            embeddings,
+            phases: vec![(12.0, 0.0); n],
+            days_ago: vec![1.0; n],
+            distinct_days: n,
+            lof: Some(model),
+        };
+
+        let edge = vec![(0.46f64).cos() as f32, (0.46f64).sin() as f32];
+        let far = vec![0.0f32, 1.0f32];
+        let (_, z_edge) = score_local(&baseline, &edge).expect("edge scored");
+        let (_, z_far) = score_local(&baseline, &far).expect("far scored");
+        assert!(
+            z_far > z_edge,
+            "the far point {z_far} must outrank the cluster edge {z_edge}"
+        );
+        assert!(
+            (z_far - z_edge).abs() > 1e-6,
+            "two different degrees of outlierness collapsed to one score"
+        );
     }
 
     /// An event far from a populated cluster should score a higher LOF (and z)
