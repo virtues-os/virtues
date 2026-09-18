@@ -5,7 +5,6 @@
 //! Trigger validation, condition evaluation, concurrency gating, and run-row
 //! lifecycle are all handled upstream — this function is pure execution.
 
-use chrono::Utc;
 use serde::Serialize;
 use sqlx::PgPool;
 
