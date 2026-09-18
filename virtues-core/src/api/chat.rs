@@ -46,11 +46,21 @@ use tokio_util::sync::CancellationToken;
 // Cancellation State
 // ============================================================================
 
+/// One registered turn: its token, and whether the cap stopped it.
+#[derive(Clone)]
+struct Registration {
+    token: CancellationToken,
+    /// Set when the unattended cap cancelled this turn, so the row and the
+    /// notice can say the box stopped it rather than telling the person they
+    /// stopped a reply they never touched.
+    unattended: bool,
+}
+
 /// Shared state for tracking active chat requests that can be cancelled
 #[derive(Clone, Default)]
 pub struct ChatCancellationState {
-    /// Map of chat_id -> cancellation token for active requests
-    tokens: Arc<std::sync::RwLock<std::collections::HashMap<String, CancellationToken>>>,
+    /// Map of chat_id -> the registration for the turn running now
+    tokens: Arc<std::sync::RwLock<std::collections::HashMap<String, Registration>>>,
 }
 
 impl ChatCancellationState {
@@ -60,35 +70,72 @@ impl ChatCancellationState {
         }
     }
 
-    /// Register a new chat request and get its cancellation token
+    /// Register a new chat request and get its cancellation token.
+    ///
+    /// A chat can have two turns in flight — `LiveTurns` says so explicitly —
+    /// so the token that lands here belongs to whichever turn started last,
+    /// and everything below is written to survive that. Nothing may act on an
+    /// entry it did not put there.
     pub fn register(&self, chat_id: &str) -> CancellationToken {
         let token = CancellationToken::new();
         // Recover from poisoned lock - the data is still valid
         let mut guard = self.tokens.write().unwrap_or_else(|e| e.into_inner());
-        guard.insert(chat_id.to_string(), token.clone());
+        guard.insert(chat_id.to_string(), Registration { token: token.clone(), unattended: false });
         token
     }
 
-    /// Cancel an active chat request
+    /// Cancel an active chat request — the person's Stop button.
     pub fn cancel(&self, chat_id: &str) -> bool {
         // Recover from poisoned lock - the data is still valid
         let guard = self.tokens.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(token) = guard.get(chat_id) {
-            token.cancel();
+        if let Some(reg) = guard.get(chat_id) {
+            reg.token.cancel();
             true
         } else {
             false
         }
     }
 
-    /// Remove a chat request (called when stream completes)
-    pub fn remove(&self, chat_id: &str) {
+    /// Cancel a turn nobody is watching, and say that is what happened.
+    ///
+    /// `token` is the caller's OWN token: an old turn hitting the unattended
+    /// cap used to cancel by chat id, which meant cancelling whatever was
+    /// registered — usually the reply the person had come back and asked for.
+    pub fn cancel_unattended(&self, chat_id: &str, token: &CancellationToken) {
+        let mut guard = self.tokens.write().unwrap_or_else(|e| e.into_inner());
+        match guard.get_mut(chat_id) {
+            Some(reg) if reg.token.eq(token) => {
+                reg.unattended = true;
+                reg.token.cancel();
+            }
+            // Someone else's turn holds the slot now; ours is stale. Cancel our
+            // own token so our loop still stops spending.
+            _ => token.cancel(),
+        }
+    }
+
+    /// Was this chat's current turn stopped by the cap rather than by a person?
+    pub fn was_unattended(&self, chat_id: &str, token: &CancellationToken) -> bool {
+        let guard = self.tokens.read().unwrap_or_else(|e| e.into_inner());
+        guard.get(chat_id).is_some_and(|reg| reg.token.eq(token) && reg.unattended)
+    }
+
+    /// Remove a chat request (called when stream completes).
+    ///
+    /// Only if it is still ours. A turn that finished used to remove by chat
+    /// id, so a turn started in the window between its last write and here had
+    /// its token deleted — and the Stop button then reported "no active
+    /// request" while a reply was visibly streaming.
+    pub fn remove(&self, chat_id: &str, token: &CancellationToken) {
         // Recover from poisoned lock - the data is still valid
         let mut guard = self.tokens.write().unwrap_or_else(|e| e.into_inner());
-        guard.remove(chat_id);
+        if guard.get(chat_id).is_some_and(|reg| reg.token.eq(token)) {
+            guard.remove(chat_id);
+        }
     }
 
     /// Check if a chat has an active request
+    #[allow(dead_code)]
     pub fn is_active(&self, chat_id: &str) -> bool {
         // Recover from poisoned lock - the data is still valid
         let guard = self.tokens.read().unwrap_or_else(|e| e.into_inner());
@@ -1707,6 +1754,9 @@ async fn chat_handler_inner(
     // it, and the assistant row was never written (VIR-323). This response
     // is one watcher on the turn; `GET /api/chat/{id}/stream` is another.
     let turn = live_turns.start(&chat_id_str);
+    // Registered here, not inside the stream, so the driver below holds the
+    // same token and can tell its own turn from whichever one holds the slot.
+    let turn_token = cancel_state.register(&chat_id_str);
     let agent_stream = create_agent_stream(
         pool,
         yjs_state,
@@ -1716,9 +1766,11 @@ async fn chat_handler_inner(
         api_messages,
         msg_id,
         compaction_needed,
+        turn_token.clone(),
     );
     {
         let turn = turn.clone();
+        let turn_token = turn_token.clone();
         let live_turns = live_turns.clone();
         let chat_id = chat_id_str.clone();
         tokio::spawn(async move {
@@ -1742,7 +1794,7 @@ async fn chat_handler_inner(
                         // and the row is saved as a stop, like the button.
                         if turn.unattended_past(live_turn::UNATTENDED_CAP) {
                             tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
-                            cancel_state.cancel(&chat_id);
+                            cancel_state.cancel_unattended(&chat_id, &turn_token);
                         }
                     }
                 }
@@ -1807,6 +1859,7 @@ fn create_agent_stream(
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
     compaction_needed: bool,
+    cancel_token: CancellationToken,
 ) -> Pin<Box<dyn Stream<Item = String> + Send>> {
     let chat_id = request.chat_id.clone();
     // Copied out for the stream block below, which reads `request` for a
@@ -1815,8 +1868,9 @@ fn create_agent_stream(
     let agent_id = request.agent_id.clone();
 
     Box::pin(async_stream::stream! {
-        // Register cancellation token for this chat
-        let cancel_token = cancel_state.register(&chat_id);
+        // The token was registered by the handler; this is the same one the
+        // driver watches.
+        let cancel_token = cancel_token;
 
         // Run compaction BEFORE the agent loop if needed, and emit checkpoint event
         if compaction_needed {
@@ -2219,14 +2273,20 @@ fn create_agent_stream(
         // a finish. Otherwise the loop's verdict wins over the last step's,
         // and the last step's over "stop".
         let was_cancelled = cancel_token.is_cancelled();
-        let cut_short = last_step_reason == Some(StepReason::MaxTokens);
+        // The cap and the Stop button are the same cancellation; only the
+        // registration knows which. Read before `remove` below.
+        let was_unattended = was_cancelled && cancel_state.was_unattended(&chat_id, &cancel_token);
+        let cut_short = loop_finish == Some(FinishReason::OutputLimit)
+            || last_step_reason == Some(StepReason::MaxTokens);
+        let hit_ceiling = loop_finish == Some(FinishReason::MaxSteps);
         if was_cancelled || loop_finish == Some(FinishReason::Cancelled) {
-            yield (serialize_event(&StreamEvent::Abort { reason: Some("stopped".to_string()) }));
+            let reason = if was_unattended { "unattended" } else { "stopped" };
+            yield (serialize_event(&StreamEvent::Abort { reason: Some(reason.to_string()) }));
         } else {
             let finish_reason = match (loop_finish, last_step_reason) {
                 (Some(FinishReason::Error), _) => "error",
                 (Some(FinishReason::MaxSteps), _) | (Some(FinishReason::AwaitingUser), _) => "other",
-                (_, Some(StepReason::MaxTokens)) => "length",
+                (Some(FinishReason::OutputLimit), _) | (_, Some(StepReason::MaxTokens)) => "length",
                 (_, Some(StepReason::ContentFilter)) => "content-filter",
                 (_, Some(StepReason::ToolCalls)) => "tool-calls",
                 _ if interrupted => "error",
@@ -2263,10 +2323,17 @@ fn create_agent_stream(
                 // "interrupted": the stream or the model stopped before the
                 // reply was finished (VIR-334). The UI reads both on reload
                 // and shows a notice under the stub; a person's stop wins.
-                subject: if was_cancelled {
+                subject: if was_unattended {
+                    // The box stopped this, not the person. Telling someone
+                    // they stopped a reply they never touched is a lie about
+                    // who did what.
+                    Some("unattended".to_string())
+                } else if was_cancelled {
                     Some("cancelled".to_string())
                 } else if cut_short {
                     Some("length".to_string())
+                } else if hit_ceiling {
+                    Some("max_steps".to_string())
                 } else if interrupted {
                     Some("interrupted".to_string())
                 } else {
@@ -2397,7 +2464,7 @@ fn create_agent_stream(
         }
 
         // Clean up cancellation token when stream ends
-        cancel_state.remove(&chat_id);
+        cancel_state.remove(&chat_id, &cancel_token);
     })
 }
 
