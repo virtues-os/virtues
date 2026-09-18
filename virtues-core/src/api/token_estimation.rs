@@ -5,6 +5,20 @@
 
 use crate::api::chats::ChatMessage;
 
+/// What to assume a model's context window is when the catalog cannot say.
+///
+/// Conservative on purpose: too large and a chat never compacts, which is the
+/// failure that hurts. The catalog's COLD floor reports a window of `0` —
+/// "unknown", explicitly, not "zero" — and `unwrap_or` never fires on a
+/// `Some(0)`, so every caller that took it at its word computed 0% usage and
+/// reported Healthy forever. Anything that is not a positive window is unknown.
+pub const ASSUMED_CONTEXT_WINDOW: i64 = 200_000;
+
+/// The usable window for a model, or the assumption if it has none.
+pub fn context_window_or_assumed(window: Option<i64>) -> i64 {
+    window.filter(|w| *w > 0).unwrap_or(ASSUMED_CONTEXT_WINDOW)
+}
+
 /// Estimate tokens for a text string.
 ///
 /// Uses a heuristic of ~4 characters per token, which is a reasonable
@@ -18,41 +32,56 @@ pub fn estimate_tokens(content: &str) -> i64 {
     (char_count / 4).max(1)
 }
 
-/// Estimate tokens for a ChatMessage including all its content
+/// Estimate tokens for a ChatMessage — as `build_context_for_llm` will send it.
+///
+/// This has to mirror the renderer, not the row. It used to sum the
+/// `tool_calls` COLUMN, which the renderer never sends for a row without
+/// `parts`, and to ignore `parts` entirely, which is where attachments live —
+/// so on a tool-heavy chat the gauge read many times the real size while a
+/// 40-page PDF counted as nothing at all. Compaction fires off this number, so
+/// a fiction here is a fiction everywhere.
 pub fn estimate_message_tokens(message: &ChatMessage) -> i64 {
-    let mut tokens = 0i64;
-
-    // Main content
-    tokens += estimate_tokens(&message.content);
+    use crate::api::chat::UIPart;
 
     // Role overhead (typically ~4 tokens for role markers)
-    tokens += 4;
+    let mut tokens = 4i64;
 
-    // Reasoning content if present
-    if let Some(reasoning) = &message.reasoning {
-        tokens += estimate_tokens(reasoning);
-    }
-
-    // Tool calls
-    if let Some(tool_calls) = &message.tool_calls {
-        for tool_call in tool_calls {
-            // Tool name
-            tokens += estimate_tokens(&tool_call.tool_name);
-
-            // Arguments (serialize to string and estimate)
-            if let Ok(args_str) = serde_json::to_string(&tool_call.arguments) {
-                tokens += estimate_tokens(&args_str);
-            }
-
-            // Result if present
-            if let Some(result) = &tool_call.result {
-                if let Ok(result_str) = serde_json::to_string(result) {
-                    tokens += estimate_tokens(&result_str);
+    if let Some(parts) = &message.parts {
+        for part in parts {
+            match part {
+                UIPart::Text { text } => tokens += estimate_tokens(text),
+                // Dropped by the renderer: not a content block type.
+                UIPart::Reasoning { .. } => {}
+                UIPart::ToolInvocation { tool_name, input, output, error_text, .. } => {
+                    tokens += estimate_tokens(tool_name);
+                    tokens += estimate_tokens(&input.to_string());
+                    match (error_text, output) {
+                        (Some(err), _) => tokens += estimate_tokens(err),
+                        (None, Some(res)) => tokens += estimate_tokens(&res.to_string()),
+                        (None, None) => {}
+                    }
                 }
+                // The data URL is what rides to the model. Images are priced
+                // per-tile by most providers rather than per-character, so this
+                // is an over-estimate for them — an over-estimate of something
+                // real, where the old number was a zero.
+                UIPart::File { url, filename, .. } => {
+                    tokens += estimate_tokens(url);
+                    if let Some(name) = filename {
+                        tokens += estimate_tokens(name);
+                    }
+                }
+                // Folded into the system prompt, counted there.
+                UIPart::Checkpoint { .. } => {}
+                UIPart::Unknown => {}
             }
         }
+        return tokens;
     }
 
+    // No parts: the renderer falls back to the joined text and sends nothing
+    // else — not the reasoning, and not the `tool_calls` column.
+    tokens += estimate_tokens(&message.content);
     tokens
 }
 
@@ -153,11 +182,7 @@ pub fn estimate_verbatim_context(
     system_prompt: Option<&str>,
     context_window: i64,
 ) -> ContextEstimate {
-    let verbatim_messages = if summary_up_to_index < messages.len() {
-        &messages[summary_up_to_index..]
-    } else {
-        &[]
-    };
+    let verbatim_messages = &messages[summary_up_to_index.min(messages.len())..];
 
     estimate_session_context(verbatim_messages, summary, system_prompt, context_window)
 }

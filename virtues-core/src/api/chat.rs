@@ -20,6 +20,7 @@ use axum::{
 };
 use chrono::Utc;
 use futures::stream::Stream;
+use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use tracing::Instrument;
 use sqlx::PgPool;
@@ -231,8 +232,17 @@ fn build_turn_parts(
     turn_slots: &[TurnSlot],
     text_segments: &[String],
     tool_calls: &[crate::api::chats::ToolCall],
+    failed_tools: &std::collections::HashSet<String>,
+    reasoning: &str,
 ) -> Vec<UIPart> {
-    let mut parts = Vec::with_capacity(turn_slots.len());
+    let mut parts = Vec::with_capacity(turn_slots.len() + 1);
+    // The thinking comes before the turn it produced. It has its own column
+    // too, but the client stopped reading that the moment `parts` existed —
+    // it returns `parts` verbatim when there are any — so a turn that thought
+    // reloaded with an empty thinking block.
+    if !reasoning.trim().is_empty() {
+        parts.push(UIPart::Reasoning { text: reasoning.to_string() });
+    }
     for slot in turn_slots {
         match slot {
             TurnSlot::Text(i) => {
@@ -250,18 +260,34 @@ fn build_turn_parts(
                 else {
                     continue;
                 };
+                // The turn is over by the time this runs, so anything that
+                // returned has its output and anything that did not, did not.
+                // A tool that FAILED is its own state: picking the state off
+                // `result.is_some()` alone stored a failure as
+                // `output-available` with the reason buried inside `output`,
+                // so the red block never rendered on reload and the replay
+                // handed the model an error object as though it were an answer.
+                let failed = failed_tools.contains(id);
+                let error_text = failed.then(|| {
+                    tc.result
+                        .as_ref()
+                        .and_then(|r| r.get("error"))
+                        .and_then(|e| e.as_str())
+                        .unwrap_or("the tool reported a failure")
+                        .to_string()
+                });
+                let state = match (failed, tc.result.is_some()) {
+                    (true, _) => "output-error",
+                    (false, true) => "output-available",
+                    (false, false) => "input-available",
+                };
                 parts.push(UIPart::ToolInvocation {
                     tool_call_id: id.clone(),
                     tool_name: tc.tool_name.clone(),
                     input: tc.arguments.clone(),
-                    // The turn is over by the time this runs, so anything that
-                    // returned has its output and anything that did not, did not.
-                    state: if tc.result.is_some() {
-                        "output-available".to_string()
-                    } else {
-                        "input-available".to_string()
-                    },
+                    state: state.to_string(),
                     output: tc.result.clone(),
+                    error_text,
                 });
             }
         }
@@ -320,6 +346,16 @@ pub enum UIPart {
     Reasoning {
         text: String,
     },
+    /// One tool call and, once it answers, its result.
+    ///
+    /// On disk and on the wire this is `tool-<toolName>`, NOT the variant's own
+    /// name — the client matches an exact type per tool (`tool-create_page`,
+    /// `tool-generate_image`, …) and has no branch for anything else, so a part
+    /// stored as `tool-invocation` renders as nothing at all. `parts_to_jsonb`
+    /// and `parts_from_jsonb` are the translation, and they are the ONLY way
+    /// this column should be written or read. A single hardcoded
+    /// `tool-web_search` variant used to stand in for the whole family; every
+    /// other tool fell through to `Unknown` and was dropped.
     #[serde(rename = "tool-invocation")]
     ToolInvocation {
         #[serde(rename = "toolCallId")]
@@ -329,24 +365,16 @@ pub enum UIPart {
         tool_name: String,
         #[serde(default)]
         input: serde_json::Value,
+        /// `output-available` or `output-error`, the two the client renders.
         #[serde(default)]
         state: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         output: Option<serde_json::Value>,
-    },
-    #[serde(rename = "tool-web_search")]
-    ToolWebSearch {
-        #[serde(rename = "toolCallId")]
-        tool_call_id: String,
-        /// Tool name - defaults to "web_search" since we know the type
-        #[serde(rename = "toolName", default = "default_web_search_tool_name")]
-        tool_name: String,
-        #[serde(default)]
-        input: serde_json::Value,
-        #[serde(default)]
-        state: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        output: Option<serde_json::Value>,
+        /// Set with `state: "output-error"`. The client keys its error block on
+        /// the state and reads this; without it a failed tool reloaded as a
+        /// successful one with the failure buried inside `output`.
+        #[serde(rename = "errorText", default, skip_serializing_if = "Option::is_none")]
+        error_text: Option<String>,
     },
     /// Checkpoint from conversation compaction
     #[serde(rename = "checkpoint")]
@@ -375,9 +403,52 @@ pub enum UIPart {
     Unknown,
 }
 
-/// Default tool name for web_search variant when toolName is missing from JSON
-fn default_web_search_tool_name() -> String {
-    "web_search".to_string()
+/// The `parts` jsonb column, read.
+///
+/// Normalizes `tool-<toolName>` — which is what the client writes and what we
+/// now store — into the tagged variant, so one shape is understood everywhere.
+/// A row whose JSON no longer matches says so rather than silently becoming
+/// "this turn had no tools": that reads as a fact, not as a bug.
+pub fn parts_from_jsonb(raw: serde_json::Value, msg_id: &str) -> Option<Vec<UIPart>> {
+    let mut raw = raw;
+    if let Some(items) = raw.as_array_mut() {
+        for item in items.iter_mut() {
+            let Some(obj) = item.as_object_mut() else { continue };
+            let Some(kind) = obj.get("type").and_then(|t| t.as_str()).map(str::to_string) else {
+                continue;
+            };
+            let Some(name) = kind.strip_prefix("tool-") else { continue };
+            if name.is_empty() || name == "invocation" {
+                continue;
+            }
+            obj.entry("toolName")
+                .or_insert_with(|| serde_json::Value::String(name.to_string()));
+            obj.insert("type".to_string(), serde_json::Value::String("tool-invocation".to_string()));
+        }
+    }
+    serde_json::from_value(raw)
+        .map_err(|e| tracing::warn!(msg_id, error = %e, "parts did not parse"))
+        .ok()
+}
+
+/// The `parts` jsonb column, written. The inverse of `parts_from_jsonb`.
+pub fn parts_to_jsonb(parts: &[UIPart]) -> serde_json::Value {
+    let mut value = serde_json::to_value(parts).unwrap_or(serde_json::Value::Null);
+    if let Some(items) = value.as_array_mut() {
+        for item in items.iter_mut() {
+            let Some(obj) = item.as_object_mut() else { continue };
+            if obj.get("type").and_then(|t| t.as_str()) != Some("tool-invocation") {
+                continue;
+            }
+            let name = obj.get("toolName").and_then(|n| n.as_str()).unwrap_or("");
+            if name.is_empty() {
+                continue;
+            }
+            let kind = format!("tool-{name}");
+            obj.insert("type".to_string(), serde_json::Value::String(kind));
+        }
+    }
+    value
 }
 
 /// Streaming event types (AI SDK v6 UI Message Stream Protocol)
@@ -613,7 +684,7 @@ async fn get_latest_checkpoint(pool: &PgPool, chat_id: &str) -> Option<StreamEve
 
     // Parse parts JSON to extract checkpoint data
     let parts: Vec<UIPart> = parts_json
-        .and_then(|json| serde_json::from_value(json).ok())
+        .and_then(|json| parts_from_jsonb(json, &id))
         .unwrap_or_default();
 
     // Find checkpoint part
@@ -1549,11 +1620,7 @@ async fn chat_handler_inner(
                         .ok()
                 });
                 let intent = intent_raw.and_then(|i| serde_json::from_value(i).ok());
-                let parts = parts_raw.and_then(|p| {
-                    serde_json::from_value(p)
-                        .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "parts did not parse"))
-                        .ok()
-                });
+                let parts = parts_raw.and_then(|p| parts_from_jsonb(p, &id));
 
                 ChatMessage {
                     id: Some(id),
@@ -1655,16 +1722,37 @@ async fn chat_handler_inner(
         let live_turns = live_turns.clone();
         let chat_id = chat_id_str.clone();
         tokio::spawn(async move {
-            let mut agent_stream = agent_stream;
-            while let Some(data) = agent_stream.next().await {
-                turn.push(data);
-                // Nobody watching for the cap: stop spending on a reply no
-                // one will read. The loop sees the token at its next step
-                // and the row is saved as a stop, like the button.
-                if turn.unattended_past(live_turn::UNATTENDED_CAP) {
-                    tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
-                    cancel_state.cancel(&chat_id);
+            // The drive loop runs inside a catch, because `finish` is what
+            // ends the turn for every watcher and a panic used to skip it:
+            // `done` stayed false, `watch` blocked on a Notify that never
+            // fired, and the SSE keep-alive held the socket open, so the
+            // person got a thinking mark that spun until they gave up — no
+            // error, no [DONE], and every later rejoin attached to the same
+            // dead turn. A panic in here has to end the turn like any other
+            // ending, or one bad decode wedges the chat.
+            let drive = {
+                let turn = turn.clone();
+                let chat_id = chat_id.clone();
+                async move {
+                    let mut agent_stream = agent_stream;
+                    while let Some(data) = agent_stream.next().await {
+                        turn.push(data);
+                        // Nobody watching for the cap: stop spending on a reply no
+                        // one will read. The loop sees the token at its next step
+                        // and the row is saved as a stop, like the button.
+                        if turn.unattended_past(live_turn::UNATTENDED_CAP) {
+                            tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
+                            cancel_state.cancel(&chat_id);
+                        }
+                    }
                 }
+            };
+            if std::panic::AssertUnwindSafe(drive).catch_unwind().await.is_err() {
+                tracing::error!(chat_id = %chat_id, "the turn's driver panicked; ending the turn");
+                turn.push(serialize_event(&StreamEvent::Error {
+                    error_text: "the box failed while writing this reply".to_string(),
+                }));
+                turn.push("[DONE]".to_string());
             }
             // After the stream's own tail (row written, usage recorded), so
             // a watcher that sees the end can reload and find the row.
@@ -1858,12 +1946,14 @@ fn create_agent_stream(
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
         let mut total_reasoning_tokens: u32 = 0;
+        let mut total_cache_read_tokens: u32 = 0;
         // Authoritative spend for this turn (sum of gateway-reported usage.cost
         // across every step), captured into app_ai_calls for the Usage tab.
         let mut total_cost_micros: i64 = 0;
 
         // Tool call tracking for persistence
         let mut all_tool_calls: Vec<ToolCall> = Vec::new();
+        let mut failed_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         // Run the agent loop with cancellation support
         let mut agent_stream = agent.run(
@@ -2006,6 +2096,10 @@ fn create_agent_stream(
                     if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
                         tc.result = Some(serde_json::json!({ "error": error_text }));
                     }
+                    // Which calls failed is only known here. `{"error": …}` in
+                    // the result is not the same claim — a tool may answer with
+                    // an `error` key of its own — so the ids are kept.
+                    failed_tools.insert(id.clone());
                     let event = StreamEvent::ToolOutputError { tool_call_id: id, error_text };
                     yield (serialize_event(&event));
                 }
@@ -2043,11 +2137,14 @@ fn create_agent_stream(
                     }
                 }
 
-                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cost_micros } => {
+                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cache_read_tokens, cost_micros } => {
                     total_input_tokens += prompt_tokens;
                     total_output_tokens += completion_tokens;
                     if let Some(r) = reasoning_tokens {
                         total_reasoning_tokens += r;
+                    }
+                    if let Some(c) = cache_read_tokens {
+                        total_cache_read_tokens += c;
                     }
                     if let Some(c) = cost_micros {
                         total_cost_micros += c;
@@ -2193,7 +2290,13 @@ fn create_agent_stream(
                 // older row has. This is additive: a row without `parts` falls
                 // back to the legacy reconstruction exactly as before.
                 parts: {
-                    let parts = build_turn_parts(&turn_slots, &text_segments, &all_tool_calls);
+                    let parts = build_turn_parts(
+                        &turn_slots,
+                        &text_segments,
+                        &all_tool_calls,
+                        &failed_tools,
+                        &reasoning_content,
+                    );
                     if parts.is_empty() { None } else { Some(parts) }
                 },
             };
@@ -2238,11 +2341,15 @@ fn create_agent_stream(
             // Record token usage. `cost_micros` is the gateway's authoritative
             // figure — the same one recorded in app_ai_calls below, and the one
             // the wallet was actually debited for. No estimating.
+            // These were literal zeros while the same totals were handed to
+            // `app_ai_calls` one call below — so the per-chat panel read 0
+            // reasoning tokens on every box while the number sat in the next
+            // table over.
             let usage_data = UsageData {
                 input_tokens: total_input_tokens as i64,
                 output_tokens: total_output_tokens as i64,
-                reasoning_tokens: 0,
-                cache_read_tokens: 0,
+                reasoning_tokens: total_reasoning_tokens as i64,
+                cache_read_tokens: total_cache_read_tokens as i64,
                 cache_write_tokens: 0,
                 cost_micros: Some(total_cost_micros),
             };
@@ -2393,7 +2500,7 @@ mod tests {
         ];
 
         assert_eq!(
-            kinds(&build_turn_parts(&slots, &segments, &calls)),
+            kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
             [
                 "text:Checking his messages.",
                 "tool:sql_query:output-available",
@@ -2420,7 +2527,7 @@ mod tests {
         let calls = vec![tool("c1", "sql_query", None)];
 
         assert_eq!(
-            kinds(&build_turn_parts(&slots, &segments, &calls)),
+            kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
             ["text:Looking it up.", "tool:sql_query:input-available"],
             "a tool that never returned still shows, as awaiting output"
         );
@@ -2430,7 +2537,7 @@ mod tests {
     /// come out as one text part, or every plain reply would look like narration.
     #[test]
     fn a_turn_with_no_tools_is_all_reply() {
-        let parts = build_turn_parts(&[TurnSlot::Text(0)], &["Yes.".to_string()], &[]);
+        let parts = build_turn_parts(&[TurnSlot::Text(0)], &["Yes.".to_string()], &[], &Default::default(), "");
         assert_eq!(kinds(&parts), ["text:Yes."]);
     }
 
@@ -2698,6 +2805,98 @@ mod live_prompt_audit {
     }
 }
 
+
+#[cfg(test)]
+mod parts_column_tests {
+    use super::*;
+
+    /// The client matches an exact type per tool — `tool-create_page`,
+    /// `tool-generate_image` — and has no branch for anything else, so a part
+    /// stored under the variant's own name renders as nothing on reload.
+    #[test]
+    fn a_tool_part_is_stored_under_its_tool_name() {
+        let parts = vec![
+            UIPart::Text { text: "Making the page.".to_string() },
+            UIPart::ToolInvocation {
+                tool_call_id: "call-0".to_string(),
+                tool_name: "create_page".to_string(),
+                input: serde_json::json!({ "title": "Notes" }),
+                state: "output-available".to_string(),
+                output: Some(serde_json::json!({ "page_id": "page_1" })),
+                error_text: None,
+            },
+        ];
+
+        let stored = parts_to_jsonb(&parts);
+        let types: Vec<&str> =
+            stored.as_array().unwrap().iter().map(|p| p["type"].as_str().unwrap()).collect();
+        assert_eq!(types, ["text", "tool-create_page"]);
+        assert_eq!(stored[1]["toolName"], "create_page");
+
+        let back = parts_from_jsonb(stored, "msg_1").expect("reads back");
+        assert!(matches!(&back[1], UIPart::ToolInvocation { tool_name, .. } if tool_name == "create_page"));
+    }
+
+    /// Rows written before the rename, and the AI SDK's own `tool-web_search`,
+    /// both still have to read.
+    #[test]
+    fn the_older_spellings_still_read() {
+        let stored = serde_json::json!([
+            { "type": "tool-invocation", "toolCallId": "c0", "toolName": "sql_query",
+              "input": {}, "state": "output-available", "output": {"rows": 1} },
+            { "type": "tool-web_search", "toolCallId": "c1",
+              "input": {}, "state": "output-available", "output": {} },
+        ]);
+        let back = parts_from_jsonb(stored, "msg_1").expect("reads back");
+        assert_eq!(back.len(), 2);
+        // The name is recovered from the type when the part does not carry one.
+        assert!(matches!(&back[1], UIPart::ToolInvocation { tool_name, .. } if tool_name == "web_search"));
+    }
+
+    /// A failed tool is its own state, or the red block never renders and the
+    /// replay hands the model an error object as though it were an answer.
+    #[test]
+    fn a_failed_tool_keeps_its_failure() {
+        let mut failed = std::collections::HashSet::new();
+        failed.insert("call-0".to_string());
+        let calls = vec![ToolCall {
+            tool_name: "create_page".to_string(),
+            tool_call_id: Some("call-0".to_string()),
+            arguments: serde_json::json!({}),
+            result: Some(serde_json::json!({ "error": "the page already exists" })),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+        }];
+        let parts = build_turn_parts(
+            &[TurnSlot::Tool("call-0".to_string())],
+            &[],
+            &calls,
+            &failed,
+            "",
+        );
+        match &parts[0] {
+            UIPart::ToolInvocation { state, error_text, .. } => {
+                assert_eq!(state, "output-error");
+                assert_eq!(error_text.as_deref(), Some("the page already exists"));
+            }
+            other => panic!("expected a tool part, got {other:?}"),
+        }
+    }
+
+    /// The thinking has its own column, but the client stopped reading it the
+    /// moment `parts` existed.
+    #[test]
+    fn a_turn_that_thought_keeps_its_thinking() {
+        let parts = build_turn_parts(
+            &[TurnSlot::Text(0)],
+            &["Yes.".to_string()],
+            &[],
+            &Default::default(),
+            "Weighing it up.",
+        );
+        assert!(matches!(&parts[0], UIPart::Reasoning { text } if text == "Weighing it up."));
+        assert!(matches!(&parts[1], UIPart::Text { .. }));
+    }
+}
 
 #[cfg(test)]
 mod checkpoint_tests {

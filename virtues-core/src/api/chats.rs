@@ -388,7 +388,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
                 let tool_calls: Option<Vec<ToolCall>> = tool_calls_raw
                     .and_then(|tc| serde_json::from_value(tc).ok());
                 let parts: Option<Vec<UIPart>> = parts_raw
-                    .and_then(|p| serde_json::from_value(p).ok());
+                    .and_then(|p| crate::api::chat::parts_from_jsonb(p, &id));
 
                 MessageResponse {
                     id,
@@ -476,10 +476,8 @@ pub async fn create_chat(
             .as_ref()
             .map(serde_json::to_value)
             .transpose()?;
-        let parts_json: Option<serde_json::Value> = msg.parts
-            .as_ref()
-            .map(serde_json::to_value)
-            .transpose()?;
+        let parts_json: Option<serde_json::Value> =
+            msg.parts.as_deref().map(crate::api::chat::parts_to_jsonb);
 
         let sequence_num = (idx + 1) as i32;
 
@@ -637,10 +635,8 @@ pub async fn append_message(
         .as_ref()
         .map(serde_json::to_value)
         .transpose()?;
-    let parts_json: Option<serde_json::Value> = message.parts
-        .as_ref()
-        .map(serde_json::to_value)
-        .transpose()?;
+    let parts_json: Option<serde_json::Value> =
+        message.parts.as_deref().map(crate::api::chat::parts_to_jsonb);
 
     let result = sqlx::query(
         r#"
@@ -725,10 +721,8 @@ pub async fn update_messages(
         // every message in the chat came back flattened. The other two insert
         // sites carry it; a column that only two of three writers know about
         // is how a rewrite silently becomes a loss.
-        let parts_json: Option<serde_json::Value> = msg.parts
-            .as_ref()
-            .map(serde_json::to_value)
-            .transpose()?;
+        let parts_json: Option<serde_json::Value> =
+            msg.parts.as_deref().map(crate::api::chat::parts_to_jsonb);
 
         let sequence_num = (idx + 1) as i32;
 

@@ -783,14 +783,33 @@ impl BearerClient {
         if resp.status().as_u16() == 402 {
             let err_body = resp.text().await.unwrap_or_default();
             if err_body.contains("insufficient_budget") || err_body.contains("wallet_empty") {
+                // The same gate the two non-streaming paths take, for the same
+                // reason. `renew::auto_topup` does no local checking — it POSTs
+                // to atlas, which charges the card — so a path that reaches it
+                // without asking charges someone who switched auto top-up OFF.
+                // This is the STREAMING path, which is every chat turn, so the
+                // setting held everywhere except where it mattered. Recording
+                // the outcome is half the gate: the 3-failure breaker arms off
+                // `record_topup_failure` and the velocity guard off
+                // `record_topup_success`, and neither ever saw a chat top-up,
+                // so a declined card was retried on every message forever.
+                if !auto_topup_allowed(&self.pool).await {
+                    let synth = synthesize_topup_disabled();
+                    return Ok(StreamOutcome::Error {
+                        status: synth.status,
+                        body: synth.body.to_string(),
+                    });
+                }
                 match renew::auto_topup(&self.pool, &self.http, &self.atlas_url).await? {
                     renew::AutoTopupOutcome::Funded { amount_micros } => {
+                        let _ = record_topup_success(&self.pool).await;
                         tracing::info!(amount_micros, "auto-top-up funded; retrying stream");
                         let bearer = self.ensure_bearer().await?;
                         let retry = self.send_stream(path, body, &bearer).await?;
                         return Ok(Self::classify_stream(retry).await);
                     }
                     other => {
+                        let _ = record_topup_failure(&self.pool).await;
                         let synth = synthesize_topup_failure(other);
                         return Ok(StreamOutcome::Error {
                             status: synth.status,
