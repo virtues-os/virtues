@@ -32,6 +32,11 @@ pub struct SaveBookmarkRequest {
     pub tags: Option<Vec<String>>,
 }
 
+// The three reads below select `occurred_at AS timestamp`: the column was
+// renamed on 2026-08-17 and the SQL text swept, but these structs decode by
+// field NAME, and `timestamp` is what the web client reads off the wire. The
+// alias holds both; without it every read here was a 500 for a month, and the
+// handler never logged it (see `error_response`).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct SavedBookmark {
     pub id: String,
@@ -189,7 +194,7 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
 
     let items = sqlx::query_as::<_, BookmarkListItem>(&format!(
         "SELECT id, url, title, description, note, source_platform, bookmark_type,
-                author, tags, thumbnail_url, occurred_at,
+                author, tags, thumbnail_url, occurred_at AS timestamp,
                 extraction->>'medium' AS medium,
                 ({STATE_SQL}) AS state
            FROM data_content_bookmark
@@ -236,7 +241,7 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
 pub async fn get_bookmark(db: &PgPool, id: &str) -> Result<BookmarkDetail> {
     sqlx::query_as::<_, BookmarkDetail>(&format!(
         "SELECT id, url, title, description, note, source_platform, bookmark_type,
-                author, tags, thumbnail_url, occurred_at, deleted_at_source,
+                author, tags, thumbnail_url, occurred_at AS timestamp, deleted_at_source,
                 enrichment_model, extraction,
                 extraction->>'medium' AS medium,
                 ({STATE_SQL}) AS state
@@ -384,7 +389,7 @@ pub async fn save_bookmark(db: &PgPool, req: SaveBookmarkRequest) -> Result<Save
     }
 
     let saved = sqlx::query_as::<_, SavedBookmark>(
-        "SELECT id, url, title, note, tags, occurred_at
+        "SELECT id, url, title, note, tags, occurred_at AS timestamp
            FROM data_content_bookmark WHERE source_stream_id = $1",
     )
     .bind(&source_stream_id)
@@ -401,19 +406,16 @@ fn from_anyhow(e: anyhow::Error) -> Error {
 mod tests {
     use super::*;
 
-    /// The list query against a real table (needs DATABASE_URL; run explicitly):
+    /// The three reads against the real schema, on a migrated database.
     ///
-    ///     cargo test -p virtues --lib -- --ignored list_bookmarks_shape
-    ///
-    /// Worth a database test rather than trusting the compiler: `state` is
-    /// decoded from a CASE expression, and a type-inference mistake there is a
-    /// runtime decode error on a live page, not a build failure.
-    #[tokio::test]
-    #[ignore]
-    async fn list_bookmarks_shape_and_states() {
-        let _ = dotenv::dotenv();
-        let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required");
-        let pool = sqlx::PgPool::connect(&db_url).await.expect("connect");
+    /// This was `#[ignore]` and hand-run, which is how the 2026-08-17 column
+    /// rename left every bookmark read a 500 for a month: `cargo check` is
+    /// blind to `query_as` (untyped SQL, decoded by field name at runtime),
+    /// and nothing ran this. `#[sqlx::test]` migrates its own database, so
+    /// it runs with the rest of the suite. `state` is also decoded from a
+    /// CASE expression, and a type-inference mistake there fails the same way.
+    #[sqlx::test]
+    async fn bookmark_reads_decode_against_the_schema(pool: PgPool) {
         let prefix = format!("test:list:{}:", Uuid::new_v4());
 
         // One of each state the room renders, plus a tombstone that must not
@@ -508,6 +510,26 @@ mod tests {
             "counts changed under a filter"
         );
 
+        // The detail read decodes the same row, timestamp included.
+        let detail = get_bookmark(&pool, &format!("{prefix}enriched"))
+            .await
+            .expect("detail decodes");
+        assert_eq!(detail.url, "https://example.com/read");
+
+        // The save path reads its row back after the upsert; that read failed
+        // too, so a save reported an error after it had saved.
+        let saved = save_bookmark(
+            &pool,
+            SaveBookmarkRequest {
+                url: "https://example.com/saved-by-hand".into(),
+                note: Some("a whisper".into()),
+                tags: None,
+            },
+        )
+        .await
+        .expect("save decodes its own row");
+        assert_eq!(saved.note.as_deref(), Some("a whisper"));
+
         sqlx::query("DELETE FROM data_content_bookmark WHERE starts_with(id, $1)")
             .bind(&prefix)
             .execute(&pool)
@@ -515,15 +537,10 @@ mod tests {
             .unwrap();
     }
 
-    /// The detail endpoints against a real table (needs DATABASE_URL):
-    ///
-    ///     cargo test -p virtues --lib -- --ignored detail_and_note
-    #[tokio::test]
-    #[ignore]
-    async fn detail_and_note_round_trip() {
-        let _ = dotenv::dotenv();
-        let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required");
-        let pool = sqlx::PgPool::connect(&db_url).await.expect("connect");
+    /// The detail endpoints on a migrated database — same reason as above:
+    /// ignored and hand-run, it caught nothing.
+    #[sqlx::test]
+    async fn detail_and_note_round_trip(pool: PgPool) {
         let id = format!("test:detail:{}", Uuid::new_v4());
 
         sqlx::query(
