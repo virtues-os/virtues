@@ -1277,9 +1277,10 @@ def _chats(chats, cmsg, f):
             ("assistant",
              f"Yes. The kayaking has no neighbours at all in your history — it is the only "
              f"one in {f['days']} days, against {f['lift_n']} lifting sessions and "
-             f"{f['run_n']} runs, so there is no prior event of that kind to compare it "
-             f"against.\n\nEverything else about the day was ordinary.\n\nI'm not going "
-             f"to tell you whether it was a good day. That one's yours."),
+             f"{f['run_n']} {'run' if f['run_n'] == 1 else 'runs'}, so there is no prior "
+             f"event of that kind to compare it against.\n\nEverything else about the day "
+             f"was ordinary.\n\nI'm not going to tell you whether it was a good day. "
+             f"That one's yours."),
         ]),
         ("Groceries, over time", "\U0001F9FE", D(2025, 10, 21), [
             ("user", "am I spending more on groceries than I used to?"),
@@ -1292,7 +1293,7 @@ def _chats(chats, cmsg, f):
         ]),
     ]
     for i, (title, icon, off, turns) in enumerate(convos):
-        cid = f"p3y_chat_{i:02d}"
+        cid = f"chat_p3y_{i:02d}"
         d = START + timedelta(days=off)
         base = ts(d, 20, 14)
         chats.add(cid, title, len(turns), icon, base, base + timedelta(minutes=6))
@@ -1344,7 +1345,7 @@ def _pages_and_articles(pages, articles, f):
          "the Office visits stop almost exactly when the job does."),
     ]
     for i, (subject_type, subject_id, title, content) in enumerate(arts):
-        pid = f"p3y_page_{i:02d}"
+        pid = f"page_p3y_{i:02d}"
         pages.add(pid, title, content, None, [], "article", now, now)
         articles.add(f"p3y_art_{i:02d}", subject_type, subject_id, pid, now, "auto", [], [])
 
@@ -1353,7 +1354,7 @@ def _pages_and_articles(pages, articles, f):
         if in_outage(off):
             continue
         did = f"day_{d.isoformat()}"
-        pid = f"p3y_page_day_{d.isoformat()}"
+        pid = f"page_p3y_day_{d.isoformat()}"
         if off in MIGRAINE_DAYS:
             prose = ("A short night and then a migraine that took the morning. Low light, "
                      "no screen, barely any movement. By evening it had lifted enough to eat.")
@@ -1455,8 +1456,8 @@ BEGIN
   UPDATE data_environment_weather SET occurred_at = occurred_at + (shift_days||' days')::interval,
                                       issued_at   = issued_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
   UPDATE app_chats           SET created_at = created_at + (shift_days||' days')::interval,
-                                 updated_at = updated_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE app_chat_messages   SET created_at = created_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
+                                 updated_at = updated_at + (shift_days||' days')::interval WHERE id LIKE 'chat_p3y_%%';
+  UPDATE app_chat_messages   SET created_at = created_at + (shift_days||' days')::interval WHERE id LIKE 'chat_p3y_%%';
   -- `wiki_chapters` carries an EXCLUSION constraint against overlapping
   -- spans, checked per row and not deferrable. An in-place shift overlaps
   -- transiently, and the park-and-land trick used above for `wiki_days` does
@@ -1538,7 +1539,7 @@ NOTEBOOKS = [
     ("p3y_nb_migraine", "Migraines", "\U0001FA7A", "#8C3B3B",
      "Track what precedes one. Do not speculate about causes — collect, then look.",
      True,
-     [("/chat/p3y_chat_00", "pin"), ("/page/p3y_up_triggers", "manuscript"),
+     [("/chat/chat_p3y_00", "pin"), ("/page/p3y_up_triggers", "manuscript"),
       ("/person/p3y_dr_park", "library")]),
     ("p3y_nb_lisbon", "Lisbon", "\u2708\uFE0F", "#3E6B7A", None, False,
      [("/place/p3y_pl_lisbon", "pin"), ("/page/p3y_up_packing", "library"),
@@ -1546,7 +1547,7 @@ NOTEBOOKS = [
     ("p3y_nb_independent", "Going independent", "\U0001F5DD\uFE0F", "#4A5D3A",
      "The decision, the runway maths, and who I told in what order.", True,
      [("/org/org_demo_employer", "library"), ("/org/p3y_org_client", "library"),
-      ("/page/p3y_up_runway", "manuscript"), ("/chat/p3y_chat_03", "pin")]),
+      ("/page/p3y_up_runway", "manuscript"), ("/chat/chat_p3y_03", "pin")]),
     ("p3y_nb_chicago", "Chicago, before", "\U0001F5C3\uFE0F", "#5A5A6B", None, False,
      [("/person/p3y_theo", "pin"), ("/person/p3y_junie", "library"),
       ("/place/p3y_pl_chicago_apt", "library"), ("/org/p3y_org_agency", "library")]),
