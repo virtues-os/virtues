@@ -126,6 +126,24 @@ impl ContextStatus {
 /// * `summary` - Optional conversation summary (if compacted)
 /// * `system_prompt` - The system prompt used
 /// * `context_window` - The model's context window size
+/// What the last assembled system prompt measured, in tokens.
+///
+/// The gauge cannot rebuild the prompt (see `estimate_session_context`), so the
+/// turn that builds it leaves the number here. Atomic and process-local: no
+/// column, no migration, and a restart costs one turn of accuracy.
+static LAST_SYSTEM_PROMPT_TOKENS: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(0);
+
+/// Record the size of the system prompt just sent.
+pub fn record_system_prompt_tokens(tokens: i64) {
+    LAST_SYSTEM_PROMPT_TOKENS.store(tokens, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The last recorded system-prompt size; 0 before any turn has run.
+pub fn last_system_prompt_tokens() -> i64 {
+    LAST_SYSTEM_PROMPT_TOKENS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn estimate_session_context(
     messages: &[ChatMessage],
     summary: Option<&str>,
@@ -134,9 +152,26 @@ pub fn estimate_session_context(
 ) -> ContextEstimate {
     let mut total_tokens = 0i64;
 
-    // System prompt
-    if let Some(prompt) = system_prompt {
-        total_tokens += estimate_tokens(prompt);
+    // System prompt.
+    //
+    // Every caller of this function passes None — none of them HAS the prompt,
+    // which is assembled per turn from seven DB-backed blocks. So the single
+    // largest component of the request was invisible to the gauge the user
+    // reads and to the threshold that triggers compaction: the prefix measures
+    // ~13.5k tokens on this box, which is a chat showing "82%" already being
+    // over the 85% Critical line, and much worse on a small-window BYO model.
+    //
+    // Rebuilding it here would mean those seven queries on every check. The
+    // turn that just ran already built it, so it reports its size and this
+    // reads that. Process-local and lost on restart, where it falls back to 0
+    // and is correct again after one turn — a gauge that is briefly optimistic
+    // beats seven queries per keystroke or a fabricated constant.
+    let prompt_tokens = match system_prompt {
+        Some(prompt) => estimate_tokens(prompt),
+        None => last_system_prompt_tokens(),
+    };
+    if prompt_tokens > 0 {
+        total_tokens += prompt_tokens;
         total_tokens += 4; // Role overhead
     }
 
@@ -202,6 +237,36 @@ mod tests {
 
         // Short string
         assert_eq!(estimate_tokens("Hello"), 1);
+    }
+
+    /// The gauge counts the system prompt even though no caller can hand it
+    /// over. It could not, so a chat reading "82%" was already past the 85%
+    /// line that triggers compaction, and compaction did not fire.
+    #[test]
+    fn the_remembered_system_prompt_counts_toward_the_window() {
+        let messages: Vec<ChatMessage> = vec![];
+
+        record_system_prompt_tokens(0);
+        let blind = estimate_session_context(&messages, None, None, 1000);
+
+        record_system_prompt_tokens(500);
+        let seeing = estimate_session_context(&messages, None, None, 1000);
+
+        assert!(
+            seeing.total_tokens > blind.total_tokens,
+            "a recorded prompt has to move the estimate"
+        );
+        assert_eq!(
+            seeing.total_tokens - blind.total_tokens,
+            504,
+            "500 tokens plus the 4-token role overhead"
+        );
+
+        // An explicit prompt still wins over the remembered one.
+        let explicit = estimate_session_context(&messages, None, Some("hi"), 1000);
+        assert!(explicit.total_tokens < seeing.total_tokens);
+
+        record_system_prompt_tokens(0);
     }
 
     #[test]
