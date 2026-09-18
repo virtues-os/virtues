@@ -95,12 +95,23 @@ pub async fn dispatch(
     // Resolve the model tiers once (each is a cheap profile read). Deep-research
     // fan-out workers run on the normal chat model; the orchestrator's "strong"
     // tier maps to it too — we don't spend the reasoning slot on workers.
+    //
+    // Empty is not a model. The profile readers fall back on a SQL NULL only,
+    // so a stored `chat_model_id = ''` — a state the profile PATCH can reach,
+    // and which `model_choice` guards against for exactly this reason —
+    // returns `Ok("")`, and `unwrap_or_else` only catches `Err`. Every worker
+    // was then dispatched with `model: ""` and rejected at the gateway while
+    // the orchestrator, which goes through the proper door, ran fine.
     let fast = crate::api::assistant_profile::get_background_model(&pool)
         .await
-        .unwrap_or_else(|_| default_tier_model("fast"));
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| default_tier_model("fast"));
     let balanced = crate::api::assistant_profile::get_chat_model(&pool)
         .await
-        .unwrap_or_else(|_| default_tier_model("balanced"));
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| default_tier_model("balanced"));
 
     let dispatch_id = DISPATCH_COUNTER.fetch_add(1, Ordering::Relaxed);
     let tx = context.subagent_tx.clone();

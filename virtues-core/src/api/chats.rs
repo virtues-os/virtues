@@ -380,8 +380,11 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
                 let timestamp: Timestamp = row.get("created_at");
                 let parts_raw: Option<serde_json::Value> = row.get("parts");
 
-                let tool_calls: Option<Vec<ToolCall>> = tool_calls_raw
-                    .and_then(|tc| serde_json::from_value(tc).ok());
+                let tool_calls: Option<Vec<ToolCall>> = tool_calls_raw.and_then(|tc| {
+                    serde_json::from_value(tc)
+                        .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                        .ok()
+                });
                 let parts: Option<Vec<UIPart>> = parts_raw
                     .and_then(|p| crate::api::chat::parts_from_jsonb(p, &id));
 
