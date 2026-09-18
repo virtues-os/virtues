@@ -287,6 +287,15 @@ MIGRAINE_DAYS = [D(2024, 9, 14), D(2024, 11, 2), D(2025, 1, 23), D(2025, 3, 30),
                  D(2025, 6, 11), D(2025, 9, 7), D(2025, 12, 2)]
 FIRST_KAYAK = D(2025, 7, 12)          # global novelty — a kind of event with no neighbours
 RAN_INSTEAD = D(2025, 10, 8)          # local novelty — ordinary kind, far edge of its cluster
+RUN_STARTED = D(2024, 9, 2)           # takes up running; Tue/Thu from here on.
+# RUN_STARTED exists because the local-novelty case DID NOT WORK without it.
+# `RAN_INSTEAD` is meant to be an ordinary KIND of event sitting at the far edge
+# of its own cluster — but running happened on that one day and nowhere else, so
+# across 1,095 days the corpus held exactly one run and one kayak trip. An
+# isolated point in the embedding space scores high LOF, which is why BOTH
+# showcase events pinned at the 3.00 local clamp and the global/local
+# distinction could not be shown at all. A local outlier needs a cluster to be
+# an outlier IN.
 GHOST_EVENT = D(2025, 8, 21)          # a calendar block with no trace behind it
 MOVE_DAY = D(2023, 11, 6)
 GYM_JOINED = D(2024, 2, 1)
@@ -588,6 +597,13 @@ def _day_health(d, off, hr, hrv, steps, sleep, workout, migraine, instrumented, 
     elif not migraine and d.weekday() in (0, 2, 4) and off > 360:
         w = ("strength_training", RNG.randint(41, 66), RNG.randint(180, 340), None,
              RNG.randint(104, 122), RNG.randint(131, 152))
+    elif not migraine and d.weekday() in (1, 3) and off > RUN_STARTED:
+        # The ordinary run: Tue/Thu, 4–6.5 km, easy effort. RAN_INSTEAD is a
+        # Wednesday — a LIFTING day — at 9.1 km and 161 bpm, so it stays the
+        # same kind of thing while sitting well outside this cluster's shape.
+        w = ("running", RNG.randint(25, 42), RNG.randint(240, 420),
+             round(RNG.uniform(4.0, 6.5), 1), RNG.randint(142, 156),
+             RNG.randint(158, 172))
     elif weekend and RNG.random() < 0.45:
         w = ("walking", RNG.randint(28, 71), RNG.randint(90, 210), round(RNG.uniform(2.1, 5.8), 1),
              RNG.randint(92, 108), RNG.randint(110, 126))
@@ -903,6 +919,10 @@ def _day_events(d, off, did, events, migraine, instrumented, lisbon, chi, weeken
             return RNG.choice([
                 f"Ran {km} km, and felt every one of them.",
                 f"{km} km on the road, holding {avg}.",
+                f"An easy {km} km before dinner.",
+                f"Out for {mn} minutes; {km} km of it, nothing forced.",
+                f"{km} km, the legs willing for once.",
+                f"A steady {km} km at {avg}.",
             ])
         return f"{km} km of {kind.replace('_', ' ')}."
 
