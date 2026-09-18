@@ -443,6 +443,16 @@ pub async fn compact_chat(
 /// Returns a vector of messages in OpenAI format ready for the API.
 /// Note: Summary is combined into the system prompt to avoid multiple system messages,
 /// which most LLM providers don't handle well.
+/// Whether to ask the provider to cache the system prefix. ON unless
+/// `VIRTUES_PROMPT_CACHE=0` — a kill switch that needs no rebuild, not an
+/// opt-in. See the call site for what was measured before it was turned on.
+fn prompt_cache_enabled() -> bool {
+    !matches!(
+        std::env::var("VIRTUES_PROMPT_CACHE").as_deref(),
+        Ok("0") | Ok("false") | Ok("FALSE")
+    )
+}
+
 pub fn build_context_for_llm(
     messages: &[ChatMessage],
     summary: Option<&str>,
@@ -481,10 +491,39 @@ pub fn build_context_for_llm(
 
     // Only add system message if there's content
     if !system_content.is_empty() {
-        context.push(serde_json::json!({
-            "role": "system",
-            "content": system_content
-        }));
+        // The system prompt is the largest stable prefix of every request in a
+        // conversation, so it is where a cache breakpoint is worth the most.
+        // Marking it needs block-shaped content rather than a bare string.
+        //
+        // Measured end to end on 2026-09-17 before this was turned on, because
+        // a body a gateway refuses is a 400 on every chat turn for every box:
+        //
+        //   - `upstream_body` (services/virtues-api/src/providers.rs) rewrites
+        //     model/stream/temperature/providerOptions and passes `messages`
+        //     through untouched, so the marker survives the hop verbatim.
+        //   - Two identical turns on anthropic/claude-haiku-4.5: the second
+        //     reported 13,522 of ~13,865 prompt tokens served from cache.
+        //   - xai/grok-4.5, zai/glm-4.7-flash and alibaba/qwen3-coder-plus all
+        //     completed normally with the same body — block-shaped system
+        //     content is not an Anthropic-only dialect here.
+        //
+        // Before this, `cache_control` appeared nowhere in the repo and every
+        // usage row read 0 cache tokens across 29.2M input tokens.
+        if prompt_cache_enabled() {
+            context.push(serde_json::json!({
+                "role": "system",
+                "content": [{
+                    "type": "text",
+                    "text": system_content,
+                    "cache_control": { "type": "ephemeral" }
+                }]
+            }));
+        } else {
+            context.push(serde_json::json!({
+                "role": "system",
+                "content": system_content
+            }));
+        }
     }
 
     // 2. Recent messages (after checkpoint or summary_up_to_index)

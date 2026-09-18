@@ -308,6 +308,7 @@ where
                 // over counts a previous chunk had already set. Each field is
                 // taken only when present, for the same reason.
                 if let Some(usage_obj) = json.get("usage").filter(|v| !v.is_null()) {
+                    tracing::debug!(usage = %usage_obj, "raw gateway usage object");
                     if let Some(t) = usage_obj.get("prompt_tokens").and_then(|t| t.as_u64()) {
                         usage.prompt_tokens = t as u32;
                     }
