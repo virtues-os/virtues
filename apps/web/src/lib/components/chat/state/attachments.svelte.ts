@@ -28,8 +28,6 @@ export type Attachment = {
 	kind: "image" | "pdf" | "audio" | "text";
 	/** name|size|lastModified — what makes "the same file again" answerable. */
 	sig: string;
-	width?: number;
-	height?: number;
 };
 
 export function formatFileSize(bytes: number): string {
@@ -38,9 +36,35 @@ export function formatFileSize(bytes: number): string {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Text/code/doc extensions — MIME is unreliable for these, so check the name too.
-const TEXT_EXT =
-	/\.(md|markdown|txt|text|csv|tsv|json|html?|xml|ya?ml|toml|ini|env|log|ts|tsx|js|jsx|mjs|cjs|py|rb|rs|go|java|c|h|cpp|cc|cs|php|swift|kt|sh|bash|zsh|sql|css|scss)$/i;
+/**
+ * Text/code/doc extensions — MIME is unreliable for these, so check the name too.
+ *
+ * ONE list, because there were two and they drifted: this was a regex here and a
+ * hand-written `accept` attribute on the file input, and eight extensions
+ * (.mjs .cjs .cc .bash .zsh .env .text .txt) had ended up droppable but greyed
+ * out in the picker. Both are now built from this array, so adding a language
+ * means adding it once.
+ */
+const TEXT_EXTENSIONS = [
+	"md", "markdown", "txt", "text", "csv", "tsv", "json", "html", "htm", "xml",
+	"yaml", "yml", "toml", "ini", "env", "log", "ts", "tsx", "js", "jsx", "mjs",
+	"cjs", "py", "rb", "rs", "go", "java", "c", "h", "cpp", "cc", "cs", "php",
+	"swift", "kt", "sh", "bash", "zsh", "sql", "css", "scss",
+] as const;
+
+const TEXT_EXT = new RegExp(`\\.(${TEXT_EXTENSIONS.join("|")})$`, "i");
+
+/**
+ * What the `+` picker offers. The MIME wildcards carry the binary kinds; the
+ * extensions carry the text ones, which the OS cannot be trusted to type.
+ */
+export const ATTACH_ACCEPT = [
+	"image/*",
+	"application/pdf",
+	"audio/*",
+	"text/*",
+	...TEXT_EXTENSIONS.map((e) => `.${e}`),
+].join(",");
 
 function attachmentKind(file: File): Attachment["kind"] | null {
 	const mt = (file.type || "").toLowerCase();
@@ -153,8 +177,6 @@ export class AttachmentsController {
 			try {
 				let mediaType = file.type || "application/octet-stream";
 				let url: string;
-				let width: number | undefined;
-				let height: number | undefined;
 
 				if (kind === "image") {
 					const norm = await normalizeImage(file);
@@ -170,8 +192,9 @@ export class AttachmentsController {
 					}
 					url = norm.dataUrl;
 					mediaType = norm.mediaType;
-					width = norm.width || undefined;
-					height = norm.height || undefined;
+					// norm.width/height are deliberately not kept: they were stored
+					// on every image and read by nothing — not the tray, not the
+					// transcript, not the file parts.
 				} else if (kind === "text") {
 					let text = await readAsText(file);
 					if (text.length > MAX_TEXT) text = text.slice(0, MAX_TEXT) + "\n…[truncated]";
@@ -191,8 +214,6 @@ export class AttachmentsController {
 						filename: file.name,
 						size: file.size,
 						kind,
-						width,
-						height,
 					},
 				];
 			} catch {
@@ -216,6 +237,19 @@ export class AttachmentsController {
 
 	remove(id: string) {
 		this.items = this.items.filter((a) => a.id !== id);
+	}
+
+	/**
+	 * Put back what a send took but never delivered.
+	 *
+	 * `takeAsFileParts` clears the tray before the request goes out, so a throw
+	 * on the way to the provider used to leave the person with no files and no
+	 * message — nothing sent, everything consumed. Anything staged in the
+	 * meantime wins, hence the signature check.
+	 */
+	restore(previous: Attachment[]) {
+		const already = new Set(this.items.map((a) => a.sig));
+		this.items = [...previous.filter((a) => !already.has(a.sig)), ...this.items];
 	}
 
 	/** Hand the staged files to the SDK as file parts and clear the tray. */

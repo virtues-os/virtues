@@ -1150,8 +1150,16 @@
 		}
 		input = "";
 
-		// Capture + clear attachments as AI SDK file parts.
+		// Capture + clear attachments as AI SDK file parts. The snapshot is what
+		// goes back in the tray if this send never reaches the box (see the catch):
+		// `items` is replaced wholesale on every change, so the reference is stable.
+		const stagedBeforeSend = attachments.items;
 		const files = attachments.takeAsFileParts();
+		// Everything after sendMessage resolves — the title, the session refresh —
+		// is inside the same try. Without this flag a throw from any of THOSE
+		// would put an already-sent message back in the composer and its files
+		// back in the tray, next to the copies sitting in the transcript.
+		let handedOff = false;
 
 		// New turn → clear any leftover Deep Research panel from the previous turn.
 		chatInstances.clearSubagents(conversationId);
@@ -1185,6 +1193,8 @@
 					: { text: messageToSend },
 			);
 
+			handedOff = true;
+
 			if (chat.messages.length >= 2 && !isGhost && !titleGenerated) {
 				await generateTitle();
 				// Update tab route if it's a new chat
@@ -1213,7 +1223,22 @@
 			}, 2000);
 		} catch (error) {
 			console.error("[handleChatSubmit] Error:", error);
-			input = "";
+			// Nothing was sent, so nothing should have been consumed. Both the
+			// text and the files were already cleared on the optimistic path;
+			// hand them back rather than leaving the person to retype and
+			// re-drag. A staged ref comes back inside the text, since it was
+			// serialized into it before the send — flattened, but not lost.
+			//
+			// Narrow on purpose. A transport failure does NOT land here —
+			// measured: the SDK keeps it, the message is already in
+			// `chat.messages` with its file parts, and ChatError offers "Try
+			// again". What reaches this catch is a throw BEFORE sendMessage
+			// resolves, the permissions sync above being the one in the path
+			// today, where nothing entered the transcript to retry from.
+			if (!handedOff) {
+				input = messageToSend;
+				attachments.restore(stagedBeforeSend);
+			}
 		} finally {
 			isAwaitingResponse = false;
 		}

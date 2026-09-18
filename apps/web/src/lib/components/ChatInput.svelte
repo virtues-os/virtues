@@ -6,6 +6,7 @@
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { closeOpenFence, createComposerEditor, type ComposerEditor } from "$lib/codemirror/composer";
 	import { createRefPicker, insertRef } from "$lib/codemirror/extensions/ref-picker";
+	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
 
 	let {
 		value = $bindable(""),
@@ -261,7 +262,7 @@
 				bind:this={fileInputEl}
 				type="file"
 				multiple
-				accept="image/*,application/pdf,audio/*,text/*,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.toml,.ini,.log,.ts,.tsx,.js,.jsx,.py,.rb,.rs,.go,.java,.c,.h,.cpp,.cs,.php,.swift,.kt,.sh,.sql,.css,.scss"
+				accept={ATTACH_ACCEPT}
 				class="sr-only"
 				onchange={onFilesPicked}
 			/>
