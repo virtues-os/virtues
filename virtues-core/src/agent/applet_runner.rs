@@ -5,7 +5,6 @@
 //! Trigger validation, condition evaluation, concurrency gating, and run-row
 //! lifecycle are all handled upstream — this function is pure execution.
 
-use chrono::Utc;
 use serde::Serialize;
 use sqlx::PgPool;
 
@@ -90,7 +89,7 @@ pub async fn run_agent_loop(
     } else {
         Vec::new()
     };
-    let mut llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt));
+    let mut llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt), None);
 
     // Providers (Bedrock, zai) require the first non-system message to be a
     // user message. Two ways that breaks here: a folder applet with no linked
@@ -382,8 +381,7 @@ async fn build_applet_system_prompt(
         .await
         .unwrap_or_else(|_| "there".to_string());
 
-    let now = Utc::now();
-    let datetime = now.format("%A, %B %-d, %Y at %-I:%M %p UTC").to_string();
+    let datetime = crate::api::profile::local_datetime_line(pool).await;
 
     let mut prompt = format!(
         "You are {assistant_name}, {user_name}'s personal AI assistant, running autonomously.\n\n\
@@ -396,7 +394,7 @@ async fn build_applet_system_prompt(
     if let Some(mem) = memory {
         if !mem.trim().is_empty() {
             prompt.push_str(&format!(
-                "\n\n<memory>\nYour persistent memory from prior runs. You can update this with the update_action_memory tool.\n{}\n</memory>",
+                "\n\n<memory>\nYour persistent memory from prior runs. You can update this with the update_applet_memory tool.\n{}\n</memory>",
                 mem
             ));
         }

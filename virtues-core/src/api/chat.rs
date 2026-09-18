@@ -20,6 +20,7 @@ use axum::{
 };
 use chrono::Utc;
 use futures::stream::Stream;
+use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use tracing::Instrument;
 use sqlx::PgPool;
@@ -45,11 +46,21 @@ use tokio_util::sync::CancellationToken;
 // Cancellation State
 // ============================================================================
 
+/// One registered turn: its token, and whether the cap stopped it.
+#[derive(Clone)]
+struct Registration {
+    token: CancellationToken,
+    /// Set when the unattended cap cancelled this turn, so the row and the
+    /// notice can say the box stopped it rather than telling the person they
+    /// stopped a reply they never touched.
+    unattended: bool,
+}
+
 /// Shared state for tracking active chat requests that can be cancelled
 #[derive(Clone, Default)]
 pub struct ChatCancellationState {
-    /// Map of chat_id -> cancellation token for active requests
-    tokens: Arc<std::sync::RwLock<std::collections::HashMap<String, CancellationToken>>>,
+    /// Map of chat_id -> the registration for the turn running now
+    tokens: Arc<std::sync::RwLock<std::collections::HashMap<String, Registration>>>,
 }
 
 impl ChatCancellationState {
@@ -59,35 +70,72 @@ impl ChatCancellationState {
         }
     }
 
-    /// Register a new chat request and get its cancellation token
+    /// Register a new chat request and get its cancellation token.
+    ///
+    /// A chat can have two turns in flight — `LiveTurns` says so explicitly —
+    /// so the token that lands here belongs to whichever turn started last,
+    /// and everything below is written to survive that. Nothing may act on an
+    /// entry it did not put there.
     pub fn register(&self, chat_id: &str) -> CancellationToken {
         let token = CancellationToken::new();
         // Recover from poisoned lock - the data is still valid
         let mut guard = self.tokens.write().unwrap_or_else(|e| e.into_inner());
-        guard.insert(chat_id.to_string(), token.clone());
+        guard.insert(chat_id.to_string(), Registration { token: token.clone(), unattended: false });
         token
     }
 
-    /// Cancel an active chat request
+    /// Cancel an active chat request — the person's Stop button.
     pub fn cancel(&self, chat_id: &str) -> bool {
         // Recover from poisoned lock - the data is still valid
         let guard = self.tokens.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(token) = guard.get(chat_id) {
-            token.cancel();
+        if let Some(reg) = guard.get(chat_id) {
+            reg.token.cancel();
             true
         } else {
             false
         }
     }
 
-    /// Remove a chat request (called when stream completes)
-    pub fn remove(&self, chat_id: &str) {
+    /// Cancel a turn nobody is watching, and say that is what happened.
+    ///
+    /// `token` is the caller's OWN token: an old turn hitting the unattended
+    /// cap used to cancel by chat id, which meant cancelling whatever was
+    /// registered — usually the reply the person had come back and asked for.
+    pub fn cancel_unattended(&self, chat_id: &str, token: &CancellationToken) {
+        let mut guard = self.tokens.write().unwrap_or_else(|e| e.into_inner());
+        match guard.get_mut(chat_id) {
+            Some(reg) if reg.token.eq(token) => {
+                reg.unattended = true;
+                reg.token.cancel();
+            }
+            // Someone else's turn holds the slot now; ours is stale. Cancel our
+            // own token so our loop still stops spending.
+            _ => token.cancel(),
+        }
+    }
+
+    /// Was this chat's current turn stopped by the cap rather than by a person?
+    pub fn was_unattended(&self, chat_id: &str, token: &CancellationToken) -> bool {
+        let guard = self.tokens.read().unwrap_or_else(|e| e.into_inner());
+        guard.get(chat_id).is_some_and(|reg| reg.token.eq(token) && reg.unattended)
+    }
+
+    /// Remove a chat request (called when stream completes).
+    ///
+    /// Only if it is still ours. A turn that finished used to remove by chat
+    /// id, so a turn started in the window between its last write and here had
+    /// its token deleted — and the Stop button then reported "no active
+    /// request" while a reply was visibly streaming.
+    pub fn remove(&self, chat_id: &str, token: &CancellationToken) {
         // Recover from poisoned lock - the data is still valid
         let mut guard = self.tokens.write().unwrap_or_else(|e| e.into_inner());
-        guard.remove(chat_id);
+        if guard.get(chat_id).is_some_and(|reg| reg.token.eq(token)) {
+            guard.remove(chat_id);
+        }
     }
 
     /// Check if a chat has an active request
+    #[allow(dead_code)]
     pub fn is_active(&self, chat_id: &str) -> bool {
         // Recover from poisoned lock - the data is still valid
         let guard = self.tokens.read().unwrap_or_else(|e| e.into_inner());
@@ -217,6 +265,32 @@ fn ghost_history(messages: &[UIMessage]) -> Vec<ChatMessage> {
         .collect()
 }
 
+/// Replace embedded data URLs with a note about what was there.
+///
+/// A `data:` URL is for the browser. Kept in a tool result it is carried to the
+/// model, stored in `parts`, and replayed on every subsequent turn — none of
+/// which it survives usefully, and all of which it fills.
+fn redact_inline_data(value: &mut serde_json::Value) {
+    /// Long enough that a small inline icon survives; short enough that no
+    /// real payload does.
+    const INLINE_LIMIT: usize = 2048;
+    match value {
+        serde_json::Value::String(s) if s.starts_with("data:") && s.len() > INLINE_LIMIT => {
+            let kind = s
+                .split_once(';')
+                .map(|(head, _)| head.trim_start_matches("data:"))
+                .filter(|k| !k.is_empty())
+                .unwrap_or("file");
+            *s = format!("[{kind}, {} KB, shown in the chat]", s.len() / 1024);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(redact_inline_data),
+        serde_json::Value::Object(map) => {
+            map.values_mut().for_each(redact_inline_data)
+        }
+        _ => {}
+    }
+}
+
 /// Materialize a turn's ordered `parts` from the pieces the stream collected.
 ///
 /// Text runs keep their order relative to the tool calls that ran between them,
@@ -231,8 +305,17 @@ fn build_turn_parts(
     turn_slots: &[TurnSlot],
     text_segments: &[String],
     tool_calls: &[crate::api::chats::ToolCall],
+    failed_tools: &std::collections::HashSet<String>,
+    reasoning: &str,
 ) -> Vec<UIPart> {
-    let mut parts = Vec::with_capacity(turn_slots.len());
+    let mut parts = Vec::with_capacity(turn_slots.len() + 1);
+    // The thinking comes before the turn it produced. It has its own column
+    // too, but the client stopped reading that the moment `parts` existed —
+    // it returns `parts` verbatim when there are any — so a turn that thought
+    // reloaded with an empty thinking block.
+    if !reasoning.trim().is_empty() {
+        parts.push(UIPart::Reasoning { text: reasoning.to_string() });
+    }
     for slot in turn_slots {
         match slot {
             TurnSlot::Text(i) => {
@@ -250,18 +333,34 @@ fn build_turn_parts(
                 else {
                     continue;
                 };
+                // The turn is over by the time this runs, so anything that
+                // returned has its output and anything that did not, did not.
+                // A tool that FAILED is its own state: picking the state off
+                // `result.is_some()` alone stored a failure as
+                // `output-available` with the reason buried inside `output`,
+                // so the red block never rendered on reload and the replay
+                // handed the model an error object as though it were an answer.
+                let failed = failed_tools.contains(id);
+                let error_text = failed.then(|| {
+                    tc.result
+                        .as_ref()
+                        .and_then(|r| r.get("error"))
+                        .and_then(|e| e.as_str())
+                        .unwrap_or("the tool reported a failure")
+                        .to_string()
+                });
+                let state = match (failed, tc.result.is_some()) {
+                    (true, _) => "output-error",
+                    (false, true) => "output-available",
+                    (false, false) => "input-available",
+                };
                 parts.push(UIPart::ToolInvocation {
                     tool_call_id: id.clone(),
                     tool_name: tc.tool_name.clone(),
                     input: tc.arguments.clone(),
-                    // The turn is over by the time this runs, so anything that
-                    // returned has its output and anything that did not, did not.
-                    state: if tc.result.is_some() {
-                        "output-available".to_string()
-                    } else {
-                        "input-available".to_string()
-                    },
+                    state: state.to_string(),
                     output: tc.result.clone(),
+                    error_text,
                 });
             }
         }
@@ -320,6 +419,16 @@ pub enum UIPart {
     Reasoning {
         text: String,
     },
+    /// One tool call and, once it answers, its result.
+    ///
+    /// On disk and on the wire this is `tool-<toolName>`, NOT the variant's own
+    /// name — the client matches an exact type per tool (`tool-create_page`,
+    /// `tool-generate_image`, …) and has no branch for anything else, so a part
+    /// stored as `tool-invocation` renders as nothing at all. `parts_to_jsonb`
+    /// and `parts_from_jsonb` are the translation, and they are the ONLY way
+    /// this column should be written or read. A single hardcoded
+    /// `tool-web_search` variant used to stand in for the whole family; every
+    /// other tool fell through to `Unknown` and was dropped.
     #[serde(rename = "tool-invocation")]
     ToolInvocation {
         #[serde(rename = "toolCallId")]
@@ -329,24 +438,16 @@ pub enum UIPart {
         tool_name: String,
         #[serde(default)]
         input: serde_json::Value,
+        /// `output-available` or `output-error`, the two the client renders.
         #[serde(default)]
         state: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         output: Option<serde_json::Value>,
-    },
-    #[serde(rename = "tool-web_search")]
-    ToolWebSearch {
-        #[serde(rename = "toolCallId")]
-        tool_call_id: String,
-        /// Tool name - defaults to "web_search" since we know the type
-        #[serde(rename = "toolName", default = "default_web_search_tool_name")]
-        tool_name: String,
-        #[serde(default)]
-        input: serde_json::Value,
-        #[serde(default)]
-        state: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        output: Option<serde_json::Value>,
+        /// Set with `state: "output-error"`. The client keys its error block on
+        /// the state and reads this; without it a failed tool reloaded as a
+        /// successful one with the failure buried inside `output`.
+        #[serde(rename = "errorText", default, skip_serializing_if = "Option::is_none")]
+        error_text: Option<String>,
     },
     /// Checkpoint from conversation compaction
     #[serde(rename = "checkpoint")]
@@ -355,6 +456,16 @@ pub enum UIPart {
         version: i32,
         /// Number of messages that were summarized
         messages_summarized: i32,
+        /// The id of the LAST message this summary covers.
+        ///
+        /// The count above is a position frozen at compaction time, and the
+        /// list it indexes keeps changing — regenerate deletes rows, and so
+        /// does the getting-started room's own sweep — so a count used as a
+        /// position silently drops one verbatim message per row deleted below
+        /// it. An id still points at the same message afterwards. Optional so
+        /// a checkpoint written before this reads; the count is the fallback.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_message_id: Option<String>,
         /// The summary text (XML structured)
         summary: String,
         /// When the checkpoint was created
@@ -375,9 +486,52 @@ pub enum UIPart {
     Unknown,
 }
 
-/// Default tool name for web_search variant when toolName is missing from JSON
-fn default_web_search_tool_name() -> String {
-    "web_search".to_string()
+/// The `parts` jsonb column, read.
+///
+/// Normalizes `tool-<toolName>` — which is what the client writes and what we
+/// now store — into the tagged variant, so one shape is understood everywhere.
+/// A row whose JSON no longer matches says so rather than silently becoming
+/// "this turn had no tools": that reads as a fact, not as a bug.
+pub fn parts_from_jsonb(raw: serde_json::Value, msg_id: &str) -> Option<Vec<UIPart>> {
+    let mut raw = raw;
+    if let Some(items) = raw.as_array_mut() {
+        for item in items.iter_mut() {
+            let Some(obj) = item.as_object_mut() else { continue };
+            let Some(kind) = obj.get("type").and_then(|t| t.as_str()).map(str::to_string) else {
+                continue;
+            };
+            let Some(name) = kind.strip_prefix("tool-") else { continue };
+            if name.is_empty() || name == "invocation" {
+                continue;
+            }
+            obj.entry("toolName")
+                .or_insert_with(|| serde_json::Value::String(name.to_string()));
+            obj.insert("type".to_string(), serde_json::Value::String("tool-invocation".to_string()));
+        }
+    }
+    serde_json::from_value(raw)
+        .map_err(|e| tracing::warn!(msg_id, error = %e, "parts did not parse"))
+        .ok()
+}
+
+/// The `parts` jsonb column, written. The inverse of `parts_from_jsonb`.
+pub fn parts_to_jsonb(parts: &[UIPart]) -> serde_json::Value {
+    let mut value = serde_json::to_value(parts).unwrap_or(serde_json::Value::Null);
+    if let Some(items) = value.as_array_mut() {
+        for item in items.iter_mut() {
+            let Some(obj) = item.as_object_mut() else { continue };
+            if obj.get("type").and_then(|t| t.as_str()) != Some("tool-invocation") {
+                continue;
+            }
+            let name = obj.get("toolName").and_then(|n| n.as_str()).unwrap_or("");
+            if name.is_empty() {
+                continue;
+            }
+            let kind = format!("tool-{name}");
+            obj.insert("type".to_string(), serde_json::Value::String(kind));
+        }
+    }
+    value
 }
 
 /// Streaming event types (AI SDK v6 UI Message Stream Protocol)
@@ -599,15 +753,21 @@ async fn get_latest_checkpoint(pool: &PgPool, chat_id: &str) -> Option<StreamEve
     .bind(chat_id)
     .fetch_optional(pool)
     .await
+    .map_err(|e| tracing::error!(chat_id, error = %e, "checkpoint lookup failed"))
     .ok()??;
 
+    // `parts` is jsonb and `created_at` is timestamptz. Reading either as a
+    // String is not a wrong value, it is a PANIC inside the turn's task —
+    // `Row::get` unwraps the decode — so auto-compaction killed the reply it
+    // had just made room for, every time it succeeded.
     let id: String = row.get("id");
-    let parts_json: Option<String> = row.get("parts");
-    let created_at: String = row.get("created_at");
+    let parts_json: Option<serde_json::Value> = row.get("parts");
+    let created_at: Timestamp = row.get("created_at");
+    let created_at = created_at.to_rfc3339();
 
     // Parse parts JSON to extract checkpoint data
     let parts: Vec<UIPart> = parts_json
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .and_then(|json| parts_from_jsonb(json, &id))
         .unwrap_or_default();
 
     // Find checkpoint part
@@ -617,6 +777,7 @@ async fn get_latest_checkpoint(pool: &PgPool, chat_id: &str) -> Option<StreamEve
             messages_summarized,
             summary,
             timestamp,
+            ..
         } = part
         {
             return Some(StreamEvent::Checkpoint {
@@ -791,7 +952,7 @@ fn truncate_to_budget(text: &str, budget: usize) -> String {
 /// read silently un-enforces, which is why it is logged.
 async fn build_rules(pool: &PgPool) -> String {
     let rows = match sqlx::query_as::<_, (String, String)>(
-        "SELECT kind, rule FROM wiki_rules WHERE active ORDER BY created_at",
+        "SELECT kind, rule FROM wiki_rules WHERE active ORDER BY created_at, id",
     )
     .fetch_all(pool)
     .await
@@ -849,7 +1010,7 @@ async fn build_system_prompt(
     agent_mode: &str,
     persona_id: &str,
     notebook_id: Option<&str>,
-) -> String {
+) -> (String, String) {
     use crate::api::assistant_profile::get_assistant_name;
     use crate::api::profile::get_display_name;
 
@@ -869,7 +1030,11 @@ async fn build_system_prompt(
                 tracing::warn!(error = %e, "interview reply count unavailable; prompt says 0");
                 0
             });
-        return crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name, their_replies);
+        // Whole-prompt stable: it changes only when the reply count does.
+        return (
+            crate::agent::prompt::build_interview_prompt(&assistant_name, &user_name, their_replies),
+            String::new(),
+        );
     }
 
     // Getting started: its own prompt plus the derived state, regenerated per
@@ -882,10 +1047,15 @@ async fn build_system_prompt(
                 "<getting_started>\n(state unavailable this turn; say so if asked, never guess)\n</getting_started>".to_string()
             }
         };
-        return crate::agent::prompt::build_getting_started_prompt(&assistant_name, &user_name, &block);
+        // Regenerated per turn, but its BYTES change only when a step does, so
+        // it is stable for caching: it busts once when the state moves on.
+        return (
+            crate::agent::prompt::build_getting_started_prompt(&assistant_name, &user_name, &block),
+            String::new(),
+        );
     }
 
-    build_system_prompt_blocks(
+    let (stable, volatile, _rendered) = build_system_prompt_blocks(
         pool,
         active_page,
         timezone,
@@ -895,8 +1065,8 @@ async fn build_system_prompt(
         &assistant_name,
         &user_name,
     )
-    .await
-    .0
+    .await;
+    (stable, volatile)
 }
 
 /// The registry: every prompt section as a named block, rendered in list
@@ -913,7 +1083,7 @@ async fn build_system_prompt_blocks(
     notebook_id: Option<&str>,
     assistant_name: &str,
     user_name: &str,
-) -> (String, Vec<crate::agent::prompt_blocks::RenderedBlock>) {
+) -> (String, String, Vec<crate::agent::prompt_blocks::RenderedBlock>) {
     use crate::agent::prompt::build_personalized_prompt;
     use crate::agent::prompt_blocks::{assemble, Author, Block, BlockMeta, Cadence, Mood};
     use crate::api::personas::get_persona_content;
@@ -1080,7 +1250,9 @@ fn build_active_page_block(active_page: Option<&ActivePageContext>) -> Option<St
 /// assert on what the model is actually sent rather than re-deriving it.
 #[cfg(test)]
 pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
-    build_system_prompt(pool, None, Some("America/Chicago"), "default", "default", None).await
+    let (stable, volatile) =
+        build_system_prompt(pool, None, Some("America/Chicago"), "default", "default", None).await;
+    format!("{stable}{volatile}")
 }
 
 /// Maximum member URLs to inline for a Notebook before truncating.
@@ -1187,6 +1359,7 @@ pub async fn chat_handler(
     State(yjs_state): State<YjsState>,
     State(cancel_state): State<ChatCancellationState>,
     State(live_turns): State<LiveTurns>,
+    State(ghost_permissions): State<crate::api::chat_permissions::GhostPermissions>,
     user: AuthUser,
     Json(request): Json<ChatRequest>,
 ) -> Response {
@@ -1206,6 +1379,7 @@ pub async fn chat_handler(
         State(yjs_state),
         State(cancel_state),
         State(live_turns),
+        State(ghost_permissions),
         user,
         Json(request),
     )
@@ -1218,6 +1392,7 @@ async fn chat_handler_inner(
     State(yjs_state): State<YjsState>,
     State(cancel_state): State<ChatCancellationState>,
     State(live_turns): State<LiveTurns>,
+    State(ghost_permissions): State<crate::api::chat_permissions::GhostPermissions>,
     _user: AuthUser,
     Json(mut request): Json<ChatRequest>,
 ) -> Response {
@@ -1252,6 +1427,25 @@ async fn chat_handler_inner(
                     "This server has nothing to answer with yet. Connect a Virtues subscription or your own AI endpoint in Getting started."
                         .to_string(),
                 ),
+            }),
+        )
+            .into_response();
+    }
+
+    // One turn per chat at a time. A turn outlives its request (live_turn.rs),
+    // so a client that lost the wire and asks again would otherwise start a
+    // SECOND turn while the first is still running: `LiveTurns::start`
+    // replaces the entry and lets the old task finish, both write an
+    // assistant row, and the transcript shows two replies to one question,
+    // both billed. The client's Try again rejoins first and only asks anew
+    // when nothing is live; this is the boundary for a client that does not,
+    // or a double tap. 409, with the name the client keys on.
+    if !request.temporary && live_turns.get(&request.chat_id).is_some() {
+        return (
+            StatusCode::CONFLICT,
+            Json(ChatError {
+                error: "turn_in_progress".to_string(),
+                details: Some("A reply to this chat is still being written.".to_string()),
             }),
         )
             .into_response();
@@ -1292,7 +1486,11 @@ async fn chat_handler_inner(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ChatError {
                     error: "Failed to resolve model".to_string(),
-                    details: Some(e.to_string()),
+                    // The error is already logged above. `sqlx::Error`'s
+                    // Display carries the Postgres message and often the
+                    // column or constraint name, and this JSON goes to a
+                    // browser.
+                    details: None,
                 }),
             )
                 .into_response();
@@ -1372,36 +1570,12 @@ async fn chat_handler_inner(
         }
     }
 
-    // Regenerate: the client has dropped its last assistant message and is
-    // asking for the last user turn to be answered again. Drop the box's copy
-    // too, or the model answers with its previous reply in front of it.
-    let regenerating = matches!(
-        request.trigger.as_deref(),
-        Some("regenerate-message") | Some("regenerate-assistant-message")
-    );
-    if regenerating && !temporary {
-        if let Err(e) = sqlx::query(
-            "DELETE FROM app_chat_messages \
-             WHERE chat_id = $1 AND role = 'assistant' \
-               AND sequence_num > COALESCE((SELECT MAX(sequence_num) FROM app_chat_messages \
-                                            WHERE chat_id = $1 AND role = 'user'), 0)",
-        )
-        .bind(&chat_id_str)
-        .execute(&pool)
-        .await
-        {
-            tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not drop the previous answer");
-        }
-    }
-
-    // Save the last user message to the chat. Not on regenerate: there is no
-    // new user turn, and a client that still sends the full history would
-    // otherwise re-append the last one.
-    if let Some(last_user_msg) = request.messages.iter().rev().filter(|_| !regenerating).find(|m| m.role == "user") {
-        // Normal flow: save the last user message from the request
-        let user_content = last_user_msg.content.clone().unwrap_or_else(|| {
-            last_user_msg
-                .parts
+    // What the person said, as it is stored: the legacy `content` if the
+    // client sent one, else the text parts joined. One derivation, used both
+    // to write the row and, on regenerate, to recognize it.
+    fn user_text(m: &UIMessage) -> String {
+        m.content.clone().unwrap_or_else(|| {
+            m.parts
                 .as_ref()
                 .map(|p| {
                     p.iter()
@@ -1413,7 +1587,87 @@ async fn chat_handler_inner(
                         .join("\n")
                 })
                 .unwrap_or_default()
-        });
+        })
+    }
+
+    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
+
+    // Regenerate: the client has dropped its last assistant message and is
+    // asking for the last user turn to be answered again. Drop the box's copy
+    // too, or the model answers with its previous reply in front of it.
+    //
+    // ONLY if that user turn is on disk. The client offers Try again on every
+    // error card, and some of those errors happened before anything was
+    // written: 409 not connected, 400 invalid model, 413, a request that
+    // never arrived. The message is then still only in the client. Treating
+    // that as a regenerate deleted the previous good answer and re-answered
+    // the question before it — on a new chat, an empty transcript went to the
+    // model. So: the client sends its last user message on regenerate too,
+    // and if it is not the last user row here, this is a first send of it.
+    // Matched by id (a transcript loaded from the box carries row ids) or by
+    // text (a message sent this session carries the SDK's id, not ours).
+    //
+    // The room's own lines (`gs:` subjects) are not "the previous answer" and
+    // stay: regenerate in the getting-started room used to delete the step
+    // the room had just narrated.
+    let mut regenerating = matches!(
+        request.trigger.as_deref(),
+        Some("regenerate-message") | Some("regenerate-assistant-message")
+    );
+    if regenerating && !temporary {
+        let answered_turn_on_disk = match last_user_msg {
+            // An older client sends nothing on regenerate; nothing to compare.
+            None => true,
+            Some(m) => {
+                match sqlx::query_as::<_, (String, String)>(
+                    "SELECT id, content FROM app_chat_messages \
+                     WHERE chat_id = $1 AND role = 'user' \
+                     ORDER BY sequence_num DESC LIMIT 1",
+                )
+                .bind(&chat_id_str)
+                .fetch_optional(&pool)
+                .await
+                {
+                    Ok(Some((id, content))) => {
+                        m.id.as_deref() == Some(id.as_str()) || content == user_text(m)
+                    }
+                    Ok(None) => false,
+                    Err(e) => {
+                        // Unknown. Deleting on a guess is the failure this
+                        // exists to stop; answering the message as new is
+                        // the harmless side.
+                        tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not read the last user turn");
+                        false
+                    }
+                }
+            }
+        };
+        if answered_turn_on_disk {
+            if let Err(e) = sqlx::query(
+                "DELETE FROM app_chat_messages \
+                 WHERE chat_id = $1 AND role = 'assistant' \
+                   AND COALESCE(subject, '') NOT LIKE 'gs:%' \
+                   AND sequence_num > COALESCE((SELECT MAX(sequence_num) FROM app_chat_messages \
+                                                WHERE chat_id = $1 AND role = 'user'), 0)",
+            )
+            .bind(&chat_id_str)
+            .execute(&pool)
+            .await
+            {
+                tracing::error!(chat_id = %chat_id_str, error = %e, "regenerate: could not drop the previous answer");
+            }
+        } else {
+            tracing::info!(chat_id = %chat_id_str, "regenerate asked for a turn that was never saved; answering it as new");
+            regenerating = false;
+        }
+    }
+
+    // Save the last user message to the chat. Not on regenerate: there is no
+    // new user turn, and a client that still sends the full history would
+    // otherwise re-append the last one.
+    if let Some(last_user_msg) = last_user_msg.filter(|_| !regenerating) {
+        // Normal flow: save the last user message from the request
+        let user_content = user_text(last_user_msg);
 
         let user_message = ChatMessage {
             id: None,
@@ -1440,15 +1694,39 @@ async fn chat_handler_inner(
 
     // Check if compaction is needed before sending to LLM. A ghost chat has
     // no usage row to read and no summary to write, so it never compacts.
-    let compaction_needed = if temporary {
-        false
+    // Compaction runs HERE, before the context is built — not inside the
+    // stream, where it used to. The turn that triggers it is the turn whose
+    // context is too big, and a summary written after `build_context_for_llm`
+    // has already run does nothing for it: the full transcript went out
+    // anyway, after up to sixty seconds of waiting for a summary it did not
+    // use. The saving only ever landed on the NEXT turn.
+    //
+    // The checkpoint event still reaches the client first thing, so the UI
+    // paints "N messages summarized" exactly as before.
+    let checkpoint_event = if temporary {
+        None
     } else {
         let compaction_status =
             crate::api::chat_usage::check_compaction_needed(&pool, request.chat_id.clone(), &model)
                 .await;
-        // Pass compaction_needed flag to stream - compaction will run inside stream
-        // and emit a checkpoint event for real-time UI updates
-        matches!(compaction_status, Ok(ContextStatus::Critical))
+        if matches!(compaction_status, Ok(ContextStatus::Critical)) {
+            tracing::info!(chat_id = %chat_id_str, "context critical, compacting before the turn");
+            let options = CompactionOptions {
+                model_id: Some(model.clone()),
+                ..Default::default()
+            };
+            match compact_chat(&pool, chat_id_str.clone(), options).await {
+                Ok(_) => get_latest_checkpoint(&pool, &chat_id_str).await,
+                Err(e) => {
+                    // A chat that cannot compact still gets its answer; it is
+                    // just a large one.
+                    tracing::warn!(chat_id = %chat_id_str, error = %e, "auto-compaction failed; continuing with the full context");
+                    None
+                }
+            }
+        } else {
+            None
+        }
     };
 
     use sqlx::Row;
@@ -1472,7 +1750,9 @@ async fn chat_handler_inner(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ChatError {
                         error: "Failed to load chat".to_string(),
-                        details: Some(e.to_string()),
+                        // Logged above; the raw database error does not
+                        // travel to the browser.
+                        details: None,
                     }),
                 )
                     .into_response();
@@ -1506,7 +1786,9 @@ async fn chat_handler_inner(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ChatError {
                         error: "Failed to load messages".to_string(),
-                        details: Some(e.to_string()),
+                        // Logged above; the raw database error does not
+                        // travel to the browser.
+                        details: None,
                     }),
                 )
                     .into_response();
@@ -1532,10 +1814,18 @@ async fn chat_handler_inner(
                 let reasoning_details: Option<serde_json::Value> = msg.get("reasoning_details");
                 let parts_raw: Option<serde_json::Value> = msg.get("parts");
 
-                // Parse JSON fields
-                let tool_calls = tool_calls_raw.and_then(|t| serde_json::from_value(t).ok());
+                // Parse JSON fields. A shape these no longer understand is a
+                // turn that silently loses its tool calls or its order and
+                // falls back to flat text — the kind of thing that reads as
+                // "this message had no tools" rather than as a bug, so it says
+                // so out loud.
+                let tool_calls = tool_calls_raw.and_then(|t| {
+                    serde_json::from_value(t)
+                        .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                        .ok()
+                });
                 let intent = intent_raw.and_then(|i| serde_json::from_value(i).ok());
-                let parts = parts_raw.and_then(|p| serde_json::from_value(p).ok());
+                let parts = parts_raw.and_then(|p| parts_from_jsonb(p, &id));
 
                 ChatMessage {
                     id: Some(id),
@@ -1586,7 +1876,11 @@ async fn chat_handler_inner(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ChatError {
                     error: "Failed to resolve chat notebook".to_string(),
-                    details: Some(e.to_string()),
+                    // The error is already logged above. `sqlx::Error`'s
+                    // Display carries the Postgres message and often the
+                    // column or constraint name, and this JSON goes to a
+                    // browser.
+                    details: None,
                 }),
             )
                 .into_response();
@@ -1595,7 +1889,11 @@ async fn chat_handler_inner(
     };
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
-    let mut system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, effective_notebook_id.as_deref()).await;
+    // Split at the cache breakpoint: `system_prompt` is the stable prefix that
+    // gets the marker, `system_tail` is the per-turn tail (the open page's live
+    // text, and the rules that deliberately sit behind it) which must stay
+    // OUTSIDE the cached block or it invalidates the prefix on every keystroke.
+    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, effective_notebook_id.as_deref()).await;
     // Scoped (grounded) chat: retrieval is hard-filtered to the notebook's
     // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
     // answer contract. Only meaningful inside a notebook.
@@ -1609,12 +1907,21 @@ async fn chat_handler_inner(
         );
     }
 
+    // Tell the gauge how big the prompt actually is. It cannot rebuild it, so
+    // without this the biggest single part of the request is invisible to both
+    // the context ring the user reads and the threshold that fires compaction.
+    crate::api::token_estimation::record_system_prompt_tokens(
+        crate::api::token_estimation::estimate_tokens(&system_prompt)
+            + crate::api::token_estimation::estimate_tokens(&system_tail),
+    );
+
     // Build context using compaction summary if available
     let api_messages = build_context_for_llm(
         &messages,
         conversation_summary.as_deref(),
         summary_up_to_index as usize,
         Some(&system_prompt),
+        Some(&system_tail),
     );
 
     // The turn is driven by its own task and outlives this request: a tab
@@ -1622,6 +1929,9 @@ async fn chat_handler_inner(
     // it, and the assistant row was never written (VIR-323). This response
     // is one watcher on the turn; `GET /api/chat/{id}/stream` is another.
     let turn = live_turns.start(&chat_id_str);
+    // Registered here, not inside the stream, so the driver below holds the
+    // same token and can tell its own turn from whichever one holds the slot.
+    let turn_token = cancel_state.register(&chat_id_str);
     let agent_stream = create_agent_stream(
         pool,
         yjs_state,
@@ -1630,23 +1940,47 @@ async fn chat_handler_inner(
         model,
         api_messages,
         msg_id,
-        compaction_needed,
+        checkpoint_event,
+        turn_token.clone(),
+        ghost_permissions,
     );
     {
         let turn = turn.clone();
+        let turn_token = turn_token.clone();
         let live_turns = live_turns.clone();
         let chat_id = chat_id_str.clone();
         tokio::spawn(async move {
-            let mut agent_stream = agent_stream;
-            while let Some(data) = agent_stream.next().await {
-                turn.push(data);
-                // Nobody watching for the cap: stop spending on a reply no
-                // one will read. The loop sees the token at its next step
-                // and the row is saved as a stop, like the button.
-                if turn.unattended_past(live_turn::UNATTENDED_CAP) {
-                    tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
-                    cancel_state.cancel(&chat_id);
+            // The drive loop runs inside a catch, because `finish` is what
+            // ends the turn for every watcher and a panic used to skip it:
+            // `done` stayed false, `watch` blocked on a Notify that never
+            // fired, and the SSE keep-alive held the socket open, so the
+            // person got a thinking mark that spun until they gave up — no
+            // error, no [DONE], and every later rejoin attached to the same
+            // dead turn. A panic in here has to end the turn like any other
+            // ending, or one bad decode wedges the chat.
+            let drive = {
+                let turn = turn.clone();
+                let chat_id = chat_id.clone();
+                async move {
+                    let mut agent_stream = agent_stream;
+                    while let Some(data) = agent_stream.next().await {
+                        turn.push(data);
+                        // Nobody watching for the cap: stop spending on a reply no
+                        // one will read. The loop sees the token at its next step
+                        // and the row is saved as a stop, like the button.
+                        if turn.unattended_past(live_turn::UNATTENDED_CAP) {
+                            tracing::info!(chat_id = %chat_id, cap_secs = live_turn::UNATTENDED_CAP.as_secs(), "turn unattended past the cap; cancelling");
+                            cancel_state.cancel_unattended(&chat_id, &turn_token);
+                        }
+                    }
                 }
+            };
+            if std::panic::AssertUnwindSafe(drive).catch_unwind().await.is_err() {
+                tracing::error!(chat_id = %chat_id, "the turn's driver panicked; ending the turn");
+                turn.push(serialize_event(&StreamEvent::Error {
+                    error_text: "the box failed while writing this reply".to_string(),
+                }));
+                turn.push("[DONE]".to_string());
             }
             // After the stream's own tail (row written, usage recorded), so
             // a watcher that sees the end can reload and find the row.
@@ -1700,7 +2034,10 @@ fn create_agent_stream(
     model: String,
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
-    compaction_needed: bool,
+    // Emitted first when this turn compacted the chat before it started.
+    checkpoint_event: Option<StreamEvent>,
+    cancel_token: CancellationToken,
+    ghost_permissions: crate::api::chat_permissions::GhostPermissions,
 ) -> Pin<Box<dyn Stream<Item = String> + Send>> {
     let chat_id = request.chat_id.clone();
     // Copied out for the stream block below, which reads `request` for a
@@ -1709,35 +2046,9 @@ fn create_agent_stream(
     let agent_id = request.agent_id.clone();
 
     Box::pin(async_stream::stream! {
-        // Register cancellation token for this chat
-        let cancel_token = cancel_state.register(&chat_id);
-
-        // Run compaction BEFORE the agent loop if needed, and emit checkpoint event
-        if compaction_needed {
-            tracing::info!(
-                chat_id = %chat_id,
-                "Context critical, auto-compacting chat"
-            );
-            let compaction_options = CompactionOptions {
-                model_id: Some(model.clone()),
-                ..Default::default()
-            };
-            match compact_chat(&pool, chat_id.clone(), compaction_options).await {
-                Ok(_) => {
-                    // Fetch the checkpoint message that was just created
-                    if let Some(checkpoint_event) = get_latest_checkpoint(&pool, &chat_id).await {
-                        yield (serialize_event(&checkpoint_event));
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        chat_id = %chat_id,
-                        error = %e,
-                        "Auto-compaction failed, continuing with full context"
-                    );
-                }
-            }
-        }
+        // The token was registered by the handler; this is the same one the
+        // driver watches.
+        let cancel_token = cancel_token;
 
         // Determine max_steps based on agent mode
         // - deep_research: 50 (read-only, needs more exploration)
@@ -1782,6 +2093,8 @@ fn create_agent_stream(
             subagent_tx: Some(subagent_tx),
             cancel_token: Some(cancel_token.clone()),
             worker_budget: Some(worker_budget),
+            temporary,
+            ghost_permissions: Some(ghost_permissions.clone()),
         };
 
         let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
@@ -1792,6 +2105,14 @@ fn create_agent_stream(
         // delta with no home. (The turn used to stream as one text part
         // for its whole length, which is why it could never emit steps.)
         yield (serialize_event(&StreamEvent::Start { message_id: msg_id.clone() }));
+        // Compaction already happened, in the handler, before the context was
+        // built from the compacted history. All that is left is to say so —
+        // AFTER `start`, because a data part that arrives before the message
+        // exists is pushed onto it as an invisible one and shown again as the
+        // synthetic checkpoint the client inserts from `onData`.
+        if let Some(event) = &checkpoint_event {
+            yield (serialize_event(event));
+        }
         yield (serialize_event(&StreamEvent::StartStep));
 
         // Track accumulated content
@@ -1840,12 +2161,15 @@ fn create_agent_stream(
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
         let mut total_reasoning_tokens: u32 = 0;
+        let mut total_cache_read_tokens: u32 = 0;
+        let mut total_cache_write_tokens: u32 = 0;
         // Authoritative spend for this turn (sum of gateway-reported usage.cost
         // across every step), captured into app_ai_calls for the Usage tab.
         let mut total_cost_micros: i64 = 0;
 
         // Tool call tracking for persistence
         let mut all_tool_calls: Vec<ToolCall> = Vec::new();
+        let mut failed_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         // Run the agent loop with cancellation support
         let mut agent_stream = agent.run(
@@ -1956,10 +2280,18 @@ fn create_agent_stream(
 
                 AgentEvent::ToolCallArgsComplete { id, args } => {
                     // AI SDK v6: tool-input-available event (args parsing complete)
-                    // Find the tool name from tracked tool calls
-                    let tool_name = all_tool_calls.iter()
+                    // This is where the arguments become known: ToolCallStart
+                    // fires as soon as the tool has a name, and the args are
+                    // still streaming in then, so the tracked call is holding
+                    // `Null`. Writing them back here is what puts them in the
+                    // persisted row — without it a reload showed a call with
+                    // no input, and the replayed turn carried none either.
+                    let tool_name = all_tool_calls.iter_mut()
                         .find(|tc| tc.tool_call_id.as_deref() == Some(&id))
-                        .map(|tc| tc.tool_name.clone())
+                        .map(|tc| {
+                            tc.arguments = args.clone();
+                            tc.tool_name.clone()
+                        })
                         .unwrap_or_default();
                     let event = StreamEvent::ToolInputAvailable {
                         tool_call_id: id,
@@ -1980,14 +2312,25 @@ fn create_agent_stream(
                     if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
                         tc.result = Some(serde_json::json!({ "error": error_text }));
                     }
+                    // Which calls failed is only known here. `{"error": …}` in
+                    // the result is not the same claim — a tool may answer with
+                    // an `error` key of its own — so the ids are kept.
+                    failed_tools.insert(id.clone());
                     let event = StreamEvent::ToolOutputError { tool_call_id: id, error_text };
                     yield (serialize_event(&event));
                 }
 
                 AgentEvent::ToolCallResult { id, result, success: true, error: _ } => {
-                    // Update the tracked tool call with the result
+                    // Update the tracked tool call with the result. The CLIENT
+                    // gets the value whole, below — it has to, that is how a
+                    // generated image reaches the chat. The ROW does not: a
+                    // data URL is a megabyte of base64 that the model cannot
+                    // read and that would be replayed into every later turn
+                    // from `parts`, which is a chat poisoned by one picture.
                     if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
-                        tc.result = Some(result.clone());
+                        let mut stored = result.clone();
+                        redact_inline_data(&mut stored);
+                        tc.result = Some(stored);
                     }
                     // The interview's finisher names the page the client
                     // should open beside the chat (see NarrativeDocumentReady).
@@ -2004,6 +2347,10 @@ fn create_agent_stream(
                     if let Some(usage) = result.get("usage") {
                         total_input_tokens += usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                         total_output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                        // Their cost too. Folding in the tokens and not the
+                        // price showed the orchestrator's bill against the
+                        // whole fan-out's usage.
+                        total_cost_micros += usage.get("cost_micros").and_then(|v| v.as_i64()).unwrap_or(0);
                     }
                     // AI SDK v6: tool-output-available event
                     let event = StreamEvent::ToolOutputAvailable {
@@ -2017,11 +2364,17 @@ fn create_agent_stream(
                     }
                 }
 
-                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cost_micros } => {
+                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cache_read_tokens, cache_write_tokens, cost_micros } => {
                     total_input_tokens += prompt_tokens;
                     total_output_tokens += completion_tokens;
                     if let Some(r) = reasoning_tokens {
                         total_reasoning_tokens += r;
+                    }
+                    if let Some(c) = cache_read_tokens {
+                        total_cache_read_tokens += c;
+                    }
+                    if let Some(c) = cache_write_tokens {
+                        total_cache_write_tokens += c;
                     }
                     if let Some(c) = cost_micros {
                         total_cost_micros += c;
@@ -2096,14 +2449,20 @@ fn create_agent_stream(
         // a finish. Otherwise the loop's verdict wins over the last step's,
         // and the last step's over "stop".
         let was_cancelled = cancel_token.is_cancelled();
-        let cut_short = last_step_reason == Some(StepReason::MaxTokens);
+        // The cap and the Stop button are the same cancellation; only the
+        // registration knows which. Read before `remove` below.
+        let was_unattended = was_cancelled && cancel_state.was_unattended(&chat_id, &cancel_token);
+        let cut_short = loop_finish == Some(FinishReason::OutputLimit)
+            || last_step_reason == Some(StepReason::MaxTokens);
+        let hit_ceiling = loop_finish == Some(FinishReason::MaxSteps);
         if was_cancelled || loop_finish == Some(FinishReason::Cancelled) {
-            yield (serialize_event(&StreamEvent::Abort { reason: Some("stopped".to_string()) }));
+            let reason = if was_unattended { "unattended" } else { "stopped" };
+            yield (serialize_event(&StreamEvent::Abort { reason: Some(reason.to_string()) }));
         } else {
             let finish_reason = match (loop_finish, last_step_reason) {
                 (Some(FinishReason::Error), _) => "error",
                 (Some(FinishReason::MaxSteps), _) | (Some(FinishReason::AwaitingUser), _) => "other",
-                (_, Some(StepReason::MaxTokens)) => "length",
+                (Some(FinishReason::OutputLimit), _) | (_, Some(StepReason::MaxTokens)) => "length",
                 (_, Some(StepReason::ContentFilter)) => "content-filter",
                 (_, Some(StepReason::ToolCalls)) => "tool-calls",
                 _ if interrupted => "error",
@@ -2115,8 +2474,14 @@ fn create_agent_stream(
         // Send [DONE] marker
         yield ("[DONE]".to_string());
 
-        // Save assistant message to chat
-        if !full_content.is_empty() {
+        // Save assistant message to chat.
+        //
+        // Text is not the only thing a turn produces. One that called tools and
+        // was stopped — or hit the step ceiling — before it wrote a word left
+        // NOTHING on disk, so a reload erased calls the person had watched run,
+        // and the "cancelled"/"interrupted" notice below had no row to hang on.
+        // A turn that produced neither text nor a call is still not a turn.
+        if !full_content.is_empty() || !all_tool_calls.is_empty() {
             let provider = model.split('/').next().unwrap_or("unknown").to_string();
             // The row says how the turn ended so a reload shows the same
             // notice: the person's stop, the output cap, or an interruption.
@@ -2134,10 +2499,17 @@ fn create_agent_stream(
                 // "interrupted": the stream or the model stopped before the
                 // reply was finished (VIR-334). The UI reads both on reload
                 // and shows a notice under the stub; a person's stop wins.
-                subject: if was_cancelled {
+                subject: if was_unattended {
+                    // The box stopped this, not the person. Telling someone
+                    // they stopped a reply they never touched is a lie about
+                    // who did what.
+                    Some("unattended".to_string())
+                } else if was_cancelled {
                     Some("cancelled".to_string())
                 } else if cut_short {
                     Some("length".to_string())
+                } else if hit_ceiling {
+                    Some("max_steps".to_string())
                 } else if interrupted {
                     Some("interrupted".to_string())
                 } else {
@@ -2161,10 +2533,38 @@ fn create_agent_stream(
                 // older row has. This is additive: a row without `parts` falls
                 // back to the legacy reconstruction exactly as before.
                 parts: {
-                    let parts = build_turn_parts(&turn_slots, &text_segments, &all_tool_calls);
+                    let parts = build_turn_parts(
+                        &turn_slots,
+                        &text_segments,
+                        &all_tool_calls,
+                        &failed_tools,
+                        &reasoning_content,
+                    );
                     if parts.is_empty() { None } else { Some(parts) }
                 },
             };
+
+            // WHAT THE REPLY LINKED TO, CHECKED AFTER THE FACT.
+            //
+            // The wiki REFUSES a bad link (`wiki_editor::check_links`), because
+            // an article is a stored artifact and nothing has been shown yet.
+            // A chat reply has already streamed past the person by the time
+            // anything could object, so the same finding is reported instead —
+            // it cannot be enforced here without rewriting text somebody has
+            // read, and a link that silently vanishes on reload is its own kind
+            // of lie. The citation example in the prompt used to be a literal
+            // id (`/person/person_ab12`), which is exactly how the wiki's first
+            // invented link got written, so this is also how we find out
+            // whether removing it was enough.
+            match crate::api::wiki_editor::dead_links(&pool, &full_content).await {
+                Ok(problems) if !problems.is_empty() => {
+                    for problem in &problems {
+                        tracing::warn!(chat_id = %chat_id, model = %model, "the reply {problem}");
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(chat_id = %chat_id, error = %e, "could not check the reply's links"),
+            }
 
             if temporary {
                 // Ghost: nothing written. The client keeps the turn in its tab.
@@ -2203,22 +2603,63 @@ fn create_agent_stream(
                 }
             }
 
-            // Record token usage. `cost_micros` is the gateway's authoritative
-            // figure — the same one recorded in app_ai_calls below, and the one
-            // the wallet was actually debited for. No estimating.
+        }
+
+        // Record token usage — OUTSIDE the block above, which is about whether
+        // there is a message worth keeping. It is not about whether the wallet
+        // was debited. A model that spends its whole output budget thinking and
+        // returns no content is billed in full, and this used to record nothing
+        // at all for it: no usage row, no cost row, no trace of the turn. The
+        // spend happened either way.
+        {
+            // `cost_micros` is the gateway's authoritative figure — the same
+            // one recorded in app_ai_calls below, and the one the wallet was
+            // actually debited for. No estimating.
+            // These were literal zeros while the same totals were handed to
+            // `app_ai_calls` one call below — so the per-chat panel read 0
+            // reasoning tokens on every box while the number sat in the next
+            // table over.
             let usage_data = UsageData {
                 input_tokens: total_input_tokens as i64,
                 output_tokens: total_output_tokens as i64,
-                reasoning_tokens: 0,
-                cache_read_tokens: 0,
-                cache_write_tokens: 0,
+                reasoning_tokens: total_reasoning_tokens as i64,
+                cache_read_tokens: total_cache_read_tokens as i64,
+                // Was a literal 0 — the same sin the comment above describes,
+                // one field over. It is still 0 on every turn, but now because
+                // nothing reported a cache write, not because someone typed it.
+                cache_write_tokens: total_cache_write_tokens as i64,
                 cost_micros: Some(total_cost_micros),
             };
 
+            // Read once and shared with the cost log below, so the two cannot
+            // disagree about which route paid for this turn.
+            //
+            // The CHECKED form, because this value decides whether the box
+            // prices the turn from its own catalog. A swallowed error here read
+            // as "not BYO" and wrote real dollars into estimated_cost_usd for
+            // tokens the owner had already paid their own provider for — the
+            // very failure `resolve_cost_usd`'s comment says was fixed once.
+            //
+            // Unknown is treated as BYO, i.e. do not price it ourselves. Of the
+            // two ways to be wrong, under-reporting a wallet turn is a gap in a
+            // display figure that app_ai_calls still records properly, while
+            // over-reporting invents a charge the person never incurred. A
+            // fabricated number is worse than a missing one.
+            let byo = match crate::api::settings_byo::byo_is_active_checked(&pool).await {
+                Ok(active) => active,
+                Err(e) => {
+                    tracing::warn!(
+                        chat_id = %chat_id,
+                        error = %e,
+                        "BYO status unreadable; not pricing this turn rather than guessing a cost"
+                    );
+                    true
+                }
+            };
             if temporary {
                 // Ghost: app_chat_usage keys on a chat row that does not exist.
                 // app_ai_calls below still records cost and counts, no content.
-            } else if let Err(e) = record_chat_usage(&pool, chat_id.clone(), &model, usage_data).await {
+            } else if let Err(e) = record_chat_usage(&pool, chat_id.clone(), &model, usage_data, byo).await {
                 tracing::warn!(
                     chat_id = %chat_id,
                     error = %e,
@@ -2243,7 +2684,7 @@ fn create_agent_stream(
                     // set, and no upstream but our own gateway sends a cost
                     // trailer — so `total_cost_micros` is 0-as-unknown there,
                     // and the Usage tab must show tokens instead of "$0.00".
-                    route: if crate::api::settings_byo::byo_is_active(&pool).await {
+                    route: if byo {
                         crate::api::ai_calls::Route::Byo
                     } else {
                         crate::api::ai_calls::Route::Wallet
@@ -2258,7 +2699,7 @@ fn create_agent_stream(
         }
 
         // Clean up cancellation token when stream ends
-        cancel_state.remove(&chat_id);
+        cancel_state.remove(&chat_id, &cancel_token);
     })
 }
 
@@ -2361,7 +2802,7 @@ mod tests {
         ];
 
         assert_eq!(
-            kinds(&build_turn_parts(&slots, &segments, &calls)),
+            kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
             [
                 "text:Checking his messages.",
                 "tool:sql_query:output-available",
@@ -2388,7 +2829,7 @@ mod tests {
         let calls = vec![tool("c1", "sql_query", None)];
 
         assert_eq!(
-            kinds(&build_turn_parts(&slots, &segments, &calls)),
+            kinds(&build_turn_parts(&slots, &segments, &calls, &Default::default(), "")),
             ["text:Looking it up.", "tool:sql_query:input-available"],
             "a tool that never returned still shows, as awaiting output"
         );
@@ -2398,7 +2839,7 @@ mod tests {
     /// come out as one text part, or every plain reply would look like narration.
     #[test]
     fn a_turn_with_no_tools_is_all_reply() {
-        let parts = build_turn_parts(&[TurnSlot::Text(0)], &["Yes.".to_string()], &[]);
+        let parts = build_turn_parts(&[TurnSlot::Text(0)], &["Yes.".to_string()], &[], &Default::default(), "");
         assert_eq!(kinds(&parts), ["text:Yes."]);
     }
 
@@ -2491,7 +2932,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let (prompt, rendered) = build_system_prompt_blocks(
+        let (stable, volatile, rendered) = build_system_prompt_blocks(
             &pool, None, Some("America/Chicago"), "default", "default", None, "Ari",
             "Adam",
         )
@@ -2511,8 +2952,27 @@ mod tests {
             assert!(pos >= last, "block {t} rendered out of registry order: {tags:?}");
             last = pos;
         }
-        // And the assembly is still one contiguous prompt, not fragments.
+        // And the assembly is still the whole prompt across the cache split.
+        let prompt = format!("{stable}{volatile}");
         assert!(prompt.contains("<rules>") && prompt.contains("<circumstances>"));
+        // The split is the point of the split: the per-turn tail (and the rules
+        // that deliberately sit behind it) must be on the uncached side, or a
+        // bound page's live text invalidates the prefix on every keystroke.
+        assert!(
+            volatile.contains("<rules>"),
+            "rules sit behind the per-turn tail, so they are outside the cached prefix"
+        );
+        assert!(
+            stable.contains("<circumstances>"),
+            "the quantized clock belongs to the stable prefix"
+        );
+        // As the audit above notes, <precedence> legitimately NAMES <rules>,
+        // and <precedence> is stable. What must not be in the cached half is
+        // the rules block's own BODY.
+        assert!(
+            !stable.contains("has marked some things as rules"),
+            "nothing behind the per-turn boundary may land in the cached prefix"
+        );
     }
 
     #[test]
@@ -2635,6 +3095,8 @@ mod live_prompt_audit {
                 nb,
             )
             .await;
+            // Measured across the cache split: this reads the whole prompt.
+            let p = format!("{}{}", p.0, p.1);
 
             // ~4 chars/token is the usual English approximation; this is an
             // order-of-magnitude reading, not a billing figure.
@@ -2666,6 +3128,160 @@ mod live_prompt_audit {
     }
 }
 
+
+#[cfg(test)]
+mod parts_column_tests {
+    use super::*;
+
+    /// The client matches an exact type per tool — `tool-create_page`,
+    /// `tool-generate_image` — and has no branch for anything else, so a part
+    /// stored under the variant's own name renders as nothing on reload.
+    #[test]
+    fn a_tool_part_is_stored_under_its_tool_name() {
+        let parts = vec![
+            UIPart::Text { text: "Making the page.".to_string() },
+            UIPart::ToolInvocation {
+                tool_call_id: "call-0".to_string(),
+                tool_name: "create_page".to_string(),
+                input: serde_json::json!({ "title": "Notes" }),
+                state: "output-available".to_string(),
+                output: Some(serde_json::json!({ "page_id": "page_1" })),
+                error_text: None,
+            },
+        ];
+
+        let stored = parts_to_jsonb(&parts);
+        let types: Vec<&str> =
+            stored.as_array().unwrap().iter().map(|p| p["type"].as_str().unwrap()).collect();
+        assert_eq!(types, ["text", "tool-create_page"]);
+        assert_eq!(stored[1]["toolName"], "create_page");
+
+        let back = parts_from_jsonb(stored, "msg_1").expect("reads back");
+        assert!(matches!(&back[1], UIPart::ToolInvocation { tool_name, .. } if tool_name == "create_page"));
+    }
+
+    /// Rows written before the rename, and the AI SDK's own `tool-web_search`,
+    /// both still have to read.
+    #[test]
+    fn the_older_spellings_still_read() {
+        let stored = serde_json::json!([
+            { "type": "tool-invocation", "toolCallId": "c0", "toolName": "sql_query",
+              "input": {}, "state": "output-available", "output": {"rows": 1} },
+            { "type": "tool-web_search", "toolCallId": "c1",
+              "input": {}, "state": "output-available", "output": {} },
+        ]);
+        let back = parts_from_jsonb(stored, "msg_1").expect("reads back");
+        assert_eq!(back.len(), 2);
+        // The name is recovered from the type when the part does not carry one.
+        assert!(matches!(&back[1], UIPart::ToolInvocation { tool_name, .. } if tool_name == "web_search"));
+    }
+
+    /// A failed tool is its own state, or the red block never renders and the
+    /// replay hands the model an error object as though it were an answer.
+    #[test]
+    fn a_failed_tool_keeps_its_failure() {
+        let mut failed = std::collections::HashSet::new();
+        failed.insert("call-0".to_string());
+        let calls = vec![ToolCall {
+            tool_name: "create_page".to_string(),
+            tool_call_id: Some("call-0".to_string()),
+            arguments: serde_json::json!({}),
+            result: Some(serde_json::json!({ "error": "the page already exists" })),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+        }];
+        let parts = build_turn_parts(
+            &[TurnSlot::Tool("call-0".to_string())],
+            &[],
+            &calls,
+            &failed,
+            "",
+        );
+        match &parts[0] {
+            UIPart::ToolInvocation { state, error_text, .. } => {
+                assert_eq!(state, "output-error");
+                assert_eq!(error_text.as_deref(), Some("the page already exists"));
+            }
+            other => panic!("expected a tool part, got {other:?}"),
+        }
+    }
+
+    /// The thinking has its own column, but the client stopped reading it the
+    /// moment `parts` existed.
+    #[test]
+    fn a_turn_that_thought_keeps_its_thinking() {
+        let parts = build_turn_parts(
+            &[TurnSlot::Text(0)],
+            &["Yes.".to_string()],
+            &[],
+            &Default::default(),
+            "Weighing it up.",
+        );
+        assert!(matches!(&parts[0], UIPart::Reasoning { text } if text == "Weighing it up."));
+        assert!(matches!(&parts[1], UIPart::Text { .. }));
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_tests {
+    use super::*;
+    use sqlx::PgPool;
+
+    /// `parts` is jsonb and `created_at` is timestamptz. Reading either as a
+    /// String panics rather than returning a wrong value, and this runs inside
+    /// the turn's own task — so auto-compaction killed the reply it had just
+    /// made room for. A pure test cannot catch it; only a real column can.
+    #[sqlx::test]
+    async fn a_checkpoint_row_decodes_into_its_event(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0)")
+            .bind("chat_cp")
+            .bind("compacted")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let parts = serde_json::json!([{
+            "type": "checkpoint",
+            "version": 3,
+            "messages_summarized": 12,
+            "summary": "<context>the earlier conversation</context>",
+            "timestamp": "",
+        }]);
+        sqlx::query(
+            "INSERT INTO app_chat_messages (id, chat_id, role, content, sequence_num, parts)
+             VALUES ($1, $2, 'checkpoint', 'Checkpoint v3', 1, $3)",
+        )
+        .bind("msg_cp")
+        .bind("chat_cp")
+        .bind(&parts)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let event = get_latest_checkpoint(&pool, "chat_cp")
+            .await
+            .expect("the checkpoint comes back as an event");
+        match event {
+            StreamEvent::Checkpoint { id, version, messages_summarized, timestamp, .. } => {
+                assert_eq!(id, "msg_cp");
+                assert_eq!(version, 3);
+                assert_eq!(messages_summarized, 12);
+                // Empty in the part, so the row's own created_at stands in.
+                assert!(!timestamp.is_empty(), "falls back to created_at");
+            }
+            other => panic!("expected a checkpoint event, got {other:?}"),
+        }
+    }
+
+    #[sqlx::test]
+    async fn a_chat_with_no_checkpoint_has_none(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ($1, $2, 0)")
+            .bind("chat_plain")
+            .bind("plain")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(get_latest_checkpoint(&pool, "chat_plain").await.is_none());
+    }
+}
 
 #[cfg(test)]
 mod ghost_tests {

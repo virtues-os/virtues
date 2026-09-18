@@ -308,6 +308,12 @@
 	// Search
 	// ────────────────────────────────────────────────────────────────────────
 	let searchQuery = $state('');
+	let searchInputEl = $state<HTMLInputElement | null>(null);
+
+	/** Put the caret in the search field — for a door that means "search". */
+	export function focusSearch() {
+		searchInputEl?.focus();
+	}
 
 	function getValue(item: T, col: Column<T>): string {
 		if (col.getValue) {
@@ -868,6 +874,7 @@
 				<Icon icon="ri:search-line" width="16" />
 				<input
 					type="text"
+					bind:this={searchInputEl}
 					bind:value={searchQuery}
 					placeholder={searchPlaceholder}
 					class="search-input"

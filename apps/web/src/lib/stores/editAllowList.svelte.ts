@@ -68,6 +68,12 @@ interface EditAllowListState {
 	loading: boolean;
 	/** Whether the chat exists in the backend (for deferred sync) */
 	chatExistsInBackend: boolean;
+	/** A ghost chat: the box keeps its grants in memory and writes nothing.
+	 *  Sending this flag is what stops a grant from creating an `app_chats`
+	 *  row — the permission table has a foreign key to one, so granting inside
+	 *  a ghost used to leave an empty "New conversation" in the sidebar for a
+	 *  conversation the UI promises is never saved. */
+	temporary: boolean;
 }
 
 function createEditAllowListStore() {
@@ -75,7 +81,8 @@ function createEditAllowListStore() {
 		chatId: null,
 		items: [],
 		loading: false,
-		chatExistsInBackend: false
+		chatExistsInBackend: false,
+		temporary: false
 	});
 
 	/**
@@ -108,7 +115,8 @@ function createEditAllowListStore() {
 			await addChatPermission(chatId, {
 				entity_id: item.id,
 				entity_type: item.type,
-				entity_title: item.title
+				entity_title: item.title,
+				temporary: state.temporary
 			});
 			return true;
 		} catch (error) {
@@ -183,12 +191,15 @@ function createEditAllowListStore() {
 		 * Set the chat ID without fetching from backend
 		 * Used for new chats that don't have permissions yet
 		 */
-		setChatId(chatId: string) {
+		setChatId(chatId: string, temporary = false) {
 			if (state.chatId !== chatId) {
 				this.clear();
 				state.chatId = chatId;
 				state.chatExistsInBackend = false; // New chat doesn't exist in backend yet
 			}
+			// Settable after the fact: the ghost toggle flips while the chat is
+			// still empty, which is before anything can have been granted.
+			state.temporary = temporary;
 		},
 
 		/**

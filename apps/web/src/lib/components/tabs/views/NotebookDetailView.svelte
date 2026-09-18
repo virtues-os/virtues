@@ -549,6 +549,10 @@
 		const id = notebookId;
 		if (!id || !entity.url) return;
 		await notebookStore.addItem(id, entity.url);
+		// A chat is listed here from the session list by its `notebook_id`,
+		// which the box has just set; the sessions have to be re-read or the
+		// add looks like it did nothing (VIR-359).
+		if (entity.url.startsWith('/chat/')) await chatSessions.refresh();
 		await loadGraph();
 	}
 
@@ -590,7 +594,14 @@
 				e.preventDefault();
 				dropActive = true;
 			}}
-			ondragleave={() => (dropActive = false)}
+			ondragleave={(e) => {
+				// Crossing into a child fires dragleave too; only leaving the
+				// notebook itself should drop the highlight.
+				const zone = e.currentTarget as HTMLElement;
+				if (!e.relatedTarget || !zone.contains(e.relatedTarget as Node)) {
+					dropActive = false;
+				}
+			}}
 			ondrop={handleDrop}
 		>
 			<header class="head">

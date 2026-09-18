@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use chrono::Utc;
 use futures::StreamExt;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -65,6 +64,14 @@ struct MissionResult {
     sources: Vec<Value>,
     input_tokens: u32,
     output_tokens: u32,
+    /// What the gateway charged for this worker's own calls.
+    ///
+    /// Workers run their own loop through `client.stream()`, and the box's
+    /// per-call log only fires on `post_json`, so no `app_ai_calls` row is
+    /// ever written for one. Their tokens were folded into the turn and their
+    /// cost was dropped, so a twelve-worker research turn showed the
+    /// orchestrator's price against the whole fan-out's tokens.
+    cost_micros: i64,
     ok: bool,
 }
 
@@ -88,12 +95,23 @@ pub async fn dispatch(
     // Resolve the model tiers once (each is a cheap profile read). Deep-research
     // fan-out workers run on the normal chat model; the orchestrator's "strong"
     // tier maps to it too — we don't spend the reasoning slot on workers.
+    //
+    // Empty is not a model. The profile readers fall back on a SQL NULL only,
+    // so a stored `chat_model_id = ''` — a state the profile PATCH can reach,
+    // and which `model_choice` guards against for exactly this reason —
+    // returns `Ok("")`, and `unwrap_or_else` only catches `Err`. Every worker
+    // was then dispatched with `model: ""` and rejected at the gateway while
+    // the orchestrator, which goes through the proper door, ran fine.
     let fast = crate::api::assistant_profile::get_background_model(&pool)
         .await
-        .unwrap_or_else(|_| default_tier_model("fast"));
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| default_tier_model("fast"));
     let balanced = crate::api::assistant_profile::get_chat_model(&pool)
         .await
-        .unwrap_or_else(|_| default_tier_model("balanced"));
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| default_tier_model("balanced"));
 
     let dispatch_id = DISPATCH_COUNTER.fetch_add(1, Ordering::Relaxed);
     let tx = context.subagent_tx.clone();
@@ -139,6 +157,11 @@ pub async fn dispatch(
         let pool = pool.clone();
         let tx = tx.clone();
         let cancel = cancel.clone();
+        // The orchestrator's scope is the worker's scope. Built from
+        // `Default` before, which meant no notebook and `Weighted`: inside a
+        // grounded chat the orchestrator was told "answer ONLY from these
+        // materials" while every worker it sent out searched the whole record.
+        let scope = (context.notebook_id.clone(), context.scope_mode);
         handles.push(tokio::spawn(async move {
             run_one_worker(
                 pool,
@@ -150,6 +173,7 @@ pub async fn dispatch(
                 style,
                 tx,
                 cancel,
+                scope,
             )
             .await
         }));
@@ -174,6 +198,7 @@ pub async fn dispatch(
     let mut ok_count = 0usize;
     let mut total_input: u32 = 0;
     let mut total_output: u32 = 0;
+    let mut total_cost_micros: i64 = 0;
     for result in joined {
         match result {
             Ok(m) => {
@@ -182,6 +207,7 @@ pub async fn dispatch(
                 }
                 total_input = total_input.saturating_add(m.input_tokens);
                 total_output = total_output.saturating_add(m.output_tokens);
+                total_cost_micros = total_cost_micros.saturating_add(m.cost_micros);
                 out_missions.push(json!({
                     "title": m.title,
                     "model": m.model,
@@ -212,7 +238,11 @@ pub async fn dispatch(
         "note": note,
         // Aggregate worker token usage so the chat handler can bill it (the gateway already
         // charged per call; this keeps the app's own accounting honest).
-        "usage": { "input_tokens": total_input, "output_tokens": total_output },
+        "usage": {
+            "input_tokens": total_input,
+            "output_tokens": total_output,
+            "cost_micros": total_cost_micros,
+        },
     })))
 }
 
@@ -228,6 +258,7 @@ async fn run_one_worker(
     style: WorkerStyle,
     tx: Option<Sender<SubagentUpdate>>,
     cancel: Option<CancellationToken>,
+    scope: (Option<String>, crate::search::ScopeMode),
 ) -> MissionResult {
     // Announce the worker as thinking so the panel shows it immediately.
     emit(&tx, dispatch_id, worker_id, &title, &model, SubagentStatus::Thinking, 0).await;
@@ -235,7 +266,7 @@ async fn run_one_worker(
     // Research workers investigate read-only; Council voices speak as a perspective (think-only).
     let (system_prompt, tools) = match style {
         WorkerStyle::Research => (
-            build_worker_prompt(&objective),
+            build_worker_prompt(&pool, &objective).await,
             crate::tools::get_tools_for_subagent(),
         ),
         WorkerStyle::Voice => (
@@ -243,10 +274,14 @@ async fn run_one_worker(
             crate::tools::get_tools_for_council_voice(),
         ),
     };
-    let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt));
+    let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt), None);
 
+    let (notebook_id, scope_mode) = scope;
     let context = ToolContext {
         user_id: Some("subagent".to_string()),
+        // A worker searches where the turn that sent it is allowed to search.
+        notebook_id,
+        scope_mode,
         // Workers don't re-emit panel updates or spawn sub-workers.
         ..Default::default()
     };
@@ -262,6 +297,7 @@ async fn run_one_worker(
     let mut findings = String::new();
     let mut input_tokens: u32 = 0;
     let mut output_tokens: u32 = 0;
+    let mut cost_micros: i64 = 0;
     let mut had_error = false;
     // id → (tool_name, args) captured from the call lifecycle, completed into a source on result.
     let mut pending: HashMap<String, (String, Value)> = HashMap::new();
@@ -291,9 +327,12 @@ async fn run_one_worker(
                     }
                 }
             }
-            AgentEvent::Usage { prompt_tokens, completion_tokens, .. } => {
+            AgentEvent::Usage { prompt_tokens, completion_tokens, cost_micros: cost, .. } => {
                 input_tokens = input_tokens.saturating_add(prompt_tokens);
                 output_tokens = output_tokens.saturating_add(completion_tokens);
+                if let Some(c) = cost {
+                    cost_micros = cost_micros.saturating_add(c);
+                }
             }
             AgentEvent::Error { message, .. } => {
                 tracing::warn!(title = %title, error = %message, "Subagent worker error");
@@ -336,6 +375,7 @@ async fn run_one_worker(
         sources,
         input_tokens,
         output_tokens,
+        cost_micros,
         ok,
     }
 }
@@ -399,8 +439,8 @@ fn truncate_source_data(tool_name: &str, mut data: Value) -> Value {
 }
 
 /// System prompt for a single read-only research worker.
-fn build_worker_prompt(objective: &str) -> String {
-    let datetime = Utc::now().format("%A, %B %-d, %Y at %-I:%M %p UTC").to_string();
+async fn build_worker_prompt(pool: &PgPool, objective: &str) -> String {
+    let datetime = crate::api::profile::local_datetime_line(pool).await;
     format!(
         "You are a focused research worker with ONE objective. Pursue it, then report back.\n\n\
          Current date/time: {datetime}\n\n\

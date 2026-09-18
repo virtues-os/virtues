@@ -94,7 +94,6 @@ pub fn default_tools() -> Vec<ToolConfig> {
         edit_applet_tool(),
         delete_applet_tool(),
         run_applet_tool(),
-        dayline_event_tool(),
         get_project_item_tool(),
         generate_image_tool(),
         read_asset_tool(),
@@ -310,7 +309,7 @@ fn record_introductions_tool() -> ToolConfig {
                 "assistant_name": { "type": "string" },
                 "home_place": { "type": "string", "description": "The city as they said it, for the card's label." },
                 "home_timezone": { "type": "string", "description": "IANA time zone, e.g. America/Chicago." },
-                "birth_date": { "type": "string", "description": "YYYY-MM-DD" }
+                "birth_date": { "type": "string", "description": "Exactly as they wrote it — \"March 1962\", \"the 3rd\", \"1987-04-02\". Do not reformat or complete it." }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -713,7 +712,7 @@ ENTITIES (resolved nouns in user's life)
   wiki_orgs         Organizations with type, role, and the span you were there
 
 TEMPORAL (daily/yearly context)
-  wiki_days         Day summaries with autobiography, context vector
+  wiki_days         One row per day; its prose lives in the wiki_day_prose view
   wiki_events       Timeline events within a day
 
 REFERENCES
@@ -771,11 +770,15 @@ QUERY TIPS (PostgreSQL dialect)
 EXAMPLE QUERIES
 ================================================================================
 
--- Spending by category this month
-SELECT category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
+-- Spending by category this month.
+-- `category` is a jsonb ARRAY (one row can carry several); `merchant_category`
+-- is the scalar to group by. Grouping by the array gives one group per
+-- permutation, not per category.
+SELECT merchant_category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
 FROM data_financial_transaction
 WHERE occurred_at >= date_trunc('month', now())
-GROUP BY category ORDER BY dollars DESC
+  AND amount > 0
+GROUP BY merchant_category ORDER BY dollars DESC
 
 -- Most contacted people this week (data row -> entity, via wiki_refs)
 SELECT p.name, COUNT(*) as messages
@@ -1282,9 +1285,10 @@ Optional filters:
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "owner": { "type": "string", "enum": ["system", "user"] },
+                "owner": { "type": "string", "enum": ["system", "user", "ai"], "description": "`ai` is anything created from a chat — omitting it hid every applet this assistant made" },
                 "enabled": { "type": "boolean" },
-                "trigger": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook"] }
+                "trigger": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook", "message"] },
+                "include_archived": { "type": "boolean", "description": "Include applets that have been archived (the handler always read this; it was never declared)" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1461,69 +1465,6 @@ This tool is only available when running as an action."#.to_string(),
 }
 
 /// Dayline event tool — structured event CRUD for hourly/EOD actions
-fn dayline_event_tool() -> ToolConfig {
-    ToolConfig {
-        id: "dayline_event".to_string(),
-        name: "Dayline Event".to_string(),
-        description: "Create or update dayline timeline events".to_string(),
-        llm_description: r#"Create, continue, revise, or mark timeline events for the Dayline.
-
-Actions:
-- NEW: Create a new event. Requires: event_summary, start_time, end_time. Optional: topics, auto_label, source_ontologies.
-- CONTINUE: Extend the current event. Requires: event_id, end_time. Optional: event_summary (updated), topics.
-- REVISE: Modify a previous event (merge, split, update). Requires: event_id. Optional: event_summary, start_time, end_time, auto_label, topics.
-- NO_DATA: Mark this time period as unknown. Requires: start_time, end_time.
-
-Event summaries should be 1-3 factual sentences. Be specific: name people, places, apps, projects. Include all data sources, even minor ones."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["action"],
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["NEW", "CONTINUE", "REVISE", "NO_DATA"],
-                    "description": "The action to perform"
-                },
-                "event_id": {
-                    "type": "string",
-                    "description": "ID of existing event (for CONTINUE, REVISE)"
-                },
-                "event_summary": {
-                    "type": "string",
-                    "description": "1-3 factual sentences describing the event"
-                },
-                "topics": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Activity contexts (e.g., 'code review', 'commute', 'exercise')"
-                },
-                "start_time": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp for event start"
-                },
-                "end_time": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp for event end"
-                },
-                "auto_label": {
-                    "type": "string",
-                    "description": "Short label (e.g., 'Work session', 'Lunch')"
-                },
-                "source_ontologies": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Ontology record IDs that informed this event"
-                }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:timeline-line".to_string(),
-        display_order: 9,
-        is_system: true,
-    }
-}
-
 /// Get Project Item tool - fetches the full content of a reference in an attached project.
 fn get_project_item_tool() -> ToolConfig {
     ToolConfig {
@@ -1534,7 +1475,7 @@ fn get_project_item_tool() -> ToolConfig {
 
 Use this when:
 - The user @-mentions something — a markdown link like [name](/chat/chat_xxx),
-  [name](/page/page_xxx), or [name](/space/space_xxx) in their message — and its
+  [name](/page/page_xxx), or [name](/notebook/notebook_xxx) in their message — and its
   content is RELEVANT to answering. The @-mention is a pointer; pull it in only
   if you actually need it.
 - An attached_project lists items and you need one's full content.
@@ -1548,7 +1489,7 @@ person/place/org details). Don't fetch a reference you don't need."#.to_string()
             "properties": {
                 "item_url": {
                     "type": "string",
-                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /chat/chat_xxx, /space/space_xxx, /person/person_xxx"
+                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /chat/chat_xxx, /notebook/notebook_xxx, /person/person_xxx"
                 }
             }
         }),
@@ -1615,7 +1556,6 @@ mod tests {
         assert!(ids.contains(&"get_page_content"));
         assert!(ids.contains(&"edit_page"));
         assert!(ids.contains(&"setup_applet"));
-        assert!(ids.contains(&"dayline_event"));
     }
 
     #[test]

@@ -209,16 +209,15 @@ class ChatInstanceStore {
                     // The box owns the history and rebuilds it from its own
                     // store, reading only the last user turn off the wire; it
                     // was sent the whole transcript every turn regardless. Now
-                    // only the last message goes, and on regenerate none: the
-                    // trigger tells the box to drop its last answer and reply
-                    // to the last user turn again. A ghost chat is the one
-                    // exception, by design: the box holds nothing for it, so
-                    // the wire is its whole transcript, every turn.
-                    const wireMessages = temporary
-                        ? messages
-                        : trigger === 'regenerate-message'
-                            ? []
-                            : messages.slice(-1);
+                    // only the last message goes. On regenerate that is the
+                    // last user message too (the SDK has already dropped the
+                    // reply): the box needs it to tell "answer this again"
+                    // from "this never reached you" — a Try again after a
+                    // refused POST used to send nothing, and the box deleted
+                    // the previous good answer instead. A ghost chat is the
+                    // one exception, by design: the box holds nothing for it,
+                    // so the wire is its whole transcript, every turn.
+                    const wireMessages = temporary ? messages : messages.slice(-1);
 
                     return {
                         body: {
@@ -286,10 +285,24 @@ class ChatInstanceStore {
                         // Insert checkpoint message into chat for immediate display.
                         // The SDK types `messages` as UIMessage[]; a checkpoint is a
                         // synthetic render-only message, so cast at this boundary.
-                        entry.chat.messages = [
-                            ...entry.chat.messages,
-                            checkpointMessage as unknown as (typeof entry.chat.messages)[number],
-                        ];
+                        //
+                        // BEFORE the reply being streamed, never after it. The
+                        // box sends this right after `start`, and `start` has
+                        // already pushed the assistant message; the SDK's next
+                        // write replaces the LAST message only if its id is the
+                        // reply's, so a checkpoint appended at the end made it
+                        // push a second copy of the reply and stream every
+                        // later token into that one — which dedupe then hid.
+                        // Every compaction turn showed an empty answer until
+                        // reload. If the reply is not there yet (nothing
+                        // streamed), the end is the right place.
+                        const current = entry.chat.messages;
+                        const tail = current[current.length - 1];
+                        const checkpoint = checkpointMessage as unknown as (typeof current)[number];
+                        entry.chat.messages =
+                            tail && tail.role === 'assistant'
+                                ? [...current.slice(0, -1), checkpoint, tail]
+                                : [...current, checkpoint];
                     }
                 }
             },

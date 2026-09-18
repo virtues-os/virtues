@@ -303,7 +303,8 @@ pub fn linked_subjects(text: &str) -> Vec<(String, String)> {
     out
 }
 
-/// Refuse prose that links to something that does not exist.
+/// Every link in a piece of prose that does not point at a real subject, each
+/// described in the words the writer needs to hear.
 ///
 /// The constitution says never invent a link, and the very first article the
 /// editor wrote invented one anyway: it linked the subject as
@@ -311,9 +312,12 @@ pub fn linked_subjects(text: &str) -> Vec<(String, String)> {
 /// leak into output, which is a property of models rather than a bug in this
 /// one, so the rule needs a check behind it and not just a sentence.
 ///
-/// A dead link in a wiki is worse than no link: it looks like a page that
-/// exists and is one click from proving the record wrong about itself.
-pub async fn check_links(pool: &sqlx::PgPool, text: &str) -> Result<()> {
+/// Separate from the policy on purpose. An article is a stored artifact, so a
+/// bad link there is REFUSED before anyone sees it (`check_links`). A chat
+/// reply has already streamed past the person by the time anything could
+/// object, so there the same finding is reported and not enforced.
+pub async fn dead_links(pool: &sqlx::PgPool, text: &str) -> Result<Vec<String>> {
+    let mut found = Vec::new();
     for (route, id) in linked_subjects(text) {
         // Resolve through the ID, not the route segment. A route is not a
         // subject_type (`/org/…` is an organization), and keying on the
@@ -331,18 +335,19 @@ pub async fn check_links(pool: &sqlx::PgPool, text: &str) -> Result<()> {
         // that goes nowhere — which is the failure this function exists to
         // prevent, arrived at from the other direction.
         let Some(expected) = subject.route else {
-            return Err(Error::InvalidInput(format!(
-                "the article links to /{route}/{id}, and a {} has no page to open — \
+            found.push(format!(
+                "links to /{route}/{id}, and a {} has no page to open — \
                  name it in the prose instead of linking it",
                 subject.kind
-            )));
+            ));
+            continue;
         };
         if route != expected {
-            return Err(Error::InvalidInput(format!(
-                "the article links to /{route}/{id}, but {id} is a {} and lives at \
-                 /{expected}/{id}",
+            found.push(format!(
+                "links to /{route}/{id}, but {id} is a {} and lives at /{expected}/{id}",
                 subject.kind
-            )));
+            ));
+            continue;
         }
 
         let Some(table) = subject.table else { continue };
@@ -354,13 +359,24 @@ pub async fn check_links(pool: &sqlx::PgPool, text: &str) -> Result<()> {
         .await
         .map_err(|e| Error::Database(format!("Failed to check a link: {e}")))?;
         if !exists {
-            return Err(Error::InvalidInput(format!(
-                "the article links to /{route}/{id}, which does not exist — link only \
+            found.push(format!(
+                "links to /{route}/{id}, which does not exist — link only \
                  the exact ids you were given, and never an id from an example"
-            )));
+            ));
         }
     }
-    Ok(())
+    Ok(found)
+}
+
+/// Refuse prose that links to something that does not exist.
+///
+/// A dead link in a wiki is worse than no link: it looks like a page that
+/// exists and is one click from proving the record wrong about itself.
+pub async fn check_links(pool: &sqlx::PgPool, text: &str) -> Result<()> {
+    match dead_links(pool, text).await?.into_iter().next() {
+        Some(problem) => Err(Error::InvalidInput(format!("the article {problem}"))),
+        None => Ok(()),
+    }
 }
 
 /// The mechanical half of an edit summary: what changed, counted rather than
@@ -1249,6 +1265,33 @@ mod tests {
             ],
             "an external URL is not a subject link"
         );
+    }
+
+    /// The finding is separate from the policy: the wiki refuses on the first
+    /// bad link, chat reports every one of them and rewrites nothing.
+    #[sqlx::test]
+    async fn every_bad_link_is_reported_not_just_the_first(pool: sqlx::PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_real', 'Nick')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let problems = dead_links(
+            &pool,
+            "I read it in [a message](/person/person_abc1) and again from \
+             [Nick](/person/person_real), then [here](/person/person_xyz9).",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(problems.len(), 2, "the real one is not a problem: {problems:?}");
+        assert!(problems[0].contains("person_abc1"));
+        assert!(problems[1].contains("person_xyz9"));
+
+        let clean = dead_links(&pool, "Only [Nick](/person/person_real) here.")
+            .await
+            .unwrap();
+        assert!(clean.is_empty());
     }
 
     #[sqlx::test]

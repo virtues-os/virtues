@@ -41,6 +41,8 @@
 		| "monthly_cap"
 		| "topup_disabled"
 		| "subscription"
+		| "billing_other"
+		| "max_steps"
 		| "reconnect"
 		| "rate_limit"
 		| "too_large"
@@ -57,6 +59,11 @@
 		if (has(/monthly_cap_reached/i)) return "monthly_cap";
 		if (has(/topup_disabled/i)) return "topup_disabled";
 		if (has(/wallet_expired|subscription_inactive/i)) return "subscription";
+		// Any OTHER 402 is still a billing refusal — `call_too_expensive` and
+		// whatever the gateway adds next. Falling through to "generic" showed a
+		// money problem as "the reply did not come through", with no way to
+		// Billing and a Retry that re-fails every time.
+		if (has(/auto-topup failed/i) || status === 402) return "billing_other";
 		if (has(/unknown_key|missing_key|malformed_key/i) || status === 401) return "reconnect";
 		if (status === 429 || (status === undefined && /rate limit|too many requests|\b429\b/i.test(raw)))
 			return "rate_limit";
@@ -68,6 +75,10 @@
 		if (has(/stream interrupted|dropped mid-reply|before the model finished|before it was finished/i))
 			return "interrupted";
 		if (has(/output limit|output cap/i)) return "output_limit";
+		// The agent used up its own allowance of tool calls. Nothing is broken;
+		// saying "the reply did not come through" invites a retry that will do
+		// the same thing.
+		if (has(/maximum steps/i)) return "max_steps";
 		// A 4xx the model itself raised — unsupported tools or modality,
 		// context overflow, a bad request. Retrying the SAME model just
 		// re-fails, so this offers the Recommended model instead.
@@ -76,7 +87,14 @@
 	});
 
 	const isBilling = $derived(
-		["wallet_empty", "card_declined", "monthly_cap", "topup_disabled", "subscription"].includes(kind)
+		[
+			"wallet_empty",
+			"card_declined",
+			"monthly_cap",
+			"topup_disabled",
+			"subscription",
+			"billing_other",
+		].includes(kind)
 	);
 	const canSwitch = $derived(kind === "model_error" && !!onSwitchAndRetry && !!recommendedName);
 
@@ -125,6 +143,17 @@
 			title: "Subscription inactive",
 			sentence: "Reconnect or update billing to continue.",
 		},
+		billing_other: {
+			title: "Billing stopped this one",
+			// The provider's own words: this bucket exists precisely for the
+			// refusals we do not have a better sentence for.
+			sentence: null,
+		},
+		max_steps: {
+			title: "The reply used up its steps",
+			sentence:
+				"It was allowed a fixed number of tool calls and reached the end of them. Ask it to carry on, or ask something narrower.",
+		},
 		reconnect: {
 			title: "This box is not recognized by billing",
 			sentence: "Reconnect your subscription to continue.",
@@ -139,7 +168,10 @@
 		},
 		interrupted: {
 			title: "The reply was cut off",
-			sentence: "The connection to the model dropped before it finished. What arrived is above.",
+			// `null`, so the provider's OWN explanation shows. A fixed sentence
+			// here computed the real reason into `detail` and then threw it
+			// away, so every mid-stream failure read as a dropped connection.
+			sentence: null,
 		},
 		output_limit: {
 			title: "The reply ran out of room",
@@ -156,7 +188,13 @@
 	};
 
 	const title = $derived(COPY[kind].title);
-	const sentence = $derived(COPY[kind].sentence ?? detail);
+	const sentence = $derived(
+		COPY[kind].sentence ??
+			detail ??
+			(kind === "interrupted"
+				? "The connection to the model dropped before it finished. What arrived is above."
+				: "")
+	);
 </script>
 
 {#if error}

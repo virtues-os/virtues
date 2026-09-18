@@ -10,8 +10,24 @@
 	import { listChats } from "$lib/api/client";
 	import Icon from "$lib/components/Icon.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	let grid = $state<ReturnType<typeof UniversalDataGrid<ChatItem>> | null>(null);
+
+	// The sidebar's "Search chats" door lands here. It bumps a token before
+	// opening this tab; whether the page was already open or is mounting now,
+	// the effect sees the change once the grid exists and puts the caret in
+	// the search field. `active` is read so a page that was open in the
+	// background focuses when it comes to the front, not while hidden.
+	let lastFocusToken = 0;
+	$effect(() => {
+		const token = chatSessions.searchFocusToken;
+		if (!active || !grid || token === lastFocusToken) return;
+		lastFocusToken = token;
+		requestAnimationFrame(() => grid?.focusSearch());
+	});
 
 	interface Session {
 		conversation_id: string;
@@ -106,6 +122,7 @@
 	{/snippet}
 
 	<UniversalDataGrid
+		bind:this={grid}
 		{items}
 		{columns}
 		entityType="chat-history"
