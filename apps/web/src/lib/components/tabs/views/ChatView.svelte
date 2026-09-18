@@ -3234,7 +3234,7 @@
 		padding: 0.25rem;
 		border: none;
 		background: none;
-		border-radius: 0.25rem;
+		border-radius: 6px;
 		color: var(--foreground-subtle);
 		cursor: pointer;
 	}
