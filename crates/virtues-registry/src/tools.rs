@@ -94,7 +94,6 @@ pub fn default_tools() -> Vec<ToolConfig> {
         edit_applet_tool(),
         delete_applet_tool(),
         run_applet_tool(),
-        dayline_event_tool(),
         get_project_item_tool(),
         generate_image_tool(),
         read_asset_tool(),
@@ -1466,69 +1465,6 @@ This tool is only available when running as an action."#.to_string(),
 }
 
 /// Dayline event tool — structured event CRUD for hourly/EOD actions
-fn dayline_event_tool() -> ToolConfig {
-    ToolConfig {
-        id: "dayline_event".to_string(),
-        name: "Dayline Event".to_string(),
-        description: "Create or update dayline timeline events".to_string(),
-        llm_description: r#"Create, continue, revise, or mark timeline events for the Dayline.
-
-Actions:
-- NEW: Create a new event. Requires: event_summary, start_time, end_time. Optional: topics, auto_label, source_ontologies.
-- CONTINUE: Extend the current event. Requires: event_id, end_time. Optional: event_summary (updated), topics.
-- REVISE: Modify a previous event (merge, split, update). Requires: event_id. Optional: event_summary, start_time, end_time, auto_label, topics.
-- NO_DATA: Mark this time period as unknown. Requires: start_time, end_time.
-
-Event summaries should be 1-3 factual sentences. Be specific: name people, places, apps, projects. Include all data sources, even minor ones."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["action"],
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["NEW", "CONTINUE", "REVISE", "NO_DATA"],
-                    "description": "The action to perform"
-                },
-                "event_id": {
-                    "type": "string",
-                    "description": "ID of existing event (for CONTINUE, REVISE)"
-                },
-                "event_summary": {
-                    "type": "string",
-                    "description": "1-3 factual sentences describing the event"
-                },
-                "topics": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Activity contexts (e.g., 'code review', 'commute', 'exercise')"
-                },
-                "start_time": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp for event start"
-                },
-                "end_time": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp for event end"
-                },
-                "auto_label": {
-                    "type": "string",
-                    "description": "Short label (e.g., 'Work session', 'Lunch')"
-                },
-                "source_ontologies": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Ontology record IDs that informed this event"
-                }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:timeline-line".to_string(),
-        display_order: 9,
-        is_system: true,
-    }
-}
-
 /// Get Project Item tool - fetches the full content of a reference in an attached project.
 fn get_project_item_tool() -> ToolConfig {
     ToolConfig {
@@ -1620,7 +1556,6 @@ mod tests {
         assert!(ids.contains(&"get_page_content"));
         assert!(ids.contains(&"edit_page"));
         assert!(ids.contains(&"setup_applet"));
-        assert!(ids.contains(&"dayline_event"));
     }
 
     #[test]

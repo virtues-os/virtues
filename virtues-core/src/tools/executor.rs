@@ -455,7 +455,6 @@ impl ToolExecutor {
                 super::applet_management::run_applet(&self._pool, yjs, arguments, context).await
             }
             // Dayline event CRUD (used by hourly/EOD actions)
-            "dayline_event" => super::dayline_events::execute(&self._pool, arguments, context).await,
             // Project item fetch (for attached project context lens)
             "get_project_item" => self.execute_get_project_item(arguments).await,
             // Text-to-image generation (rendered inline to the user)
