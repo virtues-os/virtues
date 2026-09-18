@@ -42,6 +42,8 @@ pub struct AppState {
     pub tool_executor: Option<Arc<crate::tools::ToolExecutor>>,
     pub yjs_state: super::yjs::YjsState,
     pub chat_cancel_state: ChatCancellationState,
+    /// What a ghost chat's owner has allowed, for as long as the ghost lasts.
+    pub ghost_permissions: crate::api::chat_permissions::GhostPermissions,
     /// Turns running right now, by chat id (VIR-323).
     pub live_turns: crate::api::live_turn::LiveTurns,
 }
@@ -55,6 +57,12 @@ impl axum::extract::FromRef<AppState> for sqlx::PgPool {
 impl axum::extract::FromRef<AppState> for super::yjs::YjsState {
     fn from_ref(state: &AppState) -> Self {
         state.yjs_state.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for crate::api::chat_permissions::GhostPermissions {
+    fn from_ref(state: &AppState) -> Self {
+        state.ghost_permissions.clone()
     }
 }
 

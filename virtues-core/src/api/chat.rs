@@ -1348,6 +1348,7 @@ pub async fn chat_handler(
     State(yjs_state): State<YjsState>,
     State(cancel_state): State<ChatCancellationState>,
     State(live_turns): State<LiveTurns>,
+    State(ghost_permissions): State<crate::api::chat_permissions::GhostPermissions>,
     user: AuthUser,
     Json(request): Json<ChatRequest>,
 ) -> Response {
@@ -1367,6 +1368,7 @@ pub async fn chat_handler(
         State(yjs_state),
         State(cancel_state),
         State(live_turns),
+        State(ghost_permissions),
         user,
         Json(request),
     )
@@ -1379,6 +1381,7 @@ async fn chat_handler_inner(
     State(yjs_state): State<YjsState>,
     State(cancel_state): State<ChatCancellationState>,
     State(live_turns): State<LiveTurns>,
+    State(ghost_permissions): State<crate::api::chat_permissions::GhostPermissions>,
     _user: AuthUser,
     Json(mut request): Json<ChatRequest>,
 ) -> Response {
@@ -1840,6 +1843,7 @@ async fn chat_handler_inner(
         msg_id,
         checkpoint_event,
         turn_token.clone(),
+        ghost_permissions,
     );
     {
         let turn = turn.clone();
@@ -1934,6 +1938,7 @@ fn create_agent_stream(
     // Emitted first when this turn compacted the chat before it started.
     checkpoint_event: Option<StreamEvent>,
     cancel_token: CancellationToken,
+    ghost_permissions: crate::api::chat_permissions::GhostPermissions,
 ) -> Pin<Box<dyn Stream<Item = String> + Send>> {
     let chat_id = request.chat_id.clone();
     // Copied out for the stream block below, which reads `request` for a
@@ -1989,6 +1994,8 @@ fn create_agent_stream(
             subagent_tx: Some(subagent_tx),
             cancel_token: Some(cancel_token.clone()),
             worker_budget: Some(worker_budget),
+            temporary,
+            ghost_permissions: Some(ghost_permissions.clone()),
         };
 
         let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);

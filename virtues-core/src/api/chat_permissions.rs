@@ -42,6 +42,53 @@ pub struct AddPermissionRequest {
     pub entity_id: String,
     pub entity_type: String,
     pub entity_title: Option<String>,
+    /// The chat is a ghost: keep the grant in memory, write nothing.
+    #[serde(default)]
+    pub temporary: bool,
+}
+
+/// Grants made inside a ghost chat.
+///
+/// A temporary chat has no `app_chats` row — that is the promise the UI makes
+/// about it — and `app_chat_edit_permissions` has a foreign key to one. So
+/// granting used to CREATE the row "to ensure chat exists", which left an empty
+/// "New conversation" in the list for a conversation that was never meant to
+/// exist. A ghost's grant only has to outlive the ghost, and this is process
+/// memory for exactly as long.
+///
+/// Dropping `chat_id` from the tool context instead would have been worse:
+/// `check_tool_permission` reads a missing chat as "headless, not gated", so a
+/// ghost would have skipped the gate rather than kept it.
+#[derive(Debug, Clone, Default)]
+pub struct GhostPermissions {
+    granted: std::sync::Arc<
+        std::sync::RwLock<std::collections::HashMap<String, std::collections::HashSet<String>>>,
+    >,
+}
+
+impl GhostPermissions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn grant(&self, chat_id: &str, entity_id: &str) {
+        let mut guard = self.granted.write().unwrap_or_else(|e| e.into_inner());
+        guard
+            .entry(chat_id.to_string())
+            .or_default()
+            .insert(entity_id.to_string());
+    }
+
+    pub fn has(&self, chat_id: &str, entity_id: &str) -> bool {
+        let guard = self.granted.read().unwrap_or_else(|e| e.into_inner());
+        guard.get(chat_id).is_some_and(|set| set.contains(entity_id))
+    }
+
+    /// Forget a ghost's grants. The tab is gone; so is what it allowed.
+    pub fn forget(&self, chat_id: &str) {
+        let mut guard = self.granted.write().unwrap_or_else(|e| e.into_inner());
+        guard.remove(chat_id);
+    }
 }
 
 /// Response for permission list
@@ -54,6 +101,58 @@ pub struct PermissionListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionResponse {
     pub permission: ChatEditPermission,
+}
+
+#[cfg(test)]
+mod ghost_tests {
+    use super::*;
+
+    #[test]
+    fn a_ghost_keeps_its_grants_and_leaves_nothing() {
+        let ghosts = GhostPermissions::new();
+        assert!(!ghosts.has("chat_ghost", "applet_digest"));
+
+        ghosts.grant("chat_ghost", "applet_digest");
+        assert!(ghosts.has("chat_ghost", "applet_digest"));
+        // Scoped to the chat that granted it, like the table it replaces.
+        assert!(!ghosts.has("chat_other", "applet_digest"));
+        assert!(!ghosts.has("chat_ghost", "applet_else"));
+
+        ghosts.forget("chat_ghost");
+        assert!(!ghosts.has("chat_ghost", "applet_digest"));
+    }
+
+    /// A ghost grant writes nothing — not the permission, and above all not the
+    /// `app_chats` row the foreign key used to demand.
+    #[sqlx::test]
+    async fn granting_in_a_ghost_creates_no_rows(pool: sqlx::PgPool) {
+        let ghosts = GhostPermissions::new();
+        let response = add_permission(
+            &pool,
+            &ghosts,
+            "chat_ghost",
+            AddPermissionRequest {
+                entity_id: "applet_digest".to_string(),
+                entity_type: "action".to_string(),
+                entity_title: Some("Daily digest".to_string()),
+                temporary: true,
+            },
+        )
+        .await
+        .expect("a ghost grant succeeds");
+        assert_eq!(response.permission.entity_id, "applet_digest");
+        assert!(ghosts.has("chat_ghost", "applet_digest"));
+
+        let chats: i64 = sqlx::query_scalar("SELECT count(*) FROM app_chats")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let perms: i64 = sqlx::query_scalar("SELECT count(*) FROM app_chat_edit_permissions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!((chats, perms), (0, 0), "a ghost leaves nothing behind");
+    }
 }
 
 // ============================================================================
@@ -99,10 +198,29 @@ pub async fn has_permission(pool: &PgPool, chat_id: &str, entity_id: &str) -> Re
 /// Returns the permission if created, or existing if already present
 pub async fn add_permission(
     pool: &PgPool,
+    ghosts: &GhostPermissions,
     chat_id: &str,
     request: AddPermissionRequest,
 ) -> Result<PermissionResponse> {
     let id = generate_id(PERMISSION_PREFIX, &[chat_id, &request.entity_id]);
+
+    // A ghost's grant lives in memory and nothing is written. The row creation
+    // below exists so the permission's foreign key resolves, and for a chat
+    // that is never persisted it was creating the very thing the ghost promises
+    // not to leave behind.
+    if request.temporary {
+        ghosts.grant(chat_id, &request.entity_id);
+        return Ok(PermissionResponse {
+            permission: ChatEditPermission {
+                id,
+                chat_id: chat_id.to_string(),
+                entity_id: request.entity_id,
+                entity_type: request.entity_type,
+                entity_title: request.entity_title,
+                granted_at: crate::types::Timestamp::now().to_rfc3339(),
+            },
+        });
+    }
 
     // Ensure chat exists first (for new chats that haven't sent a message yet)
     // Use ON CONFLICT DO NOTHING so we don't conflict if chat already exists

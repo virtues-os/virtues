@@ -2973,6 +2973,7 @@ pub async fn chat_handler(
         axum::extract::State(state.yjs_state.clone()),
         axum::extract::State(state.chat_cancel_state.clone()),
         axum::extract::State(state.live_turns.clone()),
+        axum::extract::State(state.ghost_permissions.clone()),
         user,
         Json(request),
     )
@@ -3040,7 +3041,13 @@ pub async fn add_chat_permission_handler(
     Json(request): Json<crate::api::chat_permissions::AddPermissionRequest>,
 ) -> Response {
     api_response(
-        crate::api::chat_permissions::add_permission(state.db.pool(), &chat_id, request).await,
+        crate::api::chat_permissions::add_permission(
+            state.db.pool(),
+            &state.ghost_permissions,
+            &chat_id,
+            request,
+        )
+        .await,
     )
 }
 
