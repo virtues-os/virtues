@@ -468,13 +468,39 @@
 				currentTabConversationId || `chat_${generateHex16()}`;
 			conversationId = newConversationId;
 
-			// Reset chat state
+			// Reset chat state.
+			//
+			// EVERYTHING that belongs to ONE conversation resets here. The list
+			// was incomplete and each omission was its own bug, because
+			// navigation is in-place — `TabContent` keys on `tab.id`, so this
+			// component is NOT remounted and anything left behind silently
+			// becomes the next conversation's state:
+			//
+			//  - `isGhost` leaking meant a saved chat inherited "temporary" and
+			//    every turn in it went out with `temporary: true`, was never
+			//    stored, and was gone on reload — while the toggle that would
+			//    undo it is disabled on a non-empty chat. Silent data loss.
+			//  - `queuedMessages` leaking sent chat A's follow-up into chat B.
+			//  - `input` leaking overwrote B's saved draft with A's text, since
+			//    `draftId` is derived from the route and the debounced writer
+			//    fires after the switch.
+			//  - staged refs pointed into torn-down DOM; staged attachments
+			//    rode along on the first send in the new chat.
+			//
+			// Before adding state to this component, ask whether it belongs to
+			// the conversation or to the view. If the conversation: reset here.
 			chat.messages = [];
 			loadedMessages = [];
 			messageMetadata = new Map();
 			contextUsage = undefined;
 			titleGenerated = false;
 			isAwaitingResponse = false;
+			isGhost = isTemporaryRoute(currentTabRoute);
+			queuedMessages = [];
+			input = "";
+			refs.clear();
+			attachments.items = [];
+			attachments.dragActive = false;
 			// Reset page create tracking (for auto-open)
 			tools.reset();
 			// NOTE: We no longer unbind the active page when switching chats.
@@ -1065,6 +1091,22 @@
 	async function handleChatStop() {
 		// Stop the client-side stream
 		chat.stop();
+
+		// And drop anything waiting behind it. Stop is the one gesture that has
+		// to mean "nothing more": the queue used to survive it and then drain
+		// the instant the drain effect saw `ready` again, so stopping a turn
+		// with three follow-ups queued sent all three. The SDK's `stop()`
+		// resolves rather than throwing, so `handleChatSubmit`'s `finally`
+		// clears `isAwaitingResponse` and the effect fires immediately.
+		//
+		// Handed back to the composer rather than discarded when there is just
+		// one, since a queued line is something the person typed and has not
+		// seen sent. More than one cannot go in a single-line composer, so they
+		// are dropped — the chips are gone from the screen either way.
+		if (queuedMessages.length === 1 && !input.trim()) {
+			input = queuedMessages[0];
+		}
+		queuedMessages = [];
 
 		// Mark the in-flight assistant message as user-stopped so the "Stopped"
 		// notice shows immediately (reload reads the persisted subject='cancelled').
