@@ -367,6 +367,14 @@ pub async fn add_notebook_item(pool: &PgPool, notebook_id: &str, req: AddNoteboo
         return Err(Error::NotFound(format!("Notebook not found: {}", notebook_id)));
     }
 
+    // A chat is filed by its own `notebook_id`, not by a member row: the
+    // notebook view lists chats from the session list and ignores `/chat/`
+    // member rows, so a bare row here was an add that did nothing (VIR-359).
+    // Bind the chat; the insert below then keeps the membership row in step.
+    if let Some(chat_id) = url.strip_prefix("/chat/") {
+        set_chat_notebook(pool, chat_id, Some(notebook_id)).await?;
+    }
+
     // role='library' = grounds chat, which is what membership means. The one
     // exception is another notebook: it is a nav-only edge ('pin'), because
     // resolving one notebook's scope through another invites cycles.
