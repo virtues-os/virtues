@@ -192,6 +192,13 @@ async fn execute_single(
         Duration::from_secs(240)
     } else if tool_call.name == "generate_image" {
         Duration::from_secs(120)
+    } else if tool_call.name == "code_interpreter" {
+        // Its schema offers the model a timeout of up to 120s and defaults to
+        // 60. Under the 30s default the DEFAULT was already unreachable: any
+        // code that ran longer died no matter what the model asked for, and
+        // the sandbox subprocess was left running. The ceiling matches what
+        // the tool advertises, plus room for the sandbox to start.
+        Duration::from_secs(150)
     } else {
         config.tool_timeout
     };

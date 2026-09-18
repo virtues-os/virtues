@@ -112,7 +112,11 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         join_hint: None,
     });
     m.insert("data_financial_transaction", TableMetadata {
-        description: "Transactions (amounts in cents, negative=debit)",
+        // positive=expense, negative=credit — Plaid's convention, which is what
+        // the collector writes. This said the opposite, so a model looking for
+        // spending wrote `WHERE amount < 0` and saw under one percent of the
+        // record.
+        description: "Transactions (amounts in cents, positive=money out, negative=refund or credit)",
         category: "financial",
         key_columns: &["account_id", "amount", "currency", "merchant_name", "merchant_category", "description", "category", "is_pending", "transaction_type", "payment_channel", "occurred_at"],
         join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),

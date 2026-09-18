@@ -180,6 +180,20 @@ pub async fn get_timezone(db: &PgPool) -> Result<Option<String>> {
     Ok(profile.home_timezone)
 }
 
+/// "Wednesday, September 17, 2025 at 6:31 PM CDT" — now, where the person is.
+///
+/// The interactive chat prompt has always used the person's timezone; the
+/// applet and worker prompts each formatted `Utc::now()` and appended "UTC",
+/// so a worker asked about "yesterday" after 7pm Central computed tomorrow's
+/// date. One helper, so the three cannot drift again.
+pub async fn local_datetime_line(db: &PgPool) -> String {
+    let now = chrono::Utc::now();
+    match get_timezone(db).await.ok().flatten().and_then(|tz| tz.parse::<chrono_tz::Tz>().ok()) {
+        Some(tz) => now.with_timezone(&tz).format("%A, %B %-d, %Y at %-I:%M %p %Z").to_string(),
+        None => now.format("%A, %B %-d, %Y at %-I:%M %p UTC").to_string(),
+    }
+}
+
 /// Seed `home_timezone` from the box's own system clock if it has never been set.
 /// Idempotent — a no-op once a value exists. Call once at server startup, before
 /// the scheduler resolves cron timezones.

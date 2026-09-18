@@ -139,6 +139,11 @@ pub async fn dispatch(
         let pool = pool.clone();
         let tx = tx.clone();
         let cancel = cancel.clone();
+        // The orchestrator's scope is the worker's scope. Built from
+        // `Default` before, which meant no notebook and `Weighted`: inside a
+        // grounded chat the orchestrator was told "answer ONLY from these
+        // materials" while every worker it sent out searched the whole record.
+        let scope = (context.notebook_id.clone(), context.scope_mode);
         handles.push(tokio::spawn(async move {
             run_one_worker(
                 pool,
@@ -150,6 +155,7 @@ pub async fn dispatch(
                 style,
                 tx,
                 cancel,
+                scope,
             )
             .await
         }));
@@ -228,6 +234,7 @@ async fn run_one_worker(
     style: WorkerStyle,
     tx: Option<Sender<SubagentUpdate>>,
     cancel: Option<CancellationToken>,
+    scope: (Option<String>, crate::search::ScopeMode),
 ) -> MissionResult {
     // Announce the worker as thinking so the panel shows it immediately.
     emit(&tx, dispatch_id, worker_id, &title, &model, SubagentStatus::Thinking, 0).await;
@@ -235,7 +242,7 @@ async fn run_one_worker(
     // Research workers investigate read-only; Council voices speak as a perspective (think-only).
     let (system_prompt, tools) = match style {
         WorkerStyle::Research => (
-            build_worker_prompt(&objective),
+            build_worker_prompt(&pool, &objective).await,
             crate::tools::get_tools_for_subagent(),
         ),
         WorkerStyle::Voice => (
@@ -245,8 +252,12 @@ async fn run_one_worker(
     };
     let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt));
 
+    let (notebook_id, scope_mode) = scope;
     let context = ToolContext {
         user_id: Some("subagent".to_string()),
+        // A worker searches where the turn that sent it is allowed to search.
+        notebook_id,
+        scope_mode,
         // Workers don't re-emit panel updates or spawn sub-workers.
         ..Default::default()
     };
@@ -399,8 +410,8 @@ fn truncate_source_data(tool_name: &str, mut data: Value) -> Value {
 }
 
 /// System prompt for a single read-only research worker.
-fn build_worker_prompt(objective: &str) -> String {
-    let datetime = Utc::now().format("%A, %B %-d, %Y at %-I:%M %p UTC").to_string();
+async fn build_worker_prompt(pool: &PgPool, objective: &str) -> String {
+    let datetime = crate::api::profile::local_datetime_line(pool).await;
     format!(
         "You are a focused research worker with ONE objective. Pursue it, then report back.\n\n\
          Current date/time: {datetime}\n\n\
