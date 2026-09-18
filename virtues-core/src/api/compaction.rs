@@ -255,8 +255,11 @@ pub async fn compact_chat(
             let subject: Option<String> = row.get("subject");
             let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
 
-            let tool_calls = tool_calls_raw
-                .and_then(|tc| serde_json::from_value(tc).ok());
+            let tool_calls = tool_calls_raw.and_then(|tc| {
+                serde_json::from_value(tc)
+                    .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                    .ok()
+            });
             let intent = intent_raw
                 .and_then(|i| serde_json::from_value(i).ok());
 
@@ -825,8 +828,11 @@ pub async fn needs_compaction(
             let subject: Option<String> = row.get("subject");
             let reasoning_details: Option<serde_json::Value> = row.get("reasoning_details");
 
-            let tool_calls = tool_calls_raw
-                .and_then(|tc| serde_json::from_value(tc).ok());
+            let tool_calls = tool_calls_raw.and_then(|tc| {
+                serde_json::from_value(tc)
+                    .map_err(|e| tracing::warn!(msg_id = %id, error = %e, "tool_calls did not parse"))
+                    .ok()
+            });
             let intent = intent_raw
                 .and_then(|i| serde_json::from_value(i).ok());
 
