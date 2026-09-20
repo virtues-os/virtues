@@ -37,6 +37,7 @@
 	import { ModelChoiceController } from "$lib/components/chat/state/modelChoice.svelte";
 	import { OpeningRevealController } from "$lib/components/chat/state/openingReveal.svelte";
 	import { ToolSideEffects } from "$lib/components/chat/state/toolSideEffects";
+	import { toolErrorDetail, toolErrorSummary } from "$lib/components/chat/state/toolError";
 	import { observeComposerReserve } from "$lib/components/chat/state/composerReserve";
 	import { readDraft, writeDraft, NEW_CHAT_DRAFT_ID } from "$lib/components/chat/state/drafts";
 
@@ -282,6 +283,23 @@
 	// opens a page beside the chat, edit_page animates one (see
 	// state/toolSideEffects for why both seed before they act).
 	const tools = new ToolSideEffects();
+
+	/**
+	 * Did the turn go on after the tool call at `index` — another call, or
+	 * reply text? A failed call the model then recovered from is working-out
+	 * and belongs in the thinking block with the other calls; one the turn
+	 * ended on is what the person got instead of an answer, and stays in the
+	 * body. Measured on a live box: nine of nine sql_query failures in two
+	 * weeks were a guessed column followed by the right one, and every one
+	 * sat in the transcript in red, in full, beside a correct answer.
+	 */
+	function turnMovedPast(parts: any[], index: number): boolean {
+		return parts.some(
+			(p: any, i: number) =>
+				i > index &&
+				(p.type.startsWith("tool-") || (p.type === "text" && p.text?.trim())),
+		);
+	}
 
 	// Effect to handle create_page side effects (auto-open new pages)
 	// Only triggers for pages created during this session, not when reopening old chats
@@ -1952,22 +1970,30 @@
 														<span>Generating image…</span>
 													</div>
 												{/if}
-												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error" && !inInterview}
-													<!-- A live static tool part carries no `toolName` (only its
+												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error" && !inInterview && !turnMovedPast(message.parts, partIndex)}
+													{@const errorText = (part as any).errorText as string | undefined}
+													{@const errorDetail = toolErrorDetail(errorText)}
+													<!-- Only a failure the turn ENDED on: it is what the person
+													     got instead of an answer. One the model recovered from
+													     is in the thinking block (see turnMovedPast).
+													     A live static tool part carries no `toolName` (only its
 													     `tool-<name>` type); a reloaded row does. Read the name
-													     off the type so the line never says "Error:  failed". -->
+													     off the type so the line never says "Error:  failed".
+													     The text was written for the model: its first line is
+													     the message, and the column list it was handed sits
+													     behind a disclosure. -->
 													<div
 														class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg"
 													>
-														<span
-															class="font-medium"
-															>Error:</span
-														>
+														<span class="font-medium">Error:</span>
 														{(part as any).toolName ?? part.type.slice("tool-".length)}
-														failed
-														{#if (part as any).errorText}
-															- {(part as any)
-																.errorText}
+														failed{#if errorText}
+															- {toolErrorSummary(errorText)}{/if}
+														{#if errorDetail}
+															<details class="mt-2">
+																<summary class="cursor-pointer text-xs opacity-80">Details</summary>
+																<pre class="mt-1 whitespace-pre-wrap font-mono text-xs opacity-90">{errorDetail}</pre>
+															</details>
 														{/if}
 													</div>
 												{/if}

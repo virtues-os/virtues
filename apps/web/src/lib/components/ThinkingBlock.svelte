@@ -2,6 +2,7 @@
 	import { slide } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
 	import ThinkingMark from "./ThinkingMark.svelte";
+	import { toolErrorSummary } from "$lib/components/chat/state/toolError";
 
 	interface ToolCallPart {
 		type: string;
@@ -591,8 +592,15 @@
 								{:else}
 									<span class="tool-icon" class:error={isError}>·</span>
 								{/if}
+								<!-- A failed call says why, in one line: the Postgres
+								     message, not the column list the model was handed.
+								     The next item in this list is the retry, so a failure
+								     the model recovered from reads as what it was — one
+								     wrong guess on the way — and never leaves this block
+								     for the transcript (ChatView keeps the body-level
+								     error for a turn that ENDED on the failure). -->
 								<span class="tool-description">
-									{getToolDescription(tool, isPending)}
+									{getToolDescription(tool, isPending)}{#if isError && tool.errorText}<span class="tool-reason"> · failed: {toolErrorSummary(tool.errorText)}</span>{/if}
 								</span>
 							</li>
 						{/if}
@@ -793,6 +801,10 @@
 
 	.tool-description {
 		flex: 1;
+	}
+
+	.tool-reason {
+		opacity: 0.85;
 	}
 
 	.tool-spinner {
