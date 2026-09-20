@@ -657,123 +657,53 @@ fn sql_query_tool() -> ToolConfig {
         id: "sql_query".to_string(),
         name: "Query Data".to_string(),
         description: "Query user's personal data with SQL".to_string(),
-        llm_description: r#"Execute read-only SQL queries against the user's personal data.
+        llm_description: r#"Execute read-only SQL queries against the user's personal data (PostgreSQL).
 
 Operations:
-- 'list_tables': Get all tables with row counts
-- 'get_schema': Get detailed columns for specific table(s)
-- 'query': Execute a SELECT query (read-only, max 200 rows)
+- 'query': Execute a SELECT (read-only, max 200 rows)
+- 'get_schema': Every column of specific table(s), with types, and how each table joins
+- 'list_tables': All tables with row counts
 
 ================================================================================
-DATA TABLES (raw ontology from connected sources)
+TABLES AND THEIR COLUMNS
 ================================================================================
+Write against the column names listed here, not names that sound right — these
+are house conventions, and a plausible English name is usually wrong. Every
+table also has `id`, `created_at` and `updated_at`; created_at/updated_at are
+when WE wrote the row, never when the thing happened, so filter time on
+occurred_at or started_at/ended_at. data_* tables also carry `metadata` (jsonb)
+and `source_stream_id`. For any column not listed, call get_schema.
 
-HEALTH
-  data_health_heart_rate     BPM measurements from wearables
-  data_health_hrv            Heart rate variability (ms)
-  data_health_steps          Step counts
-  data_health_sleep          Sleep sessions with duration & quality
-  data_health_workout        Exercise sessions (type, duration, calories)
-
-LOCATION  
-  data_location_point        Raw GPS coordinates (high volume)
-  data_location_visit        Place visits with arrival/departure times
-
-COMMUNICATION
-  data_communication_email          Email messages (subject, body, from/to)
-  data_communication_message        Chat messages (iMessage, SMS, etc.)
-  data_communication_transcription  Voice/audio transcriptions
-
-CALENDAR
-  data_calendar_event        Events with attendees, location, times
-
-FINANCIAL (amounts stored in cents - divide by 100 for dollars)
-  data_financial_account      Bank/credit/investment accounts
-  data_financial_transaction  Purchases, transfers, payments
-  data_financial_asset        Investment holdings (stocks, crypto)
-  data_financial_liability    Loans, mortgages, debt
-
-ACTIVITY
-  data_activity_app_session     Desktop/mobile app usage sessions
-  data_activity_web_browsing  Web browsing history
-
-CONTENT
-  data_content_document     Saved documents and notes
-  data_content_conversation AI chat history (search artifact)
-  data_content_bookmark     Saved/curated items (GitHub stars, bookmarks)
+<<TABLE_CATALOG>>
+Data tables carry raw identifiers, never an entity id. To reach the person,
+place or org behind a row, go through wiki_refs:
+  JOIN wiki_refs r ON r.source_table = 'data_communication_message' AND r.source_id = m.id
+  JOIN wiki_people p ON p.id = r.entity_id          (or wiki_places / wiki_orgs)
 
 ================================================================================
-WIKI TABLES (entity resolution + temporal context)
+RULES THE COLUMN LIST CANNOT SAY
 ================================================================================
-
-ENTITIES (resolved nouns in user's life)
-  wiki_people       People with names, emails, relationship info
-  wiki_places       Places with name, address, coordinates, visit stats
-  wiki_orgs         Organizations with type, role, and the span you were there
-
-TEMPORAL (daily/yearly context)
-  wiki_days         One row per day; its prose lives in the wiki_day_prose view
-  wiki_events       Timeline events within a day
-
-REFERENCES
-  wiki_refs         Junction table linking entities to ontology records.
-                    Columns: entity_type, entity_id, source_table, source_id,
-                    role, occurred_at. `role` is one of sender, recipient,
-                    attendee, location, merchant. This is the ONLY way to get
-                    from a data_* row to a resolved person/place/org — data
-                    tables carry raw identifiers, never an entity id.
-
-NARRATIVE (life story structure)
-  wiki_years        Year-level summaries
-  wiki_chapters     Named spans of life
-  wiki_stories      Story-level groupings within a chapter
-  wiki_articles     Resolved articles about a subject
-  wiki_day_prose    The day's written prose
-  wiki_notes        User-authored notes
-  wiki_rules        User-authored rules
-
-================================================================================
-COLUMN NAMING (house rules — guess with these, not with English)
-================================================================================
-These are conventions, not English defaults, so a plausible-sounding column name
-is usually wrong. The schema was renamed to hold to them:
-
-- Time: `occurred_at` for an instant; `started_at`/`ended_at` for a span.
-  `created_at`/`updated_at` mean when WE wrote the row — never when the thing
-  happened, so never filter an event by them. A table has one or the other:
-  data_health_sleep is a span and has NO occurred_at.
-- Booleans carry `is_`/`has_`: `is_pending`, `is_all_day`, `is_read`,
-  `has_attachments`. Never a bare adjective.
-- Quantities carry their unit: `duration_minutes`, `hrv_ms`, `amount_cents`
-  where cents is the unit. (data_financial_transaction is the exception: its
-  column is `amount`, in cents.)
-- Message bodies are `body`, not `content`/`body_text`. Places are
-  `location_name`, not `location`. Raw contact strings are `from_identifier` /
-  `to_identifiers` / `from_handle`, not `from_address` or `sender_url`.
-- Plural table names except `data_*`, which is singular (one observation).
-
-If you are not certain of a column, call get_schema — it costs one round trip,
-and a wrong column costs the same round trip plus a wasted query.
+- In a JOIN, qualify EVERY column (m.occurred_at, never occurred_at): most
+  tables share occurred_at, date and id, and Postgres refuses the bare name
+  as ambiguous.
+- A table is an instant (occurred_at) or a span (started_at/ended_at), never
+  both. Sleep, visits, sessions, workouts and events are spans.
+- Plural table names except data_*, which is singular (one observation).
 
 ================================================================================
 QUERY TIPS (PostgreSQL dialect)
 ================================================================================
-- Use 'get_schema' to see columns before writing queries
+- A column you need that is not listed above: get_schema for that table
 - Date filter: WHERE occurred_at > now() - interval '7 days'
 - Truncate to a period: date_trunc('month', now()), date_trunc('day', now())
 - Cast a timestamp to a date: timestamp::date  (today = current_date)
-- Financial: amount/100.0 for dollars
-- JOIN data tables to wiki_people/places/orgs THROUGH wiki_refs (see above)
 - Always LIMIT results (max 200)
 
 ================================================================================
 EXAMPLE QUERIES
 ================================================================================
 
--- Spending by category this month.
--- `category` is a jsonb ARRAY (one row can carry several); `merchant_category`
--- is the scalar to group by. Grouping by the array gives one group per
--- permutation, not per category.
+-- Spending by category this month (merchant_category is the scalar; category is an array)
 SELECT merchant_category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
 FROM data_financial_transaction
 WHERE occurred_at >= date_trunc('month', now())
@@ -793,13 +723,8 @@ GROUP BY p.name ORDER BY messages DESC LIMIT 10
 SELECT started_at::date as day, duration_minutes, sleep_quality_score
 FROM data_health_sleep
 WHERE started_at > now() - interval '14 days'
-ORDER BY started_at DESC
-
--- Calendar events today
-SELECT title, started_at, ended_at, location_name
-FROM data_calendar_event
-WHERE started_at::date = current_date
-ORDER BY started_at"#.to_string(),
+ORDER BY started_at DESC"#
+            .replace("<<TABLE_CATALOG>>", &crate::sql_catalog::prompt_block()),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["operation"],
@@ -1523,6 +1448,21 @@ pub fn default_enabled_tools() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sql_query description is generated: its table block is spliced in
+    /// from the catalog when `default_tools()` runs. A placeholder that
+    /// survived would be handed to the model AS the list of what it can query.
+    #[test]
+    fn sql_query_description_is_generated_from_the_catalog() {
+        let desc = default_tools()
+            .into_iter()
+            .find(|t| t.id == "sql_query")
+            .expect("sql_query is registered")
+            .llm_description;
+        assert!(!desc.contains("<<TABLE_CATALOG>>"), "placeholder reached the model");
+        assert!(desc.contains("data_communication_message(body, "));
+        assert!(desc.contains("wiki_day_prose(day_id, date, prose)"));
+    }
 
     #[test]
     fn test_default_tools() {
