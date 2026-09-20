@@ -255,10 +255,18 @@
 	color: var(--color-foreground-muted);
 }
 
-/* List lines — consistent horizontal padding for bullet/ordered lists */
+/* List lines — a hanging indent for bullet/ordered lists.
+   MARGIN, not padding, and only horizontally (the "padding, never margin"
+   rule above is about vertical margins collapsing). drawSelection measures
+   the left edge of every wrapped-selection row from the padding of the FIRST
+   .cm-line in the viewport, so a per-line-type padding-left makes a paragraph
+   selection start one indent in whenever a list line is scrolled to the top
+   (@codemirror/view rectanglesForRange). Horizontal margin is invisible to
+   that measurement. The 4px is the base .cm-line padding (theme.ts) so the
+   text lands exactly where the old padding put it. */
 .cm-list-line {
-	padding-left: 1.25rem !important;
-	padding-right: 0.5rem !important;
+	margin-left: calc(1.25rem - 4px);
+	margin-right: calc(0.5rem - 4px);
 }
 
 /* =============================================================================
@@ -505,12 +513,24 @@
    LIVE PREVIEW — BLOCKQUOTE
    ============================================================================= */
 
+/* Indent via horizontal margin for the same drawSelection reason as
+   .cm-list-line; the bar is a pseudo-element pulled back into the margin so
+   it stays at the content's left edge without any line padding. */
 .cm-blockquote-line {
-	border-left: var(--md-quote-border);
-	padding-left: 1.25rem !important;
-	padding-right: 0.5rem !important;
+	position: relative;
+	margin-left: calc(1.25rem - 4px);
+	margin-right: calc(0.5rem - 4px);
 	color: var(--color-foreground-muted);
 	font-style: italic;
+}
+.cm-blockquote-line::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: calc(4px - 1.25rem);
+	border-left: var(--md-quote-border);
+	pointer-events: none;
 }
 
 /* =============================================================================
