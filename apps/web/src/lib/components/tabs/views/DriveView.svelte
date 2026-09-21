@@ -13,6 +13,8 @@
 		reextractDriveFile,
 	} from "$lib/api/client";
 	import { formatDate } from "$lib/utils/dateUtils";
+	import { notifyTrashed } from "$lib/utils/toasts";
+	import { toast } from "svelte-sonner";
 	import Icon from "$lib/components/Icon.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import UniversalDataGrid, {
@@ -50,24 +52,12 @@
 	let renameValue = $state("");
 	let renaming = $state(false);
 
-	// Toast notification
-	let toastMessage = $state<string | null>(null);
-	let toastTimeout: ReturnType<typeof setTimeout> | null = null;
-
 	// File input ref
 	let fileInput = $state<HTMLInputElement | null>(null);
 
 	onMount(async () => {
 		await loadData();
 	});
-
-	function showToast(message: string) {
-		if (toastTimeout) clearTimeout(toastTimeout);
-		toastMessage = message;
-		toastTimeout = setTimeout(() => {
-			toastMessage = null;
-		}, 3000);
-	}
 
 	async function loadData() {
 		loading = true;
@@ -311,7 +301,14 @@
 			files = newFiles;
 			// Refresh usage
 			usage = await getDriveUsage().catch(() => usage);
-			showToast(`"${fileToDelete.filename}" moved to Trash`);
+			notifyTrashed({
+				kind: "file",
+				id: fileToDelete.id,
+				name: fileToDelete.filename,
+				// This view holds its own list, so Undo has to re-read it here;
+				// invalidating the shell's cache isn't enough.
+				onRestored: loadData,
+			});
 			fileToDelete = null;
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Delete failed";
@@ -423,7 +420,7 @@
 			await moveDriveFile(renamingFile.id, newPath);
 			const newFiles = await listDriveFiles(currentPath);
 			files = newFiles;
-			showToast(`Renamed to "${renameValue.trim()}"`);
+			toast(`Renamed to "${renameValue.trim()}"`);
 			renamingFile = null;
 			renameValue = "";
 		} catch (e) {
@@ -818,19 +815,6 @@
 			{/if}
 		</div>
 </Page>
-
-<!-- Toast Notification -->
-{#if toastMessage}
-	<div
-		class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-2 duration-200"
-	>
-		<div
-			class="bg-foreground text-background px-4 py-2 rounded-lg shadow-lg text-sm"
-		>
-			{toastMessage}
-		</div>
-	</div>
-{/if}
 
 <!-- New Folder Modal -->
 <Modal
