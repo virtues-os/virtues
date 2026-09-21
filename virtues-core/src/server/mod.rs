@@ -2026,3 +2026,69 @@ mod cors_tests {
         }
     }
 }
+
+/// Route paths must be spelled for the axum this crate actually depends on.
+///
+/// axum 0.8 captures a path parameter as `{id}`; 0.7 — what we are on — spells
+/// it `:id` and treats braces as ordinary characters. So a 0.8-style path is
+/// not a compile error and not a warning: it registers a literal route named
+/// after the parameter, and every real id falls through to the fallback as a
+/// 404. `/api/bookmarks/{id}` shipped that way and every bookmark's detail page
+/// answered "Failed to load bookmark: 404" until 2026-09-21.
+///
+/// The models that write most of this code are fluent in the newer syntax, so
+/// this will be attempted again. A text scan is the right shape of check: a
+/// Router cannot be asked what paths it holds, and the mistake is legible in
+/// the source and nowhere else.
+#[cfg(test)]
+mod route_syntax_tests {
+    use std::path::{Path, PathBuf};
+
+    fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("read src dir").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                rs_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    #[test]
+    fn no_axum_0_8_path_params() {
+        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rs_files(&src, &mut files);
+
+        // Built rather than written so this test's own prose cannot trip it.
+        let needle = format!(".{}(\"", "route");
+        let mut offenders = Vec::new();
+
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("read source");
+            for (n, line) in text.lines().enumerate() {
+                let Some(rest) = line.split_once(&needle).map(|(_, r)| r) else {
+                    continue;
+                };
+                let Some(path) = rest.split('"').next() else {
+                    continue;
+                };
+                if path.contains('{') {
+                    offenders.push(format!(
+                        "{}:{} — {path}",
+                        file.strip_prefix(&src).unwrap_or(file).display(),
+                        n + 1
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "axum 0.7 path parameters are `:name`, not `{{name}}`. A braced path \
+             registers a literal route and 404s every real id:\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+}
