@@ -115,6 +115,14 @@ impl ChatCancellationState {
     }
 
     /// Was this chat's current turn stopped by the cap rather than by a person?
+    /// Whether the turn holding this chat's slot has been told to stop. It
+    /// may still be running out a tool call; for "is a turn in progress"
+    /// purposes it is over.
+    pub fn is_cancelled(&self, chat_id: &str) -> bool {
+        let guard = self.tokens.read().unwrap_or_else(|e| e.into_inner());
+        guard.get(chat_id).is_some_and(|reg| reg.token.is_cancelled())
+    }
+
     pub fn was_unattended(&self, chat_id: &str, token: &CancellationToken) -> bool {
         let guard = self.tokens.read().unwrap_or_else(|e| e.into_inner());
         guard.get(chat_id).is_some_and(|reg| reg.token.eq(token) && reg.unattended)
@@ -1440,7 +1448,14 @@ async fn chat_handler_inner(
     // both billed. The client's Try again rejoins first and only asks anew
     // when nothing is live; this is the boundary for a client that does not,
     // or a double tap. 409, with the name the client keys on.
-    if !request.temporary && live_turns.get(&request.chat_id).is_some() {
+    // A turn Stop has cancelled still holds the entry until its tool returns
+    // (the loop checks the token between deltas, not inside a tool), so
+    // without the second clause a Stop during a long tool answered every send
+    // with this 409 for up to the tool's timeout.
+    if !request.temporary
+        && live_turns.get(&request.chat_id).is_some()
+        && !cancel_state.is_cancelled(&request.chat_id)
+    {
         return (
             StatusCode::CONFLICT,
             Json(ChatError {
@@ -1604,8 +1619,11 @@ async fn chat_handler_inner(
     // the question before it — on a new chat, an empty transcript went to the
     // model. So: the client sends its last user message on regenerate too,
     // and if it is not the last user row here, this is a first send of it.
-    // Matched by id (a transcript loaded from the box carries row ids) or by
-    // text (a message sent this session carries the SDK's id, not ours).
+    // Matched by id: the user row is stored under the id the client gave it
+    // (below), so a loaded transcript and a message sent this session both
+    // carry the row's id. A text match stood here first, and deleted the
+    // previous reply whenever the repeated message was a short one — "ok",
+    // "thanks", "continue" — which is exactly the case this exists to stop.
     //
     // The room's own lines (`gs:` subjects) are not "the previous answer" and
     // stay: regenerate in the getting-started room used to delete the step
@@ -1628,9 +1646,11 @@ async fn chat_handler_inner(
                 .fetch_optional(&pool)
                 .await
                 {
-                    Ok(Some((id, content))) => {
-                        m.id.as_deref() == Some(id.as_str()) || content == user_text(m)
-                    }
+                    Ok(Some((id, content))) => match m.id.as_deref() {
+                        Some(client_id) => client_id == id,
+                        // A client that sends no id: the text is all there is.
+                        None => content == user_text(m),
+                    },
                     Ok(None) => false,
                     Err(e) => {
                         // Unknown. Deleting on a guess is the failure this
@@ -1670,7 +1690,11 @@ async fn chat_handler_inner(
         let user_content = user_text(last_user_msg);
 
         let user_message = ChatMessage {
-            id: None,
+            // The client's id, so the row can be recognized again: by a
+            // regenerate (above), and by a retried POST — `append_message`
+            // does nothing on an id it has, so a send that reached the box
+            // and lost the reply does not save the question twice.
+            id: last_user_msg.id.clone().filter(|id| !id.trim().is_empty()),
             role: "user".to_string(),
             content: user_content,
             timestamp: Timestamp::now(),

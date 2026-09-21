@@ -191,6 +191,18 @@ pub async fn save_handler(
             return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
         }
     };
+    // A window outside this range is a typo, not a model: "32k" parsed as 32
+    // would compact on every turn, and 10^10 never. Bounded here, where the
+    // number is stored, whatever the client checked.
+    if let Some(w) = req.context_window {
+        if !(1_000..=10_000_000).contains(&w) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "context_window must be between 1,000 and 10,000,000 tokens" })),
+            )
+                .into_response();
+        }
+    }
     if req.api_key.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,

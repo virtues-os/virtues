@@ -480,6 +480,20 @@
 	async function retryLastTurn() {
 		danglingTurn = false;
 		if (!isGhost) {
+			// The box refused this send because a turn was still running
+			// (turn_in_progress). The message the person just typed was
+			// never saved and sits at the end of the transcript; rejoining
+			// would stream the OLD reply under it and lose it on reload.
+			// Back to the composer it goes, and the rejoin picks up the reply
+			// that was already being written.
+			if (/turn_in_progress/.test(chat.error?.message ?? "")) {
+				const last = chat.messages[chat.messages.length - 1];
+				if (last && last.role === "user") {
+					const text = messageText(last).trim();
+					if (text && !input.trim()) input = text;
+					chat.messages = chat.messages.slice(0, -1);
+				}
+			}
 			const settled = { done: false };
 			const resume = chat
 				.resumeStream()
@@ -497,6 +511,10 @@
 				await new Promise((r) => setTimeout(r, 50));
 			}
 			if (chat.status === "submitted" || chat.status === "streaming") return;
+			// Still pending after 8s: a slow link, not a 204. Regenerating now
+			// could race a rejoin that lands a moment later; leave the card
+			// and let the person press again.
+			if (!settled.done) return;
 
 			await reloadMessages();
 			const last = chat.messages[chat.messages.length - 1];
