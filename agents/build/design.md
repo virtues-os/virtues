@@ -57,8 +57,8 @@ The rail, top to bottom, in three gap-separated groups:
 
 The Home panel, top to bottom:
 
-1. **Doors**: New chat, Search, Pages, Applets. One verb, then places.
-   Search opens the ⌘K palette. Pages opens the list and carries a `+` on
+1. **Doors**: New chat, Pages, Applets, Search. The verb, the places, and
+   last the door that leaves the panel: Search opens the ⌘K palette. Pages opens the list and carries a `+` on
    hover for a new page, the same shape as the Projects label.
 2. **Pinned.** A chat, a project, an applet or a page can be pinned.
 3. **Projects.** Five, then "Show more"; the label opens the full list. A
