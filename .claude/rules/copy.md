@@ -27,7 +27,21 @@ above this — the letter is Adam's, the wiki has its own law, the assistant has
 a persona line in code. A settings page that narrates its own design history
 has drifted.
 
-**Four sentence shapes — these change the most lines:**
+**A passive sentence is a missing subject.** The first thing to check, and the
+one our copy keeps breaking (about one string in ten). "Your account is
+written" — by whom? Answer *the server* and you contradict the page titled "In
+your own words"; answer *you* and it is true and active. **Where the claim is
+that the thing is theirs, the person is the actor. Where the server did
+something, including failing, name the server.**
+
+| Was | Is |
+|---|---|
+| the machine never rewrites them, and anything to add or correct is done on the page | Nothing rewrites them but you, and you can edit either page whenever you like |
+| Your partition of the life, a page each. | Every chapter you named, a page each. |
+| Not written this time. The document is safe. | Your server couldn't write the chapters. Everything you said is safe. |
+| No page yet — it is written when the interview is closed. | No page yet. Finish the interview to create it. |
+
+**Then these, in order:**
 
 1. **The reader is the subject, not the software.** "Turn on file sharing to
    reach the box from your laptop", never "Virtues lets you…". *Allow*, *lets
@@ -35,23 +49,34 @@ has drifted.
 2. **No "we" in a failure.** "Couldn't reach the box", not "We're having
    trouble reaching the box". The only "we" that stays is the claim about the
    company: "We can't read it."
-3. **An error names the fix, not the fault.** "Choose a password of at least
-   eight characters", not "That password is too short". No *oops*, no bare
-   "Invalid input". Put it beside the thing that failed.
-4. **A setting says what it does when on.** The off case is inferred.
+3. **An error is two parts: what happened, then how to fix it.** Both present
+   or it isn't finished. No *oops*, no bare "Invalid input". Put it beside the
+   thing that failed.
+4. **Say the consequence before anything irreversible**, in the same breath as
+   the action. A person cannot consent to a door they did not know was one-way.
+5. **A setting says what it does when on.** The off case is inferred.
+6. **A button names its outcome in the person's intent** — verb plus object.
+   "Write my chapters", not "Submit"; "Delete 3 pages", not "OK".
+
+**Clear, then short, then characterful — in that order.** A few extra words are
+right when they buy understanding; character is what goes first, never clarity.
+"Concise" means nothing spare, not fewer words than the meaning needs.
 
 **Mechanics.** Active, verb-first, **sentence case everywhere** (headings,
-buttons, labels), contractions on. Fragments take no trailing period; full
-sentences keep theirs. Serial comma; no exclamation points. **Hyphens, not em
+buttons, labels), contractions on. **Over 25 words, split the sentence** —
+twenty is the target, twenty-five is the line. Fragments take no trailing
+period; full sentences keep theirs. Serial comma; no exclamation points. **Hyphens, not em
 dashes, in UI strings.** **"Computer", not "Mac"** on anything a PC user can
 reach (the Mac app may say "Mac"). **One name per thing on every screen** —
 recovery phrase, Server ID, applet, Standing, Balance, Wallet activity,
 on-device, sidecar, face, pairing, relay; vendors in their own capitalization.
 American spelling. Turn on/off not enable/disable; enter not type; choose for
 menus, select for objects; after not once; whether for two outcomes; because
-not since; to not in order to. **Don't give the box a mind** — the assistant
-is a character and may think; the box, the record, and an applet do not want
-or try.
+not since; to not in order to. Banned outright: *deliver*, *impact*,
+*leverage*, *utilise*, *streamline*, and schema words on a screen
+(*partition*, *entity*, *provenance*, *payload*, *endpoint*, *instance*,
+*surface*). **Don't give the box a mind** — the assistant is a character and
+may think; the box, the record, and an applet do not want or try.
 
 **Claims — check these before the line exists:**
 
