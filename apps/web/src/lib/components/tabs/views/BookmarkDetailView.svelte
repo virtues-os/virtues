@@ -110,7 +110,7 @@
 			case 'failed':
 				return "This page could not be read, so there is nothing below but what the source gave us.";
 			case 'skipped':
-				return 'Deliberately not read — this address is not one the box fetches.';
+				return 'Deliberately not read - your server doesn\'t fetch this kind of address.';
 			default:
 				return null;
 		}

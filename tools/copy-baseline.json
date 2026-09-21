@@ -1,10 +1,10 @@
 {
-  "banned-word": 7,
-  "dev-word": 26,
-  "em-dash": 181,
+  "banned-word": 6,
+  "dev-word": 21,
+  "em-dash": 141,
   "exclamation": 1,
-  "passive-no-actor": 117,
+  "passive-no-actor": 79,
   "software-subject": 0,
   "we-in-prose": 1,
-  "wrong-name": 48
+  "wrong-name": 0
 }

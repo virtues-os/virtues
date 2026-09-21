@@ -323,7 +323,7 @@
 	async function unpairDevice() {
 		const ok = await confirmAction({
 			title: "Unpair this device?",
-			body: "This clears the saved connection to your box. You'll need to pair again to reconnect. Your data on the box is untouched.",
+			body: "This clears the saved connection to your server. You'll need to pair again to reconnect. Nothing on your server changes.",
 			confirmLabel: "Unpair",
 			danger: true,
 		});

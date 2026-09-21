@@ -2020,7 +2020,7 @@ async fn chat_handler_inner(
             if std::panic::AssertUnwindSafe(drive).catch_unwind().await.is_err() {
                 tracing::error!(chat_id = %chat_id, "the turn's driver panicked; ending the turn");
                 turn.push(serialize_event(&StreamEvent::Error {
-                    error_text: "the box failed while writing this reply".to_string(),
+                    error_text: "Your server failed while writing this reply.".to_string(),
                 }));
                 turn.push("[DONE]".to_string());
             }

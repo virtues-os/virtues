@@ -151,7 +151,7 @@
 <SudoModal
 	action="import_applet_package"
 	title="Install a package from Git"
-	description="Installing runs code you did not write on this box. Approve at the box itself by running `virtues sudo` — the same confirmation used for changing an API key."
+	description="Installing runs code you did not write on this server. Approve at the server itself by running `virtues sudo`, the same confirmation used for changing an API key."
 	actionPayload={{ url: url.trim(), ref: ref.trim() || 'main' }}
 	bind:show={showSudo}
 	onApproved={(id) => runImport(id)}

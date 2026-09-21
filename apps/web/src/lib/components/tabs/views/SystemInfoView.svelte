@@ -399,7 +399,7 @@
 			<h2 class="settings-label">Last 24 hours</h2>
 			{#if history.length < 2}
 				<p class="history-empty">
-					Collecting samples — history appears after the box has run a few minutes.
+					Collecting samples. History appears once your server has run a few minutes.
 				</p>
 			{:else}
 				<div class="history-grid">

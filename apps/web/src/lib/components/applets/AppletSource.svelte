@@ -94,7 +94,7 @@
 					? 'Shipped with Virtues'
 					: listing.forked_from
 						? `Forked from ${listing.forked_from}`
-						: 'Lives on this box — authored or imported'}
+						: 'Lives on this server - authored or imported'}
 				· <code>{listing.dir}</code>
 			</span>
 			{#if listing.origin_root === 'shipped'}

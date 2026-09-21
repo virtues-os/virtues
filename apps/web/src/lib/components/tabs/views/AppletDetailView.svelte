@@ -107,7 +107,7 @@
 			case 'source':
 				return 'Part of a source you connected. Its settings come from the connection — disconnect the source to remove it.';
 			default:
-				return 'Built in. It keeps the box running, so it can be turned off but not deleted — reconcile would recreate it.';
+				return 'Built in. It keeps your server running, so you can turn it off but not delete it - reconcile would recreate it.';
 		}
 	});
 
@@ -683,7 +683,7 @@
 				<section class="source-block">
 					<h3>Source</h3>
 					<p class="muted">
-						The code this applet runs. Read-only — editing forks it onto this box.
+						The code this applet runs. Read-only - editing forks it onto this server.
 					</p>
 					<AppletSource appletId={action.id} />
 				</section>

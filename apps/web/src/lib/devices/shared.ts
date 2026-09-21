@@ -211,7 +211,7 @@ export async function revokeDeviceFlow(device: Device): Promise<boolean> {
 		title: device.is_current ? 'Revoke this device?' : `Revoke "${device.label}"?`,
 		body: device.is_current
 			? `${device.label} is the device you're using. You'll be signed out immediately.`
-			: 'It loses access to the box right away.',
+			: 'It loses access to your server right away.',
 		confirmLabel: 'Revoke',
 		danger: true
 	});
@@ -222,7 +222,7 @@ export async function revokeDeviceFlow(device: Device): Promise<boolean> {
 		if (resp.status === 409) {
 			toast.error('Cannot revoke the only active device', {
 				description:
-					'Run `virtues sudo` on the box to confirm before deleting your last paired device.'
+					'Run `virtues sudo` on your server to confirm before deleting your last paired device.'
 			});
 			return false;
 		}

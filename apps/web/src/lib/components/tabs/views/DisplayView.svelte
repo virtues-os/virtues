@@ -253,7 +253,7 @@
 				     there. -->
 				<p class="notice">
 					<Icon icon="ri:information-line" width="14" />
-					No screen is attached to this box. These settings keep; a screen
+					No screen is attached to this server. These settings keep; a screen
 					uses them when one arrives.
 				</p>
 			{/if}
