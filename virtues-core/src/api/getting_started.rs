@@ -507,7 +507,7 @@ fn graduated_line(state: &GettingStartedState) -> String {
 /// subscription's pitch; "the model", "it can think", and the rest are out.
 fn settled_line(s: &Step) -> String {
     match (s.id, s.status) {
-        ("connect_ai", StepStatus::Skipped) => "You went on without connecting AI. Your server can show you its record, but your assistant cannot answer until AI is connected in Settings.".into(),
+        ("connect_ai", StepStatus::Skipped) => "You went on without connecting AI. Your server can still show you its record, but your assistant can't answer until you connect AI in Settings.".into(),
         ("introductions", StepStatus::Skipped) => "You set introductions aside for now. Your name and birth date are in Settings whenever you want them, or say the word here and this step comes back.".into(),
         ("connect_world", StepStatus::Skipped) => "You set your integrations aside for now. They are waiting in Settings whenever you want them.".into(),
         ("interview", StepStatus::Skipped) => "You set your story aside for now. The interview is waiting here whenever you want it.".into(),
@@ -537,7 +537,7 @@ fn ask_line(s: &Step) -> String {
         // The buttons under this say Subscribe, Sign in and My own models, so
         // the prose does not enumerate the doors. It spends its words on the
         // one thing that needs arguing.
-        "connect_ai" => "AI has to be connected before anything else works. A Virtues subscription gives you the best of Claude, Gemini, GPT and Grok under zero data retention — nothing you send is stored or trained on, by them or by us. One day these models should run on your server itself; the hardware has to get cheaper first.".into(),
+        "connect_ai" => "Connect AI first; nothing else works until you do. A Virtues subscription gives you the best of Claude, Gemini, GPT, and Grok under zero data retention. Nothing you send is stored or trained on, by them or by us. One day these models should run on your server itself; the hardware has to get cheaper first.".into(),
         // Plainly, as a list: these five are the most important thing on the
         // screen, and buried in a sentence they read as decoration. The
         // person still answers in one message, in their own order.
@@ -548,9 +548,9 @@ fn ask_line(s: &Step) -> String {
          * feeds it, and that is the honest argument for a second. */
         "connect_world" => match s.connected {
             Some(n) if n > 0 => format!(
-                "Next, your integrations: what the record is written from. You have {n} connected. Add as many as you like — this Mac holds years of your messages and browsing and needs no account, your phone holds where you went and who you called, and Google holds your mail and calendar — then carry on. Nothing they hold ever leaves your server."
+                "Next, your integrations: what the record is written from. You have {n} connected, and you can add as many as you like. Your computer holds years of your messages and browsing and needs no account. Your phone holds where you went and who you called. Google holds your mail and calendar. What they hold comes to your server and stays there. Only the part your assistant needs to answer you goes out, under zero data retention."
             ),
-            _ => "Next, your integrations: what the record is written from. This Mac holds years of your messages and browsing and needs no account; your phone holds where you went and who you called; Google holds your mail and calendar. One is enough to begin, and the record is only as full as what feeds it. Nothing they hold ever leaves your server.".into(),
+            _ => "Next, your integrations: what the record is written from. Your computer holds years of your messages and browsing and needs no account. Your phone holds where you went and who you called. Google holds your mail and calendar. One is enough to begin, and the record is only as full as what feeds it. What they hold comes to your server and stays there. Only the part your assistant needs to answer you goes out, under zero data retention.".into(),
         },
         "interview" => "Last comes your story. The record can hold what happened; only you can say what it meant. This is an interview with your assistant of about twenty minutes, one question at a time. Stop wherever you like; your place is kept.".into(),
         _ => String::new(),

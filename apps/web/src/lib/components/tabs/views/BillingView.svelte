@@ -672,7 +672,7 @@
 		<section class="chapter">
 			<h2 class="settings-label">Standing</h2>
 			<p class="chapter-lede">
-				We could not reach the Virtues billing service just now, so this page cannot say
+				Your server couldn't reach the Virtues billing service, so this page can't say
 				where your subscription stands. Your server keeps working either way. Check your
 				connection and reload.
 			</p>

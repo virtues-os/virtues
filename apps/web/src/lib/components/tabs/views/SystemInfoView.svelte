@@ -273,7 +273,7 @@
 	</div>
 {/snippet}
 
-<Page title="System" description="The machine, examined." maxWidth="wide">
+<Page title="System" description="Your server, examined." maxWidth="wide">
 	<!-- Two different kinds of thing, kept visibly different. The pill REPORTS
 	     (no border, no hover, nothing to press); Detail ACTS. A status light
 	     styled like a button invites clicks that do nothing, which is why the

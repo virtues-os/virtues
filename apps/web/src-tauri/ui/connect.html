@@ -1553,8 +1553,8 @@ its devices apart — type its address.",
           <p class="pmark">∴ Virtues</p>
           <h2>The words that open ${esc(box.name)}</h2>
           <p class="pwhy">These four words are the only way back into this server if you
-            lose every device that can reach it. They were shown once, during setup,
-            and the server will never show them again.</p>
+            lose every device that can reach it. You saw them once, during setup,
+            and your server will never show them again.</p>
           <p class="pphrase">${esc(phrase)}</p>
           <p class="pfoot">Keep this where you keep things that matter — they are as
             good as the server itself. Anyone holding these words and standing at your
@@ -1986,7 +1986,7 @@ its devices apart — type its address.",
         if (gen !== searchGen) return;
         if (!(res && res.ok && res.grant)) {
           return renderGrantFailed(server, ssid,
-            (res && res.error) || "Atlas couldn't mint the grant.");
+            (res && res.error) || "Your account couldn't hand this server its key. Try again, or link it later from Settings.");
         }
         let wrote;
         try {
@@ -2050,7 +2050,7 @@ its devices apart — type its address.",
         renderPair(
           [server],
           '',
-          `${ssid ? `Your server is on ${ssid}. ` : ''}When a 6-digit code shows on its display, select it below.`,
+          `${ssid ? `Your server is on ${ssid}. ` : ''}Choose it below, then run virtues pair on it for a six-digit code.`,
         );
       }
 
@@ -2419,7 +2419,7 @@ its devices apart — type its address.",
         const typed = document.getElementById('code');
         const code = (preset || (typed ? typed.value : '')).replace(/\s+/g, '');
         if (!server || code.length < 6) {
-          return say('Enter the 6-digit code from the server\'s display.', 'err');
+          return say('Run virtues pair on your server for a six-digit code, then enter it here.', 'err');
         }
         if (go) go.disabled = true;
         say('Pairing…');

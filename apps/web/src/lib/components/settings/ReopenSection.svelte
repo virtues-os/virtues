@@ -67,8 +67,8 @@
 	{#if armed}
 		<div class="confirm">
 			<p>
-				Every paired device is signed out, including this one — you'll set the
-				box up again from the app, using the words it shows on its screen.
+				You'll sign out every paired device, including this one. You'll then set
+				your server up again from the app, using the words on its screen.
 			</p>
 			<div class="row">
 				<Button variant="danger" size="sm" loading={busy} onclick={go}>

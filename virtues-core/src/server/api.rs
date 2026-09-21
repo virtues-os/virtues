@@ -1494,7 +1494,10 @@ pub async fn claim_billing_handler(
         tracing::error!("failed to store api_key: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "failed to store api_key" })),
+            Json(serde_json::json!({
+                "error": "Your payment went through, but your server couldn't save your account key. \
+                          Try again and your server will pick the payment up."
+            })),
         )
             .into_response();
     }
@@ -3430,7 +3433,7 @@ pub async fn upload_drive_file_handler(
         (
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(serde_json::json!({
-                "error": "File too large — the upload limit is 250 MB."
+                "error": "Your server didn't take that file: it's over the 250 MB upload limit. Split it or compress it, then upload again."
             })),
         )
             .into_response()

@@ -1450,7 +1450,7 @@ async fn chat_handler_inner(
             Json(ChatError {
                 error: "AI is not connected".to_string(),
                 details: Some(
-                    "This server has nothing to answer with yet. Connect a Virtues subscription or your own AI endpoint in Getting started."
+                    "Your server has nothing to answer with yet. Connect a Virtues subscription, or point it at your own models, in Getting started."
                         .to_string(),
                 ),
             }),

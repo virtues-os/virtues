@@ -563,7 +563,9 @@ pub async fn upload_file(
     // Check quota
     if !check_quota(config, size_bytes).await? {
         return Err(Error::InvalidInput(
-            "Not enough free space on the box's disk.".into(),
+            "Your server is out of space, so it didn't save this file. Empty the trash in Drive or \
+             delete something large, then upload again."
+                .into(),
         ));
     }
 
@@ -706,7 +708,9 @@ pub async fn upload_system_file(
     // Check quota
     if !check_quota(config, size_bytes).await? {
         return Err(Error::InvalidInput(
-            "Not enough free space on the box's disk.".into(),
+            "Your server is out of space, so it didn't save this file. Empty the trash in Drive or \
+             delete something large, then upload again."
+                .into(),
         ));
     }
 

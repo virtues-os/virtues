@@ -373,7 +373,11 @@ pub async fn finalize_interview(pool: &PgPool, req: &CloseRequest) -> Result<Fin
 
     let article = crate::api::wiki_articles::get_article(pool, "narrative_identity", NAR_IDENTITY_ID)
         .await?
-        .ok_or_else(|| Error::Other("document written but its article is missing".into()))?;
+        .ok_or_else(|| Error::Other(
+            "Your server wrote your story but couldn't find its page. Everything you said is \
+             safe. Open Your story again in a moment."
+                .into(),
+        ))?;
 
     let (chapters_written, chapters_error) = match chapters_from_interview(pool).await {
         Ok(n) => (n, None),
