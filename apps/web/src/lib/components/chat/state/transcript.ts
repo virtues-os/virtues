@@ -34,6 +34,7 @@ export interface MessageMeta {
 	interrupted?: boolean;
 	unattended?: boolean;
 	maxSteps?: boolean;
+	budget?: boolean;
 }
 
 /** Helper function to convert database messages to Chat parts */
@@ -49,6 +50,8 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 	// as one of the three above — the cap as the person's own stop.
 	const unattended = msg.subject === "unattended";
 	const maxSteps = msg.subject === "max_steps";
+	// The turn's own cost or time ceiling, checked between steps.
+	const budget = msg.subject === "budget";
 	if (
 		msg.agentId ||
 		msg.provider ||
@@ -56,7 +59,8 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 		cutShort ||
 		interrupted ||
 		unattended ||
-		maxSteps
+		maxSteps ||
+		budget
 	) {
 		metadata.set(msg.id, {
 			agentId: msg.agentId,
@@ -66,6 +70,7 @@ export function convertMessageToParts(msg: any, metadata: Map<string, MessageMet
 			interrupted,
 			unattended,
 			maxSteps,
+			budget,
 		});
 	}
 

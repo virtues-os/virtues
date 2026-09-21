@@ -14,12 +14,16 @@
  * them on the way out) and say nothing a red mark does not already say.
  */
 
+// The envelope the box writes now (`Tool failed (sql_query, execution): …`)
+// and the three stacked prefixes it wrote before 2026-09-21, which rows
+// persisted then still carry.
+const ENVELOPE = /^Tool failed \([^)]*\):\s*/;
 const PREFIXES = ["Tool execution failed:", "Execution failed:", "Query failed:"];
 const MAX_SUMMARY = 160;
 
 /** The first line, without our own wrappers, capped so it stays a line. */
 export function toolErrorSummary(text: string | undefined | null): string {
-	let line = (text ?? "").split("\n")[0].trim();
+	let line = (text ?? "").split("\n")[0].trim().replace(ENVELOPE, "");
 	let stripped = true;
 	while (stripped) {
 		stripped = false;

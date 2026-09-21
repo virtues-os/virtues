@@ -43,6 +43,7 @@ pub mod models;
 pub mod entity_article_gen;
 pub mod assistant_memories;
 pub mod circumstances;
+pub mod coverage;
 pub mod narrative_draft;
 pub mod bookmarks;
 pub mod pages;

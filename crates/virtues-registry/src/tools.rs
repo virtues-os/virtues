@@ -58,7 +58,7 @@ pub struct ToolConfig {
 /// Get default built-in tool configurations
 ///
 /// These are the core tools that ship with Virtues:
-/// - web_search: Search the web using Exa AI
+/// - web_search: Search the web (Parallel)
 /// - sql_query: Read-only SQL queries against user data
 /// - code_interpreter: Execute Python code for calculations and analysis
 /// - create_page: Create a new page with content
@@ -505,7 +505,7 @@ This updates your name across all future conversations."#.to_string(),
     }
 }
 
-/// Web Search tool (Exa AI)
+/// Web Search tool (Parallel)
 fn web_search_tool() -> ToolConfig {
     ToolConfig {
         id: "web_search".to_string(),
@@ -596,7 +596,7 @@ project, ALWAYS omit `domains`: the project already scopes the results, and an
 extra domain filter will wrongly exclude the project's materials.
 
 Returns results in relevance order (rank 1 = best match) with title, preview, author, and timestamp. Rank is relative order within THIS result set only — it says nothing about absolute match quality, so do not describe rank-1 as a strong match unless its content shows it.
-Use sql_query with the returned record_ids to get full details.
+Each result carries a `ref` (`/record/<ontology>/<id>`); cite it as returned, and read the whole row with sql_query by that id when the preview is not enough.
 
 RECALL TIP: for a broad, vague, or many-worded need, pass 2-4 phrasings in `queries`
 (e.g. ["how my relationship with Sam changed", "tension or arguments with Sam", "good
@@ -632,7 +632,7 @@ single wording would miss. Use one phrasing for a precise lookup."#.to_string(),
                 "entities": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Optional filter: only return results whose source references one of these resolved entity IDs (e.g. a person/place/org id like 'person_abc'). Use when the query is about a specific known entity — it's far more reliable than matching the name semantically."
+                    "description": "Optional filter: only return results whose source references one of these resolved entity IDs (an id of the shape person_<hash>, place_<hash> or org_<hash>, as results and <circumstances> carry them). Use when the query is about a specific known entity — it's far more reliable than matching the name semantically."
                 },
                 "num_results": {
                     "type": "integer",
@@ -663,6 +663,8 @@ Operations:
 - 'query': Execute a SELECT (read-only, max 200 rows)
 - 'get_schema': Every column of specific table(s), with types, and how each table joins
 - 'list_tables': All tables with row counts
+
+Use semantic_search instead when the question is about MEANING — "messages about the move", "anything on the dispute" — across sources; it finds, this reads. A recall question often needs both: search to find it, then a query by id to read it whole.
 
 ================================================================================
 TABLES AND THEIR COLUMNS
@@ -1194,13 +1196,13 @@ fn list_applets_tool() -> ToolConfig {
     ToolConfig {
         id: "list_applets".to_string(),
         name: "List Applets".to_string(),
-        description: "List scheduled actions".to_string(),
-        llm_description: r#"List the user's scheduled actions (both system and user-owned). Returns id, name, owner, enabled, schedule, triggers, and last_run for each.
+        description: "List applets".to_string(),
+        llm_description: r#"List the user's applets (both system and user-owned). Returns id, name, owner, enabled, schedule, triggers, and last_run for each.
 
 Use this when:
 - User asks "what automations do I have?"
-- You need to find an action by name before editing/running it
-- Before suggesting a new action, to check whether something similar already exists
+- You need to find an applet by name before editing/running it
+- Before suggesting a new applet, to check whether something similar already exists
 
 Optional filters:
 - owner: "system" or "user" (system = built-in, user = user-created)
@@ -1210,10 +1212,10 @@ Optional filters:
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
-                "owner": { "type": "string", "enum": ["system", "user", "ai"], "description": "`ai` is anything created from a chat — omitting it hid every applet this assistant made" },
+                "owner": { "type": "string", "enum": ["system", "user", "ai"], "description": "`ai` is anything created from a chat, including by this assistant" },
                 "enabled": { "type": "boolean" },
                 "trigger": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook", "message"] },
-                "include_archived": { "type": "boolean", "description": "Include applets that have been archived (the handler always read this; it was never declared)" }
+                "include_archived": { "type": "boolean", "description": "Include applets that have been archived" }
             }
         }),
         tool_type: ToolType::Builtin,
@@ -1229,8 +1231,8 @@ fn get_applet_tool() -> ToolConfig {
     ToolConfig {
         id: "get_applet".to_string(),
         name: "Get Applet".to_string(),
-        description: "Fetch a single action".to_string(),
-        llm_description: r#"Fetch a single action by id, including its full configuration (agent, schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
+        description: "Fetch a single applet".to_string(),
+        llm_description: r#"Fetch a single applet by id, including its full configuration (agent, schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
 
 Use this when:
 - User asks "what does this action do?"
@@ -1267,13 +1269,13 @@ Editable fields:
 - enabled (bool)
 - config (object — full replace)
 - condition (nullable SQL expression; user rows only)
-- triggers (array of cron|manual|tool|api|webhook; user rows only)
+- triggers (array of cron|manual|tool|api|webhook|message; user rows only)
 - memory (nullable markdown scratchpad)
 
 System-owned rows (built-in pipelines like day_summary_eod) only accept: enabled, schedule, config, memory. Attempting to edit other fields on a system row will error with a clear message.
 
 Use this when the user asks to:
-- Change an action's prompt
+- Change an applet's prompt
 - Reschedule it
 - Disable/enable it
 - Update its memory"#.to_string(),
@@ -1312,7 +1314,7 @@ fn delete_applet_tool() -> ToolConfig {
         id: "delete_applet".to_string(),
         name: "Delete Applet".to_string(),
         description: "Delete a user-owned action".to_string(),
-        llm_description: r#"Delete an action by id. Only user-owned actions can be deleted — system rows (built-in pipelines like day_summary_eod, embedding_index, trash_purge) are protected and will return an error. Tell the user to disable them instead.
+        llm_description: r#"Delete an applet by id. Only user-owned applets can be deleted — system rows (built-in pipelines like day_summary_eod, embedding_index, trash_purge) are protected and will return an error. Tell the user to disable them instead.
 
 This is destructive. Confirm with the user before calling unless the request is explicit ("delete the weekly planner action")."#.to_string(),
         parameters: serde_json::json!({
@@ -1336,13 +1338,13 @@ fn run_applet_tool() -> ToolConfig {
         id: "run_applet".to_string(),
         name: "Run Applet".to_string(),
         description: "Trigger an action to run now".to_string(),
-        llm_description: r#"Manually dispatch an action to run immediately. The action must have `tool` in its triggers list.
+        llm_description: r#"Manually dispatch an applet to run immediately. The applet must have `tool` in its triggers list.
 
-Returns a run_id and final status (success / skipped / error / forbidden / not_found). For agent actions, `summary` contains the LLM's final message; for subprocess actions, it's the binary's result string.
+Returns a run_id and final status (success / skipped / error / forbidden / not_found). For agent applets, `summary` contains the LLM's final message; for subprocess applets, it's the binary's result string.
 
 Optional parameters:
 - payload: arbitrary JSON forwarded to the action as context
-- date: YYYY-MM-DD override for date-scoped actions (e.g. day_summary_eod). Merged into the action's config.date.
+- date: YYYY-MM-DD override for date-scoped applets (e.g. day_summary_eod). Merged into the applet's config.date.
 
 Use when the user asks to "run it now" or "re-run yesterday's summary"."#.to_string(),
         parameters: serde_json::json!({
@@ -1351,7 +1353,7 @@ Use when the user asks to "run it now" or "re-run yesterday's summary"."#.to_str
             "properties": {
                 "id": { "type": "string" },
                 "payload": { "description": "Arbitrary JSON forwarded to the action as context" },
-                "date": { "type": "string", "description": "YYYY-MM-DD override for date-scoped actions" }
+                "date": { "type": "string", "description": "YYYY-MM-DD override for date-scoped applets" }
             }
         }),
         tool_type: ToolType::Builtin,

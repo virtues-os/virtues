@@ -10,7 +10,7 @@
 	// up its allowance of tool calls.
 	// Same chip, different word, because the difference is who to blame.
 	let { reason = 'stopped' }: {
-		reason?: 'stopped' | 'length' | 'interrupted' | 'unattended' | 'max_steps' | 'no_reply';
+		reason?: 'stopped' | 'length' | 'interrupted' | 'unattended' | 'max_steps' | 'budget' | 'no_reply';
 	} = $props();
 </script>
 
@@ -33,6 +33,10 @@
 	{:else if reason === 'max_steps'}
 		<Icon icon="ri:footprint-line" width="13" />
 		<span>Used up its steps before it finished</span>
+	{:else if reason === 'budget'}
+		<!-- The turn's own ceiling of cost or time, checked between steps. -->
+		<Icon icon="ri:hourglass-line" width="13" />
+		<span>Reached one turn's budget of time or cost before it finished</span>
 	{:else}
 		<Icon icon="ri:stop-fill" width="13" />
 		<span>Stopped</span>

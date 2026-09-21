@@ -10,7 +10,8 @@
 /// - {user_name}: The user's preferred name (e.g., "Adam")
 /// - {persona_guidelines}: Persona-specific behavior guidelines
 ///
-/// Dynamic context (datetime, active page) is appended by build_system_prompt() in chat.rs.
+/// The computed blocks (memory, circumstances, coverage, the open project and
+/// page, rules) are assembled around this by build_system_prompt_blocks() in chat.rs.
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are {assistant_name}. You live on {user_name}'s own server, beside the record it keeps of their life — their days, messages, places, people — and you speak from that record, for them and no one else.
 
 <guidelines>
@@ -97,8 +98,9 @@ pub const TOOL_USAGE_PROMPT: &str = r#"
 <tool_usage>
 - Use the think tool before complex multi-step tasks to plan your approach
 - You can call multiple tools in a single step when they're independent
-- If a query returns no results, try a broader search before giving up
-- When uncertain about table structure, call sql_query with operation 'get_schema' first
+- sql_query and semantic_search are two doors to one record. semantic_search finds things ABOUT something — meaning, across every source. sql_query counts, filters, and reads exact rows — structure, time windows, a record by id. A recall question often needs both: search to find it, SQL to confirm it
+- If a query returns no results, widen it before giving up: other phrasings in semantic_search, a wider window in sql_query
+- An empty result means one of two things, and the reply says which: the table holds nothing for that window though it was flowing (say so, plainly), or the record has no coverage there (say what is missing — <coverage> lists each table's range). An empty result never stands as a fact about their life without naming which
 - If a query is ambiguous, ask for clarification before searching
 - Only ever call a tool that is in your tool list for this turn; it differs by mode
 
@@ -123,18 +125,10 @@ Not in this line: restating their question, announcing a plan you already announ
 
 /// Agent mode: conversational with quick tool access
 pub const AGENT_MODE_PROMPT: &str = r#"
-<mode>assistant</mode>
+<mode>chat</mode>
 <tool_guidance>
 - For simple lookups, one query is usually enough. For multi-step tasks, use as many tools as needed
-- Don't gather extra context unless the user asks for it
-- Do NOT use tools for: conversational replies, opinions, follow-ups on data already in context
-
-Common SQL patterns (Postgres):
-- Time filtering: WHERE occurred_at > now() - interval '7 days'
-- This month: WHERE occurred_at >= date_trunc('month', now())
-- Person lookup: JOIN wiki_people ON ... WHERE name ILIKE '%Sarah%'
-- Financial totals: SELECT merchant_category, SUM(amount)/100.0 as dollars FROM data_financial_transaction ... (`category` is a jsonb ARRAY; `merchant_category` is the scalar one to group by)
-- Aggregation: GROUP BY + ORDER BY for top-N patterns
+- Gather what the question needs and no more; a conversational reply, an opinion, or a follow-up on data already in context needs no tool
 </tool_guidance>
 "#;
 
@@ -345,9 +339,17 @@ pub fn build_interview_prompt(assistant_name: &str, user_name: &str, their_repli
     let mut out = INTERVIEW_PROMPT
         .replace("{assistant_name}", assistant_name)
         .replace("{user_name}", user_name);
+    // Banded, not exact. The count is a floor for the close gate, and a
+    // floor survives banding; an exact count changed the prompt's bytes on
+    // every turn, which re-wrote the whole 14 KB interview prompt into the
+    // provider's cache each time. The bytes now move at five band edges.
+    let floor = [25, 16, 11, 7, 4, 2]
+        .into_iter()
+        .find(|&b| their_replies >= b)
+        .unwrap_or(1);
     out.push_str(&format!(
-        "\n\n## Where this stands\n\nThe person has sent {their_replies} {} so far, counting the one you are answering now.",
-        if their_replies == 1 { "reply" } else { "replies" }
+        "\n\n## Where this stands\n\nThe person has sent at least {floor} {} so far, counting the one you are answering now.",
+        if floor == 1 { "reply" } else { "replies" }
     ));
     out
 }
@@ -541,8 +543,8 @@ mod tests {
         // Agent mode should include tool usage
         assert!(prompt.contains("<tool_usage>"));
         assert!(prompt.contains("Use the think tool before complex"));
-        // Agent mode should include assistant mode guidance
-        assert!(prompt.contains("<mode>assistant</mode>"));
+        // Agent mode should include chat mode guidance
+        assert!(prompt.contains("<mode>chat</mode>"));
         assert!(prompt.contains("For simple lookups, one query is usually enough"));
     }
 
@@ -563,7 +565,7 @@ mod tests {
         assert!(prompt.contains("You are Ari. You live on Adam's own server"));
         // Chat is now the smart default with tools, so tool usage IS included
         assert!(prompt.contains("<tool_usage>"));
-        assert!(prompt.contains("<mode>assistant</mode>"));
+        assert!(prompt.contains("<mode>chat</mode>"));
         // Nothing written, so no block — see the identity test below.
         assert!(!prompt.contains("<narrative_identity>"));
     }

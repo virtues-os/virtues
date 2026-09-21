@@ -16,6 +16,13 @@ describe("toolErrorSummary", () => {
 		);
 	});
 
+	it("strips the envelope the box writes now", () => {
+		expect(toolErrorSummary('Tool failed (sql_query, execution): column "day" does not exist')).toBe(
+			'column "day" does not exist',
+		);
+		expect(toolErrorSummary("Tool failed (code_interpreter): NameError: x")).toBe("NameError: x");
+	});
+
 	it("strips the executor's outer wrapper as well", () => {
 		expect(toolErrorSummary("Tool execution failed: Execution failed: nope")).toBe("nope");
 	});
