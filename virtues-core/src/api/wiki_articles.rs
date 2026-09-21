@@ -24,6 +24,8 @@
 
 use sqlx::PgPool;
 
+// Only the tests build pages by hand now; `delete_article` purges through `api::trash`.
+#[cfg(test)]
 use crate::api::pages;
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PAGE_PREFIX, WIKI_ARTICLE_PREFIX};
@@ -220,8 +222,10 @@ pub async fn delete_article(pool: &PgPool, subject_type: &str, subject_id: &str)
     .await
     .map_err(|e| Error::Database(format!("Failed to clear article index: {}", e)))?;
 
-    // Cascades the wiki_articles row.
-    pages::delete_page(pool, &article.page_id).await
+    // The hard delete, not the trash: an article page belongs to its
+    // `wiki_articles` row, and a trashed one would sit in Recently deleted
+    // with the row still answering `get_article`. Cascades the row.
+    crate::api::trash::purge(pool, crate::api::trash::TrashKind::Page, &article.page_id).await
 }
 
 /// One page that mentions a subject.
@@ -320,7 +324,7 @@ pub async fn get_subject_backlinks(
                a.subject_type AS "subject_type?", a.subject_id AS "subject_id?"
         FROM app_pages p
         LEFT JOIN wiki_articles a ON a.page_id = p.id
-        WHERE p.content LIKE $1
+        WHERE p.content LIKE $1 AND p.deleted_at IS NULL
         ORDER BY p.updated_at DESC
         LIMIT 100
         "#,
@@ -588,7 +592,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                notebook_id: None,
+                project_id: None,
             },
         )
         .await

@@ -12,7 +12,7 @@ export interface ChatSession {
 	icon: string | null;
 	/** `--cat-*` token key, never a hex. Migration 0079. */
 	icon_color?: string | null;
-	notebook_id?: string | null;
+	project_id?: string | null;
 	last_updated: string | null;
 	first_message_at: string;
 	last_message_at: string;
@@ -102,7 +102,7 @@ class ChatSessionStore {
 					conversation_id: chatId,
 					title,
 					icon: null,
-					notebook_id: null,
+					project_id: null,
 					last_updated: null,
 					first_message_at: '',
 					last_message_at: '',

@@ -287,6 +287,8 @@
 		models: Record<string, string>;
 		default_model: string | null;
 		endpoint_url: string | null;
+		/** Tokens, when the owner set one for a small or local model. */
+		context_window: number | null;
 		created_at: string | null;
 	};
 
@@ -307,6 +309,8 @@
 	// Form state. No provider field — a credential is a URL and a key.
 	let byoApiKey = $state('');
 	let byoEndpointUrl = $state('');
+	/** As typed; blank means "let the box look it up". */
+	let byoContextWindow = $state('');
 	/**
 	 * One entry per slot, seeded blank.
 	 *
@@ -368,8 +372,9 @@
 			// Merged OVER a blank map, never replacing it: a response that omits
 			// a slot must leave that field bound to '' rather than undefined.
 			byoModels = { ...blankSlots(), ...(byoStatus?.models ?? {}) };
+			byoContextWindow = byoStatus?.context_window ? String(byoStatus.context_window) : '';
 		} catch (e) {
-			byoLoadError = e instanceof Error ? e.message : 'Could not read your endpoint settings.';
+			byoLoadError = e instanceof Error ? e.message : "Your server couldn't read your provider settings.";
 		} finally {
 			byoLoading = false;
 		}
@@ -404,11 +409,19 @@
 					.map(([k, v]) => [k, (v ?? '').trim()])
 					.filter(([, v]) => v.length > 0),
 			);
+			const contextWindow = Number.parseInt(byoContextWindow, 10);
+			if (byoContextWindow.trim() && !(contextWindow >= 1000 && contextWindow <= 10_000_000)) {
+				toast.error('Context window must be a number of tokens, from 1,000 to 10,000,000.');
+				return;
+			}
 			await setByoKey({
 				sudo_request_id: sudoRequestId,
 				api_key: byoApiKey,
 				endpoint_url: byoEndpointUrl,
 				models,
+				...(Number.isFinite(contextWindow) && contextWindow > 0
+					? { context_window: contextWindow }
+					: {}),
 			});
 			toast.success('Key saved. AI calls now go to your endpoint.');
 			byoApiKey = '';
@@ -604,7 +617,7 @@
 -->
 <Page
 	title="Billing"
-	description="What AI costs you, and how it is paid for."
+	description="What AI costs you, and how you pay for it."
 	maxWidth="wide"
 >
 <div class="plan-sections">
@@ -659,7 +672,7 @@
 		<section class="chapter">
 			<h2 class="settings-label">Standing</h2>
 			<p class="chapter-lede">
-				We could not reach the Virtues billing service just now, so this page cannot say
+				Your server couldn't reach the Virtues billing service, so this page can't say
 				where your subscription stands. Your server keeps working either way. Check your
 				connection and reload.
 			</p>
@@ -736,7 +749,7 @@
 			     with no subscription there is no balance to fetch, and the
 			     Standing chapter above already says what to do. -->
 			<p class="note note-error note-figure">
-				The balance could not be read.
+				Your server couldn't read the balance.
 				<span class="error-code">{usageError}</span>
 				{#if isSubscribed || standingUnknown}
 					<TextAction inline onclick={() => void loadUsage()}>Check again</TextAction>
@@ -805,7 +818,7 @@
 
 			{#if localError}
 				<p class="note note-error">
-					Auto top-up and your own key could not be read.
+					Your server couldn't read auto top-up or your own key.
 					<span class="error-code">{localError}</span>
 				</p>
 			{/if}
@@ -842,8 +855,8 @@
 			<div>
 				<h2 class="settings-label">Usage</h2>
 				<p class="chapter-lede">
-					Here is what this month cost, day by day and by what it was for. Calls on your
-					own key are counted, not priced, since only your provider knows the price.
+					Here is what this month cost, day by day and by what it was for. We count calls
+					on your own key but don't price them, since only your provider knows the price.
 				</p>
 			</div>
 			{#if totalCalls > 0}
@@ -852,7 +865,7 @@
 		</div>
 		{#if summaryError}
 			<p class="note note-error">
-				The call log could not be read.
+				Your server couldn't read the call log.
 				<span class="error-code">{summaryError}</span>
 			</p>
 		{:else if summary}
@@ -956,7 +969,7 @@
 						<p class="chapter-lede">Checking for a key…</p>
 					{:else if byoLoadError}
 						<p class="note note-error">
-							Your endpoint settings could not be read.
+							Your server couldn't read your provider settings.
 							<span class="error-code">{byoLoadError}</span>
 						</p>
 					{:else if byoStatus?.configured}
@@ -977,8 +990,8 @@
 										{/if}
 									</div>
 									<p class="panel-foot">
-										Every AI call goes straight from your server to this endpoint. The
-										subscription is not in the path and is not charged.
+										Every AI call goes straight from your server to your provider. The
+										subscription isn't in the path, and we don't charge it.
 									</p>
 								</div>
 								<Button variant="ghost" onclick={startByoDelete}>
@@ -1062,6 +1075,20 @@
 			/>
 			<p class="text-xs text-foreground-muted mt-1.5">
 				Any endpoint that speaks OpenAI-style <code>/chat/completions</code> with a bearer token.
+			</p>
+		</div>
+		<div>
+			<label class="block text-xs text-foreground-muted mb-1" for="byo-context-window"
+				>Context window (tokens)</label
+			>
+			<Input
+				id="byo-context-window"
+				bind:value={byoContextWindow}
+				placeholder="Optional, e.g. 32000"
+			/>
+			<p class="text-xs text-foreground-muted mt-1.5">
+				Set this for a local or small model, so long chats are summarized before they
+				overflow it. Blank: your server goes by the model id, and assumes 200k when it can't tell.
 			</p>
 		</div>
 		<div>

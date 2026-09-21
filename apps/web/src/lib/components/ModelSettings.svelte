@@ -296,7 +296,7 @@
 					>Virtues default</span
 				>
 				follows whatever model we currently recommend, and moves when we move
-				it. Pick a model to pin it — we won't change it.
+				it. Pick a model to pin it. We won't change it.
 			</p>
 			<TextAction
 				quiet

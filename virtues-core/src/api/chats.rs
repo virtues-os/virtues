@@ -124,7 +124,7 @@ pub struct ChatListItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub notebook_id: Option<String>,
+    pub project_id: Option<String>,
     pub first_message_at: Timestamp,
     pub last_updated: Timestamp,
 }
@@ -191,10 +191,10 @@ pub struct UpdateChatRequest {
     pub icon: Option<Option<String>>,
     #[serde(default)]
     pub icon_color: Option<Option<String>>,
-    /// Tri-state: absent = leave, null = detach from Notebook, value = set Notebook.
-    /// Routed through `notebooks::set_chat_notebook` (also folds chat into membership).
-    #[serde(default, rename = "notebookId")]
-    pub notebook_id: Option<Option<String>>,
+    /// Tri-state: absent = leave, null = detach from Project, value = set Project.
+    /// Routed through `projects::set_chat_project` (also folds chat into membership).
+    #[serde(default, rename = "projectId", alias = "notebookId")]
+    pub project_id: Option<Option<String>>,
 }
 
 /// Request to create a new chat with initial messages
@@ -202,8 +202,8 @@ pub struct UpdateChatRequest {
 pub struct CreateChatRequest {
     pub title: String,
     pub messages: Vec<ChatMessage>,
-    #[serde(rename = "notebookId")]
-    pub notebook_id: Option<String>, // For auto-add to notebook_items (not stored on chat)
+    #[serde(rename = "projectId", alias = "notebookId")]
+    pub project_id: Option<String>, // For auto-add to project_items (not stored on chat)
 }
 
 /// Response after creating a chat
@@ -268,11 +268,12 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             title,
             icon,
             icon_color,
-            notebook_id,
+            project_id,
             message_count,
             created_at,
             updated_at
         FROM app_chats
+        WHERE deleted_at IS NULL
         ORDER BY updated_at DESC
         LIMIT $1
         "#,
@@ -289,7 +290,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             let title: String = row.get("title");
             let icon: Option<String> = row.get("icon");
             let icon_color: Option<String> = row.get("icon_color");
-            let notebook_id: Option<String> = row.get("notebook_id");
+            let project_id: Option<String> = row.get("project_id");
             let message_count: i64 = row.get("message_count");
             let first_message_at: Timestamp = row.get("created_at");
             let last_updated: Timestamp = row.get("updated_at");
@@ -299,7 +300,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
                 message_count: message_count as i32,
                 icon,
                 icon_color,
-                notebook_id,
+                project_id,
                 first_message_at,
                 last_updated,
             })
@@ -327,7 +328,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
             created_at,
             updated_at
         FROM app_chats
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         "#,
     )
     .bind(&chat_id_str)
@@ -523,16 +524,16 @@ pub async fn create_chat(
 }
 
 /// Create a new chat with initial messages (public API)
-/// If notebook_id is provided and not the system notebook, auto-adds to notebook_items
+/// If project_id is provided and not the system project, auto-adds to project_items
 pub async fn create_chat_from_request(
     pool: &PgPool,
     request: CreateChatRequest,
 ) -> Result<CreateChatResponse> {
     let chat = create_chat(pool, &request.title, request.messages).await?;
 
-    // Bind the chat to its Notebook (stores notebook_id + folds into membership).
-    if let Err(e) = crate::api::notebooks::set_chat_notebook(pool, &chat.id, request.notebook_id.as_deref()).await {
-        tracing::warn!("Failed to set chat notebook: {}", e);
+    // Bind the chat to its Project (stores project_id + folds into membership).
+    if let Err(e) = crate::api::projects::set_chat_project(pool, &chat.id, request.project_id.as_deref()).await {
+        tracing::warn!("Failed to set chat project: {}", e);
         // Don't fail chat creation if the binding fails
     }
 
@@ -585,9 +586,9 @@ pub async fn update_chat(
     let row = query.fetch_optional(pool).await?;
     let row = row.ok_or_else(|| crate::Error::NotFound("Chat not found".into()))?;
 
-    // Bind/unbind the chat's Notebook if the field was provided.
-    if let Some(ref notebook_id) = request.notebook_id {
-        crate::api::notebooks::set_chat_notebook(pool, &chat_id, notebook_id.as_deref()).await?;
+    // Bind/unbind the chat's Project if the field was provided.
+    if let Some(ref project_id) = request.project_id {
+        crate::api::projects::set_chat_project(pool, &chat_id, project_id.as_deref()).await?;
     }
 
     use sqlx::Row;
@@ -784,8 +785,11 @@ pub async fn update_messages(
     Ok(())
 }
 
-/// Delete a chat
-/// Also cleans up all notebook_items references (orphan cleanup)
+/// Delete a chat — into the trash, not for good. The row is stamped
+/// `deleted_at` and leaves every listing and the search index; Recently
+/// deleted holds it for `trash::TRASH_RETENTION_DAYS` with a restore, and the
+/// hard delete is `trash::purge`, reachable only from there and the sweeper.
+/// Messages and project membership stay with the row so a restore is whole.
 pub async fn delete_chat(pool: &PgPool, chat_id: String) -> Result<DeleteChatResponse> {
     // The narrative interview is undeletable, decided by the id like every
     // other property of that room (mode, title). Boot would re-seed the CHAT
@@ -800,37 +804,14 @@ pub async fn delete_chat(pool: &PgPool, chat_id: String) -> Result<DeleteChatRes
     // back to any open step is this chat.
     if chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
         return Err(crate::Error::InvalidInput(
-            "The getting-started conversation can't be deleted.".into(),
+            "You can't delete the getting-started conversation.".into(),
         ));
     }
-    let chat_id_str = chat_id;
-    let result = sqlx::query(
-        r#"
-        DELETE FROM app_chats
-        WHERE id = $1
-        RETURNING id
-        "#,
-    )
-    .bind(&chat_id_str)
-    .fetch_optional(pool)
-    .await?;
-
-    let row = result.ok_or_else(|| crate::Error::NotFound("Chat not found".into()))?;
-
-    // Parse ID
-    use sqlx::Row;
-    let id: String = row.get("id");
-
-    // Clean up all notebook_items references
-    let url = format!("/chat/{}", id);
-    if let Err(e) = crate::api::notebooks::remove_items_by_url(pool, &url).await {
-        tracing::warn!("Failed to clean up notebook_items for chat {}: {}", id, e);
-        // Don't fail deletion if cleanup fails
-    }
+    crate::api::trash::trash(pool, crate::api::trash::TrashKind::Chat, &chat_id).await?;
 
     Ok(DeleteChatResponse {
         success: true,
-        conversation_id: id,
+        conversation_id: chat_id,
     })
 }
 

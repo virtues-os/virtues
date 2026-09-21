@@ -11,24 +11,51 @@
  * rule for all of them — which is why `SIDEBAR_MODES` now supplies the BODY of
  * a room's panel rather than replacing the sidebar.
  *
- * Ten top-level destinations became eight, because a rail of ten
+ * Ten top-level destinations became eight, then six, because a rail of ten
  * indistinguishable glyphs is a memorisation tax rather than a contents page:
  *
- *   - Notebooks folded into Pages. A notebook is a scoping device over pages,
- *     and nobody in week one could say what distinguished the two rooms.
- *   - Bookmarks folded into Files. Both are "something from outside that you
- *     kept" — the loosest of the merges, and the first to revisit.
+ *   - Notebooks (now projects) folded into Pages, and then moved again: a
+ *     project is the room a chat lives in, so it is listed in the Home panel
+ *     rather than behind a rail door of its own.
+ *   - Bookmarks folded into Files (now Drive). Both are "something from
+ *     outside that you kept" — the loosest of the merges, and the first to
+ *     revisit.
+ *   - Home and Chats became one room (2026-09-21). Home's panel had been the
+ *     Desk — the pinned shelf — with Chats a peer tile beneath it; the shelf
+ *     now sits at the top of the ground room's panel as Pinned, which is
+ *     where a pin is reached for. The room is called Home, because the
+ *     panel holds chats, pages, projects and applets, and a user reads the
+ *     panel's title as the name of the place they are in — "Chats" over a
+ *     list of pages and projects was the room named after one of its
+ *     contents. Its page is `/home`, the Daily Office, so the tile leads
+ *     somewhere real.
+ *   - Applets left the rail the same day. An applet is something you run from
+ *     a conversation, so its door is a row at the top of the Home panel,
+ *     beside New chat — a rail tile for a list that is opened from chat was
+ *     a room nobody walked to.
+ *   - Pages left the rail the same day too. A page is written the way a chat
+ *     is started, so Pages is a door in the Home panel with a `+` beside it,
+ *     the same shape Projects has.
  *
  * Developer was folded into Settings too, and came back out — see its entry.
- * The two merges above survive because each pair answers the same question;
+ * The merges above survive because each pair answers the same question;
  * that one did not, because "what preference is this?" and "run a query" are
  * not the same question.
  *
  * ROUTES ARE UNCHANGED. Only labels and grouping move, so the layout can be
  * judged without also judging a migration.
  *
- * Chats sits alone above the first gap: it is the ground rather than a peer, so
- * it gets primacy, not parity.
+ * Home sits alone above the first gap: it is the ground rather than a peer, so
+ * it gets primacy, not parity, and it is the top of the rail, which is what
+ * "the ground" should have meant all along.
+ *
+ * Below it the library: Wiki, Drive, Sources. Sources was at the foot with
+ * Developer and Settings (2026-09-21 and before), which filed "connect the
+ * things that fill the record" as a utility, next to a SQL console. It is a
+ * room a new box's owner walks into on the first day, so it belongs with the
+ * library; and it is last in the library because Wiki and Drive are what you
+ * come back for daily and Sources is what you visit to feed them. The foot
+ * now holds only the two rooms that are actually utilities.
  */
 
 export type RoomGroup = 'primary' | 'library' | 'utility';
@@ -37,10 +64,8 @@ export type RoomGroup = 'primary' | 'library' | 'utility';
 export type RoomPanel =
 	/** The fixed rows of a `SIDEBAR_MODES` entry. */
 	| { kind: 'rows'; modeId: string }
-	/** The live conversation list. */
-	| { kind: 'chats' }
-	/** The Desk: what the user pinned, in their own order. */
-	| { kind: 'desk' }
+	/** The Home panel: doors, Pinned, Projects, the recent chats. */
+	| { kind: 'home' }
 	/** Nothing live yet — the panel offers the room's full page. */
 	| { kind: 'stub' };
 
@@ -67,46 +92,33 @@ export interface Room {
 	owns: string[];
 	panel: RoomPanel;
 	group: RoomGroup;
-	/** The `+` in the panel's title row. */
-	quickAdd?: 'chat' | 'page';
 }
 
 export const ROOMS: Room[] = [
 	{
-		// The Desk comes back here, and the rail is what makes that possible.
-		// design.md retired pins because "a pinned 'Pages' and a nav 'Pages'
-		// render identically", and asked that any return be "a different SHAPE,
-		// not a tinted one". A 72px column of icons beside a 208px column of
-		// serif spines cannot render identically; the shape is the rail itself.
 		id: 'home',
 		label: 'Home',
 		icon: 'home',
 		chord: '⌥⌘H',
 		href: '/home',
-		owns: ['/home', '/day'],
-		panel: { kind: 'desk' },
+		// Chats, projects, applets and pages are all reached from this panel,
+		// so the pane that holds one lights this tile: the rail is a lens over
+		// where you are, and where you are is "in something Home led you to".
+		owns: [
+			'/',
+			'/home',
+			'/day',
+			'/chat',
+			'/chat-history',
+			'/project',
+			'/projects',
+			'/applets',
+			'/applet',
+			'/page',
+			'/pages',
+		],
+		panel: { kind: 'home' },
 		group: 'primary',
-	},
-	{
-		id: 'chats',
-		label: 'Chats',
-		icon: 'chats',
-		chord: '⌥⌘C',
-		href: '/chat-history',
-		owns: ['/', '/chat', '/chat-history'],
-		panel: { kind: 'chats' },
-		group: 'primary',
-	},
-	{
-		id: 'pages',
-		label: 'Pages',
-		icon: 'pages',
-		chord: '⌥⌘P',
-		href: '/page',
-		owns: ['/page', '/pages', '/notebook', '/notebooks'],
-		panel: { kind: 'stub' },
-		group: 'library',
-		quickAdd: 'page',
 	},
 	{
 		id: 'record',
@@ -119,30 +131,19 @@ export const ROOMS: Room[] = [
 		group: 'library',
 	},
 	{
+		// "Drive", not "Files": the room already had the drive glyph and the
+		// /storage route, and "Files" named the contents rather than the place.
+		// The id stays `files` so a stored rail selection survives the relabel.
 		id: 'files',
-		label: 'Files',
+		label: 'Drive',
 		icon: 'drive',
 		chord: '⌥⌘F',
 		href: '/storage',
-		owns: ['/storage', '/bookmarks', '/asset'],
-		panel: { kind: 'stub' },
+		owns: ['/storage', '/bookmarks', '/asset', '/trash'],
+		panel: { kind: 'rows', modeId: 'drive' },
 		group: 'library',
 	},
 	{
-		id: 'routines',
-		label: 'Applets',
-		icon: 'applets',
-		chord: '⌥⌘U',
-		href: '/applets',
-		owns: ['/applets'],
-		panel: { kind: 'stub' },
-		group: 'library',
-	},
-	{
-		// Between Sources and Settings, not after them. Settings is the room
-		// muscle memory reaches for at the very foot of a rail — every desktop
-		// app it borrows from puts it there — so the new door takes the middle
-		// slot rather than pushing Settings off the anchor.
 		id: 'sources',
 		label: 'Sources',
 		icon: 'sources',
@@ -150,9 +151,14 @@ export const ROOMS: Room[] = [
 		href: '/sources',
 		owns: ['/sources'],
 		panel: { kind: 'rows', modeId: 'sources' },
-		group: 'utility',
+		group: 'library',
 	},
 	{
+		// Above Settings, never below it. Settings is the room muscle memory
+		// reaches for at the very foot of a rail — every desktop app it borrows
+		// from puts it there — so Developer takes the slot above rather than
+		// pushing Settings off the anchor.
+		//
 		// Its own door again, after a spell folded into Settings as three rows.
 		// The fold was argued as "three rooms for the handful of people who open
 		// a SQL console is not worth a rail slot" — but the slot is not what it
@@ -185,7 +191,7 @@ export const ROOMS: Room[] = [
 	},
 ];
 
-export const DEFAULT_ROOM_ID = 'chats';
+export const DEFAULT_ROOM_ID = 'home';
 
 export function roomById(id: string | null | undefined): Room | null {
 	if (!id) return null;

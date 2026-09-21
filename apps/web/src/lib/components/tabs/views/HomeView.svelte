@@ -49,7 +49,7 @@
 	import { getStreamHealth, type StreamHealth } from "$lib/api/client";
 	import Icon from "$lib/components/Icon.svelte";
 	import { IconButton, TextAction } from "$lib";
-	import { notebookStore } from "$lib/stores/notebook.svelte";
+	import { projectStore } from "$lib/stores/project.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -175,7 +175,7 @@
 		getStreamHealth()
 			.then((rows) => (health = Object.fromEntries(rows.map((r) => [r.name, r]))))
 			.catch(() => {});
-		notebookStore.load?.();
+		projectStore.load?.();
 		if (!pagesStore.pages.length) pagesStore.loadPages();
 		if (!chatSessions.sessions.length && !chatSessions.isLoading) chatSessions.load();
 
@@ -212,15 +212,15 @@
 		return [wx, clock].filter(Boolean).join(" · ");
 	});
 
-	// ---- recents: notebooks, pages and chats blended by recency ----
-	// Not "desk" — the sidebar's Desk is the pinned shelf, and two different
-	// meanings for one word is one too many.
+	// ---- recents: projects, pages and chats blended by recency ----
+	// Not "pinned" — the sidebar's Pinned section is the shelf the user keeps
+	// by hand, and two different meanings for one word is one too many.
 	type RecentItem = { route: string; title: string; kind: string; ts: number; note?: string };
 	const recentItems = $derived.by<RecentItem[]>(() => {
-		const nb: RecentItem[] = notebookStore.notebooks.map((n: any) => ({
-			route: `/notebook/${n.id}`,
+		const nb: RecentItem[] = projectStore.projects.map((n: any) => ({
+			route: `/project/${n.id}`,
 			title: n.name || "Untitled",
-			kind: "notebook",
+			kind: "project",
 			ts: n.updated_at ? Date.parse(n.updated_at) : 0,
 			note: n.current_status ? "live" : undefined,
 		}));
@@ -292,7 +292,7 @@
 			notes = [...notes, saved];
 			keepText = "";
 		} catch {
-			keepError = "That didn't save. Your server may be offline — try again.";
+			keepError = "That didn't save. Your server may be offline. Try again.";
 		} finally {
 			keeping = false;
 		}
@@ -373,7 +373,7 @@
 								</li>
 							{/each}
 						</ul>
-						{#if moment.more}<p class="mnone">More rows fall in this window than are shown.</p>{/if}
+						{#if moment.more}<p class="mnone">More rows fall in this window than this list shows.</p>{/if}
 					{:else}
 						<p class="mnone">The record holds nothing here.</p>
 					{/if}
@@ -389,7 +389,7 @@
 						<!-- The kicker's space has to come from CSS: leading whitespace
 						     inside the span is trimmed, which rendered "Untitled— page". -->
 						<button class="t" type="button" onclick={() => open(it.route, it.title)}>
-							{it.title}{#if it.kind !== "notebook"}<span class="s">— {it.kind}</span>{/if}
+							{it.title}{#if it.kind !== "project"}<span class="s">— {it.kind}</span>{/if}
 						</button>
 						<span class="d">{it.note ?? ago(new Date(it.ts).toISOString())}</span>
 					</div>

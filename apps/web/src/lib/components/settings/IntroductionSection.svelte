@@ -72,7 +72,7 @@
 			<Icon icon="ri:arrow-right-line" width="14" />
 		</button>
 		<span class="field-hint">
-			Opens the letter, and reopens any step you set aside. Nothing is deleted — your
+			Opens the letter, and reopens any step you set aside. This deletes nothing. Your
 			record, your sources and your subscription are untouched.
 		</span>
 	{:else}

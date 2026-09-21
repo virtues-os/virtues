@@ -1088,31 +1088,75 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pins/:id",
             patch(api::update_pin_handler).delete(api::delete_pin_handler),
         )
-        // Notebooks API (the "room" a chat lives in)
+        // Recently deleted: chats, pages and projects wait here 30 days.
+        // Every DELETE above lands a thing here; these are the only doors to
+        // a hard delete.
+        .route("/api/trash", get(api::list_trash_handler))
+        .route("/api/trash/empty", post(api::empty_trash_handler))
+        .route(
+            "/api/trash/:kind/:id/restore",
+            post(api::restore_trash_handler),
+        )
+        .route("/api/trash/:kind/:id", delete(api::purge_trash_handler))
+        // The visits log: what the owner opens, for ⌘K's frecency prior.
+        .route("/api/visits", post(api::record_visit_handler))
+        .route("/api/visits/frecency", get(api::frecency_handler))
+        // Projects API (the "room" a chat lives in)
+        .route(
+            "/api/projects",
+            get(api::list_projects_handler).post(api::create_project_handler),
+        )
+        .route(
+            "/api/projects/:id",
+            get(api::get_project_handler)
+                .put(api::update_project_handler)
+                .delete(api::delete_project_handler),
+        )
+        .route("/api/projects/:id/archive", post(api::archive_project_handler))
+        .route("/api/projects/:id/unarchive", post(api::unarchive_project_handler))
+        // Project membership (items come back inside GET /api/projects/:id)
+        .route(
+            "/api/projects/:id/items",
+            post(api::add_project_item_handler).delete(api::remove_project_item_handler),
+        )
+        .route(
+            "/api/projects/:id/items/reorder",
+            put(api::reorder_project_items_handler),
+        )
+        .route(
+            "/api/projects/:id/items/role",
+            put(api::set_project_item_role_handler),
+        )
+        .route("/api/projects/:id/graph", get(api::project_graph_handler))
+        // LEGACY ALIAS: `/api/notebooks…` for clients built before the
+        // notebook→project rename (migration 0029). Phones self-update both
+        // ahead of boxes and behind them, so an old app can be talking to a
+        // new box for weeks; the alias costs one route-table entry each. Same
+        // handlers, same bodies (request fields accept `notebookId` via a
+        // serde alias). Remove once no supported client build says "notebook".
         .route(
             "/api/notebooks",
-            get(api::list_notebooks_handler).post(api::create_notebook_handler),
+            get(api::list_projects_handler).post(api::create_project_handler),
         )
         .route(
             "/api/notebooks/:id",
-            get(api::get_notebook_handler)
-                .put(api::update_notebook_handler)
-                .delete(api::delete_notebook_handler),
+            get(api::get_project_handler)
+                .put(api::update_project_handler)
+                .delete(api::delete_project_handler),
         )
-        // Notebook membership (items come back inside GET /api/notebooks/:id)
         .route(
             "/api/notebooks/:id/items",
-            post(api::add_notebook_item_handler).delete(api::remove_notebook_item_handler),
+            post(api::add_project_item_handler).delete(api::remove_project_item_handler),
         )
         .route(
             "/api/notebooks/:id/items/reorder",
-            put(api::reorder_notebook_items_handler),
+            put(api::reorder_project_items_handler),
         )
         .route(
             "/api/notebooks/:id/items/role",
-            put(api::set_notebook_item_role_handler),
+            put(api::set_project_item_role_handler),
         )
-        .route("/api/notebooks/:id/graph", get(api::notebook_graph_handler))
+        .route("/api/notebooks/:id/graph", get(api::project_graph_handler))
         // Chats API
         .route(
             "/api/chats",
@@ -1873,7 +1917,7 @@ pub(crate) fn origin_is_ours(origin: &str, request_host: Option<&str>) -> bool {
         // Loopback on ANY port used to pass. That was a hole, not a
         // convenience: the desktop app splices 127.0.0.1:7117 to the box as
         // the owner, so a page served by any other local process — a dev
-        // server, a notebook, another app's UI — could call it and read the
+        // server, a Jupyter notebook, another app's UI — could call it and read the
         // reply. The app's own pages are always served by the authority they
         // dial, so a loopback origin must equal the request's Host, exactly.
         return request_host == Some(rest);

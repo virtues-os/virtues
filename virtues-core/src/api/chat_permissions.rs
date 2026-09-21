@@ -12,6 +12,7 @@
 
 use crate::error::{Error, Result};
 use crate::ids::generate_id;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
@@ -33,7 +34,13 @@ pub struct ChatEditPermission {
     pub entity_id: String,
     pub entity_type: String,
     pub entity_title: Option<String>,
-    pub granted_at: String,
+    /// `TIMESTAMPTZ` in the table. This was a `String` from the SQLite days
+    /// through the Postgres move, and sqlx refuses to decode a timestamptz into
+    /// one — so every kept grant 500'd on the re-fetch after its INSERT, and
+    /// every chat holding a grant 500'd on load. An empty list decodes nothing
+    /// and succeeded, which is why the only test that ran (a ghost, which
+    /// writes no row) stayed green.
+    pub granted_at: DateTime<Utc>,
 }
 
 /// Request to add an edit permission
@@ -153,6 +160,35 @@ mod ghost_tests {
             .unwrap();
         assert_eq!((chats, perms), (0, 0), "a ghost leaves nothing behind");
     }
+
+    /// A kept grant writes a row and reads it back — both the re-fetch inside
+    /// `add_permission` and `list_permissions` decode `granted_at`. This is the
+    /// test the ghost one could not be: it needs a row in the table.
+    #[sqlx::test]
+    async fn a_kept_grant_reads_back(pool: sqlx::PgPool) {
+        let ghosts = GhostPermissions::new();
+        let granted = add_permission(
+            &pool,
+            &ghosts,
+            "chat_kept",
+            AddPermissionRequest {
+                entity_id: "page_notes".to_string(),
+                entity_type: "page".to_string(),
+                entity_title: Some("Notes".to_string()),
+                temporary: false,
+            },
+        )
+        .await
+        .expect("a kept grant inserts and re-reads its row");
+        assert_eq!(granted.permission.entity_id, "page_notes");
+
+        let listed = list_permissions(&pool, "chat_kept")
+            .await
+            .expect("a chat with a grant lists it");
+        assert_eq!(listed.permissions.len(), 1);
+        assert_eq!(listed.permissions[0].granted_at, granted.permission.granted_at);
+        assert!(has_permission(&pool, "chat_kept", "page_notes").await.unwrap());
+    }
 }
 
 // ============================================================================
@@ -217,7 +253,7 @@ pub async fn add_permission(
                 entity_id: request.entity_id,
                 entity_type: request.entity_type,
                 entity_title: request.entity_title,
-                granted_at: crate::types::Timestamp::now().to_rfc3339(),
+                granted_at: Utc::now(),
             },
         });
     }

@@ -1,5 +1,7 @@
 # IR & the magnet: how retrieval actually works, and where to take it
 
+*Notebooks were renamed to projects on 2026-09-21 (`app_notebooks` → `app_projects`, `/notebook/…` → `/project/…`); the names below are as they were.*
+
 *Working notes — 2026-07-22. A grounded map of the retrieval stack as it exists,
 the non-obvious truths a full read exposed, and a ranked set of improvements with
 spikes. Written after cutting `wiki_stories` from v1 (see

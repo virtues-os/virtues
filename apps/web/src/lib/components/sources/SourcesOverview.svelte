@@ -289,7 +289,7 @@
 		{#if streamsErr}
 			<div class="error">{streamsErr}</div>
 		{:else if daysUnavailable}
-			<p class="muted">This box is running a build without the arrivals grid yet.</p>
+			<p class="muted">Your server is running a build without the arrivals grid yet.</p>
 		{:else if byDomain.length === 0}
 			<p class="muted">
 				Nothing has arrived yet. The <TextAction inline onclick={openCatalog}>catalog</TextAction>

@@ -30,11 +30,11 @@ export const INTERVIEW_OPENING = "# The story of your life: chapters & identity"
  *  record holds what happened; this is how the AI is grounded in who the
  *  person is and what they value, not just in what they did. */
 export const INTERVIEW_OPENING_LEAD =
-	"This lifeline is an example of what you will make here: your life from " +
-	"beginning to end, its chapters, its turning points, and the stories " +
-	"that matter. It gives the AI a grounding in who you are, your " +
-	"temperament, your virtues and vices, and the person you want to become, " +
-	"so that it keeps the record of your life the way you would.";
+	"This lifeline is an example of what you'll make here: your life from " +
+	"beginning to end, its chapters and its turning points. Here you tell " +
+	"your assistant who you are: your temperament, your virtues and vices, " +
+	"the person you want to become. It keeps the record of your life the " +
+	"way you would.";
 
 export const INTERVIEW_OPENING_BODY =
 	"A chapter is one of the major arcs of a life, usually about seven of " +

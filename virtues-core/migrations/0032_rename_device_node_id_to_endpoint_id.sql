@@ -1,0 +1,31 @@
+-- 0032_rename_device_node_id_to_endpoint_id
+--
+-- `app_device.node_id` holds an iroh EndpointId. iroh renamed NodeId to
+-- EndpointId in its 1.0 line; the column kept the old word, so the box's own
+-- identity reads `box_endpoint_id()` (relay.rs) while a paired device's
+-- identical-typed identity reads `node_id` two files away. One type, two
+-- names, and `sqlx::query` is untyped, so nothing would ever have said so.
+--
+-- Column and its partial unique index. Nothing else in the schema references
+-- either: `\d app_device` is the whole blast radius.
+ALTER TABLE app_device RENAME COLUMN node_id TO endpoint_id;
+ALTER INDEX app_device_node_id_key RENAME TO app_device_endpoint_id_key;
+
+-- The index predicate is NOT rewritten by the column rename's own accord —
+-- Postgres carries it forward against the renamed column automatically, which
+-- matters more than it looks: `api::pair::insert_device_row` infers this exact
+-- partial index with
+--
+--   ON CONFLICT (endpoint_id) WHERE endpoint_id IS NOT NULL AND revoked_at IS NULL
+--
+-- and arbiter inference is by predicate equivalence, not by name. If the two
+-- ever drift, re-pairing a device that kept its key stops being idempotent and
+-- starts being a 500 on a unique violation — which is the failure this index
+-- exists to prevent.
+--
+-- The wire keeps the old word on purpose. `device_node_id` (pair consume),
+-- `box_node_id`, `peer_node_id`, the `{node_id}` body of
+-- `POST /api/devices/self/node-id`, and the `device_node_id` key BLE
+-- provisioning writes are all JSON read by builds already baked into shipped
+-- iOS and Mac apps. Renaming a column is ours to do; renaming a payload key
+-- breaks every device that has not updated yet, and iOS OTAs forward only.

@@ -6,71 +6,78 @@
  */
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-import { notebookStore } from '$lib/stores/notebook.svelte';
+import { projectStore } from '$lib/stores/project.svelte';
 import { pinMenuItem } from '$lib/pins/pinAction';
 import { promptText } from '$lib/stores/dialog.svelte';
 import { toast } from 'svelte-sonner';
 
+/** A project's own url, in either spelling — you can't put a project in a project. */
+export function isProjectUrl(url: string): boolean {
+	return /^\/(?:project|notebook)\//.test(url);
+}
+
 /**
- * Get "Add to Notebook" menu items — a submenu of all notebooks plus a "New Notebook…"
+ * Get "Add to project" menu items — a submenu of all projects plus a "New project…"
  * action that creates one and adds this URL to it immediately.
  *
- * Organization moved from Things (folders) to Notebooks; the menu now binds the
- * item as a Notebook member.
+ * Organization moved from Things (folders) to notebooks (now projects); the menu
+ * binds the item as a project member. Empty when the url is itself a project:
+ * the server rejects that with 400, so the menu shouldn't offer it.
  *
  * @param url - The URL of the item (e.g., '/page/page_xyz', 'https://...')
  * @param _name - Reserved for a future display label (membership is URL-native).
  */
-export function getAddToNotebookMenuItems(
+export function getAddToProjectMenuItems(
 	url: string,
 	_name?: string | null,
 ): ContextMenuItem[] {
-	const notebooks = notebookStore.notebooks;
+	if (isProjectUrl(url)) return [];
+	const projects = projectStore.projects;
 
-	const submenu: ContextMenuItem[] = notebooks.map((s) => ({
-		id: `notebook-${s.id}`,
+	const submenu: ContextMenuItem[] = projects.map((s) => ({
+		id: `project-${s.id}`,
 		label: s.name,
 		icon: s.icon || 'ri:folder-open-line',
 		action: async () => {
 			try {
-				await notebookStore.addItem(s.id, url);
+				await projectStore.addItem(s.id, url);
 				toast(`Added to ${s.name}`);
 			} catch (e) {
-				console.error('[contextMenuItems] Failed to add to notebook:', e);
-				toast.error('Failed to add to notebook');
+				console.error('[contextMenuItems] Failed to add to project:', e);
+				toast.error('Failed to add to project');
 			}
 		},
 	}));
 
 	submenu.push({
-		id: 'new-notebook-with-item',
-		label: notebooks.length > 0 ? 'New Notebook…' : 'Create First Notebook…',
+		id: 'new-project-with-item',
+		label: projects.length > 0 ? 'New project…' : 'Create first project…',
 		icon: 'ri:add-line',
-		dividerBefore: notebooks.length > 0,
+		dividerBefore: projects.length > 0,
 		action: async () => {
 			// promptText, not window.prompt() — the latter is a no-op in the
 			// Tauri/WKWebView shell, so this menu item did nothing there.
-			const notebookName = await promptText({
-				title: 'New notebook',
-				placeholder: 'Name your notebook',
+			const projectName = await promptText({
+				title: 'New project',
+				placeholder: 'Name your project',
 				confirmLabel: 'Create',
 			});
-			if (!notebookName) return;
+			if (!projectName) return;
 			try {
-				const notebook = await notebookStore.create(notebookName);
-				await notebookStore.addItem(notebook.id, url);
-				toast(`Created "${notebook.name}" and added item`);
+				const project = await projectStore.create(projectName);
+				await projectStore.addItem(project.id, url);
+				toast(`Created "${project.name}" and added item`);
 			} catch (e) {
-				console.error('[contextMenuItems] Failed to create notebook:', e);
-				toast.error('Failed to create notebook');
+				console.error('[contextMenuItems] Failed to create project:', e);
+				toast.error('Failed to create project');
 			}
 		},
 	});
 
 	return [
 		{
-			id: 'add-to-notebook',
-			label: 'Add to Notebook',
+			id: 'add-to-project',
+			label: 'Add to project',
 			icon: 'ri:folder-add-line',
 			dividerBefore: true,
 			submenu,
@@ -79,24 +86,24 @@ export function getAddToNotebookMenuItems(
 }
 
 /**
- * Get organization-related menu items (Add to Notebook).
+ * Get organization-related menu items (Add to project).
  * Used by tab/sidebar/page context menus.
  */
-export function getNotebookMenuItems(
+export function getProjectMenuItems(
 	url: string,
 	name?: string | null,
 ): ContextMenuItem[] {
-	return getAddToNotebookMenuItems(url, name);
+	return getAddToProjectMenuItems(url, name);
 }
 
 /**
  * The two things you can do with anything that has a url: file it, or keep it.
  *
- * "Add to notebook" is retrieval scope; "Add to desk" is navigation. They are
+ * "Add to project" is retrieval scope; "Pin" is navigation. They are
  * different verbs on the same object and they travel together, so every
  * surface that lists routable things can offer both with one call instead of
  * assembling the pair by hand — which is how the tab bar ended up with the
- * notebook submenu and no pin for months.
+ * project submenu and no pin for months.
  */
 export function getKeepMenuItems(target: {
 	url: string;
@@ -104,7 +111,7 @@ export function getKeepMenuItems(target: {
 	icon?: string | null;
 }): ContextMenuItem[] {
 	return [
-		...getNotebookMenuItems(target.url, target.label),
+		...getProjectMenuItems(target.url, target.label),
 		pinMenuItem(target),
 	];
 }

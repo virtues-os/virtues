@@ -56,7 +56,7 @@
 			draft = '';
 			await load();
 		} catch (e) {
-			failed = e instanceof Error ? e.message : 'Could not save that note';
+			failed = e instanceof Error ? e.message : "Your server couldn't save that note. Try again.";
 		} finally {
 			busy = false;
 		}
@@ -85,7 +85,7 @@
 		<WikiCollapsibleSection title="Notes" count={notes.length} defaultOpen={notes.length > 0}>
 			{#if notes.length === 0}
 				<p class="quiet empty">
-					Nothing in the margin. Notes are things to come back to — a
+					Nothing in the margin. Notes are things to come back to - a
 					correction, something the article should say.
 				</p>
 			{/if}

@@ -28,6 +28,11 @@ pub struct ToolCall {
     pub arguments: Value,
 }
 
+/// The one key an argument object carries when the model's argument text
+/// did not parse. Set at the parse site below, read by
+/// `executor::execute_single`, never by a tool.
+pub const UNPARSEABLE_ARGUMENTS_KEY: &str = "__unparseable_arguments";
+
 /// Result of streaming an LLM response
 #[derive(Debug)]
 pub struct LlmStreamResult {
@@ -376,7 +381,29 @@ where
         .into_values()
         .filter(|(id, name, _)| !id.is_empty() && !name.is_empty())
         .map(|(id, name, args_str)| {
-            let arguments = serde_json::from_str(&args_str).unwrap_or(Value::Object(Default::default()));
+            // No arguments at all is a legitimate call to a tool that takes
+            // none — some providers send `""` rather than `{}` for it.
+            // Arguments that ARRIVED and do not parse are a different thing:
+            // they used to become `{}` here, silently, and the tool then
+            // failed on a missing field. The marker carries the parse error
+            // and the head of the text to the executor, which turns them
+            // into the failure the model can act on.
+            let arguments = if args_str.trim().is_empty() {
+                Value::Object(Default::default())
+            } else {
+                match serde_json::from_str::<Value>(&args_str) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(tool_call_id = %id, tool_name = %name, error = %e, "tool call arguments were not JSON");
+                        serde_json::json!({
+                            UNPARSEABLE_ARGUMENTS_KEY: {
+                                "error": e.to_string(),
+                                "raw": args_str.chars().take(400).collect::<String>(),
+                            }
+                        })
+                    }
+                }
+            };
             
             // Emit args complete event
             emit(AgentEvent::ToolCallArgsComplete {

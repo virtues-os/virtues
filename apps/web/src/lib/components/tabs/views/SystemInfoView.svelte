@@ -273,7 +273,7 @@
 	</div>
 {/snippet}
 
-<Page title="System" description="The machine, examined." maxWidth="wide">
+<Page title="System" description="Your server, examined." maxWidth="wide">
 	<!-- Two different kinds of thing, kept visibly different. The pill REPORTS
 	     (no border, no hover, nothing to press); Detail ACTS. A status light
 	     styled like a button invites clicks that do nothing, which is why the
@@ -399,7 +399,7 @@
 			<h2 class="settings-label">Last 24 hours</h2>
 			{#if history.length < 2}
 				<p class="history-empty">
-					Collecting samples — history appears after the box has run a few minutes.
+					Collecting samples. History appears once your server has run a few minutes.
 				</p>
 			{:else}
 				<div class="history-grid">
@@ -655,7 +655,7 @@
 	}
 
 	.detail-btn:hover {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		color: var(--color-foreground);
 	}
 

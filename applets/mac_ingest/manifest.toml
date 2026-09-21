@@ -1,5 +1,5 @@
 name = "Mac Ingest"
-description = "Receives what your Mac sees — the apps you use, the pages you visit, and your iMessage history."
+description = "Takes what your Mac sees: the apps you use, the pages you visit, and your iMessage history."
 owner = "system"
 command = ["mac_ingest"]
 triggers = ["webhook"]

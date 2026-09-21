@@ -1,6 +1,6 @@
 /**
  * Getting started — the derived state of the one room, for everything that
- * renders it: the room's mast and cards, the sidebar's progress card, the
+ * renders it: the room's mast and cards, the rail's Setup tile, the
  * door, the composer's lock. Nothing here is progress; it is a mirror of
  * `GET /api/getting-started`, which derives every step from rows on each
  * read. `refresh()` after anything that could flip a step (a card's write,

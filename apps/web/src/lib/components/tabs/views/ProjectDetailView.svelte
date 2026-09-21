@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import type { NotebookDetail, NotebookGraph } from '$lib/api/client';
+	import type { ProjectDetail, ProjectGraph } from '$lib/api/client';
 	import Icon from '$lib/components/Icon.svelte';
 	import { Button, IconButton, TextAction } from '$lib';
-	import { notebookStore } from '$lib/stores/notebook.svelte';
+	import { projectStore } from '$lib/stores/project.svelte';
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
@@ -15,38 +15,40 @@
 	import { Popover } from '$lib/floating';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { toast } from 'svelte-sonner';
+	import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { getRefSummary } from '$lib/utils/refSummary';
 	import {
 		getPage,
 		getDriveFile,
 		uploadDriveFile,
-		addNotebookItem,
+		addProjectItem,
 		reextractDriveFile,
-		getNotebookGraph
+		getProjectGraph
 	} from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
+	import { isProjectUrl } from '$lib/utils/contextMenuItems';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
 
-	const notebookId = $derived.by(() => {
-		const m = tab.route.match(/^\/notebook\/([^/]+)$/);
+	const projectId = $derived.by(() => {
+		const m = tab.route.match(/^\/project\/([^/]+)$/);
 		return m?.[1] ?? null;
 	});
 
-	let detail = $state<NotebookDetail | null>(null);
+	let detail = $state<ProjectDetail | null>(null);
 	let loading = $state(false);
 	let error = $state<string | null>(null);
 
 	async function load(force = false) {
-		const id = notebookId;
+		const id = projectId;
 		if (!id) return;
 		loading = true;
 		error = null;
 		try {
-			detail = await notebookStore.get(id, { force });
+			detail = await projectStore.get(id, { force });
 		} catch (e) {
-			console.error('[NotebookDetailView] Failed to load notebook:', e);
-			error = e instanceof Error ? e.message : 'Failed to load notebook';
+			console.error('[ProjectDetailView] Failed to load project:', e);
+			error = e instanceof Error ? e.message : 'Failed to load project';
 			detail = null;
 		} finally {
 			loading = false;
@@ -54,36 +56,36 @@
 	}
 
 	$effect(() => {
-		if (notebookId) load();
+		if (projectId) load();
 	});
 
 	// ---- Entity facets over the members --------------------------------------
 	// Same endpoint as before; it is a filter source now, not a picture. A graph
 	// of three unconnected nodes cost the top of the page to say less than a row
 	// of chips does.
-	let graph = $state<NotebookGraph>({ nodes: [], edges: [] });
+	let graph = $state<ProjectGraph>({ nodes: [], edges: [] });
 
 	async function loadGraph() {
-		const id = notebookId;
+		const id = projectId;
 		if (!id) {
 			graph = { nodes: [], edges: [] };
 			return;
 		}
 		try {
-			graph = await getNotebookGraph(id);
+			graph = await getProjectGraph(id);
 		} catch (e) {
 			// A missing graph shouldn't take the page down — it's an aid, not the content.
-			console.error('[NotebookDetailView] Failed to load graph:', e);
+			console.error('[ProjectDetailView] Failed to load graph:', e);
 			graph = { nodes: [], edges: [] };
 		}
 	}
 	$effect(() => {
-		if (notebookId) loadGraph();
+		if (projectId) loadGraph();
 	});
 
 	// Chats filed into this room — sourced from the authoritative session list,
 	// not from membership rows, so removing a member can't desync a chat.
-	const roomChats = $derived(chatSessions.sessions.filter((s) => s.notebook_id === notebookId));
+	const roomChats = $derived(chatSessions.sessions.filter((s) => s.project_id === projectId));
 
 	// Members = everything except chats (chats render in their own list).
 	const memberItems = $derived((detail?.items ?? []).filter((i) => !i.url.startsWith('/chat/')));
@@ -173,13 +175,13 @@
 	}
 
 	/**
-	 * What this member is to the notebook, in the user's terms rather than the
+	 * What this member is to the project, in the user's terms rather than the
 	 * schema's. `manuscript` and `pin` are stored roles; Reference is derived —
 	 * a filed person or place is reference material by nature, not by a flag.
 	 *
 	 * Deliberately NOT "Source": that word already means a credential connection
 	 * elsewhere in the app. And not "Bible", which is author jargon that reads as
-	 * nonsense in a notebook about a kitchen remodel.
+	 * nonsense in a project about a kitchen remodel.
 	 */
 	function statusLabel(url: string): string {
 		const s = memberStatus[url];
@@ -222,7 +224,7 @@
 	}
 
 	/**
-	 * Everything the notebook holds, in one table. Chats used to live in their
+	 * Everything the project holds, in one table. Chats used to live in their
 	 * own list below; they are members like any other and splitting them made
 	 * the page two near-identical lists.
 	 *
@@ -307,8 +309,8 @@
 
 	// ---- Actions -------------------------------------------------------------
 	/**
-	 * Open a member *beside* the notebook rather than over it. This is the whole
-	 * of "work mode": the notebook narrows to a rail and stays reachable while
+	 * Open a member *beside* the project rather than over it. This is the whole
+	 * of "work mode": the project narrows to a rail and stays reachable while
 	 * you read or write the thing you picked, so there is no mode to switch.
 	 */
 	function openUrl(url: string) {
@@ -320,20 +322,20 @@
 	}
 
 	async function removeMembers(rows: MemberRow[], clear: () => void) {
-		const id = notebookId;
+		const id = projectId;
 		if (!id) return;
 		const ok = await confirmAction({
 			title: rows.length === 1 ? 'Remove item?' : `Remove ${rows.length} items?`,
-			body: 'They stay where they are — they just stop being filed in this notebook.',
+			body: 'They stay where they are. They just stop being filed in this project.',
 			confirmLabel: 'Remove',
 			danger: true
 		});
 		if (!ok) return;
 		try {
-			for (const r of rows) await notebookStore.removeItem(id, r.url);
+			for (const r of rows) await projectStore.removeItem(id, r.url);
 			await loadGraph();
 		} catch (e) {
-			console.error('[NotebookDetailView] bulk remove failed:', e);
+			console.error('[ProjectDetailView] bulk remove failed:', e);
 			toast.error('Could not remove every item');
 		} finally {
 			clear();
@@ -341,32 +343,32 @@
 	}
 
 	async function removeMember(url: string) {
-		const id = notebookId;
+		const id = projectId;
 		if (!id) return;
-		await notebookStore.removeItem(id, url);
+		await projectStore.removeItem(id, url);
 		await loadGraph();
 	}
 
 	/**
-	 * Manual order. `app_notebook_items.sort_order` has always existed, has
+	 * Manual order. `app_project_items.sort_order` has always existed, has
 	 * always been the list's ORDER BY, and has never been settable from the UI —
-	 * so the notebook could only ever be in the order things happened to arrive.
+	 * so the project could only ever be in the order things happened to arrive.
 	 *
-	 * Order is also the only structure a notebook has that the user authors
+	 * Order is also the only structure a project has that the user authors
 	 * rather than derives: groups come from properties, this comes from you.
 	 */
 	async function moveTo(url: string, edge: 'top' | 'bottom') {
-		const id = notebookId;
+		const id = projectId;
 		if (!id || !detail) return;
 		// The whole membership must go in the payload — reorder rewrites the list,
 		// so anything omitted would be dropped from the cached detail.
 		const rest = detail.items.map((i) => i.url).filter((u) => u !== url);
 		const next = edge === 'top' ? [url, ...rest] : [...rest, url];
 		try {
-			await notebookStore.reorderItems(id, next);
+			await projectStore.reorderItems(id, next);
 			await load(true);
 		} catch (e) {
-			console.error('[NotebookDetailView] reorder failed:', e);
+			console.error('[ProjectDetailView] reorder failed:', e);
 			toast.error('Could not move that item');
 		}
 	}
@@ -398,7 +400,7 @@
 		}
 		items.push({
 			id: 'remove',
-			label: 'Remove from notebook',
+			label: 'Remove from project',
 			icon: 'ri:close-line',
 			dividerBefore: true,
 			variant: 'destructive',
@@ -418,31 +420,31 @@
 		}
 	}
 
-	// ---- Ask this notebook ---------------------------------------------------
+	// ---- Ask this project ---------------------------------------------------
 	let askDraft = $state('');
 	function submitAsk(e: Event) {
 		e.preventDefault();
 		const text = askDraft.trim();
-		const id = notebookId;
+		const id = projectId;
 		if (!text || !id) return;
 		askVirtues(text, id);
 		askDraft = '';
 	}
 
-	// ---- Drag-drop onto the notebook: upload + add in one motion -------------
+	// ---- Drag-drop onto the project: upload + add in one motion -------------
 	let dropActive = $state(false);
 	async function handleDrop(e: DragEvent) {
 		e.preventDefault();
 		dropActive = false;
-		const id = notebookId;
+		const id = projectId;
 		const dropped = e.dataTransfer?.files;
 		if (!id || !dropped || dropped.length === 0) return;
 		for (const f of dropped) {
 			try {
 				const uploaded = await uploadDriveFile('uploads', f);
-				await addNotebookItem(id, `/drive/${uploaded.id}`);
+				await addProjectItem(id, `/drive/${uploaded.id}`);
 			} catch (err) {
-				console.error('[NotebookDetailView] drop-add failed:', err);
+				console.error('[ProjectDetailView] drop-add failed:', err);
 				toast.error(`Could not add ${f.name}`);
 			}
 		}
@@ -452,17 +454,17 @@
 
 	// ---- Title + brief: always live, no edit mode ----------------------------
 	/**
-	 * The subtitle is the notebook's *brief* (`instructions`), not its memo.
+	 * The subtitle is the project's *brief* (`instructions`), not its memo.
 	 *
-	 * There are two text fields on a notebook and the wrong one was on screen.
+	 * There are two text fields on a project and the wrong one was on screen.
 	 * `instructions` is a standing direction the assistant is told to follow in
-	 * every chat in this notebook — a real input — and it had no UI at all.
+	 * every chat in this project — a real input — and it had no UI at all.
 	 * `current_status` is a transient catch-up note, and it was occupying the
 	 * header labelled "description".
 	 *
 	 * No auto-generated summary: the member list is directly below and fully
 	 * legible, so a generated description would only restate what's visible.
-	 * What can't be derived is what the notebook is *for*.
+	 * What can't be derived is what the project is *for*.
 	 */
 	let nameDraft = $state('');
 	let briefDraft = $state('');
@@ -479,7 +481,7 @@
 
 	async function commitName() {
 		nameFocused = false;
-		const id = notebookId;
+		const id = projectId;
 		if (!id || !detail) return;
 		const name = nameDraft.trim();
 		if (!name) {
@@ -487,25 +489,25 @@
 			return;
 		}
 		if (name === detail.name) return;
-		await notebookStore.update(id, { name });
+		await projectStore.update(id, { name });
 	}
 
 	async function commitBrief() {
 		briefFocused = false;
-		const id = notebookId;
+		const id = projectId;
 		if (!id || !detail) return;
 		const brief = briefDraft.trim() || null;
 		if (brief === (detail.instructions ?? null)) return;
-		await notebookStore.update(id, { instructions: brief });
+		await projectStore.update(id, { instructions: brief });
 	}
 
 	async function commitMemo() {
 		memoFocused = false;
-		const id = notebookId;
+		const id = projectId;
 		if (!id || !detail) return;
 		const memo = memoDraft.trim() || null;
 		if (memo === (detail.current_status ?? null)) return;
-		await notebookStore.update(id, { current_status: memo });
+		await projectStore.update(id, { current_status: memo });
 	}
 
 	/** The memo is only on screen when it has something to say — otherwise it's
@@ -517,25 +519,25 @@
 	let iconOpen = $state(false);
 	let overflowOpen = $state(false);
 	async function setIcon(icon: string | null) {
-		const id = notebookId;
+		const id = projectId;
 		if (!id) return;
-		await notebookStore.update(id, { icon });
+		await projectStore.update(id, { icon });
 		await load(true);
 	}
 
 	/**
-	 * The notebook's color, in the same swatch row as its icon.
+	 * The project's color, in the same swatch row as its icon.
 	 *
 	 * Stored in `accent_color`, which predates the token rule and still holds
-	 * raw hex for notebooks colored before it — `accentCss` resolves either, so
+	 * raw hex for projects colored before it — `accentCss` resolves either, so
 	 * old values keep working and new ones are theme-correct. Writing a token
-	 * key here converts a notebook the first time it's recolored, which is the
+	 * key here converts a project the first time it's recolored, which is the
 	 * only migration that doesn't guess on the user's behalf.
 	 */
 	async function setAccent(color: string | null) {
-		const id = notebookId;
+		const id = projectId;
 		if (!id) return;
-		await notebookStore.update(id, { accent_color: color });
+		await projectStore.update(id, { accent_color: color });
 		await load(true);
 	}
 
@@ -546,40 +548,74 @@
 	}
 	async function addMember(entity: { url: string }) {
 		pickerPos = null;
-		const id = notebookId;
+		const id = projectId;
 		if (!id || !entity.url) return;
-		await notebookStore.addItem(id, entity.url);
-		// A chat is listed here from the session list by its `notebook_id`,
+		// you can't put a project in a project — the picker already hides them,
+		// and the server answers 400 if one gets through.
+		if (isProjectUrl(entity.url)) return;
+		await projectStore.addItem(id, entity.url);
+		// A chat is listed here from the session list by its `project_id`,
 		// which the box has just set; the sessions have to be re-read or the
 		// add looks like it did nothing (VIR-359).
 		if (entity.url.startsWith('/chat/')) await chatSessions.refresh();
 		await loadGraph();
 	}
 
-	// ---- Delete --------------------------------------------------------------
-	async function doDelete() {
-		const id = notebookId;
+	// ---- Archive -------------------------------------------------------------
+	// Reversible, so no confirm. The project stays open in this tab, marked.
+	async function toggleArchive() {
+		const id = projectId;
 		if (!id || !detail) return;
-		const ok = await confirmAction({
-			title: 'Delete notebook?',
-			body: `"${detail.name}" will be deleted. Its chats, pages and files stay where they are — they just stop being filed here.`,
-			confirmLabel: 'Delete',
-			danger: true
-		});
-		if (!ok) return;
+		// Read both off the detail we have now: `load()` below replaces it, and
+		// the toast is about the project as it was when you clicked.
+		const wasArchived = !!detail.archived_at;
+		const name = detail.name;
 		try {
-			await notebookStore.remove(id);
-			windowShellStore.closeTabsByRoute(`/notebook/${id}`);
-			windowShellStore.openTabFromRoute('/notebooks', { focusExisting: true });
+			if (wasArchived) await projectStore.unarchive(id);
+			else await projectStore.archive(id);
+			await load(true);
+			// Only the archive direction gets a toast. Unarchiving is what the
+			// toast's own Undo does, and the project reappearing in the list is
+			// the confirmation.
+			if (!wasArchived) notifyArchived(id, name);
 		} catch (e) {
-			console.error('[NotebookDetailView] delete failed:', e);
-			toast.error('Failed to delete notebook');
+			console.error('[ProjectDetailView] archive failed:', e);
+			toast.error(
+				wasArchived
+					? `Your server couldn't reopen "${name}"`
+					: `Your server couldn't archive "${name}"`,
+				{ description: 'Nothing changed. Try again' },
+			);
+		}
+	}
+
+	// ---- Delete --------------------------------------------------------------
+	// No confirm. The delete is a trip to Recently deleted and the toast hands
+	// back the Undo, so a dialog asking whether you meant it only stands between
+	// you and a reversible act. Its chats, pages and files stay where they are.
+	async function doDelete() {
+		const id = projectId;
+		if (!id || !detail) return;
+		// Captured before the delete closes it: Undo should put back the tab you
+		// were looking at, and only if you were looking at one.
+		const reopen = routeIfOpen(`/project/${id}`);
+		const name = detail.name;
+		try {
+			await projectStore.remove(id);
+			windowShellStore.closeTabsByRoute(`/project/${id}`);
+			windowShellStore.openTabFromRoute('/projects', { focusExisting: true });
+			notifyTrashed({ kind: 'project', id, name, reopen });
+		} catch (e) {
+			console.error('[ProjectDetailView] delete failed:', e);
+			toast.error(`Your server couldn't delete "${name}"`, {
+				description: 'It\'s still here. Try again',
+			});
 		}
 	}
 
 </script>
 
-<div class="notebook-detail">
+<div class="project-detail">
 	{#if loading && !detail}
 		<div class="state"><Icon icon="ri:loader-4-line" width="18" class="spin" /> Loading…</div>
 	{:else if error}
@@ -589,14 +625,14 @@
 			class="inner"
 			class:drop-active={dropActive}
 			role="region"
-			aria-label="Notebook contents"
+			aria-label="Project contents"
 			ondragover={(e) => {
 				e.preventDefault();
 				dropActive = true;
 			}}
 			ondragleave={(e) => {
 				// Crossing into a child fires dragleave too; only leaving the
-				// notebook itself should drop the highlight.
+				// project itself should drop the highlight.
 				const zone = e.currentTarget as HTMLElement;
 				if (!e.relatedTarget || !zone.contains(e.relatedTarget as Node)) {
 					dropActive = false;
@@ -609,7 +645,7 @@
 					<Popover bind:open={iconOpen} placement="bottom-start">
 						{#snippet trigger({ toggle }: { toggle: () => void })}
 							<button class="nb-icon" title="Change icon" onclick={toggle}>
-								<Icon icon={detail?.icon || 'ri:booklet-line'} width="22" />
+								<Icon icon={detail?.icon || 'ri:folder-3-line'} width="22" />
 							</button>
 						{/snippet}
 						{#snippet children({ close }: { close: () => void })}
@@ -628,7 +664,7 @@
 							class="title-input font-serif"
 							bind:value={nameDraft}
 							rows="1"
-							placeholder="Untitled notebook"
+							placeholder="Untitled project"
 							onfocus={() => (nameFocused = true)}
 							onblur={commitName}
 							onkeydown={(e) => {
@@ -646,7 +682,7 @@
 							class="desc-input"
 							bind:value={briefDraft}
 							rows="1"
-							placeholder="What this notebook is for. The assistant follows this in every chat here."
+							placeholder="What this project is for. The assistant follows this in every chat here."
 							onfocus={() => (briefFocused = true)}
 							onblur={commitBrief}
 							onkeydown={(e) => {
@@ -682,7 +718,7 @@
 							{#snippet trigger({ toggle }: { toggle: () => void })}
 								<IconButton
 									icon="ri:more-line"
-									label="More notebook actions"
+									label="More project actions"
 									expanded={overflowOpen}
 									haspopup="menu"
 									onclick={toggle}
@@ -701,8 +737,16 @@
 										/>
 									{/if}
 									<MenuItem
+										icon={detail?.archived_at ? 'ri:inbox-unarchive-line' : 'ri:archive-line'}
+										label={detail?.archived_at ? 'Unarchive project' : 'Archive project'}
+										onclick={() => {
+											close();
+											toggleArchive();
+										}}
+									/>
+									<MenuItem
 										icon="ri:delete-bin-line"
-										label="Delete notebook"
+										label="Delete project"
 										destructive
 										onclick={() => {
 											close();
@@ -718,11 +762,15 @@
 				<!-- Counts the same set the grid counts, now that chats are rows in it. -->
 				<div class="props font-mono">
 					<span>{allRows.length} {allRows.length === 1 ? 'item' : 'items'}</span>
+					{#if detail?.archived_at}
+						<span class="dot-sep">·</span>
+						<span>Archived {new Date(detail.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+					{/if}
 				</div>
 			</header>
 
 			<form class="ask" onsubmit={submitAsk}>
-				<input class="ask-input" bind:value={askDraft} placeholder="Ask this notebook…" />
+				<input class="ask-input" bind:value={askDraft} placeholder="Ask this project…" />
 				<!-- The send stays INVISIBLE until there is something to send, which
 				     is what the rule this replaced said with `opacity: 0`. A
 				     primitive cannot carry that, and neither alternative was
@@ -733,7 +781,7 @@
 				<span class="ask-send" class:idle={!askDraft.trim()}>
 					<IconButton
 						icon="ri:arrow-right-line"
-						label="Ask — grounded in this notebook"
+						label="Ask - grounded in this project"
 						size="sm"
 						type="submit"
 						disabled={!askDraft.trim()}
@@ -744,16 +792,16 @@
 			<section class="grid-section">
 				{#if allRows.length === 0}
 					<button class="add-row" onclick={openPicker}>
-						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links — or drop files here
+						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links, or drop files here
 					</button>
 				{:else}
 					<UniversalDataGrid
 						items={allRows}
 						{columns}
-						entityType="notebook-item"
+						entityType="project-item"
 						emptyIcon="ri:filter-line"
 						emptyMessage="No members match that filter"
-						searchPlaceholder="Search this notebook…"
+						searchPlaceholder="Search this project…"
 						selectable
 						filters={entityFilters}
 						rowIcon={(row) => row.icon}
@@ -831,7 +879,7 @@
 			</section>
 		</div>
 	{:else}
-		<div class="state">Notebook not found.</div>
+		<div class="state">Project not found.</div>
 	{/if}
 </div>
 
@@ -841,6 +889,7 @@
 		position={pickerPos}
 		placeholder="Add a person, page, or link…"
 		excludeIds={memberItems.map((i) => i.url)}
+		filter={(e) => !isProjectUrl(e.url)}
 		onSelect={addMember}
 		onClose={() => (pickerPos = null)}
 	/>
@@ -848,7 +897,7 @@
 
 
 <style>
-	.notebook-detail { width: 100%; height: 100%; overflow-y: auto; }
+	.project-detail { width: 100%; height: 100%; overflow-y: auto; }
 	.inner {
 		max-width: 1080px;
 		margin: 0 auto;
@@ -911,7 +960,9 @@
 	.props {
 		font-size: 11px;
 		color: var(--color-foreground-subtle); padding-left: 60px;
+		display: flex; gap: 6px; align-items: center;
 	}
+	.props .dot-sep { opacity: 0.5; }
 
 	/* Overflow menu */
 	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }

@@ -16,11 +16,15 @@
 
 import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, type EditorView, EditorView as EditorViewValue, WidgetType } from '@codemirror/view';
-import { contextMenu } from '$lib/stores/contextMenu.svelte';
-import { linkEditor } from '$lib/stores/linkEditor.svelte';
+// Relative, not `$lib`: the vitest config carries no SvelteKit alias, and an
+// extension that reaches a store through `$lib` cannot be mounted in a test
+// at all (the transform fails before any mock applies). code-blocks.ts
+// reaches the same store the same way.
+import { contextMenu } from '../../stores/contextMenu.svelte';
+import { linkEditor } from '../../stores/linkEditor.svelte';
+import { isEntityRoute } from '../../utils/refRoutes';
 
 import { createWidgetIcon, disconnectRemeasure, remeasureOnResize } from '../widget-height';
-import { isEntityRoute } from '$lib/utils/refRoutes';
 
 import { collectCodeRanges, inCode } from './code-context';
 import { onContextGesture } from './long-press';
@@ -284,6 +288,36 @@ function showMediaContextMenu(
 // wrong line). `remeasureOnResize` — and the rule behind it — now lives in
 // ../widget-height.ts, shared with the code-block and table widgets.
 
+/**
+ * Session-lifetime cache of observed natural image dimensions, keyed by URL.
+ *
+ * `remeasureOnResize` repairs the height map AFTER an image grows, which is
+ * enough for caret math but not for scrolling: CodeMirror unmounts a block
+ * widget that leaves the viewport and calls `toDOM` again on the way back, so
+ * without a cache every remount starts as a zero-height `<img>`, measures,
+ * then snaps to its real size on decode — and the document grows under the
+ * scroll animation. On iOS that growth reads as an anchor conflict and halts
+ * kinetic scroll whenever it opposes the motion (scrolling up past an image
+ * that just remounted taller). Recording the natural size on first `load` and
+ * writing it back as `width`/`height` attributes on every later mount gives
+ * the box its aspect ratio before decode, so there is nothing to grow into.
+ * (Same mechanism as atomic-editor's image blocks.)
+ *
+ * Two numbers per distinct URL; it is never evicted, and does not need to be.
+ */
+const imageDimensions = new Map<string, { w: number; h: number }>();
+
+/** Exposed for tests only: seed or inspect the cache without a decode. */
+export const __imageDimensionCache = imageDimensions;
+
+/**
+ * Vertical padding of `.cm-image-wrapper` (0.5rem top + bottom at the 16px
+ * root), added to the estimate so it describes the measured box, not just
+ * the image. An estimate, per CodeMirror's contract; drift here costs a
+ * slightly-off guess until the real measurement lands, not a wrong layout.
+ */
+const IMAGE_WRAPPER_PADDING_PX = 16;
+
 class ImageWidget extends WidgetType {
 	private displayAlt: string;
 	private width: number | null;
@@ -295,6 +329,21 @@ class ImageWidget extends WidgetType {
 		this.width = parsed.width;
 	}
 
+	/**
+	 * The height CodeMirror should book for this widget before it is rendered
+	 * (offscreen on open, or remounting during a scroll). -1 — CodeMirror's
+	 * own default — until the URL has decoded once this session. A `|width`
+	 * suffix scales the natural height by the same ratio the browser will.
+	 * The column may still be narrower than the image, in which case the
+	 * real box is shorter; that is the measurement's job to correct.
+	 */
+	get estimatedHeight(): number {
+		const cached = imageDimensions.get(this.src);
+		if (!cached) return -1;
+		const displayWidth = this.width && this.width < cached.w ? this.width : cached.w;
+		return Math.round((displayWidth * cached.h) / cached.w) + IMAGE_WRAPPER_PADDING_PX;
+	}
+
 	toDOM(view: EditorView) {
 		const wrapper = document.createElement('div');
 		wrapper.className = 'cm-image-wrapper';
@@ -304,6 +353,21 @@ class ImageWidget extends WidgetType {
 		img.src = this.src;
 		img.alt = this.displayAlt;
 		img.loading = 'lazy';
+		// Reserve the box before decode (see `imageDimensions`). The
+		// attributes carry the aspect ratio; `.cm-image { max-width: 100%;
+		// height: auto }` and the `|width` inline style below still scale
+		// the rendered size, so nothing here overrides the column or the
+		// author's chosen width — only the shape is pinned.
+		const cached = imageDimensions.get(this.src);
+		if (cached) {
+			img.width = cached.w;
+			img.height = cached.h;
+		}
+		img.addEventListener('load', () => {
+			if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+				imageDimensions.set(this.src, { w: img.naturalWidth, h: img.naturalHeight });
+			}
+		});
 		if (this.width) {
 			img.style.width = `${this.width}px`;
 			img.style.maxWidth = '100%';

@@ -545,7 +545,7 @@ static ALLOW: OnceLock<StaticAllow> = OnceLock::new();
 /// failure are different answers and only the caller can tell them apart.
 async fn allowed_ids(db: &PgPool) -> Result<Vec<EndpointId>, sqlx::Error> {
     let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT node_id FROM app_device WHERE node_id IS NOT NULL AND revoked_at IS NULL",
+        "SELECT endpoint_id FROM app_device WHERE endpoint_id IS NOT NULL AND revoked_at IS NULL",
     )
     .fetch_all(db)
     .await?;
@@ -631,7 +631,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn allowlist_query_failure_is_not_an_empty_allowlist(pool: PgPool) {
         sqlx::query(
-            "INSERT INTO app_device (id, user_id, kind, label, node_id) \
+            "INSERT INTO app_device (id, user_id, kind, label, endpoint_id) \
              VALUES ('dev_alw1', $1, 'desktop_app', 'Test', \
                      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')",
         )

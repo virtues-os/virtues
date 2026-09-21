@@ -69,8 +69,8 @@
 			<!-- This is the highest-disclosure step in onboarding (a full chat
 			     history); say plainly where it goes. -->
 			<p class="text-xs text-foreground-subtle">
-				Parsed and stored on your box — the file never leaves your hardware,
-				and nothing is sent to Virtues.
+				Your server parses this file and keeps it on its own disk. We never
+				see it. Only the part your assistant needs to answer you ever goes out.
 			</p>
 
 			<label class="block">

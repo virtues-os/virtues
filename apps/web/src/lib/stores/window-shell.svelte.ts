@@ -23,6 +23,7 @@ import {
 	routeToEntityId
 } from '$lib/tabs/types';
 import { parseRoute } from '$lib/tabs/registry';
+import { visits } from '$lib/stores/visits.svelte';
 import { pushState, replaceState } from '$app/navigation';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 
@@ -69,7 +70,7 @@ const ENTITY_TYPE_MAP: Record<string, { type: string; icon: string; routePrefix:
 	year: { type: 'year', icon: 'ri:calendar-line', routePrefix: '/year' },
 	source: { type: 'source', icon: 'ri:database-2-line', routePrefix: '/sources' },
 	file: { type: 'drive', icon: 'ri:file-line', routePrefix: '/drive' },
-	notebook: { type: 'notebook', icon: 'ri:booklet-line', routePrefix: '/notebook' }
+	project: { type: 'project', icon: 'ri:folder-3-line', routePrefix: '/project' }
 };
 
 /**
@@ -186,6 +187,15 @@ class WindowShellStore {
 	private initialized = false;
 	private urlSyncEnabled = false;
 	private _skipUrlSync = false;
+	/**
+	 * Visits are reported from `syncActiveToUrl` — the one place every
+	 * activation passes, which already skips restores and deep links. Armed
+	 * only after the first sync at boot, so the tab that came back from
+	 * localStorage is not counted as opened; and lowered while an open the
+	 * app made on the owner's behalf is in flight (`openRouteInSplitOrActive`).
+	 */
+	private visitsArmed = false;
+	private programmaticOpen = false;
 
 	// ============================================================================
 	// Shell scope getters
@@ -264,6 +274,7 @@ class WindowShellStore {
 		this.urlSyncEnabled = true;
 		window.addEventListener('popstate', this.handlePopState);
 		this.syncActiveToUrl(false);
+		this.visitsArmed = true;
 	}
 
 	destroyUrlSync(): void {
@@ -299,6 +310,10 @@ class WindowShellStore {
 		const currentUrl = window.location.pathname + window.location.search;
 
 		if (currentUrl === url) return;
+
+		// The URL changed, so what is in front of the owner changed. The visits
+		// store decides whether it counts (dwell, dedupe, kind).
+		if (this.visitsArmed) visits.note(this.activeTab?.route, this.programmaticOpen);
 
 		// Use SvelteKit's shallow routing to update URL without triggering navigation
 		if (usePush) {
@@ -462,8 +477,11 @@ class WindowShellStore {
 	}
 
 	private openDefaultTab(): void {
-		// Fresh sessions land on Home (the "Return" surface), not an empty chat.
-		this.openTab({ type: 'home', label: 'Home', route: '/home', icon: 'ri:home-5-line' });
+		// Fresh sessions land on a new chat. They landed on Home (the "Return"
+		// surface) while Home was the top tile on the rail; the rail's ground is
+		// Chats now (2026-09-21), and a first screen the rail cannot lead back
+		// to is a room with no door. /home is still a page, not the landing.
+		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'ri:chat-1-line' });
 	}
 
 	/**
@@ -569,8 +587,16 @@ class WindowShellStore {
 	 * Route → tab dispatcher. Behavior depends on options:
 	 * - default          → navigate the active tab IN PLACE (browser model)
 	 * - forceNew: true   → always create a new tab
-	 * - focusExisting    → focus an already-open matching tab, else create (IDE model;
-	 *                       used by deep-link / popstate restore)
+	 * - focusExisting    → focus an already-open matching tab, else navigate in place
+	 *
+	 * A window is a place you walk through. Only two gestures make a new one:
+	 * the "+" on the tab bar and the explicit "open beside" (⌘-click, right-click
+	 * → Open beside). Every other door — the rail, the Home panel, New chat, New
+	 * page, search — moves the window you are in. `focusExisting` used to fall
+	 * through to *create*, and since a fresh chat lives at `/` until its first
+	 * message, the dedupe never matched a new chat: every press of New chat and
+	 * every row you clicked once was another window, nothing ever closed one,
+	 * and the layout persists, so a week produced ninety-nine tabs (2026-09-21).
 	 */
 	openTabFromRoute(route: string, options?: {
 		label?: string;
@@ -605,7 +631,7 @@ class WindowShellStore {
 				this.setActiveTab(result.tab.id);
 				return result.tab.id;
 			}
-			return this.createTabFromRoute(route, options);
+			// Not open anywhere: go there in this window, don't add one.
 		}
 
 		// Default: navigate the active tab in place.
@@ -1198,10 +1224,16 @@ class WindowShellStore {
 	 * leaving the current tab (e.g. the chat) where it is.
 	 */
 	openRouteInSplitOrActive(route: string, label?: string): string {
-		if (this.isSplit) {
-			return this.openRouteBeside(route, label);
+		// Not a visit: the app opened this, the owner did not walk to it.
+		this.programmaticOpen = true;
+		try {
+			if (this.isSplit) {
+				return this.openRouteBeside(route, label);
+			}
+			return this.openTabFromRoute(route, { forceNew: true, label });
+		} finally {
+			this.programmaticOpen = false;
 		}
-		return this.openTabFromRoute(route, { forceNew: true, label });
 	}
 
 	// Backwards compatibility aliases

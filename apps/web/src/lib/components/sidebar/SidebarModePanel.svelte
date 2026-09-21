@@ -5,7 +5,7 @@
 	 * The exit row is gone: the path mast now reads `Virtues / Settings`, and
 	 * clicking the root leaves the mode. A mode used to be the one place in
 	 * the app you left by a bespoke control that existed nowhere else; now
-	 * every "you are inside something" state — a pinned notebook, a mode, and
+	 * every "you are inside something" state — a pinned project, a mode, and
 	 * whatever we add next — is entered and left through the same breadcrumb.
 	 * That is the whole reason the mast became a path.
 	 *
@@ -118,7 +118,7 @@
 	}
 
 	.mode-row.active {
-		background: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		background: var(--sidebar-active-bg);
 		color: var(--color-foreground);
 	}
 

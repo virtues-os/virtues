@@ -44,6 +44,17 @@
 		return citations?.byId.get(key);
 	}
 
+	// A figure computed over rows cites the query that computed it, as
+	// `/chat/{chat}/tool/{call}` — the ref the box attaches to every
+	// sql_query result. The citation context already indexes each tool
+	// call by id, so the link resolves to the same panel a numbered
+	// citation opens, with the rows as a table.
+	const TOOL_REF = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
+	function citationForToolRef(url: string | undefined): Citation | undefined {
+		const callId = url?.match(TOOL_REF)?.[1];
+		return callId ? citations?.byToolCallId.get(callId) : undefined;
+	}
+
 	const processedContent = $derived.by(() => {
 		if (!content) return '';
 		// Fix adjacent citations [1][2] -> [1] [2]
@@ -149,8 +160,18 @@
 				{@const url = token?.href}
 				{@const isEntity = url ? parseEntityRoute(url) !== null : false}
 				{@const isExternal = url ? /^https?:\/\//.test(url) : false}
+				{@const queryCitation = citationForToolRef(url)}
 				{#if isEntity}
 					<Ref displayName={token.text} url={url} variant={refVariant} />
+				{:else if queryCitation}
+					<!-- The rows behind a figure. Same quiet dotted form as a
+					     web citation: it is evidence for the number, not a
+					     place to go. -->
+					<button
+						type="button"
+						class="query-ref"
+						onclick={() => onCitationClick?.(queryCitation)}
+					>{@render children()}</button>
 				{:else if isExternal}
 					<!-- Always quiet, even where entity refs are loud. A web
 					     citation is metadata about the sentence, not part of it,
@@ -193,6 +214,18 @@
 
 	.markdown :global(.streamdown-content) {
 		display: block;
+	}
+
+	.markdown :global(.query-ref) {
+		all: unset;
+		cursor: pointer;
+		text-decoration: underline dotted;
+		text-underline-offset: 3px;
+		text-decoration-color: var(--color-foreground-muted);
+	}
+
+	.markdown :global(.query-ref:hover) {
+		text-decoration-style: solid;
 	}
 
 	.markdown :global([data-streamdown-citation-preview]) {

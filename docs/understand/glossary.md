@@ -1,7 +1,7 @@
 ---
 title: Glossary
-description: The words Virtues uses for the parts of your life it holds — records, days, events, articles, pages, notebooks, applets — and what each one actually means.
-updated: 2026-08-28
+description: The words Virtues uses for the parts of your life it holds — records, days, events, articles, pages, projects, applets — and what each one actually means.
+updated: 2026-09-21
 ---
 
 Virtues names things deliberately, and uses one word per thing. This is that
@@ -82,9 +82,10 @@ one chapter; each chapter has a page of its own.
 
 **Page** — a document you write, versioned as you go, and shareable.
 
-**Notebook** — a working lens over your life: a place to gather material
+**Project** — a working lens over your life: a place to gather material
 around a question, with chat that's grounded in what you gathered rather than
-in everything.
+in everything. A project holds chats, pages and files, and never another
+project.
 
 ## What you can build
 

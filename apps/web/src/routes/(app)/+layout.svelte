@@ -20,7 +20,7 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
-	import { notebookStore } from "$lib/stores/notebook.svelte";
+	import { projectStore } from "$lib/stores/project.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -139,7 +139,7 @@
 		// Load global data
 		chatSessions.load();
 		pinsStore.load();
-		notebookStore.load();
+		projectStore.load();
 		initTheme();
 
 		// Initialize workspace store (loads workspaces, tree, and tabs)
@@ -256,7 +256,7 @@
 					const minutesLeft = Math.round(timeLeft / 60000);
 					toast.warning(`Session expires in ${minutesLeft} minutes`, {
 						description:
-							"You'll be logged out soon. Save your work.",
+							"Your session ends soon. Save your work.",
 						duration: 30000,
 					});
 				}
@@ -295,7 +295,7 @@
 	$effect(() => {
 		if (setupStateStore.remoteAccessFlipped) {
 			setupStateStore.remoteAccessFlipped = false;
-			toast.success("Your box is now reachable from anywhere", {
+			toast.success("Your server is now reachable from anywhere", {
 				description: setupStateStore.remoteAccess?.detail,
 			});
 		}

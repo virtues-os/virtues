@@ -181,7 +181,7 @@
 {:else if res.error}
 	<ErrorState message={String(res.error)} />
 {:else if !device}
-	<Page title="No such device" description="It may have been revoked.">
+	<Page title="No such device" description="Someone may have revoked it.">
 		<Button variant="secondary" onclick={backToDevices}>Back to devices</Button>
 	</Page>
 {:else}
@@ -271,7 +271,7 @@
 
 			<Field
 				label="Interface"
-				hint="the screens you are looking at — served by your server"
+				hint="the screens you are looking at - served by your server"
 				value={interfaceVersion}
 				unknown={!interfaceVersion}
 				mono
@@ -286,7 +286,7 @@
 					hint="the daemon that reads this machine and sends it on"
 					value={collector.version}
 					unknown={!collector.version}
-					note={collectorBehind ? "behind the app — relaunch" : undefined}
+					note={collectorBehind ? "behind the app - relaunch" : undefined}
 					tone="warning"
 					mono
 				/>

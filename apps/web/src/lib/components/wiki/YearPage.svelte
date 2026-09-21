@@ -67,7 +67,7 @@
 			await updateYear(year, { title: t });
 			await load();
 		} catch (e) {
-			failed = e instanceof Error ? e.message : 'Could not save that';
+			failed = e instanceof Error ? e.message : "Your server couldn't save that. Try again.";
 		}
 	}
 
@@ -79,7 +79,7 @@
 			await updateYear(year, { summary: s });
 			await load();
 		} catch (e) {
-			failed = e instanceof Error ? e.message : 'Could not save that';
+			failed = e instanceof Error ? e.message : "Your server couldn't save that. Try again.";
 		}
 	}
 
@@ -90,7 +90,7 @@
 			await writeYearArticle(year);
 			await load();
 		} catch (e) {
-			failed = e instanceof Error ? e.message : 'Could not write that';
+			failed = e instanceof Error ? e.message : "Your server couldn't write that. Try again.";
 		} finally {
 			writing = false;
 		}

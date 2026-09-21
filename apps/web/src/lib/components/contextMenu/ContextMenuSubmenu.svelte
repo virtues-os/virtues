@@ -181,7 +181,7 @@
 	}
 
 	.menu-item:hover:not(.disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: var(--hover-bg);
 	}
 
 	.menu-item.disabled {
@@ -212,7 +212,7 @@
 	}
 
 	.menu-item.checked {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 	}
 
 	.item-label {

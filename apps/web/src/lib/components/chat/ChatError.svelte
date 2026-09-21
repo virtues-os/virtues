@@ -49,11 +49,17 @@
 		| "interrupted"
 		| "output_limit"
 		| "model_error"
+		| "in_progress"
+		| "not_connected"
 		| "generic";
 
 	// Billing states first and explicitly, so a 402 "wallet empty" is never
 	// mislabeled as a rate limit (that mislabel once cost hours).
 	const kind = $derived.by((): Kind => {
+		// The box's own refusals, by their code. A turn is still running on
+		// this chat (Try again rejoins it); or there is no AI to answer with.
+		if (has(/turn_in_progress/)) return "in_progress";
+		if (has(/AI is not connected/)) return "not_connected";
 		if (has(/wallet_empty|insufficient_budget/i)) return "wallet_empty";
 		if (has(/card_declined/i)) return "card_declined";
 		if (has(/monthly_cap_reached/i)) return "monthly_cap";
@@ -107,7 +113,10 @@
 		msg = msg.replace(/^Stream interrupted:\s*/i, "");
 		try {
 			const j = JSON.parse(msg);
-			const inner = j?.error?.message ?? j?.message;
+			// The box's rejections are `{ error: <code or title>, details:
+			// <the sentence> }`; the sentence is the part for a person. Without
+			// this the whole body printed, braces and all.
+			const inner = j?.details ?? j?.error?.message ?? j?.message;
 			if (typeof inner === "string" && inner) msg = inner;
 		} catch {
 			// not JSON — leave as-is
@@ -152,10 +161,10 @@
 		max_steps: {
 			title: "The reply used up its steps",
 			sentence:
-				"It was allowed a fixed number of tool calls and reached the end of them. Ask it to carry on, or ask something narrower.",
+				"Your assistant had a fixed number of tool calls and used them all. Ask it to carry on, or ask something narrower.",
 		},
 		reconnect: {
-			title: "This box is not recognized by billing",
+			title: "Billing doesn't recognize this server",
 			sentence: "Reconnect your subscription to continue.",
 		},
 		rate_limit: {
@@ -167,7 +176,7 @@
 			sentence: "Shorten it, or attach the long part as a file.",
 		},
 		interrupted: {
-			title: "The reply was cut off",
+			title: "The reply stopped early",
 			// `null`, so the provider's OWN explanation shows. A fixed sentence
 			// here computed the real reason into `detail` and then threw it
 			// away, so every mid-stream failure read as a dropped connection.
@@ -175,10 +184,18 @@
 		},
 		output_limit: {
 			title: "The reply ran out of room",
-			sentence: "The model reached its output limit. What it wrote is above; ask it to continue.",
+			sentence: "Your assistant reached its output limit. What it wrote is above, so ask it to continue.",
 		},
 		model_error: {
 			title: "This model could not take that",
+			sentence: null,
+		},
+		in_progress: {
+			title: "Your assistant is still writing",
+			sentence: "It's answering your last message. Try again picks it up where it is.",
+		},
+		not_connected: {
+			title: "Nothing to answer with yet",
 			sentence: null,
 		},
 		generic: {
@@ -192,7 +209,7 @@
 		COPY[kind].sentence ??
 			detail ??
 			(kind === "interrupted"
-				? "The connection to the model dropped before it finished. What arrived is above."
+				? "The connection to your assistant dropped before it finished. What arrived is above."
 				: "")
 	);
 </script>
@@ -213,6 +230,8 @@
 					<!-- The account gate lives on the getting-started page now,
 					     which shows itself at the app root while unsatisfied. -->
 					<TextAction href="/">Reconnect</TextAction>
+				{:else if kind === "not_connected"}
+					<TextAction href="/">Connect an AI</TextAction>
 				{:else if canSwitch}
 					<TextAction onclick={onSwitchAndRetry}>
 						Switch to {recommendedName} and try again

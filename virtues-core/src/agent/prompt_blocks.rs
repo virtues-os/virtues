@@ -7,9 +7,10 @@
 //! LAST (constraint recency), the clock is floored to the quarter hour (and
 //! says so — a minute-granular clock re-tokenizes the whole tail every
 //! turn), and the precedence ladder is stated as text the model can cite.
+//! <circumstances>, <coverage> and the cache breakpoint are built (the
+//! breakpoint falls before the first per-turn block — see `assemble`).
 //! Still to come as one-list edits: the head split
-//! (<character>/<narrative_identity>/<tools>), <circumstances>, per-block
-//! budgets, the cache breakpoint.
+//! (<character>/<narrative_identity>/<tools>) and per-block budgets.
 //!
 //! Error policy: a block that fails renders nothing and says so in the log —
 //! never a default, never fabricated bytes (the house swallowed-query rule,
@@ -37,7 +38,7 @@ pub enum Author {
     Machine,
     /// Deterministic computation over the record (clock, user context).
     Computed,
-    /// The UI's live state (open notebook, open page).
+    /// The UI's live state (open project, open page).
     Ui,
 }
 
@@ -59,7 +60,7 @@ pub enum Cadence {
     Static,
     /// Months–years (narrative identity, rules).
     Slow,
-    /// Changes within a session but not per turn (memory, notebook).
+    /// Changes within a session but not per turn (memory, project).
     Session,
     /// Changes on a quantized clock (the datetime / situation block).
     Quantized,

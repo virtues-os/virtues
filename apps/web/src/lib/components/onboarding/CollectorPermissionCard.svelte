@@ -97,7 +97,7 @@
 					"Installed, but the collector didn't start. Check ~/.virtues/logs/collector.error.log, then try again.";
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : "Failed to start the collector.";
+			error = e instanceof Error ? e.message : "Your server couldn't start the collector. Try again in a moment.";
 		} finally {
 			installing = false;
 		}
@@ -123,9 +123,9 @@
 	<div class="rounded-lg border border-border p-4">
 		<p class="font-serif text-base text-foreground mb-1">Set up this Mac</p>
 		<p class="text-sm text-foreground-muted">
-			Open the <strong>Virtues desktop app</strong> on this Mac to let it remember
-			what happens here — the docs you open, the people you message, your calendar.
-			It all stays on your server.
+			Open the <strong>Virtues desktop app</strong> on this Mac and your server
+			starts recording what happens here: the docs you open, the people you
+			message, your calendar. It all lands on your server, not ours.
 		</p>
 	</div>
 {:else}
@@ -163,7 +163,7 @@
 					/>
 					<div class="flex-1">
 						<span class="text-foreground">Full Disk Access</span>
-						<span class="text-foreground-subtle">— Messages, read locally, never sent to Virtues</span>
+						<span class="text-foreground-subtle">Your Mac reads Messages and keeps them on your server. We never see them.</span>
 						{#if !status.hasFullDiskAccess}
 							<!-- The wrapper carries the line break and the spacing: the
 							     primitive is `display: inline; margin: 0` from a scoped
@@ -191,7 +191,7 @@
 					/>
 					<div class="flex-1">
 						<span class="text-foreground">Accessibility</span>
-						<span class="text-foreground-subtle">— optional; adds what's on your screen, kept on your server</span>
+						<span class="text-foreground-subtle">- optional; adds what's on your screen, kept on your server</span>
 						{#if !status.hasAccessibility}
 							<div class="mt-1">
 								<TextAction onclick={() => openAccessibilitySettings()}>

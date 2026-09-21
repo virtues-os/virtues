@@ -253,7 +253,7 @@
 				     there. -->
 				<p class="notice">
 					<Icon icon="ri:information-line" width="14" />
-					No screen is attached to this box. These settings keep; a screen
+					No screen is attached to this server. These settings keep; a screen
 					uses them when one arrives.
 				</p>
 			{/if}
@@ -291,7 +291,7 @@
 							<span class="g-doing">Get Virtues for your computer</span>
 							<!-- The words themselves never leave the box — the mirror
 							     may say the panel is showing them, not what they are. -->
-							<span class="g-sub">Showing the setup words — readable only on the glass itself.</span>
+							<span class="g-sub">Showing the setup words - readable only on the glass itself.</span>
 						</div>
 					{:else if data.state.asleep}
 						<!-- Mirroring blackness would read as a fault; the mirror
@@ -425,7 +425,7 @@
 					{/if}
 				</div>
 				<p class="sec-hint">
-					The screen goes truly dark — backlight off — and still wakes for
+					The screen goes truly dark - backlight off, and still wakes for
 					anything on the duty list. Leave empty and it never sleeps.
 				</p>
 			</section>

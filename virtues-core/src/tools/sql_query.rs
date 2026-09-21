@@ -4,334 +4,16 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Column, Row, PgPool, TypeInfo};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::executor::{ToolError, ToolResult};
 
-/// Table metadata for get_schema operation
-#[derive(Debug, Clone, Serialize)]
-pub struct TableMetadata {
-    pub description: &'static str,
-    pub category: &'static str,
-    pub key_columns: &'static [&'static str],
-    pub join_hint: Option<&'static str>,
-}
-
-/// Static table metadata - descriptions and key queryable columns
-fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
-    let mut m = HashMap::new();
-
-    // ============================================================================
-    // DATA TABLES - Health
-    // ============================================================================
-    m.insert("data_health_heart_rate", TableMetadata {
-        description: "Heart rate BPM measurements from wearables",
-        category: "health",
-        key_columns: &["bpm", "occurred_at"],
-        join_hint: None,
-    });
-    m.insert("data_health_hrv", TableMetadata {
-        description: "Heart rate variability measurements in milliseconds",
-        category: "health",
-        key_columns: &["hrv_ms", "occurred_at"],
-        join_hint: None,
-    });
-    m.insert("data_health_steps", TableMetadata {
-        description: "Step count records (may have multiple per day)",
-        category: "health",
-        key_columns: &["step_count", "occurred_at"],
-        join_hint: None,
-    });
-    m.insert("data_health_sleep", TableMetadata {
-        description: "Sleep sessions with duration and quality metrics",
-        category: "health",
-        key_columns: &["started_at", "ended_at", "duration_minutes", "sleep_quality_score", "sleep_stages"],
-        join_hint: None,
-    });
-    m.insert("data_health_workout", TableMetadata {
-        description: "Exercise and workout sessions",
-        category: "health",
-        key_columns: &["workout_type", "started_at", "ended_at", "duration_minutes", "calories_burned", "distance_km", "avg_heart_rate", "max_heart_rate"],
-        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_health_workout' AND er.source_id = data_health_workout.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
-    });
-
-    // ============================================================================
-    // DATA TABLES - Location
-    // ============================================================================
-    m.insert("data_location_point", TableMetadata {
-        description: "Raw GPS coordinates (high volume, use sparingly)",
-        category: "location",
-        key_columns: &["latitude", "longitude", "altitude", "horizontal_accuracy", "occurred_at"],
-        join_hint: None,
-    });
-    m.insert("data_location_visit", TableMetadata {
-        description: "Place visits with arrival/departure times",
-        category: "location",
-        key_columns: &["place_name", "latitude", "longitude", "started_at", "ended_at", "duration_minutes"],
-        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_location_visit' AND er.source_id = data_location_visit.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
-    });
-
-    // ============================================================================
-    // DATA TABLES - Communication
-    // ============================================================================
-    m.insert("data_communication_email", TableMetadata {
-        description: "Email messages from Gmail, etc.",
-        category: "communication",
-        key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "occurred_at"],
-        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_email' AND er.source_id = data_communication_email.id JOIN wiki_people ON er.entity_id = wiki_people.id AND er.entity_type = 'person'"),
-    });
-    m.insert("data_communication_message", TableMetadata {
-        description: "Chat messages (iMessage, SMS, etc.)",
-        category: "communication",
-        key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "occurred_at"],
-        // A message links to the person on the other end via wiki_refs:
-        // role='sender' for messages you received, role='recipient' for messages you
-        // sent. Filter both to get a full thread with someone; the message's own
-        // direction is in metadata->>'is_from_me'.
-        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_message' AND er.source_id = data_communication_message.id AND er.entity_type = 'person' AND er.role IN ('sender','recipient') JOIN wiki_people ON er.entity_id = wiki_people.id"),
-    });
-
-    // ============================================================================
-    // DATA TABLES - Calendar
-    // ============================================================================
-    m.insert("data_calendar_event", TableMetadata {
-        // "with attendees" is how a model comes to write `attendees` — the
-        // description is the only prose it sees, and a word that is not a
-        // column reads as one. Name the column instead: on a live box the
-        // query `attendees::text ILIKE '%name%'` failed exactly this way.
-        description: "Calendar events; attendees are in attendee_identifiers (an array of handles), location in location_name",
-        category: "calendar",
-        key_columns: &["title", "description", "calendar_name", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "started_at", "ended_at", "is_all_day"],
-        join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_calendar_event' AND er.source_id = data_calendar_event.id"),
-    });
-
-    // ============================================================================
-    // DATA TABLES - Financial (amounts in cents)
-    // ============================================================================
-    m.insert("data_financial_account", TableMetadata {
-        description: "Bank, credit, and investment accounts",
-        category: "financial",
-        key_columns: &["account_name", "account_type", "institution_name", "mask", "currency", "current_balance", "available_balance"],
-        join_hint: None,
-    });
-    m.insert("data_financial_transaction", TableMetadata {
-        // positive=expense, negative=credit — Plaid's convention, which is what
-        // the collector writes. This said the opposite, so a model looking for
-        // spending wrote `WHERE amount < 0` and saw under one percent of the
-        // record.
-        description: "Transactions (amounts in cents, positive=money out, negative=refund or credit)",
-        category: "financial",
-        key_columns: &["account_id", "amount", "currency", "merchant_name", "merchant_category", "description", "category", "is_pending", "transaction_type", "payment_channel", "occurred_at"],
-        join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
-    });
-    m.insert("data_financial_asset", TableMetadata {
-        description: "Investment holdings (stocks, crypto, etc.)",
-        category: "financial",
-        key_columns: &["account_id", "asset_type", "symbol", "name", "quantity", "cost_basis", "current_value", "currency", "occurred_at"],
-        join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
-    });
-    m.insert("data_financial_liability", TableMetadata {
-        description: "Loans, mortgages, and debt",
-        category: "financial",
-        key_columns: &["account_id", "liability_type", "principal", "interest_rate", "minimum_payment", "next_payment_due_date", "currency", "occurred_at"],
-        join_hint: Some("JOIN data_financial_account ON account_id = data_financial_account.id"),
-    });
-
-    // ============================================================================
-    // DATA TABLES - Activity
-    // ============================================================================
-    m.insert("data_activity_app_session", TableMetadata {
-        description: "Desktop/mobile app usage sessions",
-        category: "activity",
-        key_columns: &["app_name", "app_bundle_id", "started_at", "ended_at", "window_title"],
-        join_hint: None,
-    });
-    m.insert("data_activity_web_browsing", TableMetadata {
-        description: "Web browsing history",
-        category: "activity",
-        key_columns: &["url", "domain", "page_title", "occurred_at"],
-        join_hint: None,
-    });
-
-    // ============================================================================
-    // DATA TABLES - Content
-    // ============================================================================
-    m.insert("data_content_document", TableMetadata {
-        description: "Saved documents and notes",
-        category: "content",
-        key_columns: &["title", "content", "document_type", "tags", "is_authored", "occurred_at", "last_modified_time"],
-        join_hint: None,
-    });
-    m.insert("data_content_conversation", TableMetadata {
-        description: "Past AI chat conversation history",
-        category: "content",
-        key_columns: &["conversation_id", "message_id", "role", "content", "provider", "occurred_at"],
-        join_hint: None,
-    });
-    m.insert("data_content_bookmark", TableMetadata {
-        description: "Saved/starred content (GitHub stars, browser bookmarks, etc.)",
-        category: "content",
-        key_columns: &["url", "title", "description", "source_platform", "bookmark_type", "author", "tags", "occurred_at"],
-        join_hint: None,
-    });
-
-    // ============================================================================
-    // DATA TABLES - Other
-    // ============================================================================
-    m.insert("data_communication_transcription", TableMetadata {
-        description: "Voice/audio transcriptions",
-        category: "communication",
-        key_columns: &["text", "language", "duration_seconds", "started_at", "ended_at", "speaker_count"],
-        join_hint: None,
-    });
-
-    // Tables that hold real data and were never described, so the agent could
-    // see them only because the old catalog listed everything matching
-    // `data_%`/`wiki_%`. Now that an undescribed table is a hidden table, the
-    // omission would have silently taken the owner's own recordings, weather and
-    // notes out of reach — so they are described here deliberately.
-    m.insert("data_audio_recording", TableMetadata {
-        description: "Microphone recordings captured by the phone — one row per chunk. Join to transcriptions on source_stream_id for the words.",
-        category: "communication",
-        key_columns: &["started_at", "ended_at", "duration_seconds", "is_silent", "average_db_level"],
-        join_hint: Some("JOIN data_communication_transcription t ON t.source_stream_id = data_audio_recording.source_stream_id"),
-    });
-    m.insert("data_audio_session", TableMetadata {
-        description: "Conversations, derived by grouping adjacent transcription chunks into one sitting",
-        category: "communication",
-        key_columns: &["started_at", "ended_at", "speaker_mode", "chunk_count", "content"],
-        join_hint: None,
-    });
-    m.insert("data_environment_weather", TableMetadata {
-        description: "Weather where the owner was. Holds BOTH observations and forecasts — filter is_forecast = false for what actually happened.",
-        category: "environment",
-        key_columns: &["occurred_at", "is_forecast", "temperature_c", "apparent_c", "latitude", "longitude"],
-        join_hint: None,
-    });
-    m.insert("data_health_active_energy", TableMetadata {
-        description: "Active energy burned, in kilocalories",
-        category: "health",
-        key_columns: &["kcal", "occurred_at"],
-        join_hint: None,
-    });
-    m.insert("data_health_distance", TableMetadata {
-        description: "Distance moved, in meters",
-        category: "health",
-        key_columns: &["meters", "occurred_at"],
-        join_hint: None,
-    });
-    m.insert("wiki_articles", TableMetadata {
-        description: "Links a wiki subject (person/place/organization/day) to the page holding its written article",
-        category: "wiki",
-        key_columns: &["subject_type", "subject_id", "page_id"],
-        join_hint: Some("JOIN app_pages p ON p.id = wiki_articles.page_id"),
-    });
-    m.insert("wiki_notes", TableMetadata {
-        description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",
-        category: "wiki",
-        key_columns: &["subject_type", "subject_id", "kind", "body", "author", "resolved_at"],
-        join_hint: None,
-    });
-    m.insert("wiki_chapters", TableMetadata {
-        description: "The chapters of the owner's life — their own gapless partition of it into named eras, authored in the narrative interview and never inferred. A day's chapter is a range lookup on started_at/ended_at; each chapter also has a wiki article (subject_type 'chapter')",
-        category: "wiki",
-        key_columns: &["title", "kind", "started_at", "ended_at", "is_current", "changepoint", "summary"],
-        join_hint: None,
-    });
-    m.insert("wiki_rules", TableMetadata {
-        description: "Standing instructions the owner has given about how their record is written — 'avoid' subjects to leave alone, 'defend' ones to state carefully",
-        category: "wiki",
-        key_columns: &["rule", "kind", "active"],
-        join_hint: None,
-    });
-    // ============================================================================
-    // WIKI TABLES - Entities (resolved nouns)
-    // ============================================================================
-    m.insert("wiki_people", TableMetadata {
-        description: "The people in the owner's life, resolved to one row each",
-        category: "wiki_entity",
-        key_columns: &["name", "emails", "phones", "relationship_category", "nickname", "bond", "birthday", "died_on"],
-        join_hint: None,
-    });
-    m.insert("wiki_places", TableMetadata {
-        description: "The places of the owner's life, resolved to one row each",
-        category: "wiki_entity",
-        key_columns: &["name", "category", "address", "latitude", "longitude", "radius_m"],
-        join_hint: None,
-    });
-    // Advertised because they are real subjects now. The fence below keys on
-    // having a description, so a table stays invisible to the agent until
-    // someone writes one — which is why these two were dark while they were
-    // empty, and why they belong here the moment they are not.
-    m.insert("wiki_years", TableMetadata {
-        description: "A year of the owner's life as a subject: their own title and summary for it",
-        category: "wiki_entity",
-        key_columns: &["year", "title", "summary"],
-        join_hint: Some("id is 'year_YYYY'; the days of a year are wiki_days filtered by EXTRACT(YEAR FROM date)"),
-    });
-    m.insert("wiki_stories", TableMetadata {
-        description: "Subjects the owner named themselves — a theme or thread that mattered, not a span",
-        category: "wiki_entity",
-        key_columns: &["title", "summary", "started_at", "ended_at"],
-        join_hint: Some("dates are optional and often absent; a story is not a time range"),
-    });
-    m.insert("wiki_orgs", TableMetadata {
-        description: "The organizations in the owner's life, resolved to one row each",
-        category: "wiki_entity",
-        key_columns: &["name", "organization_type", "relationship_type", "role_title", "started_at", "ended_at"],
-        join_hint: None,
-    });
-
-    // ============================================================================
-    // WIKI TABLES - Temporal
-    // ============================================================================
-    m.insert("wiki_days", TableMetadata {
-        // Both relations carry `date`, and the join hint below sends the
-        // model straight from one to the other — so a bare `SELECT date`
-        // across that join is ambiguous, and a live box answered exactly
-        // that. wiki_day_prose already has the date; the join is only
-        // needed for wiki_days' own columns.
-        description: "Day records; a day's prose lives in the wiki_day_prose view (day_id, date, prose), which already carries date — query it alone for prose, and qualify `date` if you join the two",
-        category: "wiki_temporal",
-        // `last_edited_by` was here until 0025 dropped it, and this catalog is
-        // serialized straight to the model — so the agent was being handed a
-        // column whose every mention it wrote came back as an error. `narrated_at`
-        // is the live column that answers what the model actually wants to know
-        // about a day.
-        key_columns: &["date", "start_timezone", "narrated_at"],
-        join_hint: Some("JOIN wiki_day_prose ON wiki_day_prose.day_id = wiki_days.id"),
-    });
-    // A VIEW, not a table — and cataloged on purpose. The wiki_days entry
-    // above instructs a JOIN on it, and the fence in get_schema refuses
-    // anything outside this catalog, so omitting it meant the model was told
-    // to join a relation it was then refused a schema for. list_tables
-    // includes views for the same reason.
-    m.insert("wiki_day_prose", TableMetadata {
-        description: "VIEW: each day's narrated prose (day_id, date, prose). The text of a day page.",
-        category: "wiki_temporal",
-        key_columns: &["day_id", "date", "prose"],
-        join_hint: Some("JOIN wiki_days ON wiki_days.id = wiki_day_prose.day_id"),
-    });
-    m.insert("wiki_events", TableMetadata {
-        description: "Timeline events within a day",
-        category: "wiki_temporal",
-        key_columns: &["day_id", "started_at", "ended_at", "auto_label", "auto_location", "user_label", "user_location", "user_notes", "is_unknown", "is_transit"],
-        join_hint: Some("JOIN wiki_days ON day_id = wiki_days.id"),
-    });
-
-    // ============================================================================
-    // WIKI TABLES - References
-    // ============================================================================
-    m.insert("wiki_refs", TableMetadata {
-        description: "Junction table linking entities (people, places, orgs) to ontology records. Use for 'everything about entity X' queries.",
-        category: "wiki_reference",
-        key_columns: &["entity_type", "entity_id", "source_table", "source_id", "role", "occurred_at"],
-        join_hint: None,
-    });
-
-    m
-}
+// The catalog the model reads — descriptions, key columns, the visibility
+// fence — lives in the registry now, because the `sql_query` tool description
+// is generated from it there (see `virtues_registry::sql_catalog`). This file
+// keeps the three consumers that run AFTER the model has written its query:
+// `list_tables`, `get_schema`, and the failure explainer.
+use virtues_registry::sql_catalog::get_table_metadata;
 
 /// SQL query tool arguments (from LLM)
 #[derive(Debug, Deserialize)]
@@ -412,11 +94,13 @@ impl SqlQueryTool {
                 SELECT viewname AS name FROM pg_views
                 WHERE schemaname = 'public'
             ) rels
-            WHERE name LIKE 'data_%' OR name LIKE 'wiki_%'
+            -- app_pages is where an article's text lives; the catalog sends
+            -- the model there, so it is listable like the wiki_ relations.
+            WHERE name LIKE 'data_%' OR name LIKE 'wiki_%' OR name = 'app_pages'
             ORDER BY
                 CASE
                     WHEN name LIKE 'data_%' THEN 1
-                    WHEN name LIKE 'wiki_%' THEN 2
+                    ELSE 2
                 END,
                 name
             "#,
@@ -492,22 +176,12 @@ impl SqlQueryTool {
         let mut result_tables = serde_json::Map::new();
 
         for table in tables {
-            // Validate table name (must be a known queryable table)
-            let is_valid = table.starts_with("data_")
-                || table.starts_with("wiki_")
-                ;
-            
-            if !is_valid {
-                return Err(ToolError::InvalidParameters(format!(
-                    "Can only get schema for data_* or wiki_* tables. Got: '{}'",
-                    table
-                )));
-            }
-
-            // Same fence as `list_tables`. Without this the prefix check above
-            // is the only gate, so a table deliberately withheld from the
-            // catalog could still be described in full — and a described table
-            // is one the agent will then query.
+            // The catalog is the fence — the same one `list_tables` and
+            // `explain_failure` apply. There used to be a `data_*`/`wiki_*`
+            // prefix check in front of it, which refused `app_pages` while the
+            // wiki_articles join hint sent the model straight there. A table
+            // deliberately withheld from the catalog is still not described,
+            // and a described table is one the agent will then query.
             if !metadata.contains_key(table.as_str()) {
                 return Err(ToolError::InvalidParameters(format!(
                     "'{table}' is not in the queryable catalog. Call list_tables \
@@ -639,6 +313,17 @@ impl SqlQueryTool {
             .and_then(|pg| pg.hint())
         {
             out.push_str(&format!("\nHint: {hint}"));
+        }
+
+        // 57014 query_canceled: the 25s statement_timeout above. The columns
+        // are right; the question is too wide. Say what narrows it.
+        if code == "57014" {
+            out.push_str(
+                "\nThe query ran past 25 seconds and was stopped. Narrow it: a WHERE on a \
+                 time range (occurred_at / started_at), fewer joins, or an aggregate \
+                 instead of raw rows.",
+            );
+            return out;
         }
 
         // 42703 undefined_column, 42P01 undefined_table, 42702 ambiguous_column.
@@ -791,6 +476,18 @@ impl SqlQueryTool {
         // SET LOCAL, so it reverts with the transaction and cannot leak onto a
         // pooled connection.
         sqlx::query("SET LOCAL ROLE virtues_face_reader")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
+        // Postgres stops the statement itself. The executor's 30s tool
+        // timeout only drops this future; without a statement_timeout the
+        // query kept running on the box after the model had given up on
+        // it, and a retry or a parallel call stacked another one. Faces
+        // and sql_write set 5s; this tool's questions are legitimately
+        // heavier (a month of location points), so it gets most of the
+        // 30s, and the error names the fix (see `explain_failure`).
+        sqlx::query("SET LOCAL statement_timeout = '25s'")
             .execute(&mut *tx)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
@@ -1182,6 +879,47 @@ mod tests {
             "sql_query's llm_description names tables the catalog does not have, \
              so the model is being taught to write queries that cannot run:\n  {}",
             unknown.join("\n  ")
+        );
+    }
+
+    /// The column list the model reads in the tool description is rendered
+    /// from `key_columns`, so a column that drifts from the schema is a column
+    /// the model is TAUGHT to write. `last_edited_by` sat in wiki_days' entry
+    /// after migration 0025 dropped it, and every query that used it failed.
+    /// The description test above checks table names and says in its own
+    /// comment that it does not check columns; this is that check, against
+    /// the migrated schema rather than another list.
+    ///
+    /// Requires a live Postgres: `#[sqlx::test]` provisions a scratch DB and
+    /// applies migrations. `information_schema.columns` covers views too, which
+    /// matters for wiki_day_prose.
+    #[sqlx::test]
+    async fn every_key_column_in_the_catalog_exists(pool: sqlx::PgPool) {
+        let mut missing: Vec<String> = Vec::new();
+        for (table, meta) in get_table_metadata() {
+            let cols: Vec<String> = sqlx::query_scalar(
+                "SELECT column_name FROM information_schema.columns \
+                 WHERE table_schema = 'public' AND table_name = $1",
+            )
+            .bind(table)
+            .fetch_all(&pool)
+            .await
+            .expect("information_schema is readable");
+            if cols.is_empty() {
+                missing.push(format!("{table}: no such relation"));
+                continue;
+            }
+            for col in meta.key_columns {
+                if !cols.iter().any(|c| c == col) {
+                    missing.push(format!("{table}.{col}"));
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "the catalog names columns the schema does not have, so the model is \
+             being taught to write them:\n  {}",
+            missing.join("\n  ")
         );
     }
 

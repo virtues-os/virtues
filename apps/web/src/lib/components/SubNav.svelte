@@ -169,7 +169,7 @@
 		line-height: 1;
 		padding: 0.125rem 0.3125rem;
 		border-radius: var(--radius-full);
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		color: var(--color-foreground-muted);
 	}
 

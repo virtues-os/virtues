@@ -140,7 +140,7 @@ impl PageEditorTool {
             icon_color: None,
             cover_url: None,
             tags: None,
-            notebook_id: None,
+            project_id: None,
         };
 
         let page = pages::create_page(self.pool.as_ref(), req)

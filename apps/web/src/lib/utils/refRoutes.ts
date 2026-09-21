@@ -13,7 +13,8 @@ const ROUTE_TO_TYPE: Record<string, string> = {
 	'/drive': 'file',
 	'/page': 'page',
 	'/chat': 'chat',
-	'/notebook': 'notebook',
+	'/project': 'project',
+	'/notebook': 'project', // legacy spelling — projects were notebooks until 2026-09; old refs still carry it
 	'/sources': 'source',
 	'/source': 'source',
 	'/record': 'record',
@@ -26,7 +27,7 @@ const TYPE_TO_ICON: Record<string, string> = {
 	org: 'ri:building-line',
 	page: 'ri:file-text-line',
 	chat: 'ri:chat-3-line',
-	notebook: 'ri:booklet-line',
+	project: 'ri:folder-3-line',
 	file: 'ri:file-line',
 	day: 'ri:calendar-line',
 	year: 'ri:calendar-line',
