@@ -1,5 +1,5 @@
 name = "Notion Pages"
-description = "Keeps your Notion pages and databases here."
+description = "Keeps your Notion pages and databases on your server."
 owner = "system"
 command = ["notion_pages_sync"]
 triggers = ["cron", "manual"]

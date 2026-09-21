@@ -95,7 +95,7 @@ final class ImprovClient: NSObject {
   /// already-connected matching target completes immediately.
   private func ensureConnected(id: String, completion: @escaping (String?) -> Void) {
     guard let uuid = UUID(uuidString: id), let entry = found[uuid] else {
-      completion("that box is no longer in range — scan again")
+      completion("Your server went out of Bluetooth range. Move closer to it and scan again.")
       return
     }
     if let t = target, t.identifier == uuid, t.state == .connected, rpcChar != nil {
@@ -108,7 +108,7 @@ final class ImprovClient: NSObject {
     entry.peripheral.delegate = self
     central.connect(entry.peripheral, options: nil)
     // A connect that goes nowhere must not hang the UI's promise forever.
-    failLater(after: 15, message: "couldn't connect to the box over Bluetooth")
+    failLater(after: 15, message: "Your phone couldn't reach your server over Bluetooth. Move closer and try again.")
   }
 
   private func failLater(after: Double, message: String) {
@@ -185,7 +185,7 @@ final class ImprovClient: NSObject {
           // One message for wrong words AND a spent attempt budget: the box
           // refuses to distinguish them, and neither do we, so a guesser
           // learns nothing from the shape of the refusal.
-          finish(true, "That phrase didn't match. Check the words on your box's screen.")
+          finish(true, "That phrase didn't match. Check the words on your server's screen and enter them again.")
         }
         self.onResult = { data in
           if Self.parseResult(data, command: 0x86) != nil { finish(true, nil) }
@@ -198,7 +198,7 @@ final class ImprovClient: NSObject {
         }
         self.write(rpc: Self.buildRPC(command: 0x86, data: payload))
         self.queue.asyncAfter(deadline: .now() + 20) {
-          finish(true, "The box didn't answer — try again.")
+          finish(true, "Your server didn't answer. Try again.")
         }
       }
     }
@@ -297,7 +297,7 @@ final class ImprovClient: NSObject {
           if !finished {
             finished = true
             self.onResult = nil
-            completion(networks, networks.isEmpty ? "the box didn't answer the scan" : nil)
+            completion(networks, networks.isEmpty ? "Your server didn't answer the Wi-Fi scan. Try again." : nil)
           }
         }
       }
@@ -334,8 +334,8 @@ final class ImprovClient: NSObject {
         self.onImprovError = { code in
           let msg: String
           switch code {
-          case 0x03: msg = "The box couldn't join that network — usually a wrong password."
-          default: msg = "Setup failed on the box (error \(code))."
+          case 0x03: msg = "Your server couldn't join that network. Check the Wi-Fi password and try again."
+          default: msg = "Your server couldn't finish setup. Check the Wi-Fi password and try again."
           }
           finish(nil, msg)
         }
@@ -360,7 +360,7 @@ final class ImprovClient: NSObject {
         onProgress("sent")
         // A join is bounded by nmcli's own timeout on the box; add slack.
         self.queue.asyncAfter(deadline: .now() + 45) {
-          finish(nil, "Timed out waiting for the box — it may still be joining. Check its screen.")
+          finish(nil, "Your server didn't answer in time. It may still be joining, so check its screen.")
         }
       }
     }
@@ -445,7 +445,7 @@ final class ImprovClient: NSObject {
         self.write(rpc: Self.buildRPC(command: 0x83, data: payload))
         // The box does a local HTTP round-trip (15s timeout) plus BLE frames.
         self.queue.asyncAfter(deadline: .now() + 25) {
-          finish(nil, "Timed out pairing over Bluetooth — check the box's screen.")
+          finish(nil, "Pairing over Bluetooth timed out. Check your server's screen and try again.")
         }
       }
     }
@@ -524,7 +524,7 @@ extension ImprovClient: CBCentralManagerDelegate {
     if let ready = onReady {
       onReady = nil
       cancelWaits()
-      ready(error?.localizedDescription ?? "couldn't connect to the box")
+      ready(error?.localizedDescription ?? "Your phone couldn't reach your server.")
     }
   }
 

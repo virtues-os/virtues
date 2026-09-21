@@ -56,7 +56,7 @@
 			draft = '';
 			await load();
 		} catch (e) {
-			failed = e instanceof Error ? e.message : 'Could not save that note';
+			failed = e instanceof Error ? e.message : "Your server couldn't save that note. Try again.";
 		} finally {
 			busy = false;
 		}

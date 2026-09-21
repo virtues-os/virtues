@@ -67,7 +67,7 @@
 			draft = bookmark.note ?? '';
 			savedAt = Date.now();
 		} catch (e) {
-			noteError = e instanceof Error ? e.message : 'Could not save that note';
+			noteError = e instanceof Error ? e.message : "Your server couldn't save that note. Try again.";
 		} finally {
 			savingNote = false;
 		}

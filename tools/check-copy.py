@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Copy lint — the UI-copy rules in agents/build/voice.md, counted.
+
+Not a style nag. Every check here is a rule that has already cost something:
+a passive sentence with no actor shipped on the interview's close; "the
+machine" and "this box" named the same thing three ways across screens a
+person walks between; "endpoint" and "implementation server" reached a
+settings page; an em dash is the letter's punctuation, not the product's.
+
+RATCHET, NOT GATE. The tree carries a backlog, so this fails only when a
+count goes UP against tools/copy-baseline.json. Lower a number, commit the
+new baseline with the fix, and the number can never climb back. Run with
+--update to write the baseline after a pass that genuinely lowers one.
+
+Scope is the INTERFACE only. docs/ is the manual and agents/ is the
+workshop; both keep their em dashes by rule, and neither is scanned. The
+founder's letter is signed by a person and is exempt for the same reason.
+"""
+import json, pathlib, re, sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+BASELINE = ROOT / "tools" / "copy-baseline.json"
+
+# The interface. Not docs/, not agents/ — those are a different register.
+SURFACES = [
+    ("apps/web/src", ("*.svelte", "*.ts")),
+    ("apps/web/src-tauri/ui", ("*.html",)),
+    ("virtues-core/src/api", ("*.rs",)),
+    ("virtues-core/src/server", ("*.rs",)),
+    ("applets", ("manifest.toml",)),
+    ("services/virtues-atlas/src", ("email.rs",)),
+    ("apps/web/plugins/reach/ios", ("*.swift",)),
+]
+# The letter is Adam's and literary on purpose; the components gallery is a
+# developer page that quotes bad copy as examples.
+EXEMPT = ("onboarding/document/", "routes/(public)/components/")
+
+PARTICIPLE = r"\w+(?:ed|en|wn|ne|nt)"
+CHECKS = {
+    "passive-no-actor": re.compile(
+        rf"\b(?:is|are|was|were|be|been|being)\s+(?:not\s+|never\s+|already\s+)?(?:{PARTICIPLE})\b"),
+    "em-dash":       re.compile(r"—"),
+    "wrong-name":    re.compile(r"\b(?:the machine|this box|the box|the AI|the model)\b", re.I),
+    "dev-word":      re.compile(
+        r"\b(?:endpoint|payload|instance|backend|partition|entity|provenance|"
+        r"daemon|handler|implementation server)\b", re.I),
+    "software-subject": re.compile(
+        r"\b(?:lets? you|allows? you|enables? you|capability|functionality)\b", re.I),
+    "banned-word":   re.compile(
+        r"\b(?:please|simply|utilise|leverage|streamline|in order to|via|etc\.|e\.g\.|i\.e\.)\b", re.I),
+    "we-in-prose":   re.compile(r"\b(?:we're|we'll|we could not|we couldn't|we recommend)\b", re.I),
+    "exclamation":   re.compile(r"!(?:\s|$|\"|')"),
+}
+
+STRING = re.compile(r"""(['"`])((?:(?!\1)[^\\\n]|\\.){20,240})\1""")
+TEXTNODE = re.compile(r">([^<>{}]{15,240})<")
+
+
+def is_prose(s: str) -> bool:
+    """A sentence a person reads, not an identifier, path, or fragment."""
+    if re.search(r"[<>{}$#\\]|::|/api/|https?://|\.\w{2,4}$|^\s*\d", s):
+        return False
+    if not re.search(r"[a-z]{3}\s+\w+\s+\w+", s):
+        return False
+    return len(s.split()) >= 5
+
+
+def strip_comments(src: str, suffix: str) -> str:
+    src = re.sub(r"/\*.*?\*/|<!--.*?-->", " ", src, flags=re.S)
+    if suffix == ".toml":
+        return re.sub(r"^\s*#.*$", " ", src, flags=re.M)
+    return re.sub(r"^\s*(?://|///).*$", " ", src, flags=re.M)
+
+
+def scan():
+    counts = {k: 0 for k in CHECKS}
+    examples = {k: [] for k in CHECKS}
+    scanned = 0
+    for root, pats in SURFACES:
+        base = ROOT / root
+        if not base.exists():
+            continue
+        for pat in pats:
+            for p in sorted(base.rglob(pat)):
+                rel = str(p.relative_to(ROOT))
+                if any(x in rel for x in EXEMPT):
+                    continue
+                src = strip_comments(p.read_text(errors="ignore"), p.suffix)
+                cands = [m.group(2) for m in STRING.finditer(src)]
+                if p.suffix in (".svelte", ".html"):
+                    cands += [m.group(1) for m in TEXTNODE.finditer(src)]
+                for raw in cands:
+                    s = " ".join(raw.split())
+                    if not is_prose(s):
+                        continue
+                    scanned += 1
+                    for name, rx in CHECKS.items():
+                        if rx.search(s):
+                            counts[name] += 1
+                            if len(examples[name]) < 3:
+                                examples[name].append(f"{rel}: {s[:88]}")
+    return scanned, counts, examples
+
+
+def main() -> int:
+    scanned, counts, examples = scan()
+    update = "--update" in sys.argv
+    base = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
+
+    worse, better = [], []
+    for name in CHECKS:
+        was, now = base.get(name), counts[name]
+        if was is None:
+            continue
+        if now > was:
+            worse.append((name, was, now))
+        elif now < was:
+            better.append((name, was, now))
+
+    print(f"check-copy: {scanned} interface strings")
+    for name in CHECKS:
+        was = base.get(name)
+        mark = "" if was is None or was == counts[name] else (
+            f"  (was {was})" if counts[name] < was else f"  ↑ WAS {was}")
+        print(f"  {name:<18} {counts[name]:>4}{mark}")
+
+    if update:
+        BASELINE.write_text(json.dumps(counts, indent=2, sort_keys=True) + "\n")
+        print("\nbaseline written.")
+        return 0
+
+    for name, was, now in better:
+        print(f"\n  ↓ {name}: {was} → {now}. Commit the new baseline: tools/check-copy.py --update")
+    if worse:
+        print("\nFAIL — new copy broke a rule that was already being worked down:\n")
+        for name, was, now in worse:
+            print(f"  {name}: {was} → {now}")
+            for ex in examples[name][:3]:
+                print(f"      {ex}")
+        print("\n  The rules are in .claude/rules/copy.md. The one that matters most:")
+        print("  a passive sentence is a missing subject — the person is the actor")
+        print("  where the thing is theirs, the server is named where it failed.")
+        return 1
+    print("\nok — nothing got worse.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

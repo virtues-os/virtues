@@ -84,7 +84,7 @@
 			url = '';
 			revision += 1;
 		} catch (err) {
-			saveError = err instanceof Error ? err.message : 'Could not save that URL';
+			saveError = err instanceof Error ? err.message : "Your server couldn't save that link. Try again.";
 		} finally {
 			saving = false;
 		}

@@ -50,7 +50,7 @@
 		const ok = await updatePlace(page.id, { is_audio_muted: next });
 		if (!ok) {
 			muted = !next;
-			muteFailed = "Could not change that";
+			muteFailed = "Your server couldn't change that. Try again.";
 		}
 	}
 
