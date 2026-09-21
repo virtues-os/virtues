@@ -72,7 +72,7 @@
 <Page
 	title={source?.name ?? sourceId}
 	description={source?.description ??
-		'This source is not installed on this box. Anything still connected to it will not run.'}
+		'This source is not installed on this server. Anything still connected to it won\'t run.'}
 	maxWidth="wide"
 >
 	{#snippet actions()}

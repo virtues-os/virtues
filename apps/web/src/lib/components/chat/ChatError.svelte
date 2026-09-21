@@ -184,7 +184,7 @@
 		},
 		output_limit: {
 			title: "The reply ran out of room",
-			sentence: "The model reached its output limit. What it wrote is above; ask it to continue.",
+			sentence: "Your assistant reached its output limit. What it wrote is above, so ask it to continue.",
 		},
 		model_error: {
 			title: "This model could not take that",
@@ -209,7 +209,7 @@
 		COPY[kind].sentence ??
 			detail ??
 			(kind === "interrupted"
-				? "The connection to the model dropped before it finished. What arrived is above."
+				? "The connection to your assistant dropped before it finished. What arrived is above."
 				: "")
 	);
 </script>

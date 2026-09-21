@@ -32,8 +32,23 @@ SURFACES = [
     ("apps/web/plugins/reach/ios", ("*.swift",)),
 ]
 # The letter is Adam's and literary on purpose; the components gallery is a
-# developer page that quotes bad copy as examples.
-EXEMPT = ("onboarding/document/", "routes/(public)/components/")
+# developer page that quotes bad copy as examples; a test name is written for
+# whoever reads the failure, not for a person using the product.
+EXEMPT = ("onboarding/document/", "routes/(public)/components/", ".test.")
+
+# Strings that match a rule and are right anyway. Each needs a reason, and
+# "it reads fine to me" is not one — the point of the ratchet is that taste
+# does not get a vote. Keep this list short enough to read.
+ALLOW = (
+    # A drawn rectangle on the lifeline, not the server.
+    "Drag the box to move the window",
+    # On the models and bring-your-own screens "the model" IS the subject of
+    # the page. Calling it "your assistant" there would name the wrong thing.
+    "Only if this endpoint names the model differently",
+    "What these runs spent with the model",
+    "your server goes by the model id",
+    "Every model the gateway carries",
+)
 
 PARTICIPLE = r"\w+(?:ed|en|wn|ne|nt)"
 CHECKS = {
@@ -66,10 +81,21 @@ def is_prose(s: str) -> bool:
 
 
 def strip_comments(src: str, suffix: str) -> str:
+    """Remove everything written for a developer rather than a person."""
     src = re.sub(r"/\*.*?\*/|<!--.*?-->", " ", src, flags=re.S)
     if suffix == ".toml":
         return re.sub(r"^\s*#.*$", " ", src, flags=re.M)
-    return re.sub(r"^\s*(?://|///).*$", " ", src, flags=re.M)
+    src = re.sub(r"^\s*(?://|///).*$", " ", src, flags=re.M)
+    if suffix == ".rs":
+        # A log line and a test assertion are both addressed to whoever is
+        # debugging. They read like copy and are not: `tracing::error!(…,
+        # "failed to resolve the model")` is a journal entry, and an
+        # assert's message is only ever seen as a test failure.
+        src = re.sub(r"^\s*(?:tracing::\w+!|println!|eprintln!|panic!).*$", " ",
+                     src, flags=re.M)
+        src = re.sub(r"^\s*assert(?:_\w+)?!\(.*?\);", " ", src, flags=re.M | re.S)
+        src = re.sub(r'^\s*".*"\s*$(?=\s*\);)', " ", src, flags=re.M)
+    return src
 
 
 def scan():
@@ -94,6 +120,8 @@ def scan():
                     if not is_prose(s):
                         continue
                     scanned += 1
+                    if any(a in s for a in ALLOW):
+                        continue
                     for name, rx in CHECKS.items():
                         if rx.search(s):
                             counts[name] += 1

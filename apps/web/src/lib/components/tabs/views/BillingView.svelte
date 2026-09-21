@@ -1088,7 +1088,7 @@
 			/>
 			<p class="text-xs text-foreground-muted mt-1.5">
 				Set this for a local or small model, so long chats are summarized before they
-				overflow it. Blank: the box goes by the model id, and assumes 200k when it cannot tell.
+				overflow it. Blank: your server goes by the model id, and assumes 200k when it can't tell.
 			</p>
 		</div>
 		<div>

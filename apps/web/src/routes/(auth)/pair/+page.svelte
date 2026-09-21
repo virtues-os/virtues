@@ -121,7 +121,7 @@
 			</ol>
 
 			<p class="pl-11 text-xs">
-				No passwords, no email. The only way in is to prove you're at the box or
+				No passwords, no email. The only way in is to prove you're at your server or
 				you already have a paired device.
 			</p>
 		</div>

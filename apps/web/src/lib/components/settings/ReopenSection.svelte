@@ -53,7 +53,7 @@
 	<header><h3>Start over</h3></header>
 
 	<p class="sub">
-		Unpairs every device and puts the box back into setup. Your record, your
+		Unpairs every device and puts your server back into setup. Your record, your
 		connected accounts and your subscription stay exactly as they are.
 	</p>
 
@@ -81,7 +81,7 @@
 		</div>
 	{:else}
 		<Button variant="secondary" size="sm" class="self-start" onclick={() => (armed = true)}>
-			Put this box back into setup
+			Put this server back into setup
 		</Button>
 	{/if}
 </section>

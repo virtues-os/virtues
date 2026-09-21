@@ -591,7 +591,7 @@
 		{:else if nSilent}
 			<!-- Not "nothing happened": nothing was *delivered*. Naming the last
 			     thing that did report is the difference between the two. -->
-			<span class="v quiet">Nothing has reached the box today — every track has been silent since it last reported.</span>
+			<span class="v quiet">Nothing has reached your server today. Every track has been silent since it last reported.</span>
 		{:else}
 			<span class="v quiet">Nothing has arrived yet today.</span>
 		{/if}
