@@ -10,6 +10,8 @@
  * - Drag across cells to select a range (Cmd+C to copy)
  * - Cmd+B / Cmd+I / Cmd+U / Cmd+E for inline formatting in cells
  * - Tab/Shift+Tab navigate cells, Enter moves down, Escape exits
+ * - Backspace against the table's end selects it; a second one deletes it
+ * - A `|` in a cell is the cell's own (stored as `\|`); wide tables scroll
  *
  * Uses StateField (not ViewPlugin) because multi-line replace decorations
  * require direct decoration provision via EditorView.decorations facet.
@@ -18,20 +20,62 @@
  */
 
 import { syntaxTree } from '@codemirror/language';
-import { EditorSelection, EditorState, type Extension, type Range, StateField } from '@codemirror/state';
-import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
+import { EditorSelection, EditorState, type Extension, Prec, type Range, StateField } from '@codemirror/state';
+import { Decoration, type DecorationSet, EditorView, keymap, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
 import { disconnectRemeasure, remeasureOnResize } from '../widget-height';
 import { onContextGesture } from './long-press';
 
-type Alignment = 'left' | 'center' | 'right';
+export type Alignment = 'left' | 'center' | 'right';
 
-function parseCells(line: string): string[] {
+/**
+ * Split one table row into its cells' TEXT.
+ *
+ * GFM's one escape inside a table is `\|`: a pipe that belongs to the cell
+ * rather than to the row. It is unescaped here, so a cell reads `a | b` and
+ * never `a \| b`, and `serializeCell` puts the backslash back on the way out.
+ * Every other backslash passes through untouched — it belongs to the inline
+ * markdown the cell keeps raw. Splitting on the pipes ourselves (rather than
+ * walking Lezer's TableCell nodes) is what keeps an EMPTY cell a cell: Lezer
+ * emits no node for one, and a node walk would silently drop the column.
+ */
+export function parseCells(line: string): string[] {
 	let trimmed = line.trim();
 	if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
-	if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
-	return trimmed.split('|').map(c => c.trim());
+	// A trailing `\|` is an escaped pipe ending the last cell, not the row's
+	// closing pipe.
+	if (trimmed.endsWith('|') && !trimmed.endsWith('\\|')) trimmed = trimmed.slice(0, -1);
+
+	const cells: string[] = [];
+	let buf = '';
+	for (let i = 0; i < trimmed.length; i++) {
+		const ch = trimmed[i];
+		if (ch === '\\' && trimmed[i + 1] === '|') {
+			buf += '|';
+			i++;
+			continue;
+		}
+		if (ch === '|') {
+			cells.push(buf.trim());
+			buf = '';
+			continue;
+		}
+		buf += ch;
+	}
+	cells.push(buf.trim());
+	return cells;
+}
+
+/**
+ * The inverse of `parseCells` for one cell: a literal pipe becomes `\|` so it
+ * cannot split the row, and a newline — which no GFM cell can hold, and which
+ * would end the table — becomes a space. `a\|b` typed into a cell (a
+ * backslash, then a pipe) serializes as `a\\|b` and parses back to `a\|b`, so
+ * the round trip is exact even for that case.
+ */
+export function serializeCell(text: string): string {
+	return text.replace(/\r?\n|\r/g, ' ').replace(/\|/g, '\\|');
 }
 
 function parseAlignment(cell: string): Alignment | null {
@@ -42,11 +86,14 @@ function parseAlignment(cell: string): Alignment | null {
 	return 'left';
 }
 
-function parseTable(text: string): {
+export interface ParsedTable {
 	headers: string[];
 	alignments: (Alignment | null)[];
 	rows: string[][];
-} | null {
+}
+
+/** The source of a Table node → cell text. Null when the delimiter row is not one. */
+export function parseTable(text: string): ParsedTable | null {
 	const lines = text.split('\n').filter(l => l.trim());
 	if (lines.length < 2) return null;
 
@@ -61,14 +108,15 @@ function parseTable(text: string): {
 	return { headers, alignments, rows };
 }
 
-function serializeTable(headers: string[], alignments: (Alignment | null)[], rows: string[][]): string {
-	const headerLine = '| ' + headers.join(' | ') + ' |';
+/** Cell text → the source of a Table node. `parseTable(serializeTable(t))` is `t`. */
+export function serializeTable(headers: string[], alignments: (Alignment | null)[], rows: string[][]): string {
+	const headerLine = '| ' + headers.map(serializeCell).join(' | ') + ' |';
 	const delimLine = '| ' + alignments.map(a => {
 		if (a === 'center') return ':---:';
 		if (a === 'right') return '---:';
 		return '---';
 	}).join(' | ') + ' |';
-	const dataLines = rows.map(row => '| ' + row.join(' | ') + ' |');
+	const dataLines = rows.map(row => '| ' + row.map(serializeCell).join(' | ') + ' |');
 	return [headerLine, delimLine, ...dataLines].join('\n');
 }
 
@@ -127,8 +175,20 @@ class TableWidget extends WidgetType {
 	}
 
 	toDOM(view: EditorView) {
+		// wrapper  — position: relative; carries the vertical spacing as padding
+		//            (see widget-height.ts) and is what every control is
+		//            positioned against.
+		// scroller — the ONLY overflow container. A wide table scrolls inside
+		//            it instead of squishing to the column or widening the
+		//            editor. It has to be a separate element: the drag handles
+		//            and + strips hang OUTSIDE the wrapper's box (top: -20px,
+		//            left: -24px, …), and an overflow container clips anything
+		//            outside itself — so they stay children of the wrapper,
+		//            not of the scroller.
 		const wrapper = document.createElement('div');
 		wrapper.className = 'cm-table-wrapper';
+		const scroller = document.createElement('div');
+		scroller.className = 'cm-table-scroll';
 
 		const table = document.createElement('table');
 		table.className = 'cm-table-widget';
@@ -278,14 +338,64 @@ class TableWidget extends WidgetType {
 			}
 		};
 
+		/**
+		 * Put plain text where the cell's caret is (or at its end when the
+		 * DOM selection is elsewhere), as one text node. The cell's content is
+		 * read back with `textContent`, so the DOM must stay flat text — a
+		 * pasted `<div>`/`<br>` would fuse words or vanish on serialize.
+		 */
+		const insertPlainText = (cell: HTMLElement, text: string) => {
+			const sel = window.getSelection();
+			const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+			const node = document.createTextNode(text);
+			if (!range || !cell.contains(range.startContainer)) {
+				cell.appendChild(node);
+				return;
+			}
+			range.deleteContents();
+			range.insertNode(node);
+			range.setStartAfter(node);
+			range.collapse(true);
+			sel!.removeAllRanges();
+			sel!.addRange(range);
+		};
+
 		const makeCell = (tag: 'th' | 'td', text: string, colIdx: number): HTMLElement => {
 			const cell = document.createElement(tag);
 			cell.contentEditable = 'true';
+			// `text` is cell text, already unescaped by parseCells — a pipe here
+			// is a pipe. It goes back out through serializeCell.
 			cell.textContent = text;
 			const align = alignments[colIdx];
 			if (align) cell.style.textAlign = align;
 
+			// The cell is never rebuilt while it is being typed in (the document
+			// is synced when focus leaves, not per keystroke), so a composition
+			// session is only at risk from the key handler below: Enter confirms
+			// a candidate, Escape discards one, and both would otherwise move
+			// focus or sync mid-composition. Safari also delivers a keyCode 229
+			// keydown after compositionend with `isComposing` already false, so
+			// the flag and the code are both checked.
+			let composing = false;
+			cell.addEventListener('compositionstart', () => {
+				composing = true;
+			});
+			cell.addEventListener('compositionend', () => {
+				composing = false;
+			});
+
+			// Paste lands as one line of plain text. The default would insert
+			// the clipboard's HTML — a `<div>` per line, `<b>`, `<br>` — which
+			// `textContent` then fuses or drops; a newline would end the table
+			// on serialize. Pipes are kept literal and escaped on the way out.
+			cell.addEventListener('paste', (e) => {
+				e.preventDefault();
+				const text = (e.clipboardData?.getData('text/plain') ?? '').replace(/\s+/g, ' ').trim();
+				if (text) insertPlainText(cell, text);
+			});
+
 			cell.addEventListener('keydown', (e) => {
+				if (composing || e.isComposing || e.keyCode === 229) return;
 				const meta = e.metaKey || e.ctrlKey;
 
 				// Formatting shortcuts
@@ -606,7 +716,8 @@ class TableWidget extends WidgetType {
 		}
 		table.appendChild(tbody);
 
-		wrapper.appendChild(table);
+		scroller.appendChild(table);
+		wrapper.appendChild(scroller);
 
 		// --- Interactive controls (editable mode only) ---
 		const editable = view.state.facet(EditorView.editable);
@@ -752,6 +863,14 @@ class TableWidget extends WidgetType {
 			wrapper.appendChild(addColStrip);
 
 			requestAnimationFrame(() => positionControls());
+
+			// Column handles are placed from live cell rects measured against
+			// the wrapper, so a horizontal scroll moves the columns out from
+			// under them. Re-place on scroll; handles for columns scrolled out
+			// of view are clipped by the controls strip (overflow: hidden).
+			// Row handles and the + strips are pinned to the wrapper's edges
+			// and do not move with the scroll.
+			scroller.addEventListener('scroll', () => positionControls(), { passive: true });
 		}
 
 		// The table itself is synchronous (parsed strings, no media, and the
@@ -768,10 +887,12 @@ class TableWidget extends WidgetType {
 	}
 
 	eq(other: TableWidget) {
+		// Cell text may itself contain a pipe now, so cells are compared as a
+		// structure, not joined on one.
 		return (
 			JSON.stringify(this.alignments) === JSON.stringify(other.alignments) &&
-			this.headers.join('|') === other.headers.join('|') &&
-			this.rows.map(r => r.join('|')).join('\n') === other.rows.map(r => r.join('|')).join('\n')
+			JSON.stringify(this.headers) === JSON.stringify(other.headers) &&
+			JSON.stringify(this.rows) === JSON.stringify(other.rows)
 		);
 	}
 
@@ -908,4 +1029,73 @@ const tableExitGuard = EditorState.transactionFilter.of((tr) => {
 	return [tr, { changes: { from: at, insert: '\n' }, sequential: true }];
 });
 
-export const tables: Extension = [tableField, tableSelectionGuard, tableExitGuard];
+/** The Table node whose end is `pos`, or null. */
+function tableEndingAt(state: EditorState, pos: number): { from: number; to: number } | null {
+	let found: { from: number; to: number } | null = null;
+	syntaxTree(state).iterate({
+		from: Math.max(0, pos - 1),
+		to: pos,
+		enter(node) {
+			if (node.name === 'Table' && node.to === pos) found = { from: node.from, to: node.to };
+		},
+	});
+	return found;
+}
+
+/**
+ * Backspace against a table's end selects the table; a second Backspace then
+ * deletes it, like any selection. The mirror of `tableExitGuard`.
+ *
+ * A plain Backspace there would delete inside the widget — the closing pipe
+ * of the last row, invisibly — or, from the start of the line below, join
+ * that line onto the table. The block is one object; deleting it should be
+ * one visible step, and one that can be seen before it is confirmed.
+ *
+ * The third case is the Enter guard's failure class in reverse. Backspace at
+ * the start of a paragraph that sits one blank line below a table removes
+ * the blank line, and GFM absorbs the paragraph as a row: the text does not
+ * disappear, but it does turn into a table cell, which is never what
+ * Backspace meant. That Backspace only moves the caret up onto the blank
+ * line — the next one selects the table, the one after deletes it.
+ */
+export function backspaceAtTableBoundary(view: EditorView): boolean {
+	const { state } = view;
+	if (state.readOnly) return false;
+	const sel = state.selection.main;
+	if (!sel.empty || sel.head === 0) return false;
+	const { doc } = state;
+	const pos = sel.head;
+
+	// Caret at the table's end, or at the start of the line right below it.
+	const table = tableEndingAt(state, pos) ?? (doc.sliceString(pos - 1, pos) === '\n' ? tableEndingAt(state, pos - 1) : null);
+	if (table) {
+		view.dispatch({
+			selection: EditorSelection.range(table.from, table.to),
+			scrollIntoView: true,
+			userEvent: 'select',
+		});
+		return true;
+	}
+
+	// Caret at the start of a non-empty line, a blank line above it, a table
+	// above that: step onto the blank line instead of joining.
+	const line = doc.lineAt(pos);
+	if (pos !== line.from || line.length === 0 || line.number < 3) return false;
+	const blank = doc.line(line.number - 1);
+	if (blank.length !== 0 || !tableEndingAt(state, blank.from - 1)) return false;
+	view.dispatch({
+		selection: EditorSelection.cursor(blank.from),
+		scrollIntoView: true,
+		userEvent: 'select',
+	});
+	return true;
+}
+
+export const tables: Extension = [
+	tableField,
+	tableSelectionGuard,
+	tableExitGuard,
+	// Raised so it runs before defaultKeymap's deleteCharBackward, which the
+	// editor installs ahead of this module.
+	Prec.high(keymap.of([{ key: 'Backspace', run: backspaceAtTableBoundary }])),
+];
