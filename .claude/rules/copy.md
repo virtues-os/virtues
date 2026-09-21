@@ -27,13 +27,31 @@ above this — the letter is Adam's, the wiki has its own law, the assistant has
 a persona line in code. A settings page that narrates its own design history
 has drifted.
 
-**Mechanics.** Active, verb-first, sentence case, contractions on. Fragments
-take no trailing period; full sentences keep theirs. **Hyphens, not em dashes,
-in UI strings.** **"Computer", not "Mac"** on anything a PC user can reach (the
-Mac app may say "Mac"). **One name per thing on every screen** — recovery
-phrase, Server ID, applet, Standing, Balance, Wallet activity, on-device,
-sidecar, face, pairing, relay; vendors in their own capitalization. American
-spelling.
+**Four sentence shapes — these change the most lines:**
+
+1. **The reader is the subject, not the software.** "Turn on file sharing to
+   reach the box from your laptop", never "Virtues lets you…". *Allow*, *lets
+   you*, *enable*, *capability*, *functionality* all mean the subject is wrong.
+2. **No "we" in a failure.** "Couldn't reach the box", not "We're having
+   trouble reaching the box". The only "we" that stays is the claim about the
+   company: "We can't read it."
+3. **An error names the fix, not the fault.** "Choose a password of at least
+   eight characters", not "That password is too short". No *oops*, no bare
+   "Invalid input". Put it beside the thing that failed.
+4. **A setting says what it does when on.** The off case is inferred.
+
+**Mechanics.** Active, verb-first, **sentence case everywhere** (headings,
+buttons, labels), contractions on. Fragments take no trailing period; full
+sentences keep theirs. Serial comma; no exclamation points. **Hyphens, not em
+dashes, in UI strings.** **"Computer", not "Mac"** on anything a PC user can
+reach (the Mac app may say "Mac"). **One name per thing on every screen** —
+recovery phrase, Server ID, applet, Standing, Balance, Wallet activity,
+on-device, sidecar, face, pairing, relay; vendors in their own capitalization.
+American spelling. Turn on/off not enable/disable; enter not type; choose for
+menus, select for objects; after not once; whether for two outcomes; because
+not since; to not in order to. **Don't give the box a mind** — the assistant
+is a character and may think; the box, the record, and an applet do not want
+or try.
 
 **Claims — check these before the line exists:**
 

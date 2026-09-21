@@ -70,11 +70,21 @@ conversational — one turn each, about twenty words. Keep the reason: the page
 still says *why*, in plain words, not as a story. No flourish, no performed
 enthusiasm. The stance is Apple, Cursor, virtues.com.
 
+**Tone varies; the register doesn't.** Apple's rule, and the right one: the
+words are the same everywhere, the temperature follows the situation. Light
+where something went right, straight where something went wrong, never cute at
+either end. A finished backup may sound pleased. A failed payment says what
+happened and what to do.
+
 **Mechanics** — Apple's, with two overrides:
 
-- Active, verb-first. Sentence case. Contractions on.
+- Active, verb-first. **Sentence case everywhere** — headings, buttons, labels,
+  menu items. Apple asks you to pick one style per element type and hold it;
+  we hold one for all of them, and the SPA already does. Contractions on.
 - Fragments (titles, hints under a control, chips) take no trailing period.
   Full sentences keep theirs.
+- Serial comma. No exclamation points. Capitalize the first word after a colon
+  when a full sentence follows.
 - **Hyphens, not em dashes, in UI strings** — even where the em dash would be
   correct. The letter, the manual, and this workshop keep theirs.
 - **"Computer", not "Mac"**, on any surface a PC user can reach: the SPA, the
@@ -86,6 +96,46 @@ enthusiasm. The stance is Apple, Cursor, virtues.com.
   capitalization: Stripe, Postgres, Radxa, Qualcomm, Anthropic, OpenAI,
   Google, Ollama, LM Studio.
 - American spelling, in UI and in comments.
+
+**The four sentence shapes** (Apple's, and the four that change the most of
+our existing strings):
+
+- **The reader is the subject, not the software.** "Turn on file sharing to
+  reach the box from your laptop", never "Virtues allows you to…" or "This
+  setting lets you…". *Allow*, *lets you*, *enable*, *capability*, and
+  *functionality* are all signs the sentence has the wrong subject. Rewrite
+  around what the person does.
+- **No "we" in a failure.** "Couldn't reach the box", never "We're having
+  trouble reaching the box" — who is *we* to someone whose server is in their
+  own house? The one "we" that stays is the claim about the company itself:
+  "We can't read it."
+- **An error names the fix, not the fault.** "Choose a password of at least
+  eight characters" beats "That password is too short". Instruct rather than
+  scold: "Use letters only" beats "Don't use numbers". Put the message beside
+  the thing that failed. No *oops*, no *uh-oh*, no bare "Invalid input". If
+  words can't rescue an error most people will hit, the interaction is wrong.
+- **A setting says what it does when it's on.** The person infers the off
+  case. Add a sentence under the label only when the label can't carry it, and
+  link to a setting rather than describing where it lives.
+
+Two more shapes worth naming: an **empty state** points at the next action and
+holds nothing that matters, because it disappears. **Possessives are sparing** —
+"Projects", not "Your projects" — and the perspective doesn't switch mid-screen.
+
+**Words.** Turn on / turn off, not enable / disable. Choose for menu items,
+select for objects. Enter, not type or input. Quit, not exit. Cancel, not kill.
+Appears, not displays. After, not once. Whether when there are two outcomes, if
+for a condition. Because, not since. Want, not wish. To, not in order to. By,
+with, or through, not via. For example, not e.g. And so on, not etc. Rewrite
+and/or. *Can* is ability, *may* is permission, *might* is possibility — which
+is why **"cannot"** carries so much weight for us, and why it is only ever used
+where the incapability is real.
+
+**Don't give the box a mind.** The assistant is a named character and may think,
+notice, or wonder. The box, the record, an applet, and the software do not want,
+try, believe, or feel. Apple takes a passive sentence over an anthropomorphic
+one, and so do we. Define an acronym on first use or don't use it. Humor lives
+in examples, if anywhere.
 
 **Claims.** Three rules that run before a line is written or rewritten, because
 review catches a bad line and misses a missing one:
