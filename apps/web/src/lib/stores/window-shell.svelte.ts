@@ -23,6 +23,7 @@ import {
 	routeToEntityId
 } from '$lib/tabs/types';
 import { parseRoute } from '$lib/tabs/registry';
+import { visits } from '$lib/stores/visits.svelte';
 import { pushState, replaceState } from '$app/navigation';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 
@@ -186,6 +187,15 @@ class WindowShellStore {
 	private initialized = false;
 	private urlSyncEnabled = false;
 	private _skipUrlSync = false;
+	/**
+	 * Visits are reported from `syncActiveToUrl` — the one place every
+	 * activation passes, which already skips restores and deep links. Armed
+	 * only after the first sync at boot, so the tab that came back from
+	 * localStorage is not counted as opened; and lowered while an open the
+	 * app made on the owner's behalf is in flight (`openRouteInSplitOrActive`).
+	 */
+	private visitsArmed = false;
+	private programmaticOpen = false;
 
 	// ============================================================================
 	// Shell scope getters
@@ -264,6 +274,7 @@ class WindowShellStore {
 		this.urlSyncEnabled = true;
 		window.addEventListener('popstate', this.handlePopState);
 		this.syncActiveToUrl(false);
+		this.visitsArmed = true;
 	}
 
 	destroyUrlSync(): void {
@@ -299,6 +310,10 @@ class WindowShellStore {
 		const currentUrl = window.location.pathname + window.location.search;
 
 		if (currentUrl === url) return;
+
+		// The URL changed, so what is in front of the owner changed. The visits
+		// store decides whether it counts (dwell, dedupe, kind).
+		if (this.visitsArmed) visits.note(this.activeTab?.route, this.programmaticOpen);
 
 		// Use SvelteKit's shallow routing to update URL without triggering navigation
 		if (usePush) {
@@ -1209,10 +1224,16 @@ class WindowShellStore {
 	 * leaving the current tab (e.g. the chat) where it is.
 	 */
 	openRouteInSplitOrActive(route: string, label?: string): string {
-		if (this.isSplit) {
-			return this.openRouteBeside(route, label);
+		// Not a visit: the app opened this, the owner did not walk to it.
+		this.programmaticOpen = true;
+		try {
+			if (this.isSplit) {
+				return this.openRouteBeside(route, label);
+			}
+			return this.openTabFromRoute(route, { forceNew: true, label });
+		} finally {
+			this.programmaticOpen = false;
 		}
-		return this.openTabFromRoute(route, { forceNew: true, label });
 	}
 
 	// Backwards compatibility aliases

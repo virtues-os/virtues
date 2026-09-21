@@ -7,6 +7,7 @@
 	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
+	import { visits } from "$lib/stores/visits.svelte";
 	import { searchLocal, type LocalSearchHit } from "$lib/api/client";
 	import {
 		getAvailableThemes,
@@ -172,6 +173,15 @@
 		const match = (name: string | null) =>
 			!query || (name || "Untitled").toLowerCase().includes(query);
 		const inScope = (s: Scope) => scope === s || (!scope && !!query);
+		// The frecency prior, inside each group only. Ties keep store order
+		// (newest first), so a box that has never recorded a visit ranks as
+		// it always did. Never across groups: the section order below is
+		// fixed, and the row arithmetic in the template depends on it.
+		const byFrecency = <T,>(items: T[], key: (t: T) => number) =>
+			items
+				.map((item, i) => ({ item, i, f: key(item) }))
+				.sort((a, b) => b.f - a.f || a.i - b.i)
+				.map((x) => x.item);
 
 		return {
 			actions:
@@ -180,14 +190,23 @@
 					: [],
 			chats:
 				!scope || scope === "chats"
-					? chatSessions.sessions.filter((c) => match(c.title)).slice(0, limit)
+					? byFrecency(
+							chatSessions.sessions.filter((c) => match(c.title)),
+							(c) => visits.score("chat", c.conversation_id),
+						).slice(0, limit)
 					: [],
 			pages:
 				!scope || scope === "pages"
-					? pagesStore.pages.filter((p) => match(p.title)).slice(0, limit)
+					? byFrecency(
+							pagesStore.pages.filter((p) => match(p.title)),
+							(p) => visits.score("page", p.id),
+						).slice(0, limit)
 					: [],
 			projects: inScope("projects")
-				? projectStore.projects.filter((s) => match(s.name)).slice(0, limit)
+				? byFrecency(
+						projectStore.projects.filter((s) => match(s.name)),
+						(s) => visits.score("project", s.id),
+					).slice(0, limit)
 				: [],
 		};
 	});
@@ -391,6 +410,8 @@
 			if (projectStore.projects.length === 0 && !projectStore.loading) {
 				projectStore.load();
 			}
+			// The frecency prior, refreshed at most once a minute.
+			visits.refresh();
 		}
 		wasOpen = open;
 	});
