@@ -73,7 +73,7 @@
 		}
 		out.push({
 			label: "Home",
-			note: firstDay ? "Every morning, a page." : "Where the record is read.",
+			note: firstDay ? "Every morning, a page." : "Where you read the record.",
 			go: () => void goto("/home"),
 		});
 		return out;

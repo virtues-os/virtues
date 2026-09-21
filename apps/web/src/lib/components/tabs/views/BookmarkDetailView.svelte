@@ -104,11 +104,11 @@
 	const stateNote = $derived.by(() => {
 		switch (bookmark?.state) {
 			case 'held':
-				return 'Waiting to be read - the pass that reads images is not built yet.';
+				return "Not read yet - the pass that reads images isn't built.";
 			case 'queued':
 				return 'Not read yet. The next sweep will pick it up.';
 			case 'failed':
-				return "This page could not be read, so there is nothing below but what the source gave us.";
+				return "Your server couldn't read this page, so below is only what the source gave.";
 			case 'skipped':
 				return 'Deliberately not read - your server doesn\'t fetch this kind of address.';
 			default:

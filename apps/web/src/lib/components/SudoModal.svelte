@@ -221,7 +221,7 @@
 			{:else if phase === "expired"}
 				<ErrorState
 					title="Confirmation timed out"
-					message="The request expired before being approved. Close and try again."
+					message="You didn't approve this in time, so the request expired. Close and try again."
 				/>
 				<div class="flex justify-end mt-4">
 					<Button variant="ghost" onclick={cancel}>Close</Button>
@@ -229,7 +229,7 @@
 			{:else if phase === "denied"}
 				<ErrorState
 					title="Denied at the server"
-					message="The CLI confirmation was denied. The action was not performed."
+					message="You denied the confirmation at the command line, so your server didn't run it."
 				/>
 				<div class="flex justify-end mt-4">
 					<Button variant="ghost" onclick={cancel}>Close</Button>

@@ -409,7 +409,7 @@ pub async fn add_project_item(pool: &PgPool, project_id: &str, req: AddProjectIt
     // `/notebook/` is the legacy spelling of the same route (`refs::split_ref`).
     if url.starts_with("/project/") || url.starts_with("/notebook/") {
         return Err(Error::InvalidInput(
-            "a project cannot be added to a project".into(),
+            "You can't put a project inside another project.".into(),
         ));
     }
 

@@ -78,11 +78,11 @@
 				? 'This release is already downloaded. Your server runs its migrations ' +
 					'and restarts, which takes well under a minute. Every device connected ' +
 					'to it drops, phones and other browsers included, not just this window. ' +
-					'Nothing is lost, and they reconnect on their own.'
+					'You lose nothing, and they reconnect on their own.'
 				: 'Your server downloads the release, swaps its binary and runs ' +
 					'migrations, so it stops serving for a minute or two. Every device ' +
 					'connected to it drops, phones and other browsers included, not just ' +
-					'this window. Nothing is lost, and they reconnect on their own.',
+					'this window. You lose nothing, and they reconnect on their own.',
 			confirmLabel: 'Install and restart',
 			cancelLabel: 'Not now'
 		});
@@ -195,7 +195,7 @@
 					Installing. Your server is restarting and will be back in a minute or two.
 				</p>
 				<p class="how">
-					Other devices are disconnected too; they reconnect on their own.
+					Other devices drop too, and reconnect on their own.
 				</p>
 			{/if}
 		</div>

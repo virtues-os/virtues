@@ -885,7 +885,7 @@
 			{#if annotations.length === 0}
 				<p class="pdf-rail-empty">
 					Select text to highlight it, or press <b>1–4</b> for a color. Highlights
-					collect here, and can be sent into a page as a quote with a citation.
+					collect here, and you can send them into a page as a quote with a citation.
 				</p>
 			{:else}
 				<ul class="pdf-rail-list">

@@ -161,7 +161,7 @@
 		max_steps: {
 			title: "The reply used up its steps",
 			sentence:
-				"It was allowed a fixed number of tool calls and reached the end of them. Ask it to carry on, or ask something narrower.",
+				"Your assistant had a fixed number of tool calls and used them all. Ask it to carry on, or ask something narrower.",
 		},
 		reconnect: {
 			title: "Billing doesn't recognize this server",
@@ -176,7 +176,7 @@
 			sentence: "Shorten it, or attach the long part as a file.",
 		},
 		interrupted: {
-			title: "The reply was cut off",
+			title: "The reply stopped early",
 			// `null`, so the provider's OWN explanation shows. A fixed sentence
 			// here computed the real reason into `detail` and then threw it
 			// away, so every mid-stream failure read as a dropped connection.

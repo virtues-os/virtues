@@ -804,7 +804,7 @@ pub async fn delete_chat(pool: &PgPool, chat_id: String) -> Result<DeleteChatRes
     // back to any open step is this chat.
     if chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID {
         return Err(crate::Error::InvalidInput(
-            "The getting-started conversation can't be deleted.".into(),
+            "You can't delete the getting-started conversation.".into(),
         ));
     }
     crate::api::trash::trash(pool, crate::api::trash::TrashKind::Chat, &chat_id).await?;

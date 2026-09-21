@@ -69,7 +69,7 @@
 	<section class="artifacts">
 		<h3>Artifacts</h3>
 		<p class="sub">
-			Three pieces with three version numbers. They are allowed to differ. This is where you find out by how much.
+			Three pieces with three version numbers. They can differ. This is where you find out by how much.
 		</p>
 
 		<dl class="ledger">

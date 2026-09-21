@@ -38,7 +38,7 @@
 	class="door"
 	class:labeled={underway}
 	onclick={leave}
-	title={underway ? "Your place is kept - come back whenever you like" : label}
+	title={underway ? "Your place waits - come back whenever you like" : label}
 	aria-label={label}
 >
 	<Icon icon="ri:door-open-line" width="16" />

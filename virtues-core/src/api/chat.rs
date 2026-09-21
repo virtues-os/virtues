@@ -1478,7 +1478,7 @@ async fn chat_handler_inner(
             StatusCode::CONFLICT,
             Json(ChatError {
                 error: "turn_in_progress".to_string(),
-                details: Some("A reply to this chat is still being written.".to_string()),
+                details: Some("Your assistant is still writing a reply to this chat.".to_string()),
             }),
         )
             .into_response();
@@ -3418,7 +3418,7 @@ mod ui_stream_fixture {
             },
             StreamEvent::ToolOutputError {
                 tool_call_id: "call_2".into(),
-                error_text: "the page could not be written".into(),
+                error_text: "Your server couldn't write the page.".into(),
             },
             StreamEvent::NarrativeDocumentReady { page_id: "page_fixture".into() },
             StreamEvent::TextEnd { id: t2.clone() },

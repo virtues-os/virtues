@@ -73,7 +73,7 @@
 	<div class="px-4 py-3 border-b border-border">
 		<h2 class="text-sm font-medium text-foreground">What I've learned</h2>
 		<p class="text-xs text-foreground-subtle mt-0.5">
-			Notes your assistant keeps from living alongside you. Every note is read
+			Notes your assistant keeps from living alongside you. It reads every note
 			before every conversation. Edit one to put it in your words (it becomes
 			yours and the assistant can't rewrite it), or remove it for good.
 		</p>
