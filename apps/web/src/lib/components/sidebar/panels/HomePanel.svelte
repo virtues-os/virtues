@@ -29,7 +29,9 @@
 	 *             row cannot: counts, the memo, the verbs.
 	 *   Today / Recent
 	 *             the chats AND the pages, blended by when they last moved,
-	 *             newest first, capped, with the archive behind "All chats".
+	 *             newest first, capped. No "All chats" door under the list:
+	 *             the panel ends where the recents end, and the full lists
+	 *             are rooms of their own (Pages above, All chats via search).
 	 *             Two groups, not three: "Yesterday" was a calendar fact
 	 *             nobody navigated by, and it cost a heading and a fold for
 	 *             one day's worth of rows. Grouping is not reordering — a
@@ -140,8 +142,6 @@
 		].filter((g) => g.items.length > 0);
 	});
 
-	/** More than the column shows, of either kind. */
-	const hasArchive = $derived(chatSessions.sessions.length + pagesStore.pages.length > RECENTS_CAP);
 
 	/** Fold state, keyed so a future group costs one string. */
 	const zoneId = (id: string) => `chats.${id}`;
@@ -207,13 +207,6 @@
 
 	function openApplets() {
 		windowShellStore.openTabFromRoute('/applets', { label: 'Applets', focusExisting: true });
-	}
-
-	function openAllChats() {
-		windowShellStore.openTabFromRoute('/chat-history', {
-			label: 'All chats',
-			focusExisting: true,
-		});
 	}
 
 	function openProjects() {
@@ -916,9 +909,6 @@
 		</div>
 	</div>
 {/each}
-{#if hasArchive}
-	<button type="button" class="panel-row panel-more" onclick={openAllChats}>All chats</button>
-{/if}
 
 {#if card && cardProject}
 	{@const url = projectRoute(cardProject)}
