@@ -7,6 +7,60 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 use crate::api::models::{get_default_model, get_model};
+
+/// The context window a turn on `model` is really measured against.
+///
+/// `model` is OUR gateway id. On the Bring-Your-Own route the body is
+/// re-addressed at send time (`virtues_api::client::apply_byo_model`) to
+/// whatever the owner's endpoint calls that slot — which may be a local 8k
+/// llama.cpp — and the catalog knows nothing about it. Sized by our id, a
+/// BYO chat on a small model read 4% forever, never compacted, and once the
+/// transcript outgrew the real window every turn failed. The only exit was
+/// a new chat.
+///
+/// Order: the window the owner set on the credential (the one honest
+/// number for a local model); else the endpoint's id for the slot, if our
+/// catalog happens to know it (a LiteLLM aliased to a known id); else our
+/// own model's window; else the assumption.
+pub async fn turn_context_window(pool: &PgPool, model: &str) -> i64 {
+    let ours = match get_model(model).await {
+        Ok(info) => info.context_window.map(|w| w as i64).filter(|w| *w > 0),
+        Err(_) => None,
+    };
+
+    // absent-ok: a read error here is logged and means "not BYO" for the
+    // purpose of a window estimate; nothing is billed on it.
+    let byo = match crate::api::settings_byo::load_byo_credential(pool).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "BYO credential unreadable; sizing the window by our model");
+            None
+        }
+    };
+
+    if let Some(byo) = byo {
+        if let Some(w) = byo.context_window.filter(|w| *w > 0) {
+            return w;
+        }
+        let theirs = crate::api::model_catalog::slot_for_model(model)
+            .and_then(|slot| byo.models.get(slot.as_str()).cloned());
+        if let Some(theirs) = theirs {
+            if let Ok(info) = get_model(&theirs).await {
+                if let Some(w) = info.context_window.map(|w| w as i64).filter(|w| *w > 0) {
+                    return w;
+                }
+            }
+            tracing::warn!(
+                ours = %model,
+                theirs = %theirs,
+                assumed = ours.unwrap_or(crate::api::token_estimation::ASSUMED_CONTEXT_WINDOW),
+                "BYO model has no known context window; set one on the credential if it is small"
+            );
+        }
+    }
+
+    crate::api::token_estimation::context_window_or_assumed(ours)
+}
 use crate::api::chats::ChatMessage;
 use crate::api::token_estimation::{estimate_session_context, ContextStatus};
 use crate::error::Result;
@@ -506,13 +560,7 @@ pub async fn check_compaction_needed(
         })
         .collect();
 
-    // Get model context window from registry
-    let context_window = match get_model(model).await {
-        Ok(model_info) => crate::api::token_estimation::context_window_or_assumed(
-                model_info.context_window.map(|w| w as i64),
-            ),
-        Err(_) => crate::api::token_estimation::ASSUMED_CONTEXT_WINDOW,
-    };
+    let context_window = turn_context_window(pool, model).await;
 
     // Get verbatim messages (after summary)
     let verbatim_messages = if (summary_up_to_index as usize) < messages.len() {

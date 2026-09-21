@@ -1086,6 +1086,7 @@ mod byo_fork_tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             default_model: default_model.map(String::from),
+            context_window: None,
         }
     }
 
