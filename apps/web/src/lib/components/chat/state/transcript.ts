@@ -175,3 +175,57 @@ export function eyebrowsFor(messages: { id: string; subject?: string }[]): Map<s
 	}
 	return out;
 }
+
+/**
+ * The turns the owner took, indexed for the rail (ConversationRail.svelte).
+ *
+ * The anchor ids are the `exchange-N` ids the view already puts on user rows,
+ * and N counts user messages — so this must count them the same way or the
+ * rail scrolls to the wrong turn. A turn's `preview` is the opening of the
+ * next assistant reply, which is what makes an entry recognizable: a lone
+ * "and then?" names nothing.
+ *
+ * Mention pills come out of the composer as `[Name](/person/id)`; the rail
+ * shows the name, since the URL is noise at this size.
+ */
+export function railTurns(
+	messages: { id: string; role: string; parts?: any[] }[],
+): { id: string; anchor: string; label: string; preview: string }[] {
+	const out: { id: string; anchor: string; label: string; preview: string }[] = [];
+	let n = 0;
+	for (let i = 0; i < messages.length; i++) {
+		const m = messages[i];
+		if (m.role !== "user") continue;
+		const anchor = `exchange-${n}`;
+		n++;
+		const label = plainText(m.parts);
+		if (!label) continue;
+		let preview = "";
+		for (let j = i + 1; j < messages.length; j++) {
+			if (messages[j].role === "user") break;
+			if (messages[j].role !== "assistant") continue;
+			preview = plainText(messages[j].parts);
+			if (preview) break;
+		}
+		out.push({ id: m.id, anchor, label, preview: clip(preview, 200) });
+	}
+	return out;
+}
+
+function plainText(parts: any[] | undefined): string {
+	return clip(
+		(parts ?? [])
+			.filter((p: any) => p?.type === "text" && typeof p.text === "string")
+			.map((p: any) => p.text)
+			.join(" ")
+			.replace(/\[([^\]\n]+)\]\([^)\s]+\)/g, "$1")
+			.replace(/\s+/g, " ")
+			.trim(),
+		200,
+	);
+}
+
+/** Long enough for two clamped lines, short enough not to carry a transcript. */
+function clip(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text;
+}

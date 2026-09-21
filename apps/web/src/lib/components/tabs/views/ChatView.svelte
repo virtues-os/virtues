@@ -28,6 +28,7 @@
 		isSettledLine,
 		introductionsRecorded,
 		eyebrowsFor,
+		railTurns,
 	} from "$lib/components/chat/state/transcript";
 	import {
 		AttachmentsController,
@@ -52,6 +53,7 @@
 		findWriteItUpOutput,
 	} from "$lib/components/chat/interview/interview";
 	import Composing from "$lib/components/chat/Composing.svelte";
+	import ConversationRail from "$lib/components/chat/ConversationRail.svelte";
 	import Trivet from "$lib/components/chat/Trivet.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
@@ -878,6 +880,21 @@
 	 *  clip paint at its edge. Without this the plate lost both ends. */
 	const roomHoldsPlate = $derived(uniqueMessages.some((m) => m.id === GS_INTERVIEW_OPENING_ID));
 
+	// ── the rail ───────────────────────────────────────────────────────────
+	// The owner's turns as an index down the left gutter. Not in the two
+	// authored rooms: the interview and getting-started are a walk with their
+	// own choreography, and a table of contents over a walk is furniture
+	// arguing with the floor.
+	/** The pane's width, which decides whether there is a gutter to put it in. */
+	let pageWidth = $state(0);
+	const railTurnList = $derived(
+		mobileLayout.isMobile ||
+			isGettingStartedChat(currentChatConversationId) ||
+			currentChatConversationId === INTERVIEW_CHAT_ID
+			? []
+			: railTurns(uniqueMessages),
+	);
+
 	/** The one line per step that carries its number — keyed by message id. */
 	const eyebrowFor = $derived(
 		eyebrowsFor(uniqueMessages as { id: string; subject?: string }[]),
@@ -1644,7 +1661,7 @@
 						</button>
 					{/if}
 				</div>
-				<div class="page-container" class:is-empty={isEmpty}>
+				<div class="page-container" class:is-empty={isEmpty} bind:clientWidth={pageWidth}>
 					<!-- Messages area -->
 					<div
 						bind:this={scrollContainer}
@@ -2186,6 +2203,14 @@
 										/>
 						</div>
 					</div>
+
+					<!-- The turns index, in the gutter beside the column. Outside the
+					     scroller so it holds still while the transcript moves, and only
+					     once the pane is wide enough to have a gutter — below that the
+					     column takes the whole pane and the rail would sit on the words. -->
+					{#if !isEmpty && pageWidth >= 1000}
+						<ConversationRail turns={railTurnList} {scrollContainer} />
+					{/if}
 
 					{#if isEmpty && !isGhost && attachments.count === 0}
 						<!-- The opening image: the mark assembling itself in the space
