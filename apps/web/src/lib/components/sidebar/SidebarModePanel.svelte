@@ -118,7 +118,7 @@
 	}
 
 	.mode-row.active {
-		background: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		background: var(--sidebar-active-bg);
 		color: var(--color-foreground);
 	}
 

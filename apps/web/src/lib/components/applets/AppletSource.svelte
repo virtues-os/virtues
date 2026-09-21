@@ -214,7 +214,7 @@
 		background: var(--color-muted, #f3f4f6);
 	}
 	.files button.active {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		font-weight: 500;
 	}
 	.files button:disabled {

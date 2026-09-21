@@ -1750,13 +1750,13 @@
 	}
 
 	.data-row:hover {
-		background: color-mix(in srgb, var(--color-foreground) 3.5%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 3.5%, transparent);
 	}
 
 	.data-row:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
-		background: color-mix(in srgb, var(--color-foreground) 3.5%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 3.5%, transparent);
 	}
 
 	.cell-text {

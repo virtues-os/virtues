@@ -292,23 +292,35 @@
 	   Components used to reach for whichever surface token looked close —
 	   usually --color-surface-elevated — which is #F5F5F5 on a #FFFFFF parent
 	   in the default theme: a shift small enough to read as nothing happening.
-	   A foreground mix stays legible in all sixteen themes because it's defined
-	   against the text colour, not against another surface. */
-	--hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
-	--active-bg: color-mix(in srgb, var(--color-foreground) 12%, transparent);
-	--press-bg: color-mix(in srgb, var(--color-foreground) 16%, transparent);
+	   A translucent wash stays legible in all sixteen themes because it is a
+	   step off whatever ground it lands on, not a match against another
+	   surface.
 
-	/* The scrollbar's thumb, on the same ramp and for the same reason: defined
-	   against the TEXT colour, so it reads in all sixteen themes instead of
-	   landing on whichever surface token looked close. 22% is a shade above
+	   The wash is mixed from --wash-ink, a NEUTRAL pigment — black on paper,
+	   white on a dark ground (set in the dark-theme block below) — and not
+	   from the text colour. It used to be the text colour, and on any theme
+	   whose ink carries a hue that shows: Oxford's navy at 7% over cream came
+	   out a cool gray, sitting beside the warm stone of --surface-elevated as
+	   if it belonged to a different kit (the thinking card's header and body,
+	   for one). A neutral pigment darkens the paper without turning it; the
+	   strength is what makes a hover read, never the ink's hue. Components
+	   that need a wash of their own strength mix it from --wash-ink too. */
+	--wash-ink: #000000;
+	--hover-bg: color-mix(in srgb, var(--wash-ink) 7%, transparent);
+	--active-bg: color-mix(in srgb, var(--wash-ink) 12%, transparent);
+	--press-bg: color-mix(in srgb, var(--wash-ink) 16%, transparent);
+
+	/* The scrollbar's thumb, on the same ramp and for the same reason: a
+	   translucent step off the ground, so it reads in all sixteen themes
+	   instead of landing on whichever surface token looked close. 22% is a shade above
 	   --active-bg (12%) — a scrollbar has to be findable against content, not
 	   just against a ground. The track is always transparent; a painted track
 	   is a chrome object standing on the page permanently, and design.md's
 	   rule is that nothing on the desk may out-shout the page. */
-	--scrollbar-thumb: color-mix(in srgb, var(--color-foreground) 22%, transparent);
+	--scrollbar-thumb: color-mix(in srgb, var(--wash-ink) 22%, transparent);
 
-	--sidebar-hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
-	--sidebar-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+	--sidebar-hover-bg: color-mix(in srgb, var(--wash-ink) 7%, transparent);
+	--sidebar-active-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
 	--sidebar-item-gap: 4px;
 
 	/* The active tab, on the same ramp and for the same reason.
@@ -320,8 +332,8 @@
 	   in every theme whose surface and background agree.
 	   Stepped above --hover-bg (7%) so hovering an inactive tab can't be
 	   mistaken for selecting it. */
-	--tab-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
-	--tab-active-bg-focused: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+	--tab-active-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
+	--tab-active-bg-focused: color-mix(in srgb, var(--wash-ink) 14%, transparent);
 
 	/* One height for both chrome rows — the sidebar masthead and the pane
 	   toolbar. They were 30px and 40px, under a comment in WorkspaceHeader
@@ -1463,6 +1475,8 @@
 [data-theme="agora"],
 [data-theme="shire"] {
 	--illustration-filter: invert(1);
+	/* The interaction ramp's pigment (see :root): light on a dark ground. */
+	--wash-ink: #ffffff;
 	/* The editor composites its selection layer over the text with this blend
 	 * (see codemirror/theme.ts): multiply keeps dark ink dark on light paper,
 	 * screen keeps light ink light on dark paper. */

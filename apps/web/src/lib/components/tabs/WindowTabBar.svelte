@@ -921,7 +921,7 @@
 	}
 
 	.pane-action:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 
@@ -997,12 +997,12 @@
 	   treatment (plus a red wash over the whole tab) read as a warning for an
 	   action that doesn't warrant one. */
 	.tab-close:hover {
-		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 10%, transparent);
 		color: var(--color-foreground);
 	}
 
 	.tab-close:active {
-		background: color-mix(in srgb, var(--color-foreground) 16%, transparent);
+		background: var(--press-bg);
 	}
 
 	.tab-close:focus-visible {
@@ -1050,7 +1050,7 @@
 	.merge-toggle:hover,
 	.nav-btn:hover:not(:disabled),
 	.new-tab-btn:hover {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 
@@ -1059,7 +1059,7 @@
 	.merge-toggle:active,
 	.nav-btn:active:not(:disabled),
 	.new-tab-btn:active {
-		background: color-mix(in srgb, var(--color-foreground) 14%, transparent);
+		background: var(--press-bg);
 	}
 
 	.sidebar-toggle:focus-visible,

@@ -268,7 +268,7 @@
 		transition: background-color 0.25s ease-out;
 	}
 	.close-btn:active {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		transition-duration: 0s;
 	}
 
@@ -313,7 +313,7 @@
 		padding: 0 14px;
 		border: 0;
 		border-radius: 999px;
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
 		color: var(--color-foreground-muted);
 		font-size: 15px;
 		text-align: left;
@@ -322,7 +322,7 @@
 		transition: background-color 0.25s ease-out;
 	}
 	.search-pill:active {
-		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 10%, transparent);
 		transition-duration: 0s;
 	}
 	/* Atlas ships a .sidebar-icon color of its own (the desktop sidebar's);
@@ -375,7 +375,7 @@
 		-webkit-tap-highlight-color: transparent;
 	}
 	.row-plus:active {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 	}
 
 	/* Voice 1 of 2: a row. One size, one weight, everywhere in the list. */
@@ -396,7 +396,7 @@
 		transition: background-color 0.25s ease-out;
 	}
 	.row:active {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		transition-duration: 0s;
 	}
 	.row :global(svg) {
@@ -429,10 +429,10 @@
 		transition: background-color 0.25s ease-out;
 	}
 	.chat-row.active {
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 7%, transparent);
 	}
 	.chat-row:active {
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		transition-duration: 0s;
 	}
 

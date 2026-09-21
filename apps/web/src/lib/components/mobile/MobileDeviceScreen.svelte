@@ -809,7 +809,7 @@
 		height: 30px;
 		flex: none;
 		border-radius: 8px;
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
 	.s-icon.on {
