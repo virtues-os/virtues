@@ -326,7 +326,7 @@
 		if (!id) return;
 		const ok = await confirmAction({
 			title: rows.length === 1 ? 'Remove item?' : `Remove ${rows.length} items?`,
-			body: 'They stay where they are — they just stop being filed in this project.',
+			body: 'They stay where they are. They just stop being filed in this project.',
 			confirmLabel: 'Remove',
 			danger: true
 		});
@@ -590,15 +590,12 @@
 	}
 
 	// ---- Delete --------------------------------------------------------------
+	// No confirm. The delete is a trip to Recently deleted and the toast hands
+	// back the Undo, so a dialog asking whether you meant it only stands between
+	// you and a reversible act. Its chats, pages and files stay where they are.
 	async function doDelete() {
 		const id = projectId;
 		if (!id || !detail) return;
-		const ok = await confirmAction({
-			title: 'Delete project?',
-			body: `"${detail.name}" goes to Recently deleted, where you can restore it for 30 days. Its chats, pages and files stay where they are.`,
-			confirmLabel: 'Delete'
-		});
-		if (!ok) return;
 		// Captured before the delete closes it: Undo should put back the tab you
 		// were looking at, and only if you were looking at one.
 		const reopen = routeIfOpen(`/project/${id}`);
@@ -784,7 +781,7 @@
 				<span class="ask-send" class:idle={!askDraft.trim()}>
 					<IconButton
 						icon="ri:arrow-right-line"
-						label="Ask — grounded in this project"
+						label="Ask - grounded in this project"
 						size="sm"
 						type="submit"
 						disabled={!askDraft.trim()}
@@ -795,7 +792,7 @@
 			<section class="grid-section">
 				{#if allRows.length === 0}
 					<button class="add-row" onclick={openPicker}>
-						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links — or drop files here
+						<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links, or drop files here
 					</button>
 				{:else}
 					<UniversalDataGrid

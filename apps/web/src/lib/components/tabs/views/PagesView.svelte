@@ -7,7 +7,6 @@
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { getKeepMenuItems } from "$lib/utils/contextMenuItems";
 	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
-	import { confirmAction } from "$lib/stores/dialog.svelte";
 	import { Button, Page } from "$lib";
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
@@ -95,13 +94,9 @@
 				icon: "ri:delete-bin-line",
 				variant: "destructive",
 				dividerBefore: true,
+				// No confirm: the page goes to Recently deleted and the toast
+				// carries the Undo.
 				action: async () => {
-					const ok = await confirmAction({
-						title: "Delete page?",
-						body: `"${page.title}" goes to Recently deleted, where you can restore it for 30 days.`,
-						confirmLabel: "Delete",
-					});
-					if (!ok) return;
 					const reopen = routeIfOpen(`/page/${page.id}`);
 					await pagesStore.removePage(page.id);
 					notifyTrashed({ kind: "page", id: page.id, name: page.title, reopen });

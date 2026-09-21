@@ -288,7 +288,22 @@
 		}
 	}
 
-	// Delete file (soft delete - moves to trash)
+	/**
+	 * A file goes on the click: it lands in Recently deleted and the toast
+	 * carries the Undo, so there is nothing for a dialog to protect.
+	 *
+	 * A folder still asks. Deleting one trashes everything inside it
+	 * (`soft_delete_folder_recursive`), but restoring one only walks UP to its
+	 * parents — the contents stay in the trash. So the dialog names the blast
+	 * radius, and the toast offers the room instead of an Undo that would hand
+	 * back an empty folder.
+	 */
+	function deleteEntry(file: DriveFile) {
+		fileToDelete = file;
+		if (!file.is_folder) void handleDelete();
+	}
+
+	// Soft delete: the file moves to Recently deleted.
 	async function handleDelete() {
 		if (!fileToDelete) return;
 
@@ -308,6 +323,7 @@
 				// This view holds its own list, so Undo has to re-read it here;
 				// invalidating the shell's cache isn't enough.
 				onRestored: loadData,
+				undoable: !fileToDelete.is_folder,
 			});
 			fileToDelete = null;
 		} catch (e) {
@@ -346,12 +362,12 @@
 					},
 					{
 						id: "delete",
-						label: "Move to Trash",
+						label: "Delete",
 						icon: "ri:delete-bin-line",
 						variant: "destructive" as const,
 						dividerBefore: true,
 						action: () => {
-							fileToDelete = file;
+							deleteEntry(file);
 						},
 					},
 				]
@@ -386,12 +402,12 @@
 					},
 					{
 						id: "delete",
-						label: "Move to Trash",
+						label: "Delete",
 						icon: "ri:delete-bin-line",
 						variant: "destructive" as const,
 						dividerBefore: true,
 						action: () => {
-							fileToDelete = file;
+							deleteEntry(file);
 						},
 					},
 				];
@@ -851,20 +867,18 @@
 	{/snippet}
 </Modal>
 
-<!-- Delete Confirmation Modal (Soft Delete) -->
+<!-- Folders only. A file deletes on the click; see deleteEntry. -->
 <Modal
-	open={!!fileToDelete}
+	open={!!fileToDelete?.is_folder}
 	onClose={() => (fileToDelete = null)}
-	title="Move to Trash?"
+	title="Delete this folder?"
 	width="sm"
 >
 	{#if fileToDelete}
 		<p class="text-foreground-muted">
-			"{fileToDelete.filename}" will be moved to Trash.
-			{#if fileToDelete.is_folder}
-				This includes all contents inside the folder.
-			{/if}
-			You can restore it within 30 days.
+			"{fileToDelete.filename}" and everything inside it go to Recently
+			deleted for 30 days. Restoring the folder brings back the folder;
+			its contents you restore from there.
 		</p>
 	{/if}
 	{#snippet footer()}
@@ -877,7 +891,7 @@
 			variant="danger"
 			size="sm"
 			loading={deleting}
-			onclick={handleDelete}>Move to Trash</Button
+			onclick={handleDelete}>Delete folder</Button
 		>
 	{/snippet}
 </Modal>
