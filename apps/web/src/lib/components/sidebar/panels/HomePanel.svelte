@@ -62,7 +62,7 @@
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
 	import { search } from '$lib/stores/search.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-	import { confirmAction, promptText } from '$lib/stores/dialog.svelte';
+	import { promptText } from '$lib/stores/dialog.svelte';
 	import {
 		deleteChat,
 		updateChat,
@@ -313,13 +313,10 @@
 		}
 	}
 
+	// The three deletes below ask nothing. Each is a trip to Recently deleted
+	// and each toast carries the Undo, so a dialog here only stands between you
+	// and a reversible act.
 	async function removePage(p: PageSummary) {
-		const ok = await confirmAction({
-			title: 'Delete this page?',
-			body: `"${pageTitle(p)}" goes to Recently deleted, where you can restore it for 30 days.`,
-			confirmLabel: 'Delete',
-		});
-		if (!ok) return;
 		// Before the delete: `removePage` closes the tabs, so this is the only
 		// moment we can tell whether Undo has a tab to put back.
 		const reopen = routeIfOpen(pageRoute(p));
@@ -335,12 +332,6 @@
 	}
 
 	async function removeChat(s: ChatSession) {
-		const ok = await confirmAction({
-			title: 'Delete this chat?',
-			body: `"${titleOf(s)}" goes to Recently deleted, where you can restore it for 30 days.`,
-			confirmLabel: 'Delete',
-		});
-		if (!ok) return;
 		const reopen = routeIfOpen(chatRoute(s));
 		try {
 			windowShellStore.closeTabsByRoute(chatRoute(s));
@@ -390,13 +381,8 @@
 		}
 	}
 
+	// Its chats and pages stay where they are; only the project is filed away.
 	async function removeProject(p: ProjectSummary) {
-		const ok = await confirmAction({
-			title: 'Delete this project?',
-			body: `"${p.name}" goes to Recently deleted, where you can restore it for 30 days. Its chats and pages stay.`,
-			confirmLabel: 'Delete',
-		});
-		if (!ok) return;
 		const reopen = routeIfOpen(projectRoute(p));
 		try {
 			windowShellStore.closeTabsByRoute(projectRoute(p));

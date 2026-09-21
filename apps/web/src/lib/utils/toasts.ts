@@ -85,6 +85,13 @@ export interface TrashedOptions {
 	reopen?: string;
 	/** Extra work after a successful Undo, for a view holding its own list. */
 	onRestored?: () => void | Promise<void>;
+	/**
+	 * Set false where one Undo cannot put back everything the delete took, and
+	 * the toast offers only the room. A Drive folder is the case: deleting one
+	 * trashes everything inside it, but restoring it brings back the folder
+	 * alone, so an Undo here would hand back an empty shell.
+	 */
+	undoable?: boolean;
 }
 
 async function undoTrash(opts: TrashedOptions): Promise<void> {
@@ -114,11 +121,16 @@ async function undoTrash(opts: TrashedOptions): Promise<void> {
  * the box agrees is a lie you have to take back.
  */
 export function notifyTrashed(opts: TrashedOptions): void {
+	const undoable = opts.undoable !== false;
 	toast(`Deleted ${quoted(opts.name)}`, {
 		description: 'In Recently deleted for 30 days',
 		duration: UNDO_DURATION,
-		cancel: { label: 'View', onClick: openTrash },
-		action: { label: 'Undo', onClick: () => void undoTrash(opts) },
+		// With no Undo, the room is the only way back, so it stops being the
+		// quiet second button and becomes the one the toast is offering.
+		cancel: undoable ? { label: 'View', onClick: openTrash } : undefined,
+		action: undoable
+			? { label: 'Undo', onClick: () => void undoTrash(opts) }
+			: { label: 'View', onClick: openTrash },
 	});
 }
 
