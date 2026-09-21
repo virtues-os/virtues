@@ -48,12 +48,14 @@ level up.
 
 ## What is settled
 
-- **Second person, past tense.** Not an open question: [voice.md](voice.md)
-  settles it for every surface where Virtues speaks, and the day prompt
-  already writes that way. The objection worth knowing — that an article about
-  you, addressed to you, can read as a report on a subject — is answered by
-  the observe-never-infer rule and the "refuses to flatter" register, not by
-  switching to the third person and giving the wiki a third voice.
+- **Second person, past tense.** Not an open question: it is settled here,
+  and the day prompt already writes that way. (It used to cite
+  [voice.md](voice.md), which claimed one voice for every surface; that claim
+  was cut 2026-09-21, and the wiki's voice is the wiki's own — the record read
+  back, not a house style.) The objection worth knowing — that an article
+  about you, addressed to you, can read as a report on a subject — is answered
+  by the observe-never-infer rule and by refusing to flatter, not by switching
+  to the third person and giving the wiki a third voice.
 - **The three voices are deliberate.** A day is second person (a mirror you
   read at night); an entity is third person about the entity and second about
   the owner; the life document is first person, theirs, and is **never**

@@ -22,10 +22,10 @@ pairing screen, an email, a manual page. The full section is
 
 **The register is not the founder's letter's.** In-app prose is warm, plain,
 and concise: second person, a sparing "we" where Virtues acts, sentences of
-about twenty words, the reason kept but said plainly. The literary voice at the
-top of voice.md is for prose the box *writes* (wiki, day page, the AI's turns)
-and for the letter. A settings page that narrates its own design history has
-drifted.
+about twenty words, the reason kept but said plainly. There is no house voice
+above this — the letter is Adam's, the wiki has its own law, the assistant has
+a persona line in code. A settings page that narrates its own design history
+has drifted.
 
 **Mechanics.** Active, verb-first, sentence case, contractions on. Fragments
 take no trailing period; full sentences keep theirs. **Hyphens, not em dashes,
