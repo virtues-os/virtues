@@ -110,8 +110,8 @@ where
         //    sets it (the plain :8000 listener never does). A proven id that
         //    isn't a known device falls through to the paths below.
         if let Some(peer) = parts.extensions.get::<virtues_iroh::ProvenPeer>() {
-            let node_id = peer.0.to_string();
-            let user = match validate_iroh_peer(&pool, &node_id).await {
+            let endpoint_id = peer.0.to_string();
+            let user = match validate_iroh_peer(&pool, &endpoint_id).await {
                 Ok(user) => user,
                 Err(e) => return Err(unavailable(e)),
             };
@@ -196,7 +196,7 @@ pub fn is_dev() -> bool {
 }
 
 /// Authenticate a device by its proven, allowlisted iroh EndpointId (hex).
-/// Joins `app_device` to its owner keyed on `app_device.node_id` — no
+/// Joins `app_device` to its owner keyed on `app_device.endpoint_id` — no
 /// bearer/credential row involved. The caller has already established (via the
 /// QUIC handshake + `serve()`'s allowlist gate) that the peer holds this key, so
 /// a live device row owning it is sufficient to authenticate. Touches last-seen.
@@ -205,15 +205,15 @@ pub fn is_dev() -> bool {
 /// and the caller must not read the second as the first.
 pub(crate) async fn validate_iroh_peer(
     pool: &PgPool,
-    node_id: &str,
+    endpoint_id: &str,
 ) -> Result<Option<AuthUser>, sqlx::Error> {
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT u.id, d.id, d.label \
          FROM app_device d \
          JOIN app_auth_user u ON u.id = d.user_id \
-         WHERE d.node_id = $1 AND d.revoked_at IS NULL",
+         WHERE d.endpoint_id = $1 AND d.revoked_at IS NULL",
     )
-    .bind(node_id)
+    .bind(endpoint_id)
     .fetch_optional(pool)
     .await?;
     let Some((user_id, device_id, device_label)) = row else {
