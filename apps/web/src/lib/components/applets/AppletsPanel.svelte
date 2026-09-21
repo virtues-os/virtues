@@ -84,7 +84,7 @@
 
 	function startChatFlow() {
 		newMenuOpen = false;
-		windowShellStore.openTabFromRoute('/chat', { forceNew: true });
+		windowShellStore.openTabFromRoute('/chat');
 	}
 
 	function startGitImportFlow() {

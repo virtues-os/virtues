@@ -12,8 +12,6 @@
 	} from "$lib/stores/sidebarState.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
-	import GettingStartedCard from "./GettingStartedCard.svelte";
-	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import SidebarRail from "./SidebarRail.svelte";
 	import SidebarPanel from "./SidebarPanel.svelte";
 	import { sidebarRoom } from "$lib/stores/sidebarRoom.svelte";
@@ -132,30 +130,21 @@
 		});
 	}
 
+	// New chat / page navigate the window you are in. Only "+" and "open
+	// beside" make windows — see openTabFromRoute in the window shell store.
 	function handleNewChat() {
-		// Always open a new chat tab (forceNew ensures we don't reuse existing)
-		windowShellStore.openTabFromRoute("/", {
-			label: "New Chat",
-			forceNew: true,
-		});
+		windowShellStore.openTabFromRoute("/", { label: "New Chat" });
 	}
 
 	function handleNewTemporaryChat() {
 		// Ghost chat — never saved to history
-		windowShellStore.openTabFromRoute("/?temporary=1", {
-			label: "Temporary Chat",
-			forceNew: true,
-		});
+		windowShellStore.openTabFromRoute("/?temporary=1", { label: "Temporary Chat" });
 	}
 
 	async function handleNewPage() {
-		// Create a new page and open it in a new tab
 		const { pagesStore } = await import("$lib/stores/pages.svelte");
 		const page = await pagesStore.createNewPage();
-		windowShellStore.openTabFromRoute(`/page/${page.id}`, {
-			label: page.title,
-			forceNew: true,
-		});
+		windowShellStore.openTabFromRoute(`/page/${page.id}`, { label: page.title });
 	}
 
 	function toggleCollapse() {
@@ -302,9 +291,6 @@
 			{/if}
 		</nav>
 
-		{#if !isCollapsed && gettingStarted.loaded && !gettingStarted.unsupported && !gettingStarted.graduated}
-			<GettingStartedCard />
-		{/if}
 		<SidebarFooter collapsed={isCollapsed} />
 	</div>
 

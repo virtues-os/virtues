@@ -134,7 +134,7 @@
 	// ── doors ──────────────────────────────────────────────────────────────
 
 	function newChat() {
-		windowShellStore.openTabFromRoute('/', { label: 'New chat', forceNew: true });
+		windowShellStore.openTabFromRoute('/', { label: 'New chat' });
 	}
 
 	/** Search is the ⌘K palette: one field over chats, pages and projects. */
@@ -151,7 +151,7 @@
 		e.stopPropagation();
 		const { pagesStore } = await import('$lib/stores/pages.svelte');
 		const page = await pagesStore.createNewPage();
-		windowShellStore.openTabFromRoute(`/page/${page.id}`, { label: page.title, forceNew: true });
+		windowShellStore.openTabFromRoute(`/page/${page.id}`, { label: page.title });
 	}
 
 	function openApplets() {
@@ -197,7 +197,7 @@
 	function newChatIn(p: ProjectSummary) {
 		closeCard();
 		pendingPrompt.setProject(p.id);
-		windowShellStore.openTabFromRoute('/', { label: 'New chat', forceNew: true });
+		windowShellStore.openTabFromRoute('/', { label: 'New chat' });
 	}
 
 	async function newProject() {
@@ -211,7 +211,6 @@
 			const project = await projectStore.create(name.trim());
 			windowShellStore.openTabFromRoute(`/project/${project.id}`, {
 				label: project.name,
-				forceNew: true,
 			});
 		} catch (e) {
 			console.error('[HomePanel] Failed to create project:', e);
@@ -928,7 +927,7 @@
 	}
 
 	.panel-row.active {
-		background: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		background: var(--sidebar-active-bg);
 	}
 
 	.panel-row:focus-visible {
@@ -1017,7 +1016,7 @@
 	}
 
 	.row-action:hover {
-		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 10%, transparent);
 		color: var(--color-foreground);
 	}
 
