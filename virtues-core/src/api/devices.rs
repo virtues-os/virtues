@@ -560,7 +560,7 @@ mod tests {
         .bind("dev_nobody")
         .fetch_all(&mut *tx)
         .await
-        .expect("row-locking count must be legal SQL — see the doc comment");
+        .expect("row-locking count must be legal SQL - see the doc comment");
         assert!(rows.is_empty(), "no devices exist in a scratch database");
 
         // And prove the old shape is genuinely rejected, so this test fails

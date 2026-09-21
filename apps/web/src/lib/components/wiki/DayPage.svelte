@@ -599,7 +599,7 @@
 							<button
 								type="button"
 								class="day-edit"
-								title="Editing makes this day's article yours — the nightly narration stops rewriting it. Prefer a note for a line you want to attach to the day."
+								title="Editing makes this day's article yours - the nightly narration stops rewriting it. Prefer a note for a line you want to attach to the day."
 								onclick={openDayArticle}
 							>
 								Edit

@@ -476,7 +476,7 @@ pub async fn reclassify_person_as_organization(pool: &PgPool, person_id: String)
     .unwrap_or(false);
     if is_self {
         return Err(Error::InvalidInput(
-            "That person is you — reclassifying yourself as an organization is not what you meant"
+            "That person is you - reclassifying yourself as an organization is not what you meant"
                 .into(),
         ));
     }
@@ -603,7 +603,7 @@ pub async fn delete_person(pool: &PgPool, id: String) -> Result<()> {
     .map_err(|e| Error::Database(format!("Failed to check self person: {}", e)))?;
     if is_self {
         return Err(Error::InvalidInput(
-            "That person is you — deleting yourself from your own record is not what you meant"
+            "That person is you - deleting yourself from your own record is not what you meant"
                 .into(),
         ));
     }

@@ -55,7 +55,8 @@ CHECKS = {
     "passive-no-actor": re.compile(
         rf"\b(?:is|are|was|were|be|been|being)\s+(?:not\s+|never\s+|already\s+)?(?:{PARTICIPLE})\b"),
     "em-dash":       re.compile(r"—"),
-    "wrong-name":    re.compile(r"\b(?:the machine|this box|the box|the AI|the model)\b", re.I),
+    "wrong-name":    re.compile(
+        r"\b(?:the machine|this box|the box|your box|the AI|the model)\b", re.I),
     "dev-word":      re.compile(
         r"\b(?:endpoint|payload|instance|backend|partition|entity|provenance|"
         r"daemon|handler|implementation server)\b", re.I),

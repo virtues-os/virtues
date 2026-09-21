@@ -1400,7 +1400,7 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
         // "try again" would be a lie.
         Ok(crate::virtues_api::renew::PortalSession::NoSubscription { code }) => refuse(
             &code,
-            "No active subscription on this account — start one and you can manage billing here.",
+            "No active subscription on this account - start one and you can manage billing here.",
         ),
         // atlas answered and refused for its own reason. Its code is the one
         // worth showing: it is the one their logs are keyed on too.

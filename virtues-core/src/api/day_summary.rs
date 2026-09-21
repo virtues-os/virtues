@@ -58,7 +58,7 @@ A `[calendar]` line records what was SCHEDULED. It is not evidence that anyone w
 
 MESSAGES ARE PLANS TOO — THE CALENDAR RULES APPLY TO THEM:
 A message arranging something is a PLAN, exactly as a calendar entry is, and every rule in the section above applies to it unchanged. "7:30 at the wine bar?" is an intention; it is not evidence that anyone went. This is the easiest mistake to make with message text, because a plan written in a person's own voice reads far more like a memory than a calendar row does — and it is the same failure, with better prose.
-- A `[messages]` plan may NEVER, on its own, name a stretch of the timeline. It needs a TRACE at that hour — a `[visit]`, `[movement]` toward it, a `[purchase]` there, or `[audio]` that matches.
+- A `[messages]` plan may NEVER, on its own, name a stretch of the timeline. It needs a TRACE at that hour - a `[visit]`, `[movement]` toward it, a `[purchase]` there, or `[audio]` that matches.
 - Corroborated → name the stretch by what the plan says it was. Uncorroborated → "Unknown". Contradicted by a `[device]` run or a `[visit]` elsewhere → they did not go, and do not mention the plan.
 - A plan for a LATER DAY is not evidence about this day at all. Ignore it.
 - Messages that are not plans — the exchange itself, reacting to something, arranging nothing — are ordinary evidence of what a stretch was, like audio. The distinction is whether the text is about a FUTURE time.
@@ -71,8 +71,8 @@ A boundary is a change of CONTEXT — where you are, what is scheduled, who you 
 
 MOVEMENT AND TRANSIT:
 The dossier includes **[movement]** lines — each a stretch the owner was actually moving, with distance and average pace (km/h) computed from GPS. That is ALL you know about travel: distance and speed, nothing more. Hard rules:
-- NEVER name or infer a MODE of travel — not "walked", not "cycling", not "drove", not "tram"/"bus"/"train"/"flight"/"Uber", nothing. GPS pace cannot reliably tell a walk from a slow bike from a car in traffic, so ANY mode is a guess, and a guess is a fabrication. Describe travel ONLY by its distance and pace — "moved 1.3 km at ~18 km/h", "a 0.5 km trip" — and let the numbers stand.
-- If a stretch has NO [movement] line, they were NOT travelling. Do not call it "transit", "commute", "a drive", or "a ride". A stationary window — a checkout, a wait, a call at a desk — is a STOP, not a trip; a purchase or a conversation there is what it was. If you cannot otherwise name it, it is "Unknown".
+- NEVER name or infer a MODE of travel — not "walked", not "cycling", not "drove", not "tram"/"bus"/"train"/"flight"/"Uber", nothing. GPS pace cannot reliably tell a walk from a slow bike from a car in traffic, so ANY mode is a guess, and a guess is a fabrication. Describe travel ONLY by its distance and pace - "moved 1.3 km at ~18 km/h", "a 0.5 km trip" — and let the numbers stand.
+- If a stretch has NO [movement] line, they were NOT travelling. Do not call it "transit", "commute", "a drive", or "a ride". A stationary window - a checkout, a wait, a call at a desk - is a STOP, not a trip; a purchase or a conversation there is what it was. If you cannot otherwise name it, it is "Unknown".
 When a move has CONTENT (a conversation, a call), headline the span by that content, with the movement as the setting. Genuinely empty movement you may leave "Unknown"; the system marks it transit afterward.
 
 WHAT AN EVENT IS:
@@ -109,7 +109,7 @@ STRUCTURE — A LEDE, THEN BODY SECTIONS:
 
 LENGTH FOLLOWS THE EVIDENCE — NOT A QUOTA, AND NOT PADDING:
 - A dense day whose record holds real threads earns a real article: a lede and two or three sections. An ordinary day earns a lede and perhaps one. A thin day earns a few lines and stops. There is no sentence ceiling and no floor — the ceiling is the evidence itself: every sentence must trace to something in the dossier.
-- Never pad. An article stretched past its evidence is worse than a short one, because the stretching is where invention lives. A genuinely unremarkable day should say so plainly ("A day much like its neighbours — the office, home, the usual"), never be inflated into significance.
+- Never pad. An article stretched past its evidence is worse than a short one, because the stretching is where invention lives. A genuinely unremarkable day should say so plainly ("A day much like its neighbours - the office, home, the usual"), never be inflated into significance.
 
 THE ONE HARD RULE — OBSERVE, NEVER INFER:
 - Write only what the evidence shows. Warmth comes from OBSERVED detail (the low sun, the quiet train, the water) — NEVER from asserting an inner state. Do not write that the reader was "content", "productive", "happy", or "tired" as a feeling; do not say they did something "because" of a motive you are guessing at. State a departure or a goodbye as a fact ("the last coffee before she moves"); do not narrate how it felt.
@@ -387,7 +387,7 @@ pub async fn segment_day_events(pool: &PgPool, date: NaiveDate) -> Result<u32> {
             did = shape.acted,
             spans = shape.shaped,
             total_sources = sources.len(),
-            "not enough of a day to narrate — skipping summary (no LLM call)"
+            "not enough of a day to narrate - skipping summary (no LLM call)"
         );
         return Ok(0);
     }
@@ -608,7 +608,7 @@ pub async fn narrate_day(pool: &PgPool, date: NaiveDate) -> Result<Option<WikiDa
         tracing::info!(
             date = %date,
             events = events.len(),
-            "not enough of a day to write about — skipping narration (no LLM call)"
+            "not enough of a day to write about - skipping narration (no LLM call)"
         );
         return Ok(None);
     }
@@ -794,7 +794,7 @@ async fn save_day_article(
         tracing::info!(
             date = %date,
             page_id = %article.page_id,
-            "the owner has turned maintenance off for this day — narration files nothing"
+            "the owner has turned maintenance off for this day - narration files nothing"
         );
         return Ok(());
     }
@@ -1521,8 +1521,8 @@ async fn build_dossier(
             "suspend" => " — ended: machine slept",
             "idle" => " — ended: went idle",
             "quit" => " — ended: app quit",
-            "stale" => " — ended: COLLECTOR STOPPED; the gap after this is our blind spot, not evidence they left",
-            "open" => " — still open at the day's end",
+            "stale" => " - ended: COLLECTOR STOPPED; the gap after this is our blind spot, not evidence they left",
+            "open" => " - still open at the day's end",
             _ => "",
         };
             let what = if apps.is_empty() {
@@ -1533,7 +1533,7 @@ async fn build_dossier(
             let presence = if any_active {
                 "typing/clicking at a machine"
             } else {
-                "a machine held awake, NO input observed — weaker: a video plays to an empty room too"
+                "a machine held awake, NO input observed - weaker: a video plays to an empty room too"
             };
             spine.push((
                 s,
@@ -1586,7 +1586,7 @@ async fn build_dossier(
                 Some("declined") => tags.push("owner DECLINED"),
                 Some("accepted") => tags.push("owner accepted the invite in advance"),
                 Some("tentative") => tags.push("owner replied tentative"),
-                Some("needsAction") => tags.push("owner never replied — means nothing either way"),
+                Some("needsAction") => tags.push("owner never replied - means nothing either way"),
                 _ => {}
             }
             if all_day {
@@ -2070,7 +2070,7 @@ fn parse_events_salvaging(raw: &str) -> Option<Vec<LlmEvent>> {
 
     tracing::warn!(
         salvaged = events.len(),
-        "events array was malformed (likely truncated) — salvaged complete events"
+        "events array was malformed (likely truncated) - salvaged complete events"
     );
     Some(events)
 }
@@ -2251,7 +2251,7 @@ async fn store_structured_events(
                     date = %date,
                     label = event.label,
                     error = %e,
-                    "could not store an event — rolling back the re-cut, the old events stand"
+                    "could not store an event - rolling back the re-cut, the old events stand"
                 );
                 return Err(e);
             }

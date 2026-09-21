@@ -936,7 +936,7 @@ mod tests {
         let lanes = lanes_from_registry();
         let ids: Vec<&str> = lanes.iter().map(|(d, _)| d.as_str()).collect();
         for (excluded, why) in [
-            ("narrative", "wiki_events is DERIVED from the lanes — a peer row double-counts them"),
+            ("narrative", "wiki_events is DERIVED from the lanes - a peer row double-counts them"),
             ("calendar", "intent, not evidence; it is the one source that routinely lies"),
             ("environment", "weather is a condition you were in, not something you did"),
             ("app", "pages and chats are the record's own artifacts"),

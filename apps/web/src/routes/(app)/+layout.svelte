@@ -295,7 +295,7 @@
 	$effect(() => {
 		if (setupStateStore.remoteAccessFlipped) {
 			setupStateStore.remoteAccessFlipped = false;
-			toast.success("Your box is now reachable from anywhere", {
+			toast.success("Your server is now reachable from anywhere", {
 				description: setupStateStore.remoteAccess?.detail,
 			});
 		}

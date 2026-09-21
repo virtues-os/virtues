@@ -104,7 +104,7 @@
 				<Icon icon="ri:lock-2-line" class="mt-0.5 flex-none text-foreground-muted" />
 				<p class="text-xs leading-relaxed text-foreground-muted">
 					<span class="text-foreground">Read-only.</span> This is the raw record of what your
-					devices sent — everything else is derived from it. Data can be re-derived from
+					devices sent - everything else is derived from it. Data can be re-derived from
 					evidence, never the other way round, so nothing here can be edited or deleted by
 					hand.
 				</p>

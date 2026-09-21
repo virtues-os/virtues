@@ -414,9 +414,9 @@ final class ImprovClient: NSObject {
               // starting setup again.
               switch code {
               case "invalid_or_expired_token":
-                msg = "The server's setup code expired before pairing finished — start setup again."
+                msg = "The server's setup code expired before pairing finished - start setup again."
               case "too_many_attempts":
-                msg = "Too many pairing attempts on the server — wait a few minutes and try again."
+                msg = "Too many pairing attempts on the server - wait a few minutes and try again."
               default:
                 msg = "The server couldn't complete pairing (\(code))."
               }

@@ -568,7 +568,7 @@
 					<h1>Wiki</h1>
 					<p class="standfirst">
 						{standfirst ??
-							'A record of your life — its days, its people and places, and the story they add up to.'}
+							'A record of your life - its days, its people and places, and the story they add up to.'}
 					</p>
 					<!-- Computed, never written (§17.2): every number here is SQL,
 					     so the line is always current and never goes stale. -->
@@ -609,7 +609,7 @@
 								{/if}
 							{/each}
 						</svg>
-						<span class="strip-caption">The whole record — open the lifeline →</span>
+						<span class="strip-caption">The whole record. Open the lifeline →</span>
 					</button>
 				{/if}
 
@@ -648,7 +648,7 @@
 						<h2>On this day</h2>
 						{#if onThisDay.length === 0}
 							<p class="quiet">
-								No earlier years share this date yet — the record is young.
+								No earlier years share this date yet - the record is young.
 							</p>
 						{:else}
 							<ul class="otd">
@@ -707,7 +707,7 @@
 						{#if recentEdits.length === 0}
 							<p class="quiet">
 								No article edits yet. When an article is written or
-								maintained, the edit lands here — with its diff, in History.
+								maintained, the edit lands here - with its diff, in History.
 							</p>
 						{:else}
 							<ul class="wc">

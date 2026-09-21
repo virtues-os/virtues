@@ -99,7 +99,7 @@
 <div class="mast">
 	<h1>Stories</h1>
 	<p class="standfirst">
-		The parts of your life that are not a day, a year or a person — the ones you would
+		The parts of your life that are not a day, a year or a person - the ones you would
 		name yourself. Name one and the record goes looking for it.
 	</p>
 </div>

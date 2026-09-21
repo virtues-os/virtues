@@ -104,7 +104,7 @@
 	const stateNote = $derived.by(() => {
 		switch (bookmark?.state) {
 			case 'held':
-				return 'Waiting to be read — the pass that reads images is not built yet.';
+				return 'Waiting to be read - the pass that reads images is not built yet.';
 			case 'queued':
 				return 'Not read yet. The next sweep will pick it up.';
 			case 'failed':
@@ -153,7 +153,7 @@
 				class="note-input"
 				bind:value={draft}
 				rows="3"
-				placeholder="Why you kept this — a reason, a todo, the bit worth coming back to."
+				placeholder="Why you kept this - a reason, a todo, the bit worth coming back to."
 				disabled={savingNote}
 				onblur={saveNote}
 			></textarea>

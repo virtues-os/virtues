@@ -191,7 +191,7 @@
 					/>
 					<div class="flex-1">
 						<span class="text-foreground">Accessibility</span>
-						<span class="text-foreground-subtle">— optional; adds what's on your screen, kept on your server</span>
+						<span class="text-foreground-subtle">- optional; adds what's on your screen, kept on your server</span>
 						{#if !status.hasAccessibility}
 							<div class="mt-1">
 								<TextAction onclick={() => openAccessibilitySettings()}>

@@ -437,7 +437,7 @@ fn session_command(tmux: Option<&Path>, path: &str, home: Option<&str>) -> Comma
         }
         None => {
             tracing::warn!(
-                "tmux not found on PATH — terminal sessions will not survive disconnects"
+                "tmux not found on PATH - terminal sessions will not survive disconnects"
             );
             let mut cmd = CommandBuilder::new(&shell);
             cmd.arg("-l");

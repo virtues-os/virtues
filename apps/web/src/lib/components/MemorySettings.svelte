@@ -74,7 +74,7 @@
 		<h2 class="text-sm font-medium text-foreground">What I've learned</h2>
 		<p class="text-xs text-foreground-subtle mt-0.5">
 			Notes your assistant keeps from living alongside you. Every note is read
-			before every conversation — edit one to put it in your words (it becomes
+			before every conversation. Edit one to put it in your words (it becomes
 			yours and the assistant can't rewrite it), or remove it for good.
 		</p>
 	</div>
@@ -84,7 +84,7 @@
 			<div class="text-sm text-foreground-subtle">Loading…</div>
 		{:else if memories.length === 0}
 			<div class="text-sm text-foreground-subtle">
-				Nothing yet — it writes things down as you work together.
+				Nothing yet. It writes things down as you work together.
 			</div>
 		{:else}
 			{#each LANES as lane (lane.key)}

@@ -338,7 +338,7 @@
 				onclick={() => pickColor(null)}
 				role="radio"
 				aria-checked={!activeColor}
-				title="No color — follows the text around it"
+				title="No color - follows the text around it"
 				aria-label="No color"
 			>
 				{#if !activeColor}

@@ -419,7 +419,7 @@
 			title: "Health",
 			icon: "ri:heart-pulse-line",
 			what: "Steps, sleep, heart rate",
-			description: "What the Health app already keeps — steps, sleep, heart rate, workouts — copied to your server as it lands.",
+			description: "What the Health app already keeps - steps, sleep, heart rate, workouts - copied to your server as it lands.",
 		},
 		{
 			key: "calendar",
@@ -676,7 +676,7 @@
 				<div class="consent">
 					<p>
 						The microphone stays on while your phone is with you. It records the sound of
-						your day — and everyone in the room. Recordings and transcripts go to your
+						your day, and everyone in the room. Recordings and transcripts go to your
 						server and nowhere else.
 					</p>
 					<p>

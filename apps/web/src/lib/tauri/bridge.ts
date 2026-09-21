@@ -168,19 +168,19 @@ export function describeOtaCheck(c: OtaCheck | null): string | null {
 		case 'shell_too_old':
 			return `Your box has newer UI that needs a newer app (needs ${c.needs}, this app has ${c.have}) — update from the App Store.`;
 		case 'applied':
-			return 'Newer UI downloaded — it will be used next time the app starts.';
+			return 'Newer UI downloaded. It will be used next time the app starts.';
 		case 'rolled_back':
 			// Also worth a word: the device is deliberately refusing the box's
 			// bundle after a failed boot, which otherwise looks like OTA
 			// silently not working.
-			return 'A newer UI failed to start on this device and was set aside — the next box update clears it.';
+			return 'A newer UI failed to start on this device and was set aside - the next box update clears it.';
 		case 'box_behind':
 			// The other half of shell_too_old, and the ordinary one: this app
 			// updates on Apple's cadence, your box when you upgrade it. Silence
 			// here would read as OTA being broken.
 			return `This app already has newer UI than your box (box ${c.boxVersion}, app ${c.have}) — it stays on its own until you run \`sudo virtues upgrade\`.`;
 		case 'version_unreadable':
-			return "This app can't tell whether your box's UI is newer than its own, so it's staying on the build it shipped with.";
+			return "This app can't tell whether your server's UI is newer than its own, so it's staying on the build it shipped with.";
 		default:
 			return null;
 	}
@@ -398,7 +398,7 @@ export async function getCollectorStatus(): Promise<CollectorStatus | null> {
 export async function installCollector(token: string): Promise<void> {
 	const invoke = await getInvoke();
 	if (!invoke) {
-		throw new Error("Desktop bridge unavailable — open this in the Virtues app, not a browser.");
+		throw new Error("Desktop bridge unavailable. Open this in the Virtues app, not a browser.");
 	}
 
 	try {

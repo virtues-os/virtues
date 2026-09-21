@@ -26,7 +26,7 @@
 		<span>Interrupted before it finished</span>
 	{:else if reason === 'unattended'}
 		<Icon icon="ri:moon-line" width="13" />
-		<span>Stopped by your box — nothing was watching</span>
+		<span>Stopped by your server. Nothing was watching</span>
 	{:else if reason === 'no_reply'}
 		<Icon icon="ri:plug-line" width="13" />
 		<span>Your server never finished this one</span>

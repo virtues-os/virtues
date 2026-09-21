@@ -884,7 +884,7 @@
 			</div>
 			{#if annotations.length === 0}
 				<p class="pdf-rail-empty">
-					Select text to highlight it — or press <b>1–4</b> for a color. Highlights
+					Select text to highlight it, or press <b>1–4</b> for a color. Highlights
 					collect here, and can be sent into a page as a quote with a citation.
 				</p>
 			{:else}

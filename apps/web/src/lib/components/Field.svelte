@@ -70,7 +70,7 @@
 		{#if unknown}
 			<span
 				class="text-xs text-foreground-subtle border-b border-dotted border-foreground-subtle cursor-help"
-				title="Not reported — this could not be read, so it is not a measurement"
+				title="Not reported. This could not be read, so it is not a measurement"
 			>
 				—
 			</span>

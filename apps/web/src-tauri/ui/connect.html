@@ -722,7 +722,7 @@
         setupnew.addEventListener('click', async () => {
           if (!armed) {
             armed = true;
-            setupnew.textContent = "Tap again to forget — the server itself isn't touched";
+            setupnew.textContent = "Tap again to forget - the server itself isn't touched";
             return;
           }
           try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
@@ -734,7 +734,7 @@
         setServer('');
         app.innerHTML = `
           <h1>Your server doesn't recognize ${THIS_DEVICE}</h1>
-          <p class="sub">It answered, but refused this device's key — usually because the server
+          <p class="sub">It answered, but refused this device's key - usually because the server
             was reset, or this device was removed from its devices list. Pairing again fixes it.</p>
           <button class="primary" id="repair">Pair again</button>
           <p class="hint">This forgets the old connection on ${THIS_DEVICE} only — nothing on the
@@ -800,12 +800,12 @@
           <p class="kicker">Paired</p>
           <h1>Opening your server</h1>
           <div class="wait"><span class="pip"></span><span id="openstage">Connecting to it from this computer…</span></div>
-          <p class="hint">The pairing is saved — this is just the two of them finding
+          <p class="hint">The pairing is saved. This is just the two of them finding
             each other on the network, and it can take a minute the first time.</p>`;
         let ready = await waitForBoxUrl(20000);
         if (!ready) {
           const st = document.getElementById('openstage');
-          if (st) st.textContent = 'Still connecting — a fresh network can take a minute…';
+          if (st) st.textContent = 'Still connecting - a fresh network can take a minute…';
           ready = await waitForBoxUrl(75000);
         }
         if (ready) {
@@ -827,12 +827,12 @@
         app.innerHTML = `
           <p class="kicker">Paired</p>
           <h1>Paired, but can't reach it yet</h1>
-          <p class="sub">The pairing worked and is saved — this computer just can't
+          <p class="sub">The pairing worked and is saved. This computer just can't
             open a connection to your server right now. Its network may still be
             settling after setup.</p>
           <button class="primary" id="retry">Keep trying</button>
           <button class="secondary" id="anyway">Open anyway</button>
-          <p class="hint">Quitting and reopening the app later works too — it
+          <p class="hint">Quitting and reopening the app later works too. It
             reconnects on its own.</p>`;
         document.getElementById('retry').addEventListener('click', () => finishPairing());
         document.getElementById('anyway').addEventListener('click', () => {
@@ -889,9 +889,9 @@
               installing <b>${esc(target)}</b> before you meet it. Servers sit boxed
               for months, so this is normal.</p>
             <div class="wait"><span class="pip"></span><span id="upstage">${staged
-              ? 'Installing — about a minute'
-              : 'Downloading and installing — a few minutes'}</span></div>
-            <p class="hint">Your server restarts on its own — don't unplug it. This
+              ? 'Installing - about a minute'
+              : 'Downloading and installing - a few minutes'}</span></div>
+            <p class="hint">Your server restarts on its own - don't unplug it. This
               screen continues by itself when it's back.</p>`;
           (async () => {
             try {
@@ -904,8 +904,7 @@
               app.innerHTML = `
                 <p class="kicker">One last thing</p>
                 <h1>The update couldn't start</h1>
-                <p class="sub">Your server is set up and works on the build it has —
-                  it just couldn't begin updating right now. You can run the update
+                <p class="sub">Your server is set up and works on the build it has. It just couldn't begin updating right now. You can run the update
                   any time from Settings.</p>
                 <p class="msg err">${esc(String(e))}</p>
                 <button class="primary" id="carryon">Continue</button>`;
@@ -945,7 +944,7 @@
           <p class="kicker">Almost there</p>
           <h1>Your server is still restarting</h1>
           <p class="sub">It's applying the update. This can take a few minutes on a
-            fresh server — its own display is showing the same thing. Nothing is lost if
+            fresh server - its own display is showing the same thing. Nothing is lost if
             you close this; it finishes on its own.</p>
           <button class="primary" id="again">Check again</button>
           <button class="secondary" id="skip">Open anyway</button>`;
@@ -1061,7 +1060,7 @@
           <p class="sub">${note ? esc(note) + ' ' : ''}Where is your server in its life?</p>
           <button class="choice" id="fresh">
             <b>Set up a new server</b>
-            <span>Just unboxed — nothing has connected to it yet</span>
+            <span>Just unboxed. Nothing has connected to it yet</span>
           </button>
           <button class="choice" id="existing">
             <b>Connect to an existing server</b>
@@ -1148,7 +1147,7 @@
           });
         } catch (e) {
           err.textContent =
-            'The camera is unavailable — allow camera access for Virtues in Settings, then try again. (' + String(e && e.name || e) + ')';
+            'The camera is unavailable - allow camera access for Virtues in Settings, then try again. (' + String(e && e.name || e) + ')';
           return;
         }
         scanStream = stream;
@@ -1473,7 +1472,7 @@ its devices apart — type its address.",
           <p class="kicker">Setting up</p>
           <h1>Type your server's four words</h1>
           <p class="sub">A brand-new server shows them on its display. After a reset
-            they're the ones you saved — the display stays quiet on purpose.</p>
+            they're the ones you saved - the display stays quiet on purpose.</p>
           ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
           <form id="form">
             <input id="phrase" type="text" placeholder="mango-burly-skull-dough"
@@ -1556,7 +1555,7 @@ its devices apart — type its address.",
             lose every device that can reach it. You saw them once, during setup,
             and your server will never show them again.</p>
           <p class="pphrase">${esc(phrase)}</p>
-          <p class="pfoot">Keep this where you keep things that matter — they are as
+          <p class="pfoot">Keep this where you keep things that matter. They are as
             good as the server itself. Anyone holding these words and standing at your
             server can claim it.<br><br>Printed ${esc(new Date().toLocaleDateString())}.</p>`;
 
@@ -1674,8 +1673,7 @@ its devices apart — type its address.",
         app.innerHTML = `
           <button class="backnav" id="back" aria-label="Back to networks">←</button>
           <h1>Join by name</h1>
-          <p class="sub">Type the network's name exactly as it appears on other devices —
-            including spaces and capitals.</p>
+          <p class="sub">Type the network's name exactly as it appears on other devices - including spaces and capitals.</p>
           <label for="mssid">Network name</label>
           <input id="mssid" type="text" autocapitalize="off" autocorrect="off"
                  spellcheck="false" />
@@ -1741,7 +1739,7 @@ its devices apart — type its address.",
           <p class="kicker">Setting up</p>
           <h1>Joining ${esc(ssid)}</h1>
           <div class="wait"><span class="pip"></span><span id="stage">Sending to your server</span></div>
-          <p class="sub">Watching it happen over Bluetooth — nothing disconnects, and
+          <p class="sub">Watching it happen over Bluetooth. Nothing disconnects, and
             you don't have to do anything.</p>`;
         // Live progress if the platform supports plugin events; the final
         // resolution below is the source of truth either way.
@@ -1875,7 +1873,7 @@ its devices apart — type its address.",
         app.innerHTML = `
           <p class="kicker">Your account</p>
           <h1>Sign in</h1>
-          <p class="sub">The email on your Virtues account — we'll email you a
+          <p class="sub">The email on your Virtues account. We'll email you a
             six-digit code. There's no password, and your server doesn't need to
             be online yet.</p>
           ${errorText ? `<p class="msg err">${esc(errorText)}</p>` : ''}
@@ -1887,7 +1885,7 @@ its devices apart — type its address.",
             <button class="primary" id="go" type="submit" disabled>Email me a code</button>
           </form>
           <div class="msg" id="msg"></div>
-          <p class="escape"><button id="skip">Skip — run it without an account</button></p>`;
+          <p class="escape"><button id="skip">Skip. Run it without an account</button></p>`;
         const email = document.getElementById('email');
         const go = document.getElementById('go');
         const say = (t, cls) => {
@@ -2009,7 +2007,7 @@ its devices apart — type its address.",
           <h1>The account hand-off didn't land</h1>
           <p class="sub">${esc(why)}</p>
           <button class="primary" id="retry">Try again</button>
-          <p class="escape"><button id="skip">Skip — link it later from Settings</button></p>`;
+          <p class="escape"><button id="skip">Skip - link it later from Settings</button></p>`;
         document.getElementById('retry').addEventListener('click', () =>
           renderGrantStep(server, ssid));
         document.getElementById('skip').addEventListener('click', () =>
@@ -2276,7 +2274,7 @@ its devices apart — type its address.",
             network. Check that ${THIS_DEVICE} is back on your own Wi-Fi, then look again.</p>
           <button class="primary" id="again">Look again</button>
           <p class="hint">If it still doesn't appear, the server's display will show a setup
-            network again when it has given up — you can start over from there. Plugging in
+            network again when it has given up. You can start over from there. Plugging in
             ethernet always works.</p>`;
         document.getElementById('again').addEventListener('click', start);
       }
@@ -2338,7 +2336,7 @@ its devices apart — type its address.",
             <h1>Pairing</h1>
             <div class="wait"><span class="pip"></span><span>Asking your server to let this ${esc(THIS_DEVICE.replace(/^this /, ''))} in</span></div>
             <div class="msg" id="msg"></div>
-            <p class="hint">It may take up to a minute — the server finishes
+            <p class="hint">It may take up to a minute - the server finishes
               attaching to your account before it answers.</p>`;
           const done = await submitPairBle(server);
           if (done.ok) return;
@@ -2365,7 +2363,7 @@ its devices apart — type its address.",
           </form>
           <div class="msg err" id="msg">${autoErr ? esc(autoErr) : ''}</div>
           <p class="hint">${server.claimed === false
-            ? 'The install printed one too, when it finished. Codes rotate — a fresh one always works.'
+            ? 'The install printed one too, when it finished. Codes rotate - a fresh one always works.'
             : 'Each code works once and lasts about 15 minutes.'}</p>
           ${server.bleId ? '<button class="back" id="blewifi">Set up its Wi-Fi instead</button>' : ''}`;
         document.getElementById('back').addEventListener('click', start);
@@ -2426,7 +2424,7 @@ its devices apart — type its address.",
         try {
           const status = await invoke('plugin:reach|pair', { payload: { server, code } });
           if (status.paired) {
-            say('Paired — opening your server…', 'ok');
+            say('Paired - opening your server…', 'ok');
             await finishPairing(say);
             return true;
           }
@@ -2465,7 +2463,7 @@ its devices apart — type its address.",
           const res = await withDeadline(
             invoke('plugin:reach|improv_pair', { id: server.bleId }), 70000);
           if (res && res.ok) {
-            say('Paired — opening your server…', 'ok');
+            say('Paired - opening your server…', 'ok');
             invoke('plugin:reach|improv_disconnect').catch(() => {});
             await finishPairing(say);
             return { ok: true };

@@ -182,7 +182,7 @@ pub fn resolve_cost_usd(
         None => {
             tracing::debug!(
                 model,
-                "no gateway cost and no catalog price — recording 0.00 for this turn"
+                "no gateway cost and no catalog price - recording 0.00 for this turn"
             );
             0.0
         }
