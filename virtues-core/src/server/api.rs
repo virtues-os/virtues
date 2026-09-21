@@ -4297,6 +4297,26 @@ pub async fn empty_trash_handler(State(state): State<AppState>) -> Response {
     )
 }
 
+// ============================================================================
+// Visits — the frecency log behind ⌘K (`api::visits`)
+// ============================================================================
+
+/// POST /api/visits — the owner opened a chat, page or project themselves.
+pub async fn record_visit_handler(
+    State(state): State<AppState>,
+    Json(req): Json<crate::api::visits::RecordVisitRequest>,
+) -> Response {
+    match crate::api::visits::record_visit(state.db.pool(), req).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/visits/frecency — every visited record's score, highest first.
+pub async fn frecency_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::visits::frecency(state.db.pool()).await)
+}
+
 #[cfg(test)]
 mod range_tests {
     use super::{resolve_range, RangeOutcome};

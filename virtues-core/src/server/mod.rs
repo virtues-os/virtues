@@ -1098,6 +1098,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::restore_trash_handler),
         )
         .route("/api/trash/:kind/:id", delete(api::purge_trash_handler))
+        // The visits log: what the owner opens, for ⌘K's frecency prior.
+        .route("/api/visits", post(api::record_visit_handler))
+        .route("/api/visits/frecency", get(api::frecency_handler))
         // Projects API (the "room" a chat lives in)
         .route(
             "/api/projects",

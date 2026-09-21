@@ -24,6 +24,9 @@
 //!     hard delete the Recently deleted room's "Delete forever" performs —
 //!     index rows and membership sweep included.
 //!
+//!   - `app_visits` rows past `VISIT_RETENTION_DAYS` are pruned; frecency
+//!     never reads further back than that anyway.
+//!
 //! No job queue, no worker pool, no PID file — one tokio task spawned by
 //! `server::run`. Stops when the daemon stops.
 
@@ -65,7 +68,7 @@ pub fn spawn(pool: PgPool) {
         loop {
             tick.tick().await;
             match run_once(&pool).await {
-                Ok(Counts { pair_tokens: 0, sudo_requests: 0, archived: 0, telemetry: 0, trash: 0 }) => {
+                Ok(Counts { pair_tokens: 0, sudo_requests: 0, archived: 0, telemetry: 0, trash: 0, visits: 0 }) => {
                     // quiet
                 }
                 Ok(c) => tracing::info!(
@@ -74,6 +77,7 @@ pub fn spawn(pool: PgPool) {
                     archived = c.archived,
                     telemetry = c.telemetry,
                     trash = c.trash,
+                    visits = c.visits,
                     "sweeper: cleaned"
                 ),
                 Err(e) => tracing::warn!("sweeper tick failed: {e:#}"),
@@ -89,6 +93,7 @@ struct Counts {
     archived: u64,
     telemetry: u64,
     trash: u64,
+    visits: u64,
 }
 
 async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
@@ -151,11 +156,20 @@ async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
         }
     };
 
+    let visits = match crate::api::visits::prune(pool).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("sweeper: visits prune failed: {e:#}");
+            0
+        }
+    };
+
     Ok(Counts {
         pair_tokens,
         sudo_requests,
         archived,
         telemetry,
         trash,
+        visits,
     })
 }

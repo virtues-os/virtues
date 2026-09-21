@@ -1662,6 +1662,28 @@ export function emptyTrash(): Promise<{ deleted_count: number }> {
 	return apiSend<{ deleted_count: number }>('POST', '/trash/empty');
 }
 
+// ============================================================================
+// Visits — the frecency log behind ⌘K (`api::visits` on the box)
+// ============================================================================
+
+export type VisitKind = 'chat' | 'page' | 'project';
+
+export interface Frecency {
+	kind: VisitKind;
+	record_id: string;
+	score: number;
+}
+
+/** POST /api/visits — the owner opened this themselves. 204; the box dedupes a minute. */
+export function recordVisit(kind: VisitKind, recordId: string): Promise<void> {
+	return apiSend<void>('POST', '/visits', { kind, record_id: recordId });
+}
+
+/** GET /api/visits/frecency — every visited record's score, highest first. */
+export function getFrecency(): Promise<Frecency[]> {
+	return apiGet<Frecency[]>('/visits/frecency');
+}
+
 /**
  * Empty entire trash (permanently delete all trashed files)
  */
