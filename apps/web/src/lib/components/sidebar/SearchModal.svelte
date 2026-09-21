@@ -106,7 +106,6 @@
 			action: () =>
 				windowShellStore.openTabFromRoute("/?temporary=1", {
 					label: "Temporary Chat",
-					forceNew: true,
 				}),
 		},
 		{
@@ -893,7 +892,7 @@
 		line-height: 1;
 		padding: 2px 5px;
 		border-radius: 4px;
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		color: var(--color-foreground-muted);
 	}
 

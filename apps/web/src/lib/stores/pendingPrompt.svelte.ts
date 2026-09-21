@@ -38,14 +38,15 @@ export const pendingPrompt = {
 };
 
 /**
- * Ask Virtues: stage `text` and open a new (kept) chat tab that will auto-send
- * it. Opens in a new tab so the caller's surface (e.g. Home) stays put. Pass
- * `projectId` to bind the new chat to a project (grounds retrieval there).
+ * Ask Virtues: stage `text` and go to a new (kept) chat that will auto-send
+ * it. Navigates the window you are in — the surface you asked from (e.g. Home)
+ * is one Back away, not buried behind a tab. Pass `projectId` to bind the new
+ * chat to a project (grounds retrieval there).
  */
 export function askVirtues(text: string, projectId?: string | null) {
 	const trimmed = text.trim();
 	if (!trimmed) return;
 	pendingPrompt.set(trimmed);
 	pendingPrompt.setProject(projectId ?? null);
-	windowShellStore.openTabFromRoute('/', { forceNew: true, label: 'New Chat' });
+	windowShellStore.openTabFromRoute('/', { label: 'New Chat' });
 }
