@@ -278,7 +278,10 @@
 	.mark {
 		display: block;
 		height: 2px;
-		border-radius: 1px;
+		/* A pill, said the way the grammar says one. The browser clamps a
+		   radius to half the shorter side, so on a 2px bar this renders
+		   exactly as the 1px it replaces. */
+		border-radius: 100px;
 		/* 10px at rest; the pointer's nearness adds up to 12 more, and the
 		   mark directly under it adds the rest. */
 		width: calc(10px + var(--near, 0) * 12px);
@@ -319,9 +322,8 @@
 		box-sizing: border-box;
 		padding: 0.625rem 0.75rem;
 		border: 1px solid var(--color-border);
-		border-radius: 10px;
+		border-radius: 12px;
 		background: var(--color-surface-elevated);
-		box-shadow: 0 6px 22px color-mix(in srgb, var(--color-foreground) 10%, transparent);
 		pointer-events: none;
 		font-family: var(--font-sans, system-ui, sans-serif);
 		animation: card-in 0.16s cubic-bezier(0.22, 1, 0.36, 1);

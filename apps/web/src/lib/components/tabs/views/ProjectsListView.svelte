@@ -300,7 +300,7 @@
 		font-size: 12.5px; color: var(--color-foreground-muted); line-height: 1.4;
 		display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 	}
-	.nb-card-meta { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-foreground-subtle, #9ca3af); margin-top: 2px; }
+	.nb-card-meta { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-foreground-subtle); margin-top: 4px; }
 	.dot-sep { opacity: 0.5; }
 
 	/* Table row styles */

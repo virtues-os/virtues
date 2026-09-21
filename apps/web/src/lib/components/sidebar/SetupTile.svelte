@@ -223,7 +223,7 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 3px 4px;
+		padding: 4px;
 		font-size: 12px;
 		line-height: 18px;
 		color: var(--color-foreground-subtle);
@@ -254,7 +254,7 @@
 	.card-go {
 		display: block;
 		width: 100%;
-		margin-top: 2px;
+		margin-top: 4px;
 		padding: 6px 8px;
 		border: none;
 		border-radius: 6px;

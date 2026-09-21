@@ -83,8 +83,7 @@
 		padding: 6px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+		border-radius: 12px;
 		color: var(--color-foreground);
 		animation: hover-card-in 120ms ease-out;
 	}

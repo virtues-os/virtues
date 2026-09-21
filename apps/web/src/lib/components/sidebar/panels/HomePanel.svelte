@@ -1143,7 +1143,11 @@
 		height: 6.5px;
 		border-radius: 999px;
 		display: block;
-		box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+		/* A hairline, not a shadow, and in the panel's own ink rather than a
+		   black the theme never declared: on a dark theme the old rgba ring
+		   was invisible against the ground it was meant to separate from. */
+		border: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		box-sizing: border-box;
 	}
 
 	/* The controls appear where the pointer is and nowhere else. Kept in the
@@ -1152,7 +1156,7 @@
 	.row-actions {
 		display: none;
 		align-items: center;
-		gap: 2px;
+		gap: 4px;
 		flex: none;
 		margin-right: -6px;
 	}
@@ -1171,7 +1175,7 @@
 		height: 22px;
 		padding: 0;
 		border: none;
-		border-radius: 4px;
+		border-radius: 6px;
 		background: transparent;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
@@ -1201,7 +1205,7 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 6px 6px 2px 8px;
+		padding: 6px 6px 4px 8px;
 	}
 
 	.card-glyph {
@@ -1253,7 +1257,7 @@
 	   you can DO, which is the same seam a menu draws with a divider. */
 	.card-rule {
 		height: 1px;
-		margin: 2px 0 4px;
+		margin: 4px 0;
 		background: var(--color-border);
 	}
 
