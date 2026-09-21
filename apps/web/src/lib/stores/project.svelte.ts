@@ -15,6 +15,8 @@ import {
 	createProject,
 	updateProject,
 	deleteProject,
+	archiveProject,
+	unarchiveProject,
 	addProjectItem,
 	removeProjectItem,
 	reorderProjectItems,
@@ -27,30 +29,66 @@ import {
 } from '$lib/api/client';
 
 export class ProjectStore {
-	projects = $state<ProjectSummary[]>([]);
+	/** Every project that is not in the trash, archived ones included. */
+	private all = $state<ProjectSummary[]>([]);
 	loading = $state(false);
 	error = $state<string | null>(null);
 
 	private details = $state<Map<string, ProjectDetail>>(new Map());
 
-	/** GET /api/projects — refresh the summary list. */
+	/**
+	 * The working set — what the Home panel, ⌘K and "Add to project" list.
+	 * Archived projects are kept out here rather than at each reader, so a
+	 * closed project cannot leak into a menu that forgot to filter.
+	 */
+	get projects(): ProjectSummary[] {
+		return this.all.filter((p) => !p.archived_at);
+	}
+
+	/** The closed ones, for the projects page's Archived fold. */
+	get archived(): ProjectSummary[] {
+		return this.all.filter((p) => !!p.archived_at);
+	}
+
+	/** GET /api/projects?include_archived=true — refresh the summary list. */
 	async load(): Promise<void> {
 		this.loading = true;
 		this.error = null;
 		try {
-			const res = await listProjects();
-			this.projects = res.projects;
+			const res = await listProjects({ includeArchived: true });
+			this.all = res.projects;
 		} catch (e) {
 			console.error('[ProjectStore] Failed to load projects:', e);
 			this.error = e instanceof Error ? e.message : 'Failed to load projects';
-			this.projects = [];
+			this.all = [];
 		} finally {
 			this.loading = false;
 		}
 	}
 
+	/** POST /api/projects/:id/archive — close it, then refresh list and detail. */
+	async archive(id: string): Promise<void> {
+		await archiveProject(id);
+		await this.afterArchiveChange(id);
+	}
+
+	/** POST /api/projects/:id/unarchive — reopen it. */
+	async unarchive(id: string): Promise<void> {
+		await unarchiveProject(id);
+		await this.afterArchiveChange(id);
+	}
+
+	private async afterArchiveChange(id: string): Promise<void> {
+		if (this.details.has(id)) {
+			const next = new Map(this.details);
+			next.delete(id);
+			this.details = next;
+		}
+		await this.load();
+	}
+
 	byId(id: string): ProjectSummary | undefined {
-		return this.projects.find((s) => s.id === id);
+		return this.all.find((s) => s.id === id);
 	}
 
 	/** Return the cached detail, or fetch + cache it. Pass `{ force: true }` to refetch. */
@@ -180,7 +218,7 @@ export class ProjectStore {
 	}
 
 	private bumpItemCount(id: string, delta: number): void {
-		this.projects = this.projects.map((s) =>
+		this.all = this.all.map((s) =>
 			s.id === id ? { ...s, item_count: Math.max(0, s.item_count + delta) } : s
 		);
 	}

@@ -1112,6 +1112,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .put(api::update_project_handler)
                 .delete(api::delete_project_handler),
         )
+        .route("/api/projects/:id/archive", post(api::archive_project_handler))
+        .route("/api/projects/:id/unarchive", post(api::unarchive_project_handler))
         // Project membership (items come back inside GET /api/projects/:id)
         .route(
             "/api/projects/:id/items",

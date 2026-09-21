@@ -324,7 +324,7 @@ pub async fn get_subject_backlinks(
                a.subject_type AS "subject_type?", a.subject_id AS "subject_id?"
         FROM app_pages p
         LEFT JOIN wiki_articles a ON a.page_id = p.id
-        WHERE p.content LIKE $1
+        WHERE p.content LIKE $1 AND p.deleted_at IS NULL
         ORDER BY p.updated_at DESC
         LIMIT 100
         "#,

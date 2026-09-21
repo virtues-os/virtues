@@ -55,6 +55,12 @@ pub struct Project {
     /// style custom instructions) — distinct from the transient memo above.
     pub instructions: Option<String>,
     pub sort_order: i32,
+    /// Finished, kept, out of the working view. Distinct from `deleted_at`
+    /// (the trash): an archived project is one the owner closed, a trashed one
+    /// is one they removed. Archived projects leave the Home panel, the
+    /// projects list and the "Add to project" submenu; their chats and pages
+    /// stay filed in them, and the project reopens from the Archived fold.
+    pub archived_at: Option<Timestamp>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -72,6 +78,7 @@ pub struct ProjectSummary {
     pub sort_order: i32,
     pub item_count: i64,
     pub chat_count: i64,
+    pub archived_at: Option<Timestamp>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -168,18 +175,21 @@ pub struct ProjectGraph {
 // Project CRUD
 // ============================================================================
 
-/// List all Projects, most-recently-active first, with member and chat counts.
+/// List Projects, most-recently-active first, with member and chat counts.
+/// Live ones only unless `include_archived` — the projects page asks for both
+/// and folds the archived ones; every other reader (Home panel, ⌘K, the
+/// "Add to project" submenu) wants the working set.
 ///
 /// A trashed member keeps its membership row so a restore is whole (see
 /// `api::trash`), which is why the counts and `get_project`'s member list
 /// filter members through their own table's `deleted_at` rather than trusting
 /// the row's existence.
-pub async fn list_projects(pool: &PgPool) -> Result<ProjectListResponse> {
+pub async fn list_projects(pool: &PgPool, include_archived: bool) -> Result<ProjectListResponse> {
     let projects = sqlx::query_as::<_, ProjectSummary>(
         r#"
         SELECT
             s.id, s.name, s.icon, s.accent_color,
-            s.current_status, s.current_status_at, s.instructions, s.sort_order,
+            s.current_status, s.current_status_at, s.instructions, s.sort_order, s.archived_at,
             COALESCE((SELECT COUNT(*) FROM app_project_items
                       WHERE project_id = s.id
               AND NOT EXISTS (SELECT 1 FROM app_pages p WHERE url = '/page/' || p.id AND p.deleted_at IS NOT NULL)
@@ -188,10 +198,11 @@ pub async fn list_projects(pool: &PgPool) -> Result<ProjectListResponse> {
                       WHERE project_id = s.id AND deleted_at IS NULL), 0) AS chat_count,
             s.created_at, s.updated_at
         FROM app_projects s
-        WHERE s.deleted_at IS NULL
+        WHERE s.deleted_at IS NULL AND ($1 OR s.archived_at IS NULL)
         ORDER BY s.sort_order ASC, s.updated_at DESC
         "#,
     )
+    .bind(include_archived)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to list projects: {}", e)))?;
@@ -204,7 +215,7 @@ pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
     let project = sqlx::query_as::<_, Project>(
         r#"
         SELECT id, name, icon, accent_color, current_status, current_status_at,
-               instructions, sort_order, created_at, updated_at
+               instructions, sort_order, archived_at, created_at, updated_at
         FROM app_projects
         WHERE id = $1 AND deleted_at IS NULL
         "#,
@@ -248,7 +259,7 @@ pub async fn create_project(pool: &PgPool, req: CreateProjectRequest) -> Result<
         INSERT INTO app_projects (id, name, icon, accent_color)
         VALUES ($1, $2, $3, $4)
         RETURNING id, name, icon, accent_color, current_status, current_status_at,
-                  instructions, sort_order, created_at, updated_at
+                  instructions, sort_order, archived_at, created_at, updated_at
         "#,
     )
     .bind(&id)
@@ -268,7 +279,7 @@ pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) 
     let existing = sqlx::query_as::<_, Project>(
         r#"
         SELECT id, name, icon, accent_color, current_status, current_status_at,
-               instructions, sort_order, created_at, updated_at
+               instructions, sort_order, archived_at, created_at, updated_at
         FROM app_projects WHERE id = $1
         "#,
     )
@@ -314,7 +325,7 @@ pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) 
             instructions = $8
         WHERE id = $1
         RETURNING id, name, icon, accent_color, current_status, current_status_at,
-                  instructions, sort_order, created_at, updated_at
+                  instructions, sort_order, archived_at, created_at, updated_at
         "#,
     )
     .bind(id)
@@ -330,6 +341,36 @@ pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) 
     .map_err(|e| Error::Database(format!("Failed to update project: {}", e)))?;
 
     Ok(project)
+}
+
+/// Close a project: it leaves the working surfaces and keeps everything.
+/// Idempotent — archiving an archived project is not an error.
+pub async fn archive_project(pool: &PgPool, id: &str) -> Result<()> {
+    set_archived(pool, id, true).await
+}
+
+/// Reopen an archived project.
+pub async fn unarchive_project(pool: &PgPool, id: &str) -> Result<()> {
+    set_archived(pool, id, false).await
+}
+
+async fn set_archived(pool: &PgPool, id: &str, archived: bool) -> Result<()> {
+    let sql = if archived {
+        "UPDATE app_projects SET archived_at = COALESCE(archived_at, now()) \
+         WHERE id = $1 AND deleted_at IS NULL RETURNING id"
+    } else {
+        "UPDATE app_projects SET archived_at = NULL \
+         WHERE id = $1 AND deleted_at IS NULL RETURNING id"
+    };
+    let hit: Option<String> = sqlx::query_scalar(sql)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to set archived on project {id}: {e}")))?;
+    if hit.is_none() {
+        return Err(Error::NotFound(format!("Project not found: {id}")));
+    }
+    Ok(())
 }
 
 /// Delete a Project — into the trash. Members and the chats' `project_id`
@@ -372,14 +413,19 @@ pub async fn add_project_item(pool: &PgPool, project_id: &str, req: AddProjectIt
         ));
     }
 
-    let exists: Option<String> =
-        sqlx::query_scalar(r#"SELECT id FROM app_projects WHERE id = $1 AND deleted_at IS NULL"#)
-        .bind(project_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to verify project: {}", e)))?;
-    if exists.is_none() {
+    let found: Option<Option<Timestamp>> = sqlx::query_scalar(
+        r#"SELECT archived_at FROM app_projects WHERE id = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to verify project: {}", e)))?;
+    let Some(archived_at) = found else {
         return Err(Error::NotFound(format!("Project not found: {}", project_id)));
+    };
+    // A closed project does not take new members; reopen it first.
+    if archived_at.is_some() {
+        return Err(Error::InvalidInput("this project is archived".into()));
     }
 
     // A chat is filed by its own `project_id`, not by a member row: the

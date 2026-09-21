@@ -560,6 +560,21 @@
 		await loadGraph();
 	}
 
+	// ---- Archive -------------------------------------------------------------
+	// Reversible, so no confirm. The project stays open in this tab, marked.
+	async function toggleArchive() {
+		const id = projectId;
+		if (!id || !detail) return;
+		try {
+			if (detail.archived_at) await projectStore.unarchive(id);
+			else await projectStore.archive(id);
+			await load(true);
+		} catch (e) {
+			console.error('[ProjectDetailView] archive failed:', e);
+			toast.error(detail.archived_at ? 'Failed to unarchive project' : 'Failed to archive project');
+		}
+	}
+
 	// ---- Delete --------------------------------------------------------------
 	async function doDelete() {
 		const id = projectId;
@@ -704,6 +719,14 @@
 										/>
 									{/if}
 									<MenuItem
+										icon={detail?.archived_at ? 'ri:inbox-unarchive-line' : 'ri:archive-line'}
+										label={detail?.archived_at ? 'Unarchive project' : 'Archive project'}
+										onclick={() => {
+											close();
+											toggleArchive();
+										}}
+									/>
+									<MenuItem
 										icon="ri:delete-bin-line"
 										label="Delete project"
 										destructive
@@ -721,6 +744,10 @@
 				<!-- Counts the same set the grid counts, now that chats are rows in it. -->
 				<div class="props font-mono">
 					<span>{allRows.length} {allRows.length === 1 ? 'item' : 'items'}</span>
+					{#if detail?.archived_at}
+						<span class="dot-sep">·</span>
+						<span>Archived {new Date(detail.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+					{/if}
 				</div>
 			</header>
 
@@ -915,7 +942,9 @@
 	.props {
 		font-size: 11px;
 		color: var(--color-foreground-subtle); padding-left: 60px;
+		display: flex; gap: 6px; align-items: center;
 	}
+	.props .dot-sep { opacity: 0.5; }
 
 	/* Overflow menu */
 	.menu { display: flex; flex-direction: column; min-width: 190px; padding: 4px; }

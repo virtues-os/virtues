@@ -21,6 +21,20 @@
 	});
 
 	const projects = $derived(projectStore.projects);
+	const archived = $derived(projectStore.archived);
+	// Folded by default: the archive is where finished things wait, not the
+	// list you scan. The count on the head says there is something there.
+	let archivedOpen = $state(false);
+	let reopening = $state<string | null>(null);
+
+	async function reopen(p: ProjectSummary) {
+		reopening = p.id;
+		try {
+			await projectStore.unarchive(p.id);
+		} finally {
+			reopening = null;
+		}
+	}
 
 	const columns: Column<ProjectSummary>[] = [
 		{
@@ -219,6 +233,40 @@
 			{/snippet}
 		</UniversalDataGrid>
 	{/if}
+
+	{#if archived.length > 0}
+		<section class="archived">
+			<button
+				type="button"
+				class="archived-head"
+				aria-expanded={archivedOpen}
+				onclick={() => (archivedOpen = !archivedOpen)}
+			>
+				<Icon icon={archivedOpen ? 'ri:arrow-down-s-line' : 'ri:arrow-right-s-line'} width="14" />
+				<span>Archived</span>
+				<span class="archived-count">{archived.length}</span>
+			</button>
+			{#if archivedOpen}
+				<ul class="archived-list">
+					{#each archived as p (p.id)}
+						<li class="archived-row">
+							<button type="button" class="archived-name" onclick={() => open(p.id)}>
+								<Icon icon={p.icon || 'ri:folder-3-line'} width="15" />
+								<span>{p.name}</span>
+							</button>
+							<span class="archived-when">{formatRelativeDate(p.archived_at) ?? ''}</span>
+							<Button
+								variant="secondary"
+								size="sm"
+								loading={reopening === p.id}
+								onclick={() => reopen(p)}>Unarchive</Button
+							>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	{/if}
 </Page>
 
 <style>
@@ -288,4 +336,24 @@
 
 	.empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 64px 0; color: var(--color-foreground-muted); }
 	.empty p { margin: 0; font-size: 14px; }
+
+	/* The Archived fold: a group head like the sidebar's, air above it, no rule. */
+	.archived { margin-top: 32px; }
+	.archived-head {
+		display: flex; align-items: center; gap: 6px;
+		padding: 4px 0; border: none; background: none; cursor: pointer;
+		font-size: 12px; color: var(--color-foreground-subtle);
+	}
+	.archived-head:hover { color: var(--color-foreground-muted); }
+	.archived-count { font-variant-numeric: tabular-nums; color: var(--color-foreground-disabled); }
+	.archived-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+	.archived-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+	.archived-name {
+		display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+		border: none; background: none; padding: 0; cursor: pointer; text-align: left;
+		font-size: 14px; color: var(--color-foreground-muted);
+	}
+	.archived-name:hover { color: var(--color-foreground); }
+	.archived-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.archived-when { font-size: 12px; color: var(--color-foreground-subtle); white-space: nowrap; }
 </style>
