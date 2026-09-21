@@ -825,7 +825,7 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
         r#"
         SELECT id, title, message_count, created_at
         FROM app_chats
-        WHERE created_at >= $1 AND created_at <= $2
+        WHERE created_at >= $1 AND created_at <= $2 AND deleted_at IS NULL
         ORDER BY created_at ASC
         "#,
     )

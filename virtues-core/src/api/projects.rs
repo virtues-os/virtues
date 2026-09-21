@@ -169,16 +169,26 @@ pub struct ProjectGraph {
 // ============================================================================
 
 /// List all Projects, most-recently-active first, with member and chat counts.
+///
+/// A trashed member keeps its membership row so a restore is whole (see
+/// `api::trash`), which is why the counts and `get_project`'s member list
+/// filter members through their own table's `deleted_at` rather than trusting
+/// the row's existence.
 pub async fn list_projects(pool: &PgPool) -> Result<ProjectListResponse> {
     let projects = sqlx::query_as::<_, ProjectSummary>(
         r#"
         SELECT
             s.id, s.name, s.icon, s.accent_color,
             s.current_status, s.current_status_at, s.instructions, s.sort_order,
-            COALESCE((SELECT COUNT(*) FROM app_project_items WHERE project_id = s.id), 0) AS item_count,
-            COALESCE((SELECT COUNT(*) FROM app_chats       WHERE project_id = s.id), 0) AS chat_count,
+            COALESCE((SELECT COUNT(*) FROM app_project_items
+                      WHERE project_id = s.id
+              AND NOT EXISTS (SELECT 1 FROM app_pages p WHERE url = '/page/' || p.id AND p.deleted_at IS NOT NULL)
+              AND NOT EXISTS (SELECT 1 FROM app_chats c WHERE url = '/chat/' || c.id AND c.deleted_at IS NOT NULL)), 0) AS item_count,
+            COALESCE((SELECT COUNT(*) FROM app_chats
+                      WHERE project_id = s.id AND deleted_at IS NULL), 0) AS chat_count,
             s.created_at, s.updated_at
         FROM app_projects s
+        WHERE s.deleted_at IS NULL
         ORDER BY s.sort_order ASC, s.updated_at DESC
         "#,
     )
@@ -196,7 +206,7 @@ pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
         SELECT id, name, icon, accent_color, current_status, current_status_at,
                instructions, sort_order, created_at, updated_at
         FROM app_projects
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         "#,
     )
     .bind(id)
@@ -210,6 +220,8 @@ pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
         SELECT url, sort_order, role, added_at
         FROM app_project_items
         WHERE project_id = $1
+              AND NOT EXISTS (SELECT 1 FROM app_pages p WHERE url = '/page/' || p.id AND p.deleted_at IS NOT NULL)
+              AND NOT EXISTS (SELECT 1 FROM app_chats c WHERE url = '/chat/' || c.id AND c.deleted_at IS NOT NULL)
         ORDER BY sort_order ASC, added_at ASC
         "#,
     )
@@ -320,18 +332,12 @@ pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) 
     Ok(project)
 }
 
-/// Delete a Project. Members cascade; chats in it have `project_id` set to NULL.
+/// Delete a Project — into the trash. Members and the chats' `project_id`
+/// stay on the row so a restore brings the project back whole; the FK
+/// cascade and SET NULL only fire on `trash::purge`, the hard delete the
+/// trash and the sweeper reach after `TRASH_RETENTION_DAYS`.
 pub async fn delete_project(pool: &PgPool, id: &str) -> Result<()> {
-    let result = sqlx::query(r#"DELETE FROM app_projects WHERE id = $1"#)
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to delete project: {}", e)))?;
-
-    if result.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Project not found: {}", id)));
-    }
-    Ok(())
+    crate::api::trash::trash(pool, crate::api::trash::TrashKind::Project, id).await
 }
 
 /// Touch a Project's updated_at to reflect activity.
@@ -366,7 +372,8 @@ pub async fn add_project_item(pool: &PgPool, project_id: &str, req: AddProjectIt
         ));
     }
 
-    let exists: Option<String> = sqlx::query_scalar(r#"SELECT id FROM app_projects WHERE id = $1"#)
+    let exists: Option<String> =
+        sqlx::query_scalar(r#"SELECT id FROM app_projects WHERE id = $1 AND deleted_at IS NULL"#)
         .bind(project_id)
         .fetch_optional(pool)
         .await
@@ -636,7 +643,7 @@ pub async fn project_graph(pool: &PgPool, project_id: &str) -> Result<ProjectGra
     let mut page_content: HashMap<String, String> = HashMap::new();
     if !page_ids.is_empty() {
         let rows: Vec<(String, String)> =
-            sqlx::query_as(r#"SELECT id, content FROM app_pages WHERE id = ANY($1)"#)
+            sqlx::query_as(r#"SELECT id, content FROM app_pages WHERE id = ANY($1) AND deleted_at IS NULL"#)
                 .bind(&page_ids)
                 .fetch_all(pool)
                 .await

@@ -4248,6 +4248,55 @@ pub async fn list_lake_streams_handler(State(state): State<AppState>) -> Respons
     api_response(crate::api::lake::list_lake_streams(state.db.pool()).await)
 }
 
+// ============================================================================
+// Recently deleted — the trash for chats, pages and projects (`api::trash`)
+// ============================================================================
+
+/// GET /api/trash — everything in the trash, all kinds, newest deletion first.
+pub async fn list_trash_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::trash::list_trash(state.db.pool()).await)
+}
+
+/// POST /api/trash/:kind/:id/restore
+pub async fn restore_trash_handler(
+    State(state): State<AppState>,
+    Path((kind, id)): Path<(String, String)>,
+) -> Response {
+    let kind = match crate::api::trash::TrashKind::parse(&kind) {
+        Ok(k) => k,
+        Err(e) => return error_response(e),
+    };
+    match crate::api::trash::restore(state.db.pool(), kind, &id).await {
+        Ok(()) => success_message("Restored"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// DELETE /api/trash/:kind/:id — delete forever. Refuses anything not in the
+/// trash; the 30 days cannot be skipped from here.
+pub async fn purge_trash_handler(
+    State(state): State<AppState>,
+    Path((kind, id)): Path<(String, String)>,
+) -> Response {
+    let kind = match crate::api::trash::TrashKind::parse(&kind) {
+        Ok(k) => k,
+        Err(e) => return error_response(e),
+    };
+    match crate::api::trash::purge_trashed(state.db.pool(), kind, &id).await {
+        Ok(()) => success_message("Deleted forever"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// POST /api/trash/empty
+pub async fn empty_trash_handler(State(state): State<AppState>) -> Response {
+    api_response(
+        crate::api::trash::empty_trash(state.db.pool())
+            .await
+            .map(|deleted_count| serde_json::json!({ "deleted_count": deleted_count })),
+    )
+}
+
 #[cfg(test)]
 mod range_tests {
     use super::{resolve_range, RangeOutcome};

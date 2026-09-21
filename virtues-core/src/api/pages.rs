@@ -215,7 +215,7 @@ pub async fn list_pages(
     // would be swallowed by an implementation detail. Articles remain in
     // SEARCH, because prose about your life is exactly what you want to find.
     let total: i64 =
-        sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages WHERE kind = 'page'"#)
+        sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages WHERE kind = 'page' AND deleted_at IS NULL"#)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to count pages: {}", e)))?;
@@ -224,7 +224,7 @@ pub async fn list_pages(
         r#"
         SELECT id, title, icon, icon_color, cover_url, tags, created_at, updated_at
         FROM app_pages
-        WHERE kind = 'page'
+        WHERE kind = 'page' AND deleted_at IS NULL
         ORDER BY updated_at DESC
         LIMIT $1 OFFSET $2
         "#,
@@ -249,7 +249,7 @@ pub async fn get_page(pool: &PgPool, id: &str) -> Result<Page> {
         r#"
         SELECT id, title, content, icon, icon_color, cover_url, tags, created_at, updated_at
         FROM app_pages
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         "#,
     )
     .bind(id)
@@ -285,7 +285,7 @@ pub async fn get_page_backlinks(pool: &PgPool, id: &str) -> Result<BacklinksResp
         r#"
         SELECT id, title, icon, content, updated_at
         FROM app_pages
-        WHERE id <> $1 AND content LIKE $2
+        WHERE id <> $1 AND content LIKE $2 AND deleted_at IS NULL
         ORDER BY updated_at DESC
         "#,
     )
@@ -451,28 +451,13 @@ pub async fn update_page(pool: &PgPool, id: &str, req: UpdatePageRequest) -> Res
     Ok(page)
 }
 
-/// Delete a page by ID
-/// Also cleans up all project_items references (orphan cleanup)
+/// Delete a page — into the trash. The row keeps its versions, shares and
+/// project membership and leaves every listing and the search index; Recently
+/// deleted holds it for `trash::TRASH_RETENTION_DAYS`. The hard delete is
+/// `trash::purge`, which the wiki article path calls directly because an
+/// article page belongs to its `wiki_articles` row, not to the owner's desk.
 pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
-    // First delete the page
-    let result = sqlx::query(r#"DELETE FROM app_pages WHERE id = $1"#)
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to delete page: {}", e)))?;
-
-    if result.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Page not found: {}", id)));
-    }
-
-    // Clean up all project_items references
-    let url = format!("/page/{}", id);
-    if let Err(e) = crate::api::projects::remove_items_by_url(pool, &url).await {
-        tracing::warn!("Failed to clean up project_items for page {}: {}", id, e);
-        // Don't fail deletion if cleanup fails
-    }
-
-    Ok(())
+    crate::api::trash::trash(pool, crate::api::trash::TrashKind::Page, id).await
 }
 
 // ============================================================================
@@ -586,21 +571,21 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
         -- Articles are excluded here and surfaced under their SUBJECT instead:
         -- typing "Sarah" should land on Sarah, not on a page that happens to be
         -- about her (migration 0081).
-        WHERE title ILIKE $1 AND kind = 'page'
+        WHERE title ILIKE $1 AND kind = 'page' AND deleted_at IS NULL
         UNION ALL
         SELECT id, title as name, 'chat' as entity_type,
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:chat-3-line' END as icon,
                NULL as mime_type, updated_at,
                CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_chats
-        WHERE title ILIKE $1 AND title <> ''
+        WHERE title ILIKE $1 AND title <> '' AND deleted_at IS NULL
         UNION ALL
         SELECT id, name, 'project' as entity_type,
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:folder-line' END as icon,
                NULL as mime_type, updated_at,
                CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_projects
-        WHERE name ILIKE $1
+        WHERE name ILIKE $1 AND deleted_at IS NULL
         ORDER BY relevance ASC, updated_at DESC
         LIMIT $3
         "#,

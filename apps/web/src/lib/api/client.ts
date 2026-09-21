@@ -1626,6 +1626,42 @@ export async function purgeDriveFile(fileId: string): Promise<void> {
 	}
 }
 
+// ============================================================================
+// Recently deleted — chats, pages and projects (`api::trash` on the box)
+// ============================================================================
+
+export type TrashKind = 'chat' | 'page' | 'project';
+
+export interface TrashItem {
+	kind: TrashKind;
+	id: string;
+	title: string;
+	icon: string | null;
+	deleted_at: string;
+	/** When the box will purge it; computed server-side so every client agrees. */
+	expires_at: string;
+}
+
+/** GET /api/trash — every trashed chat, page and project, newest deletion first. */
+export function listTrash(): Promise<TrashItem[]> {
+	return apiGet<TrashItem[]>('/trash');
+}
+
+/** POST /api/trash/:kind/:id/restore */
+export function restoreTrashed(kind: TrashKind, id: string): Promise<void> {
+	return apiSend<void>('POST', `/trash/${kind}/${encodeURIComponent(id)}/restore`);
+}
+
+/** DELETE /api/trash/:kind/:id — delete forever. The box refuses anything not in the trash. */
+export function purgeTrashed(kind: TrashKind, id: string): Promise<void> {
+	return apiSend<void>('DELETE', `/trash/${kind}/${encodeURIComponent(id)}`);
+}
+
+/** POST /api/trash/empty — purge every trashed chat, page and project. */
+export function emptyTrash(): Promise<{ deleted_count: number }> {
+	return apiSend<{ deleted_count: number }>('POST', '/trash/empty');
+}
+
 /**
  * Empty entire trash (permanently delete all trashed files)
  */

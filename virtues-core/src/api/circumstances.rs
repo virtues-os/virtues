@@ -280,7 +280,7 @@ async fn build_section(
             let pages = sqlx::query(
                 r#"SELECT pg.id, pg.title
                    FROM app_pages pg
-                   WHERE pg.kind = 'page'
+                   WHERE pg.kind = 'page' AND pg.deleted_at IS NULL
                      AND NOT EXISTS (SELECT 1 FROM wiki_articles a WHERE a.page_id = pg.id)
                      AND pg.updated_at > $1::timestamptz - interval '7 days'
                    ORDER BY pg.updated_at DESC, pg.id LIMIT 5"#,
@@ -290,7 +290,8 @@ async fn build_section(
             .await?;
             let projects = sqlx::query(
                 r#"SELECT id, name FROM app_projects
-                   WHERE archived_at IS NULL AND updated_at > $1::timestamptz - interval '14 days'
+                   WHERE archived_at IS NULL AND deleted_at IS NULL
+                     AND updated_at > $1::timestamptz - interval '14 days'
                    ORDER BY updated_at DESC, id LIMIT 3"#,
             )
             .bind(now.to_rfc3339())
