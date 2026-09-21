@@ -95,6 +95,11 @@ pub struct SaveRequest {
     /// request body named no model — which no caller does, so it never fired.
     #[serde(default)]
     pub default_model: Option<String>,
+    /// The endpoint's context window in tokens, when the owner knows it is
+    /// small (a local model). Blank means "look it up by model id, assume
+    /// when unknown" — see `chat_usage::turn_context_window`.
+    #[serde(default)]
+    pub context_window: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,6 +114,7 @@ pub struct ByoStatus {
     pub models: std::collections::BTreeMap<String, String>,
     pub default_model: Option<String>,
     pub endpoint_url: Option<String>,
+    pub context_window: Option<i64>,
     pub created_at: Option<String>,
 }
 
@@ -148,6 +154,7 @@ pub async fn status_handler(State(pool): State<PgPool>, _user: AuthUser) -> impl
                     models,
                     default_model,
                     endpoint_url,
+                    context_window: read_context_window(&metadata),
                     created_at: Some(created_at.to_rfc3339()),
                 }),
             )
@@ -161,6 +168,7 @@ pub async fn status_handler(State(pool): State<PgPool>, _user: AuthUser) -> impl
                 models: Default::default(),
                 default_model: None,
                 endpoint_url: None,
+                context_window: None,
                 created_at: None,
             }),
         )
@@ -276,6 +284,9 @@ pub async fn save_handler(
     });
     if let Some(models) = req.models.as_ref().filter(|m| !m.is_empty()) {
         metadata["models"] = json!(models);
+    }
+    if let Some(w) = req.context_window.filter(|w| *w > 0) {
+        metadata["context_window"] = json!(w);
     }
     if let Some(p) = req.provider.as_deref() {
         metadata["provider"] = json!(p);
@@ -658,11 +669,21 @@ pub struct ByoCredential {
     /// Legacy single-model field. Superseded by `models`; still honored for a
     /// body that names no model, which is no caller today.
     pub default_model: Option<String>,
+    /// The endpoint's context window in tokens, if the owner set one. The
+    /// compaction threshold is measured against it (`turn_context_window`).
+    pub context_window: Option<i64>,
 }
 
 /// Read the slot→model map out of credential metadata, ignoring malformed
 /// entries rather than failing the call: a bad map should cost the user a
 /// wrong-model error they can read, not a dead box.
+fn read_context_window(metadata: &serde_json::Value) -> Option<i64> {
+    metadata
+        .get("context_window")
+        .and_then(|v| v.as_i64())
+        .filter(|w| *w > 0)
+}
+
 fn read_models(metadata: &serde_json::Value) -> std::collections::BTreeMap<String, String> {
     metadata
         .get("models")
@@ -735,6 +756,7 @@ pub async fn load_byo_credential(pool: &PgPool) -> Result<Option<ByoCredential>,
         endpoint_url,
         models: read_models(&metadata),
         default_model,
+        context_window: read_context_window(&metadata),
     }))
 }
 

@@ -287,6 +287,8 @@
 		models: Record<string, string>;
 		default_model: string | null;
 		endpoint_url: string | null;
+		/** Tokens, when the owner set one for a small or local model. */
+		context_window: number | null;
 		created_at: string | null;
 	};
 
@@ -307,6 +309,8 @@
 	// Form state. No provider field — a credential is a URL and a key.
 	let byoApiKey = $state('');
 	let byoEndpointUrl = $state('');
+	/** As typed; blank means "let the box look it up". */
+	let byoContextWindow = $state('');
 	/**
 	 * One entry per slot, seeded blank.
 	 *
@@ -368,6 +372,7 @@
 			// Merged OVER a blank map, never replacing it: a response that omits
 			// a slot must leave that field bound to '' rather than undefined.
 			byoModels = { ...blankSlots(), ...(byoStatus?.models ?? {}) };
+			byoContextWindow = byoStatus?.context_window ? String(byoStatus.context_window) : '';
 		} catch (e) {
 			byoLoadError = e instanceof Error ? e.message : 'Could not read your endpoint settings.';
 		} finally {
@@ -404,11 +409,15 @@
 					.map(([k, v]) => [k, (v ?? '').trim()])
 					.filter(([, v]) => v.length > 0),
 			);
+			const contextWindow = Number.parseInt(byoContextWindow, 10);
 			await setByoKey({
 				sudo_request_id: sudoRequestId,
 				api_key: byoApiKey,
 				endpoint_url: byoEndpointUrl,
 				models,
+				...(Number.isFinite(contextWindow) && contextWindow > 0
+					? { context_window: contextWindow }
+					: {}),
 			});
 			toast.success('Key saved. AI calls now go to your endpoint.');
 			byoApiKey = '';
@@ -1062,6 +1071,20 @@
 			/>
 			<p class="text-xs text-foreground-muted mt-1.5">
 				Any endpoint that speaks OpenAI-style <code>/chat/completions</code> with a bearer token.
+			</p>
+		</div>
+		<div>
+			<label class="block text-xs text-foreground-muted mb-1" for="byo-context-window"
+				>Context window (tokens)</label
+			>
+			<Input
+				id="byo-context-window"
+				bind:value={byoContextWindow}
+				placeholder="Optional, e.g. 32000"
+			/>
+			<p class="text-xs text-foreground-muted mt-1.5">
+				Set this for a local or small model, so long chats are summarized before they
+				overflow it. Blank: the box goes by the model id, and assumes 200k when it cannot tell.
 			</p>
 		</div>
 		<div>
