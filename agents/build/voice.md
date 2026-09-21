@@ -70,6 +70,13 @@ conversational — one turn each, about twenty words. Keep the reason: the page
 still says *why*, in plain words, not as a story. No flourish, no performed
 enthusiasm. The stance is Apple, Cursor, virtues.com.
 
+**Clear, then short, then characterful — in that order.** Nielsen Norman's
+ranking, and it settles what yields when they pull against each other: a few
+extra words are right when they buy understanding, and character is the thing
+that goes first, not clarity. "Concise" here means *nothing spare*, never
+*fewer words than the meaning needs*. An agent told only to be brief cuts the
+reason and leaves a label.
+
 **Tone varies; the register doesn't.** Apple's rule, and the right one: the
 words are the same everywhere, the temperature follows the situation. Light
 where something went right, straight where something went wrong, never cute at
@@ -81,6 +88,12 @@ happened and what to do.
 - Active, verb-first. **Sentence case everywhere** — headings, buttons, labels,
   menu items. Apple asks you to pick one style per element type and hold it;
   we hold one for all of them, and the SPA already does. Contractions on.
+- **Over 25 words, split it.** GOV.UK's trigger, and unlike "about twenty" it
+  is testable. Twenty is the target; twenty-five is the line where you stop
+  and break the sentence in two.
+- **A button names its outcome, in the person's intent.** Verb plus object,
+  never the mechanism and never a bare acknowledgement: "Write my chapters",
+  not "Submit"; "Delete 3 pages", not "OK".
 - Fragments (titles, hints under a control, chips) take no trailing period.
   Full sentences keep theirs.
 - Serial comma. No exclamation points. Capitalize the first word after a colon
@@ -97,30 +110,59 @@ happened and what to do.
   Google, Ollama, LM Studio.
 - American spelling, in UI and in comments.
 
-**The four sentence shapes** (Apple's, and the four that change the most of
-our existing strings):
+### The sentence shapes
+
+**A passive sentence is a missing subject. Name it, or hand the sentence to
+the person.** This is the first rule because it is the one our own copy keeps
+breaking, and because in this product the missing subject is never innocent.
+"Your account is written." Written by whom? Answer *the server* and you have
+contradicted the title of the page it sits on, "In your own words". Answer
+*you* and the sentence is both true and active. The passive was the copy
+dodging the product's central claim about who authored the thing.
+
+So: where the claim is that a thing is theirs, **the person is the actor**.
+Where the server actually did something, including failing, **name the
+server**. A sweep on 2026-09-21 found roughly one string in ten passive across
+the SPA and the API's error text; these four are the worked examples, all from
+the interview's close.
+
+| Was | Is |
+|---|---|
+| What you said is arranged in two places. Both are yours: the machine never rewrites them, and anything to add or correct is done on the page. | These are your words, in two places. Nothing rewrites them but you, and you can edit either page whenever you like. |
+| Your partition of the life, a page each. | Every chapter you named, a page each. |
+| Not written this time. The document is safe. | Your server couldn't write the chapters. Everything you said is safe. |
+| No page yet — it is written when the interview is closed. | No page yet. Finish the interview to create it. |
+
+Note what the last two do: one names the server because the server is what
+failed, and the other hands the verb to the person. "The machine" is not one
+of the two names (see the Words list); it was the passive wearing a noun.
+
+The rest, in order of how much of our copy they change:
 
 - **The reader is the subject, not the software.** "Turn on file sharing to
   reach the box from your laptop", never "Virtues allows you to…" or "This
   setting lets you…". *Allow*, *lets you*, *enable*, *capability*, and
-  *functionality* are all signs the sentence has the wrong subject. Rewrite
-  around what the person does.
+  *functionality* are all signs the sentence has the wrong subject.
 - **No "we" in a failure.** "Couldn't reach the box", never "We're having
   trouble reaching the box" — who is *we* to someone whose server is in their
   own house? The one "we" that stays is the claim about the company itself:
   "We can't read it."
-- **An error names the fix, not the fault.** "Choose a password of at least
-  eight characters" beats "That password is too short". Instruct rather than
-  scold: "Use letters only" beats "Don't use numbers". Put the message beside
-  the thing that failed. No *oops*, no *uh-oh*, no bare "Invalid input". If
-  words can't rescue an error most people will hit, the interaction is wrong.
+- **An error is two parts: what happened, then how to fix it.** Both present,
+  or it isn't finished. "Choose a password of at least eight characters" beats
+  "That password is too short"; instruct rather than scold. Put the message
+  beside the thing that failed. No *oops*, no *uh-oh*, no bare "Invalid
+  input". If words can't rescue an error most people will hit, the interaction
+  is wrong, not the sentence.
+- **Say the consequence before anything irreversible**, in the same breath as
+  the action, not after it. The interview's close writes the document once and
+  retires the room, and said so nowhere until it was over. A person cannot
+  consent to a door they did not know was one-way.
 - **A setting says what it does when it's on.** The person infers the off
   case. Add a sentence under the label only when the label can't carry it, and
   link to a setting rather than describing where it lives.
-
-Two more shapes worth naming: an **empty state** points at the next action and
-holds nothing that matters, because it disappears. **Possessives are sparing** —
-"Projects", not "Your projects" — and the perspective doesn't switch mid-screen.
+- **An empty state** points at the next action and holds nothing that matters,
+  because it disappears. **Possessives are sparing** — "Projects", not "Your
+  projects" — and the perspective doesn't switch mid-screen.
 
 **Words.** Turn on / turn off, not enable / disable. Choose for menu items,
 select for objects. Enter, not type or input. Quit, not exit. Cancel, not kill.
@@ -129,7 +171,11 @@ for a condition. Because, not since. Want, not wish. To, not in order to. By,
 with, or through, not via. For example, not e.g. And so on, not etc. Rewrite
 and/or. *Can* is ability, *may* is permission, *might* is possibility — which
 is why **"cannot"** carries so much weight for us, and why it is only ever used
-where the incapability is real.
+where the incapability is real. GOV.UK's vague-verb list is banned outright:
+*deliver*, *impact*, *leverage*, *utilise*, *streamline*. So is schema
+vocabulary on a screen — *partition*, *entity*, *primitive*, *provenance*,
+*payload*, *endpoint*, *instance*, *surface* — which is the glossary leaking
+into the product.
 
 **Don't give the box a mind.** The assistant is a named character and may think,
 notice, or wonder. The box, the record, an applet, and the software do not want,
