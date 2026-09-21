@@ -154,7 +154,7 @@
 	const caption = $derived.by(() => {
 		const a = analysis;
 		if (!a || !a.ready) return null;
-		if (!a.ticks) return "Your last twelve weeks are near-identical in rhythm — today is no exception.";
+		if (!a.ticks) return "Your last twelve weeks are near-identical in rhythm - today is no exception.";
 		const share = a.beaten / a.days;
 		const tail = `unlike ${a.beaten} of your last ${a.days} days`;
 		if (share >= 0.8) return `Today has gone off your usual rhythm — ${tail}.`;

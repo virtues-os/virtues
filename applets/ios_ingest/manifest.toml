@@ -1,5 +1,5 @@
 name = "iOS Ingest"
-description = "Receives everything your iPhone collects — health, location, calendar, contacts, audio, finance, and what you share to it."
+description = "Receives everything your iPhone collects - health, location, calendar, contacts, audio, finance, and what you share to it."
 owner = "system"
 command = ["ios_ingest"]
 triggers = ["webhook"]

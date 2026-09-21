@@ -2,6 +2,7 @@
 	import { slide } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
 	import ThinkingMark from "./ThinkingMark.svelte";
+	import { toolErrorSummary } from "$lib/components/chat/state/toolError";
 
 	interface ToolCallPart {
 		type: string;
@@ -591,8 +592,15 @@
 								{:else}
 									<span class="tool-icon" class:error={isError}>·</span>
 								{/if}
+								<!-- A failed call says why, in one line: the Postgres
+								     message, not the column list the model was handed.
+								     The next item in this list is the retry, so a failure
+								     the model recovered from reads as what it was — one
+								     wrong guess on the way — and never leaves this block
+								     for the transcript (ChatView keeps the body-level
+								     error for a turn that ENDED on the failure). -->
 								<span class="tool-description">
-									{getToolDescription(tool, isPending)}
+									{getToolDescription(tool, isPending)}{#if isError && tool.errorText}<span class="tool-reason"> · failed: {toolErrorSummary(tool.errorText)}</span>{/if}
 								</span>
 							</li>
 						{/if}
@@ -707,11 +715,15 @@
 		margin-right: 8px;
 	}
 
-	/* Content area */
+	/* Content area. Filled with the same wash the header takes on hover, so
+	   the open block is one card: the pill above it used to hover in
+	   --hover-bg while this sat in --color-surface-elevated, and on any theme
+	   whose paper is tinted (Oxford: warm stone) the two were visibly
+	   different colors stacked in the same column. */
 	.block-content {
 		margin-top: 8px;
 		padding: 12px 16px;
-		background: var(--color-surface-elevated);
+		background: var(--hover-bg);
 		border-radius: 8px;
 		max-height: 500px;
 		overflow-y: auto;
@@ -793,6 +805,10 @@
 
 	.tool-description {
 		flex: 1;
+	}
+
+	.tool-reason {
+		opacity: 0.85;
 	}
 
 	.tool-spinner {

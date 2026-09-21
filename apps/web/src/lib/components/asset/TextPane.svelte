@@ -81,7 +81,7 @@
 	{#if truncated}
 		<div class="text-banner">
 			<Icon icon="ri:scissors-cut-line" width="13" />
-			Large file — showing the first 2 MB. Download for the full contents.
+			Large file - showing the first 2 MB. Download for the full contents.
 		</div>
 	{/if}
 

@@ -11,8 +11,8 @@
 import { windowShellStore } from './window-shell.svelte';
 
 let pending: string | null = null;
-// Optional notebook to bind the next new chat to (e.g. "Ask this notebook").
-let pendingNotebook: string | null = null;
+// Optional project to bind the next new chat to (e.g. "Ask this project").
+let pendingProject: string | null = null;
 
 export const pendingPrompt = {
 	/** Stage a prompt for the next new chat to consume. */
@@ -25,27 +25,28 @@ export const pendingPrompt = {
 		pending = null;
 		return t;
 	},
-	/** Stage a notebook binding for the next new chat. */
-	setNotebook(id: string | null) {
-		pendingNotebook = id;
+	/** Stage a project binding for the next new chat. */
+	setProject(id: string | null) {
+		pendingProject = id;
 	},
-	/** Claim the staged notebook binding (once). */
-	takeNotebook(): string | null {
-		const t = pendingNotebook;
-		pendingNotebook = null;
+	/** Claim the staged project binding (once). */
+	takeProject(): string | null {
+		const t = pendingProject;
+		pendingProject = null;
 		return t;
 	},
 };
 
 /**
- * Ask Virtues: stage `text` and open a new (kept) chat tab that will auto-send
- * it. Opens in a new tab so the caller's surface (e.g. Home) stays put. Pass
- * `notebookId` to bind the new chat to a notebook (grounds retrieval there).
+ * Ask Virtues: stage `text` and go to a new (kept) chat that will auto-send
+ * it. Navigates the window you are in — the surface you asked from (e.g. Home)
+ * is one Back away, not buried behind a tab. Pass `projectId` to bind the new
+ * chat to a project (grounds retrieval there).
  */
-export function askVirtues(text: string, notebookId?: string | null) {
+export function askVirtues(text: string, projectId?: string | null) {
 	const trimmed = text.trim();
 	if (!trimmed) return;
 	pendingPrompt.set(trimmed);
-	pendingPrompt.setNotebook(notebookId ?? null);
-	windowShellStore.openTabFromRoute('/', { forceNew: true, label: 'New Chat' });
+	pendingPrompt.setProject(projectId ?? null);
+	windowShellStore.openTabFromRoute('/', { label: 'New Chat' });
 }

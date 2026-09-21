@@ -2,11 +2,11 @@
 	import { onMount, tick } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { accentCss } from '$lib/sidebar/pin-colors';
-	import { notebookStore } from '$lib/stores/notebook.svelte';
+	import { projectStore } from '$lib/stores/project.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { Button, Page } from '$lib';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
-	import type { NotebookSummary } from '$lib/api/client';
+	import type { ProjectSummary } from '$lib/api/client';
 
 	let { active: _active }: { tab?: unknown; active?: boolean } = $props();
 
@@ -17,16 +17,30 @@
 	let inputEl = $state<HTMLInputElement | null>(null);
 
 	onMount(() => {
-		notebookStore.load();
+		projectStore.load();
 	});
 
-	const notebooks = $derived(notebookStore.notebooks);
+	const projects = $derived(projectStore.projects);
+	const archived = $derived(projectStore.archived);
+	// Folded by default: the archive is where finished things wait, not the
+	// list you scan. The count on the head says there is something there.
+	let archivedOpen = $state(false);
+	let reopening = $state<string | null>(null);
 
-	const columns: Column<NotebookSummary>[] = [
+	async function reopen(p: ProjectSummary) {
+		reopening = p.id;
+		try {
+			await projectStore.unarchive(p.id);
+		} finally {
+			reopening = null;
+		}
+	}
+
+	const columns: Column<ProjectSummary>[] = [
 		{
 			key: 'name',
 			label: 'Name',
-			icon: 'ri:layout-masonry-line',
+			icon: 'ri:folder-3-line',
 			width: '35%',
 			minWidth: '180px'
 		},
@@ -74,7 +88,7 @@
 	}
 
 	function open(id: string) {
-		windowShellStore.openTabFromRoute(`/notebook/${id}`);
+		windowShellStore.openTabFromRoute(`/project/${id}`);
 	}
 
 	async function startDraft() {
@@ -95,9 +109,9 @@
 		}
 		creating = true;
 		try {
-			const notebook = await notebookStore.create(name);
+			const project = await projectStore.create(name);
 			cancelDraft();
-			if (notebook) open(notebook.id);
+			if (project) open(project.id);
 		} finally {
 			creating = false;
 		}
@@ -114,8 +128,8 @@
 </script>
 
 <Page
-	title="Notebooks"
-	description="A notebook gathers the material for one piece of work — files, people, pages, days. Chats filed here are grounded in it."
+	title="Projects"
+	description="A project gathers the material for one piece of work - files, people, pages, days. Chats you file here draw on it."
 	maxWidth="wide"
 >
 	{#snippet actions()}
@@ -124,7 +138,7 @@
 				bind:this={inputEl}
 				bind:value={draftName}
 				class="name-input"
-				placeholder="Name your Notebook"
+				placeholder="Name your Project"
 				disabled={creating}
 				onkeydown={onDraftKeydown}
 				onblur={commitDraft}
@@ -135,39 +149,39 @@
 				size="sm"
 				icon="ri:add-line"
 				loading={creating}
-				onclick={startDraft}>New Notebook</Button
+				onclick={startDraft}>New Project</Button
 			>
 		{/if}
 	{/snippet}
 
-	{#if notebooks.length === 0 && !notebookStore.loading && !notebookStore.error}
+	{#if projects.length === 0 && !projectStore.loading && !projectStore.error}
 		<div class="empty">
-			<Icon icon="ri:layout-masonry-line" width="28" />
-			<p>No Notebooks yet.</p>
+			<Icon icon="ri:folder-3-line" width="28" />
+			<p>No Projects yet.</p>
 			{#if !drafting}
 				<Button variant="secondary" size="sm" onclick={startDraft}
-					>Create your first Notebook</Button
+					>Create your first Project</Button
 				>
 			{/if}
 		</div>
 	{:else}
 		<UniversalDataGrid
-			items={notebooks}
+			items={projects}
 			{columns}
-			entityType="notebook"
-			loading={notebookStore.loading}
-			error={notebookStore.error}
-			emptyIcon="ri:layout-masonry-line"
-			emptyMessage="No Notebooks yet"
-			loadingMessage="Loading Notebooks..."
-			searchPlaceholder="Search Notebooks..."
+			entityType="project"
+			loading={projectStore.loading}
+			error={projectStore.error}
+			emptyIcon="ri:folder-3-line"
+			emptyMessage="No Projects yet"
+			loadingMessage="Loading Projects..."
+			searchPlaceholder="Search Projects..."
 			defaultViewMode="grid"
 			gridMinWidth="200px"
 			onItemClick={(nb) => open(nb.id)}
-			rowHref={(nb) => `/notebook/${nb.id}`}
-			onRetry={() => notebookStore.load()}
+			rowHref={(nb) => `/project/${nb.id}`}
+			onRetry={() => projectStore.load()}
 		>
-			{#snippet tableRow(nb: NotebookSummary)}
+			{#snippet tableRow(nb: ProjectSummary)}
 				<td class="col-name">
 					<div class="name-cell">
 						<span
@@ -175,7 +189,7 @@
 							class:tinted={!!nb.accent_color}
 							style={accentCss(nb.accent_color) ? `--room-accent: ${accentCss(nb.accent_color)}` : ''}
 						>
-							<Icon icon={nb.icon || 'ri:layout-masonry-line'} width="15" />
+							<Icon icon={nb.icon || 'ri:folder-3-line'} width="15" />
 						</span>
 						<span class="name-text">{nb.name}</span>
 					</div>
@@ -199,13 +213,13 @@
 				</td>
 			{/snippet}
 
-			{#snippet card(nb: NotebookSummary)}
+			{#snippet card(nb: ProjectSummary)}
 				<div
 					class="nb-card"
 					class:tinted={!!nb.accent_color}
 					style={accentCss(nb.accent_color) ? `--room-accent: ${accentCss(nb.accent_color)}` : ''}
 				>
-					<div class="nb-card-icon"><Icon icon={nb.icon || 'ri:layout-masonry-line'} width="20" /></div>
+					<div class="nb-card-icon"><Icon icon={nb.icon || 'ri:folder-3-line'} width="20" /></div>
 					<div class="nb-card-name">{nb.name}</div>
 					{#if nb.current_status}
 						<div class="nb-card-memo">{nb.current_status}</div>
@@ -218,6 +232,40 @@
 				</div>
 			{/snippet}
 		</UniversalDataGrid>
+	{/if}
+
+	{#if archived.length > 0}
+		<section class="archived">
+			<button
+				type="button"
+				class="archived-head"
+				aria-expanded={archivedOpen}
+				onclick={() => (archivedOpen = !archivedOpen)}
+			>
+				<Icon icon={archivedOpen ? 'ri:arrow-down-s-line' : 'ri:arrow-right-s-line'} width="14" />
+				<span>Archived</span>
+				<span class="archived-count">{archived.length}</span>
+			</button>
+			{#if archivedOpen}
+				<ul class="archived-list">
+					{#each archived as p (p.id)}
+						<li class="archived-row">
+							<button type="button" class="archived-name" onclick={() => open(p.id)}>
+								<Icon icon={p.icon || 'ri:folder-3-line'} width="15" />
+								<span>{p.name}</span>
+							</button>
+							<span class="archived-when">{formatRelativeDate(p.archived_at) ?? ''}</span>
+							<Button
+								variant="secondary"
+								size="sm"
+								loading={reopening === p.id}
+								onclick={() => reopen(p)}>Unarchive</Button
+							>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
 	{/if}
 </Page>
 
@@ -252,7 +300,7 @@
 		font-size: 12.5px; color: var(--color-foreground-muted); line-height: 1.4;
 		display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 	}
-	.nb-card-meta { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-foreground-subtle, #9ca3af); margin-top: 2px; }
+	.nb-card-meta { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-foreground-subtle); margin-top: 4px; }
 	.dot-sep { opacity: 0.5; }
 
 	/* Table row styles */
@@ -288,4 +336,24 @@
 
 	.empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 64px 0; color: var(--color-foreground-muted); }
 	.empty p { margin: 0; font-size: 14px; }
+
+	/* The Archived fold: a group head like the sidebar's, air above it, no rule. */
+	.archived { margin-top: 32px; }
+	.archived-head {
+		display: flex; align-items: center; gap: 6px;
+		padding: 4px 0; border: none; background: none; cursor: pointer;
+		font-size: 12px; color: var(--color-foreground-subtle);
+	}
+	.archived-head:hover { color: var(--color-foreground-muted); }
+	.archived-count { font-variant-numeric: tabular-nums; color: var(--color-foreground-disabled); }
+	.archived-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+	.archived-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+	.archived-name {
+		display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+		border: none; background: none; padding: 0; cursor: pointer; text-align: left;
+		font-size: 14px; color: var(--color-foreground-muted);
+	}
+	.archived-name:hover { color: var(--color-foreground); }
+	.archived-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.archived-when { font-size: 12px; color: var(--color-foreground-subtle); white-space: nowrap; }
 </style>

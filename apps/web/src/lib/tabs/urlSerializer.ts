@@ -22,7 +22,7 @@ const KNOWN_TYPES: TabType[] = [
 	'person',
 	'place',
 	'org',
-	'notebook',
+	'project',
 	'bookmarks',
 	'day',
 	'year',
@@ -37,6 +37,18 @@ const KNOWN_TYPES: TabType[] = [
 	'trash',
 	'virtues',
 ];
+
+/**
+ * Spellings that restore as another type. A serialized tab string is what an
+ * old bookmark or a shared URL carries, so a list form (`projects`) and the
+ * pre-rename spelling (projects were notebooks until 2026-09) both have to keep
+ * restoring the same view.
+ */
+const TYPE_ALIASES: Record<string, TabType> = {
+	projects: 'project',
+	notebook: 'project',
+	notebooks: 'project',
+};
 
 /**
  * Serialize a tab to a URL-safe string.
@@ -96,6 +108,10 @@ export function deserializeTab(serialized: string): string {
 		type = (underscoreIndex === -1 ? serialized : serialized.slice(0, underscoreIndex)) as TabType;
 		id = underscoreIndex === -1 ? undefined : decodeURIComponent(serialized.slice(underscoreIndex + 1));
 	}
+
+	// An alias restores as its current self; an alias with no id is a list.
+	const alias = TYPE_ALIASES[type];
+	if (alias) type = alias;
 
 	// Use registry to get the route
 	const def = tabRegistry[type];

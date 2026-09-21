@@ -495,7 +495,7 @@
 			<span class="lockup"><span class="mk">∴</span>{state_?.box_name ?? ""}</span>
 			<p class="doing">Keep holding to forget your devices</p>
 			<div class="phrase">{remaining}</div>
-			<div class="foot">Your record and your words are kept. You'll set your
+			<div class="foot">Your server keeps your record and your words. You'll set your
 				devices up again with the four words you saved.</div>
 		</div>
 	{:else if updatingNow}
@@ -529,8 +529,8 @@
 			<span class="lockup"><span class="mk">∴</span>Virtues</span>
 			<p class="doing">This screen isn't paired</p>
 			<div class="recall">
-				Any paired device can wear the box's face. Pair this one — open the
-				app here, Settings → Devices → Add device — then come back to this
+				Any paired device can wear your server's face. Pair this one. Open the
+				app here, Settings → Devices → Add device, then come back to this
 				page and go full screen.
 			</div>
 		</div>
@@ -581,19 +581,19 @@
 					     second line is what stops someone assuming the reset wiped
 					     them. -->
 					<p class="instruct">
-						virtues.com/downloads — then type the words you saved when you first set
-						this box up.
+						virtues.com/downloads, then type the words you saved when you first set
+						this server up.
 					</p>
-					<div class="recall">I can't show them again — your record is still here.</div>
+					<div class="recall">I can't show them again. Your record is still here.</div>
 				{:else if state_.setup_phrase}
-					<p class="instruct">virtues.com/downloads — then type these words.</p>
+					<p class="instruct">virtues.com/downloads, then type these words.</p>
 					<div class="phrase">{state_.setup_phrase}</div>
 				{:else if mirror}
 					<!-- A remote glass during setup. The redaction is the
 					     feature: this screen may say the words exist, and only
 					     the box's own glass may say what they are. -->
 					<p class="instruct">
-						virtues.com/downloads — the setup words show on the box's own
+						virtues.com/downloads - the setup words show on your server's own
 						screen.
 					</p>
 				{:else}
@@ -644,7 +644,7 @@
 				{#if logLine}
 					<!-- THE RECORD, counted. One line, rotating on the ambient poll.
 					     What was here before was a kicker reading "TODAY SO FAR" over
-					     the string literal "Your box is keeping the record." — a
+					     the string literal "Your server is keeping the record." — a
 					     promise of live content over something that could never
 					     change. The only true line on the screen was the device
 					     count. -->

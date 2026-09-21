@@ -765,13 +765,13 @@ fn remote_access_step(
         (
             true,
             "lan_only",
-            "Reachable on this network. Remote access is switched off — turn it back on in Settings → Network.".to_string(),
+            "Reachable on this network. Remote access is switched off - turn it back on in Settings → Network.".to_string(),
         )
     } else if reachable {
         (
             true,
             "iroh_relay",
-            "Reachable from anywhere — connections go direct when possible, via the relay otherwise.".to_string(),
+            "Reachable from anywhere - connections go direct when possible, via the relay otherwise.".to_string(),
         )
     } else if let Some(err) = endpoint_error {
         (false, "error", err.to_string())
@@ -779,7 +779,7 @@ fn remote_access_step(
         (
             false,
             "pending",
-            "Connecting to the relay so your box is reachable from anywhere…".to_string(),
+            "Connecting to the relay so your server is reachable from anywhere…".to_string(),
         )
     };
     SetupStep {

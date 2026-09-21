@@ -290,12 +290,12 @@ which is the shape Raycast uses for the same feature.
 This is a build, not a hookup (see finding 2).
 
 **Scope — decided: everything local, nothing external.** Pages, chats,
-notebooks, entities, days, *and* asset content (PDF text, images) — anything the
+projects, entities, days, *and* asset content (PDF text, images) — anything the
 box has indexed. The one exclusion is external web results; `/api/search/web`
 (Exa) stays a separate, explicitly-invoked thing and never leaks into ⌘K.
 
 That makes result *shape* the design problem rather than result *scope*. Two
-kinds of hit coexist: objects (a notebook, a person — you want to go there) and
+kinds of hit coexist: objects (a project, a person — you want to go there) and
 content (a paragraph inside a PDF — you want to see it in place). They rank on
 incomparable scales, which is the same score-scale schism already documented in
 the IR notes; interleaving them by raw score would reproduce that bug in the
@@ -344,10 +344,10 @@ already do CRUD, ordering, and reorder. Remaining:
   this item rather than as a standalone chore — the same files are already
   being opened, and `app_bookmarks` + `app_history` reads as a pair in a way
   that `app_pins` + `app_history` does not.
-- **Do not touch `app_notebook_items.role = 'pin'`.** That's an unrelated
+- **Do not touch `app_project_items.role = 'pin'`.** That's an unrelated
   concept — nav-only shortcut vs `library` (retrievable material) — and it is
   load-bearing for retrieval scope resolution (migrations 0032, 0056). Same
-  word, different meaning. `notebooks.pinned` is likewise separate.
+  word, different meaning. `projects.pinned` is likewise separate.
 - **Route rename needs a deprecation window.** `/api/pins` → `/api/bookmarks`
   is client-visible, and the Tauri app bundles its own SPA
   (`tauri.conf.json: frontendDist: "ui"`), so a Mac or iOS app older than the
@@ -388,7 +388,7 @@ saveable filters.
   (`listChats`). Recents should supersede it: one history, sidebar shows the
   recent slice, "See all" opens the full grid. Otherwise there are two
   histories with different scopes and users will notice.
-- **Filter dimensions:** type (chat/page/notebook/asset), time window, notebook
+- **Filter dimensions:** type (chat/page/project/asset), time window, project
   scope.
 - **A saved filter is a bookmark.** A bookmark is either a pinned *thing* or a
   pinned *query* — that unifies both halves of this item instead of building

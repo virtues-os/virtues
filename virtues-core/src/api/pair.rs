@@ -18,9 +18,14 @@
 //! Consume path (`POST /api/pair/consume`)
 //!   - Accepts `{token, kind, label, device_info, device_node_id?}`.
 //!   - For `kind = mobile_app | desktop_app | sensor | cli`: creates a device
-//!     row (recording the device's iroh `node_id` for the allowlist) + a
-//!     `credentials` row with a server-issued bearer (HMAC-lookup, encrypted at
-//!     rest). Reach is over iroh — no WG bundle.
+//!     row and nothing else, recording the device's iroh `endpoint_id` so the
+//!     reconciler can allowlist it. **No credential row, and no bearer** — the
+//!     proven iroh key IS the device's credential (`middleware::auth`), which
+//!     is why `api::devices` can revoke a device by clearing `revoked_at`
+//!     alone. This paragraph used to promise a `credentials` row with a
+//!     server-issued bearer; no such write has ever existed in this file, and
+//!     believing it means reading the revoke path as leaving a live bearer
+//!     behind. Reach is over iroh — no WG bundle.
 //!
 //! Status path (`GET /api/pair/status/:id`) — RFC 8628-shaped polling that the
 //! "+ Add Device" modal hits to know when the new device has finished.
@@ -480,7 +485,7 @@ pub async fn reopen_onboarding_handler(
             tracing::info!(
                 by_device = %user.device_id,
                 devices, creds,
-                "onboarding re-opened from the app — every device revoked"
+                "onboarding re-opened from the app. Every device revoked"
             );
             (StatusCode::OK, Json(json!({ "devices": devices, "credentials": creds })))
         }
@@ -1023,7 +1028,7 @@ pub async fn consume_handler(
     }
 
     // Idempotent on the device's iroh key: a re-pair of a device that kept its
-    // node_id UPDATEs the existing row and returns ITS id (so the token
+    // endpoint_id UPDATEs the existing row and returns ITS id (so the token
     // back-link + action fan-out below wire to the allowlisted device, not a
     // fresh duplicate). Shadow `device_id` with the effective id.
     let device_id = match insert_device_row(
@@ -1252,22 +1257,22 @@ pub(crate) async fn insert_device_row(
     label: &str,
     device_info: &Value,
     ip: Option<&str>,
-    node_id: Option<&str>,
+    endpoint_id: Option<&str>,
     source_id: Option<&str>,
     seen_now: bool,
 ) -> Result<String, sqlx::Error> {
-    // Re-pairing a device that kept its iroh key sends the SAME node_id. Treat
-    // that as idempotent: UPDATE the existing row in place and return ITS id, so
-    // the caller wires the token back-link + action fan-out to the device that's
-    // actually on the allowlist. A plain INSERT would 500 on the unique
-    // `app_device_node_id_key`. A NULL node_id (e.g. a browser device) never
+    // Re-pairing a device that kept its iroh key sends the SAME endpoint_id.
+    // Treat that as idempotent: UPDATE the existing row in place and return ITS
+    // id, so the caller wires the token back-link + action fan-out to the device
+    // that's actually on the allowlist. A plain INSERT would 500 on the unique
+    // `app_device_endpoint_id_key`. A NULL endpoint_id (e.g. a browser) never
     // conflicts — Postgres treats NULLs as distinct — so those always insert
     // fresh with the caller-supplied id.
     let row: (String,) = sqlx::query_as(
         "INSERT INTO app_device \
-         (id, user_id, kind, label, device_info, paired_from_ip, node_id, source_id, last_seen_at) \
+         (id, user_id, kind, label, device_info, paired_from_ip, endpoint_id, source_id, last_seen_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $9 THEN now() ELSE NULL END) \
-         ON CONFLICT (node_id) WHERE node_id IS NOT NULL AND revoked_at IS NULL DO UPDATE SET \
+         ON CONFLICT (endpoint_id) WHERE endpoint_id IS NOT NULL AND revoked_at IS NULL DO UPDATE SET \
            kind = EXCLUDED.kind, \
            label = EXCLUDED.label, \
            device_info = EXCLUDED.device_info, \
@@ -1282,7 +1287,7 @@ pub(crate) async fn insert_device_row(
     .bind(label)
     .bind(device_info)
     .bind(ip)
-    .bind(node_id)
+    .bind(endpoint_id)
     .bind(source_id)
     .bind(seen_now)
     .fetch_one(&mut **tx)
@@ -1389,6 +1394,84 @@ async fn log_event(
     .execute(pool)
     .await
     .map(|_| ())
+}
+
+#[cfg(test)]
+mod endpoint_id_conflict_tests {
+    use super::insert_device_row;
+    use serde_json::json;
+
+    /// `insert_device_row` re-pairs idempotently by naming a partial unique
+    /// index as its ON CONFLICT arbiter, and Postgres infers that arbiter by
+    /// PREDICATE EQUIVALENCE, not by name. So the `WHERE endpoint_id IS NOT
+    /// NULL AND revoked_at IS NULL` in the statement has to keep matching the
+    /// one on `app_device_endpoint_id_key` — and nothing checks that at build
+    /// time, because `sqlx::query` is untyped. Drift, and re-pairing a device
+    /// that kept its iroh key stops being idempotent and starts being a 500 on
+    /// a unique violation, which is the exact failure the index prevents.
+    ///
+    /// Migration 0032 renamed the column out from under both halves, which is
+    /// why this test exists at all.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn re_pairing_the_same_endpoint_id_updates_in_place(pool: sqlx::PgPool) {
+        let eid = "a".repeat(64);
+        let info = json!({});
+
+        let mut tx = pool.begin().await.expect("begin");
+        let first = insert_device_row(
+            &mut tx, "dev_first", "desktop_app", "First", &info, None, Some(&eid), None, true,
+        )
+        .await
+        .expect("first pair inserts - if this is a unique violation the arbiter did not infer");
+        tx.commit().await.expect("commit");
+
+        // Same key, different caller-supplied id: must return the FIRST row's
+        // id, not mint a second device holding the same allowlisted key.
+        let mut tx = pool.begin().await.expect("begin");
+        let second = insert_device_row(
+            &mut tx, "dev_second", "desktop_app", "Renamed", &info, None, Some(&eid), None, true,
+        )
+        .await
+        .expect("re-pair updates in place");
+        tx.commit().await.expect("commit");
+
+        assert_eq!(first, second, "a re-pair must return the existing device id");
+
+        let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM app_device")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(count, 1, "one key, one device row");
+
+        let (label,): (String,) =
+            sqlx::query_as("SELECT label FROM app_device WHERE endpoint_id = $1")
+                .bind(&eid)
+                .fetch_one(&pool)
+                .await
+                .expect("the row is addressable by the renamed column");
+        assert_eq!(label, "Renamed", "the conflicting insert updated the row");
+    }
+
+    /// A NULL endpoint_id (a browser device) is outside the partial index, so
+    /// those always insert fresh — Postgres treats NULLs as distinct.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn keyless_devices_never_conflict(pool: sqlx::PgPool) {
+        let info = json!({});
+        for id in ["dev_a", "dev_b"] {
+            let mut tx = pool.begin().await.expect("begin");
+            insert_device_row(
+                &mut tx, id, "desktop_app", "Browser", &info, None, None, None, false,
+            )
+            .await
+            .expect("a keyless device inserts fresh");
+            tx.commit().await.expect("commit");
+        }
+        let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM app_device")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(count, 2, "NULLs are distinct - keyless devices do not collide");
+    }
 }
 
 #[cfg(test)]

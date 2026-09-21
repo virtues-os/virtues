@@ -399,7 +399,7 @@ pub async fn freeze_current(pool: &PgPool) -> crate::Result<()> {
     .map_err(|e| crate::Error::Database(format!("freeze setup phrase: {e}")))?;
     if frozen.rows_affected() == 0 {
         return Err(crate::Error::Other(
-            "no live setup phrase to freeze — the panel may still be showing one".into(),
+            "no live setup phrase to freeze - the panel may still be showing one".into(),
         ));
     }
     let _ = sqlx::query("DELETE FROM app_setup_phrase WHERE frozen_at IS NULL")

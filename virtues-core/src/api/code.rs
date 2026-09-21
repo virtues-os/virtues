@@ -97,17 +97,28 @@ pub async fn execute_code(request: ExecuteCodeRequest) -> ExecuteCodeResponse {
     };
 
     match output {
-        Ok((stdout, stderr, success)) => ExecuteCodeResponse {
-            success,
-            stdout,
-            stderr,
-            error: if success {
-                None
-            } else {
-                Some("Code execution failed".to_string())
-            },
-            execution_time_ms: start.elapsed().as_millis() as u64,
-        },
+        Ok((stdout, stderr, success)) => {
+            // The last line of stderr is the exception — the one line of a
+            // traceback that says what went wrong. It rides in `error` so a
+            // reader of the failure alone (the thinking block, the guard's
+            // refusal) sees it; the full traceback is in `stderr` beside it.
+            let error = (!success).then(|| {
+                stderr
+                    .lines()
+                    .rev()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty())
+                    .map(|l| format!("Code execution failed: {l}"))
+                    .unwrap_or_else(|| "Code execution failed".to_string())
+            });
+            ExecuteCodeResponse {
+                success,
+                stdout,
+                stderr,
+                error,
+                execution_time_ms: start.elapsed().as_millis() as u64,
+            }
+        }
         Err(e) => ExecuteCodeResponse {
             success: false,
             stdout: String::new(),

@@ -407,7 +407,7 @@
 		padding: 4px 6px 4px 12px;
 		border: 1px solid var(--color-border);
 		border-radius: 10px;
-		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
 	}
 
 	.unreachable-text {
@@ -424,7 +424,7 @@
 		padding: 0 10px;
 		border: 0;
 		border-radius: 7px;
-		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 7%, transparent);
 		color: var(--color-foreground);
 		font-size: 13px;
 		font-weight: 550;
@@ -433,7 +433,7 @@
 		transition: background-color 0.25s ease-out;
 	}
 	.unreachable-door:active {
-		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 12%, transparent);
 		transition-duration: 0s;
 	}
 
@@ -453,7 +453,7 @@
 		transition: background-color 0.25s ease-out;
 	}
 	.bar-btn:active {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		transition-duration: 0s;
 	}
 

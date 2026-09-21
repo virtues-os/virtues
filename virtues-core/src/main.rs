@@ -344,8 +344,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ))
                     .dim()
                 );
-                for (id, kind, label, node_id, last_seen, version) in &devices {
-                    let key = node_id
+                for (id, kind, label, endpoint_id, last_seen, version) in &devices {
+                    let key = endpoint_id
                         .as_deref()
                         .map(|n| ui::ellipsize_middle(n, 14))
                         .unwrap_or_else(|| "—".to_string());

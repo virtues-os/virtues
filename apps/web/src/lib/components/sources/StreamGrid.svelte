@@ -235,7 +235,7 @@
 	.cell {
 		height: 11px;
 		border-radius: 1.5px;
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
 	}
 	/* One hue, four weights. Volume is a quantity, not a category, so it wants
 	   intensity rather than different colours. */

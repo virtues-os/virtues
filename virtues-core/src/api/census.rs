@@ -7,7 +7,7 @@
 //! someone what the box FOUND — the half they did not supply — and the cheapest,
 //! truest form of that is a count.
 //!
-//! "Your box holds 41,000 messages, and the oldest is from March 2015" is
+//! "Your server holds 41,000 messages, and the oldest is from March 2015" is
 //! verifiable, impossible to fake, and is precisely the thing they paid for. The
 //! oldest date does the most work: most people have no idea their Mac has been
 //! keeping messages for a decade, and a specific date is the moment an appliance

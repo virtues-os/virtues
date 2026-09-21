@@ -194,20 +194,32 @@ const DEEP_RESEARCH_TOOLS: &[&str] = &[
 /// The Council orchestrator's tools: read-only grounding (`semantic_search`, `sql_query`) plus the
 /// fan-out tool to convene voices. No `create_page` (Council replies in chat, not a page), no
 /// `web_search`/`code_interpreter` (Council is about perspectives, not facts). Explicit allow-list,
-/// for the same read-only-safety reason as `DEEP_RESEARCH_TOOLS`.
-const COUNCIL_TOOLS: &[&str] = &["think", "semantic_search", "sql_query", "dispatch_subagents"];
-
 /// Get tool definitions filtered by agent mode
 ///
 /// Agent modes:
 /// - "chat": All tools (smart default; write/act tools confirm before running)
 /// - "deep_research": read-only research tools + `dispatch_subagents` (fan-out) + `create_page`
 ///   (the report artifact). No other edit/act tools — see `DEEP_RESEARCH_TOOLS`.
-/// - "council": read-only grounding + `dispatch_subagents` (fan-out voices). No page — see `COUNCIL_TOOLS`.
+/// - a skill's name (`council`): the tools its file declares — see `virtues_registry::skills`.
 pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
+    if let Some(skill) = virtues_registry::skills::skill_named(agent_mode) {
+        return virtues_registry::tools::default_tools()
+            .into_iter()
+            .filter(|tool| skill.tools.iter().any(|t| t == &tool.id))
+            .map(|tool| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.id,
+                        "description": tool.llm_description,
+                        "parameters": tool.parameters,
+                    }
+                })
+            })
+            .collect();
+    }
     let allowlist = match agent_mode {
         "deep_research" => Some(DEEP_RESEARCH_TOOLS),
-        "council" => Some(COUNCIL_TOOLS),
         // The narrative interview: a listener, not an agent. Exactly one tool
         // — the finisher that turns the transcript into the document and
         // chapters. Still no search, no data, no pages: it must not read the

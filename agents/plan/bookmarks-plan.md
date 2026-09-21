@@ -120,7 +120,7 @@ layer is derived data — re-runnable wholesale when models improve.
 |---|---|---|---|
 | Short-form ≤ ~3 min (reels, TikTok, screen recordings) | Full Omni pass, audio+visual; bump FPS above default 1 for UI recordings | 1–4¢ | A reel's content is visual+music; transcript alone indexes the wrong thing |
 | Long-form (YouTube, podcasts) | NEVER ingest the file. Link + metadata + thumbnail caption; transcript free (YouTube caption track — residential box IP works; `<podcast:transcript>` RSS tag); Lite composes summary/chapters | ~free–5¢ | Long-form saves are "content & ideas" saves; text already exists |
-| Escalation on demand | Full visual pass only when something asks: user question in chat, notebook admission, screenshot-marginalia | $0.10–0.70 / 20 min | Never by default |
+| Escalation on demand | Full visual pass only when something asks: user question in chat, project admission, screenshot-marginalia | $0.10–0.70 / 20 min | Never by default |
 
 - Reels/TikTok exceptions: no transcript exists (the Omni pass IS their
   index), fetch requires yt-dlp on the box (ToS-grey; residential IP is the
@@ -146,17 +146,17 @@ layer is derived data — re-runnable wholesale when models improve.
    user-authored tags/why at ingest. Almost no source has a note field;
    almost every source has a container.
 3. **Review-time elicitation, context-routed** — capture context (browsing
-   trail, active app/notebook, time of day) is stamped deterministically at
+   trail, active app/project, time of day) is stamped deterministically at
    save. Its job is ROUTING, not answering: rich work-context → auto-
    attribute, don't ask; idle-scroll saves → the Inbox queue, where the
    model proposes 2–3 candidate whys from content+context as tappable
    suggestions. A tap/edit becomes the user-authored why; untaken
    suggestions are discarded, never stored (covenant: machine proposes,
    user disposes). Prefer cluster-level asks ("these 6 look related —
-   what's the thread?"); a notebook assignment is the highest-fidelity why.
+   what's the thread?"); a project assignment is the highest-fidelity why.
 
 The why is no longer load-bearing for retrieval (the extraction record
-carries findability); it drives triage, notebooks, and synthesis. When
+carries findability); it drives triage, projects, and synthesis. When
 present it embeds as its own aspect row — intent language matches future
 query language. Writing/editing a why re-embeds.
 
@@ -179,7 +179,7 @@ first-sync backfill (5k X bookmarks, 10k browser export → ~$50–100 surprise
 - **Budgeted queue** — drains newest-first at a daily cap (count or spend;
   the prepaid-wallet ledger makes "$0.50/day" a natural Settings knob).
 - **Lazy tail** — archive items enrich on touch (opened, clicked in
-  results, notebook admission). Explicit bulk button with a price tag
+  results, project admission). Explicit bulk button with a price tag
   ("enrich all 8,000 (~$60)?") = informed consent, never a side effect.
 - **Media storage opt-in and bounded** — enrichment reads remote media but
   stores text by default; thumbnails capped; snapshots/MP4-insurance are
@@ -215,7 +215,7 @@ To build:
   gives /bookmarks its data endpoint.
 - Settings (one flat room): enrichment daily budget, per-source media
   toggles.
-- Later: bookmark → notebook admission as sources; entity linking.
+- Later: bookmark → project admission as sources; entity linking.
 
 **Naming**: user-facing "Bookmarks" = this feature. Sidebar route pins stay
 "Pinned". `agents/plan/ui-overhaul-plan.md` item 8 (renaming `app_pins` →
@@ -602,7 +602,7 @@ the product language. The field is a **note**. When we prompt, the words are
 
 **Rule worth keeping: `tags` is source-owned.** It is in the shared upsert's
 update set, so anything a user writes there is destroyed by the next sync. User
-filing goes through notebooks, which already exist and which this plan already
+filing goes through projects, which already exist and which this plan already
 calls the highest-fidelity signal. Two filing systems is the maintenance cost;
 one is the fix. The UI must never offer tag editing.
 

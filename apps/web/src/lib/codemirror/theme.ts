@@ -35,6 +35,19 @@ export const virtuesTheme = EditorView.theme({
 	'.cm-dropCursor': {
 		borderLeftColor: 'var(--color-primary)',
 	},
+	// drawSelection paints the selection on a layer BEHIND the content (CM sets
+	// its z-index to -1 inline), so any construct with an opaque background —
+	// code blocks, inline code, ==highlight==, review marks, images — hides the
+	// selection completely. The layer is lifted above the content instead and
+	// blended: multiply on light themes leaves dark text dark and tints every
+	// background, screen does the same for light text on dark themes. The
+	// token is set per scheme in themes.css. pointer-events: none keeps clicks
+	// reaching the text; the caret layer is already above (z-index 150).
+	'& .cm-selectionLayer': {
+		zIndex: '1 !important',
+		pointerEvents: 'none',
+		mixBlendMode: 'var(--selection-blend, multiply)',
+	},
 	'.cm-selectionBackground': {
 		background: 'var(--color-highlight) !important',
 	},

@@ -743,7 +743,7 @@ pub async fn restart_display_handler() -> Response {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": "no display service is installed on this box"
+                "error": "Your server has no display service installed."
             })),
         )
             .into_response();

@@ -114,8 +114,12 @@ export const listRenumber: Extension = EditorState.transactionFilter.of((tr) => 
 	const changes = computeRenumbering(tr.newDoc, code);
 	if (changes.length === 0) return tr;
 
-	// Appended-spec change positions are in tr.newDoc coordinates; CodeMirror
-	// composes them into the same transaction. The filter is not re-run on its
-	// own output, so there is no recursion.
-	return [tr, { changes: changes as ChangeSpec, sequential: false }];
+	// The positions are in tr.newDoc coordinates, so the appended spec must be
+	// SEQUENTIAL: CodeMirror then resolves it against the document the user's
+	// change produced. Without the flag it resolves against the start state
+	// and maps the positions through the user's change a second time — a
+	// renumber below an insertion landed that many characters late, and a
+	// paste longer than the old document threw "Invalid change range". The
+	// filter is not re-run on its own output, so there is no recursion.
+	return [tr, { changes: changes as ChangeSpec, sequential: true }];
 });

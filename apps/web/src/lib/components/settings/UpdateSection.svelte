@@ -75,14 +75,14 @@
 		const ok = await confirmAction({
 			title: status?.latest ? `Install ${status.latest}?` : 'Install this update?',
 			body: staged
-				? 'This release is already downloaded. The box runs its migrations and ' +
-					'restarts, which takes well under a minute. Every device connected to ' +
-					'it drops — phones and other browsers included, not just this window. ' +
-					'Nothing is lost; they reconnect on their own.'
-				: 'The box downloads the release, swaps its binary and runs migrations, ' +
-					'so it stops serving for a minute or two. Every device connected to it ' +
-					'drops — phones and other browsers included, not just this window. ' +
-					'Nothing is lost; they reconnect on their own.',
+				? 'This release is already downloaded. Your server runs its migrations ' +
+					'and restarts, which takes well under a minute. Every device connected ' +
+					'to it drops, phones and other browsers included, not just this window. ' +
+					'You lose nothing, and they reconnect on their own.'
+				: 'Your server downloads the release, swaps its binary and runs ' +
+					'migrations, so it stops serving for a minute or two. Every device ' +
+					'connected to it drops, phones and other browsers included, not just ' +
+					'this window. You lose nothing, and they reconnect on their own.',
 			confirmLabel: 'Install and restart',
 			cancelLabel: 'Not now'
 		});
@@ -124,7 +124,7 @@
 					phase: 'going',
 					error:
 						"Your server hasn't come back after ten minutes. It may have rolled " +
-						'itself back — check `journalctl -u virtues-upgrade` on the box.'
+						'itself back. Check `journalctl -u virtues-upgrade` on your server.'
 				};
 				return;
 			}
@@ -192,10 +192,10 @@
 			{:else}
 				<p>
 					<Icon icon="ri:loader-4-line" width="14" class="spin" />
-					Installing. The box is restarting and will be back in a minute or two.
+					Installing. Your server is restarting and will be back in a minute or two.
 				</p>
 				<p class="how">
-					Other devices are disconnected too; they reconnect on their own.
+					Other devices drop too, and reconnect on their own.
 				</p>
 			{/if}
 		</div>
@@ -239,7 +239,7 @@
 					{#if status.channel === 'prerelease'}
 						<span class="risk">
 							<Icon icon="ri:alert-line" width="13" />
-							Unreviewed builds install on this box
+							Unreviewed builds install on this server
 						</span>
 					{/if}
 				</div>
@@ -276,7 +276,7 @@
 				</p>
 				<p class="warn">
 					{#if staged}
-						Already fetched and checked against this box, so installing is a
+						Already fetched and checked against this server, so installing is a
 						restart — under a minute. It disconnects every device using the
 						box, not just this one.
 					{:else}
@@ -316,7 +316,7 @@
 		{#if aheadOfStable}
 			<p class="note">
 				On Nightly you're usually ahead of the last stable release. Switching
-				back to Main stops new prereleases; it doesn't move the box backwards,
+				back to Main stops new prereleases; it doesn't move your server backwards,
 				so nothing changes until stable catches up.
 			</p>
 		{/if}

@@ -20,7 +20,7 @@
 	});
 </script>
 
-<div class="redirect">Moved to the wiki — opening…</div>
+<div class="redirect">Moved to the wiki - opening…</div>
 
 <style>
 	.redirect {

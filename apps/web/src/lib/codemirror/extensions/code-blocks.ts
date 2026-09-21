@@ -5,13 +5,17 @@
  * button. The actual syntax highlighting is handled by CM6's built-in
  * markdown + language-data.
  *
- * Uses StateField (not ViewPlugin) because block widgets require direct
- * decoration provision via EditorView.decorations facet.
+ * Two parts. The header and the block's line classes live in a StateField,
+ * because block widgets must be provided straight to EditorView.decorations
+ * (a ViewPlugin may not add them). The fence-line reveal is a ViewPlugin,
+ * because it needs `view.hasFocus`: a StateField sees only the state, and the
+ * selection survives blur — without the gate a blurred editor or the read-only
+ * view (selection at 0) shows a raw fence on line one.
  */
 
 import { syntaxTree } from '@codemirror/language';
 import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
-import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
 import { createWidgetIcon, disconnectRemeasure, remeasureOnResize } from '../widget-height';
@@ -151,11 +155,20 @@ class CodeBlockHeaderWidget extends WidgetType {
 	}
 }
 
+/**
+ * The fence lines of a block, as the code that hides them needs them: the
+ * opening line, and the closing line when there is one (an unterminated
+ * block runs to the end of the document with no closing fence).
+ */
+function fenceLines(state: EditorState, from: number, to: number) {
+	const firstLine = state.doc.lineAt(from);
+	const lastLine = to > from ? state.doc.lineAt(to - 1) : firstLine;
+	const hasClosingFence = lastLine.text.startsWith('```') && lastLine.number !== firstLine.number;
+	return { firstLine, lastLine, hasClosingFence };
+}
+
 function buildCodeBlockDecorations(state: EditorState): DecorationSet {
 	const builder: Range<Decoration>[] = [];
-
-	// Fence-line reveal keys off the caret's line — see below.
-	const cursorLine = state.doc.lineAt(state.selection.main.head);
 
 	syntaxTree(state).iterate({
 		enter(node) {
@@ -180,8 +193,7 @@ function buildCodeBlockDecorations(state: EditorState): DecorationSet {
 
 				// Add line decorations for code block container (background)
 				// Include fence lines so the background is seamless with the header
-				const lastLine = to > from ? state.doc.lineAt(to - 1) : firstLine;
-				const hasClosingFence = lastLine.text.startsWith('```') && lastLine.number !== firstLine.number;
+				const { lastLine, hasClosingFence } = fenceLines(state, from, to);
 				const closingFenceLine = hasClosingFence ? lastLine.number : nodeEndLine;
 				const contentStartLine = firstLine.number + 1;
 
@@ -196,20 +208,6 @@ function buildCodeBlockDecorations(state: EditorState): DecorationSet {
 					);
 				}
 
-				// Per-fence-LINE reveal, not per-block. The old rule revealed both
-				// fences the moment the caret entered the block's interior — a
-				// two-line vertical shift on every entry, the last construct in
-				// the editor that still flipped. A fence now shows only when the
-				// caret is ON that fence's own line (reached deliberately, by
-				// arrowing to the edge); editing inside the block moves nothing.
-				// The header's language picker covers the common reason anyone
-				// needed the opening fence visible at all.
-				if (cursorLine.number !== firstLine.number) {
-					builder.push(Decoration.replace({}).range(from, firstLine.to));
-				}
-				if (hasClosingFence && cursorLine.number !== lastLine.number) {
-					builder.push(Decoration.replace({}).range(lastLine.from, lastLine.to));
-				}
 			}
 		},
 	});
@@ -222,19 +220,72 @@ const codeBlockField = StateField.define<DecorationSet>({
 		return buildCodeBlockDecorations(state);
 	},
 	update(decos, tr) {
-		// Fence reveal is a two-line VERTICAL shift, the most violent reveal
-		// left in the editor — so it must never happen under a pressed mouse
-		// button. Held while dragging, recomputed on release (mouse-freeze.ts).
-		const rebuild =
-			tr.docChanged ||
-			(tr.selection && !isMouseSelecting(tr.state)) ||
-			dragJustEnded(tr);
-		if (rebuild) {
-			return buildCodeBlockDecorations(tr.state);
-		}
-		return decos;
+		// Header and line classes depend on the document alone.
+		return tr.docChanged ? buildCodeBlockDecorations(tr.state) : decos;
 	},
 	provide: (field) => EditorView.decorations.from(field),
 });
 
-export const codeBlocks: Extension = codeBlockField;
+/**
+ * Hide the fence lines, except the one the caret is on in a focused editor.
+ *
+ * Per-fence-LINE reveal, not per-block. The old rule revealed both fences the
+ * moment the caret entered the block's interior — a two-line vertical shift
+ * on every entry, the last construct in the editor that still flipped. A
+ * fence now shows only when the caret is ON that fence's own line (reached
+ * deliberately, by arrowing to the edge); editing inside the block moves
+ * nothing. The header's language picker covers the common reason anyone
+ * needed the opening fence visible at all.
+ */
+function buildFenceDecorations(view: EditorView): DecorationSet {
+	const builder: Range<Decoration>[] = [];
+	const { state } = view;
+	const cursorLine = state.doc.lineAt(state.selection.main.head);
+	// No reveal without focus — same gate as live-preview.ts.
+	const canReveal = view.hasFocus;
+
+	syntaxTree(state).iterate({
+		from: view.viewport.from,
+		to: view.viewport.to,
+		enter(node) {
+			if (node.name !== 'FencedCode') return;
+			const { firstLine, lastLine, hasClosingFence } = fenceLines(state, node.from, node.to);
+			if (!(canReveal && cursorLine.number === firstLine.number)) {
+				builder.push(Decoration.replace({}).range(node.from, firstLine.to));
+			}
+			if (hasClosingFence && !(canReveal && cursorLine.number === lastLine.number)) {
+				builder.push(Decoration.replace({}).range(lastLine.from, lastLine.to));
+			}
+		},
+	});
+
+	return Decoration.set(builder, true);
+}
+
+const fenceRevealPlugin = ViewPlugin.fromClass(
+	class {
+		decorations: DecorationSet;
+
+		constructor(view: EditorView) {
+			this.decorations = buildFenceDecorations(view);
+		}
+
+		update(update: ViewUpdate) {
+			// Fence reveal is a two-line VERTICAL shift, the most violent reveal
+			// left in the editor — so it must never happen under a pressed mouse
+			// button. Held while dragging, recomputed on release (mouse-freeze.ts).
+			const rebuild =
+				update.docChanged ||
+				update.viewportChanged ||
+				update.focusChanged ||
+				(update.selectionSet && !isMouseSelecting(update.state)) ||
+				dragJustEnded(update);
+			if (rebuild) {
+				this.decorations = buildFenceDecorations(update.view);
+			}
+		}
+	},
+	{ decorations: (v) => v.decorations }
+);
+
+export const codeBlocks: Extension = [codeBlockField, fenceRevealPlugin];

@@ -72,7 +72,7 @@
 <Page
 	title={source?.name ?? sourceId}
 	description={source?.description ??
-		'This source is not installed on this box. Anything still connected to it will not run.'}
+		'This source is not installed on this server. Anything still connected to it won\'t run.'}
 	maxWidth="wide"
 >
 	{#snippet actions()}
@@ -90,7 +90,7 @@
 			<Icon icon="ri:code-line" width="14" />
 			<TextAction inline onclick={readCode}>Read the code</TextAction>
 			{#if source.repo_ref}<code>{source.repo_ref}</code>{/if}
-			<span class="aside">— provenance, not how it updates</span>
+			<span class="aside">- provenance, not how it updates</span>
 		</p>
 	{/if}
 

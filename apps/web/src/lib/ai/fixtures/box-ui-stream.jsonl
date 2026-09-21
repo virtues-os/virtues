@@ -16,7 +16,7 @@
 {"type":"text-delta","id":"msg_fixture:t2","delta":" world"}
 {"type":"tool-input-start","toolCallId":"call_2","toolName":"create_page"}
 {"type":"tool-input-available","toolCallId":"call_2","toolName":"create_page","input":{"title":"t"}}
-{"type":"tool-output-error","toolCallId":"call_2","errorText":"the page could not be written"}
+{"type":"tool-output-error","toolCallId":"call_2","errorText":"Your server couldn't write the page."}
 {"type":"data-narrative-document","data":{"pageId":"page_fixture"},"transient":true}
 {"type":"text-end","id":"msg_fixture:t2"}
 {"type":"finish-step"}

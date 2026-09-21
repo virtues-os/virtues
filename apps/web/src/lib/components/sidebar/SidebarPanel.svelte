@@ -17,10 +17,8 @@
 	 * way back had to be a different affordance somewhere else. The mark is one
 	 * object doing one job from a place that never moves.
 	 */
-	import AtlasIcon from './AtlasIcon.svelte';
 	import SidebarModePanel from './SidebarModePanel.svelte';
-	import ChatsPanel from './panels/ChatsPanel.svelte';
-	import DeskSection from './DeskSection.svelte';
+	import HomePanel from './panels/HomePanel.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { SIDEBAR_MODES } from '$lib/sidebar/modes';
 	import type { Room } from '$lib/sidebar/rooms';
@@ -39,46 +37,18 @@
 			focusExisting: true,
 		});
 	}
-
-	async function quickAdd() {
-		if (room.quickAdd === 'chat') {
-			windowShellStore.openTabFromRoute('/', { label: 'New Chat', forceNew: true });
-			return;
-		}
-		if (room.quickAdd === 'page') {
-			const { pagesStore } = await import('$lib/stores/pages.svelte');
-			const page = await pagesStore.createNewPage();
-			windowShellStore.openTabFromRoute(`/page/${page.id}`, {
-				label: page.title,
-				forceNew: true,
-			});
-		}
-	}
 </script>
 
 <div class="panel">
 	<div class="panel-head">
 		<span class="panel-title">{room.label}</span>
-		<div class="panel-actions">
-			{#if room.quickAdd}
-				<button
-					type="button"
-					class="panel-icon-btn"
-					aria-label={room.quickAdd === 'chat' ? 'New chat' : 'New page'}
-					title={room.quickAdd === 'chat' ? 'New chat' : 'New page'}
-					onclick={quickAdd}
-				>
-					<AtlasIcon name={room.quickAdd === 'chat' ? 'new-chat' : 'pages'} size={16} bare />
-				</button>
-			{/if}
-		</div>
+		<!-- The head used to carry a room's quick-add (+). The verbs live as
+		     doors in the Home panel now, where they are read as words. -->
 	</div>
 
 	<div class="panel-body">
-		{#if room.panel.kind === 'desk'}
-			<DeskSection headless />
-		{:else if room.panel.kind === 'chats'}
-			<ChatsPanel />
+		{#if room.panel.kind === 'home'}
+			<HomePanel />
 		{:else if mode}
 			<SidebarModePanel {mode} />
 		{:else}
@@ -126,39 +96,6 @@
 		white-space: nowrap;
 	}
 
-	.panel-actions {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		flex: none;
-	}
-
-	.panel-icon-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border: none;
-		border-radius: var(--sidebar-interactive-radius);
-		background: none;
-		cursor: pointer;
-		color: var(--color-foreground-muted);
-	}
-
-	.panel-icon-btn :global(svg) {
-		opacity: var(--sidebar-icon-opacity);
-		transition: opacity var(--sidebar-transition-duration) ease;
-	}
-
-	.panel-icon-btn:hover {
-		background: var(--sidebar-hover-bg);
-		color: var(--color-foreground);
-	}
-
-	.panel-icon-btn:hover :global(svg) { opacity: 1; }
-
-	.panel-icon-btn:focus-visible,
 	.panel-stub:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;

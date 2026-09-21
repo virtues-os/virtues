@@ -11,6 +11,7 @@ import { DefaultChatTransport, type ChatTransport } from 'ai';
 import { subscriptionStore } from '$lib/stores/subscription.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import type { CheckpointMessage } from '$lib/types/chat';
+import { placeCheckpoint } from '$lib/components/chat/state/checkpoint';
 
 // --- Streaming reactivity helpers (see replaceMessage override below) ---------
 //
@@ -125,11 +126,11 @@ interface CreateChatConfig {
      *  slot (see `model_choice.rs`), so the field is omitted rather than
      *  guessed at. Sending a guess is what put an empty string on the wire. */
     getModel: () => string | undefined;
-    getNotebookId: () => string | null; // Getter for space ID (null for system space)
+    getProjectId: () => string | null; // Getter for space ID (null for system space)
     getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
     getPersona?: () => string; // Getter for selected persona (per-chat)
     getAgentMode?: () => string; // Getter for agent mode (agent, chat, research)
-    getChatMode?: () => string; // Getter for retrieval scope: 'open' | 'scoped' (notebook chats)
+    getChatMode?: () => string; // Getter for retrieval scope: 'open' | 'scoped' (project chats)
     getTemporary?: () => boolean; // Getter for temporary/ghost mode (don't persist server-side)
 }
 
@@ -178,7 +179,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getNotebookId, getActivePageContext, getPersona, getAgentMode, getChatMode, getTemporary } = config;
+        const { conversationId, getModel, getProjectId, getActivePageContext, getPersona, getAgentMode, getChatMode, getTemporary } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -197,7 +198,7 @@ class ChatInstanceStore {
             transport: new DefaultChatTransport({
                 api: '/api/chat',
                 prepareSendMessagesRequest: ({ messages, trigger }) => {
-                    const notebookId = getNotebookId();
+                    const projectId = getProjectId();
                     const activePage = getActivePageContext?.();
                     const persona = getPersona?.() || 'default';
                     const agentMode = getAgentMode?.() || 'chat';
@@ -227,8 +228,8 @@ class ChatInstanceStore {
                             trigger,
                             persona,
                             agentMode,
-                            // Retrieval scope for notebook chats: 'open' (whole
-                            // graph, notebook up-weighted) or 'scoped' (grounded).
+                            // Retrieval scope for project chats: 'open' (whole
+                            // graph, project up-weighted) or 'scoped' (grounded).
                             chatMode,
                             // Ghost/temporary chat — backend should skip persistence when true.
                             ...(temporary && { temporary: true }),
@@ -236,7 +237,7 @@ class ChatInstanceStore {
                             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                             // The Space (room) this chat lives in — drives the agent's
                             // active-space context block and binds the chat on the server.
-                            ...(notebookId && { notebookId }),
+                            ...(projectId && { projectId }),
                             // Include active page context if a page is bound
                             ...(activePage && { activePage }),
                             ...(model && { model })
@@ -285,24 +286,12 @@ class ChatInstanceStore {
                         // Insert checkpoint message into chat for immediate display.
                         // The SDK types `messages` as UIMessage[]; a checkpoint is a
                         // synthetic render-only message, so cast at this boundary.
-                        //
-                        // BEFORE the reply being streamed, never after it. The
-                        // box sends this right after `start`, and `start` has
-                        // already pushed the assistant message; the SDK's next
-                        // write replaces the LAST message only if its id is the
-                        // reply's, so a checkpoint appended at the end made it
-                        // push a second copy of the reply and stream every
-                        // later token into that one — which dedupe then hid.
-                        // Every compaction turn showed an empty answer until
-                        // reload. If the reply is not there yet (nothing
-                        // streamed), the end is the right place.
-                        const current = entry.chat.messages;
-                        const tail = current[current.length - 1];
-                        const checkpoint = checkpointMessage as unknown as (typeof current)[number];
-                        entry.chat.messages =
-                            tail && tail.role === 'assistant'
-                                ? [...current.slice(0, -1), checkpoint, tail]
-                                : [...current, checkpoint];
+                        // Placed BEFORE the reply being streamed — see
+                        // `placeCheckpoint` for why appending hid the reply.
+                        entry.chat.messages = placeCheckpoint(
+                            entry.chat.messages,
+                            checkpointMessage as unknown as (typeof entry.chat.messages)[number],
+                        );
                     }
                 }
             },

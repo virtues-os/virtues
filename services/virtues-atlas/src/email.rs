@@ -112,7 +112,7 @@ pub async fn send_login_magic_link(
 
 const THANKS_TEXT: &str = "Hi,
 
-It's Adam, founder of Virtues. I wanted to personally thank you for placing a deposit — you're one of the first people to bring one of these home, and that means a great deal to me.
+It's Adam, founder of Virtues. I wanted to personally thank you for placing a deposit. You're one of the first people to bring one of these home, and that means a great deal to me.
 
 Here's what happens next: your $50 deposit holds your place in line and stays fully refundable until your unit ships. I'll email you when your batch is ready, and that's when you'll complete your order.
 
@@ -126,7 +126,7 @@ P.S. Yes — this note was automated. But reply to it and I promise it's me on t
 
 const THANKS_HTML: &str = r#"<div style="font-family: Georgia, 'Times New Roman', serif; max-width: 540px; margin: 0 auto; padding: 24px; color: #14283d; line-height: 1.6; font-size: 16px;">
   <p>Hi,</p>
-  <p>It's Adam, founder of Virtues. I wanted to personally thank you for placing a deposit — you're one of the first people to bring one of these home, and that means a great deal to me.</p>
+  <p>It's Adam, founder of Virtues. I wanted to personally thank you for placing a deposit. You're one of the first people to bring one of these home, and that means a great deal to me.</p>
   <p>Here's what happens next: your $50 deposit holds your place in line and stays fully refundable until your unit ships. I'll email you when your batch is ready, and that's when you'll complete your order.</p>
   <p>If you have any questions at all — about the hardware, the software, the privacy model, anything — just reply to this email. It comes straight to me, and I'll answer personally.</p>
   <p>Thank you for believing in this.</p>

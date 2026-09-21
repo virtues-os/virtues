@@ -42,6 +42,15 @@ fn error_response(error: Error) -> Response {
         _ => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
     };
 
+    // A 500 that only the client sees is a 500 nobody finds. The bookmarks
+    // list answered `no column found for name: timestamp` for a month while
+    // a sweep of the journal for errors showed nothing, because this was the
+    // one place the error passed through and it said nothing. The request
+    // span already carries method, path and request id.
+    if status.is_server_error() {
+        tracing::error!(status = status.as_u16(), error = %error, "request failed");
+    }
+
     (status, Json(serde_json::json!({ "error": message }))).into_response()
 }
 
@@ -1391,7 +1400,7 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
         // "try again" would be a lie.
         Ok(crate::virtues_api::renew::PortalSession::NoSubscription { code }) => refuse(
             &code,
-            "No active subscription on this account — start one and you can manage billing here.",
+            "No active subscription on this account - start one and you can manage billing here.",
         ),
         // atlas answered and refused for its own reason. Its code is the one
         // worth showing: it is the one their logs are keyed on too.
@@ -1485,7 +1494,10 @@ pub async fn claim_billing_handler(
         tracing::error!("failed to store api_key: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "failed to store api_key" })),
+            Json(serde_json::json!({
+                "error": "Your payment went through, but your server couldn't save your account key. \
+                          Try again and your server will pick the payment up."
+            })),
         )
             .into_response();
     }
@@ -3421,7 +3433,7 @@ pub async fn upload_drive_file_handler(
         (
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(serde_json::json!({
-                "error": "File too large — the upload limit is 250 MB."
+                "error": "Your server didn't take that file: it's over the 250 MB upload limit. Split it or compress it, then upload again."
             })),
         )
             .into_response()
@@ -4116,109 +4128,143 @@ pub async fn reorder_pins_handler(
 }
 
 // ============================================================================
-// Notebooks Handlers
+// Projects Handlers
 // ============================================================================
 
-/// GET /api/notebooks - List all notebooks
-pub async fn list_notebooks_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::notebooks::list_notebooks(state.db.pool()).await)
-}
-
-/// GET /api/notebooks/:id - Get a single notebook with its members
-pub async fn get_notebook_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::notebooks::get_notebook(state.db.pool(), &id).await)
-}
-
-/// POST /api/notebooks - Create a notebook
-pub async fn create_notebook_handler(
+/// GET /api/projects - List all projects
+pub async fn list_projects_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::notebooks::CreateNotebookRequest>,
+    axum::extract::Query(q): axum::extract::Query<ListProjectsQuery>,
 ) -> Response {
-    match crate::api::notebooks::create_notebook(state.db.pool(), request).await {
-        Ok(notebook) => (StatusCode::CREATED, Json(notebook)).into_response(),
+    api_response(
+        crate::api::projects::list_projects(state.db.pool(), q.include_archived.unwrap_or(false))
+            .await,
+    )
+}
+
+#[derive(Deserialize)]
+pub struct ListProjectsQuery {
+    /// `?include_archived=true` — the projects page, which folds them.
+    pub include_archived: Option<bool>,
+}
+
+/// POST /api/projects/:id/archive — close a project (kept, out of the working view)
+pub async fn archive_project_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::projects::archive_project(state.db.pool(), &id).await {
+        Ok(()) => success_message("Project archived"),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/notebooks/:id - Update a notebook
-pub async fn update_notebook_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::notebooks::UpdateNotebookRequest>,
-) -> Response {
-    api_response(crate::api::notebooks::update_notebook(state.db.pool(), &id, request).await)
-}
-
-/// DELETE /api/notebooks/:id - Delete a notebook
-pub async fn delete_notebook_handler(
+/// POST /api/projects/:id/unarchive
+pub async fn unarchive_project_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::notebooks::delete_notebook(state.db.pool(), &id).await {
-        Ok(_) => success_message("Notebook deleted"),
+    match crate::api::projects::unarchive_project(state.db.pool(), &id).await {
+        Ok(()) => success_message("Project reopened"),
         Err(e) => error_response(e),
     }
 }
 
-/// POST /api/notebooks/:id/items - Add a member URL to a notebook
-pub async fn add_notebook_item_handler(
+/// GET /api/projects/:id - Get a single project with its members
+pub async fn get_project_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    api_response(crate::api::projects::get_project(state.db.pool(), &id).await)
+}
+
+/// POST /api/projects - Create a project
+pub async fn create_project_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::projects::CreateProjectRequest>,
+) -> Response {
+    match crate::api::projects::create_project(state.db.pool(), request).await {
+        Ok(project) => (StatusCode::CREATED, Json(project)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// PUT /api/projects/:id - Update a project
+pub async fn update_project_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::notebooks::AddNotebookItemRequest>,
+    Json(request): Json<crate::api::projects::UpdateProjectRequest>,
 ) -> Response {
-    match crate::api::notebooks::add_notebook_item(state.db.pool(), &id, request).await {
+    api_response(crate::api::projects::update_project(state.db.pool(), &id, request).await)
+}
+
+/// DELETE /api/projects/:id - Delete a project
+pub async fn delete_project_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::projects::delete_project(state.db.pool(), &id).await {
+        Ok(_) => success_message("Project deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// POST /api/projects/:id/items - Add a member URL to a project
+pub async fn add_project_item_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::projects::AddProjectItemRequest>,
+) -> Response {
+    match crate::api::projects::add_project_item(state.db.pool(), &id, request).await {
         Ok(item) => (StatusCode::CREATED, Json(item)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RemoveNotebookItemRequest {
+pub struct RemoveProjectItemRequest {
     pub url: String,
 }
 
-/// DELETE /api/notebooks/:id/items - Remove a member URL from a notebook
-pub async fn remove_notebook_item_handler(
+/// DELETE /api/projects/:id/items - Remove a member URL from a project
+pub async fn remove_project_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<RemoveNotebookItemRequest>,
+    Json(request): Json<RemoveProjectItemRequest>,
 ) -> Response {
-    match crate::api::notebooks::remove_notebook_item(state.db.pool(), &id, &request.url).await {
-        Ok(_) => success_message("Item removed from notebook"),
+    match crate::api::projects::remove_project_item(state.db.pool(), &id, &request.url).await {
+        Ok(_) => success_message("Item removed from project"),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/notebooks/:id/items/reorder - Reorder notebook members
-pub async fn reorder_notebook_items_handler(
+/// PUT /api/projects/:id/items/reorder - Reorder project members
+pub async fn reorder_project_items_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::notebooks::ReorderNotebookItemsRequest>,
+    Json(request): Json<crate::api::projects::ReorderProjectItemsRequest>,
 ) -> Response {
-    match crate::api::notebooks::reorder_notebook_items(state.db.pool(), &id, request).await {
-        Ok(_) => success_message("Notebook items reordered"),
+    match crate::api::projects::reorder_project_items(state.db.pool(), &id, request).await {
+        Ok(_) => success_message("Project items reordered"),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/notebooks/:id/items/role - Set a member's role
-pub async fn set_notebook_item_role_handler(
+/// PUT /api/projects/:id/items/role - Set a member's role
+pub async fn set_project_item_role_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::notebooks::SetNotebookItemRoleRequest>,
+    Json(request): Json<crate::api::projects::SetProjectItemRoleRequest>,
 ) -> Response {
-    match crate::api::notebooks::set_notebook_item_role(state.db.pool(), &id, request).await {
+    match crate::api::projects::set_project_item_role(state.db.pool(), &id, request).await {
         Ok(item) => Json(item).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// GET /api/notebooks/:id/graph - Entities referenced across the members
-pub async fn notebook_graph_handler(
+/// GET /api/projects/:id/graph - Entities referenced across the members
+pub async fn project_graph_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::notebooks::notebook_graph(state.db.pool(), &id).await {
+    match crate::api::projects::project_graph(state.db.pool(), &id).await {
         Ok(graph) => Json(graph).into_response(),
         Err(e) => error_response(e),
     }
@@ -4237,6 +4283,75 @@ pub async fn get_lake_summary_handler(State(state): State<AppState>) -> Response
 /// GET /api/lake/streams - List all streams in the lake
 pub async fn list_lake_streams_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::lake::list_lake_streams(state.db.pool()).await)
+}
+
+// ============================================================================
+// Recently deleted — the trash for chats, pages and projects (`api::trash`)
+// ============================================================================
+
+/// GET /api/trash — everything in the trash, all kinds, newest deletion first.
+pub async fn list_trash_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::trash::list_trash(state.db.pool()).await)
+}
+
+/// POST /api/trash/:kind/:id/restore
+pub async fn restore_trash_handler(
+    State(state): State<AppState>,
+    Path((kind, id)): Path<(String, String)>,
+) -> Response {
+    let kind = match crate::api::trash::TrashKind::parse(&kind) {
+        Ok(k) => k,
+        Err(e) => return error_response(e),
+    };
+    match crate::api::trash::restore(state.db.pool(), kind, &id).await {
+        Ok(()) => success_message("Restored"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// DELETE /api/trash/:kind/:id — delete forever. Refuses anything not in the
+/// trash; the 30 days cannot be skipped from here.
+pub async fn purge_trash_handler(
+    State(state): State<AppState>,
+    Path((kind, id)): Path<(String, String)>,
+) -> Response {
+    let kind = match crate::api::trash::TrashKind::parse(&kind) {
+        Ok(k) => k,
+        Err(e) => return error_response(e),
+    };
+    match crate::api::trash::purge_trashed(state.db.pool(), kind, &id).await {
+        Ok(()) => success_message("Deleted forever"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// POST /api/trash/empty
+pub async fn empty_trash_handler(State(state): State<AppState>) -> Response {
+    api_response(
+        crate::api::trash::empty_trash(state.db.pool())
+            .await
+            .map(|deleted_count| serde_json::json!({ "deleted_count": deleted_count })),
+    )
+}
+
+// ============================================================================
+// Visits — the frecency log behind ⌘K (`api::visits`)
+// ============================================================================
+
+/// POST /api/visits — the owner opened a chat, page or project themselves.
+pub async fn record_visit_handler(
+    State(state): State<AppState>,
+    Json(req): Json<crate::api::visits::RecordVisitRequest>,
+) -> Response {
+    match crate::api::visits::record_visit(state.db.pool(), req).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/visits/frecency — every visited record's score, highest first.
+pub async fn frecency_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::visits::frecency(state.db.pool()).await)
 }
 
 #[cfg(test)]

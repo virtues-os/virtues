@@ -1,9 +1,9 @@
 //! Server-side resolution of ref URLs to human names.
 //!
 //! A ref URL (`/person/per_123`, `/drive/dr_abc`, `/page/pg_9`) is the one
-//! identifier every collection in the system shares — notebook members, pins,
+//! identifier every collection in the system shares — project members, pins,
 //! citations. Until now only the browser could turn one into a name, in
-//! [`refSummary.ts`] and `NotebookDetailView`, one fetch per ref.
+//! [`refSummary.ts`] and `ProjectDetailView`, one fetch per ref.
 //!
 //! The server needs the same thing for a different reason: text the model
 //! reads. A bare `/drive/dr_abc` in a prompt is unreadable — the model cannot
@@ -55,17 +55,22 @@ fn text_state(extraction_status: &str) -> &'static str {
 /// Split `/type/id` into its parts. Returns None for anything that isn't a
 /// two-segment app ref (external URLs are handled separately).
 ///
-/// This is THE parser for the ref-URL grammar — notebook scope resolution
+/// This is THE parser for the ref-URL grammar — project scope resolution
 /// (`search/query.rs`) and the prompt's member resolver both consume it.
 /// When it was three hand-rolled copies, they disagreed about which kinds
 /// even existed.
 pub(crate) fn split_ref(url: &str) -> Option<(&str, &str)> {
     let rest = url.strip_prefix('/')?;
     let (kind, id) = rest.split_once('/')?;
+    // `/notebook/{id}` is the pre-rename spelling of `/project/{id}` (migration
+    // 0029). Old chat messages, citations and wiki refs still carry it, and
+    // rewriting stored JSON on live boxes is not worth a word — so the grammar
+    // accepts both and every consumer sees one kind.
+    let kind = if kind == "notebook" { "project" } else { kind };
     // Viewer params and fragments (`?page=3`, `#hl`) ride on stored routes —
-    // the file viewer writes them into notebook members and citations — but
+    // the file viewer writes them into project members and citations — but
     // they are never part of an id. Stripping here, at the grammar, is what
-    // keeps every consumer agreeing; when only the notebook-scope resolver
+    // keeps every consumer agreeing; when only the project-scope resolver
     // stripped them, the prompt resolver showed those members as bare URLs
     // and read_asset refused files that exist.
     let id = id.split(['?', '#']).next().unwrap_or(id);
@@ -78,7 +83,7 @@ pub(crate) fn split_ref(url: &str) -> Option<(&str, &str)> {
 /// Resolve many ref URLs at once.
 ///
 /// One query per distinct type present, regardless of how many refs there are
-/// — a 100-member notebook costs at most a handful of round trips, where the
+/// — a 100-member project costs at most a handful of round trips, where the
 /// browser's per-ref approach would cost 100.
 pub async fn resolve_refs(pool: &PgPool, urls: &[String]) -> HashMap<String, ResolvedRef> {
     let mut out: HashMap<String, ResolvedRef> = HashMap::new();
@@ -131,7 +136,7 @@ pub async fn resolve_refs(pool: &PgPool, urls: &[String]) -> HashMap<String, Res
 
     // The per-kind queries are independent — run them concurrently rather
     // than paying each round trip in sequence (this sits ahead of the LLM
-    // stream on every notebook-chat turn).
+    // stream on every project-chat turn).
     let lookups = ids_by_kind
         .into_iter()
         .map(|(kind, ids)| async move { (kind, fetch_names(pool, kind, &ids).await) });
@@ -233,16 +238,16 @@ async fn fetch_names(
             "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled page') \
              FROM app_pages WHERE id = ANY($1)"
         }
-        // Chats and notebooks are ordinary members — a notebook routinely
+        // Chats and projects are ordinary members — a project routinely
         // collects the conversations that happened inside it, and pins point
-        // at sibling notebooks. Both were reaching the prompt as bare ids.
+        // at sibling projects. Both were reaching the prompt as bare ids.
         "chat" => {
             "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled chat') \
              FROM app_chats WHERE id = ANY($1)"
         }
-        "notebook" => {
-            "SELECT id, COALESCE(NULLIF(name, ''), 'Untitled notebook') \
-             FROM app_notebooks WHERE id = ANY($1)"
+        "project" => {
+            "SELECT id, COALESCE(NULLIF(name, ''), 'Untitled project') \
+             FROM app_projects WHERE id = ANY($1)"
         }
         _ => return Vec::new(),
     };
@@ -283,6 +288,13 @@ pub async fn resolve_one(pool: &PgPool, url: &str) -> ResolvedRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_notebook_url_parses_as_project() {
+        assert_eq!(split_ref("/project/nb_abc"), Some(("project", "nb_abc")));
+        assert_eq!(split_ref("/notebook/nb_abc"), Some(("project", "nb_abc")));
+        assert_eq!(split_ref("/notebook/nb_abc?page=2"), Some(("project", "nb_abc")));
+    }
 
     #[test]
     fn splits_app_refs() {
@@ -336,21 +348,21 @@ mod live {
 
     #[tokio::test]
     #[ignore]
-    async fn resolves_every_kind_a_real_notebook_actually_contains() {
+    async fn resolves_every_kind_a_real_project_actually_contains() {
         let pool = pool().await;
 
-        let urls: Vec<String> = sqlx::query_scalar("SELECT DISTINCT url FROM app_notebook_items")
+        let urls: Vec<String> = sqlx::query_scalar("SELECT DISTINCT url FROM app_project_items")
             .fetch_all(&pool)
             .await
-            .expect("notebook items");
-        assert!(!urls.is_empty(), "no notebook members to resolve");
+            .expect("project items");
+        assert!(!urls.is_empty(), "no project members to resolve");
 
         let resolved = resolve_refs(&pool, &urls).await;
 
         // Every kind that appears in real data must resolve to something a
         // reader can use. The point of this test is that the KINDS are
         // discovered from the data rather than from my imagination — /chat and
-        // /notebook members were both missed on the first pass.
+        // /project members were both missed on the first pass.
         let mut unresolved: Vec<&String> = Vec::new();
         for url in &urls {
             // A single-segment route like /home names no record; nothing to look up.

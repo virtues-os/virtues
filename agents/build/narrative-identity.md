@@ -193,7 +193,7 @@ the one imperative block last for constraint recency:
 | 4 | `<current_chapter>` | The current chapter | the open period, drafted from the record | machine drafts, person edits | weeks |
 | 5 | `<memory>` | What I've learned | facts / manner / practices lanes | machine, person can edit | continuously |
 | 6 | `<circumstances>` | Right now | the computed present | SQL only, no LLM | hourly |
-| 7 | `<active_notebook>` / `<active_context>` | — | the room and the open page | the UI | per turn |
+| 7 | `<active_project>` / `<active_context>` | — | the room and the open page | the UI | per turn |
 | 8 | `<rules>` | Precepts | the person's absolute imperatives | the person | rarely |
 
 Prose vocabulary: "your life story" (never "portrait" — a portrait is
@@ -249,7 +249,7 @@ how, why — is nearly a spec for the fields:
 - recent people: last ~2 weeks' correspondents WITH entity ids — labeled
   *recency, not significance*: who is around, never who matters (bonds, in
   the NI, carry who matters)
-- live threads: recently edited pages, active notebooks, last night's sleep
+- live threads: recently edited pages, active projects, last night's sleep
 - observances: recurring time the person keeps — fasts, sabbaths,
   anniversaries. Lived time is cyclical as well as linear, and a machine
   that knows the clock but not that it is Lent or a death-anniversary is

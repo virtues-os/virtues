@@ -134,7 +134,7 @@
 		 * The route a row points at.
 		 *
 		 * Supplying it gives every row a right-click menu for free — "Open
-		 * beside", "Add to notebook", "Add to desk" — without each of the
+		 * beside", "Add to project", "Add to desk" — without each of the
 		 * fifteen grids in the app assembling the same menu by hand. Eleven of
 		 * them had no menu at all, which meant whether you could keep a thing
 		 * depended on which list you happened to be looking at.
@@ -1750,13 +1750,13 @@
 	}
 
 	.data-row:hover {
-		background: color-mix(in srgb, var(--color-foreground) 3.5%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 3.5%, transparent);
 	}
 
 	.data-row:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
-		background: color-mix(in srgb, var(--color-foreground) 3.5%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 3.5%, transparent);
 	}
 
 	.cell-text {

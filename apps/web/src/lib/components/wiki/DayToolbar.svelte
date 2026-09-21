@@ -292,7 +292,7 @@
 		padding: 0;
 	}
 	.cal-day:hover {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 	.cal-day.current {
