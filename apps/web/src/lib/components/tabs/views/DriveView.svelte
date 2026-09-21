@@ -43,9 +43,6 @@
 	let newFolderName = $state("");
 	let creatingFolder = $state(false);
 
-	// Delete confirmation
-	let fileToDelete = $state<DriveFile | null>(null);
-	let deleting = $state(false);
 
 	// Rename state
 	let renamingFile = $state<DriveFile | null>(null);
@@ -289,47 +286,30 @@
 	}
 
 	/**
-	 * A file goes on the click: it lands in Recently deleted and the toast
-	 * carries the Undo, so there is nothing for a dialog to protect.
-	 *
-	 * A folder still asks. Deleting one trashes everything inside it
-	 * (`soft_delete_folder_recursive`), but restoring one only walks UP to its
-	 * parents — the contents stay in the trash. So the dialog names the blast
-	 * radius, and the toast offers the room instead of an Undo that would hand
-	 * back an empty folder.
+	 * No dialog, for a folder either. Deleting one trashes everything inside
+	 * it (`soft_delete_subtree`) and restoring it brings that same subtree
+	 * back, so the Undo in the toast really does undo it. That is a better
+	 * guard than a question nobody reads.
 	 */
-	function deleteEntry(file: DriveFile) {
-		fileToDelete = file;
-		if (!file.is_folder) void handleDelete();
-	}
-
-	// Soft delete: the file moves to Recently deleted.
-	async function handleDelete() {
-		if (!fileToDelete) return;
-
-		deleting = true;
+	async function deleteEntry(file: DriveFile) {
 		error = null;
 
 		try {
-			await deleteDriveFile(fileToDelete.id);
+			await deleteDriveFile(file.id);
 			const newFiles = await listDriveFiles(currentPath);
 			files = newFiles;
 			// Refresh usage
 			usage = await getDriveUsage().catch(() => usage);
 			notifyTrashed({
 				kind: "file",
-				id: fileToDelete.id,
-				name: fileToDelete.filename,
+				id: file.id,
+				name: file.filename,
 				// This view holds its own list, so Undo has to re-read it here;
 				// invalidating the shell's cache isn't enough.
 				onRestored: loadData,
-				undoable: !fileToDelete.is_folder,
 			});
-			fileToDelete = null;
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Delete failed";
-		} finally {
-			deleting = false;
 		}
 	}
 
@@ -367,7 +347,7 @@
 						variant: "destructive" as const,
 						dividerBefore: true,
 						action: () => {
-							deleteEntry(file);
+							void deleteEntry(file);
 						},
 					},
 				]
@@ -407,7 +387,7 @@
 						variant: "destructive" as const,
 						dividerBefore: true,
 						action: () => {
-							deleteEntry(file);
+							void deleteEntry(file);
 						},
 					},
 				];
@@ -863,35 +843,6 @@
 			loading={creatingFolder}
 			disabled={!newFolderName.trim()}
 			onclick={handleCreateFolder}>Create</Button
-		>
-	{/snippet}
-</Modal>
-
-<!-- Folders only. A file deletes on the click; see deleteEntry. -->
-<Modal
-	open={!!fileToDelete?.is_folder}
-	onClose={() => (fileToDelete = null)}
-	title="Delete this folder?"
-	width="sm"
->
-	{#if fileToDelete}
-		<p class="text-foreground-muted">
-			"{fileToDelete.filename}" and everything inside it go to Recently
-			deleted for 30 days. Restoring the folder brings back the folder;
-			its contents you restore from there.
-		</p>
-	{/if}
-	{#snippet footer()}
-		<Button
-			variant="secondary"
-			size="sm"
-			onclick={() => (fileToDelete = null)}>Cancel</Button
-		>
-		<Button
-			variant="danger"
-			size="sm"
-			loading={deleting}
-			onclick={handleDelete}>Delete folder</Button
 		>
 	{/snippet}
 </Modal>
