@@ -25,6 +25,7 @@ pub mod assistant;
 pub mod models;
 pub mod ontologies;
 pub mod personas;
+pub mod skills;
 pub mod sql_catalog;
 pub mod tools;
 
@@ -34,4 +35,5 @@ pub use models::{default_model_for_slot, required_model_ids, ModelSlot, Reasonin
 pub use ontologies::{registered_ontologies, EmbeddingConfig, OntologyDescriptor};
 pub use personas::{default_personas, get_persona, PersonaConfig};
 pub use sql_catalog::{get_table_metadata, TableMetadata};
+pub use skills::{default_skills, skill_named, Skill};
 pub use tools::{default_tools, ToolConfig};
