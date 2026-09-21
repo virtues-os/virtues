@@ -136,7 +136,7 @@
 		     geometry is the app icon's and ThinkingMark's, exactly: equilateral,
 		     side 15, r 3, on the 24-unit box `virtues:logo` uses in icons.ts, so
 		     the rail, the chat, and the Dock all show one mark. -->
-		<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+		<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
 			<g
 				class="mark-figure"
 				class:turn-open={turn === 'open'}
