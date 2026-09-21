@@ -223,9 +223,13 @@
 		position: absolute;
 		top: 50%;
 		transform: translateY(-50%);
-		/* In the gutter beside the 48rem column. ChatView hides the rail when
-		   the pane is too narrow for one. */
-		left: calc(50% - 24rem - 2.25rem);
+		/* Against the pane's own left edge, not the column's. Trailing the
+		   column meant the rail moved every time the pane resized and sat
+		   right up against the words on a narrow one; pinned here it is a
+		   fixture of the window, in the same place every time the hand goes
+		   looking for it. ChatView hides it when the pane is too narrow to
+		   have a gutter at all. */
+		left: 1.5rem;
 		z-index: 5;
 		max-height: 64%;
 		/* A COLUMN flex box, and the marks shrink inside it. Laid out as a row
