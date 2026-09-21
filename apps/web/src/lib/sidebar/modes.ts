@@ -187,7 +187,26 @@ export const SOURCES_MODE: SidebarMode = {
 	],
 };
 
+/**
+ * Drive's panel: the Storage room's sections as rows, plus Bookmarks, which
+ * folded into Drive when the rail went to six rooms. Trash is last because it
+ * is the one section you walk to on purpose — everything deleted anywhere in
+ * the app (chats, pages, projects, files) waits there 30 days.
+ */
+export const DRIVE_MODE: SidebarMode = {
+	id: 'drive',
+	title: 'Drive',
+	rows: [
+		{ id: 'files', label: 'Files', icon: 'ri:hard-drive-2-line', href: '/storage' },
+		{ id: 'streams', label: 'Streams', icon: 'ri:database-2-line', href: '/storage/streams' },
+		{ id: 'media', label: 'App Media', icon: 'ri:image-2-line', href: '/storage/media' },
+		{ id: 'bookmarks', label: 'Bookmarks', icon: 'ri:bookmark-line', href: '/bookmarks' },
+		{ id: 'trash', label: 'Recently deleted', icon: 'ri:delete-bin-line', href: '/storage/trash' },
+	],
+};
+
 export const SIDEBAR_MODES: Record<string, SidebarMode> = {
+	drive: DRIVE_MODE,
 	settings: SETTINGS_MODE,
 	developer: DEVELOPER_MODE,
 	wiki: WIKI_MODE,

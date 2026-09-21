@@ -1725,6 +1725,7 @@ async fn build_dossier(
             "SELECT title, message_count, created_at \
          FROM app_chats \
          WHERE created_at >= $1::timestamptz AND created_at <= $2::timestamptz \
+           AND deleted_at IS NULL \
          ORDER BY created_at LIMIT 12",
         )
         .bind(start_str)

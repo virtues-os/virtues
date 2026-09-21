@@ -24,6 +24,8 @@
 
 use sqlx::PgPool;
 
+// Only the tests build pages by hand now; `delete_article` purges through `api::trash`.
+#[cfg(test)]
 use crate::api::pages;
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PAGE_PREFIX, WIKI_ARTICLE_PREFIX};
@@ -220,8 +222,10 @@ pub async fn delete_article(pool: &PgPool, subject_type: &str, subject_id: &str)
     .await
     .map_err(|e| Error::Database(format!("Failed to clear article index: {}", e)))?;
 
-    // Cascades the wiki_articles row.
-    pages::delete_page(pool, &article.page_id).await
+    // The hard delete, not the trash: an article page belongs to its
+    // `wiki_articles` row, and a trashed one would sit in Recently deleted
+    // with the row still answering `get_article`. Cascades the row.
+    crate::api::trash::purge(pool, crate::api::trash::TrashKind::Page, &article.page_id).await
 }
 
 /// One page that mentions a subject.

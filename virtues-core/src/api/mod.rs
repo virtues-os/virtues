@@ -51,6 +51,7 @@ pub mod personas;
 pub mod updates;
 pub mod live_turn;
 pub mod pins;
+pub mod trash;
 pub mod search_local;
 pub mod places;
 pub mod profile;

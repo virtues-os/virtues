@@ -273,6 +273,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             created_at,
             updated_at
         FROM app_chats
+        WHERE deleted_at IS NULL
         ORDER BY updated_at DESC
         LIMIT $1
         "#,
@@ -327,7 +328,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
             created_at,
             updated_at
         FROM app_chats
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         "#,
     )
     .bind(&chat_id_str)
@@ -784,8 +785,11 @@ pub async fn update_messages(
     Ok(())
 }
 
-/// Delete a chat
-/// Also cleans up all project_items references (orphan cleanup)
+/// Delete a chat — into the trash, not for good. The row is stamped
+/// `deleted_at` and leaves every listing and the search index; Recently
+/// deleted holds it for `trash::TRASH_RETENTION_DAYS` with a restore, and the
+/// hard delete is `trash::purge`, reachable only from there and the sweeper.
+/// Messages and project membership stay with the row so a restore is whole.
 pub async fn delete_chat(pool: &PgPool, chat_id: String) -> Result<DeleteChatResponse> {
     // The narrative interview is undeletable, decided by the id like every
     // other property of that room (mode, title). Boot would re-seed the CHAT
@@ -803,34 +807,11 @@ pub async fn delete_chat(pool: &PgPool, chat_id: String) -> Result<DeleteChatRes
             "The getting-started conversation can't be deleted.".into(),
         ));
     }
-    let chat_id_str = chat_id;
-    let result = sqlx::query(
-        r#"
-        DELETE FROM app_chats
-        WHERE id = $1
-        RETURNING id
-        "#,
-    )
-    .bind(&chat_id_str)
-    .fetch_optional(pool)
-    .await?;
-
-    let row = result.ok_or_else(|| crate::Error::NotFound("Chat not found".into()))?;
-
-    // Parse ID
-    use sqlx::Row;
-    let id: String = row.get("id");
-
-    // Clean up all project_items references
-    let url = format!("/chat/{}", id);
-    if let Err(e) = crate::api::projects::remove_items_by_url(pool, &url).await {
-        tracing::warn!("Failed to clean up project_items for chat {}: {}", id, e);
-        // Don't fail deletion if cleanup fails
-    }
+    crate::api::trash::trash(pool, crate::api::trash::TrashKind::Chat, &chat_id).await?;
 
     Ok(DeleteChatResponse {
         success: true,
-        conversation_id: id,
+        conversation_id: chat_id,
     })
 }
 

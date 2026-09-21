@@ -373,7 +373,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "wiki",
         key_columns: &["title", "content", "kind", "icon", "tags"],
         join_hint: Some("JOIN wiki_articles a ON a.page_id = app_pages.id"),
-        note: Some("content is markdown; kind tells an article from an owner-written page"),
+        note: Some("content is markdown; kind tells an article from an owner-written page; a row with deleted_at set is in the trash — filter deleted_at IS NULL"),
     });
     m.insert("wiki_notes", TableMetadata {
         description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",

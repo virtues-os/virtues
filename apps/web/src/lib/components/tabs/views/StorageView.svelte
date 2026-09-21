@@ -4,7 +4,7 @@
 	//   Drive       files you filed          read-write
 	//   Streams     raw evidence + its blobs read-only
 	//   App Media   assets the app made/uses read-only
-	//   Trash       deleted Drive files      restore/purge
+	//   Recently deleted   everything deleted in the app   restore/purge
 	//
 	// These were previously scattered (/drive, /trash, /developers/lake) and one of
 	// them — the lake — was a stub rendering zeros. They are one surface because
@@ -39,7 +39,7 @@
 		{ id: "drive", label: "Drive" },
 		{ id: "streams", label: "Streams" },
 		{ id: "media", label: "App Media" },
-		{ id: "trash", label: "Trash" },
+		{ id: "trash", label: "Recently deleted" },
 	];
 </script>
 

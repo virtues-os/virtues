@@ -720,7 +720,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return { type: 'storage', label: 'App Media', icon: 'ri:image-2-line' };
 			}
 			if (sub === 'trash') {
-				return { type: 'storage', label: 'Trash', icon: 'ri:delete-bin-line' };
+				return { type: 'storage', label: 'Recently deleted', icon: 'ri:delete-bin-line' };
 			}
 			// Drive, possibly deep inside a folder: /storage/drive/Documents/2026
 			const storagePath = path.replace(/^\/storage\/drive\/?/, '');
@@ -780,13 +780,13 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		match: (path) => path === '/trash',
 		parse: () => ({
 			type: 'trash',
-			label: 'Trash',
+			label: 'Recently deleted',
 			icon: 'ri:delete-bin-line',
 		}),
 		serialize: () => 'trash',
 		deserialize: () => '/storage/trash',
 		icon: 'ri:delete-bin-line',
-		defaultLabel: 'Trash',
+		defaultLabel: 'Recently deleted',
 		component: StorageView,
 	},
 

@@ -97,9 +97,8 @@
 				action: async () => {
 					const ok = await confirmAction({
 						title: "Delete page?",
-						body: `"${page.title}" will be deleted. Projects that reference it will drop the link.`,
+						body: `"${page.title}" goes to Recently deleted, where you can restore it for 30 days.`,
 						confirmLabel: "Delete",
-						danger: true,
 					});
 					if (ok) await pagesStore.removePage(page.id);
 				},

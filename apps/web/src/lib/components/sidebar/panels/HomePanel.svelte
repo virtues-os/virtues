@@ -314,9 +314,8 @@
 	async function removePage(p: PageSummary) {
 		const ok = await confirmAction({
 			title: 'Delete this page?',
-			body: `"${pageTitle(p)}" will be deleted. This cannot be undone.`,
+			body: `"${pageTitle(p)}" goes to Recently deleted, where you can restore it for 30 days.`,
 			confirmLabel: 'Delete',
-			danger: true,
 		});
 		if (!ok) return;
 		try {
@@ -329,9 +328,8 @@
 	async function removeChat(s: ChatSession) {
 		const ok = await confirmAction({
 			title: 'Delete this chat?',
-			body: `"${titleOf(s)}" will be deleted. This cannot be undone.`,
+			body: `"${titleOf(s)}" goes to Recently deleted, where you can restore it for 30 days.`,
 			confirmLabel: 'Delete',
-			danger: true,
 		});
 		if (!ok) return;
 		try {
@@ -363,9 +361,8 @@
 	async function removeProject(p: ProjectSummary) {
 		const ok = await confirmAction({
 			title: 'Delete this project?',
-			body: `"${p.name}" will be deleted. Its chats and pages stay; they just leave the project.`,
+			body: `"${p.name}" goes to Recently deleted, where you can restore it for 30 days. Its chats and pages stay.`,
 			confirmLabel: 'Delete',
-			danger: true,
 		});
 		if (!ok) return;
 		try {

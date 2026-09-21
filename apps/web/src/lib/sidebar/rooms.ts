@@ -139,8 +139,8 @@ export const ROOMS: Room[] = [
 		icon: 'drive',
 		chord: '⌥⌘F',
 		href: '/storage',
-		owns: ['/storage', '/bookmarks', '/asset'],
-		panel: { kind: 'stub' },
+		owns: ['/storage', '/bookmarks', '/asset', '/trash'],
+		panel: { kind: 'rows', modeId: 'drive' },
 		group: 'library',
 	},
 	{

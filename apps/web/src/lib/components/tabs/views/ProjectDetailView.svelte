@@ -566,9 +566,8 @@
 		if (!id || !detail) return;
 		const ok = await confirmAction({
 			title: 'Delete project?',
-			body: `"${detail.name}" will be deleted. Its chats, pages and files stay where they are — they just stop being filed here.`,
-			confirmLabel: 'Delete',
-			danger: true
+			body: `"${detail.name}" goes to Recently deleted, where you can restore it for 30 days. Its chats, pages and files stay where they are.`,
+			confirmLabel: 'Delete'
 		});
 		if (!ok) return;
 		try {

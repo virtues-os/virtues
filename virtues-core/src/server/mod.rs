@@ -1088,6 +1088,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pins/:id",
             patch(api::update_pin_handler).delete(api::delete_pin_handler),
         )
+        // Recently deleted: chats, pages and projects wait here 30 days.
+        // Every DELETE above lands a thing here; these are the only doors to
+        // a hard delete.
+        .route("/api/trash", get(api::list_trash_handler))
+        .route("/api/trash/empty", post(api::empty_trash_handler))
+        .route(
+            "/api/trash/:kind/:id/restore",
+            post(api::restore_trash_handler),
+        )
+        .route("/api/trash/:kind/:id", delete(api::purge_trash_handler))
         // Projects API (the "room" a chat lives in)
         .route(
             "/api/projects",
