@@ -16,21 +16,25 @@
 	It is NOT a room. A rail tile swaps the panel and never opens a tab; this
 	one opens the getting-started chat, so it takes the rail's other precedent
 	— the ∴ mark, the one object on the rail with a job of its own — and has
-	no occupied or selected state. To keep it from reading as a seventh room
-	its tile is not a glyph but the folio, set in the same serif as the mark,
-	so the head and the foot of the rail rhyme.
+	no occupied or selected state. What tells it from a room is the ink: it
+	is the rail's one object in the primary color, on the primary wash. Blue
+	means interactive, never decorative, and this is the one standing call
+	to act on the desk — and it expires, so the loudness does too. The wash
+	rather than a solid block, because a filled 60px slab would be the
+	loudest thing on a desk whose job is to whisper.
 
-	The folio, not a bar: a bar dramatizes a number nobody asked for, and a
-	fraction is the printed page's own answer to "where am I in this". The
-	card used to name the next step under its title — "Introductions" is the
-	answer you were going to have to find anyway — and a 72px rail cannot
-	carry a name. So the name moves to the hover card, where the whole list
-	fits, and the tile's tooltip carries it for anyone who never rests.
+	The tile was the folio ("2/4") set in the mark's serif, so head and foot
+	would rhyme. At 21px on a 72px rail it read as a fraction, a piece of
+	arithmetic rather than a place, so it is a glyph now like the rooms. The
+	count and the next step's name — "Introductions" is the answer you were
+	going to have to find anyway — live in the hover card, where the whole
+	list fits, and in the tooltip for anyone who never rests.
 
 	"Setup" is the label because "Getting started" wraps at this width and a
 	rail label is one word. The room keeps its name; this is the door.
 -->
 <script lang="ts">
+	import AtlasIcon from "./AtlasIcon.svelte";
 	import HoverCard from "./HoverCard.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -108,7 +112,9 @@
 	aria-label={`Setup — ${settled} of ${steps.length} done${next ? `, next: ${next}` : ""}`}
 	title={next ? `Getting started · next: ${next}` : "Getting started"}
 >
-	<span class="folio" aria-hidden="true">{settled}/{steps.length}</span>
+	<span class="tile" aria-hidden="true">
+		<AtlasIcon name="sources" size={20} stroke={1.0} bare />
+	</span>
 	<span class="label">Setup</span>
 </button>
 
@@ -135,9 +141,9 @@
 {/if}
 
 <style>
-	/* The rail-item's box exactly — same padding, radius, hover, transitions —
-	   so it sits in the column's rhythm. What differs is the tile: a serif
-	   numeral where the rooms have a stroked glyph. */
+	/* The rail-item's box exactly — same padding, radius, transitions — so it
+	   sits in the column's rhythm. What differs is the color: primary ink on
+	   the primary wash, standing, where a room is muted ink on nothing. */
 	.setup {
 		display: flex;
 		flex-direction: column;
@@ -147,17 +153,17 @@
 		padding: 8px 4px;
 		border: none;
 		border-radius: var(--sidebar-interactive-radius);
-		background: none;
+		background: var(--color-primary-subtle);
 		cursor: pointer;
-		color: var(--color-foreground-muted);
+		color: var(--color-primary);
 		transition:
 			background var(--sidebar-transition-duration) ease,
 			color var(--sidebar-transition-duration) ease;
 	}
 
 	.setup:hover {
-		color: var(--color-foreground);
-		background: var(--sidebar-hover-bg);
+		color: var(--color-primary-hover);
+		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
 	}
 
 	.setup:focus-visible {
@@ -165,16 +171,9 @@
 		outline-offset: -2px;
 	}
 
-	/* The mark's face: serif, 21px, roman. Tabular so 3/7 and 10/12 sit on the
-	   same axis, and a fixed 20px line so the tile is the height of a glyph. */
-	.folio {
-		font-family: var(--font-serif);
-		font-size: 21px;
-		font-weight: 400;
-		line-height: 20px;
-		font-variant-numeric: tabular-nums;
-		letter-spacing: 0.01em;
-		color: var(--color-foreground);
+	.tile {
+		display: grid;
+		place-items: center;
 	}
 
 	.label {
