@@ -100,6 +100,24 @@ Other rules that follow from a shared tree:
   `virtues-core/migrations/`.
 - **Claim verification modestly.** A green `cargo check` on a shared tree may
   reflect another agent's half-finished edits.
+- **Never cut a ratchet baseline from this checkout.** A baseline is a claim
+  about *committed* content, so it can only be measured against committed
+  content. Measured here it records whatever every agent happens to have open,
+  and CI — which reads the commit — then fails forever on something nobody can
+  see locally. Cut it in a scratch clone instead, which costs seconds:
+
+  ```sh
+  git clone --local -b wave . /tmp/baseline-check   # then run the tool there
+  ```
+
+  Both halves of that have already cost a release. On 2026-09-21 a
+  `design-lint.sh --update-baseline` run in this tree **raised** five counts by
+  sweeping in other agents' uncommitted edits, and `copy-baseline.json`
+  recorded `em-dash: 0` while an uncommitted fix for the one em dash sat in the
+  working tree — the string was still committed, so every CI run afterwards
+  failed on a line that looked clean to everyone here. It applies to every
+  ratchet, `check-swallowed-queries.sh`, `check-copy.py` and `design-lint.sh`
+  today, and to `check-manual.py` or the arch lint the moment either grows one.
 
 ### Merging up
 
