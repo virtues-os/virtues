@@ -15,6 +15,7 @@
 	import { Popover } from '$lib/floating';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { toast } from 'svelte-sonner';
+	import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { getRefSummary } from '$lib/utils/refSummary';
 	import {
 		getPage,
@@ -565,13 +566,26 @@
 	async function toggleArchive() {
 		const id = projectId;
 		if (!id || !detail) return;
+		// Read both off the detail we have now: `load()` below replaces it, and
+		// the toast is about the project as it was when you clicked.
+		const wasArchived = !!detail.archived_at;
+		const name = detail.name;
 		try {
-			if (detail.archived_at) await projectStore.unarchive(id);
+			if (wasArchived) await projectStore.unarchive(id);
 			else await projectStore.archive(id);
 			await load(true);
+			// Only the archive direction gets a toast. Unarchiving is what the
+			// toast's own Undo does, and the project reappearing in the list is
+			// the confirmation.
+			if (!wasArchived) notifyArchived(id, name);
 		} catch (e) {
 			console.error('[ProjectDetailView] archive failed:', e);
-			toast.error(detail.archived_at ? 'Failed to unarchive project' : 'Failed to archive project');
+			toast.error(
+				wasArchived
+					? `Your server couldn't reopen "${name}"`
+					: `Your server couldn't archive "${name}"`,
+				{ description: 'Nothing changed. Try again' },
+			);
 		}
 	}
 
@@ -585,13 +599,20 @@
 			confirmLabel: 'Delete'
 		});
 		if (!ok) return;
+		// Captured before the delete closes it: Undo should put back the tab you
+		// were looking at, and only if you were looking at one.
+		const reopen = routeIfOpen(`/project/${id}`);
+		const name = detail.name;
 		try {
 			await projectStore.remove(id);
 			windowShellStore.closeTabsByRoute(`/project/${id}`);
 			windowShellStore.openTabFromRoute('/projects', { focusExisting: true });
+			notifyTrashed({ kind: 'project', id, name, reopen });
 		} catch (e) {
 			console.error('[ProjectDetailView] delete failed:', e);
-			toast.error('Failed to delete project');
+			toast.error(`Your server couldn't delete "${name}"`, {
+				description: 'It\'s still here. Try again',
+			});
 		}
 	}
 

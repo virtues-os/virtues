@@ -73,6 +73,8 @@
 	} from '$lib/api/client';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
+	import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
+	import { toast } from 'svelte-sonner';
 	import { accentCss, clothFor } from '$lib/sidebar/pin-colors';
 	import { isEmoji } from '$lib/utils/iconHelpers';
 	import Icon from '$lib/components/Icon.svelte';
@@ -318,10 +320,17 @@
 			confirmLabel: 'Delete',
 		});
 		if (!ok) return;
+		// Before the delete: `removePage` closes the tabs, so this is the only
+		// moment we can tell whether Undo has a tab to put back.
+		const reopen = routeIfOpen(pageRoute(p));
 		try {
 			await pagesStore.removePage(p.id);
+			notifyTrashed({ kind: 'page', id: p.id, name: pageTitle(p), reopen });
 		} catch (e) {
 			console.error('[HomePanel] Failed to delete page:', e);
+			toast.error(`Your server couldn't delete "${pageTitle(p)}"`, {
+				description: "It's still here. Try again",
+			});
 		}
 	}
 
@@ -332,13 +341,23 @@
 			confirmLabel: 'Delete',
 		});
 		if (!ok) return;
+		const reopen = routeIfOpen(chatRoute(s));
 		try {
 			windowShellStore.closeTabsByRoute(chatRoute(s));
 			await deleteChat(s.conversation_id);
 			chatSessions.remove(s.conversation_id);
 			windowShellStore.invalidateViewCache('chat');
+			notifyTrashed({
+				kind: 'chat',
+				id: s.conversation_id,
+				name: titleOf(s),
+				reopen,
+			});
 		} catch (e) {
 			console.error('[HomePanel] Failed to delete chat:', e);
+			toast.error(`Your server couldn't delete "${titleOf(s)}"`, {
+				description: "It's still here. Try again",
+			});
 		}
 	}
 
@@ -362,8 +381,12 @@
 		closeCard();
 		try {
 			await projectStore.archive(p.id);
+			notifyArchived(p.id, p.name);
 		} catch (e) {
 			console.error('[HomePanel] Failed to archive project:', e);
+			toast.error(`Your server couldn't archive "${p.name}"`, {
+				description: 'Nothing changed. Try again',
+			});
 		}
 	}
 
@@ -374,11 +397,16 @@
 			confirmLabel: 'Delete',
 		});
 		if (!ok) return;
+		const reopen = routeIfOpen(projectRoute(p));
 		try {
 			windowShellStore.closeTabsByRoute(projectRoute(p));
 			await projectStore.remove(p.id);
+			notifyTrashed({ kind: 'project', id: p.id, name: p.name, reopen });
 		} catch (e) {
 			console.error('[HomePanel] Failed to delete project:', e);
+			toast.error(`Your server couldn't delete "${p.name}"`, {
+				description: "It's still here. Try again",
+			});
 		}
 	}
 

@@ -653,6 +653,32 @@ h6 {
 	white-space: pre-line;
 }
 
+/* Toast buttons — Undo on a delete, Details on the update notice.
+   Sonner styles these from its own --normal-bg/--normal-text, which it sets
+   from its theme prop and not from ours; left alone, the button on a dark
+   theme is near-black on a dark surface. !important because sonner's rules
+   ship inside the Toaster component and carry the same specificity. */
+[data-sonner-toast] [data-button] {
+	background: var(--foreground) !important;
+	color: var(--surface) !important;
+	font-family: var(--font-sans) !important;
+	height: 26px !important;
+	border-radius: 6px !important;
+}
+
+/* The secondary one (View). Quieter than Undo on purpose: the room is still
+   there in 30 days, the Undo is the thing with a clock on it. */
+[data-sonner-toast] [data-cancel] {
+	background: transparent !important;
+	color: var(--foreground-muted) !important;
+	border: 1px solid var(--border) !important;
+}
+
+[data-sonner-toast] [data-cancel]:hover {
+	color: var(--foreground) !important;
+	border-color: var(--foreground-muted) !important;
+}
+
 /* =============================================================================
    FULL-SCREEN FOCUS MODE
    Driven by body.focus-mode (toggled from the (app) layout on

@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { notifyTrashed, routeIfOpen } from "$lib/utils/toasts";
+	import { toast } from "svelte-sonner";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import { getInitializationPromise } from "$lib/stores/models.svelte";
@@ -1182,13 +1184,21 @@
 	const canManageChat = $derived(!isEmpty && !isGhost && !isGettingStartedChat(currentChatConversationId));
 
 	async function deleteThisChat() {
+		// Read before the delete: the title comes off the session row that is
+		// about to go, and Undo has to put back the tab this closes.
+		const name = chatTitle;
+		const reopen = routeIfOpen(`/chat/${conversationId}`);
 		try {
 			windowShellStore.closeTabsByRoute(`/chat/${conversationId}`);
 			await deleteChat(conversationId);
 			chatSessions.remove(conversationId);
 			windowShellStore.invalidateViewCache("chat");
+			notifyTrashed({ kind: "chat", id: conversationId, name, reopen });
 		} catch (e) {
 			console.error("[ChatView] Failed to delete chat:", e);
+			toast.error(`Your server couldn't delete "${name}"`, {
+				description: "It's still here. Try again",
+			});
 		}
 	}
 

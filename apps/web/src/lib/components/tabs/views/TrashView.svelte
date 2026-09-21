@@ -29,10 +29,8 @@
 		type Column,
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import { confirmAction } from "$lib/stores/dialog.svelte";
-	import { chatSessions } from "$lib/stores/chatSessions.svelte";
-	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { projectStore } from "$lib/stores/project.svelte";
-	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { refreshAfterRestore } from "$lib/utils/toasts";
+	import { toast } from "svelte-sonner";
 	import { onMount } from "svelte";
 
 	let { tab: _tab, active: _active }: { tab: Tab; active: boolean } = $props();
@@ -59,20 +57,9 @@
 	let error = $state<string | null>(null);
 	let busy = $state(false);
 
-	let toastMessage = $state<string | null>(null);
-	let toastTimeout: ReturnType<typeof setTimeout> | null = null;
-
 	onMount(() => {
 		load();
 	});
-
-	function showToast(message: string) {
-		if (toastTimeout) clearTimeout(toastTimeout);
-		toastMessage = message;
-		toastTimeout = setTimeout(() => {
-			toastMessage = null;
-		}, 3000);
-	}
 
 	const KIND_LABEL: Record<RowKind, string> = {
 		chat: "Chat",
@@ -140,14 +127,6 @@
 		}
 	}
 
-	/** The store that lists this kind, so a restored thing reappears at once. */
-	async function refreshKind(kind: RowKind) {
-		if (kind === "chat") await chatSessions.refresh();
-		else if (kind === "page") await pagesStore.loadPages();
-		else if (kind === "project") await projectStore.load();
-		windowShellStore.invalidateViewCache(kind === "file" ? "storage" : kind);
-	}
-
 	async function restore(row: TrashRow) {
 		if (busy) return;
 		busy = true;
@@ -155,8 +134,8 @@
 		try {
 			if (row.kind === "file") await restoreDriveFile((row.raw as DriveFile).id);
 			else await restoreTrashed(row.kind, (row.raw as TrashItem).id);
-			await Promise.all([load(), refreshKind(row.kind)]);
-			showToast(`"${row.title}" restored`);
+			await Promise.all([load(), refreshAfterRestore(row.kind)]);
+			toast(`Restored "${row.title}"`);
 		} catch (e) {
 			error = e instanceof Error ? e.message : `Couldn't restore "${row.title}"`;
 		} finally {
@@ -179,7 +158,7 @@
 			if (row.kind === "file") await purgeDriveFile((row.raw as DriveFile).id);
 			else await purgeTrashed(row.kind, (row.raw as TrashItem).id);
 			await load();
-			showToast(`"${row.title}" deleted forever`);
+			toast(`Deleted "${row.title}" forever`);
 		} catch (e) {
 			error = e instanceof Error ? e.message : `Couldn't delete "${row.title}"`;
 		} finally {
@@ -202,7 +181,7 @@
 		try {
 			const [records, files] = await Promise.all([emptyTrash(), emptyDriveTrash()]);
 			await load();
-			showToast(`${records.deleted_count + files.deleted_count} items deleted forever`);
+			toast(`Deleted ${records.deleted_count + files.deleted_count} items forever`);
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Couldn't empty Recently deleted";
 		} finally {
@@ -300,11 +279,3 @@
 		{/snippet}
 	</UniversalDataGrid>
 </Page>
-
-{#if toastMessage}
-	<div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50">
-		<div class="bg-foreground text-background px-4 py-2 rounded-lg shadow-lg text-sm">
-			{toastMessage}
-		</div>
-	</div>
-{/if}
