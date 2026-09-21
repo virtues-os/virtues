@@ -134,7 +134,7 @@
 					</li>
 				{/each}
 				{#if listing.truncated}
-					<li class="more">More files than can be listed here.</li>
+					<li class="more">More files than fit here.</li>
 				{/if}
 			</ul>
 

@@ -520,13 +520,13 @@ fn settled_line(s: &Step) -> String {
                 .as_deref()
                 .filter(|v| !v.is_empty())
                 .map(|v| format!("The record is being written from {}.", list(v)))
-                .unwrap_or_else(|| "The record is being written from what you connected.".to_string());
+                .unwrap_or_else(|| "Your server is writing the record from what you connected.".to_string());
             match &s.detail {
                 Some(d) => format!("{from} One thing still to see to: {d}."),
                 None => format!("{from} You can add more in Settings whenever you like."),
             }
         }
-        ("interview", _) => "Your story is written down, in your own words.".into(),
+        ("interview", _) => "You've written your story down, in your own words.".into(),
         _ => String::new(),
     }
 }
@@ -552,7 +552,7 @@ fn ask_line(s: &Step) -> String {
             ),
             _ => "Next, your integrations: what the record is written from. Your computer holds years of your messages and browsing and needs no account. Your phone holds where you went and who you called. Google holds your mail and calendar. One is enough to begin, and the record is only as full as what feeds it. What they hold comes to your server and stays there. Only the part your assistant needs to answer you goes out, under zero data retention.".into(),
         },
-        "interview" => "Last comes your story. The record can hold what happened; only you can say what it meant. This is an interview with your assistant of about twenty minutes, one question at a time. Stop wherever you like; your place is kept.".into(),
+        "interview" => "Last comes your story. The record can hold what happened; only you can say what it meant. This is an interview with your assistant of about twenty minutes, one question at a time. Stop wherever you like; your place waits.".into(),
         _ => String::new(),
     }
 }

@@ -201,7 +201,7 @@
 	{:else if mode === "checkout"}
 		<div class="pane" in:fly={IN} out:fly={OUT}>
 			<Choices>
-				<Waiting>Finish in the window that opened. This picks up on its own once you have, and nothing is charged until you confirm there.</Waiting>
+				<Waiting>Finish in the window that opened. This picks up on its own once you have, and we charge nothing until you confirm there.</Waiting>
 				<Act variant="plain" onclick={back}>Back</Act>
 			</Choices>
 		</div>

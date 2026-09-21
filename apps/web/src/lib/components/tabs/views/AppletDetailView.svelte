@@ -619,8 +619,8 @@
 						<span class="label">Only when</span>
 						<code class="readonly-value mono">{action.condition}</code>
 						<span class="hint">
-							Checked before each run. When it is false the run is skipped, not
-							failed.
+							Checked before each run. When it's false your server skips the
+							run rather than failing it.
 						</span>
 					</div>
 				{/if}
@@ -820,7 +820,7 @@
 					{/each}
 				</ul>
 				{#if !dropData}
-					<p class="keep-note dim">Its data will be kept and can outlive the applet.</p>
+					<p class="keep-note dim">Your server keeps its data, which can outlive the applet.</p>
 				{/if}
 			{/if}
 		</div>

@@ -706,8 +706,8 @@
 						<h2>What changed</h2>
 						{#if recentEdits.length === 0}
 							<p class="quiet">
-								No article edits yet. When an article is written or
-								maintained, the edit lands here - with its diff, in History.
+								No article edits yet. When the record writes or maintains an
+								article, the edit lands here - with its diff, in History.
 							</p>
 						{:else}
 							<ul class="wc">

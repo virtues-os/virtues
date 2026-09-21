@@ -145,12 +145,12 @@
 	}
 	function zdrDetail(v: string | null | undefined): string {
 		if (v === "all")
-			return "Every endpoint this model can be served from is zero-data-retention.";
+			return "Every provider that serves this model is zero-data-retention.";
 		if (v === "some")
-			return "Only some endpoints serving this model are zero-data-retention, so every request is pinned to those - the others are never used.";
+			return "Only some endpoints serving this model are zero-data-retention, so your server pins every request to those and never uses the others.";
 		if (v === "none")
-			return "No zero-data-retention endpoint exists for this model. Choosing it means this slot's requests are retained by the provider; every other slot stays zero-retention.";
-		return "This model's retention posture hasn't been reported. Requests are sent with zero-retention required, so an endpoint that can't honor it is refused rather than used.";
+			return "No zero-data-retention endpoint exists for this model. Choosing it means the provider keeps this slot's requests; every other slot stays zero-retention.";
+		return "Nobody has reported how this model handles retention. Your server requires zero retention on every call, so a provider that won't agree never gets the request.";
 	}
 
 	function perM(per1k: number | null | undefined): string {

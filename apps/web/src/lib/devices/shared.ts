@@ -100,12 +100,12 @@ export const PERMISSION_COPY: Record<
 > = {
 	full_disk_access: {
 		label: 'Full Disk Access',
-		costs: "iMessages and Safari history can't be read",
+		costs: "your Mac can't read iMessages or Safari history",
 		open: openFullDiskAccess
 	},
 	accessibility: {
 		label: 'Accessibility',
-		costs: 'app events are recorded without window titles',
+		costs: 'your Mac records app events without window titles',
 		open: openAccessibilitySettings
 	}
 };
@@ -130,7 +130,7 @@ export function deniedPermissions(device: Pick<Device, 'permissions'>) {
 		if ((p as Record<string, unknown>)[key] === false) names.add(key);
 	}
 	return [...names].map(
-		(name) => PERMISSION_COPY[name] ?? { label: name, costs: "some data can't be read" }
+		(name) => PERMISSION_COPY[name] ?? { label: name, costs: "your Mac can't read some data" }
 	);
 }
 

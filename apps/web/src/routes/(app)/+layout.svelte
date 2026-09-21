@@ -256,7 +256,7 @@
 					const minutesLeft = Math.round(timeLeft / 60000);
 					toast.warning(`Session expires in ${minutesLeft} minutes`, {
 						description:
-							"You'll be logged out soon. Save your work.",
+							"Your session ends soon. Save your work.",
 						duration: 30000,
 					});
 				}

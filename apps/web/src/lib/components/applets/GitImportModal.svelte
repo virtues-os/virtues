@@ -116,7 +116,7 @@
 				</div>
 			</div>
 			<p class="hint">
-				The repo is cloned locally and any folder containing a
+				Your server clones the repo locally and any folder containing a
 				<code>manifest.toml</code> becomes an applet; a
 				<code>sources.toml</code> adds sources.
 			</p>
@@ -127,8 +127,8 @@
 			<p class="hint">
 				<strong>Public</strong> HTTPS URLs work without auth.
 				<strong>Private</strong> repos: use the SSH URL
-				(<code>git@host:owner/repo.git</code>) and make sure your key
-				is loaded in <code>ssh-agent</code> first.
+				(<code>git@host:owner/repo.git</code>) and make sure you've loaded
+				your key in <code>ssh-agent</code> first.
 			</p>
 			{#if error}
 				<div class="error">{error}</div>

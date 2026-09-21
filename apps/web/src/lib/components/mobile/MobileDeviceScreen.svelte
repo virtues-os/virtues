@@ -433,7 +433,7 @@
 			title: "Contacts",
 			icon: "ri:contacts-book-line",
 			what: "Names for the people in your record",
-			description: "Your address book, so the people in messages, calls and calendars are known by name.",
+			description: "Your address book, so your server knows the people in messages, calls and calendars by name.",
 		},
 		{
 			key: "finance",
@@ -448,7 +448,7 @@
 			icon: "ri:mic-line",
 			what: "Ambient sound & transcripts",
 			description:
-				"The microphone stays on while your phone is with you and records the sound of your day. Recordings are transcribed on your server and become part of each day's record.",
+				"The microphone stays on while your phone is with you and records the sound of your day. Your server transcribes the recordings on your server and become part of each day's record.",
 		},
 	];
 
@@ -722,7 +722,7 @@
 		icon="ri:history-line"
 		status={activityLine}
 		on={enabled}
-		description="Location fixes this phone has recorded, newest first. Fixes at the same spot are collapsed into one run with a count; a filled dot means the app was in the background when it recorded."
+		description="Location fixes this phone has recorded, newest first. This list collapses fixes at the same spot into one run with a count; a filled dot means the app was in the background when it recorded."
 		action={{ label: loading ? "Loading…" : "Refresh", onclick: load, disabled: loading }}
 		{error}
 		onBack={() => (activityOpen = false)}

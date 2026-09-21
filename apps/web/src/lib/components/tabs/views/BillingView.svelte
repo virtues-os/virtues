@@ -374,7 +374,7 @@
 			byoModels = { ...blankSlots(), ...(byoStatus?.models ?? {}) };
 			byoContextWindow = byoStatus?.context_window ? String(byoStatus.context_window) : '';
 		} catch (e) {
-			byoLoadError = e instanceof Error ? e.message : 'Could not read your endpoint settings.';
+			byoLoadError = e instanceof Error ? e.message : "Your server couldn't read your provider settings.";
 		} finally {
 			byoLoading = false;
 		}
@@ -617,7 +617,7 @@
 -->
 <Page
 	title="Billing"
-	description="What AI costs you, and how it is paid for."
+	description="What AI costs you, and how you pay for it."
 	maxWidth="wide"
 >
 <div class="plan-sections">
@@ -749,7 +749,7 @@
 			     with no subscription there is no balance to fetch, and the
 			     Standing chapter above already says what to do. -->
 			<p class="note note-error note-figure">
-				The balance could not be read.
+				Your server couldn't read the balance.
 				<span class="error-code">{usageError}</span>
 				{#if isSubscribed || standingUnknown}
 					<TextAction inline onclick={() => void loadUsage()}>Check again</TextAction>
@@ -818,7 +818,7 @@
 
 			{#if localError}
 				<p class="note note-error">
-					Auto top-up and your own key could not be read.
+					Your server couldn't read auto top-up or your own key.
 					<span class="error-code">{localError}</span>
 				</p>
 			{/if}
@@ -855,8 +855,8 @@
 			<div>
 				<h2 class="settings-label">Usage</h2>
 				<p class="chapter-lede">
-					Here is what this month cost, day by day and by what it was for. Calls on your
-					own key are counted, not priced, since only your provider knows the price.
+					Here is what this month cost, day by day and by what it was for. We count calls
+					on your own key but don't price them, since only your provider knows the price.
 				</p>
 			</div>
 			{#if totalCalls > 0}
@@ -865,7 +865,7 @@
 		</div>
 		{#if summaryError}
 			<p class="note note-error">
-				The call log could not be read.
+				Your server couldn't read the call log.
 				<span class="error-code">{summaryError}</span>
 			</p>
 		{:else if summary}
@@ -969,7 +969,7 @@
 						<p class="chapter-lede">Checking for a key…</p>
 					{:else if byoLoadError}
 						<p class="note note-error">
-							Your endpoint settings could not be read.
+							Your server couldn't read your provider settings.
 							<span class="error-code">{byoLoadError}</span>
 						</p>
 					{:else if byoStatus?.configured}
@@ -990,8 +990,8 @@
 										{/if}
 									</div>
 									<p class="panel-foot">
-										Every AI call goes straight from your server to this endpoint. The
-										subscription is not in the path and is not charged.
+										Every AI call goes straight from your server to your provider. The
+										subscription isn't in the path, and we don't charge it.
 									</p>
 								</div>
 								<Button variant="ghost" onclick={startByoDelete}>

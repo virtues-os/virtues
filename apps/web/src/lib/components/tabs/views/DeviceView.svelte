@@ -181,7 +181,7 @@
 {:else if res.error}
 	<ErrorState message={String(res.error)} />
 {:else if !device}
-	<Page title="No such device" description="It may have been revoked.">
+	<Page title="No such device" description="Someone may have revoked it.">
 		<Button variant="secondary" onclick={backToDevices}>Back to devices</Button>
 	</Page>
 {:else}

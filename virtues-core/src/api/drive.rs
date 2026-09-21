@@ -891,7 +891,7 @@ pub async fn download_file(
     // Check if this is a lake object - these need special handling via storage layer
     if is_lake_object_id(file_id) {
         return Err(Error::InvalidInput(
-            "Lake objects must be downloaded via the storage API".into(),
+            "Download lake objects through the storage API".into(),
         ));
     }
 
@@ -963,7 +963,7 @@ pub async fn download_file_stream(
     // Check if this is a lake object
     if is_lake_object_id(file_id) {
         return Err(Error::InvalidInput(
-            "Lake objects must be downloaded via the storage API".into(),
+            "Download lake objects through the storage API".into(),
         ));
     }
 

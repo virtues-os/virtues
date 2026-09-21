@@ -199,7 +199,7 @@ export class AttachmentsController {
 					},
 				];
 			} catch {
-				turnedAway.push({ name: file.name, why: "The file could not be read." });
+				turnedAway.push({ name: file.name, why: "Your server couldn't read that file." });
 			}
 		}
 		if (turnedAway.length > 0) this.#reportTurnedAway(turnedAway);

@@ -373,7 +373,7 @@
 								</li>
 							{/each}
 						</ul>
-						{#if moment.more}<p class="mnone">More rows fall in this window than are shown.</p>{/if}
+						{#if moment.more}<p class="mnone">More rows fall in this window than this list shows.</p>{/if}
 					{:else}
 						<p class="mnone">The record holds nothing here.</p>
 					{/if}

@@ -117,7 +117,7 @@
 		<div class="body">
 			<h1>Set up Virtues</h1>
 			<p class="intro">
-				Choose what this phone collects. Everything is stored on <b>your own box</b>. You can change any of this later in <b>This device</b>.
+				Choose what this phone collects. Your phone stores everything on <b>your own box</b>. You can change any of this later in <b>This device</b>.
 			</p>
 
 			{#each streams as s (s.key)}

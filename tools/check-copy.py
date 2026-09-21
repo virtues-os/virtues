@@ -45,15 +45,48 @@ ALLOW = (
     # On the models and bring-your-own screens "the model" IS the subject of
     # the page. Calling it "your assistant" there would name the wrong thing.
     "Only if this endpoint names the model differently",
+    # A state, not a hidden actor: nothing did the untouching or the setting up.
+    "your subscription are untouched",
+    "This release is already downloaded",
+    "Your server is set up and works on the build it has",
+    "Remote access is switched off",
+    "while it waits to be found",
+    # The wiki's colophon contrasts two authors on purpose: the record writes
+    # everything else, and the person writes this one. Flattening either half
+    # to the active voice loses the contrast that is the whole sentence.
+    "Everything else here is written from the record",
+    "Your document is written from the interview",
+    # Addressed to a model (a tool result), or to whoever is reading the
+    # known-gaps catalog in the code. Neither is a person using the product.
+    "The content shown is truncated",
+    "GAP: holdings are collected",
+    "GAP: debts are collected",
     "What these runs spent with the model",
     "your server goes by the model id",
     "Every model the gateway carries",
 )
 
-PARTICIPLE = r"\w+(?:ed|en|wn|ne|nt)"
+# A past participle, for finding passives. "ne" and "nt" are NOT endings
+# here: they matched "one", "done", "gone", "went" and turned "a chapter is
+# one of the major arcs" into a passive. Irregulars are listed instead.
+IRREGULAR = (
+    "built|sent|kept|left|lost|made|found|put|set|read|held|told|meant|"
+    "brought|bought|caught|taught|paid|said|sold|spent|split|shut|cut|hit|"
+    "let|run|won|begun|done|gone|drawn|grown|known|shown|thrown|blown|flown"
+)
+PARTICIPLE = rf"(?:\w+(?:ed|en|wn)|{IRREGULAR})"
+
+# Participles that are ordinary adjectives after "be": "the chat is open",
+# "your server may be offline". A state, not an action with a hidden actor.
+ADJECTIVAL = (
+    "open|closed|done|involved|silent|offline|online|connected|linked|"
+    "attached|ready|able|unable|empty|false|true|gone|gone|gray|grey|"
+    "limited|advanced|mixed|related|interested|tired|used to"
+)
 CHECKS = {
     "passive-no-actor": re.compile(
-        rf"\b(?:is|are|was|were|be|been|being)\s+(?:not\s+|never\s+|already\s+)?(?:{PARTICIPLE})\b"),
+        rf"\b(?:is|are|was|were|be|been|being)\s+(?:not\s+|never\s+|already\s+|still\s+)?"
+        rf"(?!(?:{ADJECTIVAL})\b)(?:{PARTICIPLE})\b"),
     "em-dash":       re.compile(r"—"),
     "wrong-name":    re.compile(
         r"\b(?:the machine|this box|the box|your box|the AI|the model)\b", re.I),
@@ -88,12 +121,16 @@ def strip_comments(src: str, suffix: str) -> str:
         return re.sub(r"^\s*#.*$", " ", src, flags=re.M)
     src = re.sub(r"^\s*(?://|///).*$", " ", src, flags=re.M)
     if suffix == ".rs":
+        # A *_PROMPT constant is addressed to a model, not to a person. It is
+        # governed by the prompt rules in agents/build/, not by this file.
+        src = re.sub(r"const\s+\w*PROMPT\w*\s*:\s*&str\s*=\s*r#\".*?\"#;", " ",
+                     src, flags=re.S)
         # A log line and a test assertion are both addressed to whoever is
         # debugging. They read like copy and are not: `tracing::error!(…,
         # "failed to resolve the model")` is a journal entry, and an
         # assert's message is only ever seen as a test failure.
-        src = re.sub(r"^\s*(?:tracing::\w+!|println!|eprintln!|panic!).*$", " ",
-                     src, flags=re.M)
+        src = re.sub(r"(?:tracing::\w+!|println!|eprintln!|panic!)\s*\(.*?\);", " ",
+                     src, flags=re.S)
         src = re.sub(r"^\s*assert(?:_\w+)?!\(.*?\);", " ", src, flags=re.M | re.S)
         src = re.sub(r'^\s*".*"\s*$(?=\s*\);)', " ", src, flags=re.M)
     return src

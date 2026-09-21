@@ -52,7 +52,7 @@
 		<EmptyState
 			icon="ri:image-2-line"
 			title="No app media yet"
-			message="Images the app generates or you paste into pages and chats are kept here."
+			message="Your server keeps the images the app generates, and the ones you paste into pages and chats."
 			class="h-full"
 		/>
 	{:else}

@@ -385,7 +385,7 @@ pub async fn finalize_interview(pool: &PgPool, req: &CloseRequest) -> Result<Fin
             tracing::warn!(error = %e, "chapters extraction failed; document stands");
             (
                 0,
-                Some("the chapters were not written this time; the document is safe".to_string()),
+                Some("Your server couldn't write the chapters. Everything you said is safe.".to_string()),
             )
         }
     };
@@ -643,7 +643,7 @@ pub async fn delete_chapter(pool: &PgPool, id: &str) -> Result<ChapterRow> {
     let chapter = get_chapter(pool, id).await?;
     if chapter.kind == "unknown" {
         return Err(Error::InvalidInput(
-            "that stretch is already unnamed. There is nothing to remove".into(),
+            "you have already left that stretch unnamed, so there is nothing to remove".into(),
         ));
     }
 

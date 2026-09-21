@@ -726,7 +726,7 @@ impl YjsState {
                 let text = txn.get_or_insert_text("content");
                 let current = text.get_string(&txn);
                 if current != expected_old {
-                    return Err("the page changed while the edit was being written".to_string());
+                    return Err("the page changed while your edit was in flight; reload and try again".to_string());
                 }
 
                 // (byte offset into `expected_old`, bytes to delete, insertion)

@@ -495,7 +495,7 @@
 			<span class="lockup"><span class="mk">∴</span>{state_?.box_name ?? ""}</span>
 			<p class="doing">Keep holding to forget your devices</p>
 			<div class="phrase">{remaining}</div>
-			<div class="foot">Your record and your words are kept. You'll set your
+			<div class="foot">Your server keeps your record and your words. You'll set your
 				devices up again with the four words you saved.</div>
 		</div>
 	{:else if updatingNow}
