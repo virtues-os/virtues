@@ -239,7 +239,7 @@
 	/* Selected: the panel is showing this room. */
 	.rail-item.selected {
 		color: var(--color-foreground);
-		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		background: var(--active-bg);
 	}
 	.rail-item.selected :global(svg) { opacity: 1; }
 
