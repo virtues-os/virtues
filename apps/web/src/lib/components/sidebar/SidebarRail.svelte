@@ -26,11 +26,20 @@
 	 * elevation and stops at the first that reads, and here whitespace reads.
 	 * One even rhythm for every room; only the utility pair is set apart, by the
 	 * spacer that pushes it to the foot.
+	 *
+	 * Two objects on the rail are not rooms: the ∴ mark at the head, and Setup
+	 * at the foot of the spacer while getting started is unfinished. Each has
+	 * a job of its own (toggle the sidebar; open the getting-started chat),
+	 * neither takes the occupied or selected state, and Setup leaves on
+	 * graduation without moving anything — it sits at the bottom of the
+	 * spacer, so its going only lengthens the gap.
 	 */
 	import AtlasIcon from './AtlasIcon.svelte';
+	import SetupTile from './SetupTile.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarRoom } from '$lib/stores/sidebarRoom.svelte';
 	import { sidebarState } from '$lib/stores/sidebarState.svelte';
+	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 	import { roomForRoute, roomsInGroup, type Room } from '$lib/sidebar/rooms';
 
 	const primary = roomsInGroup('primary');
@@ -117,6 +126,10 @@
 	{#each library as room (room.id)}{@render railItem(room)}{/each}
 
 	<div class="rail-spacer" aria-hidden="true"></div>
+
+	{#if gettingStarted.loaded && !gettingStarted.unsupported && !gettingStarted.graduated}
+		<SetupTile />
+	{/if}
 
 	{#each utility as room (room.id)}{@render railItem(room)}{/each}
 </nav>

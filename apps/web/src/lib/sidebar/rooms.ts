@@ -48,6 +48,14 @@
  * Home sits alone above the first gap: it is the ground rather than a peer, so
  * it gets primacy, not parity, and it is the top of the rail, which is what
  * "the ground" should have meant all along.
+ *
+ * Below it the library: Wiki, Drive, Sources. Sources was at the foot with
+ * Developer and Settings (2026-09-21 and before), which filed "connect the
+ * things that fill the record" as a utility, next to a SQL console. It is a
+ * room a new box's owner walks into on the first day, so it belongs with the
+ * library; and it is last in the library because Wiki and Drive are what you
+ * come back for daily and Sources is what you visit to feed them. The foot
+ * now holds only the two rooms that are actually utilities.
  */
 
 export type RoomGroup = 'primary' | 'library' | 'utility';
@@ -136,10 +144,6 @@ export const ROOMS: Room[] = [
 		group: 'library',
 	},
 	{
-		// Between Sources and Settings, not after them. Settings is the room
-		// muscle memory reaches for at the very foot of a rail — every desktop
-		// app it borrows from puts it there — so the new door takes the middle
-		// slot rather than pushing Settings off the anchor.
 		id: 'sources',
 		label: 'Sources',
 		icon: 'sources',
@@ -147,9 +151,14 @@ export const ROOMS: Room[] = [
 		href: '/sources',
 		owns: ['/sources'],
 		panel: { kind: 'rows', modeId: 'sources' },
-		group: 'utility',
+		group: 'library',
 	},
 	{
+		// Above Settings, never below it. Settings is the room muscle memory
+		// reaches for at the very foot of a rail — every desktop app it borrows
+		// from puts it there — so Developer takes the slot above rather than
+		// pushing Settings off the anchor.
+		//
 		// Its own door again, after a spell folded into Settings as three rows.
 		// The fold was argued as "three rooms for the handful of people who open
 		// a SQL console is not worth a rail slot" — but the slot is not what it
