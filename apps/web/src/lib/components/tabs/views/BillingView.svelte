@@ -410,6 +410,10 @@
 					.filter(([, v]) => v.length > 0),
 			);
 			const contextWindow = Number.parseInt(byoContextWindow, 10);
+			if (byoContextWindow.trim() && !(contextWindow >= 1000 && contextWindow <= 10_000_000)) {
+				toast.error('Context window must be a number of tokens, from 1,000 to 10,000,000.');
+				return;
+			}
 			await setByoKey({
 				sudo_request_id: sudoRequestId,
 				api_key: byoApiKey,

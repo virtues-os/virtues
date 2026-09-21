@@ -147,6 +147,11 @@ const SUMMARY_INPUT_BYTES: usize = 240_000;
 const SUMMARY_MESSAGE_BYTES: usize = 60_000;
 /// Per summarizer call, not per compaction: a long history is several calls.
 const SUMMARY_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// The most calls one compaction makes. The turn's response does not open
+/// until compaction returns, so this bounds what a person waits through:
+/// four calls is ~1MB of history and a few minutes at worst. Older batches
+/// beyond it are not read; the summary says so.
+const SUMMARY_MAX_BATCHES: usize = 4;
 
 /// Cut the messages into runs that each fit one summarizer call. A message
 /// counts at most `SUMMARY_MESSAGE_BYTES` because that is all of it the call
@@ -184,13 +189,34 @@ async fn generate_summary(
     }
 
     let mut summary: Option<String> = existing_summary.map(str::to_string);
-    for batch in batches {
+
+    // Bounded: the oldest batches past the cap are not summarized, and the
+    // summary carries a line saying how much it does not cover.
+    let skip = batches.len().saturating_sub(SUMMARY_MAX_BATCHES);
+    if skip > 0 {
+        let dropped: usize = batches[..skip].iter().map(|b| b.len()).sum();
+        tracing::warn!(dropped_messages = dropped, batches = batches.len(), "compaction: history past the batch cap is not summarized");
+        let note = format!("[{dropped} earlier messages are not represented in this summary.]");
+        summary = Some(match summary {
+            Some(s) => format!("{s}\n{note}"),
+            None => note,
+        });
+    }
+
+    for batch in &batches[skip..] {
         let next = timeout(
             SUMMARY_CALL_TIMEOUT,
             summarize_batch(pool, batch, summary.as_deref()),
         )
         .await
         .map_err(|_| crate::Error::Other("Summary generation timed out after 60s".to_string()))??;
+        // An empty reply is a refusal or a model that spent its output
+        // elsewhere. Stored, it would replace every earlier batch with
+        // nothing and advance the index past them; the caller keeps the old
+        // summary and the turn goes out uncompacted instead.
+        if next.trim().is_empty() {
+            return Err(crate::Error::Other("Summary generation returned nothing".to_string()));
+        }
         summary = Some(next);
     }
     Ok(summary.unwrap_or_default())
