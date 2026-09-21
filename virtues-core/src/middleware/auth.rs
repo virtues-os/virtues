@@ -17,9 +17,18 @@
 //!   3. **Dev fallback** — `ENVIRONMENT=dev` only, so `make dev` lands in the
 //!      app with no pairing. Inert on a real appliance.
 //!
-//! Each authenticated request bumps `last_seen_at`. Webhook / OAuth bearers are
-//! a separate, surviving token class (see `validate_device_token`) — they are
-//! NOT an app credential and are not checked here.
+//! Each authenticated request bumps `last_seen_at`.
+//!
+//! There is no fourth class. This paragraph used to say webhook and OAuth
+//! bearers were "a separate, surviving token class (see `validate_device_token`)"
+//! — no function of that name has ever existed, and neither half of the claim
+//! is true. Webhook ingestion is gated by the same proven iroh key as every
+//! other route (`server::webhook`), with no long-lived bearer anywhere. The
+//! secrets in the `credentials` table point the other way: they are what the
+//! box presents to Google or Plaid, never something a caller presents to us,
+//! so nothing checks them here or ever should. The only other token in the
+//! process is `server::faces`, and it is in-memory, single-purpose and minted
+//! behind this extractor, not an alternative to it.
 
 use axum::{
     async_trait,

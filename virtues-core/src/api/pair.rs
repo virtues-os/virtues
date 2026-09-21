@@ -18,9 +18,14 @@
 //! Consume path (`POST /api/pair/consume`)
 //!   - Accepts `{token, kind, label, device_info, device_node_id?}`.
 //!   - For `kind = mobile_app | desktop_app | sensor | cli`: creates a device
-//!     row (recording the device's iroh `node_id` for the allowlist) + a
-//!     `credentials` row with a server-issued bearer (HMAC-lookup, encrypted at
-//!     rest). Reach is over iroh — no WG bundle.
+//!     row and nothing else, recording the device's iroh `node_id` so the
+//!     reconciler can allowlist it. **No credential row, and no bearer** — the
+//!     proven iroh key IS the device's credential (`middleware::auth`), which
+//!     is why `api::devices` can revoke a device by clearing `revoked_at`
+//!     alone. This paragraph used to promise a `credentials` row with a
+//!     server-issued bearer; no such write has ever existed in this file, and
+//!     believing it means reading the revoke path as leaving a live bearer
+//!     behind. Reach is over iroh — no WG bundle.
 //!
 //! Status path (`GET /api/pair/status/:id`) — RFC 8628-shaped polling that the
 //! "+ Add Device" modal hits to know when the new device has finished.
