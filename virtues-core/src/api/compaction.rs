@@ -707,7 +707,7 @@ pub fn build_context_for_llm(
                         // an error object in the result position tells the model
                         // the tool succeeded and returned something odd.
                         let content = match (error_text, output) {
-                            (Some(err), _) => format!("Tool execution failed: {err}"),
+                            (Some(err), _) => format!("Tool failed ({tool_name}): {err}"),
                             (None, Some(serde_json::Value::String(s))) => s.clone(),
                             (None, Some(res)) => res.to_string(),
                             (None, None) => "the tool did not finish".to_string(),

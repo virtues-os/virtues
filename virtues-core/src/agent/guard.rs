@@ -156,10 +156,13 @@ fn fingerprint(arguments: &serde_json::Value) -> String {
 /// dump sql_query appends for the model's own retry.
 fn first_line(text: &str) -> String {
     let line = text.lines().next().unwrap_or("").trim();
-    let line = line
-        .strip_prefix("Tool execution failed:")
-        .map(str::trim)
-        .unwrap_or(line);
+    // The envelope names the tool and the cause; the refusal names the tool
+    // itself, so only the reason is repeated back.
+    let line = if line.starts_with("Tool failed (") {
+        line.split_once("): ").map(|(_, rest)| rest.trim()).unwrap_or(line)
+    } else {
+        line
+    };
     let mut line: String = line.chars().take(200).collect();
     if line.chars().count() == 200 && line.len() < text.lines().next().unwrap_or("").len() {
         line.push('…');

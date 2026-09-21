@@ -80,6 +80,21 @@ impl Default for AgentConfig {
     }
 }
 
+/// What one turn may spend before the loop stops starting steps. Beside
+/// `AgentConfig` rather than in it so the config stays a plain struct every
+/// caller builds by hand; a run with no budgets is what every caller had.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TurnBudget {
+    /// Most the turn may spend, in micro-dollars as the gateway reports
+    /// cost, checked between steps. `None` = unbounded. A step whose usage
+    /// carries no cost (a BYO endpoint) counts as free here — the ceiling is
+    /// for the bill this box can see.
+    pub max_cost_micros: Option<i64>,
+    /// Longest the whole turn may run, checked between steps (a step in
+    /// flight is not cut; the next one is not started).
+    pub max_wall_clock: Option<Duration>,
+}
+
 /// The main agent loop orchestrator
 ///
 /// Handles the complete cycle of:
@@ -92,6 +107,7 @@ pub struct AgentLoop {
     llm_config: LlmConfig,
     tool_executor: ToolExecutor,
     config: AgentConfig,
+    budget: TurnBudget,
 }
 
 impl AgentLoop {
@@ -106,6 +122,7 @@ impl AgentLoop {
             },
             _pool: pool,
             config: AgentConfig::default(),
+            budget: TurnBudget::default(),
         }
     }
 
@@ -119,7 +136,14 @@ impl AgentLoop {
             },
             _pool: pool,
             config: AgentConfig::default(),
+            budget: TurnBudget::default(),
         }
+    }
+
+    /// Cap what one turn may spend. See `TurnBudget`.
+    pub fn with_budget(mut self, budget: TurnBudget) -> Self {
+        self.budget = budget;
+        self
     }
 
     /// Create with custom configuration
@@ -144,6 +168,7 @@ impl AgentLoop {
         let pool = self._pool.clone();
         let tool_executor = self.tool_executor.clone();
         let config = self.config.clone();
+        let budget = self.budget;
         let executor_config = ExecutorConfig {
             tool_timeout: config.tool_timeout,
             parallel: config.parallel_tools,
@@ -156,6 +181,10 @@ impl AgentLoop {
             let mut finish = protocol::FinishReason::EndTurn;
             // Per turn: which tools have failed, and how — see `guard`.
             let mut repeat_guard = guard::RepeatGuard::new();
+            // Per turn: what it has cost and how long it has run, for the
+            // budget. Checked where the step ceiling is.
+            let turn_started = std::time::Instant::now();
+            let mut spent_micros: i64 = 0;
 
             // Ask the model to RETURN its thinking. Claude 5 omits the text
             // unless told `display: summarized`; Gemini needs
@@ -198,6 +227,27 @@ impl AgentLoop {
                 if step > config.max_steps {
                     tracing::info!(step, max_steps = config.max_steps, "agent loop hit its step ceiling");
                     finish = protocol::FinishReason::MaxSteps;
+                    break;
+                }
+                // The budgets. Same shape as the ceiling above: a finish
+                // reason, not an error — the turn ended for a reason the
+                // person can be told, and what streamed before it stands.
+                let over_cost = budget
+                    .max_cost_micros
+                    .is_some_and(|cap| spent_micros >= cap);
+                let over_clock = budget
+                    .max_wall_clock
+                    .is_some_and(|cap| turn_started.elapsed() >= cap);
+                if over_cost || over_clock {
+                    tracing::warn!(
+                        step,
+                        spent_micros,
+                        elapsed_secs = turn_started.elapsed().as_secs(),
+                        over_cost,
+                        over_clock,
+                        "turn stopped at its budget"
+                    );
+                    finish = protocol::FinishReason::BudgetExceeded;
                     break;
                 }
 
@@ -301,6 +351,10 @@ impl AgentLoop {
                         break;
                     }
                 };
+
+                if let Some(cost) = result.usage.as_ref().and_then(|u| u.cost_micros) {
+                    spent_micros += cost;
+                }
 
                 // The step's reasoning blocks, for the row and for the echo
                 // below. Before the completion check, so a final step's
@@ -447,9 +501,13 @@ impl AgentLoop {
                 // 3. Inject turn limit warning when running low on steps
                 let steps_remaining = config.max_steps.saturating_sub(step);
                 if steps_remaining <= 3 && steps_remaining > 0 {
+                    // "Steps" — model calls — not "tool calls": one step can
+                    // carry several calls, and a model told it had two calls
+                    // left when it had two steps rationed the wrong thing.
                     let warning = format!(
-                        "[System: {} tool call{} remaining. Complete your current task or summarize progress for the user.]",
+                        "[System: {} step{} (model call{}) remaining in this turn. Finish, or say where you got to and what is left.]",
                         steps_remaining,
+                        if steps_remaining == 1 { "" } else { "s" },
                         if steps_remaining == 1 { "" } else { "s" }
                     );
                     messages.push(serde_json::json!({

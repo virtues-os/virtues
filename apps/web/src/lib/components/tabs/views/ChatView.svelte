@@ -2039,6 +2039,8 @@
 												<StoppedNotice reason="unattended" />
 											{:else if messageMetadata.get(message.id)?.maxSteps}
 												<StoppedNotice reason="max_steps" />
+											{:else if messageMetadata.get(message.id)?.budget}
+												<StoppedNotice reason="budget" />
 											{/if}
 
 											<!-- What to do with an answer once it exists.

@@ -1009,7 +1009,10 @@ async fn build_rules(pool: &PgPool) -> String {
 
 /// Build system prompt with dynamic context and personalization.
 ///
-/// Assembles: identity → persona → narrative_identity → tools → datetime → user_context → active_page.
+/// Assembles the block registry in `build_system_prompt_blocks`: base
+/// (identity + persona + narrative identity + tools + mode) → precedence →
+/// memory → circumstances → coverage → active_project → active_context →
+/// rules; the cache split falls before the first per-turn block..
 /// Loads user name, assistant name, persona, and narrative identity from profiles.
 async fn build_system_prompt(
     pool: &PgPool,
@@ -1178,6 +1181,21 @@ async fn build_system_prompt_blocks(
                         now.format("%M").to_string().parse::<u32>().unwrap_or(0) % 15,
                     ));
                 crate::api::circumstances::build_circumstances(pool, timezone, floored).await
+            }),
+        },
+        // What the record holds, per table, as a date range — the fact that
+        // lets the model tell "the record is silent" from "there was
+        // nothing". Day-floored, so its bytes move once a day per table.
+        Block {
+            meta: BlockMeta { tag: "coverage", author: Author::Computed, mood: Mood::Declarative, rung: 30, cadence: Cadence::Quantized },
+            body: Box::pin(async move {
+                let tz: Option<chrono_tz::Tz> = timezone.and_then(|t| t.parse().ok());
+                let now = Utc::now();
+                let today = match tz {
+                    Some(tz) => now.with_timezone(&tz).date_naive(),
+                    None => now.date_naive(),
+                };
+                crate::api::coverage::build_coverage(pool, today).await
             }),
         },
         // The active Project (room) as a salience lens: its name, catch-up
@@ -2078,10 +2096,16 @@ fn create_agent_stream(
         // - deep_research: 50 (read-only, needs more exploration)
         // - council: 40 (gate + 1-2 dispatch rounds + synthesis; bounded)
         // - chat / default: 20 (conversational, full tool access, multi-turn)
-        let max_steps = match request.agent_mode.as_str() {
-            "deep_research" => 50,
-            "council" => 40, // gate + 1-2 dispatch rounds + synthesis; bounded
-            _ => 20,         // "chat" or default
+        // The budgets beside the step ceiling: dollars the gateway reports
+        // and wall-clock. A step ceiling alone bounds nothing a person feels
+        // — twenty steps of a large model over a long context is real money,
+        // and twenty thirty-second tools is ten minutes. First figures,
+        // 2026-09-21; the journal line "turn stopped at its budget" is how
+        // they get revised.
+        let (max_steps, max_cost_micros, max_wall_clock) = match request.agent_mode.as_str() {
+            "deep_research" => (50, 10_000_000, std::time::Duration::from_secs(25 * 60)),
+            "council" => (40, 5_000_000, std::time::Duration::from_secs(15 * 60)), // gate + 1-2 dispatch rounds + synthesis; bounded
+            _ => (20, 2_500_000, std::time::Duration::from_secs(8 * 60)),           // "chat" or default
         };
 
         // Create AgentLoop with YjsState for real-time page editing
@@ -2090,6 +2114,10 @@ fn create_agent_stream(
             max_steps,
             tool_timeout: std::time::Duration::from_secs(30),
             parallel_tools: true,
+        })
+        .with_budget(crate::agent::TurnBudget {
+            max_cost_micros: Some(max_cost_micros),
+            max_wall_clock: Some(max_wall_clock),
         });
 
         // Side-channel for live Deep Research subagent status. The dispatch_subagents tool sends
@@ -2479,13 +2507,14 @@ fn create_agent_stream(
         let cut_short = loop_finish == Some(FinishReason::OutputLimit)
             || last_step_reason == Some(StepReason::MaxTokens);
         let hit_ceiling = loop_finish == Some(FinishReason::MaxSteps);
+        let hit_budget = loop_finish == Some(FinishReason::BudgetExceeded);
         if was_cancelled || loop_finish == Some(FinishReason::Cancelled) {
             let reason = if was_unattended { "unattended" } else { "stopped" };
             yield (serialize_event(&StreamEvent::Abort { reason: Some(reason.to_string()) }));
         } else {
             let finish_reason = match (loop_finish, last_step_reason) {
                 (Some(FinishReason::Error), _) => "error",
-                (Some(FinishReason::MaxSteps), _) | (Some(FinishReason::AwaitingUser), _) => "other",
+                (Some(FinishReason::MaxSteps), _) | (Some(FinishReason::BudgetExceeded), _) | (Some(FinishReason::AwaitingUser), _) => "other",
                 (Some(FinishReason::OutputLimit), _) | (_, Some(StepReason::MaxTokens)) => "length",
                 (_, Some(StepReason::ContentFilter)) => "content-filter",
                 (_, Some(StepReason::ToolCalls)) => "tool-calls",
@@ -2534,6 +2563,8 @@ fn create_agent_stream(
                     Some("length".to_string())
                 } else if hit_ceiling {
                     Some("max_steps".to_string())
+                } else if hit_budget {
+                    Some("budget".to_string())
                 } else if interrupted {
                     Some("interrupted".to_string())
                 } else {
@@ -2969,7 +3000,7 @@ mod tests {
         assert_eq!(tags.last(), Some(&"rules"), "rules must render last — nearest the conversation");
         assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
         assert!(tags.contains(&"circumstances"));
-        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "active_project", "active_context", "rules"];
+        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "coverage", "active_project", "active_context", "rules"];
         let mut last = 0usize;
         for t in &tags {
             let pos = expected.iter().position(|e| e == t).expect("unknown block tag");
