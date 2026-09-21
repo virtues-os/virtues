@@ -1,11 +1,17 @@
 # Voice
 
-> The one voice for onboarding microcopy, AI-generated prose, and every other
-> surface where Virtues speaks: **a perceptive friend who has read the data and
-> refuses to flatter you.** Second person, active, precise-over-warm,
-> honest-not-cheerleading, literary-by-restraint. Show the architecture, don't
-> assert the virtue ("Stays on your box. We can't read it." — never "your
-> privacy matters to us").
+> The voice for the prose Virtues writes — the founder's letter, the wiki, the
+> day page, the AI's own turns — and the bank of lines behind it: **a
+> perceptive friend who has read the data and refuses to flatter you.** Second
+> person, active, precise-over-warm, honest-not-cheerleading,
+> literary-by-restraint. Show the architecture, don't assert the virtue ("Stays
+> on your box. We can't read it." — never "your privacy matters to us").
+>
+> In-app copy — settings, hints, empty states, errors — is **not** written in
+> this register. It has its own, plainer and shorter, in [UI copy](#ui-copy)
+> below. Same honesty, less literature. This header used to claim "onboarding
+> microcopy" too, and UI strings inherited the letter's length and cleverness
+> from it.
 
 ## Register rules (settled during the 2026-08 letter rewrite)
 
@@ -29,6 +35,62 @@
 - **No corporate "we"** in a document signed by a person.
 - **The ∴ mark is logic before it is a logo.** When it appears in prose it must
   actually mean *therefore* — premises above, conclusion after.
+
+## UI copy
+
+Settled 2026-09-14 (the Billing pass — "I don't like much of your current copy
+and tone and voice") and 2026-09-21 (Paul Henry's copy principles, the voice
+rules of which are folded in here; his scope and process lists stay his). The
+register above is for prose the box writes and for the letter. In-app prose —
+settings pages, hints under controls, empty states, status and error text,
+applet descriptions, pairing screens, Atlas emails — is plainer. The tell that
+it has drifted: a settings page narrating its own design history.
+
+**Register.** Warm and plain, and concise. Second person; a sparing, confident
+"we" where Virtues itself acts ("We can't read it"). Sentences medium and
+conversational — one turn each, about twenty words. Keep the reason: the page
+still says *why*, in plain words, not as a story. No flourish, no performed
+enthusiasm. The stance is Apple, Cursor, virtues.com.
+
+**Mechanics** — Apple's, with two overrides:
+
+- Active, verb-first. Sentence case. Contractions on.
+- Fragments (titles, hints under a control, chips) take no trailing period.
+  Full sentences keep theirs.
+- **Hyphens, not em dashes, in UI strings** — even where the em dash would be
+  correct. The letter, the manual, and this workshop keep theirs.
+- **"Computer", not "Mac"**, on any surface a PC user can reach: the SPA, the
+  box's own screens, the manual. Vague beats wrong. The Mac desktop app may
+  say "Mac"; it runs nowhere else.
+- **One name per thing, the same on every screen.** *Recovery phrase*, *Server
+  ID*, *applet*, *Standing*, *Balance*, *Wallet activity*, *on-device*,
+  *sidecar*, *face*, *pairing*, *relay*. Vendors in the vendor's own
+  capitalization: Stripe, Postgres, Radxa, Qualcomm, Anthropic, OpenAI,
+  Google, Ollama, LM Studio.
+- American spelling, in UI and in comments.
+
+**Claims.** Three rules that run before a line is written or rewritten, because
+review catches a bad line and misses a missing one:
+
+- **A line that states a behavior, benefit, or guarantee is checked against
+  the shipping build.** If the build doesn't do it, the line is deleted, not
+  polished. "Your data stays on the server" was cut the day it stopped being
+  true; a cleaner-sounding false claim is still a false claim.
+- **A line about where data physically lives trades clarity for accuracy,
+  never the reverse.** If the accurate wording is unreadable, leave it standing
+  and flag it — do not simplify it into something vaguer.
+- **A screen where the app could appear to change or lose the person's data
+  says, in one plain line, what happened and that the data is safe.** "I can't
+  show them again. Your data is still here." The absent reassurance is the
+  thing reviews miss.
+
+**What this section does not govern.** Names — a button label, a section
+header, an applet's `display_name` — are identifiers with a human face;
+renaming one is a code change with mirrors (sidebar, URL, tests, docs) and
+lands as a bundle or not at all. Error codes (`not_linked`, `vault_unreadable`),
+log lines, env vars, and column names are contracts, not copy; the human
+sentence beside a code is fair game, the code is not. The CLI and installer
+print through their own vocabulary (∴ ✓ · ⚠ ✖) and are not covered here.
 
 ## The name, reframed (2026-08-24)
 
