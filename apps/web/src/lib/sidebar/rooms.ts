@@ -15,23 +15,27 @@
  * indistinguishable glyphs is a memorisation tax rather than a contents page:
  *
  *   - Notebooks (now projects) folded into Pages, and then moved again: a
- *     project is the room a chat lives in, so it is listed in the Chats panel
+ *     project is the room a chat lives in, so it is listed in the Home panel
  *     rather than behind a rail door of its own.
  *   - Bookmarks folded into Files (now Drive). Both are "something from
  *     outside that you kept" — the loosest of the merges, and the first to
  *     revisit.
- *   - Home left the rail (2026-09-21). Its panel was the Desk — the pinned
- *     shelf — and the shelf now lives at the top of the Chats panel as
- *     Pinned, which is where a pin is reached for. `/home` is still a page;
- *     it is no longer a door.
+ *   - Home and Chats became one room (2026-09-21). Home's panel had been the
+ *     Desk — the pinned shelf — with Chats a peer tile beneath it; the shelf
+ *     now sits at the top of the ground room's panel as Pinned, which is
+ *     where a pin is reached for. The room is called Home, because the
+ *     panel holds chats, pages, projects and applets, and a user reads the
+ *     panel's title as the name of the place they are in — "Chats" over a
+ *     list of pages and projects was the room named after one of its
+ *     contents. Its page is `/home`, the Daily Office, so the tile leads
+ *     somewhere real.
  *   - Applets left the rail the same day. An applet is something you run from
- *     a conversation, so its door is a row at the top of the Chats panel,
+ *     a conversation, so its door is a row at the top of the Home panel,
  *     beside New chat — a rail tile for a list that is opened from chat was
  *     a room nobody walked to.
  *   - Pages left the rail the same day too. A page is written the way a chat
- *     is started, so "New page" stands under "New chat" in the Chats panel's
- *     doors, and Search (⌘K, `#pages`) finds the rest. The `/page` list
- *     route still exists; it is no longer a door.
+ *     is started, so Pages is a door in the Home panel with a `+` beside it,
+ *     the same shape Projects has.
  *
  * Developer was folded into Settings too, and came back out — see its entry.
  * The merges above survive because each pair answers the same question;
@@ -41,9 +45,9 @@
  * ROUTES ARE UNCHANGED. Only labels and grouping move, so the layout can be
  * judged without also judging a migration.
  *
- * Chats sits alone above the first gap: it is the ground rather than a peer, so
- * it gets primacy, not parity. With Home gone it is also the top of the rail,
- * which is what "the ground" should have meant all along.
+ * Home sits alone above the first gap: it is the ground rather than a peer, so
+ * it gets primacy, not parity, and it is the top of the rail, which is what
+ * "the ground" should have meant all along.
  */
 
 export type RoomGroup = 'primary' | 'library' | 'utility';
@@ -52,8 +56,8 @@ export type RoomGroup = 'primary' | 'library' | 'utility';
 export type RoomPanel =
 	/** The fixed rows of a `SIDEBAR_MODES` entry. */
 	| { kind: 'rows'; modeId: string }
-	/** The Chats panel: doors, Pinned, Projects, Recents. */
-	| { kind: 'chats' }
+	/** The Home panel: doors, Pinned, Projects, the recent chats. */
+	| { kind: 'home' }
 	/** Nothing live yet — the panel offers the room's full page. */
 	| { kind: 'stub' };
 
@@ -84,16 +88,28 @@ export interface Room {
 
 export const ROOMS: Room[] = [
 	{
-		id: 'chats',
-		label: 'Chats',
-		icon: 'chats',
-		chord: '⌥⌘C',
-		href: '/chat-history',
-		// Projects, applets and pages are reached from this panel, so the pane
-		// that holds one lights this tile: the rail is a lens over where you
-		// are, and where you are is "in something the Chats panel led you to".
-		owns: ['/', '/chat', '/chat-history', '/project', '/projects', '/applets', '/applet', '/page', '/pages'],
-		panel: { kind: 'chats' },
+		id: 'home',
+		label: 'Home',
+		icon: 'home',
+		chord: '⌥⌘H',
+		href: '/home',
+		// Chats, projects, applets and pages are all reached from this panel,
+		// so the pane that holds one lights this tile: the rail is a lens over
+		// where you are, and where you are is "in something Home led you to".
+		owns: [
+			'/',
+			'/home',
+			'/day',
+			'/chat',
+			'/chat-history',
+			'/project',
+			'/projects',
+			'/applets',
+			'/applet',
+			'/page',
+			'/pages',
+		],
+		panel: { kind: 'home' },
 		group: 'primary',
 	},
 	{
@@ -166,7 +182,7 @@ export const ROOMS: Room[] = [
 	},
 ];
 
-export const DEFAULT_ROOM_ID = 'chats';
+export const DEFAULT_ROOM_ID = 'home';
 
 export function roomById(id: string | null | undefined): Room | null {
 	if (!id) return null;

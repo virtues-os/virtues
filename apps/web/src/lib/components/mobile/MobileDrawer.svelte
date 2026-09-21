@@ -13,7 +13,7 @@
 	 *     shouting day-bucket headers between them — one quiet section label,
 	 *     then rows.
 	 *   - Two regions, not one list: the mast and the doors (Search, New
-	 *     chat, New page, Applets, All chats, Settings) are pinned chrome; only the
+	 *     chat, Pages, Applets, All chats, Settings) are pinned chrome; only the
 	 *     lists scroll — Projects, then Recents, the desktop panel's order —
 	 *     and a hairline appears under the doors once the list has slid
 	 *     beneath them — the way a navigation bar earns its rule. There used
@@ -149,10 +149,17 @@
 			<AtlasIcon name="new-chat" bare />
 			<span class="row-text">New chat</span>
 		</button>
-		<button class="row" onclick={newPage}>
-			<AtlasIcon name="pages" bare />
-			<span class="row-text">New page</span>
-		</button>
+		<!-- The word is the list, the + is the new one — the desktop panel's
+		     shape. No hover on a phone, so the + is always drawn. -->
+		<div class="row row-split">
+			<button class="row-main" onclick={() => go("/page", "Pages")}>
+				<AtlasIcon name="pages" bare />
+				<span class="row-text">Pages</span>
+			</button>
+			<button class="row-plus" onclick={newPage} aria-label="New page">
+				<Icon icon="ri:add-line" width={20} />
+			</button>
+		</div>
 		<!-- Applets is a door beside New chat, here as on the desktop panel:
 		     an applet is something you run from a chat, so its door stands
 		     beside the chat's. -->
@@ -332,6 +339,43 @@
 		-webkit-overflow-scrolling: touch;
 		overscroll-behavior: contain;
 		padding: 0 10px calc(12px + env(safe-area-inset-bottom));
+	}
+
+	/* A row that is two controls: the word and a + at its right edge. The
+	   outer keeps the row's box; the inner buttons split it. */
+	.row-split {
+		padding: 0;
+	}
+	.row-main {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-height: 48px;
+		padding: 0 10px;
+		border: 0;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.row-plus {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 44px;
+		min-height: 48px;
+		border: 0;
+		border-radius: 10px;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.row-plus:active {
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 	}
 
 	/* Voice 1 of 2: a row. One size, one weight, everywhere in the list. */

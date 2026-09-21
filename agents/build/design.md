@@ -35,28 +35,31 @@ The rail, top to bottom, in three gap-separated groups:
 
 | Group | Room | Route |
 |---|---|---|
-| ground | **Chats** | `/chat-history` |
+| ground | **Home** | `/home` |
 | library | **Wiki** | `/wiki` |
 | library | **Drive** | `/storage` |
 | utility | **Sources** | `/sources` |
 | utility | **Developer** | `/virtues/developer/sql` |
 | utility | **Settings** | `/virtues/you` |
 
-- **Chats is the ground.** It sits alone above the first gap and at the top
-  of the rail. There is no Home room: `/home` is still a page, reached by
-  whatever links to it, and it is not a door.
+- **Home is the ground.** It sits alone above the first gap and at the top
+  of the rail. It was called Chats until its panel held pages, projects and
+  applets too; a user reads the panel's title as the name of the place, so
+  the room is named for the place, not one of its contents. Its page is
+  `/home`, the Daily Office.
 - **Drive, not Files.** The room kept its glyph and its `/storage` route; the
   label names the place rather than its contents.
 - **Applets is not a room, and neither is Pages.** Each is a door at the top
-  of the Chats panel; `/applets` and `/page` are unchanged. Projects likewise:
-  a project is the room a chat lives in, so projects are listed in the Chats
+  of the Home panel; `/applets` and `/page` are unchanged. Projects likewise:
+  a project is the room a chat lives in, so projects are listed in the Home
   panel rather than behind a rail door of their own.
 - Routes did not move. Labels and grouping did.
 
-The Chats panel, top to bottom:
+The Home panel, top to bottom:
 
-1. **Doors**: New chat, New page, Search, Applets. Search opens the ⌘K
-   palette.
+1. **Doors**: New chat, Search, Pages, Applets. One verb, then places.
+   Search opens the ⌘K palette. Pages opens the list and carries a `+` on
+   hover for a new page, the same shape as the Projects label.
 2. **Pinned.** A chat, a project, an applet or a page can be pinned.
 3. **Projects.** Five, then "Show more"; the label opens the full list. A
    project cannot contain a project.
@@ -192,13 +195,13 @@ carry a contents page.
   problem: a pinned "Pages" and a nav "Pages" render identically, so the
   section read as a duplicate of the nav directly beneath it. The `app_pins`
   table, its API and the reorder endpoint stayed through that. Pinning came
-  back as **Pinned** at the top of the Chats panel (see The shell), reached
+  back as **Pinned** at the top of the Home panel (see The shell), reached
   by a pin control on the thing itself rather than a tab menu: what gets
   pinned is a chat, a project, an applet or a page, never a room, which is
   the different shape the rule asked for.
 - **Recents as a sidebar-wide list.** Six of twelve rows were destinations
   already in the nav; the sidebar was the largest contributor to its own
-  history list. Recents returned at the foot of the Chats panel, where it
+  history list. Recents returned at the foot of the Home panel, where it
   lists chats only, so no row in it can be a room.
 - **Today.** `/home` is the live view of today; `/day` only exists after the
   nightly run.

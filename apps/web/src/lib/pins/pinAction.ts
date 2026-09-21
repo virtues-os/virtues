@@ -18,7 +18,7 @@
  * retrieval scope. Same English word, three different concepts; this is the
  * navigational one.
  *
- * Pins live under "Pinned" at the top of the Chats panel. They were "the
+ * Pins live under "Pinned" at the top of the Home panel. They were "the
  * Desk" behind a Home tile on the rail; the tile is gone (2026-09-21) and so
  * is the word — "pin" and "unpin" are the verbs, and "Pinned" is the place.
  * A chat, a project, an applet or a page can be pinned; anything with a url
@@ -115,7 +115,7 @@ export function pinMenuItem(
 		id: 'pin-sidebar',
 		// "Pin" used to be "Add to desk", when the destination was a room with
 		// a name. Now the destination is the section labeled Pinned, at the top
-		// of the Chats panel, and the plain verb is the one the label speaks.
+		// of the Home panel, and the plain verb is the one the label speaks.
 		label: pinned ? 'Unpin' : 'Pin',
 		icon: pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line',
 		dividerBefore: opts.dividerBefore ?? true,
