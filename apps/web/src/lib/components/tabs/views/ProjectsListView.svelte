@@ -2,11 +2,11 @@
 	import { onMount, tick } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { accentCss } from '$lib/sidebar/pin-colors';
-	import { notebookStore } from '$lib/stores/notebook.svelte';
+	import { projectStore } from '$lib/stores/project.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { Button, Page } from '$lib';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
-	import type { NotebookSummary } from '$lib/api/client';
+	import type { ProjectSummary } from '$lib/api/client';
 
 	let { active: _active }: { tab?: unknown; active?: boolean } = $props();
 
@@ -17,16 +17,16 @@
 	let inputEl = $state<HTMLInputElement | null>(null);
 
 	onMount(() => {
-		notebookStore.load();
+		projectStore.load();
 	});
 
-	const notebooks = $derived(notebookStore.notebooks);
+	const projects = $derived(projectStore.projects);
 
-	const columns: Column<NotebookSummary>[] = [
+	const columns: Column<ProjectSummary>[] = [
 		{
 			key: 'name',
 			label: 'Name',
-			icon: 'ri:layout-masonry-line',
+			icon: 'ri:folder-3-line',
 			width: '35%',
 			minWidth: '180px'
 		},
@@ -74,7 +74,7 @@
 	}
 
 	function open(id: string) {
-		windowShellStore.openTabFromRoute(`/notebook/${id}`);
+		windowShellStore.openTabFromRoute(`/project/${id}`);
 	}
 
 	async function startDraft() {
@@ -95,9 +95,9 @@
 		}
 		creating = true;
 		try {
-			const notebook = await notebookStore.create(name);
+			const project = await projectStore.create(name);
 			cancelDraft();
-			if (notebook) open(notebook.id);
+			if (project) open(project.id);
 		} finally {
 			creating = false;
 		}
@@ -114,8 +114,8 @@
 </script>
 
 <Page
-	title="Notebooks"
-	description="A notebook gathers the material for one piece of work — files, people, pages, days. Chats filed here are grounded in it."
+	title="Projects"
+	description="A project gathers the material for one piece of work — files, people, pages, days. Chats filed here are grounded in it."
 	maxWidth="wide"
 >
 	{#snippet actions()}
@@ -124,7 +124,7 @@
 				bind:this={inputEl}
 				bind:value={draftName}
 				class="name-input"
-				placeholder="Name your Notebook"
+				placeholder="Name your Project"
 				disabled={creating}
 				onkeydown={onDraftKeydown}
 				onblur={commitDraft}
@@ -135,39 +135,39 @@
 				size="sm"
 				icon="ri:add-line"
 				loading={creating}
-				onclick={startDraft}>New Notebook</Button
+				onclick={startDraft}>New Project</Button
 			>
 		{/if}
 	{/snippet}
 
-	{#if notebooks.length === 0 && !notebookStore.loading && !notebookStore.error}
+	{#if projects.length === 0 && !projectStore.loading && !projectStore.error}
 		<div class="empty">
-			<Icon icon="ri:layout-masonry-line" width="28" />
-			<p>No Notebooks yet.</p>
+			<Icon icon="ri:folder-3-line" width="28" />
+			<p>No Projects yet.</p>
 			{#if !drafting}
 				<Button variant="secondary" size="sm" onclick={startDraft}
-					>Create your first Notebook</Button
+					>Create your first Project</Button
 				>
 			{/if}
 		</div>
 	{:else}
 		<UniversalDataGrid
-			items={notebooks}
+			items={projects}
 			{columns}
-			entityType="notebook"
-			loading={notebookStore.loading}
-			error={notebookStore.error}
-			emptyIcon="ri:layout-masonry-line"
-			emptyMessage="No Notebooks yet"
-			loadingMessage="Loading Notebooks..."
-			searchPlaceholder="Search Notebooks..."
+			entityType="project"
+			loading={projectStore.loading}
+			error={projectStore.error}
+			emptyIcon="ri:folder-3-line"
+			emptyMessage="No Projects yet"
+			loadingMessage="Loading Projects..."
+			searchPlaceholder="Search Projects..."
 			defaultViewMode="grid"
 			gridMinWidth="200px"
 			onItemClick={(nb) => open(nb.id)}
-			rowHref={(nb) => `/notebook/${nb.id}`}
-			onRetry={() => notebookStore.load()}
+			rowHref={(nb) => `/project/${nb.id}`}
+			onRetry={() => projectStore.load()}
 		>
-			{#snippet tableRow(nb: NotebookSummary)}
+			{#snippet tableRow(nb: ProjectSummary)}
 				<td class="col-name">
 					<div class="name-cell">
 						<span
@@ -175,7 +175,7 @@
 							class:tinted={!!nb.accent_color}
 							style={accentCss(nb.accent_color) ? `--room-accent: ${accentCss(nb.accent_color)}` : ''}
 						>
-							<Icon icon={nb.icon || 'ri:layout-masonry-line'} width="15" />
+							<Icon icon={nb.icon || 'ri:folder-3-line'} width="15" />
 						</span>
 						<span class="name-text">{nb.name}</span>
 					</div>
@@ -199,13 +199,13 @@
 				</td>
 			{/snippet}
 
-			{#snippet card(nb: NotebookSummary)}
+			{#snippet card(nb: ProjectSummary)}
 				<div
 					class="nb-card"
 					class:tinted={!!nb.accent_color}
 					style={accentCss(nb.accent_color) ? `--room-accent: ${accentCss(nb.accent_color)}` : ''}
 				>
-					<div class="nb-card-icon"><Icon icon={nb.icon || 'ri:layout-masonry-line'} width="20" /></div>
+					<div class="nb-card-icon"><Icon icon={nb.icon || 'ri:folder-3-line'} width="20" /></div>
 					<div class="nb-card-name">{nb.name}</div>
 					{#if nb.current_status}
 						<div class="nb-card-memo">{nb.current_status}</div>

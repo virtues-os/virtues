@@ -56,7 +56,7 @@ What is missing, and is not a small gap:
 `app_page_shares` is page-shaped, and the thing we need is not.
 
 > A **publication** is a frozen, self-contained artifact with a token,
-> produced by any surface: a page, an applet face, a wiki entity, a notebook,
+> produced by any surface: a page, an applet face, a wiki entity, a project,
 > a query result.
 
 Pages become one producer among many rather than the special case. One table,

@@ -4,8 +4,8 @@
 //! Pages are knowledge documents with entity linking support using
 //! the format: ((Display Name))[[prefix_hash]]
 //!
-//! Note: Pages don't "belong" to notebooks - they're just URL-native entities.
-//! Organization is handled by notebook_items which hold URL references.
+//! Note: Pages don't "belong" to projects - they're just URL-native entities.
+//! Organization is handled by project_items which hold URL references.
 
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, PAGE_PREFIX, PAGE_SHARE_PREFIX, PAGE_VERSION_PREFIX};
@@ -68,8 +68,8 @@ pub struct CreatePageRequest {
     pub title: String,
     #[serde(default)]
     pub content: String,
-    #[serde(rename = "notebookId")]
-    pub notebook_id: Option<String>,  // For auto-add to notebook_items (not stored on page)
+    #[serde(rename = "projectId", alias = "notebookId")]
+    pub project_id: Option<String>,  // For auto-add to project_items (not stored on page)
     pub icon: Option<String>,
     pub icon_color: Option<String>,
     pub cover_url: Option<String>,
@@ -354,7 +354,7 @@ fn truncate_chars(s: &str, max: usize) -> String {
 }
 
 /// Create a new page
-/// If notebook_id is provided and not the system notebook, auto-adds to notebook_items
+/// If project_id is provided and not the system project, auto-adds to project_items
 pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> {
     let title = req.title.trim();
     if title.is_empty() {
@@ -383,17 +383,17 @@ pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> 
     .await
     .map_err(|e| Error::Database(format!("Failed to create page: {}", e)))?;
 
-    // Auto-add the page as a member of the Notebook it was created in.
-    if let Some(notebook_id) = &req.notebook_id {
+    // Auto-add the page as a member of the Project it was created in.
+    if let Some(project_id) = &req.project_id {
         let url = format!("/page/{}", page.id);
-        if let Err(e) = crate::api::notebooks::add_notebook_item(
+        if let Err(e) = crate::api::projects::add_project_item(
             pool,
-            notebook_id,
-            crate::api::notebooks::AddNotebookItemRequest { url },
+            project_id,
+            crate::api::projects::AddProjectItemRequest { url },
         )
         .await
         {
-            tracing::warn!("Failed to auto-add page to notebook {}: {}", notebook_id, e);
+            tracing::warn!("Failed to auto-add page to project {}: {}", project_id, e);
             // Don't fail page creation if auto-add fails
         }
     }
@@ -452,7 +452,7 @@ pub async fn update_page(pool: &PgPool, id: &str, req: UpdatePageRequest) -> Res
 }
 
 /// Delete a page by ID
-/// Also cleans up all notebook_items references (orphan cleanup)
+/// Also cleans up all project_items references (orphan cleanup)
 pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
     // First delete the page
     let result = sqlx::query(r#"DELETE FROM app_pages WHERE id = $1"#)
@@ -465,10 +465,10 @@ pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
         return Err(Error::NotFound(format!("Page not found: {}", id)));
     }
 
-    // Clean up all notebook_items references
+    // Clean up all project_items references
     let url = format!("/page/{}", id);
-    if let Err(e) = crate::api::notebooks::remove_items_by_url(pool, &url).await {
-        tracing::warn!("Failed to clean up notebook_items for page {}: {}", id, e);
+    if let Err(e) = crate::api::projects::remove_items_by_url(pool, &url).await {
+        tracing::warn!("Failed to clean up project_items for page {}: {}", id, e);
         // Don't fail deletion if cleanup fails
     }
 
@@ -509,7 +509,7 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
         "page" => format!("/page/{}", id),
         "source" => format!("/source/{}", id),
         "chat" => format!("/chat/{}", id),
-        "notebook" => format!("/notebook/{}", id),
+        "project" => format!("/project/{}", id),
         "file" => format!("/drive/{}", id),
         _ => format!("/{}/{}", entity_type, id),
     }
@@ -595,11 +595,11 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
         FROM app_chats
         WHERE title ILIKE $1 AND title <> ''
         UNION ALL
-        SELECT id, name, 'notebook' as entity_type,
+        SELECT id, name, 'project' as entity_type,
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:folder-line' END as icon,
                NULL as mime_type, updated_at,
                CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
-        FROM app_notebooks
+        FROM app_projects
         WHERE name ILIKE $1
         ORDER BY relevance ASC, updated_at DESC
         LIMIT $3

@@ -32,7 +32,7 @@ impl SemanticSearchTool {
     pub async fn execute(
         &self,
         arguments: serde_json::Value,
-        notebook_id: Option<&str>,
+        project_id: Option<&str>,
         scope_mode: crate::search::ScopeMode,
     ) -> Result<ToolResult, ToolError> {
         // Prefer `queries` (multi-facet recall); fall back to the single `query`
@@ -96,7 +96,7 @@ impl SemanticSearchTool {
             date_after: date_after.map(str::to_string),
             date_before: date_before.map(str::to_string),
             entities: entities.unwrap_or_default(),
-            notebook_id: notebook_id.map(str::to_string),
+            project_id: project_id.map(str::to_string),
             scope_mode,
             limit: num_results,
         };

@@ -126,11 +126,11 @@ interface CreateChatConfig {
      *  slot (see `model_choice.rs`), so the field is omitted rather than
      *  guessed at. Sending a guess is what put an empty string on the wire. */
     getModel: () => string | undefined;
-    getNotebookId: () => string | null; // Getter for space ID (null for system space)
+    getProjectId: () => string | null; // Getter for space ID (null for system space)
     getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
     getPersona?: () => string; // Getter for selected persona (per-chat)
     getAgentMode?: () => string; // Getter for agent mode (agent, chat, research)
-    getChatMode?: () => string; // Getter for retrieval scope: 'open' | 'scoped' (notebook chats)
+    getChatMode?: () => string; // Getter for retrieval scope: 'open' | 'scoped' (project chats)
     getTemporary?: () => boolean; // Getter for temporary/ghost mode (don't persist server-side)
 }
 
@@ -179,7 +179,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getNotebookId, getActivePageContext, getPersona, getAgentMode, getChatMode, getTemporary } = config;
+        const { conversationId, getModel, getProjectId, getActivePageContext, getPersona, getAgentMode, getChatMode, getTemporary } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -198,7 +198,7 @@ class ChatInstanceStore {
             transport: new DefaultChatTransport({
                 api: '/api/chat',
                 prepareSendMessagesRequest: ({ messages, trigger }) => {
-                    const notebookId = getNotebookId();
+                    const projectId = getProjectId();
                     const activePage = getActivePageContext?.();
                     const persona = getPersona?.() || 'default';
                     const agentMode = getAgentMode?.() || 'chat';
@@ -228,8 +228,8 @@ class ChatInstanceStore {
                             trigger,
                             persona,
                             agentMode,
-                            // Retrieval scope for notebook chats: 'open' (whole
-                            // graph, notebook up-weighted) or 'scoped' (grounded).
+                            // Retrieval scope for project chats: 'open' (whole
+                            // graph, project up-weighted) or 'scoped' (grounded).
                             chatMode,
                             // Ghost/temporary chat — backend should skip persistence when true.
                             ...(temporary && { temporary: true }),
@@ -237,7 +237,7 @@ class ChatInstanceStore {
                             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                             // The Space (room) this chat lives in — drives the agent's
                             // active-space context block and binds the chat on the server.
-                            ...(notebookId && { notebookId }),
+                            ...(projectId && { projectId }),
                             // Include active page context if a page is bound
                             ...(activePage && { activePage }),
                             ...(model && { model })

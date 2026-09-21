@@ -424,11 +424,11 @@ def build():
     articles = tbl("wiki_articles", ["id", "subject_type", "subject_id", "page_id",
                                      "last_written_at", "maintenance", "theirs", "removed"])
     # The rooms nothing had ever seeded. `id` is omitted on the three identity
-    # tables (notebook items, notes, memories) — Postgres generates it.
-    notebooks = tbl("app_notebooks", ["id", "name", "icon", "accent_color", "sort_order",
+    # tables (project items, notes, memories) — Postgres generates it.
+    projects = tbl("app_projects", ["id", "name", "icon", "accent_color", "sort_order",
                                       "instructions", "auto_add_materials",
                                       "created_at", "updated_at"])
-    nbitems = tbl("app_notebook_items", ["notebook_id", "url", "sort_order", "added_at",
+    nbitems = tbl("app_project_items", ["project_id", "url", "sort_order", "added_at",
                                          "role", "added_by"])
     notes = tbl("wiki_notes", ["subject_type", "subject_id", "kind", "body", "author",
                                "created_at", "source_refs", "resolved_at", "resolution",
@@ -532,7 +532,7 @@ def build():
     facts = compute_facts(t)
     _chats(chats, cmsg, facts)
     _pages_and_articles(pages, articles, facts)
-    _notebooks(notebooks, nbitems)
+    _projects(projects, nbitems)
     _user_pages(pages)
     _notes_and_memories(notes, memories)
     _saves_and_docs(marks, docs)
@@ -1564,7 +1564,7 @@ def _day_web(d, off, web, chi):
                 f"p3y_s_web_{k}_{i}", "data_activity_web_browsing", "demo")
 
 
-NOTEBOOKS = [
+PROJECTS = [
     # (id, name, icon, accent, instructions, auto_add, [(url, role)])
     ("p3y_nb_house", "The Selden St house", "\U0001F3E1", "#7A5C3E",
      "Everything about buying and keeping this house. Inspection notes are the "
@@ -1592,21 +1592,21 @@ NOTEBOOKS = [
 ]
 
 
-def _notebooks(notebooks, nbitems):
-    """Six notebooks with their children — the room has never had any data.
+def _projects(projects, nbitems):
+    """Six projects with their children — the room has never had any data.
 
-    A notebook item is a URL into the record (`/person/`, `/place/`, `/org/`,
+    A project item is a URL into the record (`/person/`, `/place/`, `/org/`,
     `/page/`, `/chat/`), so the children are real refs rather than copies, and
     the roles exercise all three: `pin` is the spine, `manuscript` is the thing
     being written, `library` is everything gathered around it.
     """
     now = ts(ANCHOR_END, 9, 0)
-    for i, (nid, name, icon, accent, instr, auto, items) in enumerate(NOTEBOOKS):
+    for i, (nid, name, icon, accent, instr, auto, items) in enumerate(PROJECTS):
         made = ts(START + timedelta(days=400 + i * 90), 10, 0)
-        notebooks.add(nid, name, icon, accent, i, instr, auto, made, now)
+        projects.add(nid, name, icon, accent, i, instr, auto, made, now)
         for j, (url, role) in enumerate(items):
             # Some of it gathered by hand, some pulled in by the magnet — a
-            # notebook where every row says "user" hides half the feature.
+            # project where every row says "user" hides half the feature.
             by = "user" if role != "library" or j % 3 else "magnet"
             nbitems.add(nid, url, j, made + timedelta(days=j), role, by)
 
@@ -1901,13 +1901,13 @@ DELETE FROM app_page_versions
  WHERE page_id NOT IN (SELECT id FROM app_pages WHERE starts_with(id, 'page_p3y_'));
 DELETE FROM app_pages WHERE NOT starts_with(id, 'page_p3y_');
 
--- Notebooks, and the items inside them. An item a visitor adds to a SEEDED
--- notebook survives this: the seed does not give items their own ids, so there
+-- Projects, and the items inside them. An item a visitor adds to a SEEDED
+-- project survives this: the seed does not give items their own ids, so there
 -- is nothing to tell one from the other. Left as-is deliberately — give
--- `app_notebook_items` seeded ids if that edge ever shows up in a demo.
-DELETE FROM app_notebook_items
- WHERE notebook_id NOT IN (SELECT id FROM app_notebooks WHERE starts_with(id, 'p3y_nb_'));
-DELETE FROM app_notebooks WHERE NOT starts_with(id, 'p3y_nb_');
+-- `app_project_items` seeded ids if that edge ever shows up in a demo.
+DELETE FROM app_project_items
+ WHERE project_id NOT IN (SELECT id FROM app_projects WHERE starts_with(id, 'p3y_nb_'));
+DELETE FROM app_projects WHERE NOT starts_with(id, 'p3y_nb_');
 
 -- What a visitor's chat taught the assistant about a life that is not theirs.
 --
@@ -1938,7 +1938,7 @@ GROUPS = {
                    "data_calendar_event", "data_environment_weather"],
     "03_derived": ["wiki_days", "wiki_events"],
     "04_creation": ["app_chats", "app_chat_messages", "app_pages", "wiki_articles",
-                    "app_notebooks", "app_notebook_items", "wiki_notes",
+                    "app_projects", "app_project_items", "wiki_notes",
                     "app_assistant_memories", "app_applets", "app_applet_runs"],
     "05_content": ["data_content_bookmark", "data_content_document",
                    "data_activity_web_browsing"],

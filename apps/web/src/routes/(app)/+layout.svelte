@@ -20,7 +20,7 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
-	import { notebookStore } from "$lib/stores/notebook.svelte";
+	import { projectStore } from "$lib/stores/project.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -139,7 +139,7 @@
 		// Load global data
 		chatSessions.load();
 		pinsStore.load();
-		notebookStore.load();
+		projectStore.load();
 		initTheme();
 
 		// Initialize workspace store (loads workspaces, tree, and tabs)

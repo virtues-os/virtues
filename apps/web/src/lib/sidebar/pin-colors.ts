@@ -1,7 +1,7 @@
 /**
  * Identity colors — the one palette for "which thing is this?"
  *
- * A thing that carries a color (a pin, a page, a chat, a notebook) shows it
+ * A thing that carries a color (a pin, a page, a chat, a project) shows it
  * wherever its NAME appears: the dot or glyph on its sidebar row, its tab icon,
  * the dot in the path mast. It never colors a container — a pane holds tabs
  * from many worlds, so painting the pane would claim the window for one of
@@ -186,10 +186,10 @@ export function accentCss(value: string | null | undefined): string | null {
  * The color for a pinned thing: its chosen one if it has one, otherwise the
  * hash of its url.
  *
- * Keyed on the URL, not on a species. Anything with a route can sit on the
- * Desk — a notebook, an applet, a PDF in Drive, a single day, a person, an
- * external link — so asking "what kind of thing is this?" would be both
- * fragile and beside the point. The url IS the identity.
+ * Keyed on the URL, not on a species. Anything with a route can be pinned —
+ * a project, an applet, a PDF in Drive, a single day, a person, an external
+ * link — so asking "what kind of thing is this?" would be both fragile and
+ * beside the point. The url IS the identity.
  */
 export function clothFor(pin: { url: string; color?: string | null }): string {
 	return accentCss(pin.color) ?? `var(--cat-${pinColor(pin.url)})`;

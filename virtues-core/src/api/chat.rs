@@ -178,10 +178,10 @@ pub struct ChatRequest {
     /// Optional client-generated message ID for idempotency
     #[serde(rename = "messageId")]
     pub message_id: Option<String>,
-    /// The Notebook (room) this chat lives in. Stored on the chat and inlined into
+    /// The Project (room) this chat lives in. Stored on the chat and inlined into
     /// the system prompt as a salience lens (name + memo + member URLs).
-    #[serde(rename = "notebookId", default)]
-    pub notebook_id: Option<String>,
+    #[serde(rename = "projectId", alias = "notebookId", default)]
+    pub project_id: Option<String>,
     /// Optional active page context for AI page editing
     #[serde(rename = "activePage")]
     pub active_page: Option<ActivePageContext>,
@@ -204,9 +204,9 @@ pub struct ChatRequest {
     /// Agent mode controlling tool availability (agent, chat, research)
     #[serde(rename = "agentMode", default = "default_agent_mode")]
     pub agent_mode: String,
-    /// Retrieval scope for notebook chats: "open" (default — whole graph,
-    /// notebook items up-weighted) or "scoped" (grounded — items only).
-    /// Ignored without a notebook_id.
+    /// Retrieval scope for project chats: "open" (default — whole graph,
+    /// project items up-weighted) or "scoped" (grounded — items only).
+    /// Ignored without a project_id.
     #[serde(rename = "chatMode", default = "default_chat_mode")]
     pub chat_mode: String,
     /// A temporary ("ghost") chat: nothing about it is written to the box.
@@ -1009,7 +1009,7 @@ async fn build_system_prompt(
     timezone: Option<&str>,
     agent_mode: &str,
     persona_id: &str,
-    notebook_id: Option<&str>,
+    project_id: Option<&str>,
 ) -> (String, String) {
     use crate::api::assistant_profile::get_assistant_name;
     use crate::api::profile::get_display_name;
@@ -1061,7 +1061,7 @@ async fn build_system_prompt(
         timezone,
         agent_mode,
         persona_id,
-        notebook_id,
+        project_id,
         &assistant_name,
         &user_name,
     )
@@ -1080,7 +1080,7 @@ async fn build_system_prompt_blocks(
     timezone: Option<&str>,
     agent_mode: &str,
     persona_id: &str,
-    notebook_id: Option<&str>,
+    project_id: Option<&str>,
     assistant_name: &str,
     user_name: &str,
 ) -> (String, String, Vec<crate::agent::prompt_blocks::RenderedBlock>) {
@@ -1172,13 +1172,13 @@ async fn build_system_prompt_blocks(
                 crate::api::circumstances::build_circumstances(pool, timezone, floored).await
             }),
         },
-        // The active Notebook (room) as a salience lens: its name, catch-up
+        // The active Project (room) as a salience lens: its name, catch-up
         // memo, and member URLs. This is the room the chat lives in.
         Block {
-            meta: BlockMeta { tag: "active_notebook", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::Session },
+            meta: BlockMeta { tag: "active_project", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::Session },
             body: Box::pin(async move {
-                match notebook_id {
-                    Some(id) => build_notebook_context(pool, id).await,
+                match project_id {
+                    Some(id) => build_project_context(pool, id).await,
                     None => None,
                 }
             }),
@@ -1255,27 +1255,27 @@ pub(crate) async fn build_system_prompt_for_audit(pool: &PgPool) -> String {
     format!("{stable}{volatile}")
 }
 
-/// Maximum member URLs to inline for a Notebook before truncating.
-const MAX_NOTEBOOK_ITEMS_INLINED: usize = 100;
+/// Maximum member URLs to inline for a Project before truncating.
+const MAX_PROJECT_ITEMS_INLINED: usize = 100;
 
-/// Build a context block for the active Notebook (room) the chat lives in.
-/// Returns None if the Notebook can't be loaded.
-async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<String> {
-    let detail = match crate::api::notebooks::get_notebook(pool, notebook_id).await {
+/// Build a context block for the active Project (room) the chat lives in.
+/// Returns None if the Project can't be loaded.
+async fn build_project_context(pool: &PgPool, project_id: &str) -> Option<String> {
+    let detail = match crate::api::projects::get_project(pool, project_id).await {
         Ok(d) => d,
         Err(e) => {
-            tracing::warn!("[chat] failed to load active notebook {}: {}", notebook_id, e);
+            tracing::warn!("[chat] failed to load active project {}: {}", project_id, e);
             return None;
         }
     };
 
     let mut out = String::new();
     out.push_str(&format!(
-        "\n\n<active_notebook name=\"{}\">",
-        escape_attr(&detail.notebook.name),
+        "\n\n<active_project name=\"{}\">",
+        escape_attr(&detail.project.name),
     ));
 
-    if let Some(instr) = detail.notebook.instructions.as_deref() {
+    if let Some(instr) = detail.project.instructions.as_deref() {
         if !instr.is_empty() {
             out.push_str(&format!(
                 "\n  <instructions>{}</instructions>",
@@ -1284,7 +1284,7 @@ async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<Stri
         }
     }
 
-    if let Some(memo) = detail.notebook.current_status.as_deref() {
+    if let Some(memo) = detail.project.current_status.as_deref() {
         if !memo.is_empty() {
             out.push_str(&format!("\n  <memo>{}</memo>", escape_attr(memo)));
         }
@@ -1294,7 +1294,7 @@ async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<Stri
     let shown: Vec<_> = detail
         .items
         .iter()
-        .take(MAX_NOTEBOOK_ITEMS_INLINED)
+        .take(MAX_PROJECT_ITEMS_INLINED)
         .collect();
 
     // Resolve every member in one batch before writing the block. A bare URL
@@ -1325,16 +1325,16 @@ async fn build_notebook_context(pool: &PgPool, notebook_id: &str) -> Option<Stri
         // a draft read exactly like a source.
         out.push_str(&format!(" role=\"{}\"/>", escape_attr(&item.role)));
     }
-    if total > MAX_NOTEBOOK_ITEMS_INLINED {
+    if total > MAX_PROJECT_ITEMS_INLINED {
         out.push_str(&format!(
             "\n  <!-- {} more members not shown -->",
-            total - MAX_NOTEBOOK_ITEMS_INLINED
+            total - MAX_PROJECT_ITEMS_INLINED
         ));
     }
 
-    out.push_str("\n</active_notebook>");
+    out.push_str("\n</active_project>");
 
-    let preamble = "\n\n<active_notebook_preamble>\nThis chat lives in the Notebook (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. <instructions>, if present, are standing directions for how you should behave in this notebook — follow them. <memo>, if present, is a catch-up note about the notebook's current state. Members are also boosted in semantic search while this notebook is active.\n\nThe member list below IS the notebook's contents — it is already complete (up to the cap noted at its end). When the user refers to something \"in this notebook,\" match it here first; do not go looking for the notebook's contents with other tools.\n\nEach member carries what it is: `title`, `kind`, and `role`. `role=\"library\"` grounds this chat; `role=\"manuscript\"` is the user's own draft, deliberately excluded from retrieval — never cite it back at them as a source; `role=\"pin\"` is navigation only. Files also carry `text`: `indexed` means its contents are searchable, `pending` means extraction has not finished yet, and `none` means no text was extracted — searching for its contents will find nothing, so say so plainly rather than reporting an empty search as an absence of the thing.\n</active_notebook_preamble>";
+    let preamble = "\n\n<active_project_preamble>\nThis chat lives in the Project (room) below — a collection the user returns to (an undertaking, a pet, a hobby, a goal, or a topic). Treat its members as high-salience: they are the user's actively curated focus for this room. <instructions>, if present, are standing directions for how you should behave in this project — follow them. <memo>, if present, is a catch-up note about the project's current state. Members are also boosted in semantic search while this project is active.\n\nThe member list below IS the project's contents — it is already complete (up to the cap noted at its end). When the user refers to something \"in this project,\" match it here first; do not go looking for the project's contents with other tools.\n\nEach member carries what it is: `title`, `kind`, and `role`. `role=\"library\"` grounds this chat; `role=\"manuscript\"` is the user's own draft, deliberately excluded from retrieval — never cite it back at them as a source; `role=\"pin\"` is navigation only. Files also carry `text`: `indexed` means its contents are searchable, `pending` means extraction has not finished yet, and `none` means no text was extracted — searching for its contents will find nothing, so say so plainly rather than reporting an empty search as an absence of the thing.\n</active_project_preamble>";
 
     Some(format!("{}{}", preamble, out))
 }
@@ -1564,9 +1564,9 @@ async fn chat_handler_inner(
 
     if chat_was_created {
         if let Err(e) =
-            crate::api::notebooks::set_chat_notebook(&pool, &chat_id_str, request.notebook_id.as_deref()).await
+            crate::api::projects::set_chat_project(&pool, &chat_id_str, request.project_id.as_deref()).await
         {
-            tracing::warn!("Failed to set chat notebook: {}", e);
+            tracing::warn!("Failed to set chat project: {}", e);
         }
     }
 
@@ -1847,35 +1847,35 @@ async fn chat_handler_inner(
     };
 
     // Resolve the chat's room from the persisted row (single source of truth) so
-    // the active-notebook context always matches the binding, even if a stale client
-    // sends a different per-message notebookId. The create path above already bound a
-    // new chat from request.notebook_id, so the row is current by now.
-    // Decoded as `Option<String>` on purpose: `app_chats.notebook_id` is nullable
+    // the active-project context always matches the binding, even if a stale client
+    // sends a different per-message projectId. The create path above already bound a
+    // new chat from request.project_id, so the row is current by now.
+    // Decoded as `Option<String>` on purpose: `app_chats.project_id` is nullable
     // (and the FK is ON DELETE SET NULL), so an unbound chat legitimately reads
     // NULL. Scalar-typing it as `String` would make that NULL a decode *error* —
     // which is what the old `.ok()` was really swallowing, alongside every real
     // query failure. A swallow here is not cosmetic: None reads as "not in a
-    // notebook", so a broken query silently unscopes a scoped chat — retrieval
+    // project", so a broken query silently unscopes a scoped chat — retrieval
     // stops being hard-filtered and the answer contract below is dropped.
     // A ghost chat has no row to read it from; the request is the binding.
-    let effective_notebook_id: Option<String> = if temporary {
-        request.notebook_id.clone()
+    let effective_project_id: Option<String> = if temporary {
+        request.project_id.clone()
     } else {
         match sqlx::query_scalar::<_, Option<String>>(
-        r#"SELECT notebook_id FROM app_chats WHERE id = $1"#,
+        r#"SELECT project_id FROM app_chats WHERE id = $1"#,
     )
     .bind(&chat_id_str)
     .fetch_optional(&pool)
     .await
     {
-        // Outer None = no such row, inner None = bound to no notebook.
-        Ok(notebook_id) => notebook_id.flatten(),
+        // Outer None = no such row, inner None = bound to no project.
+        Ok(project_id) => project_id.flatten(),
         Err(e) => {
-            tracing::error!("Failed to resolve notebook for chat {}: {}", chat_id_str, e);
+            tracing::error!("Failed to resolve project for chat {}: {}", chat_id_str, e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ChatError {
-                    error: "Failed to resolve chat notebook".to_string(),
+                    error: "Failed to resolve chat project".to_string(),
                     // The error is already logged above. `sqlx::Error`'s
                     // Display carries the Postgres message and often the
                     // column or constraint name, and this JSON goes to a
@@ -1893,13 +1893,13 @@ async fn chat_handler_inner(
     // gets the marker, `system_tail` is the per-turn tail (the open page's live
     // text, and the rules that deliberately sit behind it) which must stay
     // OUTSIDE the cached block or it invalidates the prefix on every keystroke.
-    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, effective_notebook_id.as_deref()).await;
-    // Scoped (grounded) chat: retrieval is hard-filtered to the notebook's
+    let (mut system_prompt, system_tail) = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, effective_project_id.as_deref()).await;
+    // Scoped (grounded) chat: retrieval is hard-filtered to the project's
     // items (ScopeMode::Exclusive in ToolContext); this line sets the matching
-    // answer contract. Only meaningful inside a notebook.
-    if request.chat_mode == "scoped" && effective_notebook_id.is_some() {
+    // answer contract. Only meaningful inside a project.
+    if request.chat_mode == "scoped" && effective_project_id.is_some() {
         system_prompt.push_str(
-            "\n\nSCOPED CHAT: this conversation is grounded in the current notebook's \
+            "\n\nSCOPED CHAT: this conversation is grounded in the current project's \
              materials only. Retrieval is restricted to them. Answer ONLY from what \
              retrieval returns, citing each load-bearing claim with its ref link. If \
              the materials don't cover the question, say so plainly — do not answer \
@@ -2082,7 +2082,7 @@ fn create_agent_stream(
         let context = ToolContext {
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
             user_id: None,
-            notebook_id: request.notebook_id.clone(),
+            project_id: request.project_id.clone(),
             scope_mode: if request.chat_mode == "scoped" {
                 crate::search::ScopeMode::Exclusive
             } else {
@@ -2945,7 +2945,7 @@ mod tests {
         assert_eq!(tags.last(), Some(&"rules"), "rules must render last — nearest the conversation");
         assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
         assert!(tags.contains(&"circumstances"));
-        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "active_notebook", "active_context", "rules"];
+        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "active_project", "active_context", "rules"];
         let mut last = 0usize;
         for t in &tags {
             let pos = expected.iter().position(|e| e == t).expect("unknown block tag");
@@ -3019,12 +3019,12 @@ mod ni_budget_tests {
     }
 }
 
-/// Renders the real active-notebook block against a dev database, so the text
+/// Renders the real active-project block against a dev database, so the text
 /// the model actually receives is inspected rather than assumed. Ignored by
 /// default — CI has no box database.
-///   cargo test -p virtues --lib api::chat::live_notebook -- --ignored --nocapture
+///   cargo test -p virtues --lib api::chat::live_project -- --ignored --nocapture
 #[cfg(test)]
-mod live_notebook {
+mod live_project {
     use sqlx::PgPool;
 
     #[tokio::test]
@@ -3035,18 +3035,18 @@ mod live_notebook {
         let pool = PgPool::connect(&url).await.expect("dev database");
 
         let id: Option<String> = sqlx::query_scalar(
-            "SELECT notebook_id FROM app_notebook_items
-             GROUP BY notebook_id ORDER BY count(*) DESC LIMIT 1",
+            "SELECT project_id FROM app_project_items
+             GROUP BY project_id ORDER BY count(*) DESC LIMIT 1",
         )
         .fetch_optional(&pool)
         .await
         .expect("query");
         let Some(id) = id else {
-            println!("no notebooks with members; nothing to render");
+            println!("no projects with members; nothing to render");
             return;
         };
 
-        let block = super::build_notebook_context(&pool, &id)
+        let block = super::build_project_context(&pool, &id)
             .await
             .expect("a context block");
         println!("\n{block}\n");
@@ -3077,15 +3077,15 @@ mod live_prompt_audit {
             .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
         let pool = PgPool::connect(&url).await.expect("dev database");
 
-        let notebook: Option<String> = sqlx::query_scalar(
-            "SELECT notebook_id FROM app_notebook_items
-             GROUP BY notebook_id ORDER BY count(*) DESC LIMIT 1",
+        let project: Option<String> = sqlx::query_scalar(
+            "SELECT project_id FROM app_project_items
+             GROUP BY project_id ORDER BY count(*) DESC LIMIT 1",
         )
         .fetch_optional(&pool)
         .await
         .expect("query");
 
-        for (label, nb) in [("no notebook", None), ("in a notebook", notebook.as_deref())] {
+        for (label, nb) in [("no project", None), ("in a project", project.as_deref())] {
             let p = super::build_system_prompt(
                 &pool,
                 None,
@@ -3114,7 +3114,7 @@ mod live_prompt_audit {
                 "<identity>",
                 "<recent_days>",
                 "<connected_sources>",
-                "<active_notebook",
+                "<active_project",
                 "<active_context>",
             ] {
                 if let Some(i) = p.find(tag) {

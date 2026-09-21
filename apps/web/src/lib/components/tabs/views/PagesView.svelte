@@ -97,7 +97,7 @@
 				action: async () => {
 					const ok = await confirmAction({
 						title: "Delete page?",
-						body: `"${page.title}" will be deleted. Notebooks that reference it will drop the link.`,
+						body: `"${page.title}" will be deleted. Projects that reference it will drop the link.`,
 						confirmLabel: "Delete",
 						danger: true,
 					});

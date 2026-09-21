@@ -8,7 +8,7 @@
  *
  * Usage (anywhere, including plain .ts):
  *     if (!(await confirmAction({ title: 'Delete page?', danger: true }))) return;
- *     const name = await promptText({ title: 'Notebook name' });
+ *     const name = await promptText({ title: 'Project name' });
  *
  * A single <DialogHost /> in the app layout renders whatever is pending.
  */

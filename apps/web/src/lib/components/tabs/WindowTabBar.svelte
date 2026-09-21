@@ -13,7 +13,7 @@
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
-	import { getNotebookMenuItems } from "$lib/utils/contextMenuItems";
+	import { getProjectMenuItems } from "$lib/utils/contextMenuItems";
 	import { updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
@@ -355,7 +355,7 @@
 
 		// Add "Add to Folder" / "Move to Workspace" submenus if tab has a route
 		if (tab.route) {
-			items.push(...getNotebookMenuItems(tab.route));
+			items.push(...getProjectMenuItems(tab.route));
 			// Anything you can open, you can keep. The tab is the one surface
 			// that exists for every route in the app, so wiring the pin here
 			// makes the Desk reachable from everywhere by construction rather

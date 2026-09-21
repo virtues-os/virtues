@@ -303,10 +303,10 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             virtues.database.initialize().await?;
             let pool = virtues.database.pool();
 
-            use crate::magnet::{self, NOTEBOOK};
-            let notebooks = magnet::run_all(pool, NOTEBOOK).await?;
+            use crate::magnet::{self, PROJECT};
+            let projects = magnet::run_all(pool, PROJECT).await?;
 
-            println!("magnet · notebooks attached {notebooks}");
+            println!("magnet · projects attached {projects}");
             return Ok(());
         }
 

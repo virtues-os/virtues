@@ -55,6 +55,8 @@
 		entityTypes?: string[];
 		/** IDs to exclude from results (already selected) */
 		excludeIds?: string[];
+		/** Keep only results this returns true for (runs after the type/id filters) */
+		filter?: (entity: EntityResult) => boolean;
 		/** Position for fixed positioning (optional) */
 		position?: { x: number; y: number };
 		/** Placeholder text */
@@ -74,6 +76,7 @@
 		onClose,
 		entityTypes,
 		excludeIds = [],
+		filter,
 		position,
 		placeholder = 'Search entities...',
 		keepOpen = false,
@@ -130,6 +133,10 @@
 			// Exclude already selected items
 			if (excludeIds.length > 0) {
 				items = items.filter((item) => !excludeIds.includes(item.id));
+			}
+
+			if (filter) {
+				items = items.filter(filter);
 			}
 
 			results = items;
@@ -238,7 +245,7 @@
 			org: 'Organizations',
 			thing: 'Things',
 			chat: 'Chats',
-			notebook: 'Notebooks'
+			project: 'Projects'
 		};
 		return labels[type] || type;
 	}

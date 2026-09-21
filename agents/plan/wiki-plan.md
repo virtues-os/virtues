@@ -498,7 +498,7 @@ pins. Two real gaps:
   match. It needs a **new bind of the raw lowercased query** — aliases are
   already stored lowercased with a GIN index (0037), so `aliases ? $4` works.
   Note the UNION has **seven** branches (people, places, orgs, files, pages,
-  chats, notebooks), not the five an earlier draft listed.
+  chats, projects), not the five an earlier draft listed.
 - **Articles will arrive typed as `page`.** With the wrapper, an article must
   resolve as *the person*, not as a page — a `kind` filter plus subject typing.
 
@@ -538,7 +538,7 @@ every dimension that matters:
 | author | you | you or the machine |
 | cites | no | machine notes: required |
 | lifecycle | permanent; a highlight is never "resolved" | open → accepted / dismissed / absorbed |
-| built | fully: create/list/patch, markdown export per file and per notebook, its own indexed ontology | schema only, zero producers |
+| built | fully: create/list/patch, markdown export per file and per project, its own indexed ontology | schema only, zero producers |
 | rows on the real box | **1** | **0** |
 
 **Marginalia is the literal thing** — a note written in the margin of a page you
@@ -567,7 +567,7 @@ cannot be written the obvious way** — `DROP CONSTRAINT wiki_notes_subject_type
 fails and aborts the migration mid-upgrade. The rename migration must carry
 `ALTER INDEX … RENAME`, `ALTER TABLE … RENAME CONSTRAINT`, and
 `ALTER SEQUENCE … RENAME` first. 0033 is the in-repo precedent — it renamed four
-indexes after the notebook rename.
+indexes after the Spaces→Notebooks rename.
 
 **And the index rows must be re-pointed in the same migration.** There is no GC
 path in `search/` at all: nothing ever deletes rows whose ontology no longer
@@ -1425,7 +1425,7 @@ schema hint.
 10. **Merge**, standalone. Deliberately last and deliberately alone: it rewrites
    rows in a 131k-row table under a `NULLS NOT DISTINCT` unique index, unions
    `emails`/`phones`/`handles`/`aliases`, re-points articles, notes, pins and
-   notebook items, and is effectively irreversible — so the loser is
+   project items, and is effectively irreversible — so the loser is
    soft-deleted (marked merged-into), not dropped. It needs its own design pass;
    nothing else in the plan waits on it.
 

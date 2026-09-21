@@ -25,6 +25,58 @@ producing the statistical average of every SaaS dashboard.
 
 ---
 
+## The shell
+
+A rail of rooms, and one panel beside it that the selected room fills. The
+rail is the spine and does not move; the panel swaps. Defined in
+`apps/web/src/lib/sidebar/rooms.ts`.
+
+The rail, top to bottom, in three gap-separated groups:
+
+| Group | Room | Route |
+|---|---|---|
+| ground | **Chats** | `/chat-history` |
+| library | **Wiki** | `/wiki` |
+| library | **Drive** | `/storage` |
+| utility | **Sources** | `/sources` |
+| utility | **Developer** | `/virtues/developer/sql` |
+| utility | **Settings** | `/virtues/you` |
+
+- **Chats is the ground.** It sits alone above the first gap and at the top
+  of the rail. There is no Home room: `/home` is still a page, reached by
+  whatever links to it, and it is not a door.
+- **Drive, not Files.** The room kept its glyph and its `/storage` route; the
+  label names the place rather than its contents.
+- **Applets is not a room, and neither is Pages.** Each is a door at the top
+  of the Chats panel; `/applets` and `/page` are unchanged. Projects likewise:
+  a project is the room a chat lives in, so projects are listed in the Chats
+  panel rather than behind a rail door of their own.
+- Routes did not move. Labels and grouping did.
+
+The Chats panel, top to bottom:
+
+1. **Doors**: New chat, New page, Search, Applets. Search opens the ⌘K
+   palette.
+2. **Pinned.** A chat, a project, an applet or a page can be pinned.
+3. **Projects.** Five, then "Show more"; the label opens the full list. A
+   project cannot contain a project.
+4. **Today, Yesterday, Earlier**: the recent chats, grouped by when.
+
+Every group folds from its label, and the fold is remembered. A group with
+nothing in it is not drawn: no empty-state line, because the doors above
+already say how to make the first one.
+
+Hovering a project row opens a hover card: the name, its counts, a pin
+control, and two doors, "Open project" and "New chat here". Hovering a chat
+row or a pinned row reveals inline controls (pin, more). Both need the
+keyboard path and the touch fallback the interaction rules below require.
+
+**Pinned replaces the Desk.** "Desk" is retired as a name: the verb is pin and
+unpin, the section is Pinned. The desk in the organizing idea above is the
+metaphor for the chrome, not a section of it.
+
+---
+
 ## Anti-slop rules
 
 Every one of these was violated in this codebase and had to be undone. They are
@@ -118,8 +170,8 @@ carry a contents page.
   require a recessed strip, and a recessed strip is not worth what it costs the
   rest of the window.
 - **A row that names a destination navigates to it.** The chevron expands.
-  Two hit targets. A row that only toggles means "Notebooks" cannot take you to
-  Notebooks.
+  Two hit targets. A row that only toggles means "Projects" cannot take you to
+  Projects.
 - **No control that goes where you already are.** The `···` overflow is only
   rendered when the row itself cannot reach the index.
 - **Modifier hints gate on a BARE accelerator**, never on hold-duration alone.
@@ -135,14 +187,19 @@ carry a contents page.
 
 ## Removed, and why
 
-- **Pins / favourites.** Two visual treatments were tried (plain rows, then
-  coloured ribbons) and neither solved the actual problem: a pinned "Pages" and
-  a nav "Pages" render identically, so the section read as a duplicate of the
-  nav directly beneath it. The `app_pins` table, its API and the reorder
-  endpoint all remain — the UI is gone, not the data. If it returns it should
-  be a different SHAPE from a nav row, not a tinted one.
-- **Recents.** Six of twelve rows were destinations already in the nav; the
-  sidebar was the largest contributor to its own history list.
+- **Pins as a shelf of nav rows (the Desk).** Two visual treatments were
+  tried (plain rows, then colored ribbons) and neither solved the actual
+  problem: a pinned "Pages" and a nav "Pages" render identically, so the
+  section read as a duplicate of the nav directly beneath it. The `app_pins`
+  table, its API and the reorder endpoint stayed through that. Pinning came
+  back as **Pinned** at the top of the Chats panel (see The shell), reached
+  by a pin control on the thing itself rather than a tab menu: what gets
+  pinned is a chat, a project, an applet or a page, never a room, which is
+  the different shape the rule asked for.
+- **Recents as a sidebar-wide list.** Six of twelve rows were destinations
+  already in the nav; the sidebar was the largest contributor to its own
+  history list. Recents returned at the foot of the Chats panel, where it
+  lists chats only, so no row in it can be a room.
 - **Today.** `/home` is the live view of today; `/day` only exists after the
   nightly run.
 
@@ -153,6 +210,6 @@ Check whether a word is already taken before reusing it. Three live examples:
 - **`data_content_bookmark`** owns "bookmark" for *ingested* saved links (GitHub
   stars, browser bookmarks). The sidebar's kept routes stayed "Pinned" for this
   reason.
-- **`app_notebook_items.role = 'pin'`** is retrieval scope, unrelated to sidebar
+- **`app_project_items.role = 'pin'`** is retrieval scope, unrelated to sidebar
   pins.
 - **`tab.pinned`** is tab *compaction*, unrelated to both.

@@ -330,10 +330,10 @@ fn read_asset_tool() -> ToolConfig {
 
 Use this when the user refers to a specific file — a screenshot, a photo, a diagram — and answering means seeing what is actually in it.
 
-Take the id from the file's ref URL: `/drive/dr_abc123` means `file_id: "dr_abc123"`. Notebook members list theirs.
+Take the id from the file's ref URL: `/drive/dr_abc123` means `file_id: "dr_abc123"`. Project members list theirs.
 
 When to reach for this instead of searching:
-- A member of the active notebook carries `text="none"` — nothing was extracted from it, so semantic_search cannot see inside it and will return nothing. That is not evidence the file lacks what the user is asking about. Look at it.
+- A member of the active project carries `text="none"` — nothing was extracted from it, so semantic_search cannot see inside it and will return nothing. That is not evidence the file lacks what the user is asking about. Look at it.
 - The user says "this screenshot" / "that photo" / "the image in here". Look before answering.
 - A document's extracted text is not enough and the layout matters.
 
@@ -592,8 +592,8 @@ Searchable domains: document (uploaded PDFs/files), email, message, calendar, ch
 
 IMPORTANT: `domains` is an OPTIONAL narrowing filter. OMIT it to search everything —
 including the user's uploaded documents. When the conversation is grounded in a
-notebook, ALWAYS omit `domains`: the notebook already scopes the results, and an
-extra domain filter will wrongly exclude the notebook's materials.
+project, ALWAYS omit `domains`: the project already scopes the results, and an
+extra domain filter will wrongly exclude the project's materials.
 
 Returns results in relevance order (rank 1 = best match) with title, preview, author, and timestamp. Rank is relative order within THIS result set only — it says nothing about absolute match quality, so do not describe rank-1 as a strong match unless its content shows it.
 Use sql_query with the returned record_ids to get full details.
@@ -619,7 +619,7 @@ single wording would miss. Use one phrasing for a precise lookup."#.to_string(),
                 "domains": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "OPTIONAL narrowing filter — omit to search all sources (including uploaded documents). Valid: document, email, message, calendar, chat, transaction, transcription, page. In a notebook-grounded chat, OMIT this."
+                    "description": "OPTIONAL narrowing filter — omit to search all sources (including uploaded documents). Valid: document, email, message, calendar, chat, transaction, transcription, page. In a project-grounded chat, OMIT this."
                 },
                 "date_after": {
                     "type": "string",
@@ -1400,12 +1400,12 @@ fn get_project_item_tool() -> ToolConfig {
 
 Use this when:
 - The user @-mentions something — a markdown link like [name](/chat/chat_xxx),
-  [name](/page/page_xxx), or [name](/notebook/notebook_xxx) in their message — and its
+  [name](/page/page_xxx), or [name](/project/nb_xxx) in their message — and its
   content is RELEVANT to answering. The @-mention is a pointer; pull it in only
   if you actually need it.
 - An attached_project lists items and you need one's full content.
 
-Supported urls: /page/, /chat/, /notebook/, /person/, /place/, /org/.
+Supported urls: /page/, /chat/, /project/, /person/, /place/, /org/.
 Returns the item's content (page text, recent chat messages, space members,
 person/place/org details). Don't fetch a reference you don't need."#.to_string(),
         parameters: serde_json::json!({
@@ -1414,7 +1414,7 @@ person/place/org details). Don't fetch a reference you don't need."#.to_string()
             "properties": {
                 "item_url": {
                     "type": "string",
-                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /chat/chat_xxx, /notebook/notebook_xxx, /person/person_xxx"
+                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /chat/chat_xxx, /project/nb_xxx, /person/person_xxx"
                 }
             }
         }),

@@ -59,7 +59,7 @@ pub mod identity;
 pub mod setup_phrase;
 pub mod network;
 pub mod provision;
-pub mod notebooks;
+pub mod projects;
 pub mod records;
 pub mod refs;
 pub mod source_auth;
@@ -209,12 +209,12 @@ pub use annotations::{
     list_annotations, update_annotation, Annotation, CreateAnnotationRequest,
     UpdateAnnotationRequest,
 };
-pub use notebooks::{
-    add_notebook_item, create_notebook, delete_notebook, get_notebook, list_notebooks,
-    remove_notebook_item, reorder_notebook_items, set_chat_notebook, touch_notebook,
-    update_notebook, AddNotebookItemRequest, CreateNotebookRequest, Notebook, NotebookDetail,
-    NotebookItem, NotebookListResponse, NotebookSummary, ReorderNotebookItemsRequest,
-    UpdateNotebookRequest,
+pub use projects::{
+    add_project_item, create_project, delete_project, get_project, list_projects,
+    remove_project_item, reorder_project_items, set_chat_project, touch_project,
+    update_project, AddProjectItemRequest, CreateProjectRequest, Project, ProjectDetail,
+    ProjectItem, ProjectListResponse, ProjectSummary, ReorderProjectItemsRequest,
+    UpdateProjectRequest,
 };
 
 pub use chat_usage::{

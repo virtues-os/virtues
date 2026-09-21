@@ -588,7 +588,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                notebook_id: None,
+                project_id: None,
             },
         )
         .await

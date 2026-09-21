@@ -28,7 +28,7 @@ use sqlx::{PgPool, Row};
 /// from mail and messages, so everything the record ingested can reach this
 /// block. All of it lands inside the SYSTEM message, where a `</circumstances>`
 /// in a 64-character title would close the block and let what follows read as
-/// instruction. The notebook block a few hundred lines away already escapes for
+/// instruction. The project block a few hundred lines away already escapes for
 /// this reason; this one only clipped.
 fn clip(s: &str, max: usize) -> String {
     let flattened = s.replace('<', "&lt;").replace('>', "&gt;");
@@ -288,8 +288,8 @@ async fn build_section(
             .bind(now.to_rfc3339())
             .fetch_all(pool)
             .await?;
-            let notebooks = sqlx::query(
-                r#"SELECT id, name FROM app_notebooks
+            let projects = sqlx::query(
+                r#"SELECT id, name FROM app_projects
                    WHERE archived_at IS NULL AND updated_at > $1::timestamptz - interval '14 days'
                    ORDER BY updated_at DESC, id LIMIT 3"#,
             )
@@ -306,10 +306,10 @@ async fn build_section(
                     id
                 ));
             }
-            for r in &notebooks {
+            for r in &projects {
                 let id: String = r.try_get("id")?;
                 let name: String = r.try_get("name")?;
-                items.push(format!("- notebook \"{}\" ({})", clip(&name, 48), id));
+                items.push(format!("- project \"{}\" ({})", clip(&name, 48), id));
             }
             Ok((!items.is_empty())
                 .then(|| format!("Live threads (edited recently):\n{}", items.join("\n"))))
@@ -478,12 +478,12 @@ mod tests {
             .await
             .unwrap();
         }
-        // threads: a fresh page + notebook
+        // threads: a fresh page + project
         sqlx::query("INSERT INTO app_pages (id, title) VALUES ('page_t1', 'Draft essay')")
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO app_notebooks (id, name) VALUES ('nb_t1', 'Garden')")
+        sqlx::query("INSERT INTO app_projects (id, name) VALUES ('nb_t1', 'Garden')")
             .execute(&pool)
             .await
             .unwrap();

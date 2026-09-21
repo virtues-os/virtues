@@ -87,28 +87,28 @@ const CANDIDATE_POOL: i64 = 200;
 /// added data", which is exactly what a vector index is supposed to prevent.
 const HNSW_EF_SEARCH: i64 = CANDIDATE_POOL + CANDIDATE_POOL / 4;
 
-/// Notebook-scoped retrieval (lean v1): additive bonus, in z-score space, for a
-/// candidate chunk that belongs to the active notebook's members. z-scores can be
+/// Project-scoped retrieval (lean v1): additive bonus, in z-score space, for a
+/// candidate chunk that belongs to the active project's members. z-scores can be
 /// negative, so we ADD a bonus (≈ one std-dev) rather than multiply — a boost, not
-/// a hard filter (recall is unchanged; only ranking shifts toward the notebook).
-const NOTEBOOK_BOOST: f64 = 1.0;
+/// a hard filter (recall is unchanged; only ranking shifts toward the project).
+const PROJECT_BOOST: f64 = 1.0;
 
-/// How an active notebook shapes retrieval (user-facing: "Open" vs "Scoped"
+/// How an active project shapes retrieval (user-facing: "Open" vs "Scoped"
 /// chat — see researcher-plan decision 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScopeMode {
-    /// Open: search everything; notebook members get the additive z-boost.
+    /// Open: search everything; project members get the additive z-boost.
     #[default]
     Weighted,
-    /// Scoped: hard-filter to the notebook's members (grounded chat). An
+    /// Scoped: hard-filter to the project's members (grounded chat). An
     /// empty scope returns no results — honest, never silently open.
     Exclusive,
 }
 
 /// The scoping applied to a recall pass, resolved and owned so a single set can
 /// be reused across many recall calls (e.g. multi-query fan-out) without
-/// re-resolving. Empty collections mean "no filter". Notebook membership is
-/// pre-resolved into `nb_records`/`nb_entities` by `resolve_notebook_scope`, so
+/// re-resolving. Empty collections mean "no filter". Project membership is
+/// pre-resolved into `nb_records`/`nb_entities` by `resolve_project_scope`, so
 /// `recall_and_fuse` does no I/O of its own.
 #[derive(Debug, Clone, Default)]
 pub struct SearchFilters {
@@ -140,9 +140,9 @@ pub struct SearchOptions {
     /// Resolved entity IDs (person/place/org). When set, only rows whose
     /// source record references one of these entities are returned.
     pub entities: Vec<String>,
-    /// Active notebook: its members' chunks get an additive ranking boost
+    /// Active project: its members' chunks get an additive ranking boost
     /// (Weighted) or become the only searchable set (Exclusive).
-    pub notebook_id: Option<String>,
+    pub project_id: Option<String>,
     pub scope_mode: ScopeMode,
     pub limit: Option<i64>,
 }
@@ -370,21 +370,21 @@ impl SemanticSearchEngine {
 
     /// Resolve a request's scope into ready-to-bind `SearchFilters`, or `None`
     /// for the honest-zero case: a grounded (Exclusive) chat over an empty or
-    /// fully unindexed notebook scope returns no results — never silently
+    /// fully unindexed project scope returns no results — never silently
     /// falls open to the whole graph.
     async fn prepare_filters(&self, opts: &SearchOptions) -> Result<Option<SearchFilters>> {
-        // Notebook scoping: resolve the active notebook's members into a set of
+        // Project scoping: resolve the active project's members into a set of
         // record_ids (page/day/source/chat + document chunks for /drive/file_
         // members) and entity_ids (person/place/org). Weighted = additive
         // ranking bonus; Exclusive = hard filter (grounded chat).
-        let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match &opts.notebook_id {
-            Some(nb) => self.resolve_notebook_scope(nb).await?,
+        let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match &opts.project_id {
+            Some(nb) => self.resolve_project_scope(nb).await?,
             None => (Vec::new(), Vec::new()),
         };
-        let notebook_scoped = !nb_records.is_empty() || !nb_entities.is_empty();
-        if opts.notebook_id.is_some()
+        let project_scoped = !nb_records.is_empty() || !nb_entities.is_empty();
+        if opts.project_id.is_some()
             && opts.scope_mode == ScopeMode::Exclusive
-            && !notebook_scoped
+            && !project_scoped
         {
             return Ok(None);
         }
@@ -476,7 +476,7 @@ impl SemanticSearchEngine {
     /// both callers. `terms` are the BM25 tokens of the source query (empty for a
     /// pure-vector query, which degenerates cleanly to dense-only: the lexical
     /// arm matches nothing and `bz` normalizes to 0). Scope resolution is the
-    /// caller's job (see `SearchFilters`); this method does no notebook I/O and
+    /// caller's job (see `SearchFilters`); this method does no project I/O and
     /// does not enforce Exclusive honest-zero — `prepare_filters` does that
     /// before calling in.
     pub(crate) async fn recall_and_fuse(
@@ -491,9 +491,9 @@ impl SemanticSearchEngine {
         let w_dense = 1.0 - alpha;
         let w_lex = alpha;
 
-        let notebook_scoped =
+        let project_scoped =
             !filters.nb_records.is_empty() || !filters.nb_entities.is_empty();
-        let notebook_boost = notebook_scoped;
+        let project_boost = project_scoped;
 
         // Shared filters (applied to both arms). $1 = query vector, $2 = query
         // terms; filter placeholders start at $3; the final placeholder is the
@@ -537,9 +537,9 @@ impl SemanticSearchEngine {
             ));
             next += 1;
         }
-        // Notebook boost placeholders ($record_ids, $entity_ids), bound after the
+        // Project boost placeholders ($record_ids, $entity_ids), bound after the
         // filters and before the recall limit.
-        let (p_nb_rec, p_nb_ent) = if notebook_boost {
+        let (p_nb_rec, p_nb_ent) = if project_boost {
             let a = next;
             let b = next + 1;
             next += 2;
@@ -551,7 +551,7 @@ impl SemanticSearchEngine {
         // joins filter_sql, which dense and lex share). Weighted: the additive
         // z-boost as before. Placeholder numbers were allocated above in bind
         // order, so using them inside filter_sql is safe.
-        if notebook_boost && filters.scope_mode == ScopeMode::Exclusive {
+        if project_boost && filters.scope_mode == ScopeMode::Exclusive {
             filter_sql.push_str(&format!(
                 " AND (se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_refs er2 \
                   WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
@@ -560,14 +560,14 @@ impl SemanticSearchEngine {
                 e = p_nb_ent,
             ));
         }
-        let boost_sql = if notebook_boost && filters.scope_mode == ScopeMode::Weighted {
+        let boost_sql = if project_boost && filters.scope_mode == ScopeMode::Weighted {
             format!(
                 " + CASE WHEN se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_refs er2 \
                   WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
                   AND er2.entity_id = ANY(${e})) THEN {boost} ELSE 0 END",
                 r = p_nb_rec,
                 e = p_nb_ent,
-                boost = NOTEBOOK_BOOST,
+                boost = PROJECT_BOOST,
             )
         } else {
             String::new()
@@ -671,7 +671,7 @@ impl SemanticSearchEngine {
         if exclude_filter {
             db_query = db_query.bind(filters.exclude_urls.clone());
         }
-        if notebook_boost {
+        if project_boost {
             db_query = db_query.bind(filters.nb_records.clone());
             db_query = db_query.bind(filters.nb_entities.clone());
         }
@@ -751,20 +751,20 @@ impl SemanticSearchEngine {
         Ok(candidates)
     }
 
-    /// Resolve an active notebook's members into the two buckets the search
+    /// Resolve an active project's members into the two buckets the search
     /// scope understands: direct record_ids (page/day/source/chat, plus the
     /// document CHUNKS of `/drive/file_` members — the uploaded_document
     /// ontology indexes per-chunk) and entity_ids (person/place/org —
     /// matched via `wiki_refs`). Filters to `role='library'` (= grounds
     /// chat; nav-only 'pin' rows are ignored, and 'manuscript' rows are the
     /// user's own draft — retrieving them would cite their unfinished prose
-    /// back at them as a source). External URLs and nested notebooks aren't
+    /// back at them as a source). External URLs and nested projects aren't
     /// indexed and are skipped.
-    async fn resolve_notebook_scope(&self, notebook_id: &str) -> Result<(Vec<String>, Vec<String>)> {
+    async fn resolve_project_scope(&self, project_id: &str) -> Result<(Vec<String>, Vec<String>)> {
         let urls: Vec<String> = sqlx::query_scalar(
-            "SELECT url FROM app_notebook_items WHERE notebook_id = $1 AND role = 'library'",
+            "SELECT url FROM app_project_items WHERE project_id = $1 AND role = 'library'",
         )
-        .bind(notebook_id)
+        .bind(project_id)
         .fetch_all(self.pool.as_ref())
         .await?;
         let mut records = Vec::new();
@@ -787,7 +787,7 @@ impl SemanticSearchEngine {
                         file_ids.push(id.to_string());
                     }
                 }
-                _ => {} // /notebook/ → not indexed
+                _ => {} // /project/ → not indexed
             }
         }
         if !file_ids.is_empty() {
