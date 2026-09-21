@@ -1,19 +1,31 @@
 # Voice
 
-> The voice for the prose Virtues writes — the founder's letter, the wiki, the
-> day page, the AI's own turns — and the bank of lines behind it: **a
-> perceptive friend who has read the data and refuses to flatter you.** Second
-> person, active, precise-over-warm, honest-not-cheerleading,
-> literary-by-restraint. Show the architecture, don't assert the virtue ("Stays
-> on your box. We can't read it." — never "your privacy matters to us").
+> Three things, none of them a voice: the **claim rules** every surface obeys,
+> the **register for in-app copy**, and the **bank** of lines written for the
+> letter and kept for the website, the film, and the colophon.
 >
-> In-app copy — settings, hints, empty states, errors — is **not** written in
-> this register. It has its own, plainer and shorter, in [UI copy](#ui-copy)
-> below. Same honesty, less literature. This header used to claim "onboarding
-> microcopy" too, and UI strings inherited the letter's length and cleverness
-> from it.
+> **There is no house voice, and this file no longer claims one.** Until
+> 2026-09-21 the header announced "the one voice for every surface where
+> Virtues speaks: a perceptive friend who has read the data and refuses to
+> flatter you." That line was a description of how the founder's letter should
+> feel, written during its August rewrite, and it was promoted into a style by
+> accident. Walk the surfaces and nobody named Virtues ever speaks: the letter
+> is Adam's, signed and first person; the day page and the articles are the
+> record read back, governed by [wiki-editor.md](wiki-editor.md) and the day
+> prompt; the life document is the person's own words; the assistant is a
+> named character whose line lives in `agent/prompt.rs`; the website is the
+> company's, and outside this repo. Everything else is copy. A stylized voice
+> over all of that gave UI strings the letter's length and cleverness, and
+> nothing else.
+>
+> What survives is discipline about claims, one plain register for the
+> product's furniture, and a file of good lines.
 
-## Register rules (settled during the 2026-08 letter rewrite)
+## Claim rules
+
+Settled during the 2026-08 letter rewrite; they apply to every sentence on
+every surface — the letter, copy, the manual, the assistant's turns. These are
+not tone. They are about what a sentence is allowed to assert.
 
 - **Headings are titles, not sentences** — no trailing periods.
 - **Artifacts, not features.** Name what a person would point at (the record,
@@ -30,21 +42,27 @@
 - **"Data" vs "the record":** their word when it is being weaponized (ads,
   algorithms, addictions extract *data*); our word when it is being kept (you
   hold *the record*). The letter uses both, on purpose, on opposite sides.
-- **One command per document.** The founder's letter permits itself exactly one
-  imperative (the ∴ thesis line). Everything else states, shows, or asks.
-- **No corporate "we"** in a document signed by a person.
 - **The ∴ mark is logic before it is a logo.** When it appears in prose it must
   actually mean *therefore* — premises above, conclusion after.
+- **Show the architecture, don't assert the virtue.** "Stays on your box. We
+  can't read it." — never "your privacy matters to us."
+
+Two rules belong to the letter alone, because it is signed by a person:
+
+- **One command per document.** The letter permits itself exactly one
+  imperative. Everything else states, shows, or asks.
+- **No corporate "we"** in a document signed by a person.
 
 ## UI copy
 
 Settled 2026-09-14 (the Billing pass — "I don't like much of your current copy
 and tone and voice") and 2026-09-21 (Paul Henry's copy principles, the voice
-rules of which are folded in here; his scope and process lists stay his). The
-register above is for prose the box writes and for the letter. In-app prose —
-settings pages, hints under controls, empty states, status and error text,
-applet descriptions, pairing screens, Atlas emails — is plainer. The tell that
-it has drifted: a settings page narrating its own design history.
+rules of which are folded in here; his scope and process lists stay his).
+In-app prose — settings pages, hints under controls, empty states, status and
+error text, applet descriptions, pairing screens, Atlas emails — is the
+product's furniture: read mid-task, on the way to something else. The tell that
+it has drifted: a settings page narrating its own design history, or a hint
+that reads like a paragraph of the letter.
 
 **Register.** Warm and plain, and concise. Second person; a sparing, confident
 "we" where Virtues itself acts ("We can't read it"). Sentences medium and

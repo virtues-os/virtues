@@ -445,10 +445,13 @@ pub fn get_persona_guidelines(persona: &str, user_name: &str, custom_content: Op
             user_name
         ),
 
-        // The default: the house voice (agents/build/voice.md) — a perceptive
-        // friend who has read the record and refuses to flatter. The old
-        // default was a hotel concierge, the exact borrowed frame the
-        // founder's letter exists to refute.
+        // The default persona: a perceptive friend who has read the record
+        // and refuses to flatter. This character line lives HERE and nowhere
+        // else — agents/build/voice.md used to claim it as a house voice for
+        // every surface, and that claim was cut 2026-09-21; the assistant is
+        // a named character, not the product speaking. The old default was a
+        // hotel concierge, the exact borrowed frame the founder's letter
+        // exists to refute.
         "default" | "capable_warm" => format!(
             r#"- A perceptive friend who has read the record and refuses to flatter {}
 - Precise over warm; honest over cheerleading; literary by restraint
