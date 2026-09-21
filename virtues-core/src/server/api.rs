@@ -4129,8 +4129,42 @@ pub async fn reorder_pins_handler(
 // ============================================================================
 
 /// GET /api/projects - List all projects
-pub async fn list_projects_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::projects::list_projects(state.db.pool()).await)
+pub async fn list_projects_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<ListProjectsQuery>,
+) -> Response {
+    api_response(
+        crate::api::projects::list_projects(state.db.pool(), q.include_archived.unwrap_or(false))
+            .await,
+    )
+}
+
+#[derive(Deserialize)]
+pub struct ListProjectsQuery {
+    /// `?include_archived=true` — the projects page, which folds them.
+    pub include_archived: Option<bool>,
+}
+
+/// POST /api/projects/:id/archive — close a project (kept, out of the working view)
+pub async fn archive_project_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::projects::archive_project(state.db.pool(), &id).await {
+        Ok(()) => success_message("Project archived"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// POST /api/projects/:id/unarchive
+pub async fn unarchive_project_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::projects::unarchive_project(state.db.pool(), &id).await {
+        Ok(()) => success_message("Project reopened"),
+        Err(e) => error_response(e),
+    }
 }
 
 /// GET /api/projects/:id - Get a single project with its members

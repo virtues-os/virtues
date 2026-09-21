@@ -358,6 +358,15 @@
 		}
 	}
 
+	async function archiveProject(p: ProjectSummary) {
+		closeCard();
+		try {
+			await projectStore.archive(p.id);
+		} catch (e) {
+			console.error('[HomePanel] Failed to archive project:', e);
+		}
+	}
+
 	async function removeProject(p: ProjectSummary) {
 		const ok = await confirmAction({
 			title: 'Delete this project?',
@@ -448,6 +457,9 @@
 			{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renameProject(p) },
 			// No "Add to project" here: you can't put a project in a project.
 			pinMenuItem({ url, label: p.name, icon: p.icon }),
+			// Closing a project is reversible (the Archived fold on Projects), so
+			// no confirm: the row leaving is the feedback.
+			{ id: 'archive', label: 'Archive', icon: 'ri:archive-line', action: () => archiveProject(p) },
 			{
 				id: 'delete',
 				label: 'Delete',

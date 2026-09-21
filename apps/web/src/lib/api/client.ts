@@ -1831,6 +1831,8 @@ export interface Project {
 	current_status_at: string | null;
 	instructions: string | null;
 	sort_order: number;
+	/** Set when the project is closed: kept, out of the working view. Not the trash. */
+	archived_at: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -1886,10 +1888,22 @@ export interface ProjectDetail extends Project {
 }
 
 /** GET /api/projects — all Projects with counts. */
-export async function listProjects(): Promise<{ projects: ProjectSummary[] }> {
-	const res = await fetch(`${API_BASE}/projects`);
-	if (!res.ok) throw new Error(`Failed to list projects: ${res.statusText}`);
-	return res.json();
+export async function listProjects(opts?: {
+	includeArchived?: boolean;
+}): Promise<{ projects: ProjectSummary[] }> {
+	return apiGet<{ projects: ProjectSummary[] }>('/projects', {
+		include_archived: opts?.includeArchived ? 'true' : undefined,
+	});
+}
+
+/** POST /api/projects/:id/archive — close a project. Reversible; no confirm needed. */
+export function archiveProject(id: string): Promise<void> {
+	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/archive`);
+}
+
+/** POST /api/projects/:id/unarchive — reopen it. */
+export function unarchiveProject(id: string): Promise<void> {
+	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/unarchive`);
 }
 
 /** GET /api/projects/:id — a Project with its ordered members. */
