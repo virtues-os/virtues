@@ -35,6 +35,7 @@
 
 pub mod applet_runner;
 pub mod executor;
+pub mod guard;
 pub mod subagent;
 pub mod prompt;
 pub mod prompt_blocks;
@@ -153,6 +154,8 @@ impl AgentLoop {
             let mut step: u32 = 0;
             // How this turn ends. Assigned at each break; reported once, below.
             let mut finish = protocol::FinishReason::EndTurn;
+            // Per turn: which tools have failed, and how — see `guard`.
+            let mut repeat_guard = guard::RepeatGuard::new();
 
             // Ask the model to RETURN its thinking. Claude 5 omits the text
             // unless told `display: summarized`; Gemini needs
@@ -328,13 +331,22 @@ impl AgentLoop {
                     "Executing tool calls"
                 );
 
-                let tool_results = executor::execute_tools(
+                // A call identical to one that already failed this turn, or
+                // a tool that has failed several times in a row, is not run:
+                // it comes back as a failed result saying so, and the model
+                // has to change something. The step ceiling still bounds the
+                // turn; this bounds how much of it is spent asking the same
+                // question.
+                let (admitted, refused) = repeat_guard.admit(&result.tool_calls);
+                let mut tool_results = executor::execute_tools(
                     &tool_executor,
-                    &result.tool_calls,
+                    &admitted,
                     &context,
                     &executor_config,
                 )
                 .await;
+                tool_results.extend(refused);
+                repeat_guard.record(&result.tool_calls, &tool_results);
 
                 // Emit tool results, checking for awaiting_user condition
                 let mut awaiting_user = false;

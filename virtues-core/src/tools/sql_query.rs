@@ -13,7 +13,7 @@ use super::executor::{ToolError, ToolResult};
 // is generated from it there (see `virtues_registry::sql_catalog`). This file
 // keeps the three consumers that run AFTER the model has written its query:
 // `list_tables`, `get_schema`, and the failure explainer.
-pub use virtues_registry::sql_catalog::{get_table_metadata, TableMetadata};
+use virtues_registry::sql_catalog::get_table_metadata;
 
 /// SQL query tool arguments (from LLM)
 #[derive(Debug, Deserialize)]
