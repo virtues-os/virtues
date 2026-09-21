@@ -2003,10 +2003,10 @@
 													<div
 														class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg"
 													>
-														<span class="font-medium">Error:</span>
-														{(part as any).toolName ?? part.type.slice("tool-".length)}
-														failed{#if errorText}
-															- {toolErrorSummary(errorText)}{/if}
+														<span class="font-medium">Your assistant couldn't finish</span>
+														{(part as any).toolName ?? part.type.slice("tool-".length)}.
+														Ask it to try again, or narrow what you asked for.{#if errorText}
+															{toolErrorSummary(errorText)}{/if}
 														{#if errorDetail}
 															<details class="mt-2">
 																<summary class="cursor-pointer text-xs opacity-80">Details</summary>

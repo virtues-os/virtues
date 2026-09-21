@@ -164,7 +164,7 @@
 				"It was allowed a fixed number of tool calls and reached the end of them. Ask it to carry on, or ask something narrower.",
 		},
 		reconnect: {
-			title: "This box is not recognized by billing",
+			title: "Billing doesn't recognize this server",
 			sentence: "Reconnect your subscription to continue.",
 		},
 		rate_limit: {
@@ -191,8 +191,8 @@
 			sentence: null,
 		},
 		in_progress: {
-			title: "A reply is still being written",
-			sentence: "This chat is answering your last message. Try again picks it up where it is.",
+			title: "Your assistant is still writing",
+			sentence: "It's answering your last message. Try again picks it up where it is.",
 		},
 		not_connected: {
 			title: "Nothing to answer with yet",

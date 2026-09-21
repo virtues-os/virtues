@@ -96,8 +96,8 @@
 		const ok = await confirmAction({
 			title: isSystem ? `Hide "${editingPersona.title}"?` : `Delete "${editingPersona.title}"?`,
 			body: isSystem
-				? 'A built-in persona — hiding it removes it from the picker. Reset personas restores it.'
-				: 'This persona is removed from the picker for good.',
+				? 'A built-in persona. Hiding it takes it out of the picker, and Reset personas brings it back.'
+				: "You'll remove this persona from the picker for good.",
 			confirmLabel: isSystem ? 'Hide' : 'Delete',
 			danger: !isSystem,
 		});
@@ -110,7 +110,7 @@
 	async function handleReset() {
 		const ok = await confirmAction({
 			title: 'Reset personas to defaults?',
-			body: 'Your custom personas are removed and hidden built-ins come back.',
+			body: "You'll delete every persona you wrote, for good. The built-ins you hid come back.",
 			confirmLabel: 'Reset',
 			danger: true,
 		});

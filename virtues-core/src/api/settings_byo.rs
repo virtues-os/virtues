@@ -616,8 +616,8 @@ fn validate_endpoint(url: &str) -> Result<(), &'static str> {
     match scheme {
         "https" => Ok(()),
         "http" if is_loopback(hostname) => Ok(()),
-        "http" => Err("endpoint_url must use https (http is allowed for localhost only)"),
-        _ => Err("endpoint_url must be an absolute http(s) URL"),
+        "http" => Err("Your server can only reach that address over https. Change it to start with https://, or use http only for a model on this server."),
+        _ => Err("Enter the full address of your model, starting with https://."),
     }
 }
 

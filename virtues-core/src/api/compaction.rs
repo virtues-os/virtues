@@ -209,13 +209,21 @@ async fn generate_summary(
             summarize_batch(pool, batch, summary.as_deref()),
         )
         .await
-        .map_err(|_| crate::Error::Other("Summary generation timed out after 60s".to_string()))??;
+        .map_err(|_| crate::Error::Other(
+            "Your assistant couldn't summarize this chat in time, so the turn didn't go out. \
+             Everything said so far is safe. Send it again."
+                .to_string(),
+        ))??;
         // An empty reply is a refusal or a model that spent its output
         // elsewhere. Stored, it would replace every earlier batch with
         // nothing and advance the index past them; the caller keeps the old
         // summary and the turn goes out uncompacted instead.
         if next.trim().is_empty() {
-            return Err(crate::Error::Other("Summary generation returned nothing".to_string()));
+            return Err(crate::Error::Other(
+                "Your assistant couldn't summarize this chat, so the turn didn't go out. \
+                 Everything said so far is safe. Send it again."
+                    .to_string(),
+            ));
         }
         summary = Some(next);
     }

@@ -305,7 +305,7 @@
 		onRetry={res.reload}
 		onRefresh={res.reload}
 		emptyIcon="ri:cpu-line"
-		emptyMessage="The catalog is empty — this box hasn't reached the cloud yet. It fills in on the next refresh."
+		emptyMessage="Your server hasn't reached the cloud yet, so there are no models to list. Refresh once it's back online."
 		loadingMessage="Loading the catalog..."
 		searchPlaceholder="Search models..."
 		defaultViewMode="table"

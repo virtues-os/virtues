@@ -25,7 +25,7 @@
                 console.error("Failed to load tables:", e.status, e.message);
                 if (e.status === 404) {
                     error =
-                        "Backend endpoint not found. Please restart the implementation server.";
+                        "Your server couldn't find the table list. Restart your server, then open this tab again.";
                 } else {
                     error = `Failed to load tables: ${e.status} ${e.message}`;
                 }
@@ -151,15 +151,13 @@
                         size="sm"
                     />
                     <div class="info-popover">
-                        <div class="info-title">Database is Read-Only</div>
+                        <div class="info-title">You can read these tables, not change them</div>
                         <p>
-                            These tables are critical for Virtues' internal data
-                            processing pipeline. Any modifications could break
-                            compatibility with the application.
+                            Your server reads these tables on every request, so
+                            an edit here would break what it reads.
                         </p>
                         <p class="mt-2">
-                            If you need to add, modify, or transform data, we
-                            recommend setting up your own database via
+                            To keep data of your own, make your own database in
                             the <strong>Terminal</strong> tab.
                         </p>
                     </div>
