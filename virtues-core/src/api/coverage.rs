@@ -105,10 +105,16 @@ mod tests {
                 "SELECT MIN({0})::date, MAX({0})::date FROM {1}",
                 ont.timestamp_column, ont.table_name
             );
-            sqlx::query_as::<_, (Option<NaiveDate>, Option<NaiveDate>)>(&sql)
+            // Spelled as an `if let` rather than `.unwrap_or_else(|e| panic!(…))`:
+            // the swallowed-query ratchet matches the `unwrap_or_else` shape and
+            // cannot see that this closure panics, which is the loudest handling
+            // there is. Same behavior, and the check keeps meaning what it says.
+            if let Err(e) = sqlx::query_as::<_, (Option<NaiveDate>, Option<NaiveDate>)>(&sql)
                 .fetch_one(&pool)
                 .await
-                .unwrap_or_else(|e| panic!("{}.{} is not readable: {e}", ont.table_name, ont.timestamp_column));
+            {
+                panic!("{}.{} is not readable: {e}", ont.table_name, ont.timestamp_column);
+            }
         }
     }
 
