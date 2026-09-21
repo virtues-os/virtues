@@ -20,15 +20,22 @@
 	 *   Pinned    what the user chose to keep, in their own order. This was
 	 *             the Desk, behind the Home tile; the shelf is more useful
 	 *             where a pin is reached for than in a room you walk to first.
-	 *   Projects  the rooms a chat can live in. Five, then "Show more"; the
-	 *             label opens the full list. A row's hover card carries what
-	 *             the row cannot: counts, the memo, the verbs.
-	 *   Today / Yesterday / Earlier
-	 *             the conversations, grouped by when, newest first, capped, with
-	 *             the archive behind "All chats". Grouping is not reordering —
-	 *             the groups are fixed and a chat only ever moves down through
-	 *             them. The archive page keeps the grid, the multi-select and
-	 *             the columns a 208px column can never carry.
+	 *   Projects  the rooms a chat can live in. Five, then "Show more". The
+	 *             label folds the group like every other label; the full
+	 *             list is behind the head's ⋯ (it used to be the label
+	 *             itself, which made Projects the one head that navigated
+	 *             when the others folded — a click that did a different
+	 *             thing in one place). A row's hover card carries what the
+	 *             row cannot: counts, the memo, the verbs.
+	 *   Today / Recent
+	 *             the chats AND the pages, blended by when they last moved,
+	 *             newest first, capped, with the archive behind "All chats".
+	 *             Two groups, not three: "Yesterday" was a calendar fact
+	 *             nobody navigated by, and it cost a heading and a fold for
+	 *             one day's worth of rows. Grouping is not reordering — a
+	 *             row only ever moves down from Today into Recent. The
+	 *             archive page keeps the grid, the multi-select and the
+	 *             columns a 208px column can never carry.
 	 *
 	 * Every group folds, and its fold is remembered (`sidebarZones`): a folded
 	 * group is a statement about how you want the column to look, not a place
@@ -46,6 +53,7 @@
 	 */
 	import { chatSessions, type ChatSession } from '$lib/stores/chatSessions.svelte';
 	import { projectStore } from '$lib/stores/project.svelte';
+	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { pendingPrompt } from '$lib/stores/pendingPrompt.svelte';
@@ -53,7 +61,14 @@
 	import { search } from '$lib/stores/search.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { confirmAction, promptText } from '$lib/stores/dialog.svelte';
-	import { deleteChat, updateChat, type Pin, type ProjectSummary } from '$lib/api/client';
+	import {
+		deleteChat,
+		updateChat,
+		updatePage,
+		type PageSummary,
+		type Pin,
+		type ProjectSummary,
+	} from '$lib/api/client';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 	import { accentCss, clothFor } from '$lib/sidebar/pin-colors';
@@ -74,31 +89,59 @@
 	const visibleProjects = $derived(
 		projectsExpanded ? projects : projects.slice(0, PROJECTS_SHOWN),
 	);
-	const recents = $derived(chatSessions.sessions.slice(0, RECENTS_CAP));
+	// The page list is loaded by the rooms that show pages; this panel is
+	// mounted before any of them, so it asks once. The store dedupes nothing,
+	// hence the guard on both the list and the in-flight flag.
+	if (!pagesStore.pages.length && !pagesStore.pagesLoading) pagesStore.loadPages();
 
-	/** Midnight-relative, so "yesterday" means the calendar day, not 24 hours. */
-	function bucketOf(s: ChatSession): 'today' | 'yesterday' | 'earlier' {
-		if (!s.last_updated) return 'earlier';
-		const then = new Date(s.last_updated);
-		if (Number.isNaN(then.getTime())) return 'earlier';
-		const startOfToday = new Date();
-		startOfToday.setHours(0, 0, 0, 0);
-		if (then >= startOfToday) return 'today';
-		const startOfYesterday = new Date(startOfToday);
-		startOfYesterday.setDate(startOfYesterday.getDate() - 1);
-		if (then >= startOfYesterday) return 'yesterday';
-		return 'earlier';
+	/** One row of the recents: a chat or a page, with when it last moved. */
+	type RecentRow =
+		| { kind: 'chat'; key: string; ts: number; session: ChatSession }
+		| { kind: 'page'; key: string; ts: number; page: PageSummary };
+
+	function stamp(iso: string | null | undefined): number {
+		if (!iso) return 0;
+		const t = Date.parse(iso);
+		return Number.isNaN(t) ? 0 : t;
 	}
 
-	const chatGroups = $derived.by(() => {
-		const buckets: Record<string, ChatSession[]> = { today: [], yesterday: [], earlier: [] };
-		for (const s of recents) buckets[bucketOf(s)].push(s);
+	/** Chats and pages, newest first, capped as one list. */
+	const recents = $derived.by<RecentRow[]>(() => {
+		const chats: RecentRow[] = chatSessions.sessions.map((session) => ({
+			kind: 'chat',
+			key: `chat:${session.conversation_id}`,
+			ts: stamp(session.last_updated),
+			session,
+		}));
+		const pages: RecentRow[] = pagesStore.pages.map((page) => ({
+			kind: 'page',
+			key: `page:${page.id}`,
+			ts: stamp(page.updated_at),
+			page,
+		}));
+		return [...chats, ...pages].sort((a, b) => b.ts - a.ts).slice(0, RECENTS_CAP);
+	});
+
+	/** Midnight-relative, so "today" means the calendar day, not 24 hours. */
+	function isToday(ts: number): boolean {
+		if (!ts) return false;
+		const startOfToday = new Date();
+		startOfToday.setHours(0, 0, 0, 0);
+		return ts >= startOfToday.getTime();
+	}
+
+	const recentGroups = $derived.by(() => {
+		const today: RecentRow[] = [];
+		const recent: RecentRow[] = [];
+		for (const r of recents) (isToday(r.ts) ? today : recent).push(r);
 		return [
-			{ id: 'today', label: 'Today', items: buckets.today },
-			{ id: 'yesterday', label: 'Yesterday', items: buckets.yesterday },
-			{ id: 'earlier', label: 'Earlier', items: buckets.earlier },
+			{ id: 'today', label: 'Today', items: today },
+			{ id: 'recent', label: 'Recent', items: recent },
 		].filter((g) => g.items.length > 0);
 	});
+
+	/** More than the column shows, of either kind. */
+	const hasArchive = $derived(chatSessions.sessions.length + pagesStore.pages.length > RECENTS_CAP);
 
 	/** Fold state, keyed so a future group costs one string. */
 	const zoneId = (id: string) => `chats.${id}`;
@@ -120,6 +163,14 @@
 
 	function projectRoute(p: ProjectSummary): string {
 		return `/project/${p.id}`;
+	}
+
+	function pageTitle(p: PageSummary): string {
+		return p.title?.trim() || 'Untitled';
+	}
+
+	function pageRoute(p: PageSummary): string {
+		return `/page/${p.id}`;
 	}
 
 	function isExternal(url: string): boolean {
@@ -173,6 +224,10 @@
 
 	function openChat(s: ChatSession) {
 		windowShellStore.openTabFromRoute(chatRoute(s), { label: titleOf(s), focusExisting: true });
+	}
+
+	function openPage(p: PageSummary) {
+		windowShellStore.openTabFromRoute(pageRoute(p), { label: pageTitle(p), focusExisting: true });
 	}
 
 	function openProject(p: ProjectSummary) {
@@ -243,6 +298,38 @@
 		} catch (e) {
 			console.error('[HomePanel] rename failed:', e);
 			await chatSessions.refresh();
+		}
+	}
+
+	async function renamePage(p: PageSummary) {
+		const next = await promptText({
+			title: 'Rename page',
+			initialValue: pageTitle(p),
+			confirmLabel: 'Rename',
+		});
+		const title = next?.trim();
+		if (!title || title === pageTitle(p)) return;
+		relabelTabs(pageRoute(p), title);
+		try {
+			await updatePage(p.id, { title });
+			await pagesStore.loadPages();
+		} catch (e) {
+			console.error('[HomePanel] page rename failed:', e);
+		}
+	}
+
+	async function removePage(p: PageSummary) {
+		const ok = await confirmAction({
+			title: 'Delete this page?',
+			body: `"${pageTitle(p)}" will be deleted. This cannot be undone.`,
+			confirmLabel: 'Delete',
+			danger: true,
+		});
+		if (!ok) return;
+		try {
+			await pagesStore.removePage(p.id);
+		} catch (e) {
+			console.error('[HomePanel] Failed to delete page:', e);
 		}
 	}
 
@@ -319,6 +406,40 @@
 				dividerBefore: true,
 				action: () => removeChat(s),
 			},
+		];
+	}
+
+	function pageMenu(p: PageSummary): ContextMenuItem[] {
+		const url = pageRoute(p);
+		const label = pageTitle(p);
+		return [
+			{
+				id: 'open-beside',
+				label: 'Open beside',
+				icon: 'ri:layout-column-line',
+				action: () => {
+					windowShellStore.openRouteBeside(url, label);
+				},
+			},
+			{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renamePage(p) },
+			...getProjectMenuItems(url, label),
+			pinMenuItem({ url, label, icon: p.icon }),
+			{
+				id: 'delete',
+				label: 'Delete',
+				icon: 'ri:delete-bin-line',
+				variant: 'destructive',
+				dividerBefore: true,
+				action: () => removePage(p),
+			},
+		];
+	}
+
+	/** The head's ⋯: the list's own doors, off the label so the label can fold. */
+	function projectsHeadMenu(): ContextMenuItem[] {
+		return [
+			{ id: 'all', label: 'All projects', icon: 'ri:folder-3-line', action: openProjects },
+			{ id: 'new', label: 'New project', icon: 'ri:add-line', action: newProject },
 		];
 	}
 
@@ -518,49 +639,44 @@
 <!-- A group's head: the label folds the group; the chevron says so on
      approach and stays while the group is shut, because a folded group has
      to be able to say so — absence reads as missing data, not a decision.
-     `door` makes the label ALSO a route (Projects opens the full list) and
-     moves the fold onto the chevron alone. -->
-{#snippet groupHead(id: string, label: string, door?: () => void, action?: import('svelte').Snippet)}
+     Every label folds. Projects' label used to be a door to the full list
+     with the fold moved onto its chevron, which made it the one head that
+     went somewhere when the others folded; the doors now sit behind the
+     head's ⋯, and one click means one thing across the column. -->
+{#snippet groupHead(id: string, label: string, action?: import('svelte').Snippet)}
 	<div class="group-head" class:folded={folded(id)}>
-		{#if door}
-			<button type="button" class="group-label group-door" onclick={door}>{label}</button>
-			<button
-				type="button"
-				class="group-fold"
-				aria-expanded={!folded(id)}
-				aria-label={folded(id) ? `Show ${label}` : `Hide ${label}`}
-				title={folded(id) ? `Show ${label}` : `Hide ${label}`}
-				onclick={() => sidebarZones.toggle(zoneId(id))}
-			>
-				<svg class="chev" width="9" height="6" viewBox="0 0 10 6" fill="none" aria-hidden="true">
-					<path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-				</svg>
-			</button>
-		{:else}
-			<button
-				type="button"
-				class="group-label group-toggle"
-				aria-expanded={!folded(id)}
-				title={folded(id) ? `Show ${label}` : `Hide ${label}`}
-				onclick={() => sidebarZones.toggle(zoneId(id))}
-			>
-				<span>{label}</span>
-				<svg class="chev" width="9" height="6" viewBox="0 0 10 6" fill="none" aria-hidden="true">
-					<path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-				</svg>
-			</button>
-		{/if}
+		<button
+			type="button"
+			class="group-label group-toggle"
+			aria-expanded={!folded(id)}
+			title={folded(id) ? `Show ${label}` : `Hide ${label}`}
+			onclick={() => sidebarZones.toggle(zoneId(id))}
+		>
+			<span>{label}</span>
+			<svg class="chev" width="9" height="6" viewBox="0 0 10 6" fill="none" aria-hidden="true">
+				<path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+		</button>
 		{#if action}
 			<span class="group-actions">{@render action()}</span>
 		{/if}
 	</div>
 {/snippet}
 
-{#snippet newProjectAction()}
+{#snippet projectsHeadActions()}
 	<button type="button" class="row-action" aria-label="New project" title="New project" onclick={newProject}>
 		<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
 			<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
 		</svg>
+	</button>
+	<button
+		type="button"
+		class="row-action"
+		aria-label="More"
+		title="More"
+		onclick={(e) => showMenuFromButton(e, projectsHeadMenu())}
+	>
+		<Icon icon="ri:more-line" width="14" />
 	</button>
 {/snippet}
 
@@ -582,6 +698,7 @@
 		}}
 		oncontextmenu={(e) => showMenu(e, chatMenu(session))}
 	>
+		<span class="row-glyph" aria-hidden="true"><AtlasIcon name="chats" size={15} bare /></span>
 		<span class="panel-row-text">{titleOf(session)}</span>
 		<span class="row-actions">
 			<button
@@ -600,6 +717,56 @@
 				aria-label="More"
 				title="More"
 				onclick={(e) => showMenuFromButton(e, chatMenu(session))}
+			>
+				<Icon icon="ri:more-line" width="14" />
+			</button>
+		</span>
+	</div>
+{/snippet}
+
+{#snippet pageRow(page: PageSummary)}
+	{@const url = pageRoute(page)}
+	{@const pinned = isPinned(url)}
+	<div
+		class="panel-row panel-row-has-actions"
+		class:active={activeRoute === url}
+		role="link"
+		tabindex="0"
+		title={pageTitle(page)}
+		onclick={() => openPage(page)}
+		onkeydown={(e) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				openPage(page);
+			}
+		}}
+		oncontextmenu={(e) => showMenu(e, pageMenu(page))}
+	>
+		<span class="row-glyph" aria-hidden="true">
+			{#if page.icon && isEmoji(page.icon)}
+				<span class="row-emoji">{page.icon}</span>
+			{:else}
+				<AtlasIcon name="pages" size={15} bare />
+			{/if}
+		</span>
+		<span class="panel-row-text">{pageTitle(page)}</span>
+		<span class="row-actions">
+			<button
+				type="button"
+				class="row-action"
+				class:on={pinned}
+				aria-label={pinned ? 'Unpin' : 'Pin'}
+				title={pinned ? 'Unpin' : 'Pin'}
+				onclick={(e) => quickPin(e, { url, label: pageTitle(page), icon: page.icon })}
+			>
+				<Icon icon={pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line'} width="14" />
+			</button>
+			<button
+				type="button"
+				class="row-action"
+				aria-label="More"
+				title="More"
+				onclick={(e) => showMenuFromButton(e, pageMenu(page))}
 			>
 				<Icon icon="ri:more-line" width="14" />
 			</button>
@@ -667,7 +834,7 @@
 {/if}
 
 {#if projects.length > 0}
-	{@render groupHead('projects', 'Projects', openProjects, newProjectAction)}
+	{@render groupHead('projects', 'Projects', projectsHeadActions)}
 	<div class="sidebar-expandable" class:expanded={!folded('projects')}>
 		<div class="sidebar-expandable-inner">
 			{#each visibleProjects as project (project.id)}
@@ -735,17 +902,21 @@
 	</div>
 {/if}
 
-{#each chatGroups as group (group.id)}
+{#each recentGroups as group (group.id)}
 	{@render groupHead(group.id, group.label)}
 	<div class="sidebar-expandable" class:expanded={!folded(group.id)}>
 		<div class="sidebar-expandable-inner">
-			{#each group.items as session (session.conversation_id)}
-				{@render chatRow(session)}
+			{#each group.items as row (row.key)}
+				{#if row.kind === 'chat'}
+					{@render chatRow(row.session)}
+				{:else}
+					{@render pageRow(row.page)}
+				{/if}
 			{/each}
 		</div>
 	</div>
 {/each}
-{#if chatSessions.sessions.length > RECENTS_CAP}
+{#if hasArchive}
 	<button type="button" class="panel-row panel-more" onclick={openAllChats}>All chats</button>
 {/if}
 
@@ -827,30 +998,9 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.group-label:focus-visible,
-	.group-fold:focus-visible {
+	.group-label:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
-	}
-
-	/* The label that is also a door reads as a word until you reach it. */
-	.group-door:hover {
-		color: var(--color-foreground);
-	}
-
-	.group-fold {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 18px;
-		height: 18px;
-		margin-left: 2px;
-		padding: 0;
-		border: none;
-		border-radius: 4px;
-		background: none;
-		cursor: pointer;
-		color: var(--color-foreground-subtle);
 	}
 
 	.chev {
@@ -862,8 +1012,7 @@
 	}
 
 	.group-head:hover .chev,
-	.group-toggle:focus-visible .chev,
-	.group-fold:focus-visible .chev {
+	.group-toggle:focus-visible .chev {
 		opacity: 0.8;
 	}
 
