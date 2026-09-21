@@ -37,7 +37,7 @@ pub enum Author {
     Machine,
     /// Deterministic computation over the record (clock, user context).
     Computed,
-    /// The UI's live state (open notebook, open page).
+    /// The UI's live state (open project, open page).
     Ui,
 }
 
@@ -59,7 +59,7 @@ pub enum Cadence {
     Static,
     /// Months–years (narrative identity, rules).
     Slow,
-    /// Changes within a session but not per turn (memory, notebook).
+    /// Changes within a session but not per turn (memory, project).
     Session,
     /// Changes on a quantized clock (the datetime / situation block).
     Quantized,

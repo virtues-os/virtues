@@ -33,8 +33,8 @@ const PagesView: ViewLoader = () => import('$lib/components/tabs/views/PagesView
 const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/PageDetailView.svelte');
 const BookmarksView: ViewLoader = () => import('$lib/components/tabs/views/BookmarksView.svelte');
 const BookmarkDetailView: ViewLoader = () => import('$lib/components/tabs/views/BookmarkDetailView.svelte');
-const NotebooksListView: ViewLoader = () => import('$lib/components/tabs/views/NotebooksListView.svelte');
-const NotebookDetailView: ViewLoader = () => import('$lib/components/tabs/views/NotebookDetailView.svelte');
+const ProjectsListView: ViewLoader = () => import('$lib/components/tabs/views/ProjectsListView.svelte');
+const ProjectDetailView: ViewLoader = () => import('$lib/components/tabs/views/ProjectDetailView.svelte');
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
 
@@ -348,7 +348,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		component: BookmarksView,
 	},
 
-	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /notebook/{id}.
+	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /project/{id}.
 	bookmark: {
 		match: (path) => /^\/bookmark\/.+$/.test(path),
 		parse: (path) => ({
@@ -367,45 +367,53 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// NOTEBOOK NAMESPACE: /notebooks (list), /notebook/{id} (detail)
+	// PROJECT NAMESPACE: /projects (list), /project/{id} (detail)
 	//
-	// A Notebook is the "room" a chat lives in — a workspace lens over the graph:
+	// A Project is the "room" a chat lives in — a workspace lens over the graph:
 	// a Library of materials, filed chats, entities, and pages. (id may be a
 	// legacy `space_…` or a new `nb_…` — both route the same.)
+	//
+	// Projects were called notebooks until 2026-09. The legacy `/notebooks` and
+	// `/notebook/{id}` spellings still match — old pins, citations and serialized
+	// tab URLs carry them — and parse to a `project` tab with `normalizedRoute`
+	// rewritten to the `/project…` form, so nothing downstream sees the old name.
 	// ========================================================================
-	notebook: {
+	project: {
 		match: (path) =>
+			path === '/projects' ||
+			path === '/project' ||
 			path === '/notebooks' ||
 			path === '/notebook' ||
-			/^\/notebook\/[^/]+$/.test(path),
+			/^\/(?:project|notebook)\/[^/]+$/.test(path),
 		parse: (path) => {
-			if (path === '/notebooks' || path === '/notebook') {
+			if (path === '/projects' || path === '/project' || path === '/notebooks' || path === '/notebook') {
 				return {
-					type: 'notebook',
-					label: 'Notebooks',
-					icon: 'ri:booklet-line',
-					normalizedRoute: '/notebooks',
+					type: 'project',
+					label: 'Projects',
+					icon: 'ri:folder-3-line',
+					normalizedRoute: '/projects',
 				};
 			}
-			const match = path.match(/^\/notebook\/([^/]+)$/);
+			const match = path.match(/^\/(project|notebook)\/([^/]+)$/);
 			return {
-				type: 'notebook',
-				label: 'Notebook',
-				icon: 'ri:booklet-line',
-				entityId: match?.[1],
+				type: 'project',
+				label: 'Project',
+				icon: 'ri:folder-3-line',
+				entityId: match?.[2],
+				// Rewrite the legacy spelling; the canonical form is a no-op.
+				...(match?.[1] === 'notebook' && { normalizedRoute: `/project/${match[2]}` }),
 			};
 		},
-		serialize: (id) => id || 'notebooks',
-		deserialize: (serialized) => {
-			if (serialized && serialized !== 'notebooks' && serialized !== 'notebook') {
-				return `/notebook/${serialized}`;
-			}
-			return '/notebooks';
-		},
-		icon: 'ri:booklet-line',
-		defaultLabel: 'Notebooks',
-		component: NotebooksListView,
-		detailComponent: NotebookDetailView,
+		// Prefixed like `bookmark_`, not bare like `person_…`: a bare `nb_…` id
+		// has no tab type in front of it, so `deserializeTab` read it as type
+		// "nb" and every project tab restored as Home.
+		serialize: (id) => (id ? `project_${id}` : 'projects'),
+		deserialize: (serialized) =>
+			serialized.startsWith('project_') ? `/project/${serialized.slice(8)}` : '/projects',
+		icon: 'ri:folder-3-line',
+		defaultLabel: 'Projects',
+		component: ProjectsListView,
+		detailComponent: ProjectDetailView,
 	},
 
 	// ========================================================================
@@ -866,7 +874,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'person',
 		'place',
 		'org',
-		'notebook',
+		'project',
 		// Detail before the room: /bookmark/{id} and /bookmarks are distinct
 		// paths, but keeping the pair adjacent is how the next person notices
 		// that BOTH have to be listed here. An entry in `tabRegistry` alone is

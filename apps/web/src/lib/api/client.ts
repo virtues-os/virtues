@@ -1309,7 +1309,7 @@ export async function listAnnotations(fileId: string): Promise<Annotation[]> {
 	return res.json();
 }
 
-/** A highlight enriched with its file's name, for the notebook Highlights tab. */
+/** A highlight enriched with its file's name, for the project Highlights tab. */
 /** A file's highlights as markdown (blockquote + citation ref each). */
 export async function exportFileAnnotations(fileId: string): Promise<string> {
 	const res = await fetch(`${API_BASE}/annotations/export?file_id=${encodeURIComponent(fileId)}`);
@@ -1715,7 +1715,7 @@ export async function updateChat(
 		title?: string;
 		icon?: string | null;
 		icon_color?: string | null;
-		notebookId?: string | null;
+		projectId?: string | null;
 	}
 ): Promise<{
 	conversation_id: string;
@@ -1755,16 +1755,16 @@ export async function deleteChat(chatId: string): Promise<{ deleted: boolean }> 
 }
 
 // =============================================================================
-// Notebooks API — the "room" a chat lives in
+// Projects API — the "room" a chat lives in
 //
-// A Notebook is a manual collection the user returns to: a project, pet, hobby,
+// A Project is a manual collection the user returns to: a project, pet, hobby,
 // goal, or topic. It gathers entities, chats, and pages as URL-native members
 // and carries a single accent tint plus a catch-up memo (`current_status`).
-// A chat lives in at most one Notebook (see `updateChat`'s `notebookId`).
+// A chat lives in at most one Project (see `updateChat`'s `projectId`).
 // =============================================================================
 
-/** Core Notebook row (no counts). Returned by create/update. */
-export interface Notebook {
+/** Core Project row (no counts). Returned by create/update. */
+export interface Project {
 	id: string;
 	name: string;
 	icon: string | null;
@@ -1778,30 +1778,30 @@ export interface Notebook {
 }
 
 /** List-view summary — adds member and chat counts. */
-export interface NotebookSummary extends Notebook {
+export interface ProjectSummary extends Project {
 	item_count: number;
 	chat_count: number;
 }
 
 /**
- * What a member is to the notebook.
+ * What a member is to the project.
  *  - `library`    grounds chat (the default for anything you add)
  *  - `manuscript` yours to write — kept out of retrieval, so a draft is never
  *                 cited back at you as if it were a source
  *  - `pin`        nav-only shortcut
  */
-export type NotebookItemRole = 'library' | 'manuscript' | 'pin';
+export type ProjectItemRole = 'library' | 'manuscript' | 'pin';
 
-/** A single URL-native member of a Notebook. */
-export interface NotebookItem {
+/** A single URL-native member of a Project. */
+export interface ProjectItem {
 	url: string;
 	sort_order: number;
-	role: NotebookItemRole;
+	role: ProjectItemRole;
 	added_at: string;
 }
 
-/** One entity referenced across a notebook's members. */
-export interface NotebookGraphNode {
+/** One entity referenced across a project's members. */
+export interface ProjectGraphNode {
 	/** Ref URL, e.g. `/person/pe_abc` — also the node's identity. */
 	url: string;
 	entity_type: string;
@@ -1811,57 +1811,57 @@ export interface NotebookGraphNode {
 }
 
 /** Two entities that share at least one member. */
-export interface NotebookGraphEdge {
+export interface ProjectGraphEdge {
 	source: string;
 	target: string;
 	weight: number;
 }
 
-export interface NotebookGraph {
-	nodes: NotebookGraphNode[];
-	edges: NotebookGraphEdge[];
+export interface ProjectGraph {
+	nodes: ProjectGraphNode[];
+	edges: ProjectGraphEdge[];
 }
 
-/** GET /api/notebooks/:id — a Notebook plus its ordered members. */
-export interface NotebookDetail extends Notebook {
-	items: NotebookItem[];
+/** GET /api/projects/:id — a Project plus its ordered members. */
+export interface ProjectDetail extends Project {
+	items: ProjectItem[];
 }
 
-/** GET /api/notebooks — all Notebooks with counts. */
-export async function listNotebooks(): Promise<{ notebooks: NotebookSummary[] }> {
-	const res = await fetch(`${API_BASE}/notebooks`);
-	if (!res.ok) throw new Error(`Failed to list notebooks: ${res.statusText}`);
+/** GET /api/projects — all Projects with counts. */
+export async function listProjects(): Promise<{ projects: ProjectSummary[] }> {
+	const res = await fetch(`${API_BASE}/projects`);
+	if (!res.ok) throw new Error(`Failed to list projects: ${res.statusText}`);
 	return res.json();
 }
 
-/** GET /api/notebooks/:id — a Notebook with its ordered members. */
-export async function getNotebook(id: string): Promise<NotebookDetail> {
-	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(id)}`);
-	if (!res.ok) throw new Error(`Failed to get notebook: ${res.statusText}`);
+/** GET /api/projects/:id — a Project with its ordered members. */
+export async function getProject(id: string): Promise<ProjectDetail> {
+	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`);
+	if (!res.ok) throw new Error(`Failed to get project: ${res.statusText}`);
 	return res.json();
 }
 
-/** POST /api/notebooks — create a Notebook. */
-export async function createNotebook(body: {
+/** POST /api/projects — create a Project. */
+export async function createProject(body: {
 	name: string;
 	icon?: string | null;
 	accent_color?: string | null;
-}): Promise<Notebook> {
-	const res = await fetch(`${API_BASE}/notebooks`, {
+}): Promise<Project> {
+	const res = await fetch(`${API_BASE}/projects`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
 	});
-	if (!res.ok) throw new Error(`Failed to create notebook: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to create project: ${res.statusText}`);
 	return res.json();
 }
 
 /**
- * PUT /api/notebooks/:id — update a Notebook. For the nullable fields
+ * PUT /api/projects/:id — update a Project. For the nullable fields
  * (`icon`/`accent_color`/`current_status`): omit the key to leave unchanged,
  * send `null` to clear, send a value to set.
  */
-export async function updateNotebook(
+export async function updateProject(
 	id: string,
 	patch: {
 		name?: string;
@@ -1871,20 +1871,20 @@ export async function updateNotebook(
 		instructions?: string | null;
 		sort_order?: number;
 	}
-): Promise<Notebook> {
-	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(id)}`, {
+): Promise<Project> {
+	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(patch)
 	});
-	if (!res.ok) throw new Error(`Failed to update notebook: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to update project: ${res.statusText}`);
 	return res.json();
 }
 
-/** DELETE /api/notebooks/:id */
-export async function deleteNotebook(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(id)}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete notebook: ${res.statusText}`);
+/** DELETE /api/projects/:id */
+export async function deleteProject(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete project: ${res.statusText}`);
 }
 
 // =============================================================================
@@ -1906,51 +1906,51 @@ export interface ViewEntity {
 
 
 // =============================================================================
-// Notebook Items API — the URL-native members of a Notebook
+// Project Items API — the URL-native members of a Project
 //
-// (Listing comes back inside `getNotebook(id)` as `NotebookDetail.items`; there is
+// (Listing comes back inside `getProject(id)` as `ProjectDetail.items`; there is
 // no separate GET.)
 // =============================================================================
 
-/** POST /api/notebooks/:id/items — add a member URL to a Notebook. */
-export async function addNotebookItem(notebookId: string, url: string): Promise<NotebookItem> {
+/** POST /api/projects/:id/items — add a member URL to a Project. */
+export async function addProjectItem(projectId: string, url: string): Promise<ProjectItem> {
 	const sanitizedUrl = sanitizeUrl(url);
-	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items`, {
+	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ url: sanitizedUrl })
 	});
-	if (!res.ok) throw new Error(`Failed to add notebook item: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to add project item: ${res.statusText}`);
 	return res.json();
 }
 
-/** DELETE /api/notebooks/:id/items — remove a member URL from a Notebook. */
-export async function removeNotebookItem(notebookId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items`, {
+/** DELETE /api/projects/:id/items — remove a member URL from a Project. */
+export async function removeProjectItem(projectId: string, url: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items`, {
 		method: 'DELETE',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ url })
 	});
-	if (!res.ok) throw new Error(`Failed to remove notebook item: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to remove project item: ${res.statusText}`);
 }
 
-/** PUT /api/notebooks/:id/items/reorder — set the member order by URL. */
-export async function reorderNotebookItems(notebookId: string, urls: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items/reorder`, {
+/** PUT /api/projects/:id/items/reorder — set the member order by URL. */
+export async function reorderProjectItems(projectId: string, urls: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items/reorder`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ urls })
 	});
-	if (!res.ok) throw new Error(`Failed to reorder notebook items: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to reorder project items: ${res.statusText}`);
 }
 
-/** PUT /api/notebooks/:id/items/role — set what a member is to the notebook. */
-export async function setNotebookItemRole(
-	notebookId: string,
+/** PUT /api/projects/:id/items/role — set what a member is to the project. */
+export async function setProjectItemRole(
+	projectId: string,
 	url: string,
-	role: NotebookItemRole
-): Promise<NotebookItem> {
-	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/items/role`, {
+	role: ProjectItemRole
+): Promise<ProjectItem> {
+	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/items/role`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ url, role })
@@ -1960,13 +1960,13 @@ export async function setNotebookItemRole(
 }
 
 /**
- * GET /api/notebooks/:id/graph — entities referenced across the members.
+ * GET /api/projects/:id/graph — entities referenced across the members.
  * Built only from things explicitly filed or linked (`[@ref]`); nothing is
  * inferred, so an entity merely mentioned inside a PDF will not appear.
  */
-export async function getNotebookGraph(notebookId: string): Promise<NotebookGraph> {
-	const res = await fetch(`${API_BASE}/notebooks/${encodeURIComponent(notebookId)}/graph`);
-	if (!res.ok) throw new Error(`Failed to load notebook graph: ${res.statusText}`);
+export async function getProjectGraph(projectId: string): Promise<ProjectGraph> {
+	const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/graph`);
+	if (!res.ok) throw new Error(`Failed to load project graph: ${res.statusText}`);
 	return res.json();
 }
 
@@ -1978,7 +1978,7 @@ export interface Page {
 	id: string;
 	title: string;
 	content: string;
-	notebook_id: string | null;
+	project_id: string | null;
 	icon: string | null;
 	/** `--cat-*` token key ('orange', 'emerald'), never a hex. Migration 0079. */
 	icon_color: string | null;
@@ -1991,7 +1991,7 @@ export interface Page {
 export interface PageSummary {
 	id: string;
 	title: string;
-	notebook_id: string | null;
+	project_id: string | null;
 	icon: string | null;
 	icon_color: string | null;
 	cover_url: string | null;
@@ -2021,11 +2021,11 @@ export interface RefSearchResponse {
 /**
  * List all pages with optional pagination and workspace filter
  */
-export async function listPages(limit?: number, offset?: number, notebook_id?: string): Promise<PageListResponse> {
+export async function listPages(limit?: number, offset?: number, project_id?: string): Promise<PageListResponse> {
 	const params = new URLSearchParams();
 	if (limit !== undefined) params.set('limit', String(limit));
 	if (offset !== undefined) params.set('offset', String(offset));
-	if (notebook_id !== undefined) params.set('notebook_id', notebook_id);
+	if (project_id !== undefined) params.set('project_id', project_id);
 
 	const url = params.toString() ? `${API_BASE}/pages?${params}` : `${API_BASE}/pages`;
 	const res = await fetch(url);
@@ -2049,13 +2049,13 @@ export async function getPage(id: string): Promise<Page> {
 export async function createPage(
 	title: string,
 	content: string = '',
-	notebook_id: string | null = null,
+	project_id: string | null = null,
 	options?: { icon?: string; cover_url?: string; tags?: string }
 ): Promise<Page> {
 	const res = await fetch(`${API_BASE}/pages`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title, content, notebookId: notebook_id, ...options })
+		body: JSON.stringify({ title, content, projectId: project_id, ...options })
 	});
 
 	if (!res.ok) throw new Error(`Failed to create page: ${res.statusText}`);
@@ -2070,7 +2070,7 @@ export async function updatePage(
 	updates: {
 		title?: string;
 		content?: string;
-		notebook_id?: string | null;
+		project_id?: string | null;
 		icon?: string | null;
 		icon_color?: string | null;
 		cover_url?: string | null;

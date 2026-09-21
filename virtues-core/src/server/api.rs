@@ -4125,109 +4125,109 @@ pub async fn reorder_pins_handler(
 }
 
 // ============================================================================
-// Notebooks Handlers
+// Projects Handlers
 // ============================================================================
 
-/// GET /api/notebooks - List all notebooks
-pub async fn list_notebooks_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::notebooks::list_notebooks(state.db.pool()).await)
+/// GET /api/projects - List all projects
+pub async fn list_projects_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::projects::list_projects(state.db.pool()).await)
 }
 
-/// GET /api/notebooks/:id - Get a single notebook with its members
-pub async fn get_notebook_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::notebooks::get_notebook(state.db.pool(), &id).await)
+/// GET /api/projects/:id - Get a single project with its members
+pub async fn get_project_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    api_response(crate::api::projects::get_project(state.db.pool(), &id).await)
 }
 
-/// POST /api/notebooks - Create a notebook
-pub async fn create_notebook_handler(
+/// POST /api/projects - Create a project
+pub async fn create_project_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::notebooks::CreateNotebookRequest>,
+    Json(request): Json<crate::api::projects::CreateProjectRequest>,
 ) -> Response {
-    match crate::api::notebooks::create_notebook(state.db.pool(), request).await {
-        Ok(notebook) => (StatusCode::CREATED, Json(notebook)).into_response(),
+    match crate::api::projects::create_project(state.db.pool(), request).await {
+        Ok(project) => (StatusCode::CREATED, Json(project)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/notebooks/:id - Update a notebook
-pub async fn update_notebook_handler(
+/// PUT /api/projects/:id - Update a project
+pub async fn update_project_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::notebooks::UpdateNotebookRequest>,
+    Json(request): Json<crate::api::projects::UpdateProjectRequest>,
 ) -> Response {
-    api_response(crate::api::notebooks::update_notebook(state.db.pool(), &id, request).await)
+    api_response(crate::api::projects::update_project(state.db.pool(), &id, request).await)
 }
 
-/// DELETE /api/notebooks/:id - Delete a notebook
-pub async fn delete_notebook_handler(
+/// DELETE /api/projects/:id - Delete a project
+pub async fn delete_project_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::notebooks::delete_notebook(state.db.pool(), &id).await {
-        Ok(_) => success_message("Notebook deleted"),
+    match crate::api::projects::delete_project(state.db.pool(), &id).await {
+        Ok(_) => success_message("Project deleted"),
         Err(e) => error_response(e),
     }
 }
 
-/// POST /api/notebooks/:id/items - Add a member URL to a notebook
-pub async fn add_notebook_item_handler(
+/// POST /api/projects/:id/items - Add a member URL to a project
+pub async fn add_project_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::notebooks::AddNotebookItemRequest>,
+    Json(request): Json<crate::api::projects::AddProjectItemRequest>,
 ) -> Response {
-    match crate::api::notebooks::add_notebook_item(state.db.pool(), &id, request).await {
+    match crate::api::projects::add_project_item(state.db.pool(), &id, request).await {
         Ok(item) => (StatusCode::CREATED, Json(item)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RemoveNotebookItemRequest {
+pub struct RemoveProjectItemRequest {
     pub url: String,
 }
 
-/// DELETE /api/notebooks/:id/items - Remove a member URL from a notebook
-pub async fn remove_notebook_item_handler(
+/// DELETE /api/projects/:id/items - Remove a member URL from a project
+pub async fn remove_project_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<RemoveNotebookItemRequest>,
+    Json(request): Json<RemoveProjectItemRequest>,
 ) -> Response {
-    match crate::api::notebooks::remove_notebook_item(state.db.pool(), &id, &request.url).await {
-        Ok(_) => success_message("Item removed from notebook"),
+    match crate::api::projects::remove_project_item(state.db.pool(), &id, &request.url).await {
+        Ok(_) => success_message("Item removed from project"),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/notebooks/:id/items/reorder - Reorder notebook members
-pub async fn reorder_notebook_items_handler(
+/// PUT /api/projects/:id/items/reorder - Reorder project members
+pub async fn reorder_project_items_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::notebooks::ReorderNotebookItemsRequest>,
+    Json(request): Json<crate::api::projects::ReorderProjectItemsRequest>,
 ) -> Response {
-    match crate::api::notebooks::reorder_notebook_items(state.db.pool(), &id, request).await {
-        Ok(_) => success_message("Notebook items reordered"),
+    match crate::api::projects::reorder_project_items(state.db.pool(), &id, request).await {
+        Ok(_) => success_message("Project items reordered"),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/notebooks/:id/items/role - Set a member's role
-pub async fn set_notebook_item_role_handler(
+/// PUT /api/projects/:id/items/role - Set a member's role
+pub async fn set_project_item_role_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::notebooks::SetNotebookItemRoleRequest>,
+    Json(request): Json<crate::api::projects::SetProjectItemRoleRequest>,
 ) -> Response {
-    match crate::api::notebooks::set_notebook_item_role(state.db.pool(), &id, request).await {
+    match crate::api::projects::set_project_item_role(state.db.pool(), &id, request).await {
         Ok(item) => Json(item).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// GET /api/notebooks/:id/graph - Entities referenced across the members
-pub async fn notebook_graph_handler(
+/// GET /api/projects/:id/graph - Entities referenced across the members
+pub async fn project_graph_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::notebooks::notebook_graph(state.db.pool(), &id).await {
+    match crate::api::projects::project_graph(state.db.pool(), &id).await {
         Ok(graph) => Json(graph).into_response(),
         Err(e) => error_response(e),
     }

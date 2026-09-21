@@ -236,7 +236,7 @@ pub async fn list_bookmarks(db: &PgPool, q: ListBookmarksQuery) -> Result<Bookma
 ///
 /// Returns the tombstoned ones too, unlike the list. A row removed at its
 /// source still has the user's note on it, and a link to it — from a citation,
-/// a notebook, a pinned tab — should open something rather than 404. The
+/// a project, a pinned tab — should open something rather than 404. The
 /// `deleted_at_source` field is in the payload so the view can say so.
 pub async fn get_bookmark(db: &PgPool, id: &str) -> Result<BookmarkDetail> {
     sqlx::query_as::<_, BookmarkDetail>(&format!(

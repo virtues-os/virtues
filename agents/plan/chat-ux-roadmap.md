@@ -432,10 +432,10 @@ needed, actionable errors.
   - **Multi-select / move-many** from the sidebar.
   - Clarify the Space mental model in UI (folder/project, not "room").
 - **Files:** written against the Spaces naming, which is gone — Spaces became
-  Notebooks (see [notebooks-plan.md](notebooks-plan.md)). Today's equivalents are
-  [ChatNotebookBreadcrumb.svelte](../apps/web/src/lib/components/chat/ChatNotebookBreadcrumb.svelte)
-  and [notebook.svelte.ts](../apps/web/src/lib/stores/notebook.svelte.ts);
-  `SpacesSection.svelte` has no direct successor.
+  Notebooks, and Notebooks became Projects on 2026-09-21 (see
+  [projects-plan.md](projects-plan.md)). Today's equivalent is
+  [project.svelte.ts](../apps/web/src/lib/stores/project.svelte.ts);
+  `SpacesSection.svelte` and the chat breadcrumb have no direct successor.
 
 ### ✅ Verification gate K
 - Filing a chat into a space is obvious in < 2s for a new user (self-check).

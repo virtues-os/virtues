@@ -519,7 +519,7 @@ h6 {
 /* The spinner every "working" glyph in the app wears: `<Icon … class="spin" />`.
    It lives here because it was never anywhere: SIX components each declared
    their own `:global(.spin)` (ContextMenuItem, CoverImagePicker,
-   NotebookDetailView, PageContent, VersionHistoryPanel, the public share page)
+   ProjectDetailView, PageContent, VersionHistoryPanel, the public share page)
    and TEN more used the class without declaring it — SubagentPanel,
    SystemInfoView, DeveloperSqlView, ReferencesPanel and the rest — so whether
    your spinner turned depended on whether an unrelated component happened to

@@ -514,7 +514,7 @@ pub enum Commands {
     Doctor,
 
     /// Run the magnet: recompute centroids and attach matching material to
-    /// every notebook and story with `auto_add_materials` switched on.
+    /// every project and story with `auto_add_materials` switched on.
     #[command(hide = true)]
     Magnet,
 

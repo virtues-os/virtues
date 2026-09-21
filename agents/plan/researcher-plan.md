@@ -2,7 +2,7 @@
 
 Status: planned 2026-07-20, **revised same day after a code-verified review** (claims
 below checked against the codebase, not inherited from older plans). Extends and
-partially supersedes the Phase D section of [notebooks-plan.md](./notebooks-plan.md).
+partially supersedes the Phase D section of [projects-plan.md](./projects-plan.md).
 North star: the researcher / PhD / academic archetype, built to be **complete in v1**
 — corpus, reading/annotation, scholarly metadata, and the synthesis bridge.
 NotebookLM's trust loop + Heptabase's highlight-to-note loop + Zotero's reference
@@ -16,7 +16,7 @@ layer, over the life-graph, on the box.
   Never overclaim "nothing leaves the box" — retrieval is local, inference today
   is not. (Researcher privacy concern is at 58% and rising; "don't put unpublished
   work in cloud AI" is standard advice. An appliance is the only honest answer.)
-- **Federation beats the upload-bin**: a notebook holds the PDF, the advisor's email
+- **Federation beats the upload-bin**: a project holds the PDF, the advisor's email
   thread, the person, and last Tuesday as peers in one retrieval scope.
 - **Citations = refs (already doctrine)**: a cited answer opens the exact page —
   and after D2, the exact passage. NotebookLM's dead-end "Source 3" chips are the
@@ -27,17 +27,17 @@ layer, over the life-graph, on the box.
 ## Decisions locked (2026-07-20, incl. review revisions)
 
 0. **No "Library" noun (renamed 2026-07-20).** The two-noun structure
-   (a notebook *containing* a Library) contradicted the lens model. Things are
-   simply **in the notebook** — user-facing verb is **"Add to notebook"**, the
-   contents are **notebook items** (matching `app_notebook_items`). Internally
+   (a project *containing* a Library) contradicted the lens model. Things are
+   simply **in the project** — user-facing verb is **"Add to project"**, the
+   contents are **project items** (matching `app_project_items`). Internally
    every added item defaults to `role='library'` (grounds chat — that is what
    membership means); `role='pin'` survives schema-only for nav-only edges
-   (e.g. related notebooks), with no chooser UI in v1. Where these docs say
-   "Library", read "the notebook's items".
+   (e.g. related projects), with no chooser UI in v1. Where these docs say
+   "Library", read "the project's items".
 1. **Universal extraction on upload.** Every text-bearing drive file is extracted,
    chunked, and embedded — the whole drive is corpus. The Library is a *lens*
    (scope + up-weight), not a container that triggers ingestion. Supersedes
-   notebooks-plan's "lazy, on add-to-Library". Existing drive files are
+   projects-plan's "lazy, on add-to-Library". Existing drive files are
    **backfilled** (migration seeds `extraction_status='pending'`; cron drains).
 2. **Naming: "Open" vs "Scoped" chat** (user-facing); internal
    `ScopeMode::Weighted | Exclusive`. Old Boost/Strict names retired.
@@ -78,9 +78,9 @@ layer, over the life-graph, on the box.
 
 ## Verified state of the codebase (2026-07-20 review — do not re-derive)
 
-- `ToolContext.notebook_id` is threaded end-to-end and **already used**: an additive
-  notebook boost ships today (query.rs:242-253, `NOTEBOOK_BOOST` z-boost).
-- `resolve_notebook_scope` exists but uses **ALL members** — the `role` column
+- `ToolContext.project_id` is threaded end-to-end and **already used**: an additive
+  project boost ships today (query.rs:242-253, `PROJECT_BOOST` z-boost).
+- `resolve_project_scope` exists but uses **ALL members** — the `role` column
   (`'library'|'pin'`, migration 0032) is a **schema stub**: the add-member API never
   sets it and search never reads it. `/drive/file_` members are stored but skipped.
 - Indexer is generic via `EmbeddingConfig.embed_text_sql` over registry ontologies;
@@ -104,7 +104,7 @@ layer, over the life-graph, on the box.
 
 ## D1 — Corpus (extract → chunk → embed → scope → cite) · ~2 wks
 
-The trust loop: drop PDFs on a notebook → watch them index → ask → click citation
+The trust loop: drop PDFs on a project → watch them index → ask → click citation
 → land on the page.
 
 1. **Extraction pipeline** (`document_extraction` cron, cron-drain doctrine):
@@ -126,16 +126,16 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
 3. **Ontology `uploaded_document`** (registry) with `embed_text_sql: "t.text"` →
    indexer embeds for free. Verify stale-GC covers deleted chunk rows (above).
 4. **Scope finishing** (not from scratch): set `role='library'|'pin'` in the
-   add/update member API + UI; filter `resolve_notebook_scope` to `role='library'`;
+   add/update member API + UI; filter `resolve_project_scope` to `role='library'`;
    resolve `/drive/file_` members → chunk record filter; add
    `ScopeMode::Exclusive` (AND-clause) beside the existing additive boost;
    `chat_mode: open|scoped` on ChatRequest; Scoped adds the grounded prompt line.
 5. **Citations via the existing pipeline**: `semantic_search` chunk hits carry
    `ref = /drive/file_{id}?page=N&q=<quote_head>`; model cites per refs doctrine;
    `CitedMarkdown` renders; PdfPane lands on the page (D2 upgrades to passage).
-6. **Ingestion UX**: drag-drop files onto a notebook = upload + auto-add
+6. **Ingestion UX**: drag-drop files onto a project = upload + auto-add
    (`role='library'`). (Chat-attachment unification is NOT in D1 — see leftovers.)
-7. **Status UI truth**: per-item chips in the notebook (`queued · extracting ·
+7. **Status UI truth**: per-item chips in the project (`queued · extracting ·
    indexed (14 pages) · no text layer · failed·retry`) + an indexed column in
    DriveView; aggregate count when a bulk drop is draining.
 
@@ -143,7 +143,7 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
 
 1. **Migration `app_annotations`**: `(id, file_id FK CASCADE, page_num, quote_text,
    quote_prefix, quote_suffix, rects JSONB (normalized page-space), color, note_md,
-   created_at, updated_at)`. Global to the file; visible from every notebook.
+   created_at, updated_at)`. Global to the file; visible from every project.
 2. **PdfPane annotation layer**: selection → floating toolbar (colors + note);
    overlay rendering from rects (multiply blend); click → popover (markdown note,
    edit/delete). TextPane gets the same quote anchors (simpler rendering).
@@ -154,8 +154,8 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
    flash/underline the passage. Fallback when quote not found: land on page only.
 5. **Annotations retrievable**: ontology `document_annotation`
    (`embed_text_sql` over `quote_text || note_md`) — "what did I highlight about X".
-6. **Annotation index views**: per-file rail in AssetView (jump list); notebook
-   "Highlights" tab aggregating across the notebook's items.
+6. **Annotation index views**: per-file rail in AssetView (jump list); project
+   "Highlights" tab aggregating across the project's items.
 
 ## D3 — Scholar layer (Zotero-grade, local-only) · ~3 days
 
@@ -166,9 +166,9 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
 3. **Metadata edit form** (heuristics will be wrong; this is the correction lane —
    and the quality gate for citekeys/BibTeX).
 4. **Citekeys** (`author2026word`) + collision suffixes.
-5. **References view**: the notebook's documents as a bibliography grid (UniversalDataGrid):
+5. **References view**: the project's documents as a bibliography grid (UniversalDataGrid):
    authors · year · title · venue · status.
-6. **BibTeX export** (`GET /api/notebooks/:id/bibtex`) + copy-citekey.
+6. **BibTeX export** (`GET /api/projects/:id/bibtex`) + copy-citekey.
 7. **Dedup**: SHA-256 (exists) + DOI match surfaced ("already in Drive").
 
 ## D4 — Synthesis bridge · ~0.5 wk
@@ -176,7 +176,7 @@ The trust loop: drop PDFs on a notebook → watch them index → ask → click c
 1. **Send highlight → Page**: blockquote + ref link (`?page=N&hl=<id>`, citekey
    suffix when meta exists). **Must reconcile with Yjs** (append via the Yjs doc /
    server-side update, not blind REST content replace — open-editor clobber risk).
-2. **Bulk annotations export** (markdown per file / per notebook).
+2. **Bulk annotations export** (markdown per file / per project).
 3. Polish: keyboard for colors, item counts, empty-states that teach the loop.
 
 ## Sequencing & risks
@@ -205,14 +205,14 @@ the Q6A; MuPDF excluded — AGPL). Checks folded into the build itself:
 - Scope toggle: **per-chat, persisted** (recommended) vs per-message.
 - Chunk hits in tool output should carry **doc title + page** so the model cites
   by name ("per Smith 2024, p. 6"), not by filename.
-- **Trash semantics**: a notebook item whose file is in trash — show a
+- **Trash semantics**: a project item whose file is in trash — show a
   "in trash" chip state, exclude from scope resolution.
 - **Shared pages**: `shared_file_download` validates file membership in the
   shared page — confirm `?page/q` params flow through and no chunk/annotation
   data leaks via share tokens.
 - Highlights spanning page boundaries: **disallow in v1** (anchor model is
   per-page).
-- Add-to-notebook affordances: drag-drop (D1) + an "add from Drive" picker —
+- Add-to-project affordances: drag-drop (D1) + an "add from Drive" picker —
   picker ships when trivial, else fast-follow.
 
 ## D5 — OCR — ❌ CUT FROM v1 (decided 2026-07-21, after a full hardware spike)

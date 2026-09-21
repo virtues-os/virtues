@@ -130,7 +130,7 @@ fn check_same_origin(headers: &HeaderMap) -> Option<Response> {
 // had typed it. Every CLI already knows what to do with a path.
 //
 // These land in the user's home, not the drive's media store: `media` is
-// app-level content (page embeds, notebook sources), while this is a scratch
+// app-level content (page embeds, project sources), while this is a scratch
 // file belonging to a shell session.
 // ---------------------------------------------------------------------------
 

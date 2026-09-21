@@ -82,10 +82,10 @@
 </script>
 
 <nav class="rail" aria-label="Rooms">
-	<!-- Identity AND the sidebar's toggle. Home is a tile now, so the mark no
-	     longer carries the "way home" job the old path-mast root did; what it
-	     carries instead is open/closed, in both directions, from a place that
-	     never moves. -->
+	<!-- Identity AND the sidebar's toggle. The mark no longer carries the
+	     "way home" job the old path-mast root did (Chats is the ground now,
+	     and it is the first tile); what it carries instead is open/closed, in
+	     both directions, from a place that never moves. -->
 	<button
 		type="button"
 		class="rail-mark rail-mark-btn"

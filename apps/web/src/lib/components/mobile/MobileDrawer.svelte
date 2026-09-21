@@ -13,7 +13,8 @@
 	 *     shouting day-bucket headers between them — one quiet section label,
 	 *     then rows.
 	 *   - Two regions, not one list: the mast and the doors (Search, New
-	 *     chat, All chats, Settings) are pinned chrome; only Recents scrolls,
+	 *     chat, New page, Applets, All chats, Settings) are pinned chrome; only the
+	 *     lists scroll — Projects, then Recents, the desktop panel's order —
 	 *     and a hairline appears under the doors once the list has slid
 	 *     beneath them — the way a navigation bar earns its rule. There used
 	 *     to be a bottom bar too (search pill, compose), and search down there
@@ -34,13 +35,17 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { projectStore } from "$lib/stores/project.svelte";
 	import { search } from "$lib/stores/search.svelte";
 
 	// Refresh the list whenever the drawer opens: it is the moment the user is
 	// looking at it, the GET is small, and a stale list here reads as lost
 	// conversations. The layout's boot-time load covers first paint.
 	$effect(() => {
-		if (mobileLayout.drawerOpen) void chatSessions.refresh();
+		if (mobileLayout.drawerOpen) {
+			void chatSessions.refresh();
+			void projectStore.load();
+		}
 	});
 
 	const activeRoute = $derived(windowShellStore.activeTab?.route ?? "");
@@ -59,6 +64,13 @@
 	function openSearch() {
 		mobileLayout.closeDrawer();
 		search.show();
+	}
+
+	/** A page is written the way a chat is started, so its door stands under New chat. */
+	async function newPage() {
+		const { pagesStore } = await import("$lib/stores/pages.svelte");
+		const page = await pagesStore.createNewPage();
+		go(`/page/${page.id}`, page.title);
 	}
 
 	/** The list has scrolled under the doors; draw the rule between them. */
@@ -137,6 +149,17 @@
 			<AtlasIcon name="new-chat" bare />
 			<span class="row-text">New chat</span>
 		</button>
+		<button class="row" onclick={newPage}>
+			<AtlasIcon name="pages" bare />
+			<span class="row-text">New page</span>
+		</button>
+		<!-- Applets is a door beside New chat, here as on the desktop panel:
+		     an applet is something you run from a chat, so its door stands
+		     beside the chat's. -->
+		<button class="row" onclick={() => go("/applets", "Applets")}>
+			<AtlasIcon name="applets" bare />
+			<span class="row-text">Applets</span>
+		</button>
 		<button class="row" onclick={() => go("/chat-history", "All Chats")}>
 			<AtlasIcon name="chats" bare />
 			<span class="row-text">All chats</span>
@@ -148,6 +171,24 @@
 	</div>
 
 	<div class="body" onscroll={(e) => (scrolled = e.currentTarget.scrollTop > 0)}>
+		{#if projectStore.projects.length > 0}
+			<!-- The rooms a chat can live in, above the chats themselves: the
+			     same order as the desktop panel. No empty state — a section
+			     with nothing in it is a feature announcing itself. -->
+			<div class="section-label">Projects</div>
+			{#each projectStore.projects as p (p.id)}
+				{@const route = `/project/${p.id}`}
+				<button
+					class="chat-row"
+					class:active={activeRoute === route}
+					aria-current={activeRoute === route ? "page" : undefined}
+					onclick={() => go(route, p.name || "Project")}
+				>
+					<span class="chat-title">{p.name || "Untitled"}</span>
+					<span class="chat-when">{p.chat_count === 1 ? "1 chat" : `${p.chat_count} chats`}</span>
+				</button>
+			{/each}
+		{/if}
 		<div class="section-label">Recents</div>
 		{#each recentSessions as s (s.conversation_id)}
 			{@const route = `/chat/${s.conversation_id}`}

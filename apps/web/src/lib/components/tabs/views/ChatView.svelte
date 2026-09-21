@@ -212,31 +212,31 @@
 	let citationPanelOpen = $state(false);
 	let selectedCitation = $state<Citation | null>(null);
 
-	// The Notebook (room) this chat lives in — at most one. Its id is sent with
+	// The Project (room) this chat lives in — at most one. Its id is sent with
 	// each message (drives the agent's active-space context + server-side
 	// binding). Read-only here now: the picker that used to set it from this
 	// view is gone, so the binding is seeded from the session row and changed
-	// where the filing happens — in the notebook.
-	let chatNotebookId = $state<string | null>(null);
-	// Which conversation chatNotebookId was seeded for. Seeding happens ONCE per
+	// where the filing happens — in the project.
+	let chatProjectId = $state<string | null>(null);
+	// Which conversation chatProjectId was seeded for. Seeding happens ONCE per
 	// conversation (when its session row is available, or once the session list
 	// has finished loading and confirms there's no row yet) so a later session
 	// refresh can never clobber a room the user just picked locally.
-	let seededNotebookFor = $state<string | null>(null);
+	let seededProjectFor = $state<string | null>(null);
 
 	$effect(() => {
 		const id = conversationId;
-		if (seededNotebookFor === id) return;
+		if (seededProjectFor === id) return;
 		const session = chatSessions.sessions.find((s) => s.conversation_id === id);
 		if (session) {
-			chatNotebookId = session.notebook_id ?? null;
-			seededNotebookFor = id;
+			chatProjectId = session.project_id ?? null;
+			seededProjectFor = id;
 		} else if (!chatSessions.isLoading) {
 			// Sessions are loaded and this chat has no row yet (brand-new, not yet
 			// persisted) — start unfiled; the create path binds it from the first
-			// message's notebookId.
-			chatNotebookId = null;
-			seededNotebookFor = id;
+			// message's projectId.
+			chatProjectId = null;
+			seededProjectFor = id;
 		}
 	});
 
@@ -520,10 +520,10 @@
 		currentChatConversationId === INTERVIEW_CHAT_ID || isGettingStartedChat(currentChatConversationId),
 	);
 
-	// Getter for the chat's Notebook (room) ID — sent with each message so the agent
+	// Getter for the chat's Project (room) ID — sent with each message so the agent
 	// gets the active-space context block and the server keeps the binding fresh.
-	function getNotebookId(): string | null {
-		return chatNotebookId;
+	function getProjectId(): string | null {
+		return chatProjectId;
 	}
 
 	// Get or create chat instance for the current conversationId
@@ -537,7 +537,7 @@
 			chat = chatInstances.getOrCreate({
 				conversationId,
 				getModel: () => models.idForWire(),
-				getNotebookId,
+				getProjectId,
 				getActivePageContext: activePageContext,
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
@@ -717,19 +717,19 @@
 
 	// Load conversation data on mount
 	onMount(() => {
-		// (The notebook list used to be fetched here for the breadcrumb's name
+		// (The project list used to be fetched here for the breadcrumb's name
 		// and accent. The app layout already loads it, and nothing in this view
-		// renders a notebook's name any more.)
+		// renders a project's name any more.)
 
-		// Claim any prompt handed off from Home / ⌘K / "Ask this notebook"
+		// Claim any prompt handed off from Home / ⌘K / "Ask this project"
 		// (consume-once, synchronously — so only this freshly-opened chat sends it).
 		const initialPrompt = pendingPrompt.take();
-		// If the ask came from a notebook, bind this new chat to it before the
+		// If the ask came from a project, bind this new chat to it before the
 		// first message so the create path files it + grounds retrieval there.
-		const seededNotebook = pendingPrompt.takeNotebook();
-		if (seededNotebook) {
-			chatNotebookId = seededNotebook;
-			seededNotebookFor = conversationId;
+		const seededProject = pendingPrompt.takeProject();
+		if (seededProject) {
+			chatProjectId = seededProject;
+			seededProjectFor = conversationId;
 		}
 		(async () => {
 			// Stage 1: Models must load first (other code depends on model list)
@@ -970,11 +970,11 @@
 	let selectedAgentMode = $state<AgentModeId>('chat');
 	let selectedPersona = $state<string>('default');
 
-	// Retrieval scope. 'scoped' (grounded in a notebook's items only) still
+	// Retrieval scope. 'scoped' (grounded in a project's items only) still
 	// exists on the wire and in the retriever — what's gone is the pill above
 	// the composer that switched it, which was a permanent piece of chrome for
 	// a setting almost nobody moved. Every chat is 'open': the whole graph,
-	// with the notebook up-weighted when there is one. If scoped comes back it
+	// with the project up-weighted when there is one. If scoped comes back it
 	// belongs somewhere it can be explained, not as a two-state word.
 	const chatMode = 'open' as const;
 

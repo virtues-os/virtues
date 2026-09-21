@@ -69,7 +69,7 @@ const ENTITY_TYPE_MAP: Record<string, { type: string; icon: string; routePrefix:
 	year: { type: 'year', icon: 'ri:calendar-line', routePrefix: '/year' },
 	source: { type: 'source', icon: 'ri:database-2-line', routePrefix: '/sources' },
 	file: { type: 'drive', icon: 'ri:file-line', routePrefix: '/drive' },
-	notebook: { type: 'notebook', icon: 'ri:booklet-line', routePrefix: '/notebook' }
+	project: { type: 'project', icon: 'ri:folder-3-line', routePrefix: '/project' }
 };
 
 /**
@@ -462,8 +462,11 @@ class WindowShellStore {
 	}
 
 	private openDefaultTab(): void {
-		// Fresh sessions land on Home (the "Return" surface), not an empty chat.
-		this.openTab({ type: 'home', label: 'Home', route: '/home', icon: 'ri:home-5-line' });
+		// Fresh sessions land on a new chat. They landed on Home (the "Return"
+		// surface) while Home was the top tile on the rail; the rail's ground is
+		// Chats now (2026-09-21), and a first screen the rail cannot lead back
+		// to is a room with no door. /home is still a page, not the landing.
+		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'ri:chat-1-line' });
 	}
 
 	/**
