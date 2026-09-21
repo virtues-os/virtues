@@ -49,11 +49,17 @@
 		| "interrupted"
 		| "output_limit"
 		| "model_error"
+		| "in_progress"
+		| "not_connected"
 		| "generic";
 
 	// Billing states first and explicitly, so a 402 "wallet empty" is never
 	// mislabeled as a rate limit (that mislabel once cost hours).
 	const kind = $derived.by((): Kind => {
+		// The box's own refusals, by their code. A turn is still running on
+		// this chat (Try again rejoins it); or there is no AI to answer with.
+		if (has(/turn_in_progress/)) return "in_progress";
+		if (has(/AI is not connected/)) return "not_connected";
 		if (has(/wallet_empty|insufficient_budget/i)) return "wallet_empty";
 		if (has(/card_declined/i)) return "card_declined";
 		if (has(/monthly_cap_reached/i)) return "monthly_cap";
@@ -107,7 +113,10 @@
 		msg = msg.replace(/^Stream interrupted:\s*/i, "");
 		try {
 			const j = JSON.parse(msg);
-			const inner = j?.error?.message ?? j?.message;
+			// The box's rejections are `{ error: <code or title>, details:
+			// <the sentence> }`; the sentence is the part for a person. Without
+			// this the whole body printed, braces and all.
+			const inner = j?.details ?? j?.error?.message ?? j?.message;
 			if (typeof inner === "string" && inner) msg = inner;
 		} catch {
 			// not JSON — leave as-is
@@ -181,6 +190,14 @@
 			title: "This model could not take that",
 			sentence: null,
 		},
+		in_progress: {
+			title: "A reply is still being written",
+			sentence: "This chat is answering your last message. Try again picks it up where it is.",
+		},
+		not_connected: {
+			title: "Nothing to answer with yet",
+			sentence: null,
+		},
 		generic: {
 			title: "The reply did not come through",
 			sentence: null,
@@ -213,6 +230,8 @@
 					<!-- The account gate lives on the getting-started page now,
 					     which shows itself at the app root while unsatisfied. -->
 					<TextAction href="/">Reconnect</TextAction>
+				{:else if kind === "not_connected"}
+					<TextAction href="/">Connect an AI</TextAction>
 				{:else if canSwitch}
 					<TextAction onclick={onSwitchAndRetry}>
 						Switch to {recommendedName} and try again

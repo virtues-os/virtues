@@ -94,11 +94,13 @@ impl SqlQueryTool {
                 SELECT viewname AS name FROM pg_views
                 WHERE schemaname = 'public'
             ) rels
-            WHERE name LIKE 'data_%' OR name LIKE 'wiki_%'
+            -- app_pages is where an article's text lives; the catalog sends
+            -- the model there, so it is listable like the wiki_ relations.
+            WHERE name LIKE 'data_%' OR name LIKE 'wiki_%' OR name = 'app_pages'
             ORDER BY
                 CASE
                     WHEN name LIKE 'data_%' THEN 1
-                    WHEN name LIKE 'wiki_%' THEN 2
+                    ELSE 2
                 END,
                 name
             "#,
@@ -174,22 +176,12 @@ impl SqlQueryTool {
         let mut result_tables = serde_json::Map::new();
 
         for table in tables {
-            // Validate table name (must be a known queryable table)
-            let is_valid = table.starts_with("data_")
-                || table.starts_with("wiki_")
-                ;
-            
-            if !is_valid {
-                return Err(ToolError::InvalidParameters(format!(
-                    "Can only get schema for data_* or wiki_* tables. Got: '{}'",
-                    table
-                )));
-            }
-
-            // Same fence as `list_tables`. Without this the prefix check above
-            // is the only gate, so a table deliberately withheld from the
-            // catalog could still be described in full — and a described table
-            // is one the agent will then query.
+            // The catalog is the fence — the same one `list_tables` and
+            // `explain_failure` apply. There used to be a `data_*`/`wiki_*`
+            // prefix check in front of it, which refused `app_pages` while the
+            // wiki_articles join hint sent the model straight there. A table
+            // deliberately withheld from the catalog is still not described,
+            // and a described table is one the agent will then query.
             if !metadata.contains_key(table.as_str()) {
                 return Err(ToolError::InvalidParameters(format!(
                     "'{table}' is not in the queryable catalog. Call list_tables \
@@ -321,6 +313,17 @@ impl SqlQueryTool {
             .and_then(|pg| pg.hint())
         {
             out.push_str(&format!("\nHint: {hint}"));
+        }
+
+        // 57014 query_canceled: the 25s statement_timeout above. The columns
+        // are right; the question is too wide. Say what narrows it.
+        if code == "57014" {
+            out.push_str(
+                "\nThe query ran past 25 seconds and was stopped. Narrow it: a WHERE on a \
+                 time range (occurred_at / started_at), fewer joins, or an aggregate \
+                 instead of raw rows.",
+            );
+            return out;
         }
 
         // 42703 undefined_column, 42P01 undefined_table, 42702 ambiguous_column.
@@ -473,6 +476,18 @@ impl SqlQueryTool {
         // SET LOCAL, so it reverts with the transaction and cannot leak onto a
         // pooled connection.
         sqlx::query("SET LOCAL ROLE virtues_face_reader")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
+        // Postgres stops the statement itself. The executor's 30s tool
+        // timeout only drops this future; without a statement_timeout the
+        // query kept running on the box after the model had given up on
+        // it, and a retry or a parallel call stacked another one. Faces
+        // and sql_write set 5s; this tool's questions are legitimately
+        // heavier (a month of location points), so it gets most of the
+        // 30s, and the error names the fix (see `explain_failure`).
+        sqlx::query("SET LOCAL statement_timeout = '25s'")
             .execute(&mut *tx)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
