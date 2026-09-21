@@ -307,12 +307,13 @@ async fn execute_single(
     .await;
 
     let result = match result {
-        Ok(Ok(result)) => {
+        Ok(Ok(mut result)) => {
             tracing::info!(
                 tool_call_id = %tool_call.id,
                 success = result.success,
                 "Tool execution completed"
             );
+            attach_query_ref(tool_call, context, &mut result);
             Ok(result)
         }
         Ok(Err(e)) => {
@@ -339,6 +340,31 @@ async fn execute_single(
         tool_name: tool_call.name.clone(),
         result,
     }
+}
+
+/// A citable ref for the query itself.
+///
+/// A row cites its own `/record/…` ref. A count, a sum, a trend cites
+/// nothing: it was computed over rows, and no one row is the source. So the
+/// pattern answers — the ones where trust is decided — carried a number with
+/// no way to open what it came from. `/chat/{chat}/tool/{call}` is that way:
+/// the UI's citation context already indexes every tool call by id and the
+/// panel already renders `rows` as a table, so the link opens the rows the
+/// figure was computed from. Set here rather than in the tool because the
+/// tool never learns its own call id.
+fn attach_query_ref(tool_call: &ToolCall, context: &ToolContext, result: &mut ToolResult) {
+    if tool_call.name != "sql_query" || !result.success {
+        return;
+    }
+    let Some(chat_id) = context.chat_id.as_deref() else { return };
+    let Some(obj) = result.data.as_object_mut() else { return };
+    if !obj.get("rows").is_some_and(|r| r.is_array()) {
+        return;
+    }
+    obj.insert(
+        "ref".to_string(),
+        Value::String(format!("/chat/{chat_id}/tool/{}", tool_call.id)),
+    );
 }
 
 /// Build the tool result message for the LLM
@@ -434,6 +460,75 @@ pub fn build_assistant_tool_message(
     }
 
     msg
+}
+
+#[cfg(test)]
+mod query_ref_tests {
+    use super::*;
+
+    fn ctx(chat: Option<&str>) -> ToolContext {
+        ToolContext { chat_id: chat.map(str::to_string), ..Default::default() }
+    }
+
+    fn call(name: &str) -> ToolCall {
+        ToolCall { id: "call_9".into(), name: name.into(), arguments: serde_json::json!({}) }
+    }
+
+    /// Rows from sql_query get the query's own ref; anything else is left
+    /// alone — a failure, another tool, a result with no rows, a run with no
+    /// chat to point into.
+    #[test]
+    fn only_a_successful_sql_result_with_rows_gets_the_query_ref() {
+        let mut r = ToolResult::success(serde_json::json!({"rows": [{"n": 3}]}));
+        attach_query_ref(&call("sql_query"), &ctx(Some("chat_1")), &mut r);
+        assert_eq!(r.data["ref"], "/chat/chat_1/tool/call_9");
+
+        let mut r = ToolResult::success(serde_json::json!({"rows": [{"n": 3}]}));
+        attach_query_ref(&call("semantic_search"), &ctx(Some("chat_1")), &mut r);
+        assert!(r.data.get("ref").is_none());
+
+        let mut r = ToolResult::success(serde_json::json!({"rows": [{"n": 3}]}));
+        attach_query_ref(&call("sql_query"), &ctx(None), &mut r);
+        assert!(r.data.get("ref").is_none());
+
+        let mut r = ToolResult::success(serde_json::json!({"tables": {}}));
+        attach_query_ref(&call("sql_query"), &ctx(Some("chat_1")), &mut r);
+        assert!(r.data.get("ref").is_none());
+
+        let mut r = ToolResult::error("nope");
+        attach_query_ref(&call("sql_query"), &ctx(Some("chat_1")), &mut r);
+        assert!(r.data.get("ref").is_none());
+    }
+
+    /// The envelope, and the evidence riding with a failure.
+    #[test]
+    fn a_failure_is_one_envelope_with_its_data() {
+        let r = ToolExecutionResult {
+            tool_call_id: "c".into(),
+            tool_name: "code_interpreter".into(),
+            result: Ok(ToolResult {
+                success: false,
+                data: serde_json::json!({"stderr": "Traceback…\nNameError: x"}),
+                error: Some("Code execution failed: NameError: x".into()),
+                attachments: vec![],
+            }),
+        };
+        let text = r.to_llm_content();
+        assert!(text.starts_with("Tool failed (code_interpreter, execution): Code execution failed: NameError: x\n"), "{text}");
+        assert!(text.contains("Traceback"), "the data rides along: {text}");
+
+        let r = ToolExecutionResult {
+            tool_call_id: "c".into(),
+            tool_name: "sql_query".into(),
+            result: Err(ToolExecutionError::Timeout(Duration::from_secs(30))),
+        };
+        let text = r.to_llm_content();
+        assert!(text.starts_with("Tool failed (sql_query, timeout): no result after 30s"), "{text}");
+
+        let big = "x".repeat(MAX_TOOL_OUTPUT_BYTES + 10);
+        let clipped = clip_for_model(&big, MAX_TOOL_OUTPUT_BYTES);
+        assert!(clipped.contains("10 more bytes not shown"), "{}", &clipped[clipped.len() - 120..]);
+    }
 }
 
 #[cfg(test)]

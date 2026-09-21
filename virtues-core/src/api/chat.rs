@@ -1209,6 +1209,17 @@ async fn build_system_prompt_blocks(
                 }
             }),
         },
+        // The skill this chat is running, if any — its file's body, in the
+        // TAIL: PerTurn cadence puts it (and everything after) outside the
+        // cached prefix, so the prefix is the same whatever the chat does
+        // and switching skills rewrites a few KB, not the cache.
+        Block {
+            meta: BlockMeta { tag: "skill", author: Author::System, mood: Mood::Imperative, rung: 60, cadence: Cadence::PerTurn },
+            body: Box::pin(async move {
+                virtues_registry::skills::skill_named(agent_mode)
+                    .map(|s| format!("\n\n<skill name=\"{}\">\n{}\n</skill>", s.name, s.body))
+            }),
+        },
         // The open page's live content (Yjs is the source of truth).
         Block {
             meta: BlockMeta { tag: "active_context", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::PerTurn },
@@ -2102,11 +2113,19 @@ fn create_agent_stream(
         // and twenty thirty-second tools is ten minutes. First figures,
         // 2026-09-21; the journal line "turn stopped at its budget" is how
         // they get revised.
-        let (max_steps, max_cost_micros, max_wall_clock) = match request.agent_mode.as_str() {
-            "deep_research" => (50, 10_000_000, std::time::Duration::from_secs(25 * 60)),
-            "council" => (40, 5_000_000, std::time::Duration::from_secs(15 * 60)), // gate + 1-2 dispatch rounds + synthesis; bounded
-            _ => (20, 2_500_000, std::time::Duration::from_secs(8 * 60)),           // "chat" or default
-        };
+        let (max_steps, max_cost_micros, max_wall_clock) =
+            match virtues_registry::skills::skill_named(&request.agent_mode) {
+                // A skill's ceilings come from its file.
+                Some(skill) => (
+                    skill.max_steps,
+                    (skill.max_cost_usd * 1_000_000.0).round() as i64,
+                    std::time::Duration::from_secs(skill.max_minutes * 60),
+                ),
+                None => match request.agent_mode.as_str() {
+                    "deep_research" => (50, 10_000_000, std::time::Duration::from_secs(25 * 60)),
+                    _ => (20, 2_500_000, std::time::Duration::from_secs(8 * 60)), // "chat" or default
+                },
+            };
 
         // Create AgentLoop with YjsState for real-time page editing
         let agent = AgentLoop::new_with_yjs(pool.clone(), yjs_state)
@@ -2981,6 +3000,30 @@ mod tests {
     /// future edit to the block list is a deliberate, test-visible act — the
     /// reorder slice (rules last, per the formula doc) flips this assertion
     /// on purpose, and nothing reorders by accident.
+    /// A skill's body is in the tail, never the cached prefix: the prefix
+    /// must be the same whatever the chat is doing, or switching skills
+    /// rewrites the cache. And ordinary chat carries no skill block at all.
+    #[sqlx::test]
+    async fn a_skill_rides_in_the_tail_and_chat_carries_none(pool: PgPool) {
+        let (stable, volatile, rendered) = build_system_prompt_blocks(
+            &pool, None, Some("America/Chicago"), "council", "default", None, "Ari", "Adam",
+        )
+        .await;
+        assert!(rendered.iter().any(|r| r.tag == "skill"), "council renders its skill block");
+        assert!(!stable.contains("<skill name=\"council\">"), "the skill body must not be in the cached prefix");
+        assert!(volatile.contains("<skill name=\"council\">"), "the skill body is in the tail");
+        assert!(volatile.contains("<council>"), "the body is the file's body");
+        assert!(!stable.contains("<page_tools>"), "council has no page tools, so no page guidance");
+
+        let (stable, volatile, rendered) = build_system_prompt_blocks(
+            &pool, None, Some("America/Chicago"), "chat", "default", None, "Ari", "Adam",
+        )
+        .await;
+        assert!(!rendered.iter().any(|r| r.tag == "skill"));
+        assert!(!format!("{stable}{volatile}").contains("<skill"));
+        assert!(stable.contains("<mode>chat</mode>"));
+    }
+
     #[sqlx::test]
     async fn prompt_blocks_render_in_registry_order(pool: PgPool) {
         sqlx::query("INSERT INTO wiki_rules (id, kind, rule) VALUES ('rule_t1', 'avoid', 'x')")
@@ -3000,7 +3043,7 @@ mod tests {
         assert_eq!(tags.last(), Some(&"rules"), "rules must render last — nearest the conversation");
         assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
         assert!(tags.contains(&"circumstances"));
-        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "coverage", "active_project", "active_context", "rules"];
+        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "coverage", "active_project", "skill", "active_context", "rules"];
         let mut last = 0usize;
         for t in &tags {
             let pos = expected.iter().position(|e| e == t).expect("unknown block tag");
