@@ -872,7 +872,7 @@
 		font-size: 0.6875rem;
 		font-weight: 500;
 		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		padding: 1px 8px;
 		border-radius: var(--radius-full);
 	}
@@ -1024,7 +1024,7 @@
 	}
 
 	.chat-item:hover {
-		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
 	}
 
 	.chat-item-static {
@@ -1041,7 +1041,7 @@
 		font-weight: 500;
 		padding: 1px 6px;
 		border-radius: var(--radius-full);
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		color: var(--color-foreground-muted);
 		margin-right: 0.25rem;
 	}
@@ -1058,7 +1058,7 @@
 		width: 1.5rem;
 		height: 1.5rem;
 		border-radius: 5px;
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		color: var(--color-foreground-muted);
 		flex-shrink: 0;
 		margin-top: 1px;

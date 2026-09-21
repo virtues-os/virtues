@@ -298,12 +298,12 @@
     }
 
     .table-item:hover {
-        background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+        background: var(--hover-bg);
         color: var(--color-foreground);
     }
 
     .table-item.active {
-        background: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+        background: var(--active-bg);
         color: var(--color-foreground);
         font-weight: 500;
     }

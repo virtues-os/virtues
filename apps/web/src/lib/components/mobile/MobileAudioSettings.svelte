@@ -344,7 +344,7 @@
 		padding-left: 28px;
 	}
 	.editor {
-		background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 3%, transparent);
 	}
 	.r-label {
 		font-size: 15px;
@@ -373,7 +373,7 @@
 		height: 26px;
 		flex: none;
 		border-radius: 7px;
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
 	.times {

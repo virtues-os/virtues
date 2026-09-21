@@ -81,7 +81,7 @@
 		   color, so it is the same quiet step off the rail in every theme —
 		   including the ones where the rail and the page are the same paper
 		   and a surface token would leave the card invisible. */
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
 		text-align: left;
 		font: inherit;
 		cursor: pointer;

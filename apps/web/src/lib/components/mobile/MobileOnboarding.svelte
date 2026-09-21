@@ -217,7 +217,7 @@
 		height: 40px;
 		flex: none;
 		border-radius: 10px;
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
 	.c-icon.on {
@@ -267,7 +267,7 @@
 		color: var(--color-foreground-muted);
 		padding: 4px 10px;
 		border-radius: 8px;
-		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 	}
 	.foot {
 		flex: none;

@@ -120,7 +120,7 @@
 
 	.door:hover {
 		border-color: var(--color-border);
-		background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
+		background: color-mix(in srgb, var(--wash-ink) 3%, transparent);
 	}
 
 	.door:focus-visible {
