@@ -18,7 +18,7 @@
 	 * object doing one job from a place that never moves.
 	 */
 	import SidebarModePanel from './SidebarModePanel.svelte';
-	import ChatsPanel from './panels/ChatsPanel.svelte';
+	import HomePanel from './panels/HomePanel.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { SIDEBAR_MODES } from '$lib/sidebar/modes';
 	import type { Room } from '$lib/sidebar/rooms';
@@ -43,12 +43,12 @@
 	<div class="panel-head">
 		<span class="panel-title">{room.label}</span>
 		<!-- The head used to carry a room's quick-add (+). The verbs live as
-		     doors in the Chats panel now, where they are read as words. -->
+		     doors in the Home panel now, where they are read as words. -->
 	</div>
 
 	<div class="panel-body">
-		{#if room.panel.kind === 'chats'}
-			<ChatsPanel />
+		{#if room.panel.kind === 'home'}
+			<HomePanel />
 		{:else if mode}
 			<SidebarModePanel {mode} />
 		{:else}

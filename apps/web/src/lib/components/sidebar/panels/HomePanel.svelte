@@ -1,15 +1,21 @@
 <script lang="ts">
 	/**
-	 * The Chats panel — the sidebar's ground, which is what it shows most of
-	 * the time, because talking to the box is what most sessions are.
+	 * The Home panel — the sidebar's ground, which is what it shows most of
+	 * the time, because talking to the box is what most sessions are. It was
+	 * the Chats panel until it held pages, projects and applets too; a user
+	 * reads the panel's title as the name of the place, and "Chats" over a
+	 * list of projects was the room named after one of its contents.
 	 *
 	 * Doors first, then groups, and the order is the order of reach:
 	 *
-	 *   doors     New chat, New page, Search, Applets. The verbs. Pages and
-	 *             Applets each lived on the rail as a room of their own and
-	 *             were rooms nobody walked to — a page is written the way a
-	 *             chat is started, and an applet is run from a conversation,
-	 *             so their doors stand beside the conversation's.
+	 *   doors     New chat, Search, Pages, Applets. One verb, then places.
+	 *             Pages and Applets each lived on the rail as a room of their
+	 *             own and were rooms nobody walked to — a page is written the
+	 *             way a chat is started, and an applet is run from a
+	 *             conversation, so their doors stand beside the
+	 *             conversation's. Pages carries a `+` on hover, the same shape
+	 *             as the Projects label: the word is the list, the plus is
+	 *             the new one.
 	 *   Pinned    what the user chose to keep, in their own order. This was
 	 *             the Desk, behind the Home tile; the shelf is more useful
 	 *             where a pin is reached for than in a room you walk to first.
@@ -135,7 +141,13 @@
 		search.show();
 	}
 
-	async function newPage() {
+	function openPages() {
+		windowShellStore.openTabFromRoute('/page', { label: 'Pages', focusExisting: true });
+	}
+
+	async function newPage(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
 		const { pagesStore } = await import('$lib/stores/pages.svelte');
 		const page = await pagesStore.createNewPage();
 		windowShellStore.openTabFromRoute(`/page/${page.id}`, { label: page.title, forceNew: true });
@@ -201,7 +213,7 @@
 				forceNew: true,
 			});
 		} catch (e) {
-			console.error('[ChatsPanel] Failed to create project:', e);
+			console.error('[HomePanel] Failed to create project:', e);
 		}
 	}
 
@@ -229,7 +241,7 @@
 		try {
 			await updateChat(s.conversation_id, { title });
 		} catch (e) {
-			console.error('[ChatsPanel] rename failed:', e);
+			console.error('[HomePanel] rename failed:', e);
 			await chatSessions.refresh();
 		}
 	}
@@ -248,7 +260,7 @@
 			chatSessions.remove(s.conversation_id);
 			windowShellStore.invalidateViewCache('chat');
 		} catch (e) {
-			console.error('[ChatsPanel] Failed to delete chat:', e);
+			console.error('[HomePanel] Failed to delete chat:', e);
 		}
 	}
 
@@ -264,7 +276,7 @@
 			await projectStore.update(p.id, { name });
 			relabelTabs(projectRoute(p), name);
 		} catch (e) {
-			console.error('[ChatsPanel] rename failed:', e);
+			console.error('[HomePanel] rename failed:', e);
 		}
 	}
 
@@ -280,7 +292,7 @@
 			windowShellStore.closeTabsByRoute(projectRoute(p));
 			await projectStore.remove(p.id);
 		} catch (e) {
-			console.error('[ChatsPanel] Failed to delete project:', e);
+			console.error('[HomePanel] Failed to delete project:', e);
 		}
 	}
 
@@ -389,7 +401,7 @@
 		try {
 			await togglePin(target);
 		} catch (err) {
-			console.error('[ChatsPanel] pin failed:', err);
+			console.error('[HomePanel] pin failed:', err);
 		}
 	}
 
@@ -469,14 +481,34 @@
 		<AtlasIcon name="new-chat" size={16} bare />
 		<span class="panel-row-text">New chat</span>
 	</button>
-	<button type="button" class="panel-row panel-door" onclick={newPage}>
-		<AtlasIcon name="pages" size={16} bare />
-		<span class="panel-row-text">New page</span>
-	</button>
 	<button type="button" class="panel-row panel-door" onclick={openSearch}>
 		<AtlasIcon name="search" size={16} bare />
 		<span class="panel-row-text">Search</span>
 	</button>
+	<!-- The word opens the list; the + that appears beside it makes a new
+	     one. A div, not a button, so the + can be a real button inside it. -->
+	<div
+		class="panel-row panel-door panel-row-has-actions"
+		role="link"
+		tabindex="0"
+		onclick={openPages}
+		onkeydown={(e) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				openPages();
+			}
+		}}
+	>
+		<AtlasIcon name="pages" size={16} bare />
+		<span class="panel-row-text">Pages</span>
+		<span class="row-actions">
+			<button type="button" class="row-action" aria-label="New page" title="New page" onclick={newPage}>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+					<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+				</svg>
+			</button>
+		</span>
+	</div>
 	<button type="button" class="panel-row panel-door" onclick={openApplets}>
 		<AtlasIcon name="applets" size={16} bare />
 		<span class="panel-row-text">Applets</span>
