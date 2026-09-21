@@ -186,7 +186,7 @@
 			{serverExtra}
 			pageSize={10}
 			emptyIcon="ri:database-2-line"
-			emptyMessage="No records reference this entity yet"
+			emptyMessage="Nothing in the record mentions this yet"
 			loadingMessage="Reading the record..."
 			searchPlaceholder="Filter records..."
 		/>

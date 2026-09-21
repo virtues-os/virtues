@@ -52,7 +52,7 @@
 			await load();
 		} catch (e) {
 			chapterError = ch.id;
-			errorText = e instanceof Error ? e.message : 'Could not save that';
+			errorText = e instanceof Error ? e.message : "Your server couldn't save that. Try again.";
 		}
 	}
 
@@ -68,7 +68,7 @@
 			await load();
 		} catch (e) {
 			chapterError = ch.id;
-			errorText = e instanceof Error ? e.message : 'Could not do that';
+			errorText = e instanceof Error ? e.message : "Your server couldn't do that. Try again.";
 		}
 	}
 

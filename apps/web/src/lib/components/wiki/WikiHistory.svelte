@@ -70,7 +70,7 @@
 			reverted[k] = 'Put back.';
 			entries = await listHistory(50);
 		} catch {
-			reverted[k] = 'That could not be put back.';
+			reverted[k] = "Your server couldn't put that back. The old version is still in this list, so try again.";
 		} finally {
 			reverting = null;
 		}

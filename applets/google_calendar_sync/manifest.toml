@@ -1,5 +1,5 @@
 name = "Google Calendar"
-description = "Keeps your Google Calendar events here."
+description = "Keeps your Google Calendar events on your server."
 owner = "system"
 command = ["google_calendar_sync"]
 triggers = ["cron", "manual"]
