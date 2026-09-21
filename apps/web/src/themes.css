@@ -186,6 +186,9 @@
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 
+	/* Editor selection blend — see the dark-theme block below. */
+	--selection-blend: multiply;
+
 	/* Surface Colors - One paper, top to bottom.
 	   Every surface is the same pure white, including --surface-elevated, which
 	   is what the sidebar sits on. Previous themes gave the rail a 4% step so it
@@ -1460,6 +1463,10 @@
 [data-theme="agora"],
 [data-theme="shire"] {
 	--illustration-filter: invert(1);
+	/* The editor composites its selection layer over the text with this blend
+	 * (see codemirror/theme.ts): multiply keeps dark ink dark on light paper,
+	 * screen keeps light ink light on dark paper. */
+	--selection-blend: screen;
 }
 
 /* Narnia draws its ruling in LIGHT lines, which the shared blend mode forbids.
