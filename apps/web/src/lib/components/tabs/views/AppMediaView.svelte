@@ -65,7 +65,7 @@
 			</div>
 			<div class="flex items-center gap-1.5 text-xs text-foreground-muted">
 				<Icon icon="ri:lock-2-line" />
-				Read-only — used by the app
+				Read-only - used by the app
 			</div>
 		</div>
 

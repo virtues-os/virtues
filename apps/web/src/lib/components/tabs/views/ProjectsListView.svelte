@@ -129,7 +129,7 @@
 
 <Page
 	title="Projects"
-	description="A project gathers the material for one piece of work — files, people, pages, days. Chats filed here are grounded in it."
+	description="A project gathers the material for one piece of work - files, people, pages, days. Chats filed here are grounded in it."
 	maxWidth="wide"
 >
 	{#snippet actions()}

@@ -480,7 +480,7 @@ pub async fn reopen_onboarding_handler(
             tracing::info!(
                 by_device = %user.device_id,
                 devices, creds,
-                "onboarding re-opened from the app — every device revoked"
+                "onboarding re-opened from the app. Every device revoked"
             );
             (StatusCode::OK, Json(json!({ "devices": devices, "credentials": creds })))
         }

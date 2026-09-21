@@ -93,7 +93,7 @@ impl DocCache {
             }
             tracing::info!(
                 page_id,
-                "page was rewritten outside the CRDT — dropping the cached doc and reseeding"
+                "page was rewritten outside the CRDT - dropping the cached doc and reseeding"
             );
             self.pages.invalidate(page_id);
         }
@@ -235,7 +235,7 @@ impl SaveQueue {
                             "page save failed; requeued");
                     } else {
                         tracing::error!(page = %page_id, attempts, error = %e,
-                            "page save still failing — the owner's edits are unsaved");
+                            "page save still failing - the owner's edits are unsaved");
                     }
                     let mut pending = self.pending.write().await;
                     // A newer edit may have arrived while we were away; it
@@ -558,7 +558,7 @@ impl YjsState {
         for (page_id, state) in drained {
             if let Err(e) = save_and_materialize(&self.pool, &page_id, &state).await {
                 tracing::error!(page = %page_id, error = %e,
-                    "could not flush page on shutdown — these edits are lost");
+                    "could not flush page on shutdown - these edits are lost");
             }
         }
     }

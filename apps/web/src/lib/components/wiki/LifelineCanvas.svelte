@@ -1312,7 +1312,7 @@
 	{:else if lanes.length === 0}
 		<p class="quiet pad">
 			Nothing recorded yet. The lifeline draws whatever the collectors have
-			gathered — it needs no articles and no AI.
+			gathered. It needs no articles and no AI.
 		</p>
 	{:else}
 		<header class="bar">

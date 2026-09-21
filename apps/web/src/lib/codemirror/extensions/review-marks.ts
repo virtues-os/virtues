@@ -332,14 +332,14 @@ const reviewField = StateField.define<DecorationSet>({
 // ── The accept/reject affordance ────────────────────────────────────────────
 
 const ACCEPT_LABEL: Record<ReviewKind, string> = {
-	insertion: 'Accept — keep this text',
-	deletion: 'Accept — remove this text',
+	insertion: 'Accept. Keep this text',
+	deletion: 'Accept - remove this text',
 	comment: 'Resolve comment',
 };
 
 const REJECT_LABEL: Record<ReviewKind, string> = {
-	insertion: 'Reject — discard this text',
-	deletion: 'Reject — keep this text',
+	insertion: 'Reject - discard this text',
+	deletion: 'Reject. Keep this text',
 	comment: '',
 };
 

@@ -122,7 +122,7 @@
 			</p>
 			<p class="hint">
 				Pin to a tag or a commit rather than a branch if you want the code to
-				stay put — a branch moves under you on the next import.
+				stay put - a branch moves under you on the next import.
 			</p>
 			<p class="hint">
 				<strong>Public</strong> HTTPS URLs work without auth.

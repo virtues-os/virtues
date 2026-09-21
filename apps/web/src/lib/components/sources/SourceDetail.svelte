@@ -90,7 +90,7 @@
 			<Icon icon="ri:code-line" width="14" />
 			<TextAction inline onclick={readCode}>Read the code</TextAction>
 			{#if source.repo_ref}<code>{source.repo_ref}</code>{/if}
-			<span class="aside">— provenance, not how it updates</span>
+			<span class="aside">- provenance, not how it updates</span>
 		</p>
 	{/if}
 

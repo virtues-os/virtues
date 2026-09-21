@@ -148,7 +148,7 @@
 		</p>
 		{#if maintained && canWrite}
 			<p class="regime-hint">
-				Anything you write here stays as you wrote it — the record edits around your
+				Anything you write here stays as you wrote it - the record edits around your
 				sentences, and every change it makes is listed in History, where you can put any
 				version back.
 			</p>

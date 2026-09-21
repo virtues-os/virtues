@@ -127,7 +127,7 @@
 				update?.update_available && update.latest
 					? `${update.latest} is available — open to install`
 					: update?.update_available
-						? "A newer release is available — open to install"
+						? "A newer release is available. Open to install"
 						: null,
 			// It answered this request.
 			last_seen_at: new Date().toISOString(),
@@ -427,7 +427,7 @@
 		error={res.error}
 		onRetry={reloadAll}
 		emptyIcon="ri:device-line"
-		emptyMessage="No paired devices — run `virtues pair` on your server to pair this browser, or click Add device above."
+		emptyMessage="No paired devices. Run `virtues pair` on your server to pair this browser, or click Add device above."
 		loadingMessage="Loading devices..."
 		searchPlaceholder="Search by name, kind, version..."
 		onRefresh={reloadAll}
@@ -475,7 +475,7 @@
 										     few minutes, so that instruction was jargon AND untrue —
 										     it asked for work that was never needed. -->
 										Turn on <span class="text-foreground">Virtues</span> in the list,
-										then leave it — this Mac notices within a few minutes.
+										then leave it. This Mac notices within a few minutes.
 									</div>
 									<Button
 										variant="secondary"
@@ -498,7 +498,7 @@
 									     one fact must not disagree about whether it is
 									     actionable from here. -->
 									<div class="text-foreground-muted mt-0.5">
-										Granting this needs someone at that machine — macOS has no
+										Granting this needs someone at that machine - macOS has no
 										remote path for it.
 									</div>
 								{/if}
@@ -507,7 +507,7 @@
 					{/each}
 					{#if device.permissions?.stale}
 						<div class="text-xs text-foreground-muted mt-2 italic">
-							Permission report is stale — the collector may not be running.
+							Permission report is stale - the collector may not be running.
 						</div>
 					{/if}
 				{/if}

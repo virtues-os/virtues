@@ -271,7 +271,7 @@
 
 			<Field
 				label="Interface"
-				hint="the screens you are looking at — served by your server"
+				hint="the screens you are looking at - served by your server"
 				value={interfaceVersion}
 				unknown={!interfaceVersion}
 				mono
@@ -286,7 +286,7 @@
 					hint="the daemon that reads this machine and sends it on"
 					value={collector.version}
 					unknown={!collector.version}
-					note={collectorBehind ? "behind the app — relaunch" : undefined}
+					note={collectorBehind ? "behind the app - relaunch" : undefined}
 					tone="warning"
 					mono
 				/>

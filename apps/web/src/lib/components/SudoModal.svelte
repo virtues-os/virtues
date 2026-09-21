@@ -181,7 +181,7 @@
 				<div>
 					<h2 class="text-lg font-semibold leading-tight">{title}</h2>
 					<p class="text-xs text-foreground-muted">
-						Sensitive action — requires physical confirmation.
+						Sensitive action - requires physical confirmation.
 					</p>
 				</div>
 			</div>

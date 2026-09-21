@@ -89,7 +89,7 @@
             case "provisioning":
                 return "This usually takes about 30 seconds.";
             case "migrating":
-                return "Bringing services back up — this won't take long.";
+                return "Bringing services back up. This won't take long.";
             case "error":
                 return errorMessage || "";
             default:
@@ -148,7 +148,7 @@
                         rel="noopener noreferrer"
                         class="support-link"
                     >
-                        Check your box — run <code>virtues doctor</code>
+                        Check your box. Run <code>virtues doctor</code>
                     </a>
                 </div>
             {/if}

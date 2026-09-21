@@ -292,7 +292,7 @@
 			notes = [...notes, saved];
 			keepText = "";
 		} catch {
-			keepError = "That didn't save. Your server may be offline — try again.";
+			keepError = "That didn't save. Your server may be offline. Try again.";
 		} finally {
 			keeping = false;
 		}

@@ -126,7 +126,7 @@ pub async fn draft_from_interview(pool: &PgPool) -> Result<Draft> {
     let they_spoke = turns.iter().any(|(role, _)| role == "user");
     if !they_spoke {
         return Err(Error::Other(
-            "nothing said yet — talk for a bit first".into(),
+            "nothing said yet - talk for a bit first".into(),
         ));
     }
 
@@ -180,7 +180,7 @@ Output STRICT JSON only, no prose, no code fences: an array in chronological ord
 Rules:
 - Only chapters the person themselves gave. The interviewer's words are scaffolding — but a name or year the interviewer played back and the person confirmed counts as theirs. Anything never confirmed does not exist.
 - "title": their name for the era, verbatim or near-verbatim. null ONLY for a stretch they deliberately left unnamed.
-- "start_year"/"end_year": the rough year they said — "about '09" is 2009. When they wavered ("'08 or '09"), take the one they settled on, or the later mention. "end_year": null means the chapter is still running.
+- "start_year"/"end_year": the rough year they said - "about '09" is 2009. When they wavered ("'08 or '09"), take the one they settled on, or the later mention. "end_year": null means the chapter is still running.
 - "start_month"/"end_month": 1-12, ONLY when they gave a month ("Aug 2023" is start_year 2023, start_month 8; "July 20 2024" is 2024, 7). A bare year is null. Never invent a month to make eras line up.
 - Several eras can begin in one year — keep every one of them, with its month. Two eras with the same start year AND the same month (or both no month) are one era: keep the one they said more about.
 - "changepoint": what ENDED the era, in their words, if they said. Otherwise null.
@@ -643,7 +643,7 @@ pub async fn delete_chapter(pool: &PgPool, id: &str) -> Result<ChapterRow> {
     let chapter = get_chapter(pool, id).await?;
     if chapter.kind == "unknown" {
         return Err(Error::InvalidInput(
-            "that stretch is already unnamed — there is nothing to remove".into(),
+            "that stretch is already unnamed. There is nothing to remove".into(),
         ));
     }
 

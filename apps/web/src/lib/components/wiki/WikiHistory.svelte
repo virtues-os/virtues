@@ -92,7 +92,7 @@
 {:else if entries.length === 0}
 	<p class="quiet">
 		Nothing has been rewritten yet. Articles are only maintained when you ask
-		them to be — turn on "Keep this updated" on an article and its edits will
+		them to be - turn on "Keep this updated" on an article and its edits will
 		appear here.
 	</p>
 {:else}

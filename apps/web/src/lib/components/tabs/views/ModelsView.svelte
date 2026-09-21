@@ -147,7 +147,7 @@
 		if (v === "all")
 			return "Every endpoint this model can be served from is zero-data-retention.";
 		if (v === "some")
-			return "Only some endpoints serving this model are zero-data-retention, so every request is pinned to those — the others are never used.";
+			return "Only some endpoints serving this model are zero-data-retention, so every request is pinned to those - the others are never used.";
 		if (v === "none")
 			return "No zero-data-retention endpoint exists for this model. Choosing it means this slot's requests are retained by the provider; every other slot stays zero-retention.";
 		return "This model's retention posture hasn't been reported. Requests are sent with zero-retention required, so an endpoint that can't honor it is refused rather than used.";
@@ -288,7 +288,7 @@
 		>
 			<Icon icon="ri:cloud-off-line" class="mt-0.5 shrink-0" width="14" />
 			<span>
-				Showing the built-in defaults — this server hasn't loaded the live
+				Showing the built-in defaults. This server hasn't loaded the live
 				catalog yet. It retries every few minutes; the full list appears as
 				soon as the cloud is reachable.
 			</span>
