@@ -363,6 +363,18 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         join_hint: Some("JOIN app_pages p ON p.id = wiki_articles.page_id"),
         note: Some("link row; the text is the page at page_id"),
     });
+    // The one non-`data_`/`wiki_` relation the model is sent to: the join
+    // hint above points here, the reader role is granted it at boot, and
+    // yet `get_schema` refused to describe it ("Can only get schema for
+    // data_* or wiki_* tables") — a destination it was given directions to
+    // and then refused directions at. Cataloged, so every fence agrees.
+    m.insert("app_pages", TableMetadata {
+        description: "Pages: the written text of a wiki article (via wiki_articles.page_id) and the owner's own pages, as markdown",
+        category: "wiki",
+        key_columns: &["title", "content", "kind", "icon", "tags"],
+        join_hint: Some("JOIN wiki_articles a ON a.page_id = app_pages.id"),
+        note: Some("content is markdown; kind tells an article from an owner-written page"),
+    });
     m.insert("wiki_notes", TableMetadata {
         description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",
         category: "wiki",
