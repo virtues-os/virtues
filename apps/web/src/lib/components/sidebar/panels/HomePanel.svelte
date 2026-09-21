@@ -8,7 +8,8 @@
 	 *
 	 * Doors first, then groups, and the order is the order of reach:
 	 *
-	 *   doors     New chat, Search, Pages, Applets. One verb, then places.
+	 *   doors     New chat, Pages, Applets, Search. The verb, the places, and
+	 *             last the door that leaves the panel for the palette.
 	 *             Pages and Applets each lived on the rail as a room of their
 	 *             own and were rooms nobody walked to — a page is written the
 	 *             way a chat is started, and an applet is run from a
@@ -481,10 +482,6 @@
 		<AtlasIcon name="new-chat" size={16} bare />
 		<span class="panel-row-text">New chat</span>
 	</button>
-	<button type="button" class="panel-row panel-door" onclick={openSearch}>
-		<AtlasIcon name="search" size={16} bare />
-		<span class="panel-row-text">Search</span>
-	</button>
 	<!-- The word opens the list; the + that appears beside it makes a new
 	     one. A div, not a button, so the + can be a real button inside it. -->
 	<div
@@ -512,6 +509,10 @@
 	<button type="button" class="panel-row panel-door" onclick={openApplets}>
 		<AtlasIcon name="applets" size={16} bare />
 		<span class="panel-row-text">Applets</span>
+	</button>
+	<button type="button" class="panel-row panel-door" onclick={openSearch}>
+		<AtlasIcon name="search" size={16} bare />
+		<span class="panel-row-text">Search</span>
 	</button>
 </div>
 
