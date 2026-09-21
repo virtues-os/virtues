@@ -17,24 +17,29 @@
 	one opens the getting-started chat, so it takes the rail's other precedent
 	— the ∴ mark, the one object on the rail with a job of its own — and has
 	no occupied or selected state. What tells it from a room is the ink: it
-	is the rail's one object in the primary color, on the primary wash. Blue
-	means interactive, never decorative, and this is the one standing call
-	to act on the desk — and it expires, so the loudness does too. The wash
-	rather than a solid block, because a filled 60px slab would be the
-	loudest thing on a desk whose job is to whisper.
+	is the rail's one object in the primary color. Blue means interactive,
+	never decorative, and this is the one standing call to act on the desk —
+	and it expires, so the loudness does too. Ink only, no fill: a primary
+	wash was tried and on the slate theme, where primary is not blue, it came
+	out as the same gray as the selected room's tile, so the tile said
+	"selected" instead of "act". A fill is the selected state's word; this
+	object keeps to color alone.
 
 	The tile was the folio ("2/4") set in the mark's serif, so head and foot
 	would rhyme. At 21px on a 72px rail it read as a fraction, a piece of
 	arithmetic rather than a place, so it is a glyph now like the rooms. The
-	count and the next step's name — "Introductions" is the answer you were
-	going to have to find anyway — live in the hover card, where the whole
-	list fits, and in the tooltip for anyone who never rests.
+	open door is the room's own plate — the getting-started chat opens on a
+	drawing of doors standing open — and it is a Remix glyph because Atlas
+	draws rooms, and this is not one. The count and the next step's name —
+	"Introductions" is the answer you were going to have to find anyway —
+	live in the hover card, where the whole list fits, and in the tooltip for
+	anyone who never rests.
 
 	"Setup" is the label because "Getting started" wraps at this width and a
 	rail label is one word. The room keeps its name; this is the door.
 -->
 <script lang="ts">
-	import AtlasIcon from "./AtlasIcon.svelte";
+	import Icon from "$lib/components/Icon.svelte";
 	import HoverCard from "./HoverCard.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -113,7 +118,7 @@
 	title={next ? `Getting started · next: ${next}` : "Getting started"}
 >
 	<span class="tile" aria-hidden="true">
-		<AtlasIcon name="sources" size={20} stroke={1.0} bare />
+		<Icon icon="ri:door-open-line" width="20" />
 	</span>
 	<span class="label">Setup</span>
 </button>
@@ -141,9 +146,9 @@
 {/if}
 
 <style>
-	/* The rail-item's box exactly — same padding, radius, transitions — so it
-	   sits in the column's rhythm. What differs is the color: primary ink on
-	   the primary wash, standing, where a room is muted ink on nothing. */
+	/* The rail-item's box exactly — same padding, radius, hover, transitions —
+	   so it sits in the column's rhythm. What differs is the ink: primary,
+	   standing, where a room is muted ink. */
 	.setup {
 		display: flex;
 		flex-direction: column;
@@ -153,7 +158,7 @@
 		padding: 8px 4px;
 		border: none;
 		border-radius: var(--sidebar-interactive-radius);
-		background: var(--color-primary-subtle);
+		background: none;
 		cursor: pointer;
 		color: var(--color-primary);
 		transition:
@@ -163,7 +168,7 @@
 
 	.setup:hover {
 		color: var(--color-primary-hover);
-		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+		background: var(--sidebar-hover-bg);
 	}
 
 	.setup:focus-visible {
