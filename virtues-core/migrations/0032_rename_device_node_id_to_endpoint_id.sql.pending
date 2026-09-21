@@ -1,0 +1,5 @@
+-- 0032_rename_device_node_id_to_endpoint_id
+-- Number claimed; SQL to follow.
+--
+-- Rename to .sql once written — sqlx ignores this file until you do,
+-- which is what stops a boot from applying it as an empty migration.
