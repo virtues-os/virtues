@@ -6,6 +6,10 @@ import UIKit
 @_silgen_name("virtues_drain_blocking")
 private func virtues_drain_blocking(_ timeoutSecs: Int32) -> Int32
 
+// Move share-sheet saves onto the outbox (the reach plugin's ShareInbox.swift).
+@_silgen_name("virtues_share_inbox_drain")
+private func virtues_share_inbox_drain() -> Int32
+
 /// Movement-independent background sync via `BGProcessingTask`.
 ///
 /// Significant-location wakes only fire when you *move*; a stationary phone
@@ -48,6 +52,9 @@ final class BackgroundSync {
     // then drain everything queued. Run off the main thread; end on completion.
     let work = DispatchWorkItem {
       HealthCollector.shared.collectAll()
+      // Shares first, so one made while the app was closed leaves on this wake
+      // rather than waiting for the app to be opened.
+      _ = virtues_share_inbox_drain()
       let rc = virtues_drain_blocking(25)
       NSLog("[BackgroundSync] BGProcessingTask drain rc/count=%d", rc)
       task.setTaskCompleted(success: rc >= 0)
